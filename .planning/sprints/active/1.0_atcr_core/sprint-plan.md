@@ -322,12 +322,12 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** 3 HIGH — fixed in 1.8 (full rewrite of the boundary test addressing all 8 findings) before proceeding.
 
-### 1.8 [ ] **[Internal package boundaries - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 1.8 [x] **[Internal package boundaries - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 1.7 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 1.9 [ ] **[Registry config loading - RED](plan/user-stories/02-agent-configuration.md)**
+### 1.9 [x] **[Registry config loading - RED](plan/user-stories/02-agent-configuration.md)**
    **AC:** [02-02 Provider/Agent Registry](plan/acceptance-criteria/02-02-provider-agent-registry.md)
    1. Analyze AC, identify testable units
    2. Write tests: parse valid/invalid YAML, required field validation
