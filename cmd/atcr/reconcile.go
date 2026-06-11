@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -68,12 +69,20 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	return gateFindings(res, threshold)
 }
 
+// gateFlagValue reads the --fail-on flag and trims it, so both threshold
+// readers share one semantic: a whitespace-only value is unset, never a usage
+// error in one command and a config fallback in the other.
+func gateFlagValue(cmd *cobra.Command) string {
+	v, _ := cmd.Flags().GetString("fail-on")
+	return strings.TrimSpace(v)
+}
+
 // failOnThreshold reads and validates the --fail-on flag, returning the
 // canonical threshold ("" when the flag is unset). An invalid value is a usage
 // error (exit 2). Used by the one-shot review path, where the flag presence is
 // itself the trigger.
 func failOnThreshold(cmd *cobra.Command) (string, error) {
-	v, _ := cmd.Flags().GetString("fail-on")
+	v := gateFlagValue(cmd)
 	if v == "" {
 		return "", nil
 	}
@@ -91,8 +100,7 @@ func failOnThreshold(cmd *cobra.Command) (string, error) {
 // project config is a usage error (exit 2, the repo's own config). The same
 // resolver backs the MCP atcr_reconcile handler so the two layers cannot fork.
 func resolveGateThreshold(cmd *cobra.Command) (string, error) {
-	flagVal, _ := cmd.Flags().GetString("fail-on")
-	raw, err := registry.ResolveGateThreshold(".", flagVal)
+	raw, err := registry.ResolveGateThreshold(".", gateFlagValue(cmd))
 	if err != nil {
 		return "", usageError(err)
 	}
