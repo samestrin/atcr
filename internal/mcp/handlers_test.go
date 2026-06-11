@@ -171,6 +171,15 @@ func TestReviewHandler_MergeCommitWithBaseHeadRejected(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(root, ".atcr", "reviews"), "no review dir for rejected args")
 }
 
+// isolateUserConfig redirects HOME/XDG so file-tier config probes (the
+// user-global registry) never read the developer's real ~/.config/atcr.
+func isolateUserConfig(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+}
+
 // --- atcr_reconcile ------------------------------------------------------
 
 func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
@@ -200,6 +209,20 @@ func TestReconcileHandler_InvalidFailOn(t *testing.T) {
 	cs := connectTest(t, root, fakeCompleter{})
 	msg := callErr(t, cs, ToolReconcile, map[string]any{"fail_on": "SEVERE"})
 	assert.Contains(t, msg, "invalid severity")
+}
+
+// TestReconcileHandler_PreCancelledContext verifies the handler passes its ctx
+// through to RunReconcile instead of discarding it: a pre-cancelled context
+// aborts the reconcile pipeline (risk profile: handlers honor ctx cancellation).
+func TestReconcileHandler_PreCancelledContext(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	reviewFixture(t, root)
+	e := &engine{root: root}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := e.handleReconcile(ctx, nil, ReconcileArgs{})
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestReconcileHandler_NoResults(t *testing.T) {

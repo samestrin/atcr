@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,6 +58,17 @@ func TestRunReconcile_EndToEnd(t *testing.T) {
 	// Gate: 1 finding at/above HIGH; 0 at/above CRITICAL.
 	assert.Equal(t, 1, CountAtOrAbove(res.Findings, SevHigh))
 	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevCritical))
+}
+
+func TestRunReconcile_PreCancelledContext(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
+		"HIGH|a.go:1|issue|fix|security|10|ev|host\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := RunReconcile(ctx, reviewDir, nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NoDirExists(t, filepath.Join(reviewDir, "reconciled"), "a cancelled run must not emit artifacts")
 }
 
 func TestRunReconcile_MissingSourcesDirErrors(t *testing.T) {
