@@ -214,6 +214,23 @@ func TestRunReview_UnknownProviderIsBuildError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown provider")
 }
 
+// A client retry of atcr_review with the same explicit id (plausible while the
+// first run still shows running) must not launch a second fan-out into the SAME
+// review directory — the second PrepareReview must refuse, not scaffold.
+func TestPrepareReview_RejectsExistingOverrideID(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	req := reviewReq(repo, repo, base, head)
+	req.IDOverride = "custom-review-id"
+
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	_, err = PrepareReview(context.Background(), cfg, req)
+	require.Error(t, err, "second prepare with the same override id must refuse")
+	assert.Contains(t, err.Error(), "custom-review-id")
+}
+
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.
