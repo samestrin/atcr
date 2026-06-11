@@ -282,8 +282,9 @@ func (e *engine) handleStatus(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // and its id. An empty anchor falls back to .atcr/latest. A non-empty anchor is
 // treated strictly as a review id and validated so a path separator, "..", an
 // absolute path, or a leading dash can never escape .atcr/reviews/ — the MCP
-// path-containment invariant (AC 04-03/04-04 Security). A missing latest pointer
-// is the "no reviews found" error.
+// path-containment invariant (AC 04-03/04-04 Security). A missing or unusable
+// latest pointer is the "no reviews found" error, wrapping ReadLatest's cause
+// so a corrupt/tampered pointer is not misreported as absent.
 func (e *engine) resolveReviewDir(idOrPath string) (dir, id string, err error) {
 	id = idOrPath
 	if id == "" {
