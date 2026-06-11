@@ -227,19 +227,19 @@ Documentation available in [documentation/](plan/documentation/):
 
 **Focus:** Go module scaffold, cobra CLI skeleton, internal package boundaries, two-tier config loading with validation.
 
-### 1.1 [ ] **[Scaffold Go module + cobra CLI - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 1.1 [x] **[Scaffold Go module + cobra CLI - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-01 End-to-End Review](plan/acceptance-criteria/01-01-end-to-end-review.md)
    1. Analyze AC, identify testable units
    2. Write tests: `go build` succeeds, `atcr --help` shows subcommands
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 1.2 [ ] **[Scaffold Go module + cobra CLI - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 1.2 [x] **[Scaffold Go module + cobra CLI - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 1.3 [ ] **[Scaffold Go module + cobra CLI - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.2]
+### 1.3 [x] **[Scaffold Go module + cobra CLI - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** cmd/atcr/{main,review,reconcile,report,range,init,serve,main_test}.go, .github/workflows/ci.yml
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
 
@@ -259,13 +259,20 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cmd/atcr/main.go:23-33 | Exit-2 contract documented but no code path produces 2 (usage errors map to 1) | SetFlagErrorFunc + coded usage errors |
+   | MEDIUM | cmd/atcr/main.go:38-51 | asExitCoder reimplements errors.As; misses Unwrap() []error chains | Replace with errors.As |
+   | MEDIUM | cmd/atcr/review.go:20-21, range.go:19-20 | --head and --merge-commit not mutually exclusive; conflict caught only by accident with misleading message | MarkFlagsMutuallyExclusive("head", "merge-commit") |
+   | MEDIUM | cmd/atcr/main_test.go | exitCode/asExitCoder logic has zero test coverage | Table-driven exitCode tests |
+   | LOW | cmd/atcr/main_test.go | Flag relationships untested | Add group-constraint tests |
+   | LOW | cmd/atcr/main.go:16-18 | ExitCode()==0 error prints stderr banner then exits 0 | Skip banner when code 0 |
+   | LOW | ci.yml:1-12 | No permissions: block (default GITHUB_TOKEN grant) | permissions: contents: read |
+   | LOW | ci.yml:3-7 | No concurrency group; redundant runs queue | Add concurrency group |
+   | LOW | ci.yml:34-53 | Dead go.mod guards, two guard styles, standalone vet redundant with golangci govet | Captured as TD-001 |
+   | LOW | ci.yml:49 | coverage.out generated but never consumed | Captured as TD-002 |
+   | LOW | cmd/atcr/report.go:15 | --format accepts any string; enum validation deferred | Captured as TD-003 (lands with task 3.37) |
+   | LOW | cmd/atcr/review.go,range.go | Range-flag block copy-pasted across two commands | Extract addRangeFlags helper |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.4, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. MEDIUMs + cheap LOWs fixed in 1.4; remaining LOWs appended to `tech-debt-captured.md` (TD-001..TD-003).
 
 ### 1.4 [ ] **[Scaffold Go module + cobra CLI - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 1.3 (if any)

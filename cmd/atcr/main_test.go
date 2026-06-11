@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,6 +54,62 @@ func TestRootCmd_HasExactlySixSubcommands(t *testing.T) {
 func TestRootCmd_UnknownSubcommandErrors(t *testing.T) {
 	_, err := execute(t, "no-such-command")
 	assert.Error(t, err)
+}
+
+func TestExitCode(t *testing.T) {
+	plain := errors.New("boom")
+	coded := usageError(plain)
+
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"nil error", nil, 0},
+		{"plain error", plain, 1},
+		{"coded usage error", coded, 2},
+		{"wrapped coded error", fmt.Errorf("context: %w", coded), 2},
+		{"joined coded error", errors.Join(plain, coded), 2},
+		{"explicit zero code", &codedError{code: 0, err: plain}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, exitCode(tt.err))
+		})
+	}
+}
+
+func TestFlagRelationships(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"review base without head", []string{"review", "--base", "abc"}},
+		{"review base with merge-commit", []string{"review", "--base", "abc", "--head", "def", "--merge-commit", "fff"}},
+		{"review head with merge-commit", []string{"review", "--head", "def", "--merge-commit", "fff"}},
+		{"range base without head", []string{"range", "--base", "abc"}},
+		{"range head with merge-commit", []string{"range", "--head", "def", "--merge-commit", "fff"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := execute(t, tt.args...)
+			require.Error(t, err)
+			assert.Equal(t, 2, exitCode(err), "flag-group violations are usage errors")
+		})
+	}
+}
+
+func TestUsageErrors_ExitCodeTwo(t *testing.T) {
+	t.Run("unknown flag", func(t *testing.T) {
+		_, err := execute(t, "review", "--no-such-flag")
+		require.Error(t, err)
+		assert.Equal(t, 2, exitCode(err))
+	})
+	t.Run("unexpected positional arg", func(t *testing.T) {
+		_, err := execute(t, "init", "unexpected")
+		require.Error(t, err)
+		assert.Equal(t, 2, exitCode(err))
+	})
 }
 
 func TestRootCmd_SubcommandsUseRunE(t *testing.T) {

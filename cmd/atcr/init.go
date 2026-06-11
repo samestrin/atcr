@@ -8,7 +8,7 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Write .atcr/config.yaml and editable persona files",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return errNotImplemented("init")
 		},

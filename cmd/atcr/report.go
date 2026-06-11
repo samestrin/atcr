@@ -7,7 +7,7 @@ func newReportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report [id-or-path]",
 		Short: "Render md, json, or checklist views over reconciled findings",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return errNotImplemented("report")
 		},

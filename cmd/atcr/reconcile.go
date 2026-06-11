@@ -8,7 +8,7 @@ func newReconcileCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile [id-or-path]",
 		Short: "Merge findings from all sources into reconciled artifacts",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  usageArgs(cobra.MaximumNArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return errNotImplemented("reconcile")
 		},
