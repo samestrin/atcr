@@ -867,33 +867,35 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.37 [ ] **[Findings stream parser/writer (atcr-findings/v1) - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 2.37 [x] **[Findings stream parser/writer (atcr-findings/v1) - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-05 Reconciliation Pipeline](plan/acceptance-criteria/01-05-reconciliation-pipeline.md), [05-02 Host Review Findings](plan/acceptance-criteria/05-02-host-review-findings-generation.md)
    1. Analyze ACs, identify testable units
    2. Write tests: strict severity-prefix regex `^(CRITICAL|HIGH|MEDIUM|LOW)\|` skips prose; literal `|` in fields → `/`; short rows padded to 8 (per-source) / 9 (reconciled) columns; `# atcr-findings/v1` header required (unknown version = hard error); comment/blank lines skipped
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 2.38 [ ] **[Findings stream parser/writer (atcr-findings/v1) - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 2.38 [x] **[Findings stream parser/writer (atcr-findings/v1) - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 2.39 [ ] **[Findings stream parser/writer (atcr-findings/v1) - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.38]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.38`).
+### 2.39 [x] **[Findings stream parser/writer (atcr-findings/v1) - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/stream/{parser.go, writer.go, parser_test.go, writer_test.go}.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: findings stream`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | CRITICAL | writer.go escapeField | embedded newline in a field split a finding across physical lines → silent data loss / unstable round-trip | Fixed in 2.40: escapeField neutralizes CR/LF → space + newline-escape test |
+   | HIGH | writer.go fieldsFor | comma inside a reviewer name round-trips as multiple reviewers, forging CONFIDENCE | Fixed in 2.40: sanitize commas in reviewer names before join + test |
+   | HIGH | parser.go column check | a valid finding written with a trailing pipe was discarded as malformed | Fixed in 2.40: trim trailing-empty columns before count check + test |
+   | MEDIUM | parser.go version match | `# atcr-findings/v1x` loosely matched as unknown-version | Deferred → TD-014 (reasonable v1 classification) |
+   | LOW | parser.go splitFileLine | bare trailing colon (`a.go:`) kept in File | Fixed in 2.40: strip empty line-number colon |
+   | LOW | parser.go/writer.go | control bytes beyond CR/LF pass through | Deferred → TD-014 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.40, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 CRITICAL + 2 HIGH (all wire-contract integrity defects) fixed in 2.40 with regression tests; one LOW fixed inline; two minor items deferred (TD-014). The format is the public contract, so these were fixed, not deferred.
 
-### 2.40 [ ] **[Findings stream parser/writer (atcr-findings/v1) - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 2.40 [x] **[Findings stream parser/writer (atcr-findings/v1) - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 2.39 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

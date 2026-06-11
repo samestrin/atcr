@@ -90,3 +90,10 @@
 **Issue:** `total += e.Size` could wrap negative for pathological/huge sizes, making `total <= budget` true and skipping truncation (a silent over-budget payload). Negative `FileEntry.Size` values are also not rejected.
 **Why accepted:** Sizes are real file byte counts (<2GB each) summed over <100 files; overflow is unreachable with realistic inputs. Correctness for normal inputs is fully tested (including duplicate paths and zero-size files).
 **Fix in:** v2 — reject negative sizes and detect `total > math.MaxInt64 - e.Size` before adding.
+
+## TD-014 — findings header match is loose and control chars beyond CR/LF pass through (LOW)
+**Origin:** Phase 2, task 2.39 adversarial review, 2026-06-10
+**File:** internal/stream/parser.go:97
+**Issue:** (1) `# atcr-findings/v1x`, `v10`, `v1.2` all match the `# atcr-findings/` prefix and are reported as `ErrUnknownVersion` rather than a clean version-token comparison, so a consumer cannot distinguish a well-formed-but-unsupported version from a garbage header. (2) `escapeField` now neutralizes pipes and CR/LF, but other control bytes (NUL, etc.) still pass through into the wire contract.
+**Why accepted:** Reporting any non-v1 `atcr-findings/*` header as unknown-version is a reasonable v1 classification; control bytes other than newlines do not occur in real findings text (severity-prefixed lines from LLMs). The structural defects (newline split, comma-forged reviewers, trailing-pipe drop) were all fixed inline in 2.40.
+**Fix in:** v2 — parse the version token exactly; optionally strip remaining control characters in escapeField.
