@@ -1338,7 +1338,7 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.41 [ ] **Phase 3 DoD Validation**
+### 3.41 [x] **Phase 3 DoD Validation**
    1. Run `go test ./...` - all passing
    2. Run `go vet ./...` - clean
    3. Run `golangci-lint run` - clean
@@ -1347,7 +1347,7 @@ Documentation available in [documentation/](plan/documentation/):
    6. Update metadata.md with Phase 3 completion metrics
    **Duration:** 30 min
 
-### 3.42 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+### 3.42 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool (subagent_type: `general-purpose`, description: `Phase 3 gate review`) with a self-contained brief:
@@ -1367,10 +1367,15 @@ Documentation available in [documentation/](plan/documentation/):
    | CRITICAL | | | |
    | HIGH | | | |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Files changed during Phase 3:** internal/fanout/{engine,outcome,artifacts,reviewdir,review,status}.go, internal/reconcile/{discover,cluster,dedupe,merge,reconcile,emit,gate}.go, internal/report/render.go, internal/stream/parser.go (ParseModelOutput), internal/gitrange/resolver.go (CurrentBranch), cmd/atcr/{review,reconcile,report,anchor}.go
+
+   **Gate findings (first run):** 1 HIGH — config-level `fail_on` resolved through precedence but never consumed (both commands read only the `--fail-on` flag, so a project's configured gate was silently ignored, contradicting AC 03-02). LOWs: dead `AsReconciled`/`ParseReconciled` helpers + one-way disagreement folding → TD-022.
+
+   **Fix + re-run:** `resolveGateThreshold` now consumes the project config's `fail_on`. The re-run confirmed the fix correct but flagged a deeper HIGH (2-tier flag>project precedence bypassed the documented registry tier) + a MEDIUM (broken project config silently disabled the gate). **Second fix:** full flag > project > registry precedence with the embedded default excluded (opt-in preserved), enum-validation of the config value, loud exit-2 on a broken project config, best-effort on a broken registry; HOME-isolated tests added.
+
+   **Re-run verdict: GATE: PASS** — fresh subagent confirmed the fix correct, opt-in preserved, enum-validated, one-shot review path correctly flag-only; reconcile/report/fanout contracts sound (deterministic ordering, atomic writes, escaped markdown, consistent on-disk schema, correct Partial threading); no remaining CRITICAL/HIGH. Verified: tests race-clean, vet+lint clean, coverage 84.4%.
+
+   **Action Required:** None remaining — 2 HIGH + 1 MEDIUM fixed across two gate rounds with tests; LOWs → TD-022. Phase gate passed.
    **Duration:** 15-30 min
 
 ---
