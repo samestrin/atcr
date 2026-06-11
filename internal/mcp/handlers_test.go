@@ -420,6 +420,19 @@ func TestStatusHandler_NoReviews(t *testing.T) {
 	assert.Contains(t, msg, "no reviews found")
 }
 
+// TestStatusHandler_CorruptLatestPointer verifies a corrupt/tampered
+// .atcr/latest pointer is not misreported as "no reviews found": ReadLatest
+// distinguishes a missing file from an invalid pointer, and resolveReviewDir
+// must wrap that cause rather than discard it.
+func TestStatusHandler_CorruptLatestPointer(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte("../escape\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolStatus, map[string]any{})
+	assert.Contains(t, msg, "invalid review id")
+}
+
 func TestStatusHandler_CorruptManifest(t *testing.T) {
 	root := t.TempDir()
 	id := "2026-06-10_corrupt"
