@@ -39,6 +39,12 @@ const (
 // (the roster) and sources/pool/summary.json (the completion signal). It is the
 // shared shape returned to the `atcr status` CLI command and the atcr_status MCP
 // tool so both report identical state.
+//
+// AgentsDone/AgentsPending are completion-granular, not live progress: WritePool
+// persists every per-agent status and summary.json only after the whole fan-out
+// returns, so while a run is in_progress AgentsDone reads 0 and AgentsPending
+// reads the full roster size, then both jump to their final values when
+// summary.json lands.
 type ReviewStatus struct {
 	ReviewID      string `json:"review_id"`
 	Status        string `json:"status"`
