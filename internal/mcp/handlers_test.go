@@ -219,6 +219,24 @@ func TestReconcileHandler_FailOnGate(t *testing.T) {
 	assert.Equal(t, "CRITICAL", out.Findings[0].Severity)
 }
 
+// TestReconcileHandler_ProjectConfigFailOnGatesByDefault verifies the MCP
+// layer honors the same file-tier gate precedence as the CLI: with no explicit
+// fail_on argument, a project config fail_on gates the reconcile instead of
+// silently reporting pass=true.
+func TestReconcileHandler_ProjectConfigFailOnGatesByDefault(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	reviewFixture(t, root) // one CRITICAL finding
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "config.yaml"),
+		[]byte("agents:\n  - greta\nfail_on: HIGH\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[ReconcileResult](t, cs, ToolReconcile, map[string]any{})
+	assert.False(t, out.Pass, "project-config fail_on must gate through MCP like the CLI")
+	assert.Equal(t, "HIGH", out.FailOn)
+	require.NotEmpty(t, out.Findings, "failing findings are returned inline")
+}
+
 func TestReconcileHandler_InvalidFailOn(t *testing.T) {
 	root := t.TempDir()
 	reviewFixture(t, root)
