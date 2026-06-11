@@ -125,16 +125,16 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] `skill/SKILL.md` exists and contains all required sections
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] `skill/SKILL.md` exists and contains all required sections
 
 **Story-Specific:**
-- [ ] Skill accepts git range, branch name, and PR URL as input
-- [ ] Skill defaults to current branch when no input provided
-- [ ] Skill installation path is documented
-- [ ] No hardcoded paths in skill instructions
+- [x] Skill accepts git range, branch name, and PR URL as input
+- [x] Skill defaults to current branch when no input provided
+- [x] Skill installation path is documented
+- [x] No hardcoded paths in skill instructions
 
 **Manual Review:**
 - [ ] Code reviewed and approved

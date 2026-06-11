@@ -92,15 +92,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr review && atcr reconcile && atcr report` completes end-to-end with zero arguments
-- [ ] Partial failure: manifest.json records partial:true, exit code is 0 when ≥1 agent succeeded, and failed agents contribute no rows to sources/pool/findings.txt
-- [ ] All three subcommands registered and accessible via `atcr --help`
-- [ ] Exit codes are correct (0 success, 1 failure)
+- [x] `atcr review && atcr reconcile && atcr report` completes end-to-end with zero arguments
+- [x] Partial failure: manifest.json records partial:true, exit code is 0 when ≥1 agent succeeded, and failed agents contribute no rows to sources/pool/findings.txt
+- [x] All three subcommands registered and accessible via `atcr --help`
+- [x] Exit codes are correct (0 success, 1 failure)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

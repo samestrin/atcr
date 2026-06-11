@@ -181,22 +181,22 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Persona resolution chain works through all six levels
-- [ ] Template rendering substitutes all supported variables
-- [ ] `--task-message` completely bypasses persona file resolution
-- [ ] Empty persona files fall through to next level with warning
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Persona resolution chain works through all six levels
+- [x] Template rendering substitutes all supported variables
+- [x] `--task-message` completely bypasses persona file resolution
+- [x] Empty persona files fall through to next level with warning
 
 **Story-Specific:**
-- [ ] Resolution order: `--task-message` flag > agent's `persona:` ref (named persona file) > `<agent>.md` in `.atcr/personas/` (project) > `<agent>.md` in `~/.config/atcr/` (registry dir) > `_base.md` (project dir first, then registry dir) > embedded default
-- [ ] `--task-message` CLI flag overrides ALL persona resolution
-- [ ] Supported template variables: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`
-- [ ] Persona names are sanitized (no path traversal)
-- [ ] Template parse errors include file path and line number
-- [ ] Template execution errors name the undefined field
-- [ ] Multiple agents resolve personas independently (no shared state)
+- [x] Resolution order: `--task-message` flag > agent's `persona:` ref (named persona file) > `<agent>.md` in `.atcr/personas/` (project) > `<agent>.md` in `~/.config/atcr/` (registry dir) > `_base.md` (project dir first, then registry dir) > embedded default
+- [x] `--task-message` CLI flag overrides ALL persona resolution
+- [x] Supported template variables: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`
+- [x] Persona names are sanitized (no path traversal)
+- [x] Template parse errors include file path and line number
+- [x] Template execution errors name the undefined field
+- [x] Multiple agents resolve personas independently (no shared state)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -105,15 +105,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Directory structure matches spec: `payload/`, `sources/pool/raw/agent/`, `sources/host/`, `reconciled/`
-- [ ] manifest.json contains all required fields (base, head, detection_mode, payload_modes, roster, timestamps, partial)
-- [ ] `.atcr/latest` pointer updated to most recent review ID
-- [ ] Slug generation strips branch prefixes and sanitizes special characters
+- [x] Directory structure matches spec: `payload/`, `sources/pool/raw/agent/`, `sources/host/`, `reconciled/`
+- [x] manifest.json contains all required fields (base, head, detection_mode, payload_modes, roster, timestamps, partial)
+- [x] `.atcr/latest` pointer updated to most recent review ID
+- [x] Slug generation strips branch prefixes and sanitizes special characters
 
 **Manual Review:**
 - [ ] Code reviewed and approved

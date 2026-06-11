@@ -160,18 +160,18 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] Handler files contain zero business logic (only delegation to internal packages)
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] Handler files contain zero business logic (only delegation to internal packages)
 
 **Story-Specific:**
-- [ ] `atcr_review` returns `{review_id, review_path, status: "running", agent_count}` immediately once the review directory is created and fan-out has started
-- [ ] `atcr_reconcile` returns reconciliation summary with pass/fail status
-- [ ] Handlers call `internal/fanout` and `internal/reconcile` directly (no duplicated logic)
-- [ ] `atcr_review` supports args: id, base, head, merge_commit (all optional)
-- [ ] `atcr_reconcile` supports args: id_or_path, fail_on (all optional)
-- [ ] Default id_or_path resolves via `.atcr/latest` pointer
+- [x] `atcr_review` returns `{review_id, review_path, status: "running", agent_count}` immediately once the review directory is created and fan-out has started
+- [x] `atcr_reconcile` returns reconciliation summary with pass/fail status
+- [x] Handlers call `internal/fanout` and `internal/reconcile` directly (no duplicated logic)
+- [x] `atcr_review` supports args: id, base, head, merge_commit (all optional)
+- [x] `atcr_reconcile` supports args: id_or_path, fail_on (all optional)
+- [x] Default id_or_path resolves via `.atcr/latest` pointer
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -109,16 +109,16 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Three formats render correctly: md, json, checklist
-- [ ] Default format is markdown when --format not specified
-- [ ] --output flag writes to file; default writes to stdout
-- [ ] Zero-findings case renders the documented "No findings" message (Edge Case 1)
-- [ ] Golden file tests pass for each format
+- [x] Three formats render correctly: md, json, checklist
+- [x] Default format is markdown when --format not specified
+- [x] --output flag writes to file; default writes to stdout
+- [x] Zero-findings case renders the documented "No findings" message (Edge Case 1)
+- [x] Golden file tests pass for each format
 
 **Manual Review:**
 - [ ] Code reviewed and approved

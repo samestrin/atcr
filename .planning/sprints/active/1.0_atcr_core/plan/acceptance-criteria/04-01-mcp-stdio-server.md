@@ -117,16 +117,16 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] `atcr serve` starts and completes MCP initialize handshake
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] `atcr serve` starts and completes MCP initialize handshake
 
 **Story-Specific:**
-- [ ] Stdio transport is the only transport configured (no HTTP/SSE)
-- [ ] All log/human output goes to stderr; stdout reserved for MCP protocol
-- [ ] InMemoryTransport available and used in tests
-- [ ] Server startup completes within 50ms
+- [x] Stdio transport is the only transport configured (no HTTP/SSE)
+- [x] All log/human output goes to stderr; stdout reserved for MCP protocol
+- [x] InMemoryTransport available and used in tests
+- [x] Server startup completes within 50ms
 
 **Manual Review:**
 - [ ] Code reviewed and approved

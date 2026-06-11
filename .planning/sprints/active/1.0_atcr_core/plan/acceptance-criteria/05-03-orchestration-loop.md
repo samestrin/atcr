@@ -178,18 +178,18 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] `atcr status` command returns correct state
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] `atcr status` command returns correct state
 
 **Story-Specific:**
-- [ ] Skill orchestration follows: range → review → host review → reconcile → report
-- [ ] Background review polling works with configurable timeout
-- [ ] Host review runs after pool agents complete
-- [ ] Reconciled report includes host as a reviewer
-- [ ] Review directory path is output on completion
-- [ ] Orchestration halts gracefully on range/review/reconcile errors
+- [x] Skill orchestration follows: range → review → host review → reconcile → report
+- [x] Background review polling works with configurable timeout
+- [x] Host review runs after pool agents complete
+- [x] Reconciled report includes host as a reviewer
+- [x] Review directory path is output on completion
+- [x] Orchestration halts gracefully on range/review/reconcile errors
 
 **Manual Review:**
 - [ ] Code reviewed and approved

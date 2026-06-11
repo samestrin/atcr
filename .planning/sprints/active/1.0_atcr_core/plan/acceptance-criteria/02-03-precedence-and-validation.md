@@ -169,21 +169,21 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Precedence chain correctly resolves for all four levels
-- [ ] Cycle detection catches 2-node, 3-node, and self-ref cycles
-- [ ] Dangling reference detection catches unknown agent refs
-- [ ] Strict mode rejects unknown fields with descriptive errors
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Precedence chain correctly resolves for all four levels
+- [x] Cycle detection catches 2-node, 3-node, and self-ref cycles
+- [x] Dangling reference detection catches unknown agent refs
+- [x] Strict mode rejects unknown fields with descriptive errors
 
 **Story-Specific:**
-- [ ] Precedence order documented: CLI flag > project config > registry > embedded default
-- [ ] Fallback validation runs at config load time, before any review
-- [ ] Cycle error message includes the full cycle path (e.g., "bruce -> greta -> bruce")
-- [ ] Dangling ref error message names both the agent and the missing reference
-- [ ] `KnownFields(true)` is set on all YAML decoders
-- [ ] Diamond-shaped fallback graphs (multiple agents pointing to same fallback) do NOT trigger false cycle detection
+- [x] Precedence order documented: CLI flag > project config > registry > embedded default
+- [x] Fallback validation runs at config load time, before any review
+- [x] Cycle error message includes the full cycle path (e.g., "bruce -> greta -> bruce")
+- [x] Dangling ref error message names both the agent and the missing reference
+- [x] `KnownFields(true)` is set on all YAML decoders
+- [x] Diamond-shaped fallback graphs (multiple agents pointing to same fallback) do NOT trigger false cycle detection
 
 **Manual Review:**
 - [ ] Code reviewed and approved

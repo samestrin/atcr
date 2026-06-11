@@ -134,17 +134,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Config validation rejects invalid payload modes
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Config validation rejects invalid payload modes
 
 **Story-Specific:**
-- [ ] `PayloadMode` type defined with allowed values: `"diff"`, `"blocks"`, `"files"`
-- [ ] Default payload mode is `"blocks"` when not configured
-- [ ] Project config `.atcr/config.yaml` supports `payload_mode` field
-- [ ] Registry agent config supports `payload` field as per-agent override
-- [ ] Resolution logic: per-agent override > project config default > built-in default (`"blocks"`)
+- [x] `PayloadMode` type defined with allowed values: `"diff"`, `"blocks"`, `"files"`
+- [x] Default payload mode is `"blocks"` when not configured
+- [x] Project config `.atcr/config.yaml` supports `payload_mode` field
+- [x] Registry agent config supports `payload` field as per-agent override
+- [x] Resolution logic: per-agent override > project config default > built-in default (`"blocks"`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

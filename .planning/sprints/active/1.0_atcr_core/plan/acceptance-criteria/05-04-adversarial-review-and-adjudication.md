@@ -158,19 +158,19 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] ambiguous.json format validated against schema
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] ambiguous.json format validated against schema
 
 **Story-Specific:**
-- [ ] Host review instructions include adversarial personality clause
-- [ ] Host findings contain no praise or positive observations
-- [ ] Ambiguous clusters written to `ambiguous.json` with correct schema
-- [ ] Skill can adjudicate clusters and re-invoke reconcile
-- [ ] Conservative default preserves unmerged findings when adjudication is skipped
-- [ ] Adjudication decisions are logged for audit
-- [ ] Adjudication decisions are persisted to reconciled/adjudication.json and the pre-adjudication sidecar is preserved as ambiguous.original.json (both verified by test)
+- [x] Host review instructions include adversarial personality clause
+- [x] Host findings contain no praise or positive observations
+- [x] Ambiguous clusters written to `ambiguous.json` with correct schema
+- [x] Skill can adjudicate clusters and re-invoke reconcile
+- [x] Conservative default preserves unmerged findings when adjudication is skipped
+- [x] Adjudication decisions are logged for audit
+- [x] Adjudication decisions are persisted to reconciled/adjudication.json and the pre-adjudication sidecar is preserved as ambiguous.original.json (both verified by test)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

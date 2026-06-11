@@ -104,15 +104,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Decision tree resolves correctly for explicit, merge_commit, and auto modes
-- [ ] Default branch fallback chain: origin/HEAD → origin/main → origin/master → local main → local master
-- [ ] Empty range (base==head) produces hard error before any provider call
-- [ ] Shallow clone produces HARD ERROR (not warning) with `git fetch --unshallow` guidance; resolver does NOT auto-unshallow
+- [x] Decision tree resolves correctly for explicit, merge_commit, and auto modes
+- [x] Default branch fallback chain: origin/HEAD → origin/main → origin/master → local main → local master
+- [x] Empty range (base==head) produces hard error before any provider call
+- [x] Shallow clone produces HARD ERROR (not warning) with `git fetch --unshallow` guidance; resolver does NOT auto-unshallow
 
 **Manual Review:**
 - [ ] Code reviewed and approved

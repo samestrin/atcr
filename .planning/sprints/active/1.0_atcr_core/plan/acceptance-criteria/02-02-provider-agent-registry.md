@@ -178,20 +178,20 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Registry loads valid configs without error
-- [ ] Strict mode rejects unknown fields with clear error messages
-- [ ] Missing required fields produce descriptive errors
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Registry loads valid configs without error
+- [x] Strict mode rejects unknown fields with clear error messages
+- [x] Missing required fields produce descriptive errors
 
 **Story-Specific:**
-- [ ] Provider struct has fields: `api_key_env` (required), `base_url` (optional)
-- [ ] AgentConfig struct has fields: `provider` (required), `model` (required), `persona` (optional), `temperature` (optional), `timeout_secs` (optional), `rate_limited` (optional), `fallback` (optional), `payload` (optional)
-- [ ] API keys are resolved by env var name at invoke time, not load time
-- [ ] Project config can select agent subset from registry
-- [ ] Agent referencing unknown provider produces error at load time
-- [ ] Empty agent roster produces error
+- [x] Provider struct has fields: `api_key_env` (required), `base_url` (optional)
+- [x] AgentConfig struct has fields: `provider` (required), `model` (required), `persona` (optional), `temperature` (optional), `timeout_secs` (optional), `rate_limited` (optional), `fallback` (optional), `payload` (optional)
+- [x] API keys are resolved by env var name at invoke time, not load time
+- [x] Project config can select agent subset from registry
+- [x] Agent referencing unknown provider produces error at load time
+- [x] Empty agent roster produces error
 
 **Manual Review:**
 - [ ] Code reviewed and approved

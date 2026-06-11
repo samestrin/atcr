@@ -152,17 +152,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] Findings parser validates all v1 format rules
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] Findings parser validates all v1 format rules
 
 **Story-Specific:**
-- [ ] Host findings written to `sources/host/findings.txt` with version header
-- [ ] All host findings have REVIEWER column set to `host`
-- [ ] Findings use exactly 8 pipe-delimited columns matching v1 spec
-- [ ] Severity values restricted to CRITICAL, HIGH, MEDIUM, LOW
-- [ ] `sources/host/review.md` written alongside findings
+- [x] Host findings written to `sources/host/findings.txt` with version header
+- [x] All host findings have REVIEWER column set to `host`
+- [x] Findings use exactly 8 pipe-delimited columns matching v1 spec
+- [x] Severity values restricted to CRITICAL, HIGH, MEDIUM, LOW
+- [x] `sources/host/review.md` written alongside findings
 
 **Manual Review:**
 - [ ] Code reviewed and approved

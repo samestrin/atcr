@@ -140,19 +140,19 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Pipeline stages execute in order: discover → normalize → cluster → dedupe → merge → confidence → emit
-- [ ] Clustering uses FILE + LINE±3 bucketing correctly
-- [ ] Deduplication uses token-set Jaccard similarity with fixed v1 thresholds: merge at Jaccard ≥ 0.7; gray zone 0.4–0.7 goes to ambiguous.json (thresholds are not configurable in v1)
-- [ ] Confidence score computed and added as 9th column in reconciled findings.txt
-- [ ] All 4 reconciled artifacts written: findings.txt, findings.json, report.md, summary.json
-- [ ] `summary.json` contains: `sources_scanned`, `per_source_counts`, `clusters_collapsed`, `severity_disagreements`, `partial`, `total_findings`, `reconciled_at` (per US-01 #13)
-- [ ] `--sources <list>` allowlist flag restricts reconciled source directories; omitted/empty means open discovery (all sources except `reconciled/`)
-- [ ] Malformed findings.txt rows skipped with warning (not fatal)
+- [x] Pipeline stages execute in order: discover → normalize → cluster → dedupe → merge → confidence → emit
+- [x] Clustering uses FILE + LINE±3 bucketing correctly
+- [x] Deduplication uses token-set Jaccard similarity with fixed v1 thresholds: merge at Jaccard ≥ 0.7; gray zone 0.4–0.7 goes to ambiguous.json (thresholds are not configurable in v1)
+- [x] Confidence score computed and added as 9th column in reconciled findings.txt
+- [x] All 4 reconciled artifacts written: findings.txt, findings.json, report.md, summary.json
+- [x] `summary.json` contains: `sources_scanned`, `per_source_counts`, `clusters_collapsed`, `severity_disagreements`, `partial`, `total_findings`, `reconciled_at` (per US-01 #13)
+- [x] `--sources <list>` allowlist flag restricts reconciled source directories; omitted/empty means open discovery (all sources except `reconciled/`)
+- [x] Malformed findings.txt rows skipped with warning (not fatal)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

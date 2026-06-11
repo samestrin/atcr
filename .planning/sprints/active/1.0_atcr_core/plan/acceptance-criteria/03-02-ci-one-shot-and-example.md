@@ -92,15 +92,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr review --fail-on <severity>` runs review + reconcile + exit-code check in one command
-- [ ] examples/ci-gate.sh script exists and is executable
-- [ ] README.md documents CI integration with `--fail-on` flag and exit codes
-- [ ] examples/ci-gate.sh passes `bash -n` and `shellcheck` with zero errors; the GitHub Actions snippet in README is valid YAML
+- [x] `atcr review --fail-on <severity>` runs review + reconcile + exit-code check in one command
+- [x] examples/ci-gate.sh script exists and is executable
+- [x] README.md documents CI integration with `--fail-on` flag and exit codes
+- [x] examples/ci-gate.sh passes `bash -n` and `shellcheck` with zero errors; the GitHub Actions snippet in README is valid YAML
 
 **Manual Review:**
 - [ ] Code reviewed and approved

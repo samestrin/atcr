@@ -147,19 +147,19 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Template rendering produces expected output for all modes
-- [ ] docs/payload-modes.md exists and contains mode descriptions
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Template rendering produces expected output for all modes
+- [x] docs/payload-modes.md exists and contains mode descriptions
 
 **Story-Specific:**
-- [ ] `PayloadContext` struct has fields: `Payload`, `PayloadMode`, `FileCount`, `BaseRef`, `HeadRef`, `AgentName`
-- [ ] All template variables renderable in persona prompts
-- [ ] files mode scope rule mentions pre-existing issues visibility
-- [ ] diff/blocks scope rules constrain findings to changed ranges
-- [ ] Reconciler annotates findings outside changed ranges
-- [ ] `docs/payload-modes.md` documents all three modes with usage guidance
+- [x] `PayloadContext` struct has fields: `Payload`, `PayloadMode`, `FileCount`, `BaseRef`, `HeadRef`, `AgentName`
+- [x] All template variables renderable in persona prompts
+- [x] files mode scope rule mentions pre-existing issues visibility
+- [x] diff/blocks scope rules constrain findings to changed ranges
+- [x] Reconciler annotates findings outside changed ranges
+- [x] `docs/payload-modes.md` documents all three modes with usage guidance
 
 **Manual Review:**
 - [ ] Code reviewed and approved

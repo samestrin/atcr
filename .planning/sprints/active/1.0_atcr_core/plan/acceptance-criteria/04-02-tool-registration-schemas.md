@@ -117,17 +117,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] `tools/list` MCP call returns exactly 5 tools with valid schemas
+- [x] All tests passing (unit)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] `tools/list` MCP call returns exactly 5 tools with valid schemas
 
 **Story-Specific:**
-- [ ] Tools registered: atcr_review, atcr_reconcile, atcr_report, atcr_range, atcr_status
-- [ ] Each tool uses `mcp.AddTool` with generic typed args and result structs
-- [ ] All args fields are optional (client can call with `{}`)
-- [ ] atcr_report `format` field accepts enum: `md`, `json`, `checklist`
-- [ ] Each tool description is non-empty and states the tool's effect and its required/optional arguments
+- [x] Tools registered: atcr_review, atcr_reconcile, atcr_report, atcr_range, atcr_status
+- [x] Each tool uses `mcp.AddTool` with generic typed args and result structs
+- [x] All args fields are optional (client can call with `{}`)
+- [x] atcr_report `format` field accepts enum: `md`, `json`, `checklist`
+- [x] Each tool description is non-empty and states the tool's effect and its required/optional arguments
 
 **Manual Review:**
 - [ ] Code reviewed and approved

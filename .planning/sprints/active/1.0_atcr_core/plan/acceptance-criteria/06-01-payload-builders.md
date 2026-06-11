@@ -151,17 +151,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] All three modes produce correct output against golden files
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] All three modes produce correct output against golden files
 
 **Story-Specific:**
-- [ ] `BuildDiff` produces standard unified diff via `git diff base..head`
-- [ ] `BuildBlocks` uses `git diff --function-context` and falls back to `-U10` when it exits nonzero or produces zero hunks for a changed file
-- [ ] `BuildFiles` reads full head-version content and marks changed regions
-- [ ] Binary files are excluded from payload content and represented by the `[binary file changed: <path>]` marker
-- [ ] Invalid mode returns descriptive error
+- [x] `BuildDiff` produces standard unified diff via `git diff base..head`
+- [x] `BuildBlocks` uses `git diff --function-context` and falls back to `-U10` when it exits nonzero or produces zero hunks for a changed file
+- [x] `BuildFiles` reads full head-version content and marks changed regions
+- [x] Binary files are excluded from payload content and represented by the `[binary file changed: <path>]` marker
+- [x] Invalid mode returns descriptive error
 
 **Manual Review:**
 - [ ] Code reviewed and approved

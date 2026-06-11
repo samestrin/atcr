@@ -169,18 +169,18 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] All three report formats produce valid output
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] All three report formats produce valid output
 
 **Story-Specific:**
-- [ ] `atcr_report` supports format enum: `md`, `json`, `checklist`
-- [ ] `atcr_report` default format is `md`
-- [ ] `atcr_range` returns `{base, head, commit_count, file_count}`
-- [ ] `atcr_status` returns `{review_id, status, agent_count, agents_done, agents_pending}`
-- [ ] All handlers default to `.atcr/latest` when `id_or_path` is omitted
-- [ ] Handlers call `internal/report` and `internal/gitrange` directly (no duplicated logic)
+- [x] `atcr_report` supports format enum: `md`, `json`, `checklist`
+- [x] `atcr_report` default format is `md`
+- [x] `atcr_range` returns `{base, head, commit_count, file_count}`
+- [x] `atcr_status` returns `{review_id, status, agent_count, agents_done, agents_pending}`
+- [x] All handlers default to `.atcr/latest` when `id_or_path` is omitted
+- [x] Handlers call `internal/report` and `internal/gitrange` directly (no duplicated logic)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

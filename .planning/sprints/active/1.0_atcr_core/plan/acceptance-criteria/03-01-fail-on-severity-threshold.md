@@ -110,17 +110,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--fail-on CRITICAL` returns 1 only when CRITICAL findings exist
-- [ ] `--fail-on HIGH` returns 1 when HIGH or CRITICAL findings exist
-- [ ] `--fail-on MEDIUM` returns 1 when MEDIUM, HIGH, or CRITICAL findings exist
-- [ ] `--fail-on LOW` returns 1 when any finding exists
-- [ ] Exit code 0 when no findings at/above threshold
-- [ ] Severity comparison is case-insensitive
+- [x] `--fail-on CRITICAL` returns 1 only when CRITICAL findings exist
+- [x] `--fail-on HIGH` returns 1 when HIGH or CRITICAL findings exist
+- [x] `--fail-on MEDIUM` returns 1 when MEDIUM, HIGH, or CRITICAL findings exist
+- [x] `--fail-on LOW` returns 1 when any finding exists
+- [x] Exit code 0 when no findings at/above threshold
+- [x] Severity comparison is case-insensitive
 
 **Manual Review:**
 - [ ] Code reviewed and approved

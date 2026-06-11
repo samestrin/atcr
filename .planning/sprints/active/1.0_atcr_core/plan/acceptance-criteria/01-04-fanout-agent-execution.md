@@ -112,17 +112,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Parallel lane uses sync.WaitGroup for concurrent agent invocation
-- [ ] Serial lane respects rate limiting between calls
-- [ ] Per-agent artifacts (review.md, findings.txt, status.json) written to correct paths
-- [ ] Global timeout context cancels in-flight requests
-- [ ] Fallback chain attempts alternatives before marking agent as failed
-- [ ] Partial-success semantics: review succeeds if ≥1 agent succeeds
+- [x] Parallel lane uses sync.WaitGroup for concurrent agent invocation
+- [x] Serial lane respects rate limiting between calls
+- [x] Per-agent artifacts (review.md, findings.txt, status.json) written to correct paths
+- [x] Global timeout context cancels in-flight requests
+- [x] Fallback chain attempts alternatives before marking agent as failed
+- [x] Partial-success semantics: review succeeds if ≥1 agent succeeds
 
 **Manual Review:**
 - [ ] Code reviewed and approved

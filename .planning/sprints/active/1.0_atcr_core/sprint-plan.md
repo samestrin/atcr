@@ -1623,35 +1623,35 @@ Documentation available in [documentation/](plan/documentation/):
 
 **Focus:** Documentation, CI examples, lint/vet clean, final validation.
 
-### 5.1 [ ] **[README rewrite](plan/user-stories/01-cli-review-workflow.md)**
+### 5.1 [x] **[README rewrite](plan/user-stories/01-cli-review-workflow.md)**
    Rewrite README.md around the actual architecture (panel + reconcile): overview, quickstart (`atcr init` → `atcr review && atcr reconcile`), command table, payload-mode guidance explicitly stating `diff` is the most compact/token-friendly mode and `blocks` is the default for small-model quality, and a CI integration section with a GitHub Actions snippet (YAML-valid).
    **Files:** `README.md` | **Duration:** 1.5 hours
 
-### 5.2 [ ] **[docs/findings-format.md](plan/user-stories/01-cli-review-workflow.md)**
+### 5.2 [x] **[docs/findings-format.md](plan/user-stories/01-cli-review-workflow.md)**
    Write the versioned `atcr-findings/v1` spec: 8-col per-source and 9-col reconciled layouts with examples, severity enum, extraction regex, pipe escaping, short-row padding, version header, additive-only evolution policy.
    **Files:** `docs/findings-format.md` | **Duration:** 1 hour
 
-### 5.3 [ ] **[docs/registry.md](plan/user-stories/02-agent-configuration.md)**
+### 5.3 [x] **[docs/registry.md](plan/user-stories/02-agent-configuration.md)**
    Write the configuration reference: providers/agents/personas schemas, two-tier files (~/.config/atcr/registry.yaml, .atcr/config.yaml), precedence chain (CLI > project > registry > embedded), fallback-chain validation rules, persona resolution chain.
    **Files:** `docs/registry.md` | **Duration:** 1 hour
 
-### 5.4 [ ] **[docs/payload-modes.md](plan/user-stories/06-payload-mode-selection.md)**
+### 5.4 [x] **[docs/payload-modes.md](plan/user-stories/06-payload-mode-selection.md)**
    Write payload-mode guidance: when to use each mode, diff-vs-blocks token trade-offs, per-agent override examples, byte budget + truncation behavior, files-mode changed-region marker syntax.
    **Files:** `docs/payload-modes.md` | **Duration:** 45 min
 
-### 5.5 [ ] **[examples/ci-gate.sh](plan/user-stories/03-ci-integration.md)**
+### 5.5 [x] **[examples/ci-gate.sh](plan/user-stories/03-ci-integration.md)**
    **AC:** [03-02 CI One-Shot Mode](plan/acceptance-criteria/03-02-ci-one-shot-and-example.md)
    Working CI gate script using `atcr review --fail-on`; passes `bash -n` and `shellcheck` with zero errors; referenced from README CI section.
    **Files:** `examples/ci-gate.sh` | **Duration:** 30 min
 
-### 5.6 [ ] **[Quality gates](plan/user-stories/01-cli-review-workflow.md)**
+### 5.6 [x] **[Quality gates](plan/user-stories/01-cli-review-workflow.md)**
    1. `go test ./...` - all passing
    2. `go test -coverprofile=coverage.out ./...` - coverage ≥70%
    3. `go vet ./...` - clean
    4. `golangci-lint run` - clean
    **Duration:** 1 hour
 
-### 5.7 [ ] **Phase 5 DoD Validation**
+### 5.7 [x] **Phase 5 DoD Validation**
    1. All docs written and linked from README
    2. Verify every documented command/flag exists in the binary (`atcr --help` cross-check)
    3. Update metadata.md with final sprint metrics

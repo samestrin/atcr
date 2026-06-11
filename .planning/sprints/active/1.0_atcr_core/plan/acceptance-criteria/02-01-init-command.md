@@ -117,19 +117,19 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] `atcr init` creates `.atcr/config.yaml` with all six personas in roster
-- [ ] `atcr init` creates six persona `.md` files + `_base.md`
-- [ ] Generated config passes strict YAML parsing round-trip
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] `atcr init` creates `.atcr/config.yaml` with all six personas in roster
+- [x] `atcr init` creates six persona `.md` files + `_base.md`
+- [x] Generated config passes strict YAML parsing round-trip
 
 **Story-Specific:**
-- [ ] Default roster includes: bruce, greta, kai, mira, dax, otto
-- [ ] `payload_mode` defaults to `blocks`
-- [ ] `timeout_secs` defaults to 600
-- [ ] `fail_on` defaults to `HIGH`
-- [ ] Re-running without `--force` produces a clear error (not silent overwrite)
+- [x] Default roster includes: bruce, greta, kai, mira, dax, otto
+- [x] `payload_mode` defaults to `blocks`
+- [x] `timeout_secs` defaults to 600
+- [x] `fail_on` defaults to `HIGH`
+- [x] Re-running without `--force` produces a clear error (not silent overwrite)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

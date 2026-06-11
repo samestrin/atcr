@@ -42,18 +42,18 @@
 
 _Populated by `/execute-sprint` upon completion_
 
-**Executed:** Started 2026-06-10 (Phases 1–4 complete)
+**Executed:** Started 2026-06-10, completed 2026-06-11 (Phases 1–5 complete)
 **Runtime:** _TBD_
-**Status:** In Progress — gated at Phase 4 boundary
+**Status:** Ready for Review
 
 ### Progress
-- **Phases:** 4/5 (Foundation + Core Systems + Engines + Integration complete)
-- **Work Items:** 156/173 tasks (Phase 1: 30, Phase 2: 48, Phase 3: 42, Phase 4: 34 incl. DoD 4.33 + gate 4.34)
+- **Phases:** 5/5 (Foundation + Core Systems + Engines + Integration + Validation & Docs complete)
+- **Work Items:** 173/173 tasks (Phase 1: 30, Phase 2: 48, Phase 3: 42, Phase 4: 34, Phase 5: 7 incl. DoD 5.7) + 12 ACs
 
 ### Quality
 - **Tests:** all passing (10 test packages + skill, race-clean)
 - **Coverage:** 82.4% total (≥70% baseline)
-- **Lint:** Clean (golangci-lint, go vet, gofmt)
+- **Lint:** Clean (golangci-lint 0 issues, go vet clean, gofmt)
 
 ### Changes
 - **Files Changed (Phase 2):** internal/gitrange (resolver), internal/payload (builder/diff/resolve/budget/manifest/template/scope), internal/stream (parser/writer), internal/llmclient (client), internal/fanout (status), internal/registry (persona + payload-mode validation), cmd/atcr/range.go
@@ -91,3 +91,9 @@ _Populated by `/execute-sprint` upon completion_
 - Adjudication (internal/reconcile/ambiguous.go): content-addressed 128-bit cluster ids, adjudication.json decisions (merge/distinct/skipped) applied on reconcile re-invocation, validated against the preserved ambiguous.original.json baseline (idempotent re-runs), unknown-id + malformed rejection, conservative unmerged default
 - Adversarial reviews: 2 holistic subagent reviews (MCP unit, skill+adjudication). Fixed inline — 1 CRITICAL (background-goroutine panic recover), 4 HIGH (shutdown drain, empty-range guard on review, adjudication idempotency, manifest-reader dedup) + cheap MEDIUM/LOW (AtOrAbove unknown-threshold guard, prompt-injection clause, 128-bit ids); deferred TD-023 (status read race), TD-024 (adjudication baseline binding)
 - New dependency: github.com/modelcontextprotocol/go-sdk v1.6.1 (go directive bumped 1.24→1.25); go vet/lint clean, coverage 82.4%
+
+### Phase 5 Completion Notes (2026-06-11)
+- README rewrite: panel+reconcile architecture, quickstart (`atcr init` → `atcr review && atcr reconcile`), full 7-command table (incl. `status`), key-flag list, payload-mode guidance (diff = most compact/token-friendly, blocks = default), CI section with YAML-valid GitHub Actions snippet referencing examples/ci-gate.sh, exit-code table (0/1/2)
+- docs finalized in place (grounded against source, not memory): findings-format.md (atcr-findings/v1 — 8-col/9-col layouts with examples, severity enum, `^(CRITICAL|HIGH|MEDIUM|LOW)\|` extraction regex, pipe→/ + CR/LF→space escaping, header gate, short-row padding/overflow rules, leaf-preference source discovery, additive-only evolution policy); registry.md (provider/agent/project schemas, 4-tier precedence, 6-level persona resolution chain, fallback dangling+cycle validation, reserved-key table); payload-modes.md (mode trade-offs, per-agent override examples, byte-budget truncation with 0=unlimited, files-mode markers `>>> CHANGED LINES`/`[deleted file:]`/`[binary file changed:]`, out-of-scope CATEGORY rule); ci-integration.md exit-code table corrected from TBD to 0/1/2
+- examples/ci-gate.sh: thin one-shot wrapper (`atcr review --fail-on`), executable, `bash -n` clean, shellcheck 0 issues (shellcheck installed via Homebrew)
+- DoD: all 7 commands + every documented flag cross-checked against `atcr --help`; all README doc links resolve; tests pass, coverage 82.4%, go vet clean, golangci-lint 0 issues
