@@ -36,14 +36,14 @@ type ReviewArgs struct {
 
 // ReconcileArgs are the atcr_reconcile tool arguments (all optional).
 type ReconcileArgs struct {
-	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to reconcile; defaults to .atcr/latest"`
+	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to reconcile (review id only; paths are not accepted); defaults to .atcr/latest"`
 	FailOn   string `json:"fail_on,omitempty" jsonschema:"set pass=false if any finding at or above this severity survives: CRITICAL, HIGH, MEDIUM, or LOW"`
 }
 
 // ReportArgs are the atcr_report tool arguments (all optional). Format is
 // constrained to a closed enum by reportInputSchema.
 type ReportArgs struct {
-	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to render; defaults to .atcr/latest"`
+	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to render (review id only; paths are not accepted); defaults to .atcr/latest"`
 	Format   string `json:"format,omitempty" jsonschema:"output format: md (default), json, or checklist"`
 }
 
@@ -56,7 +56,7 @@ type RangeArgs struct {
 
 // StatusArgs are the atcr_status tool arguments (all optional).
 type StatusArgs struct {
-	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to query; defaults to .atcr/latest"`
+	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to query (review id only; paths are not accepted); defaults to .atcr/latest"`
 }
 
 // ReviewResult is returned by atcr_review immediately after the review directory
@@ -113,13 +113,13 @@ const (
 		"Returns immediately with {review_id, review_path, status:\"running\", agent_count}; " +
 		"poll atcr_status for completion. Optional args: id, base, head, merge_commit (all optional; defaults to the current branch vs. the default branch)."
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
-		"Optional args: id_or_path (defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives)."
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives)."
 	descReport = "Render a view over a review's reconciled findings. " +
-		"Optional args: id_or_path (defaults to the latest review), format (md|json|checklist; default md)."
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), format (md|json|checklist; default md)."
 	descRange = "Resolve a git review range without calling any provider. " +
 		"Returns {base, head, commit_count, file_count}. Optional args: base, head, merge_commit (defaults to the current branch vs. the default branch)."
 	descStatus = "Report a review's fan-out progress. " +
-		"Returns {review_id, status, agent_count, agents_done, agents_pending, partial}. Optional args: id_or_path (defaults to the latest review)."
+		"Returns {review_id, status, agent_count, agents_done, agents_pending, partial}. Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review)."
 )
 
 // reportInputSchema builds the atcr_report input schema with the format property
