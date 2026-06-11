@@ -156,6 +156,21 @@ func TestReviewHandler_EmptyRangeErrors(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(root, ".atcr", "reviews"), "no review dir for an empty range")
 }
 
+// TestReviewHandler_MergeCommitWithBaseHeadRejected verifies the argument
+// combination the CLI forbids in validateRangeFlags is also rejected at the MCP
+// layer instead of silently ignoring merge_commit (explicit base/head wins in
+// gitrange.Resolve), and that the error speaks json field names, not CLI flags.
+func TestReviewHandler_MergeCommitWithBaseHeadRejected(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+	cs := connectTest(t, root, fakeCompleter{resp: validFindings})
+	msg := callErr(t, cs, ToolReview, map[string]any{"base": base, "head": head, "merge_commit": head})
+	assert.Contains(t, msg, "merge_commit")
+	assert.NotContains(t, msg, "--base", "error must use json field names, not CLI flags")
+	assert.NoDirExists(t, filepath.Join(root, ".atcr", "reviews"), "no review dir for rejected args")
+}
+
 // --- atcr_reconcile ------------------------------------------------------
 
 func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
@@ -265,6 +280,18 @@ func TestRangeHandler_NoGit(t *testing.T) {
 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
 	msg := callErr(t, cs, ToolRange, map[string]any{})
 	assert.Contains(t, msg, "not a git repository")
+}
+
+// TestRangeHandler_MergeCommitWithHeadRejected verifies merge_commit combined
+// with head is rejected with an error phrased in the MCP json arg vocabulary —
+// not the "--base and --head must be provided together" CLI flag wording that
+// gitrange surfaces when the first decision-tree branch fires.
+func TestRangeHandler_MergeCommitWithHeadRejected(t *testing.T) {
+	root, _, head := gitRepo(t)
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolRange, map[string]any{"head": head, "merge_commit": head})
+	assert.Contains(t, msg, "merge_commit")
+	assert.NotContains(t, msg, "--base", "error must use json field names, not CLI flags")
 }
 
 // --- atcr_status ---------------------------------------------------------
