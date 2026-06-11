@@ -60,7 +60,9 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err := os.WriteFile(output, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("failed to write report to %q: %w", output, err)
+		// A local I/O failure is an infrastructure/usage error (exit 2), the
+		// same classification reconcile.go applies to its disk writes.
+		return usageError(fmt.Errorf("failed to write report to %q: %w", output, err))
 	}
 	return nil
 }
