@@ -54,6 +54,18 @@ func TestReportCmd_DefaultsToLatest(t *testing.T) {
 	require.Equal(t, 0, execCmd(t, "report", "--format", "checklist"))
 }
 
+func TestReportCmd_OutputWriteFailureIsUsageError(t *testing.T) {
+	// A local I/O failure is an infrastructure/usage error (exit 2), matching
+	// how `atcr reconcile` classifies the same disk-write failure class.
+	isolate(t)
+	fixtureReconciled(t, "r", oneFinding)
+
+	ro := filepath.Join(t.TempDir(), "ro")
+	require.NoError(t, os.MkdirAll(ro, 0o555)) // read-only dir → WriteFile fails
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+	require.Equal(t, 2, execCmd(t, "report", "--output", filepath.Join(ro, "report.md"), "r"))
+}
+
 func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
 	isolate(t)
 	fixtureReconciled(t, "r", "") // 0-byte findings.json → malformed, not "no findings"
