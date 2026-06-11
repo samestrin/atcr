@@ -58,6 +58,20 @@ func TestRootCmd_UnknownSubcommandErrors(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestRootCmd_UnknownSubcommandIsUsageError(t *testing.T) {
+	// A typo'd subcommand is a usage error (exit 2) — in CI, exit 1 means
+	// "findings at/above threshold", so the two must never conflate.
+	_, err := execute(t, "no-such-command")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+}
+
+func TestRootCmd_BareInvocationShowsHelp(t *testing.T) {
+	out, err := execute(t)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Usage:")
+}
+
 func TestExitCode(t *testing.T) {
 	plain := errors.New("boom")
 	coded := usageError(plain)
