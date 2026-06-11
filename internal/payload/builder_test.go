@@ -1,7 +1,9 @@
 package payload
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -336,4 +338,26 @@ func TestBuildEntries_TrailingBlankContextLineSurvives(t *testing.T) {
 			"mode %s: trailing blank context line must survive verbatim, body: %q",
 			mode, entries[0].Body)
 	}
+}
+
+func TestFileBody_BlocksFallbackLeavesRecord(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.txt", "x\n")
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "b.txt", "y\n")
+	head := commitAll(t, dir, "v2")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	// a.txt has no diff in base..head, so function-context yields zero hunks
+	// and fileBody degrades to the plain context fallback. That degradation
+	// must leave an operator-visible record, never happen silently.
+	g := &gitRunner{ctx: context.Background(), dir: dir}
+	_, err := g.fileBody(ModeBlocks, base, head, changedFile{path: "a.txt"})
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "function context unavailable")
+	assert.Contains(t, buf.String(), "a.txt")
 }
