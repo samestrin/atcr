@@ -1,0 +1,91 @@
+package reconcile
+
+import (
+	"testing"
+
+	"github.com/samestrin/atcr/internal/stream"
+	"github.com/stretchr/testify/assert"
+)
+
+// mf builds a per-source finding with the merge-relevant fields.
+func mf(sev, file string, line int, problem, fix, category string, est int, evidence, reviewer string) stream.Finding {
+	return stream.Finding{
+		Severity: sev, File: file, Line: line, Problem: problem, Fix: fix,
+		Category: category, EstMinutes: est, Evidence: evidence, Reviewer: reviewer,
+	}
+}
+
+func TestMerge_ReviewersJoinedDedupedSorted(t *testing.T) {
+	m := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "e1", "kai"),
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "e2", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "e3", "kai"), // dup reviewer
+	})
+	assert.Equal(t, []string{"greta", "kai"}, m.Reviewers)
+	assert.Equal(t, ConfHigh, m.Confidence, "2 distinct reviewers → HIGH")
+}
+
+func TestMerge_SingleReviewerIsMedium(t *testing.T) {
+	m := Merge([]stream.Finding{mf("LOW", "a.go", 1, "p", "f", "style", 5, "e", "greta")})
+	assert.Equal(t, ConfMedium, m.Confidence)
+	assert.Empty(t, m.Disagreement)
+}
+
+func TestMerge_MaxSeverityWithDisagreement(t *testing.T) {
+	// agent-a CRITICAL, agent-b LOW on the same merged finding.
+	m := Merge([]stream.Finding{
+		mf("CRITICAL", "a.go", 42, "long detailed problem text", "f", "sec", 30, "e", "greta"),
+		mf("LOW", "a.go", 42, "short", "fix detail longer", "perf", 60, "e", "kai"),
+	})
+	assert.Equal(t, "CRITICAL", m.Severity, "max severity wins")
+	assert.Equal(t, "LOW vs CRITICAL", m.Disagreement)
+}
+
+func TestMerge_LongestProblemAndFix_MaxEst(t *testing.T) {
+	m := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "short", "f1", "sec", 15, "e", "greta"),
+		mf("HIGH", "a.go", 1, "a much longer and more detailed problem", "longer fix text", "sec", 45, "e", "kai"),
+	})
+	assert.Equal(t, "a much longer and more detailed problem", m.Problem)
+	assert.Equal(t, "longer fix text", m.Fix)
+	assert.Equal(t, 45, m.EstMinutes, "max estimate (most pessimistic)")
+}
+
+func TestMerge_ModalCategoryAlphabeticTiebreak(t *testing.T) {
+	// security x2, performance x1 → security (modal).
+	m := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "a"),
+		mf("HIGH", "a.go", 1, "p", "f", "performance", 10, "e", "b"),
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "c"),
+	})
+	assert.Equal(t, "security", m.Category)
+
+	// tie: correctness vs security, 1 each → alphabetical "correctness".
+	tie := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "a"),
+		mf("HIGH", "a.go", 1, "p", "f", "correctness", 10, "e", "b"),
+	})
+	assert.Equal(t, "correctness", tie.Category)
+}
+
+func TestMerge_EmptyGroupDoesNotPanic(t *testing.T) {
+	assert.NotPanics(t, func() { _ = Merge(nil) })
+}
+
+func TestMerge_EmptyCategoryDoesNotHijackTie(t *testing.T) {
+	// One empty-category finding tied with a real category must not win.
+	m := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "", 10, "e", "a"),
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "b"),
+	})
+	assert.Equal(t, "security", m.Category)
+}
+
+func TestMerge_EvidenceReviewerPrefixedWhenMultiple(t *testing.T) {
+	m := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "saw X", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "saw Y", "kai"),
+	})
+	assert.Contains(t, m.Evidence, "[greta] saw X")
+	assert.Contains(t, m.Evidence, "[kai] saw Y")
+}

@@ -1241,33 +1241,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.29 [ ] **[Merge rules + confidence + disagreement + emit - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.29 [x] **[Merge rules + confidence + disagreement + emit - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-05 Reconciliation Pipeline](plan/acceptance-criteria/01-05-reconciliation-pipeline.md)
    1. Analyze AC, identify testable units
    2. Write tests: REVIEWERS comma-joined deduplicated; SEVERITY = max with `disagreement: <lo> vs <hi>` preserved; PROBLEM/FIX = longest; CATEGORY = modal; EST_MINUTES = max; CONFIDENCE categorical (HIGH = 2+ distinct reviewers, MEDIUM = single, LOW = untrusted); emits findings.txt (9-col), findings.json, report.md, summary.json
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 3.30 [ ] **[Merge rules + confidence + disagreement + emit - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.30 [x] **[Merge rules + confidence + disagreement + emit - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 2 hours
 
-### 3.31 [ ] **[Merge rules + confidence + disagreement + emit - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.30]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.30`).
+### 3.31 [x] **[Merge rules + confidence + disagreement + emit - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/reconcile/merge.go, reconcile.go, emit.go (+ tests)
+   Fresh subagent (description: `Adversarial review: 3.30`) reviewed the unit. Determinism independently confirmed (modalCategory tiebreak verified across 200k randomized runs; map JSON key-sorting; reviewer-comma/pipe/newline defended in stream writer before escaping).
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | emit.go esc | html.EscapeString leaves newlines → markdown structure injection in report.md (forged headings) | Fixed in 3.32: esc flattens CR/LF before escaping + injection test |
+   | MEDIUM | merge.go Merge | empty group → group[0] panic (latent; unreachable via Reconcile) | Fixed in 3.32: empty-group guard + test |
+   | MEDIUM | emit.go Emit | per-file atomic but not set-atomic → partial artifact set on render error | Fixed in 3.32: render-all-then-write |
+   | LOW | merge.go modalCategory | empty-string category hijacks alpha tiebreak | Fixed in 3.32: sorted keys + non-empty preference + test |
+   | LOW | reconcile.go/merge.go | unknown merged severity ranks 0 | Moot: extraction regex only admits CRITICAL/HIGH/MEDIUM/LOW |
+   | LOW | emit.go grid | default confidence bucket labels unknown as LOW | Kept: confidence always HIGH/MEDIUM in flow |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.32, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 HIGH (markdown newline injection) + 2 MEDIUM (panic guard, set-atomic emit) + 1 LOW (modal tiebreak) fixed in 3.32 with tests. Remaining items moot/kept (validated severities, harmless default bucket).
 
-### 3.32 [ ] **[Merge rules + confidence + disagreement + emit - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.32 [x] **[Merge rules + confidence + disagreement + emit - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.31 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
