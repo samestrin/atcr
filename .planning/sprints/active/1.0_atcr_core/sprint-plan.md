@@ -1003,33 +1003,34 @@ Documentation available in [documentation/](plan/documentation/):
 
 **Focus:** Fan-out concurrency engine, reconciler pipeline, report rendering.
 
-### 3.1 [ ] **[Fan-out parallel + serial lanes - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.1 [x] **[Fan-out parallel + serial lanes - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-04 Fan-out Agent Execution](plan/acceptance-criteria/01-04-fanout-agent-execution.md)
    1. Analyze AC, identify testable units
    2. Write tests (httptest + atomic counters): parallel agents run concurrently; serial lane runs agents sequentially with ctx.Err() check before each invocation, concurrent with the parallel lane; global timeout cancels via context; WaitGroup always drains on cancel
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 3.2 [ ] **[Fan-out parallel + serial lanes - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.2 [x] **[Fan-out parallel + serial lanes - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 2 hours
 
-### 3.3 [ ] **[Fan-out parallel + serial lanes - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.2]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.2`).
+### 3.3 [x] **[Fan-out parallel + serial lanes - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/fanout/engine.go, internal/fanout/engine_test.go
+   Fresh subagent (description: `Adversarial review: 3.2`) reviewed the scheduler.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | engine.go invokeAgent | Timeout vs failed misclassified by inferring from ambient ctx.Err() instead of the returned error | Fixed in 3.4: classifyStatus(err) via errors.Is(DeadlineExceeded/Canceled); else failed |
+   | HIGH | engine.go invokeSlot | ctx-cancel mid-chain overwrote prior real failure's diagnostics with a generic timeout | Fixed in 3.4: preserve prior last.Err; only synthesize when no attempt ran |
+   | MEDIUM | engine.go invokeSlot | context.Canceled reported as timeout (conflates abort with deadline) | Fixed in 3.4: classifyStatus handles both as timeout intentionally (documented) |
+   | MEDIUM | engine.go invokeSlot | truncation/payload provenance only restored when PayloadMode=="" — fallback failure recorded substitute's provenance | Fixed in 3.4: always stamp primary's PayloadMode/Truncation on slot failure |
+   | MEDIUM | engine.go Run | unbounded parallel-lane goroutine fan-out, no concurrency cap | Deferred → TD-017 |
+   | LOW | engine.go | nil-completer guard, DurationMS=0 on short-circuit, divergent slot capture | Deferred → TD-018 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.4, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 2 HIGH + 2 correctness MEDIUM fixed in 3.4 (classification on error, last-error preservation, canceled/deadline handling, primary provenance) with new tests (TestClassifyStatus, TestInvokeAgent_RealErrorUnderCancelledCtx...). 1 MEDIUM + LOWs deferred (TD-017, TD-018). Race-clean under `go test -race`.
 
-### 3.4 [ ] **[Fan-out parallel + serial lanes - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.4 [x] **[Fan-out parallel + serial lanes - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.3 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

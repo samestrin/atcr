@@ -112,3 +112,17 @@
 **Issue:** Personas are documented to emit 7 columns; the engine appends REVIEWER. But `ParseSource` is lenient (pads short rows), so a misbehaving model that self-emits an 8th column has that value land in `Finding.Reviewer` — forging its own attribution. The contract is convention-only, not enforced at the parser/type layer.
 **Mitigation this sprint:** The fan-out engine (Phase 3, task 3.9) is the writer of per-source `findings.txt` and MUST set `Finding.Reviewer` to the agent name itself, ignoring any model-supplied 8th column — this captures that requirement so Phase 3 does not rely on model honesty.
 **Fix in:** Phase 3 task 3.9 — engine constructs Reviewer from the agent name; optionally parse model output as a 7-column shape that rejects a populated 8th field.
+
+## TD-017 — fan-out parallel lane has no concurrency cap (MEDIUM)
+**Origin:** Phase 3, task 3.3 adversarial review, 2026-06-10
+**File:** internal/fanout/engine.go:88
+**Issue:** Every non-serial slot spawns its own goroutine with no semaphore or worker-pool bound. A very large roster would fire that many concurrent provider HTTP calls at once, risking 429 storms and socket/FD exhaustion.
+**Why accepted:** v1 ships six embedded personas; real rosters are <=~10 agents, comfortably within the AC's "10 concurrent agent calls" target. A concurrency cap adds config surface (max_parallel) not requested in v1.
+**Fix in:** v2 — bound the parallel lane with a buffered semaphore channel sized from a new max_parallel setting.
+
+## TD-018 — minor fan-out engine hardening gaps (LOW)
+**Origin:** Phase 3, task 3.3 adversarial review, 2026-06-10
+**File:** internal/fanout/engine.go
+**Issue:** (1) NewEngine(nil) would nil-panic inside invokeAgent rather than failing cleanly; (2) DurationMS is 0 on the ctx-short-circuit path even when real wall-clock elapsed before cancellation; (3) parallel lane passes slots[i] by arg while the serial goroutine closes over slots and indexes directly — divergent styles that invite a future closure-capture bug.
+**Why accepted:** All three are latent/defensive — current call sites never pass a nil completer, the short-circuit path only fires on already-expired contexts, and the shared-results writes are race-clean today (verified under -race with mixed lanes). No behavior is wrong for real inputs.
+**Fix in:** v2 — add a nil-completer guard, stamp elapsed time on early-return paths, and standardize slot capture to explicit parameters.
