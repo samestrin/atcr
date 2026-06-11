@@ -1035,33 +1035,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.5 [ ] **[Fallback chains + partial-success semantics - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.5 [x] **[Fallback chains + partial-success semantics - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-04 Fan-out Agent Execution](plan/acceptance-criteria/01-04-fanout-agent-execution.md)
    1. Analyze AC, identify testable units
    2. Write tests: primary failure → fallback agent tried (same persona), fallback_used/fallback_from recorded; fallback chain exhausted → agent failed; ≥1 success → exit 0 + partial:true; all fail → nonzero exit
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 3.6 [ ] **[Fallback chains + partial-success semantics - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.6 [x] **[Fallback chains + partial-success semantics - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 3.7 [ ] **[Fallback chains + partial-success semantics - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.6]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.6`).
+### 3.7 [x] **[Fallback chains + partial-success semantics - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/fanout/outcome.go, internal/fanout/outcome_test.go (+ engine.go fallback path)
+   Fresh subagent (description: `Adversarial review: 3.6`) reviewed the unit.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | outcome.go formatFailures | all-failed error embeds raw r.Err — could leak secrets | Non-issue (documented): llmclient uses header-only Bearer auth (no key in URL/query/error), registry rejects base_url userinfo, key-not-set error names only the env var — no credential reaches the string. Comment added. |
+   | MEDIUM | outcome.go Outcome | zero-value/unknown Status folded into Failed | Fixed in 3.8: explicit switch counts only StatusFailed/StatusTimeout as failed |
+   | MEDIUM | outcome.go formatFailures | did not filter OK rows (contract unenforced) | Fixed in 3.8: skips StatusOK rows independent of caller |
+   | MEDIUM | engine.go/outcome.go | duplicate primary names indistinguishable in failure list | Non-issue: ProjectConfig.ValidateAgainst enforces unique, single-lane agent names |
+   | LOW | outcome.go | empty Agent name renders " (reason)" | Fixed in 3.8: <unnamed> placeholder + test |
+   | LOW | outcome.go | empty-roster vs all-failed not distinguishable by errors.Is | Fixed in 3.8: ErrEmptyRoster / ErrAllAgentsFailed sentinels |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.8, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No true CRITICAL/HIGH (the HIGH is prevented by existing llmclient/registry guarantees, documented inline). Correctness MEDIUMs + LOWs fixed in 3.8 with new tests (sentinel errors.Is, placeholder name, OK-row filter). Race-clean.
 
-### 3.8 [ ] **[Fallback chains + partial-success semantics - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.8 [x] **[Fallback chains + partial-success semantics - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.7 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
