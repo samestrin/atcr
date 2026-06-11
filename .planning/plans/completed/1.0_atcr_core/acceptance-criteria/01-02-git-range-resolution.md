@@ -59,9 +59,10 @@ This AC is implemented against the following project documentation. Read before 
 - **Then** resolver returns hard error: "empty range: base and head are the same commit (abc123)"
 
 **Edge Case 2: Shallow clone detected**
-- **Given** `.git/shallow` file exists
+- **Given** `git rev-parse --is-shallow-repository` returns true (shallow clone in use)
 - **When** resolver detects shallow repo
-- **Then** warning emitted: "shallow clone detected; run `git fetch --unshallow` for complete diff"
+- **Then** resolver returns a **hard error** (NOT a warning): "shallow clone detected: cannot review incomplete history; run `git fetch --unshallow` to enable full history access"
+- **Note:** The resolver does **not** auto-unshallow. This prevents silent zero-findings CI gate clears on incomplete history.
 
 **Edge Case 3: Detached HEAD state**
 - **Given** user is in detached HEAD state
@@ -81,6 +82,12 @@ This AC is implemented against the following project documentation. Read before 
 **Error Scenario 3: Not a git repository**
 - Error message: "not a git repository (or any of the parent directories): .git"
 - Exit code: 1
+
+**Error Scenario 4: Shallow clone (hard error, not warning)**
+- Error message: "shallow clone detected: cannot review incomplete history; run `git fetch --unshallow` to enable full history access"
+- Exit code: 1
+- Trigger: `git rev-parse --is-shallow-repository` returns true
+- Note: Resolver must NOT auto-unshallow. Surfacing as a hard error (not a warning) prevents silent zero-findings CI gate clears on incomplete history, per `plan.md` Risk Mitigation and US-01 #14.
 
 ## Performance Requirements
 - **Response Time:** Range resolution completes in <500ms (5 git calls max)
@@ -105,7 +112,7 @@ This AC is implemented against the following project documentation. Read before 
 - [ ] Decision tree resolves correctly for explicit, merge-commit, and auto modes
 - [ ] Default branch fallback chain: origin/HEAD → origin/main → origin/master → local main → local master
 - [ ] Empty range (base==head) produces hard error before any provider call
-- [ ] Shallow clone warning emitted when applicable
+- [ ] Shallow clone produces HARD ERROR (not warning) with `git fetch --unshallow` guidance; resolver does NOT auto-unshallow
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -36,9 +36,9 @@ The 8 columns are:
 
 > Source: [plan.md:Findings Format], [original-requirements.md:Findings stream format]
 
-### Reconciled Format (10 columns)
+### Reconciled Format (9 columns)
 
-The reconciler emits `reconciled/findings.txt` with 10 columns: the original 8 plus `REVIEWERS` (comma-joined, deduplicated) and `CONFIDENCE` (`HIGH`, `MEDIUM`, or `LOW`):
+The reconciler emits `reconciled/findings.txt` with **9 columns**: the original 8, with the 8th slot renamed from `REVIEWER` (singular) to `REVIEWERS` (plural, comma-joined, deduplicated), plus `CONFIDENCE` (`HIGH`, `MEDIUM`, or `LOW`) as the 9th column:
 
 ```
 # atcr-findings/v1
@@ -63,7 +63,7 @@ var severityRe = regexp.MustCompile(`^(CRITICAL|HIGH|MEDIUM|LOW)\|`)
 Two rules keep the format machine-parseable even when a model misbehaves:
 
 1. **Literal `|` within fields replaced with `/`.** Example: a PROBLEM that says "use `a || b`" becomes "use `a // b`" in the wire format. The parser does not unescape — the loss is intentional, because column count stability matters more than preserving OR.
-2. **Short rows padded to 8 (or 10) columns.** A model that emits only 6 columns (e.g., empty `EVIDENCE`) gets the missing fields filled with empty strings on the right. This keeps the column index stable across rows.
+2. **Short rows padded to 8 (per-source) or 9 (reconciled) columns.** A model that emits only 6 columns (e.g., empty `EVIDENCE`) gets the missing fields filled with empty strings on the right. This keeps the column index stable across rows.
 
 > Source: [plan.md:Findings Format — literal `|` within fields replaced with `/`; short rows padded]
 
@@ -143,7 +143,7 @@ func WriteReconciled(path string, findings []Finding) error {
 |---------|------|
 | Version header | `# atcr-findings/v1` (required, first non-blank line) |
 | Per-source columns | 8 (SEVERITY, FILE:LINE, PROBLEM, FIX, CATEGORY, EST_MINUTES, EVIDENCE, REVIEWER) |
-| Reconciled columns | 10 (per-source 8 + REVIEWERS + CONFIDENCE) |
+| Reconciled columns | 9 (per-source 8 with REVIEWER→REVIEWERS rename + CONFIDENCE) |
 | Severities | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` (closed set) |
 | Extraction regex | `^(CRITICAL\|HIGH\|MEDIUM\|LOW)\|` |
 | Pipe escape | `\|` → `/` (lossy but stable) |

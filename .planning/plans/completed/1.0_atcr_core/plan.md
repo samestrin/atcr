@@ -13,7 +13,8 @@
 
 ### Acceptance Criteria
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
-- **Status:** Pending - generate with `/create-acceptance-criteria @.planning/plans/active/1.0_atcr_core/`
+- **Status:** Generated - 24 ACs across 6 user stories (4 ACs/story on average; US-01 has 6, US-03 has 2)
+- **Coverage:** All 24 ACs trace to one or more requirements in `original-requirements.md`; refinement pass applied 2026-06-10 to close 6 partial-coverage gaps (see `/refine-design` report).
 
 ## Feature Analysis Summary
 

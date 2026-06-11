@@ -1,26 +1,26 @@
-# Plan [[PLAN_NUMBER]]: [[TITLE]]
+# Plan 1.0: atcr Core - Review Engine, Reconciler, and Skill
 
 ## Plan Metadata
-**Created:** [[TODAYS_DATE]]
+**Created:** 2026-06-10
 **Status:** Draft - Awaiting User Stories
-**Plan Number:** [[PLAN_NUMBER]]
-**Plan Type:** [[PLAN_TYPE]]
-**Feature Category:** [[FEATURE_CATEGORY]]
-**Priority:** [[PRIORITY_LEVEL]]
-**Assigned Team:** [[TEAM_ASSIGNMENT]]
-**Epic/Initiative:** [[RELATED_EPIC]]
-**Dependencies:** [[PLAN_DEPENDENCIES]]
-**Stakeholders:** [[KEY_STAKEHOLDERS]]
+**Plan Number:** 1.0
+**Plan Type:** feature
+**Feature Category:** Developer Tools
+**Priority:** High
+**Assigned Team:** Solo Developer
+**Epic/Initiative:** 1.0_atcr_core
+**Dependencies:** None
+**Stakeholders:** Sam Estrin
 
 ## Estimated User Story Count
-**Complexity Level:** [[COMPLEXITY_LEVEL]]
-**Estimated Stories:** [[USER_STORY_COUNT]]
+**Complexity Level:** Complex
+**Estimated Stories:** 6
 
 ---
 
 ## Workflow Status
 
-**Document Status**: [x] Plan Created [ ] User Stories Added [ ] Acceptance Criteria Added [ ] Ready for Sprint
+**Document Status**: [x] Plan Created [x] User Stories Added [x] Acceptance Criteria Added [ ] Ready for Sprint
 
 ## Sprint Tracking
 

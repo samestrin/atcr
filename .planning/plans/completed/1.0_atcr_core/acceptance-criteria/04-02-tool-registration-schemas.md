@@ -26,8 +26,8 @@ This AC is implemented against the following project documentation. Read before 
 
 - **The 5 tools are exactly**: `atcr_review`, `atcr_reconcile`, `atcr_report`, `atcr_range`, `atcr_status`. Tool names are part of the public contract — do not rename without a coordinated v2 bump.
 - **Generic `mcp.AddTool` is the recommended pattern in v1.6.1**. Manual `Server.AddTool` is reserved for untyped/raw cases. Schema inference reads `jsonschema:"..."` struct tags.
-- **Per-tool result shape** (per `mcp-server.md`):
-  - `atcr_review` → `{review_dir, partial, findings}` (plus internal `agent_count` from engine output)
+- **Per-tool result shape** (per `mcp-server.md`, `user-stories/04-mcp-integration.md` original criterion #12, and AC 04-03 happy path Scenario 1):
+  - `atcr_review` → `{review_id, review_path, agent_count, partial}` (returns immediately after fan-out completes; long-running reviews do not block the MCP client — clients poll `atcr_status` for progress)
   - `atcr_reconcile` → reconciliation summary with `pass` field (true/false based on `--fail-on` threshold)
   - `atcr_report` → rendered content (markdown, JSON, or checklist)
   - `atcr_range` → `{base, head, commit_count, file_count}`

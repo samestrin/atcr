@@ -63,6 +63,25 @@ This AC is implemented against the following project documentation. Read before 
 - **When** output phase runs
 - **Then** files written to `reconciled/`: `findings.txt` (9-column pipe-delimited), `findings.json`, `report.md`, `summary.json`
 
+**Scenario 6: `summary.json` records run stats**
+- **Given** reconciliation completes
+- **When** `summary.json` is written
+- **Then** the file contains the following fields (per US-01 #13):
+  - `sources_scanned`: list of source names whose `findings.txt` was discovered and parsed
+  - `per_source_counts`: map of source name → number of input findings
+  - `clusters_collapsed`: integer count of clusters that merged ≥2 findings into one
+  - `severity_disagreements`: integer count of clusters where the max-severity record had a lower-severity sibling preserved with `disagreement:` annotation
+  - `partial`: bool — true when ≥1 source was missing/unreadable but ≥1 succeeded
+  - `total_findings`: integer count of findings in the reconciled output
+  - `reconciled_at`: RFC3339 timestamp
+
+**Scenario 7: `--sources` allowlist restricts which source directories are reconciled**
+- **Given** the user invokes `atcr reconcile --sources pool,host` on a review with sources `{pool, host, ci-extras}` present
+- **When** the reconciler discovers sources
+- **Then** only `pool` and `host` are read; `ci-extras` is skipped (recorded in `summary.json.sources_scanned` as not included)
+- **And** the reconciled output reflects only the allowlisted sources
+- **And** if the allowlist is empty or omitted, all sources under `sources/` (excluding `reconciled/`) are processed (default open-discovery behavior per `plan.md` Reconciler step 1)
+
 ## Edge Cases
 
 **Edge Case 1: Single agent finding**
@@ -120,6 +139,8 @@ This AC is implemented against the following project documentation. Read before 
 - [ ] Deduplication uses token-set Jaccard similarity with configurable threshold
 - [ ] Confidence score computed and added as 9th column in reconciled findings.txt
 - [ ] All 4 reconciled artifacts written: findings.txt, findings.json, report.md, summary.json
+- [ ] `summary.json` contains: `sources_scanned`, `per_source_counts`, `clusters_collapsed`, `severity_disagreements`, `partial`, `total_findings`, `reconciled_at` (per US-01 #13)
+- [ ] `--sources <list>` allowlist flag restricts reconciled source directories; omitted/empty means open discovery (all sources except `reconciled/`)
 - [ ] Malformed findings.txt rows skipped with warning (not fatal)
 
 **Manual Review:**

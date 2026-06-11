@@ -1,5 +1,5 @@
 ---
-id: [[MEMORY_ID]]
+id: [[KNOWLEDGE_ID]]
 question: "[[CANONICAL_QUESTION]]"
 created: [[CREATED_DATE]]
 last_retrieved: ""
