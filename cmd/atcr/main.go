@@ -77,6 +77,15 @@ func newRootCmd() *cobra.Command {
 		Long:          "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\nthen deterministically reconciles their findings into a single deduplicated,\nconfidence-scored deliverable.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// An unknown subcommand is a usage error (exit 2), not the generic
+		// failure code: in CI, exit 1 specifically means "findings at/above
+		// threshold". Setting Args bypasses cobra's legacyArgs path (which
+		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
+		// printing help with exit 0.
+		Args: usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
