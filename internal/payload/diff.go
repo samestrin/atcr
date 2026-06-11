@@ -121,21 +121,27 @@ func (g *gitRunner) isBinary(base, head, path string) bool {
 	return len(fields) >= 2 && fields[0] == "-" && fields[1] == "-"
 }
 
-// functionContextFile returns the function-context diff for a single file.
+// functionContextFile returns the function-context diff for a single file,
+// verbatim (raw bytes, no trimming — diff payloads ship to reviewers as-is).
 // ok is false (no error) when git fails or yields zero hunks, signalling the
 // caller to fall back to a plain context diff.
 func (g *gitRunner) functionContextFile(base, head, path string) (out string, ok bool) {
-	got, err := g.run("diff", "--function-context", base+".."+head, "--", path)
-	if err != nil || strings.TrimSpace(got) == "" {
+	got, err := g.output("diff", "--function-context", base+".."+head, "--", path)
+	if err != nil || len(bytes.TrimSpace(got)) == 0 {
 		return "", false
 	}
-	return got, true
+	return string(got), true
 }
 
-// contextFile returns a plain -U10 context diff for a single file (the blocks
-// fallback for no-brace languages and files where function-context fails).
+// contextFile returns a plain -U10 context diff for a single file, verbatim
+// (the blocks fallback for no-brace languages and files where
+// function-context fails).
 func (g *gitRunner) contextFile(base, head, path string) (string, error) {
-	return g.run("diff", "--unified=10", base+".."+head, "--", path)
+	out, err := g.output("diff", "--unified=10", base+".."+head, "--", path)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // headContent returns the full head-version content of path.
