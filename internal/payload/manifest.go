@@ -47,7 +47,9 @@ func WriteManifest(path string, m *Manifest) error {
 }
 
 // atomicWriteFile writes data to a sibling temp file then renames it over path,
-// so a reader never observes a partially-written file.
+// so a reader never observes a partially-written file. The temp is chmod'd to
+// 0644 before the rename so the artifact lands with the AC 01-03 file mode
+// (matching internal/fanout's copy) rather than os.CreateTemp's 0600 default.
 func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -57,6 +59,10 @@ func atomicWriteFile(path string, data []byte) error {
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
 	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
 		_ = tmp.Close()
 		return err
 	}
