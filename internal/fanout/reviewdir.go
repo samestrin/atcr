@@ -194,11 +194,22 @@ func claimReviewDir(root, id, suffix string) (string, string, error) {
 // ScaffoldReviewDir creates .atcr/reviews/<id>/ and its top-level subdirs (0755),
 // returning the review-dir path. Parent directories are created as needed
 // (AC 01-03 Edge Case 3). A creation failure carries the AC 01-03 message.
-// Creation is non-exclusive (MkdirAll): explicit id overrides are honored
-// verbatim even when the directory exists. Derived ids go through
+// Creation is exclusive: an id whose review directory already exists is
+// rejected, so a retried explicit override (e.g. an MCP client re-sending
+// atcr_review while the first run shows running) can never launch a second
+// fan-out into a directory another run is writing. Derived ids go through
 // claimReviewDir instead, which makes creation the atomic collision claim.
 func ScaffoldReviewDir(root, id string) (string, error) {
+	if err := os.MkdirAll(ReviewsRoot(root), 0o755); err != nil {
+		return "", fmt.Errorf("failed to create review directory: %w", err)
+	}
 	dir := filepath.Join(ReviewsRoot(root), id)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return "", fmt.Errorf("review %q already exists: refusing to scaffold into an existing review directory (omit --id to derive a fresh one)", id)
+		}
+		return "", fmt.Errorf("failed to create review directory: %w", err)
+	}
 	for _, sub := range reviewSubdirs {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return "", fmt.Errorf("failed to create review directory: %w", err)
