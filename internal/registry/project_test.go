@@ -83,6 +83,17 @@ func TestProjectConfig_EmptyAgents(t *testing.T) {
 	}
 }
 
+// The serial lane exists for rate-limited providers, so a project where every
+// provider is rate-limited legitimately has an empty parallel lane. The roster
+// is the union of both lanes (matching fanout's ErrEmptyRoster contract):
+// only a config empty in BOTH lanes is rejected.
+func TestProjectConfig_SerialOnlyRosterLoads(t *testing.T) {
+	cfg, err := LoadProjectConfig(writeProject(t, "agents: []\nserial_agents: [kai]\n"))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Agents)
+	assert.Equal(t, []string{"kai"}, cfg.SerialAgents)
+}
+
 func TestProjectConfig_UnknownField(t *testing.T) {
 	_, err := LoadProjectConfig(writeProject(t, `
 agents: [bruce]
