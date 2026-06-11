@@ -271,6 +271,23 @@ func TestComplete_ErrorBodySnippetBounded(t *testing.T) {
 	assert.Less(t, len(err.Error()), (4<<10)+200, "snippet must be bounded")
 }
 
+func TestComplete_OversizedResponseRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Leading whitespace is valid JSON padding, so the decoder keeps
+		// reading until it crosses the size cap before the real payload.
+		_, _ = io.WriteString(w, strings.Repeat(" ", 32<<20+1))
+		okResponse(w, "x")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
 func TestComplete_UserinfoStrippedFromErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		okResponse(w, "x")
