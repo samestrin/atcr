@@ -289,7 +289,9 @@ func (e *engine) resolveReviewDir(idOrPath string) (dir, id string, err error) {
 	if id == "" {
 		latest, lerr := fanout.ReadLatest(e.root)
 		if lerr != nil {
-			return "", "", fmt.Errorf("no reviews found; run atcr_review first")
+			// Wrap rather than discard: ReadLatest distinguishes a missing file
+			// from a corrupt/tampered pointer, and that cause must surface.
+			return "", "", fmt.Errorf("no reviews found; run atcr_review first: %w", lerr)
 		}
 		id = latest
 	} else if verr := fanout.ValidateReviewID(id); verr != nil {
