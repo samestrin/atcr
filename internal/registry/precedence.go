@@ -1,5 +1,14 @@
 package registry
 
+import (
+	"fmt"
+	"strings"
+)
+
+// MaxTimeoutSecs caps timeout values at every tier (24h); larger values
+// would overflow time.Duration arithmetic long before being useful.
+const MaxTimeoutSecs = 86400
+
 // Settings are the effective shared review settings after precedence
 // resolution: CLI flag > project config > registry > embedded default.
 // Each field resolves independently; a tier participates only where it
@@ -11,6 +20,7 @@ type Settings struct {
 }
 
 // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
+// A set-but-empty string is treated as unset rather than as an override.
 type CLIOverrides struct {
 	PayloadMode *string
 	TimeoutSecs *int
@@ -18,8 +28,9 @@ type CLIOverrides struct {
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
-// absent tiers simply fall through to the next one.
-func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) Settings {
+// absent tiers simply fall through to the next one. CLI values are validated
+// here because they bypass the load-time checks the file tiers go through.
+func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Settings, error) {
 	s := Settings{
 		PayloadMode: DefaultPayloadMode,
 		TimeoutSecs: DefaultTimeoutSecs,
@@ -32,27 +43,40 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) Setti
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.FailOn)
 	}
-	if cli.PayloadMode != nil {
-		s.PayloadMode = *cli.PayloadMode
-	}
+
 	if cli.TimeoutSecs != nil {
+		if *cli.TimeoutSecs <= 0 || *cli.TimeoutSecs > MaxTimeoutSecs {
+			return Settings{}, fmt.Errorf("timeout must be within 1..%d seconds", MaxTimeoutSecs)
+		}
 		s.TimeoutSecs = *cli.TimeoutSecs
 	}
-	if cli.FailOn != nil {
-		s.FailOn = *cli.FailOn
+	if v := deref(cli.PayloadMode); v != "" {
+		s.PayloadMode = v
 	}
-	return s
+	if v := deref(cli.FailOn); v != "" {
+		s.FailOn = v
+	}
+	return s, nil
 }
 
 // applyTier overlays one configuration tier's explicitly-set values onto s.
+// Whitespace-only strings count as unset.
 func applyTier(s *Settings, payloadMode string, timeoutSecs *int, failOn string) {
-	if payloadMode != "" {
-		s.PayloadMode = payloadMode
+	if v := strings.TrimSpace(payloadMode); v != "" {
+		s.PayloadMode = v
 	}
 	if timeoutSecs != nil {
 		s.TimeoutSecs = *timeoutSecs
 	}
-	if failOn != "" {
-		s.FailOn = failOn
+	if v := strings.TrimSpace(failOn); v != "" {
+		s.FailOn = v
 	}
+}
+
+// deref returns the trimmed value of p, or "" when p is nil.
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
 }

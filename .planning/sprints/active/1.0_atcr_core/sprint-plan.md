@@ -429,12 +429,12 @@ Documentation available in [documentation/](plan/documentation/):
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 1.18 [ ] **[Precedence resolution - GREEN](plan/user-stories/02-agent-configuration.md)**
+### 1.18 [x] **[Precedence resolution - GREEN](plan/user-stories/02-agent-configuration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 1.19 [ ] **[Precedence resolution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.18]
+### 1.19 [x] **[Precedence resolution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
+   **Changed Files:** internal/registry/{precedence.go, precedence_test.go, config.go, project.go}
 
    **Spawn a fresh subagent** via the Agent tool to perform this review.
 
@@ -454,13 +454,16 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | precedence.go:38-40 | CLI tier bypasses positive-timeout invariant (ResolveSettings cannot fail) | Return error; validate CLI timeout |
+   | MEDIUM | config.go:153-156 | Agent TimeoutSecs eagerly defaulted to 600 — global/project/CLI timeout can never reach an agent | Leave nil; EffectiveTimeoutSecs(Settings) resolves at use |
+   | LOW | project.go:34-35 | Stale doc comment about eager defaults | Updated |
+   | LOW | precedence.go:35-43 | Empty-string CLI override clobbers lower tiers with the "unset" sentinel | TrimSpace-empty treated as unset |
+   | LOW | precedence.go:49,55 | Whitespace YAML values count as set | TrimSpace in applyTier |
+   | LOW | config.go:95 | No upper bound on timeout_secs (Duration overflow) | Max 86400 at all tiers |
+   | LOW | config.go:16-19 | Constant comment stale / dual-purpose coupling | Comment fixed; coupling gone with the nil-default fix |
+   | LOW | precedence_test.go | Missing zero-timeout and absent-registry-globals cases | Added |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.20, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. All 8 findings fixed in 1.20.
 
 ### 1.20 [ ] **[Precedence resolution - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.19 (if any)

@@ -71,8 +71,9 @@ func TestRegistryLoad_OptionalFieldDefaults(t *testing.T) {
 	assert.Equal(t, "bruce", bruce.Persona, "persona defaults to the agent name")
 	require.NotNil(t, bruce.Temperature)
 	assert.InDelta(t, 0.7, *bruce.Temperature, 1e-9, "temperature defaults to 0.7")
-	require.NotNil(t, bruce.TimeoutSecs)
-	assert.Equal(t, 600, *bruce.TimeoutSecs, "timeout_secs defaults to 600")
+	assert.Nil(t, bruce.TimeoutSecs, "timeout stays unset at load (inherits resolved settings)")
+	assert.Equal(t, 600, bruce.EffectiveTimeoutSecs(Settings{TimeoutSecs: DefaultTimeoutSecs}),
+		"effective timeout defaults to 600 via the settings chain")
 	assert.False(t, bruce.RateLimited, "rate_limited defaults to false")
 	assert.Empty(t, bruce.Payload, "payload stays empty when unset (inherits project default)")
 	assert.Empty(t, bruce.Fallback)
@@ -255,12 +256,12 @@ func TestRegistryLoad_ValidationRejections(t *testing.T) {
 		{
 			"zero timeout",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    timeout_secs: 0\n",
-			"timeout_secs must be positive",
+			"timeout_secs must be within",
 		},
 		{
 			"negative timeout",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    timeout_secs: -5\n",
-			"timeout_secs must be positive",
+			"timeout_secs must be within",
 		},
 		{
 			"temperature out of range",

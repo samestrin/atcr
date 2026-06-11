@@ -32,7 +32,8 @@ func DefaultProjectConfigPath(root string) string {
 }
 
 // LoadProjectConfig reads, strictly parses, and validates the project config
-// at path, applying embedded defaults to absent optional fields.
+// at path. Absent optional fields stay unset; embedded defaults are applied
+// by ResolveSettings so precedence can see what this tier actually set.
 func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {

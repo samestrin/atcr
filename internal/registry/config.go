@@ -10,9 +10,12 @@ import (
 	"strings"
 )
 
-// Defaults applied to optional agent fields at load time. Payload has no
-// agent-level default: an empty payload means "inherit the project default"
-// so the precedence chain (CLI > project > registry > embedded) stays intact.
+// DefaultTemperature fills an agent's temperature when unset (applied at
+// load time — temperature is purely agent-level).
+//
+// DefaultTimeoutSecs is the embedded-tier floor of the shared-settings
+// precedence chain (see ResolveSettings). Agent-level timeout and payload
+// deliberately stay unset at load so agents inherit the resolved settings.
 const (
 	DefaultTemperature = 0.7
 	DefaultTimeoutSecs = 600
@@ -92,8 +95,8 @@ func LoadRegistry(path string) (*Registry, error) {
 
 // validate checks required fields and reference integrity.
 func (r *Registry) validate() error {
-	if r.TimeoutSecs != nil && *r.TimeoutSecs <= 0 {
-		return errors.New("timeout_secs must be positive")
+	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
+		return fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs)
 	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {
@@ -128,8 +131,8 @@ func (r *Registry) validate() error {
 		if _, ok := r.Providers[a.Provider]; !ok {
 			return fmt.Errorf("agent '%s' references unknown provider '%s'", name, a.Provider)
 		}
-		if a.TimeoutSecs != nil && *a.TimeoutSecs <= 0 {
-			return fmt.Errorf("agent '%s': timeout_secs must be positive", name)
+		if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
+			return fmt.Errorf("agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
 		}
 		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
 			return fmt.Errorf("agent '%s': temperature must be within [0, 2]", name)
@@ -139,8 +142,9 @@ func (r *Registry) validate() error {
 }
 
 // applyDefaults fills optional agent fields: persona defaults to the agent
-// name, temperature to 0.7, timeout_secs to 600. Payload intentionally stays
-// empty when unset (inherits the project-level default).
+// name and temperature to 0.7. TimeoutSecs and Payload intentionally stay
+// unset (nil/empty) so agents inherit the resolved shared settings — see
+// EffectiveTimeoutSecs and the precedence chain in ResolveSettings.
 func (r *Registry) applyDefaults() {
 	for name, a := range r.Agents {
 		if a.Persona == "" {
@@ -150,10 +154,15 @@ func (r *Registry) applyDefaults() {
 			temp := DefaultTemperature
 			a.Temperature = &temp
 		}
-		if a.TimeoutSecs == nil {
-			secs := DefaultTimeoutSecs
-			a.TimeoutSecs = &secs
-		}
 		r.Agents[name] = a
 	}
+}
+
+// EffectiveTimeoutSecs returns the agent's own timeout when set, otherwise
+// the resolved shared timeout.
+func (a AgentConfig) EffectiveTimeoutSecs(s Settings) int {
+	if a.TimeoutSecs != nil {
+		return *a.TimeoutSecs
+	}
+	return s.TimeoutSecs
 }
