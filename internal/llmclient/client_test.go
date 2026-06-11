@@ -90,6 +90,32 @@ func TestComplete_RetryOn429(t *testing.T) {
 	assert.Equal(t, "recovered", out)
 }
 
+func TestComplete_RetryOnTransportError(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			// Drop the connection mid-exchange so the client sees a
+			// transport-level error rather than an HTTP status.
+			hj, ok := w.(http.Hijacker)
+			require.True(t, ok, "test server must support hijacking")
+			conn, _, err := hj.Hijack()
+			require.NoError(t, err)
+			_ = conn.Close()
+			return
+		}
+		okResponse(w, "recovered from transport error")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "recovered from transport error", out)
+	assert.Equal(t, int32(2), calls.Load()) // 1 dropped + 1 retry
+}
+
 func TestComplete_4xxFailsImmediately(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
