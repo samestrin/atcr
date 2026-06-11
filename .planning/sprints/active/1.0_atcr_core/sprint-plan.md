@@ -1209,33 +1209,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 3.25 [ ] **[Clustering + Jaccard dedupe + ambiguous sidecar - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.25 [x] **[Clustering + Jaccard dedupe + ambiguous sidecar - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-05 Reconciliation Pipeline](plan/acceptance-criteria/01-05-reconciliation-pipeline.md)
    1. Analyze AC, identify testable units
    2. Write tests (fixture corpus): (FILE, LINE±3) clustering incl. delta-3 same cluster / delta-4 different; Jaccard token-set ≥0.7 → merge; gray zone 0.4–0.7 → ambiguous.json (always written, empty array when none; default unmerged); <0.4 → distinct; thresholds fixed in v1
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 3.26 [ ] **[Clustering + Jaccard dedupe + ambiguous sidecar - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.26 [x] **[Clustering + Jaccard dedupe + ambiguous sidecar - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 2 hours
 
-### 3.27 [ ] **[Clustering + Jaccard dedupe + ambiguous sidecar - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.26]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.26`).
+### 3.27 [x] **[Clustering + Jaccard dedupe + ambiguous sidecar - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/reconcile/cluster.go, internal/reconcile/dedupe.go (+ tests)
+   Fresh subagent (description: `Adversarial review: 3.26`) reviewed the unit. **No CRITICAL/HIGH** — determinism independently confirmed sound (sorted file order, union-toward-smaller-root, i,j ambiguous order).
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | cluster.go | "exact ±3" comment understated single-linkage transitive spread | Fixed in 3.28: comment corrected; noted clustering only scopes comparison, merge gated by Jaccard |
+   | MEDIUM | dedupe.go | O(n²) re-tokenized strings every pair | Fixed in 3.28: pre-tokenize each finding once |
+   | MEDIUM | dedupe.go | AmbiguousCluster.Line arbitrary (pair may span ±3) | Documented: Line = lower-indexed finding's; per-finding lines in Findings |
+   | LOW | dedupe.go | float threshold boundary at 0.7/0.4 undefended | Fixed in 3.28: integer cross-multiplication (inter*10 vs union*7/4) + boundary tests |
+   | LOW | dedupe.go | empty==empty problems scored 0 not identical | Fixed in 3.28: both-empty → merge (1.0) + test |
+   | LOW | cluster.go | negative lines co-mingled into file-level | Documented: parser never emits negatives (Line 0 for missing) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.28, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. Determinism hardened (integer thresholds), perf improved (pre-tokenize), comments corrected, with boundary + empty-problem tests. Remaining items documented.
 
-### 3.28 [ ] **[Clustering + Jaccard dedupe + ambiguous sidecar - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.28 [x] **[Clustering + Jaccard dedupe + ambiguous sidecar - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.27 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
