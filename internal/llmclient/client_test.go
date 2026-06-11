@@ -205,6 +205,56 @@ func TestComplete_Temperature(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestComplete_ErrorBodySnippetIncluded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 400")
+	assert.Contains(t, err.Error(), "model not found")
+}
+
+func TestComplete_ErrorBodySnippetOnExhaustedRetries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "{\"error\":\n  {\"message\": \"quota exhausted\"}}")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	assert.Contains(t, err.Error(), "HTTP 503")
+	// Multi-line body must be collapsed to a single sanitized line.
+	assert.Contains(t, err.Error(), `{"error": {"message": "quota exhausted"}}`)
+	assert.NotContains(t, err.Error(), "\n")
+}
+
+func TestComplete_ErrorBodySnippetBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, strings.Repeat("x", 8<<10))
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Less(t, len(err.Error()), (4<<10)+200, "snippet must be bounded")
+}
+
 func TestComplete_UserinfoStrippedFromErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		okResponse(w, "x")
