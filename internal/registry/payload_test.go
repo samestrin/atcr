@@ -3,6 +3,7 @@ package registry
 import (
 	"testing"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,6 +86,21 @@ agents:
 	assert.Contains(t, err.Error(), "agent 'bruce'")
 	assert.Contains(t, err.Error(), "invalid payload 'wrong'")
 	assert.Contains(t, err.Error(), "must be one of diff, blocks, files")
+}
+
+func TestPayloadModeEnumParity(t *testing.T) {
+	// validPayloadModes deliberately hand-duplicates the frozen enum in
+	// internal/payload (the package boundary forbids importing it in
+	// production code). This test imports both sides and fails when they
+	// drift. payload.validModes is unexported, so the reverse direction is
+	// checked through the exported mode constants plus the frozen set size.
+	for mode := range validPayloadModes {
+		assert.Truef(t, payload.ValidMode(mode), "registry accepts payload_mode %q but internal/payload rejects it", mode)
+	}
+	for _, mode := range []payload.PayloadMode{payload.ModeDiff, payload.ModeBlocks, payload.ModeFiles} {
+		assert.Truef(t, validPayloadModes[string(mode)], "internal/payload defines mode %q but registry rejects it", mode)
+	}
+	assert.Len(t, validPayloadModes, 3, "frozen v1 enum has exactly three modes; adding one is a coordinated change in both packages")
 }
 
 func TestRegistry_DefaultPayloadModeInvalid(t *testing.T) {
