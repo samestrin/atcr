@@ -800,33 +800,36 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.29 [ ] **[Byte budget + deterministic truncation - RED](plan/user-stories/06-payload-mode-selection.md)**
+### 2.29 [x] **[Byte budget + deterministic truncation - RED](plan/user-stories/06-payload-mode-selection.md)**
    **AC:** [06-03 Byte Budget and Truncation](plan/acceptance-criteria/06-03-byte-budget-truncation.md)
    1. Analyze AC, identify testable units
    2. Write tests: smallest-first whole-file drop with alphabetical tie-break; zero budget = unlimited; negative budget = usage error (exit 2); truncation recorded in status.json + manifest.json (never silent); exact-fit boundary
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 2.30 [ ] **[Byte budget + deterministic truncation - GREEN](plan/user-stories/06-payload-mode-selection.md)**
+### 2.30 [x] **[Byte budget + deterministic truncation - GREEN](plan/user-stories/06-payload-mode-selection.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 2.31 [ ] **[Byte budget + deterministic truncation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.30]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.30`).
+### 2.31 [x] **[Byte budget + deterministic truncation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
+   **Changed Files:** internal/payload/{budget.go, budget_test.go, manifest.go, manifest_test.go}, internal/fanout/{status.go, status_test.go}.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: byte budget`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | budget.go drop loop | keyed drops by Path → over-drop / miscount when two entries share a path | Fixed in 2.32: drop by entry index + duplicate-path test |
+   | MEDIUM | budget.go fast paths | returned input slice aliased the caller's backing array | Fixed in 2.32: copyEntries on all return paths |
+   | MEDIUM | manifest.go/status.go | non-atomic in-place writes risk a half-written file on crash | Fixed in 2.32: temp-file + rename atomic write |
+   | MEDIUM | manifest.go | nil PerAgentPayload marshals as null, not {} | Fixed in 2.32: normalize nil map → {} |
+   | MEDIUM | budget.go sum | int64 overflow could skip truncation silently | Deferred → TD-013 (unreachable with real file sizes) |
+   | LOW | status.go | files_dropped omitempty contradicted never-silent invariant | Fixed in 2.32: dropped omitempty, normalize non-nil |
+   | LOW | budget_test.go | no duplicate-path / zero-size coverage | Fixed in 2.32: added both tests |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.32, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 HIGH (duplicate-path miscount) fixed in 2.32 with a regression test, plus three MEDIUM and two LOW; overflow guard deferred (TD-013).
 
-### 2.32 [ ] **[Byte budget + deterministic truncation - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
+### 2.32 [x] **[Byte budget + deterministic truncation - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
    1. Fix CRITICAL/HIGH issues from 2.31 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min

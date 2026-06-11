@@ -83,3 +83,10 @@
 **Issue:** The frozen {diff,blocks,files} enum is hand-duplicated in `registry.validPayloadModes` and `payload.validModes` because the package boundary forbids `registry` importing `payload`. No automated test asserts the two sets stay in sync; adding a v2 mode to one and not the other would mis-validate at one tier yet pass all current tests.
 **Why accepted:** The enum is frozen for v1; drift can only occur with a deliberate future edit. A cross-package guard test needs a package that may import both (fanout/mcp), which do not exist until Phase 3/4.
 **Fix in:** Phase 3/4 — add an enum-parity test from a package permitted to import both registry and payload (e.g. fanout or an e2e test package).
+
+## TD-013 — byte-budget size summation has no int64 overflow guard (LOW)
+**Origin:** Phase 2, task 2.31 adversarial review, 2026-06-10
+**File:** internal/payload/budget.go:46
+**Issue:** `total += e.Size` could wrap negative for pathological/huge sizes, making `total <= budget` true and skipping truncation (a silent over-budget payload). Negative `FileEntry.Size` values are also not rejected.
+**Why accepted:** Sizes are real file byte counts (<2GB each) summed over <100 files; overflow is unreachable with realistic inputs. Correctness for normal inputs is fully tested (including duplicate paths and zero-size files).
+**Fix in:** v2 — reject negative sizes and detect `total > math.MaxInt64 - e.Size` before adding.
