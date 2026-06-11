@@ -68,33 +68,7 @@ func BuildDiff(ctx context.Context, repo, base, head string) (string, error) {
 // yields zero hunks fall back to a plain -U10 context diff; binary files are
 // excluded and represented by a one-line marker.
 func BuildBlocks(ctx context.Context, repo, base, head string) (string, error) {
-	g := &gitRunner{ctx: ctx, dir: repo}
-	if err := validateRange(g, base, head); err != nil {
-		return "", err
-	}
-	files, err := g.changedFiles(base, head)
-	if err != nil {
-		return "", err
-	}
-	var b strings.Builder
-	for _, f := range files {
-		if g.isBinary(base, head, f.path) {
-			fmt.Fprintf(&b, binaryMarkerFmt+"\n", f.path)
-			continue
-		}
-		out, ok := g.functionContextFile(base, head, f.path)
-		if !ok {
-			out, err = g.contextFile(base, head, f.path)
-			if err != nil {
-				return "", fmt.Errorf("git diff failed: %w", err)
-			}
-		}
-		b.WriteString(out)
-		if out != "" && !strings.HasSuffix(out, "\n") {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String(), nil
+	return joinEntries(BuildEntries(ctx, ModeBlocks, repo, base, head))
 }
 
 // BuildFiles returns the full head-version content of each changed file with
@@ -102,24 +76,74 @@ func BuildBlocks(ctx context.Context, repo, base, head string) (string, error) {
 // [deleted file: <path>] marker; binary files a [binary file changed: <path>]
 // marker; renamed files appear under the new path with the rename noted.
 func BuildFiles(ctx context.Context, repo, base, head string) (string, error) {
+	return joinEntries(BuildEntries(ctx, ModeFiles, repo, base, head))
+}
+
+// BuildEntries returns the per-file payload contributions for mode. This is the
+// bridge between the builders and the byte-budget pass: callers feed these
+// entries to ApplyByteBudget, derive the changed-file count from len(entries),
+// and record per-file truncation in status.json. Build/BuildBlocks/BuildFiles
+// join these for the flat string form. (BuildDiff is the verbatim whole-range
+// diff; BuildEntries with ModeDiff produces an equivalent per-file split so the
+// budget can drop individual files.)
+func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string) ([]FileEntry, error) {
+	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
+		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+	}
 	g := &gitRunner{ctx: ctx, dir: repo}
 	if err := validateRange(g, base, head); err != nil {
-		return "", err
+		return nil, err
 	}
 	files, err := g.changedFiles(base, head)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	var b strings.Builder
+	entries := make([]FileEntry, 0, len(files))
 	for _, f := range files {
+		body, err := g.fileBody(mode, base, head, f)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, FileEntry{Path: f.path, Size: int64(len(body)), Body: body})
+	}
+	return entries, nil
+}
+
+// fileBody renders one changed file's contribution for mode, including the
+// trailing newline so concatenating bodies reproduces the flat payload.
+func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile) (string, error) {
+	switch mode {
+	case ModeDiff:
+		if g.isBinary(base, head, f.path) {
+			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
+		}
+		out, err := g.run("diff", base+".."+head, "--", f.path)
+		if err != nil {
+			return "", fmt.Errorf("git diff failed: %w", err)
+		}
+		return ensureTrailingNewline(out), nil
+
+	case ModeBlocks:
+		if g.isBinary(base, head, f.path) {
+			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
+		}
+		out, ok := g.functionContextFile(base, head, f.path)
+		if !ok {
+			var err error
+			if out, err = g.contextFile(base, head, f.path); err != nil {
+				return "", fmt.Errorf("git diff failed: %w", err)
+			}
+		}
+		return ensureTrailingNewline(out), nil
+
+	case ModeFiles:
 		if f.kind == kindDeleted {
-			fmt.Fprintf(&b, deletedMarkerFmt+"\n", f.path)
-			continue
+			return fmt.Sprintf(deletedMarkerFmt+"\n", f.path), nil
 		}
 		if g.isBinary(base, head, f.path) {
-			fmt.Fprintf(&b, binaryMarkerFmt+"\n", f.path)
-			continue
+			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
+		var b strings.Builder
 		if f.kind == kindRenamed {
 			fmt.Fprintf(&b, renamedHeaderFmt+"\n", f.path, f.oldPath)
 		} else {
@@ -135,8 +159,33 @@ func BuildFiles(ctx context.Context, repo, base, head string) (string, error) {
 		}
 		b.WriteString(renderWithSentinels(content, ranges))
 		b.WriteByte('\n')
+		return b.String(), nil
+
+	default:
+		return "", fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
+	}
+}
+
+// joinEntries concatenates entry bodies into the flat payload string, threading
+// any builder error through.
+func joinEntries(entries []FileEntry, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString(e.Body)
 	}
 	return b.String(), nil
+}
+
+// ensureTrailingNewline appends a newline to non-empty content that lacks one,
+// so per-file bodies concatenate without running together.
+func ensureTrailingNewline(s string) string {
+	if s != "" && !strings.HasSuffix(s, "\n") {
+		return s + "\n"
+	}
+	return s
 }
 
 // renderWithSentinels emits content with each changed line range wrapped in

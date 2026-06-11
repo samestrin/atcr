@@ -69,3 +69,15 @@ var fieldReplacer = strings.NewReplacer("|", "/", "\r\n", " ", "\r", " ", "\n", 
 func escapeField(s string) string {
 	return fieldReplacer.Replace(s)
 }
+
+// AsReconciled migrates a per-source Finding (single Reviewer) into a reconciled
+// Finding (Reviewers + Confidence), carrying the location and detail fields
+// across. The reconciler uses this when collapsing a cluster so a finding's
+// attribution is never silently dropped between the 8-col and 9-col shapes.
+func (f Finding) AsReconciled(reviewers []string, confidence string) Finding {
+	out := f
+	out.Reviewer = ""
+	out.Reviewers = reviewers
+	out.Confidence = confidence
+	return out
+}

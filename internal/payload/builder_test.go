@@ -211,6 +211,66 @@ func TestBuild_EmptyDiff(t *testing.T) {
 	}
 }
 
+func TestBuildEntries_PerFileBridge(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks, ModeFiles} {
+		entries, err := BuildEntries(context.Background(), mode, dir, base, head)
+		require.NoErrorf(t, err, "mode %s", mode)
+		require.Lenf(t, entries, 2, "mode %s: one entry per changed file", mode)
+		for _, e := range entries {
+			assert.NotEmpty(t, e.Path)
+			assert.Equal(t, int64(len(e.Body)), e.Size)
+		}
+		// Joining entry bodies reproduces the flat builder output.
+		flat, err := Build(context.Background(), mode, dir, base, head)
+		require.NoError(t, err)
+		if mode != ModeDiff { // BuildDiff is the verbatim whole-range diff
+			var joined string
+			for _, e := range entries {
+				joined += e.Body
+			}
+			assert.Equalf(t, flat, joined, "mode %s entries should join to the flat payload", mode)
+		}
+	}
+}
+
+func TestBuildEntries_BudgetIntegration(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	write(t, dir, "b.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+
+	entries, err := BuildEntries(context.Background(), ModeFiles, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	// A tiny budget forces a drop; truncation is reported, never silent.
+	kept, tr := ApplyByteBudget(entries, entries[0].Size)
+	assert.True(t, tr.Truncated)
+	assert.NotEmpty(t, tr.FilesDropped)
+	assert.Less(t, len(kept), len(entries))
+}
+
+func TestBuildEntries_InvalidMode(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "a.go", goFileV2)
+	head := commitAll(t, dir, "v2")
+	_, err := BuildEntries(context.Background(), PayloadMode("bogus"), dir, base, head)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be one of diff, blocks, files")
+}
+
 func TestBuild_InvalidMode(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "foo.go", goFileV1)

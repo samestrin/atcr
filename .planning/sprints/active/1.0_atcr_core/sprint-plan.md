@@ -964,7 +964,7 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 2.49 [ ] **Phase 2 DoD Validation**
+### 2.49 [x] **Phase 2 DoD Validation**
    1. Run `go test ./...` - all passing
    2. Run `go vet ./...` - clean
    3. Run `golangci-lint run` - clean
@@ -973,30 +973,24 @@ Documentation available in [documentation/](plan/documentation/):
    6. Update metadata.md with Phase 2 completion metrics
    **Duration:** 30 min
 
-### 2.50 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.50 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)** — GATE: PASS (re-run after fixes)
    **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
-   **Spawn a fresh subagent** via the Agent tool (subagent_type: `general-purpose`, description: `Phase 2 gate review`) with a self-contained brief:
-   - Files changed during Phase 2 (absolute paths): [LIST]
-   - Checklist (pass verbatim, hostile integrator perspective):
-     - CONTRACT EXIT: All phase-exit contracts honored (signatures, return shapes, error types)?
-     - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
-     - INTEGRATION: Cross-module calls correct, no hidden coupling introduced?
-     - PHASE-EXIT CONTRACT: Downstream phases can consume outputs without rework?
-     - REGRESSION: Earlier-phase behavior still intact?
-   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-   - Required output: ONLY the findings table (markdown), no prose
+   Fresh subagent (description: `Phase 2 gate review`) ran a hostile-integrator review over all Phase 2 files.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **First-run findings (HIGH fixed before boundary, then gate re-run):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | payload/builder.go + budget.go | builder returned a flat string but ApplyByteBudget needs []FileEntry — no exported bridge; Phase 3 could not apply truncation / derive FileCount / fill status fields | Fixed: added exported `BuildEntries(ctx, mode, repo, base, head) []FileEntry`; BuildBlocks/BuildFiles delegate via `joinEntries`; BuildDiff stays verbatim |
+   | HIGH | payload/template.go FileCount | no exported producer for FileCount / status truncation fields | Fixed: `len(BuildEntries(...))` supplies FileCount; Truncation from ApplyByteBudget supplies status fields (test TestBuildEntries_BudgetIntegration) |
+   | MEDIUM | stream parser | no per-source→reconciled Finding migration helper | Fixed: added `Finding.AsReconciled(reviewers, confidence)` + round-trip test |
+   | MEDIUM | stream/parser.go | engine-appends-REVIEWER is convention-only; a model could self-attribute via a padded 8th column | Deferred → TD-016 (Phase 3 fan-out engine sets Reviewer from the agent name) |
+   | MEDIUM | payload Build typed vs config string | mode seam requires routing through ParseMode | Accepted by design (typed at the builder boundary; Phase 3 calls ParseMode) |
+   | LOW | payload/registry enum duplication | already tracked | Deferred → TD-012 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Re-run verdict: GATE: PASS** — fresh subagent verified `BuildEntries` closes the budget/FileCount/status seam, BuildBlocks/BuildFiles remain byte-identical (confirmed via git diff of the pre-refactor builder), BuildDiff stays verbatim, and `AsReconciled` round-trips. No regression to Phase 1 config behavior. Sole remaining note: one LOW (a tautological equivalence test) — no action required.
+
+   **Action Required:** No CRITICAL/HIGH remain. HIGHs fixed before the boundary and the gate re-ran to PASS; MEDIUM/LOW deferred (TD-012, TD-016) or accepted by design.
    **Duration:** 15-30 min
 
 ---

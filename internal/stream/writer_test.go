@@ -97,6 +97,28 @@ func TestWriteReconciled_NineColumns(t *testing.T) {
 	assert.Equal(t, "CRITICAL|auth.go:42|p|f|security|45|ev|greta,kai|HIGH", lines[1])
 }
 
+func TestFinding_AsReconciled(t *testing.T) {
+	src := Finding{
+		Severity: "HIGH", File: "a.go", Line: 5, Problem: "p", Fix: "f",
+		Category: "security", EstMinutes: 20, Evidence: "ev", Reviewer: "bruce",
+	}
+	rec := src.AsReconciled([]string{"bruce", "greta"}, "HIGH")
+	assert.Empty(t, rec.Reviewer)
+	assert.Equal(t, []string{"bruce", "greta"}, rec.Reviewers)
+	assert.Equal(t, "HIGH", rec.Confidence)
+	// Detail/location fields carry across unchanged.
+	assert.Equal(t, "a.go", rec.File)
+	assert.Equal(t, 5, rec.Line)
+	assert.Equal(t, "p", rec.Problem)
+
+	var b strings.Builder
+	require.NoError(t, WriteReconciled(&b, []Finding{rec}))
+	res, err := ParseReconciled([]byte(b.String()))
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 1)
+	assert.Equal(t, []string{"bruce", "greta"}, res.Findings[0].Reviewers)
+}
+
 func TestRoundTrip_SourceThenReconciled(t *testing.T) {
 	src := []Finding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Fix: "f1", Category: "correctness", EstMinutes: 10, Evidence: "e1", Reviewer: "bruce"},

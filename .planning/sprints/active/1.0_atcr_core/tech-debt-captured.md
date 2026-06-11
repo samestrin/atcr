@@ -105,3 +105,10 @@
 **Issue:** If a provider base_url embedded userinfo (`https://user:pass@host`), a request-creation or transport error wraps the full URL via `%w`, which could surface the credential in logs — the same risk class as the (already-prevented) API-key leak.
 **Mitigation this sprint:** The registry loader already rejects any `base_url` containing userinfo at load time (internal/registry/config.go validate), so an embedded-credential URL never reaches the client in practice.
 **Fix in:** v2 — defensively strip userinfo (or scrub the URL) before building the request, so the client is safe independent of registry validation.
+
+## TD-016 — engine-appends-REVIEWER rule is convention-only, unenforced by the parser (MEDIUM)
+**Origin:** Phase 2, task 2.50 gate review, 2026-06-10
+**File:** internal/stream/parser.go:106
+**Issue:** Personas are documented to emit 7 columns; the engine appends REVIEWER. But `ParseSource` is lenient (pads short rows), so a misbehaving model that self-emits an 8th column has that value land in `Finding.Reviewer` — forging its own attribution. The contract is convention-only, not enforced at the parser/type layer.
+**Mitigation this sprint:** The fan-out engine (Phase 3, task 3.9) is the writer of per-source `findings.txt` and MUST set `Finding.Reviewer` to the agent name itself, ignoring any model-supplied 8th column — this captures that requirement so Phase 3 does not rely on model honesty.
+**Fix in:** Phase 3 task 3.9 — engine constructs Reviewer from the agent name; optionally parse model output as a 7-column shape that rejects a populated 8th field.
