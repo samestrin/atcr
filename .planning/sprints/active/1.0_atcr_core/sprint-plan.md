@@ -932,33 +932,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 2.45 [ ] **[Persona resolution chain + six embedded personas - RED](plan/user-stories/02-agent-configuration.md)**
+### 2.45 [x] **[Persona resolution chain + six embedded personas - RED](plan/user-stories/02-agent-configuration.md)**
    **AC:** [02-04 Persona Resolution and Override](plan/acceptance-criteria/02-04-persona-resolution-override.md)
    1. Analyze AC, identify testable units
    2. Write tests: six-level chain (--task-message > persona ref > <agent>.md in .atcr/personas/ > <agent>.md in ~/.config/atcr/ > _base.md (project then registry) > embedded); explicit persona ref with no file at any level = hard error; template parse error = exit 1 with file path and line; six embedded personas render with payload vars and per-mode scope rules; personas emit 7 columns (engine appends REVIEWER)
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 2.46 [ ] **[Persona resolution chain + six embedded personas - GREEN](plan/user-stories/02-agent-configuration.md)**
+### 2.46 [x] **[Persona resolution chain + six embedded personas - GREEN](plan/user-stories/02-agent-configuration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 2.47 [ ] **[Persona resolution chain + six embedded personas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.46]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.46`).
+### 2.47 [x] **[Persona resolution chain + six embedded personas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
+   **Changed Files:** internal/registry/{persona.go, persona_test.go}, internal/payload/personas_render_test.go.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: persona resolution`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | persona.go readNonEmpty | symlinked persona file was followed and read into the LLM prompt (exfiltration vector) | Fixed in 2.48: lstat + skip symlinks with warning + test |
+   | LOW | persona.go validateName | explicit ref `_base` resolved to the shared base file | Fixed in 2.48: `_base` reserved-name rejection + test |
+   | LOW | persona.go validateName | dot-prefixed names (`.`, `.hidden`) accepted | Fixed in 2.48: reject leading-dot names |
+   | LOW | persona_test.go | agentName traversal / symlink / `_base` ref untested | Fixed in 2.48: added all three tests |
+   | LOW | persona.go taskMessage early return | names unvalidated on the task-message path | Accepted: taskMessage wins outright and the names never touch the FS; documented with a comment |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.48, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. 1 MEDIUM (symlink follow) + LOWs fixed in 2.48 with tests. Persona/agent names are sanitized against path traversal, dotfiles, and the reserved `_base`. (TD-005 resolved: all six embedded personas + _base render against PayloadContext.)
 
-### 2.48 [ ] **[Persona resolution chain + six embedded personas - REFACTOR](plan/user-stories/02-agent-configuration.md)**
+### 2.48 [x] **[Persona resolution chain + six embedded personas - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 2.47 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

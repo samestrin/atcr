@@ -27,6 +27,7 @@
 **Issue:** Persona templates use 7 variables ({{.AgentName}}, {{.ScopeRule}}, {{.FileCount}}, {{.BaseRef}}, {{.HeadRef}}, {{.PayloadMode}}, {{.Payload}}) but no exported struct anchors them; renderer and templates can drift.
 **Mitigation this sprint:** Task 2.33 (payload template vars) defines the typed template-data struct with missingkey=error; task 2.45 adds tests that all six embedded personas render against it.
 **Fix in:** Phase 2 tasks 2.33 / 2.45.
+**Resolved:** 2026-06-10 — `payload.PayloadContext` anchors all 7 vars (rendered with missingkey=error); `TestEmbeddedPersonasRenderAgainstContext` renders all six personas + _base against it, so renderer and templates can no longer drift.
 
 ## TD-006 — atcr init writes explicit defaults that mask the registry settings tier (LOW, kept by design)
 **Origin:** Phase 1, task 1.30 gate review, 2026-06-10
