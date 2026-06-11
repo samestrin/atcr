@@ -72,6 +72,23 @@ func TestDedupeCluster_TransitiveMerge(t *testing.T) {
 	assert.Len(t, groups[0], 3)
 }
 
+func TestDedupeCluster_TransitivelyMergedGrayPairDropped(t *testing.T) {
+	// A~B is gray (0.667) but A~C and B~C both merge (0.818), so A and B end up
+	// under the same union-find root via C. The A-B pair must NOT be emitted as
+	// an AmbiguousCluster: a "merge" adjudication for it would be a silent no-op
+	// and "distinct" could not be honored (the pair is already collapsed), so a
+	// surviving entry would make ambiguous.json contradict findings.txt.
+	cluster := []stream.Finding{
+		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 w10", "greta"), // A
+		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 c1 b1", "kai"),    // B: vs A inter 8 / union 12 = 0.667 gray
+		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 c1", "mira"),   // C: vs A and vs B inter 9 / union 11 = 0.818 merge
+	}
+	groups, amb := DedupeCluster(cluster)
+	require.Len(t, groups, 1, "all three findings collapse transitively via C")
+	assert.Len(t, groups[0], 3)
+	assert.Empty(t, amb, "a gray pair already merged transitively must not be left for adjudication")
+}
+
 func TestDedupeCluster_ExactThresholdBoundaries(t *testing.T) {
 	// Exactly 0.7 (7 shared of 10 union) must MERGE (>= MergeThreshold).
 	merge := []stream.Finding{
