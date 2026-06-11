@@ -346,5 +346,3 @@ func failingFindings(res reconcile.Result, threshold string) []reconcile.JSONFin
 	}
 	return out
 }
-
-
