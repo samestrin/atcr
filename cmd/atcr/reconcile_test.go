@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
 
@@ -152,4 +153,33 @@ func TestReconcileCmd_SourcesAllowlist(t *testing.T) {
 	// fails on pool's HIGH, but --fail-on CRITICAL passes (host filtered out).
 	require.Equal(t, 0, execCmd(t, "reconcile", "--sources", "pool", "--fail-on", "CRITICAL", "r"))
 	require.Equal(t, 1, execCmd(t, "reconcile", "--sources", "pool", "--fail-on", "HIGH", "r"))
+}
+
+// TestGateThresholdReaders_OneWhitespaceSemantic verifies the two --fail-on
+// readers (failOnThreshold on the one-shot review path, resolveGateThreshold on
+// the reconcile path) share one semantic: a whitespace-only flag value is unset
+// (no gate), not a usage error, and a real value canonicalizes identically.
+func TestGateThresholdReaders_OneWhitespaceSemantic(t *testing.T) {
+	isolate(t)
+	readers := map[string]func(*cobra.Command) (string, error){
+		"failOnThreshold":      failOnThreshold,
+		"resolveGateThreshold": resolveGateThreshold,
+	}
+	cases := []struct {
+		flag string
+		want string
+	}{
+		{"", ""},
+		{"  ", ""},
+		{"high", "HIGH"},
+	}
+	for _, tc := range cases {
+		for name, reader := range readers {
+			cmd := newReconcileCmd()
+			require.NoError(t, cmd.Flags().Set("fail-on", tc.flag))
+			got, err := reader(cmd)
+			require.NoError(t, err, "%s(%q)", name, tc.flag)
+			require.Equal(t, tc.want, got, "%s(%q)", name, tc.flag)
+		}
+	}
 }
