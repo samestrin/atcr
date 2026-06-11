@@ -3,6 +3,7 @@ package payload
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -130,6 +131,9 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		}
 		out, ok := g.functionContextFile(base, head, f.path)
 		if !ok {
+			// Defensive-measure contract: every degradation is recorded. Without
+			// this an operator cannot tell which files got function context.
+			slog.Warn("blocks mode: function context unavailable, falling back to plain context diff", "file", f.path)
 			var err error
 			if out, err = g.contextFile(base, head, f.path); err != nil {
 				return "", fmt.Errorf("git diff failed: %w", err)
