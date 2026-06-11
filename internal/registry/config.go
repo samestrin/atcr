@@ -42,10 +42,16 @@ type AgentConfig struct {
 }
 
 // Registry is the user-level configuration from ~/.config/atcr/registry.yaml:
-// providers and agents. Personas live as .md files next to it, not in YAML.
+// providers, agents, and optional user-level defaults for the shared review
+// settings (the tier between project config and embedded defaults in the
+// precedence chain). Personas live as .md files next to it, not in YAML.
 type Registry struct {
 	Providers map[string]Provider    `yaml:"providers"`
 	Agents    map[string]AgentConfig `yaml:"agents"`
+
+	PayloadMode string `yaml:"payload_mode,omitempty"`
+	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`
+	FailOn      string `yaml:"fail_on,omitempty"`
 }
 
 // DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
@@ -86,6 +92,9 @@ func LoadRegistry(path string) (*Registry, error) {
 
 // validate checks required fields and reference integrity.
 func (r *Registry) validate() error {
+	if r.TimeoutSecs != nil && *r.TimeoutSecs <= 0 {
+		return errors.New("timeout_secs must be positive")
+	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {
 			return errors.New("providers: provider name must not be empty")

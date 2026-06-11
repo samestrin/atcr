@@ -63,22 +63,10 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("%s: timeout_secs must be positive", base)
 	}
 
-	cfg.applyDefaults()
+	// Absent optional fields stay unset here; embedded defaults are applied
+	// by ResolveSettings so the precedence chain can see what each tier
+	// actually configured.
 	return &cfg, nil
-}
-
-// applyDefaults fills absent optional fields from the embedded defaults.
-func (c *ProjectConfig) applyDefaults() {
-	if c.PayloadMode == "" {
-		c.PayloadMode = DefaultPayloadMode
-	}
-	if c.TimeoutSecs == nil {
-		secs := DefaultTimeoutSecs
-		c.TimeoutSecs = &secs
-	}
-	if c.FailOn == "" {
-		c.FailOn = DefaultFailOn
-	}
 }
 
 // ValidateAgainst checks that every roster entry (parallel and serial lane)

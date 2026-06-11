@@ -417,12 +417,12 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** No CRITICAL/HIGH. All fixed in 1.16 except the AC-mandated error string (kept by design).
 
-### 1.16 [ ] **[Project config loading - REFACTOR](plan/user-stories/02-agent-configuration.md)**
+### 1.16 [x] **[Project config loading - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.15 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 1.17 [ ] **[Precedence resolution - RED](plan/user-stories/02-agent-configuration.md)**
+### 1.17 [x] **[Precedence resolution - RED](plan/user-stories/02-agent-configuration.md)**
    **AC:** [02-03 Precedence and Validation](plan/acceptance-criteria/02-03-precedence-and-validation.md)
    1. Analyze AC, identify testable units
    2. Write tests: each override level tested independently

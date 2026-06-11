@@ -51,16 +51,15 @@ fail_on: MEDIUM
 	assert.Equal(t, "MEDIUM", cfg.FailOn)
 }
 
-func TestProjectConfig_EmbeddedDefaults(t *testing.T) {
+func TestProjectConfig_MinimalRoster(t *testing.T) {
 	cfg, err := LoadProjectConfig(writeProject(t, `
 agents: [bruce]
 `))
 	require.NoError(t, err)
-	assert.Equal(t, "blocks", cfg.PayloadMode, "payload_mode defaults to blocks")
-	require.NotNil(t, cfg.TimeoutSecs)
-	assert.Equal(t, 600, *cfg.TimeoutSecs, "timeout_secs defaults to 600")
-	assert.Equal(t, "HIGH", cfg.FailOn, "fail_on defaults to HIGH")
+	assert.Equal(t, []string{"bruce"}, cfg.Agents)
 	assert.Empty(t, cfg.SerialAgents)
+	// Embedded defaults are applied by ResolveSettings, not at load time —
+	// see TestProjectConfig_AbsentFieldsStayUnset.
 }
 
 func TestProjectConfig_FileNotFound(t *testing.T) {
