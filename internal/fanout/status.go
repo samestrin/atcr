@@ -15,7 +15,11 @@ import (
 // successful HTTP response is StatusOK regardless of content shape —
 // unparseable finding lines are silently skipped at parse time, so an ok agent
 // whose response yielded nothing parseable legitimately records
-// findings_count 0.
+// findings_count 0. StatusTimeout covers both deadline expiry and context
+// cancellation (e.g. a user interrupt): classifyStatus deliberately maps
+// context.Canceled to timeout, so persisted artifacts do not distinguish a
+// cancelled run from an exhausted time budget (documented design decision,
+// sprint-plan Phase 3).
 const (
 	StatusOK      = "ok"
 	StatusFailed  = "failed"
