@@ -24,6 +24,13 @@ const (
 	ConfLow    = "LOW"
 )
 
+// CategoryOutOfScope tags a finding as outside the reviewed change (a
+// pre-existing issue in files mode, out-of-range in diff/blocks mode). Such
+// findings are annotated rather than promoted (AC 06-04): kept in the
+// artifacts, counted in summary.json, listed in a separate report section, and
+// excluded from the severity gate (CountAtOrAbove).
+const CategoryOutOfScope = "out-of-scope"
+
 // Merged is one reconciled finding: a stream.Finding (with Reviewers + Confidence
 // set) plus the severity-disagreement annotation when reviewers disagreed.
 type Merged struct {
@@ -122,11 +129,24 @@ func longestField(group []stream.Finding, sel func(stream.Finding) string) strin
 // alphabetically. Iteration is over sorted keys for determinism, and a non-empty
 // category is preferred over the empty string on a tie so a single
 // empty-category finding cannot hijack the modal result.
+//
+// out-of-scope is fail-closed: it wins only when EVERY finding in the group
+// carries it. Any other value present (even one reviewer's) excludes
+// out-of-scope from the vote, so a duplicate-majority cannot silently drop the
+// real category and un-gate the finding.
 func modalCategory(group []stream.Finding) string {
 	counts := map[string]int{}
+	allOutOfScope := true
 	for _, f := range group {
 		counts[f.Category]++
+		if f.Category != CategoryOutOfScope {
+			allOutOfScope = false
+		}
 	}
+	if allOutOfScope {
+		return CategoryOutOfScope
+	}
+	delete(counts, CategoryOutOfScope)
 	cats := make([]string, 0, len(counts))
 	for cat := range counts {
 		cats = append(cats, cat)

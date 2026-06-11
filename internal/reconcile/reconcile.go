@@ -40,6 +40,9 @@ type Summary struct {
 	// AmbiguousHash digests the emitted ambiguous.json bytes (TD-024); the
 	// Skill copies it verbatim into adjudication.json as baseline_hash.
 	AmbiguousHash string `json:"ambiguous_hash"`
+	// OutOfScope counts findings annotated out-of-scope (AC 06-04): kept in
+	// the artifacts but excluded from the severity gate.
+	OutOfScope    int    `json:"out_of_scope"`
 	TotalFindings int    `json:"total_findings"`
 	ReconciledAt  string `json:"reconciled_at"`
 }
@@ -72,6 +75,12 @@ func Reconcile(sources []Source, opts Options) Result {
 	}
 	sortMerged(merged)
 	skipped := skippedSourceFiles(sources)
+	outOfScope := 0
+	for _, m := range merged {
+		if m.Category == CategoryOutOfScope {
+			outOfScope++
+		}
+	}
 
 	return Result{
 		Findings:  merged,
@@ -85,6 +94,7 @@ func Reconcile(sources []Source, opts Options) Result {
 			SkippedSources:        skipped,
 			SkippedSourceCount:    len(skipped),
 			AmbiguousHash:         AmbiguousHash(ambiguous),
+			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
 		},

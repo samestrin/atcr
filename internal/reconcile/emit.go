@@ -117,10 +117,23 @@ func RenderJSON(w io.Writer, r Result) error {
 }
 
 // RenderMarkdown writes the human report.md: an executive summary (counts by
-// severity x confidence) followed by findings grouped by severity. Free text is
-// HTML-escaped and file paths are rendered in backtick code spans so neither
-// raw HTML nor markdown injection survives (AC 01-06 Security).
+// severity x confidence) followed by findings grouped by severity. Findings
+// annotated out-of-scope are listed in their own section (AC 06-04) — they do
+// not gate, so mixing them into the main list (or the summary table) would
+// misread as gate-relevant. Free text is HTML-escaped and file paths are
+// rendered in backtick code spans so neither raw HTML nor markdown injection
+// survives (AC 01-06 Security).
 func RenderMarkdown(w io.Writer, r Result) error {
+	inScope := make([]Merged, 0, len(r.Findings))
+	var outOfScope []Merged
+	for _, m := range r.Findings {
+		if m.Category == CategoryOutOfScope {
+			outOfScope = append(outOfScope, m)
+		} else {
+			inScope = append(inScope, m)
+		}
+	}
+
 	var b bytes.Buffer
 	b.WriteString("# atcr Reconciled Review\n\n")
 
@@ -129,11 +142,14 @@ func RenderMarkdown(w io.Writer, r Result) error {
 	fmt.Fprintf(&b, "- Sources: %s\n", joinOrNone(r.Summary.SourcesScanned))
 	fmt.Fprintf(&b, "- Clusters collapsed: %d\n", r.Summary.ClustersCollapsed)
 	fmt.Fprintf(&b, "- Severity disagreements: %d\n", r.Summary.SeverityDisagreements)
+	if len(outOfScope) > 0 {
+		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))
+	}
 	if r.Summary.Partial {
 		b.WriteString("- Partial: yes (a source was missing or unreadable)\n")
 	}
 	b.WriteString("\n")
-	writeSeverityConfidenceTable(&b, r.Findings)
+	writeSeverityConfidenceTable(&b, inScope)
 
 	if len(r.Findings) == 0 {
 		b.WriteString("\nNo findings.\n")
@@ -141,28 +157,40 @@ func RenderMarkdown(w io.Writer, r Result) error {
 		return err
 	}
 
-	b.WriteString("\n## Findings\n")
-	lastSev := ""
-	for _, m := range r.Findings {
-		if m.Severity != lastSev {
-			fmt.Fprintf(&b, "\n### %s\n\n", esc(m.Severity))
-			lastSev = m.Severity
-		}
-		fmt.Fprintf(&b, "- %s — confidence %s, reviewers: %s\n",
-			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
-		if m.Disagreement != "" {
-			fmt.Fprintf(&b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
-		}
-		fmt.Fprintf(&b, "  - Problem: %s\n", esc(m.Problem))
-		if m.Fix != "" {
-			fmt.Fprintf(&b, "  - Fix: %s\n", esc(m.Fix))
-		}
-		if m.Evidence != "" {
-			fmt.Fprintf(&b, "  - Evidence: %s\n", esc(m.Evidence))
-		}
+	if len(inScope) > 0 {
+		b.WriteString("\n## Findings\n")
+		writeFindingsList(&b, inScope)
+	}
+	if len(outOfScope) > 0 {
+		b.WriteString("\n## Out-of-Scope Findings\n\nPre-existing issues outside the reviewed change — annotated for the record, excluded from the severity gate.\n")
+		writeFindingsList(&b, outOfScope)
 	}
 	_, err := w.Write(b.Bytes())
 	return err
+}
+
+// writeFindingsList renders findings grouped by severity heading, in the order
+// given (the caller passes sortMerged-ordered slices).
+func writeFindingsList(b *bytes.Buffer, findings []Merged) {
+	lastSev := ""
+	for _, m := range findings {
+		if m.Severity != lastSev {
+			fmt.Fprintf(b, "\n### %s\n\n", esc(m.Severity))
+			lastSev = m.Severity
+		}
+		fmt.Fprintf(b, "- %s — confidence %s, reviewers: %s\n",
+			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
+		if m.Disagreement != "" {
+			fmt.Fprintf(b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
+		}
+		fmt.Fprintf(b, "  - Problem: %s\n", esc(m.Problem))
+		if m.Fix != "" {
+			fmt.Fprintf(b, "  - Fix: %s\n", esc(m.Fix))
+		}
+		if m.Evidence != "" {
+			fmt.Fprintf(b, "  - Evidence: %s\n", esc(m.Evidence))
+		}
+	}
 }
 
 // writeSeverityConfidenceTable writes the counts-by-severity x confidence grid.

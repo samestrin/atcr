@@ -51,9 +51,15 @@ func AtOrAbove(severity, threshold string) bool {
 // threshold must be a canonical severity (validated via ParseSeverity). The
 // ordering is CRITICAL > HIGH > MEDIUM > LOW, so --fail-on HIGH counts HIGH and
 // CRITICAL. This is the pure helper the centralized exit-code logic uses.
+// Findings annotated out-of-scope never count (AC 06-04): a pre-existing
+// CRITICAL the change never touched must not fail CI; the annotation and the
+// summary.json out_of_scope count are the audit trail.
 func CountAtOrAbove(findings []Merged, threshold string) int {
 	n := 0
 	for _, f := range findings {
+		if f.Category == CategoryOutOfScope {
+			continue
+		}
 		if AtOrAbove(f.Severity, threshold) {
 			n++
 		}
