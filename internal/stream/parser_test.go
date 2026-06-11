@@ -76,6 +76,21 @@ func TestParser_UnknownVersion(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnknownVersion)
 }
 
+func TestParser_VersionTokenExact(t *testing.T) {
+	// A well-formed-but-unsupported version token is ErrUnknownVersion; a
+	// garbage header that merely shares the prefix is ErrMissingHeader, so a
+	// consumer can tell the two apart (TD-014).
+	_, err := ParseSource([]byte("# atcr-findings/v10\nLOW|a.go:1|p|f|c|5|e|bruce\n"))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownVersion)
+
+	for _, header := range []string{"# atcr-findings/v1x", "# atcr-findings/v1.2", "# atcr-findings/"} {
+		_, err := ParseSource([]byte(header + "\nLOW|a.go:1|p|f|c|5|e|bruce\n"))
+		require.Error(t, err, header)
+		assert.ErrorIs(t, err, ErrMissingHeader, header)
+	}
+}
+
 func TestParser_EmptyFindings(t *testing.T) {
 	data := "# atcr-findings/v1\n"
 	res, err := ParseSource([]byte(data))
