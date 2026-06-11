@@ -52,17 +52,12 @@ func validateRange(g *gitRunner, base, head string) error {
 	return g.verifyRef(head, "head")
 }
 
-// BuildDiff returns the unified diff of base..head, verbatim (no trimming).
+// BuildDiff returns the per-file unified diffs of base..head joined in
+// changed-file order — byte-identical to the entries path (binary files
+// appear as one-line markers, not raw binary-diff lines) so flat and
+// persisted payload artifacts never diverge.
 func BuildDiff(ctx context.Context, repo, base, head string) (string, error) {
-	g := &gitRunner{ctx: ctx, dir: repo}
-	if err := validateRange(g, base, head); err != nil {
-		return "", err
-	}
-	out, err := g.output("diff", base+".."+head)
-	if err != nil {
-		return "", fmt.Errorf("git diff failed: %w", err)
-	}
-	return string(out), nil
+	return joinEntries(BuildEntries(ctx, ModeDiff, repo, base, head))
 }
 
 // BuildBlocks returns changed hunks expanded to enclosing functions via
@@ -84,10 +79,8 @@ func BuildFiles(ctx context.Context, repo, base, head string) (string, error) {
 // BuildEntries returns the per-file payload contributions for mode. This is the
 // bridge between the builders and the byte-budget pass: callers feed these
 // entries to ApplyByteBudget, derive the changed-file count from len(entries),
-// and record per-file truncation in status.json. Build/BuildBlocks/BuildFiles
-// join these for the flat string form. (BuildDiff is the verbatim whole-range
-// diff; BuildEntries with ModeDiff produces an equivalent per-file split so the
-// budget can drop individual files.)
+// and record per-file truncation in status.json. The flat Build* entry points
+// all join these entries, so both forms are byte-identical by construction.
 func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string) ([]FileEntry, error) {
 	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
 		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
