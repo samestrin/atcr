@@ -111,6 +111,23 @@ func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string
 	return entries, nil
 }
 
+// ChangedFileCount returns the number of files changed in base..head from a
+// single `git diff --name-status` call — the cheap pre-flight counterpart to
+// BuildEntries, which materializes every per-file diff body just to be counted.
+// Rename detection (-M) matches changedFiles, so the count equals
+// len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
+func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
+	g := &gitRunner{ctx: ctx, dir: repo}
+	if err := validateRange(g, base, head); err != nil {
+		return 0, err
+	}
+	files, err := g.changedFiles(base, head)
+	if err != nil {
+		return 0, err
+	}
+	return len(files), nil
+}
+
 // fileBody renders one changed file's contribution for mode, including the
 // trailing newline so concatenating bodies reproduces the flat payload.
 func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile) (string, error) {

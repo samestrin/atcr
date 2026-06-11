@@ -319,14 +319,11 @@ func validateRangeArgs(base, head, mergeCommit string) error {
 	return nil
 }
 
-// changedFileCount counts the changed files in base..head by building the diff
-// entries (one per file) via the same payload package the fan-out uses.
+// changedFileCount counts the changed files in base..head via the payload
+// package's single name-status call — atcr_range is a cheap pre-flight, so it
+// must not materialize per-file diff bodies just to count them.
 func changedFileCount(ctx context.Context, root, base, head string) (int, error) {
-	entries, err := payload.BuildEntries(ctx, payload.ModeDiff, root, base, head)
-	if err != nil {
-		return 0, err
-	}
-	return len(entries), nil
+	return payload.ChangedFileCount(ctx, root, base, head)
 }
 
 // rangeError maps a resolution failure to a client-facing error, surfacing the
