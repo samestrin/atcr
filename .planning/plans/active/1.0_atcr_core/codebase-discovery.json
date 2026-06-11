@@ -1,0 +1,600 @@
+{
+  "generated": "2026-06-10",
+  "refined": "2026-06-10",
+  "discovery_method": "specification_review_and_codebase_audit",
+  "greenfield": true,
+  "keywords_searched": [
+    "atcr",
+    "mcp",
+    "code review",
+    "reconciler",
+    "fan-out",
+    "payload",
+    "findings",
+    "persona",
+    "gitrange",
+    "registry",
+    "atcr-findings/v1"
+  ],
+  "match_count": 0,
+  "build_from": {
+    "primary_file": null,
+    "reason": "Greenfield project - no Go implementation exists yet. All source files are pending creation in tasks 1-13 of the plan.",
+    "suggested_approach": "Build from scratch following the epic plan architecture. The plan references two out-of-repo codebases (~/Documents/GitHub/llm-tools and ~/Documents/GitHub/claude-prompts) as conceptual reference only - they are NOT to be imported or vendored."
+  },
+  "existing_patterns": [
+    {
+      "file": ".planning/specifications/coding-standards.md",
+      "lines": "1-57",
+      "pattern": "Go coding standards: package naming (lowercase, single-word), receiver names (1-3 letters), error wrapping with fmt.Errorf %w, context.Context as first param, table-driven tests, *_test.go co-location",
+      "applies_to": [
+        "cmd/atcr/main.go",
+        "internal/gitrange/resolver.go",
+        "internal/payload/builder.go",
+        "internal/registry/config.go",
+        "internal/llmclient/client.go",
+        "internal/fanout/engine.go",
+        "internal/stream/parser.go",
+        "internal/reconcile/merger.go",
+        "internal/report/renderer.go",
+        "internal/mcp/server.go"
+      ],
+      "source": "project_spec"
+    },
+    {
+      "file": ".planning/specifications/implementation-standards.md",
+      "lines": "1-69",
+      "pattern": "Architecture: black-box interfaces, single responsibility modules, primitive-first design. Anti-patterns: leaky abstractions, god objects, hidden side effects. Go-specific: panic safety in goroutines, defer cleanup, robust JSON-RPC error handling for MCP.",
+      "applies_to": "all internal/ packages"
+    },
+    {
+      "file": ".planning/specifications/packages/cobra.md",
+      "lines": "97-103",
+      "pattern": "Use cobra.Command with RunE (returns error), ExecuteContext for global timeout propagation, MarkFlagsMutuallyExclusive for --base/--merge-commit, exit-code logic centralized in main(). Root command name: 'atcr'.",
+      "applies_to": "cmd/atcr/main.go"
+    },
+    {
+      "file": ".planning/specifications/packages/mcp-go-sdk.md",
+      "lines": "86-93",
+      "pattern": "Generic mcp.AddTool with typed args/result for schema inference; one engine, thin handlers; InMemoryTransport for tests; honor ctx in handlers; stderr-only output in serve mode (stdio owns stdout).",
+      "applies_to": "internal/mcp/server.go"
+    },
+    {
+      "file": ".planning/specifications/packages/yaml-v3.md",
+      "lines": "39-65",
+      "pattern": "Always decode with NewDecoder().KnownFields(true) for strict config parsing. Use yaml.Marshal/Unmarshal for whole-doc round-trip; goccy/go-yaml is NOT needed.",
+      "applies_to": "internal/registry/config.go"
+    },
+    {
+      "file": ".planning/specifications/packages/standard-library.md",
+      "lines": "8-78",
+      "pattern": "net/http+encoding/json for OpenAI-compatible client (POST ${base_url}/chat/completions); os/exec for git (CommandContext, no shell -c); text/template for persona prompts (never html/template); context+sync for fan-out (sync.WaitGroup must drain on cancel); testing+httptest for provider mocks (httptest.NewServer with atomic.Int32 for concurrency verification).",
+      "applies_to": [
+        "internal/llmclient/client.go",
+        "internal/gitrange/resolver.go",
+        "internal/fanout/engine.go",
+        "internal/payload/builder.go"
+      ]
+    },
+    {
+      "file": ".planning/specifications/git-strategy.md",
+      "lines": "1-37",
+      "pattern": "GitHub Flow / Trunk-Based: feature/* branches off main, Conventional Commits (feat/fix/docs/style/refactor/test/chore), squash-merge, <400 lines per PR, CI gates merge.",
+      "applies_to": "sprint workflow (informational)"
+    },
+    {
+      "file": ".planning/specifications/packages/registry.yaml",
+      "lines": "1-33",
+      "pattern": "Pinned versions: cobra v1.10.2, yaml.v3 v3.0.1, modelcontextprotocol/go-sdk v1.6.1. Tier: cobra=critical, yaml.v3=important, go-sdk=critical.",
+      "applies_to": "go.mod"
+    }
+  ],
+  "related_files": [
+    {
+      "path": "README.md",
+      "relevance": "high",
+      "purpose": "Project overview — currently documents the OLD structure (cmd/atcr-mcp/, pkg/, skill/ with skill.yaml). Plan calls for a complete rewrite around panel+reconcile architecture.",
+      "likely_modification": "rewrite",
+      "status_note": "current README references 'Go 1.21' and binary name 'atcr-mcp' — both outdated by the v1 plan"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "relevance": "low",
+      "purpose": "Currently empty placeholder. Will be populated as v1 ships.",
+      "likely_modification": "populate"
+    },
+    {
+      "path": ".gitignore",
+      "relevance": "medium",
+      "purpose": "Existing .gitignore should be checked for: /bin/, /atcr, .atcr/, coverage.out, .DS_Store entries",
+      "likely_modification": "verify_and_extend"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "relevance": "high",
+      "purpose": "CI pipeline currently uses Go 1.21, builds cmd/atcr-mcp/. Plan requires Go 1.24+ and binary path cmd/atcr/.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": ".planning/specifications/coding-standards.md",
+      "relevance": "high",
+      "purpose": "Authoritative Go coding standards — must be followed across all created files",
+      "likely_modification": "reference_only"
+    },
+    {
+      "path": ".planning/specifications/implementation-standards.md",
+      "relevance": "high",
+      "purpose": "Architecture principles (black-box, single responsibility, primitive-first) — drive package design",
+      "likely_modification": "reference_only"
+    },
+    {
+      "path": ".planning/specifications/packages/registry.yaml",
+      "relevance": "high",
+      "purpose": "Pinned dependency versions (cobra v1.10.2, yaml.v3 v3.0.1, mcp-go-sdk v1.6.1)",
+      "likely_modification": "reference_only"
+    },
+    {
+      "path": ".planning/specifications/packages/cobra.md",
+      "relevance": "high",
+      "purpose": "cobra usage patterns, integration notes for atcr",
+      "likely_modification": "reference_only"
+    },
+    {
+      "path": ".planning/specifications/packages/mcp-go-sdk.md",
+      "relevance": "high",
+      "purpose": "MCP SDK usage patterns, InMemoryTransport for tests, stderr discipline",
+      "likely_modification": "reference_only"
+    },
+    {
+      "path": ".planning/specifications/packages/yaml-v3.md",
+      "relevance": "high",
+      "purpose": "YAML parsing patterns, KnownFields(true) strict mode",
+      "likely_modification": "reference_only"
+    },
+    {
+      "path": ".planning/specifications/packages/standard-library.md",
+      "relevance": "high",
+      "purpose": "stdlib package assignments (net/http, os/exec, text/template, context, testing)",
+      "likely_modification": "reference_only"
+    }
+  ],
+  "integration_points": [
+    {
+      "name": "OpenAI-compatible LLM APIs",
+      "description": "All provider interaction via POST ${base_url}/chat/completions. Auth via Authorization: Bearer ${api_key_env} at invoke time. No provider-specific SDKs.",
+      "files": ["internal/llmclient/client.go", "internal/registry/config.go"],
+      "configuration": "~/.config/atcr/registry.yaml providers section"
+    },
+    {
+      "name": "Git",
+      "description": "Range resolution, diff, function-context, default-branch detection, shallow-clone guard. All via os/exec (no go-git). CommandContext for cancellation safety.",
+      "files": ["internal/gitrange/resolver.go", "internal/payload/builder.go"],
+      "commands_used": [
+        "git rev-parse",
+        "git symbolic-ref",
+        "git merge-base",
+        "git rev-list --count",
+        "git diff base..head",
+        "git diff --function-context",
+        "git rev-parse --is-shallow-repository"
+      ]
+    },
+    {
+      "name": "MCP stdio transport",
+      "description": "StdioTransport is the only v1 transport for atcr serve. stdout is owned by the protocol; all human/log output in serve mode goes to stderr.",
+      "files": ["internal/mcp/server.go", "cmd/atcr/main.go"]
+    },
+    {
+      "name": "Filesystem (review directory)",
+      "description": "All output goes to .atcr/reviews/<id>/ with manifest.json, payload/, sources/{pool,host}/, reconciled/. sources/ is an open extension point: any child containing findings.txt is a reconcile source.",
+      "files": [
+        "internal/fanout/engine.go",
+        "internal/reconcile/merger.go",
+        "internal/report/renderer.go"
+      ],
+      "anchor": "atcr review creates .atcr/reviews/<id>/ and writes id to .atcr/latest; atcr reconcile/report default to .atcr/latest"
+    },
+    {
+      "name": "Filesystem (config)",
+      "description": "Two-tier: ~/.config/atcr/registry.yaml (user-level: providers + agents) and .atcr/config.yaml (project-level: roster, payload mode, timeouts, fail-on). Precedence: CLI flag > project config > registry > embedded default.",
+      "files": ["internal/registry/config.go"]
+    },
+    {
+      "name": "Agent Skill (orchestrator)",
+      "description": "skill/SKILL.md runs host-model review (writes sources/host/findings.txt in v1 format) and orchestrates atcr range -> atcr review -> atcr reconcile. Optional: adjudicate ambiguous.json clusters.",
+      "files": ["skill/SKILL.md"],
+      "constraint": "no sprint knowledge; input is git range/branch/PR; output is the review directory"
+    },
+    {
+      "name": "CI gate (exit codes)",
+      "description": "atcr reconcile --fail-on <severity> returns nonzero when any finding at/above threshold survives reconciliation. Enables PR gate with no glue code.",
+      "files": ["cmd/atcr/main.go", "internal/reconcile/merger.go"]
+    }
+  ],
+  "reusable_components": [],
+  "architecture_notes": [
+    "Greenfield Go project — no existing Go source. Plan calls for fresh rewrite informed by (but not extracting from) llm-tools and claude-prompts which live in different repos.",
+    "Target architecture: single Go binary (CLI + MCP server over one engine) + Agent Skill. No logic forks between CLI and MCP handlers.",
+    "Go module import path (from coding-standards): github.com/samestrin/atcr/. Internal packages at internal/{gitrange,payload,registry,llmclient,fanout,stream,reconcile,report,mcp}.",
+    "Dependency tree MUST stay small per epic constraint: cobra, yaml.v3, mcp-go-sdk, testify (recommended). Everything else is stdlib (net/http, encoding/json, os/exec, text/template, context, sync, testing, httptest, log/slog).",
+    "Go version 1.24+. Pinned versions per .planning/specifications/packages/registry.yaml: cobra v1.10.2, yaml.v3 v3.0.1, mcp-go-sdk v1.6.1.",
+    "NAMING DISCREPANCY: existing .planning/.config/config.yaml and .github/workflows/ci.yml reference 'cmd/atcr-mcp/' and binary 'atcr-mcp'. The v1 plan calls for 'cmd/atcr/' and binary 'atcr'. Sprint task 1 must reconcile: rename to cmd/atcr/ or keep cmd/atcr-mcp/. RECOMMENDATION: align to 'atcr' per the plan; the older 'atcr-mcp' references are pre-plan residue.",
+    "CI workflow uses Go 1.21 — must be updated to 1.24+. golangci-lint-action pinned to v1.59, golangci-lint-action@v6 — verify compatibility with Go 1.24.",
+    "Findings format is the public contract: pipe-delimited, versioned (atcr-findings/v1), 8 cols per-source, 9 cols reconciled. Strict severity-prefix regex for extraction. This format will be documented in docs/findings-format.md (task 13).",
+    "Six embedded personas installed editable via `atcr init`: bruce (generalist/correctness), greta (algorithmic correctness), kai (architecture/design fit), mira (production feasibility), dax (test coverage/error paths), otto (style/readability/idiom). Persona prompts are text/templates with payload vars.",
+    "Three payload modes: blocks (default, --function-context expansion for small models), diff (unified diff, most compact for large ranges), files (full head content with changed regions marked). Per-agent override in registry.yaml; one run can mix; manifest.json records who saw what.",
+    "Reconciler is the net-new core: deterministic Go pipeline (discover -> normalize -> cluster by FILE+LINE±3 -> dedupe via token-set similarity -> merge with REVIEWERS joined, SEVERITY max, PROBLEM/FIX longest, CATEGORY modal -> confidence HIGH=2+ reviewers, MEDIUM=single -> emit). ambiguous.json sidecar for gray-zone clusters (conservative unmerged default).",
+    "Range resolution decision tree: explicit --base/--head -> --merge-commit SHA (base=SHA^, head=SHA) -> auto (merge-base against origin/HEAD -> origin/main -> origin/master -> local main -> local master). Empty range is HARD ERROR before any provider call. Shallow clone produces guidance to run git fetch --unshallow.",
+    "Fan-out has parallel lane (default) and serial lane (rate_limited: true agents), fallback chain validated at load time (dangling + cycle = error). Partial-success semantics: error only if ALL agents fail. status.json per agent (ok | failed | timeout).",
+    "Test framework: testify (assert/require/mock/suite) per .planning/specifications/coding-standards.md. httptest.NewServer for provider mocks with atomic.Int32 high-water mark for concurrency verification. Table-driven tests with t.Run subtests. t.TempDir for review-dir fixtures. Fixture git repos built with os/exec in test helpers.",
+    "Test coverage target: ≥70% per plan success criteria. Combined coverage enabled in .planning/.config/config.yaml.",
+    "All cross-stage handoffs are machine-parseable files on disk (manifest.json, findings.txt, findings.json, summary.json, ambiguous.json). No implicit in-memory coupling between stages.",
+    "Source discovery is open: any child of sources/ containing findings.txt is a reconcile source. CI tools and the Skill can drop sources/<name>/findings.txt and reconcile picks it up with zero config. reconciled/ is output, never input.",
+    "No filesystem writes outside the review directory and config locations (per epic technical constraints)."
+  ],
+  "files_to_modify": [
+    {
+      "path": "README.md",
+      "reason": "Full rewrite: replace pre-plan content (cmd/atcr-mcp/, pkg/, skill.yaml) with v1 architecture (panel + reconcile). Document 6 CLI commands, MCP tools, Skill, findings format v1, payload modes. Include payload-mode guidance: blocks=default for small models, diff=most compact for large ranges, files=audit-style. Note Go 1.24+.",
+      "scope": "major"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "reason": "Update go-version from 1.21 to 1.24, update build command from cmd/atcr-mcp to cmd/atcr (or document the chosen name). Verify golangci-lint-action v1.59 compatibility with Go 1.24.",
+      "scope": "minor"
+    },
+    {
+      "path": ".gitignore",
+      "reason": "AUDIT COMPLETE (2026-06-10): Already covers bin/, *.exe, *.so, *.dylib, *.out, *.cover, *.test, coverage.html, coverage.txt, .DS_Store, IDE files, .planning/.temp/, .planning/.memory/. Gaps: (1) does NOT cover '.atcr/' — review directories with potentially large payloads could be committed; (2) does NOT list 'atcr' as a build artifact (only 'atcr-mcp' and 'atcr-mcp-ssee' which are pre-plan names). Add '.atcr/' and either rename to 'atcr' or add 'atcr' alongside the legacy names.",
+      "scope": "minor"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "reason": "Currently empty. Add v1.0.0 entry on first release. Use Keep-a-Changelog format.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "go.mod",
+      "purpose": "Go module: module github.com/samestrin/atcr, go 1.24. Pinned: cobra v1.10.2, yaml.v3 v3.0.1, mcp-go-sdk v1.6.1, testify (latest stable).",
+      "based_on": ".planning/specifications/packages/registry.yaml"
+    },
+    {
+      "path": "go.sum",
+      "purpose": "Go module checksums (generated by go mod tidy).",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "purpose": "CLI entry point. Root command 'atcr' with subcommands: review, reconcile, report, range, init, serve. Centralized exit-code logic in main() for --fail-on CI gate. ExecuteContext for global timeout propagation.",
+      "based_on": ".planning/specifications/packages/cobra.md (RunE, ExecuteContext, MarkFlagsMutuallyExclusive patterns)"
+    },
+    {
+      "path": "cmd/atcr/review.go",
+      "purpose": "Cobra command: atcr review [--id] [--base X --head Y | --merge-commit SHA]. Calls fanout engine. Manages .atcr/latest pointer.",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/reconcile.go",
+      "purpose": "Cobra command: atcr reconcile [id-or-path]. Calls reconciler. Supports --fail-on <severity>.",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/report.go",
+      "purpose": "Cobra command: atcr report [id-or-path] --format md|json|checklist.",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/range.go",
+      "purpose": "Cobra command: atcr range [--base X --head Y | --merge-commit SHA]. Pre-flight: prints resolution JSON.",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/init.go",
+      "purpose": "Cobra command: atcr init. Writes .atcr/config.yaml and editable persona files from embedded defaults.",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/serve.go",
+      "purpose": "Cobra command: atcr serve. Wraps internal/mcp server in StdioTransport. stderr-only human output.",
+      "based_on": null
+    },
+    {
+      "path": "internal/gitrange/resolver.go",
+      "purpose": "Decision tree: explicit --base/--head -> --merge-commit SHA (base=SHA^) -> auto (merge-base against origin/HEAD -> origin/main -> origin/master -> local main -> local master). Default-branch detection, empty-range HARD ERROR, shallow-clone guard with guidance text. Exposes Resolve() and Resolution JSON.",
+      "based_on": ".planning/specifications/packages/standard-library.md (os/exec patterns)"
+    },
+    {
+      "path": "internal/gitrange/resolver_test.go",
+      "purpose": "Table-driven tests for all decision-tree branches. t.TempDir fixture git repos built with os/exec.",
+      "based_on": null
+    },
+    {
+      "path": "internal/payload/builder.go",
+      "purpose": "Three builders: diff (unified diff), blocks (git diff --function-context expansion), files (full head content with changed regions marked). Byte budgets with deterministic truncation (drop whole files by size rank). Records truncation in agent's status.json — never silent. Payload template vars.",
+      "based_on": null
+    },
+    {
+      "path": "internal/payload/builder_test.go",
+      "purpose": "Edge cases: no-brace languages, generated files, renames, binary files, function-context fallback to plain -U<n> context diff.",
+      "based_on": null
+    },
+    {
+      "path": "internal/registry/config.go",
+      "purpose": "Two-tier loader: ~/.config/atcr/registry.yaml (providers + agents) and .atcr/config.yaml (roster, payload mode, timeouts, fail-on). Precedence chain. yaml.v3 Decoder with KnownFields(true) strict mode. Fallback-chain validation (dangling + cycle = error). Embedded provider defaults.",
+      "based_on": ".planning/specifications/packages/yaml-v3.md (KnownFields pattern)"
+    },
+    {
+      "path": "internal/registry/config_test.go",
+      "purpose": "Strict-mode catches typos, precedence chain, fallback chain cycle/dangling detection.",
+      "based_on": null
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "purpose": "OpenAI-compatible chat client. net/http POST ${base_url}/chat/completions with Authorization Bearer header. Retry on 429/500/502/503/504 with ~500ms initial delay and 1.5x backoff. Per-agent temperature/timeout. API key resolved from env var at invoke time.",
+      "based_on": ".planning/specifications/packages/standard-library.md (net/http+encoding/json section)"
+    },
+    {
+      "path": "internal/llmclient/client_test.go",
+      "purpose": "httptest.NewServer provider mocks. 429-then-200 retry, persistent 500, timeout via handler sleep past deadline.",
+      "based_on": null
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "purpose": "Parallel lane (sync.WaitGroup, must drain on cancel) + serial lane (rate_limited: true, ctx check before each invocation). Fallback chain. Global-timeout context with per-agent derived timeouts. Partial-success semantics: error only if all agents fail. Per-agent status.json (ok|failed|timeout). Pool findings.txt merge. summary.json. Manifest + latest pointer management.",
+      "based_on": ".planning/specifications/packages/standard-library.md (context+sync section)"
+    },
+    {
+      "path": "internal/fanout/engine_test.go",
+      "purpose": "httptest.NewServer with atomic.Int32 high-water mark for parallelism verification. Fallback invocation, timeout, partial success, agent-name sanitization against path traversal.",
+      "based_on": null
+    },
+    {
+      "path": "internal/stream/parser.go",
+      "purpose": "Findings v1 spec parser/writer shared by fan-out and reconcile. Strict severity-prefix regex extraction (^(CRITICAL|HIGH|MEDIUM|LOW)\\|). Escape literal | to /. Pad short rows to full column count. Per-source 8 cols, reconciled 9 cols.",
+      "based_on": null
+    },
+    {
+      "path": "internal/stream/parser_test.go",
+      "purpose": "Table-driven tests: extraction, escape, pad, parse round-trip, prose-mention exclusion.",
+      "based_on": null
+    },
+    {
+      "path": "internal/reconcile/merger.go",
+      "purpose": "Deterministic reconciler pipeline: discover sources -> normalize (tolerate short rows) -> cluster by (FILE, LINE ± 3) -> dedupe via normalized PROBLEM token-set similarity with threshold -> merge (REVIEWERS joined, SEVERITY max with disagreement annotation, PROBLEM/FIX longest, CATEGORY modal, EST_MINUTES max) -> confidence (HIGH=2+ distinct reviewers, MEDIUM=single, LOW reserved for untrusted) -> emit findings.txt (9-col), findings.json, report.md, summary.json, ambiguous.json sidecar.",
+      "based_on": null
+    },
+    {
+      "path": "internal/reconcile/merger_test.go",
+      "purpose": "Clustering, dedupe similarity threshold, merge rules, confidence scoring, disagreement annotation, ambiguous sidecar generation, --fail-on exit-code mapping.",
+      "based_on": null
+    },
+    {
+      "path": "internal/report/renderer.go",
+      "purpose": "Three renderers over findings.json: md (executive summary + severity-grouped findings with problem/fix/evidence/reviewers/disagreements), json (raw), checklist (render-only markdown table, no persistence).",
+      "based_on": null
+    },
+    {
+      "path": "internal/report/renderer_test.go",
+      "purpose": "All three renderers over a shared fixture findings.json. Verify counts by severity × confidence and panel table.",
+      "based_on": null
+    },
+    {
+      "path": "internal/mcp/server.go",
+      "purpose": "MCP stdio server using modelcontextprotocol/go-sdk. Generic mcp.AddTool with typed args/result. Tools: atcr_review, atcr_reconcile, atcr_report, atcr_range, atcr_status. Thin handlers call the same internal packages as CLI commands (no logic in handlers). Stderr-only human output.",
+      "based_on": ".planning/specifications/packages/mcp-go-sdk.md (generic AddTool, InMemoryTransport, stderr discipline)"
+    },
+    {
+      "path": "internal/mcp/server_test.go",
+      "purpose": "InMemoryTransport integration tests — call each tool, verify typed result, verify stderr isolation.",
+      "based_on": null
+    },
+    {
+      "path": "skill/SKILL.md",
+      "purpose": "Agent Skill: SKILL.md with installation in .claude/skills/atcr/. Host review (writes sources/host/{review.md, findings.txt} in v1 format). Orchestration loop: atcr range -> atcr review (background, polled) -> host review -> atcr reconcile -> present report.md. Optional ambiguous.json adjudication and re-invoke merge. No sprint knowledge — input is git range/branch/PR, output is the review directory.",
+      "based_on": null
+    },
+    {
+      "path": "personas/bruce.md",
+      "purpose": "Embedded persona: generalist / correctness. text/template with payload vars.",
+      "based_on": null
+    },
+    {
+      "path": "personas/greta.md",
+      "purpose": "Embedded persona: algorithmic correctness.",
+      "based_on": null
+    },
+    {
+      "path": "personas/kai.md",
+      "purpose": "Embedded persona: architecture / design fit.",
+      "based_on": null
+    },
+    {
+      "path": "personas/mira.md",
+      "purpose": "Embedded persona: production feasibility.",
+      "based_on": null
+    },
+    {
+      "path": "personas/dax.md",
+      "purpose": "Embedded persona: test coverage / error paths.",
+      "based_on": null
+    },
+    {
+      "path": "personas/otto.md",
+      "purpose": "Embedded persona: style / readability / idiom.",
+      "based_on": null
+    },
+    {
+      "path": "personas/_base.md",
+      "purpose": "Base persona template (resolution-chain fallback after agent.md, before embedded).",
+      "based_on": null
+    },
+    {
+      "path": "docs/findings-format.md",
+      "purpose": "Versioned spec for atcr-findings/v1. Columns, escaping rules, extraction regex, version-header policy (additive-only evolution).",
+      "based_on": null
+    },
+    {
+      "path": "docs/registry.md",
+      "purpose": "Configuration reference: registry.yaml schema (providers, agents, fallback, rate_limited, payload, temperature, timeout_secs), .atcr/config.yaml schema, precedence rules, fallback-chain validation.",
+      "based_on": null
+    },
+    {
+      "path": "docs/payload-modes.md",
+      "purpose": "Diff vs blocks vs files guidance: when to use each, token cost trade-offs, persona scope rules per mode, per-agent overrides, byte budget behavior.",
+      "based_on": null
+    },
+    {
+      "path": ".golangci.yml",
+      "purpose": "golangci-lint config aligned with coding-standards.md (staticcheck + errcheck enabled).",
+      "based_on": null
+    },
+    {
+      "path": "examples/ci-gate.sh",
+      "purpose": "Example CI gate script: atcr reconcile --fail-on HIGH, block PR merge on nonzero exit.",
+      "based_on": null
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Naming reconciliation: cmd/atcr-mcp/ vs cmd/atcr/",
+      "description": ".planning/.config/config.yaml (build command), .github/workflows/ci.yml (build step when go.mod exists), AND .gitignore (lines 3-4, lists 'atcr-mcp' and 'atcr-mcp-ssee' as build artifacts) reference 'atcr-mcp'. The v1 plan calls for cmd/atcr/ and binary 'atcr'. Sprint task 1 must pick one. RECOMMENDATION: align to 'atcr' (plan is authoritative for v1) and update the planning config, CI, and .gitignore in the same task. Note: .gitignore already has 'bin/' which catches the binary if it's built into bin/.",
+      "files_affected": [
+        ".planning/.config/config.yaml",
+        ".github/workflows/ci.yml",
+        ".gitignore",
+        "go.mod (module path uses /atcr regardless)"
+      ]
+    },
+    {
+      "gap": "Existing README.md describes the pre-plan structure",
+      "description": "Current README.md documents cmd/atcr-mcp/, pkg/, skill/ with skill.yaml and a focus on the MCP server only. The v1 architecture is CLI-first with the MCP server as a thin transport. README must be rewritten as a major task (not a minor update).",
+      "files_affected": ["README.md"]
+    },
+    {
+      "gap": "Existing CI is at Go 1.21, plan requires 1.24+",
+      "description": ".github/workflows/ci.yml uses go-version '1.21' and golangci-lint-action v1.59. Plan and coding standards require Go 1.24+. golangci-lint v1.59 may not be compatible with Go 1.24 — verify and bump if needed.",
+      "files_affected": [".github/workflows/ci.yml"]
+    },
+    {
+      "gap": ".gitignore does NOT cover .atcr/ (review directory) or 'atcr' build artifact",
+      "description": "AUDIT COMPLETE (2026-06-10): Existing .gitignore covers bin/ (catches build output if built into bin/), *.out, *.cover, *.test, coverage.html, coverage.txt. But it does NOT cover '.atcr/' (the .atcr/ directory contains reviews/<id>/{manifest.json,payload/, sources/, reconciled/} which can include large payloads and findings — should not be committed) and does NOT list 'atcr' as a build artifact name (only 'atcr-mcp' and 'atcr-mcp-ssee' from the pre-plan era). If binary is built into bin/, the bin/ rule covers it; if built to repo root as ./atcr, the rule is missing.",
+      "files_affected": [".gitignore"]
+    },
+    {
+      "gap": "CHANGELOG.md is empty",
+      "description": "CHANGELOG.md exists but is empty (0 bytes). Add a v1.0.0 entry when the first release ships. Not a blocker for task 1, but should be tracked.",
+      "files_affected": ["CHANGELOG.md"]
+    },
+    {
+      "gap": "No .golangci.yml in repo",
+      "description": "Coding standards require golangci-lint with staticcheck + errcheck. Need a repo-level .golangci.yml aligned with coding-standards.md.",
+      "files_affected": [".golangci.yml"]
+    },
+    {
+      "gap": "No embedded persona files exist",
+      "description": "The plan ships with six embedded personas installed editable via `atcr init`. These need to be created under personas/ and embedded via Go embed in internal/registry (or equivalent).",
+      "files_affected": [
+        "personas/bruce.md",
+        "personas/greta.md",
+        "personas/kai.md",
+        "personas/mira.md",
+        "personas/dax.md",
+        "personas/otto.md",
+        "personas/_base.md"
+      ]
+    },
+    {
+      "gap": "Skill directory not present",
+      "description": "skill/SKILL.md and any helper files (e.g., installation script) need to be created. Plan specifies the Skill is installable into .claude/skills/atcr/.",
+      "files_affected": ["skill/SKILL.md"]
+    },
+    {
+      "gap": "Documentation files for v1 don't exist",
+      "description": "docs/findings-format.md, docs/registry.md, docs/payload-modes.md are task-13 deliverables. Findings format is the public contract; should be drafted alongside the stream package in task 8, not deferred to task 13.",
+      "files_affected": ["docs/findings-format.md", "docs/registry.md", "docs/payload-modes.md"]
+    },
+    {
+      "gap": "No examples or CI gate demonstration",
+      "description": "Plan calls for 'CI gate examples' as a deliverable but no example files exist. examples/ci-gate.sh is a natural fit.",
+      "files_affected": ["examples/ci-gate.sh"]
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test + github.com/stretchr/testify",
+    "test_location": "*_test.go alongside source (same package)",
+    "naming_convention": "TestXxx for unit, TestMain for setup, table-driven with t.Run for scenarios",
+    "assertion_library": "github.com/stretchr/testify/assert and /require",
+    "mocking": "httptest.NewServer for OpenAI-compatible provider mocks; atomic.Int32 high-water mark for concurrency verification; small handler delays (20-50ms) to make parallelism measurable without flaky timing",
+    "fixture_strategy": "t.TempDir() for review-directory fixtures; fixture git repos built with os/exec in test helpers",
+    "build_tags": "Integration tests separated via //go:build integration at top of file",
+    "example_test": null,
+    "coverage_target": 70,
+    "coverage_baseline": 70,
+    "test_subsystems": [
+      {
+        "subsystem": "gitrange (internal/gitrange/resolver_test.go)",
+        "covers": "Decision-tree branches: explicit base/head, merge-commit SHA, auto-detection, empty-range hard error, shallow-clone guard"
+      },
+      {
+        "subsystem": "payload (internal/payload/builder_test.go)",
+        "covers": "diff/blocks/files builders, byte budgets, deterministic truncation recording, function-context fallback, edge cases (no-brace languages, generated files, renames, binary files)"
+      },
+      {
+        "subsystem": "registry (internal/registry/config_test.go)",
+        "covers": "Strict-mode typo detection, precedence chain, fallback chain cycle/dangling validation, embedded defaults"
+      },
+      {
+        "subsystem": "llmclient (internal/llmclient/client_test.go)",
+        "covers": "httptest mock provider, 429-then-200 retry, persistent 500, timeout via handler sleep past deadline, env-var key resolution"
+      },
+      {
+        "subsystem": "fanout (internal/fanout/engine_test.go)",
+        "covers": "httptest mock provider, parallel lane concurrency (atomic.Int32), serial lane ordering, fallback invocation, global timeout, partial success, agent-name sanitization (path traversal), status.json per-agent"
+      },
+      {
+        "subsystem": "stream (internal/stream/parser_test.go)",
+        "covers": "Extraction regex, escape, pad, parse round-trip, prose-mention exclusion, both 8-col and 9-col formats"
+      },
+      {
+        "subsystem": "reconcile (internal/reconcile/merger_test.go)",
+        "covers": "Clustering (FILE, LINE±3), dedupe similarity threshold, merge rules (REVIEWERS join, SEVERITY max with disagreement, PROBLEM/FIX longest, CATEGORY modal, EST_MINUTES max), confidence (HIGH=2+, MEDIUM=single), ambiguous sidecar, --fail-on exit code"
+      },
+      {
+        "subsystem": "report (internal/report/renderer_test.go)",
+        "covers": "All three renderers (md, json, checklist) over shared fixture findings.json"
+      },
+      {
+        "subsystem": "mcp (internal/mcp/server_test.go)",
+        "covers": "InMemoryTransport integration tests for each tool, typed result, stderr isolation"
+      }
+    ]
+  },
+  "risks": [
+    {
+      "risk": "Deterministic text-similarity dedupe under/over-merges vs. prompt-based judgment",
+      "mitigation": "Conservative threshold + ambiguous.json sidecar (conservative unmerged default). Skill adjudication path. Tune threshold with fixture corpora from real multi-agent runs."
+    },
+    {
+      "risk": "blocks payload builder edge cases (no-brace languages, generated files, renames, binary files)",
+      "mitigation": "Fall back to plain -U<n> context diff per file when --function-context fails. Explicit tests per case in internal/payload/builder_test.go."
+    },
+    {
+      "risk": "files mode produces out-of-change findings that pollute reconciliation",
+      "mitigation": "Per-payload scope rules in personas; reconcile annotates findings outside changed ranges."
+    },
+    {
+      "risk": "Token cost surprises for blocks/files on large ranges",
+      "mitigation": "Byte budgets with recorded truncation; docs steer large ranges to diff mode; per-agent payload overrides in registry.yaml."
+    },
+    {
+      "risk": "Format spec churn after publication",
+      "mitigation": "Version header (atcr-findings/v1) from day one; additive-only evolution policy in docs/findings-format.md."
+    },
+    {
+      "risk": "golangci-lint v1.59 may not support Go 1.24",
+      "mitigation": "Verify on first CI run; bump to compatible version if needed (latest stable as of June 2026)."
+    }
+  ]
+}

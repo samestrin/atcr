@@ -1,0 +1,107 @@
+---
+binaries:
+  llm: /usr/local/bin/llm-support
+  html2text: html2text
+  support: /usr/local/bin/llm-support
+  filesystem: /usr/local/bin/llm-filesystem
+  semantic: /usr/local/bin/llm-semantic
+helper:
+  provider: gemini
+  model: ""
+  max_lines: 1500
+project:
+  source_directory: ./
+  type: go
+  framework: mcp
+  package_manager: go mod
+testing:
+  cmd: go test ./...
+  runner: go test
+  coverage_cmd: go test -coverprofile=coverage.out ./...
+  coverage_baseline: 70
+  combined_coverage: true
+  changed_cmd: go test -coverprofile=coverage.out ./...
+commands:
+  build: go build -o bin/atcr-mcp ./cmd/atcr-mcp
+  format: go fmt ./...
+  lint: golangci-lint run
+  types: go vet ./...
+patterns:
+  "github.com/*": tier-2
+  "golang.org/*": tier-3
+
+categories:
+  testing:
+    - test
+    - jest
+    - mocha
+    - cypress
+    - playwright
+  linting:
+    - lint
+    - eslint
+    - prettier
+    - stylelint
+  bundling:
+    - webpack
+    - vite
+    - rollup
+    - esbuild
+    - parcel
+semantic:
+  code_collection: atcr-code
+  code_enabled: true
+  code_storage: qdrant
+  docs_collection: atcr-docs
+  docs_enabled: true
+  docs_storage: qdrant
+  memory_collection: atcr-memory
+  memory_enabled: true
+  memory_storage: qdrant
+  min_score: 0.7
+  stale_days: 7
+  enabled: true
+  max_results: 10
+  batch_size: 100
+  embed_batch_size: 32
+  parallel: 2
+  reranker: true
+
+
+# --- Code review configuration ---
+# /code-review: Claude reviews the diff, writes to code-review/claude/
+# /code-review --multi-agent: multi-agent review, writes to code-review/multi-agent/
+#   - If review.direct.enabled=true: uses local LLM API calls (review_direct)
+#   - If review.direct.enabled=false: uses SSH to nucleus.lan openclaw (legacy)
+# /reconcile-code-review: auto-discovers source dirs under code-review/, dedupes,
+#                        updates TD README with REVIEWERS + CONFIDENCE columns
+# All three are independent — run any combination, reconcile what's there.
+review:
+  # --- Direct mode: local LLM API calls (no SSH/Docker/openclaw) ---
+  direct:
+    enabled: true                         # when true, --multi-agent uses review_direct
+    agents:                               # agents from ~/.config/llm-tools/agents/registry.yaml
+      - bruce      # qwen-3.6-plus, generalist correctness + security
+      - greta      # glm-5.1, algorithmic correctness
+      - kai        # kimi-k2.6-coding, architecture + design fit
+      - mira       # minimax-m3-mira, production feasibility + edge cases
+      - dax        # deepseek-4 (qwen3.6-27b), test coverage + error paths
+      - otto       # gemma-4-31b, style + naming + readability
+      - archer     # mellum2, snippet-level bug detection
+      - ronin      # llm-large (local), author's advocate
+      - brad       # poolside-laguna, adversarial review
+      - bob        # bob-model, generalist backup
+      - bob2       # bob2-model, performance
+      - vera       # gpt-oss-20b, api contract stability
+
+    serial_lanes: []                      # providers that must run serially (rate limits)
+                                          # e.g. ["anthropic"] if using Claude agents
+  reconcile:
+    claude_role: intent_verifier          # "intent_verifier" (default), "reviewer", or "off"
+                                          # intent_verifier: Claude annotates findings that
+                                          #   contradict sprint scope, doesn't add own findings
+                                          # reviewer: Claude reviews independently AND annotates
+                                          # off: pure orchestration only
+    sources: []                           # allowlist of source dirs under code-review/.
+                                          # empty = auto-discover any dir with a td-stream.txt
+                                          # (e.g. ["claude", "multi-agent"] to restrict)
