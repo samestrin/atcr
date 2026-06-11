@@ -694,95 +694,77 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.13 [ ] **[Diff payload builder - RED](plan/user-stories/06-payload-mode-selection.md)**
+### 2.13 [x] **[Diff payload builder - RED](plan/user-stories/06-payload-mode-selection.md)**
    **AC:** [06-01 Payload Builders](plan/acceptance-criteria/06-01-payload-builders.md)
    1. Analyze AC, identify testable units
    2. Write tests: unified diff output verbatim from `git diff base..head` (temp git repo fixtures); ref validation via `git rev-parse --verify`; argv-only exec (no shell)
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 2.14 [ ] **[Diff payload builder - GREEN](plan/user-stories/06-payload-mode-selection.md)**
+### 2.14 [x] **[Diff payload builder - GREEN](plan/user-stories/06-payload-mode-selection.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 45 min
 
-### 2.15 [ ] **[Diff payload builder - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.14]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.14`).
+### 2.15 [x] **[Diff payload builder - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
+   **Changed Files:** internal/payload/{builder.go, diff.go} (diff builder). Reviewed as part of the holistic payload-builders adversarial review in 2.19.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 2.19 payload review — `BuildDiff` emits `git diff base..head` verbatim with ref validation. No CRITICAL/HIGH specific to diff mode. Adversarial review passed.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.16, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 2.16 [ ] **[Diff payload builder - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
+### 2.16 [x] **[Diff payload builder - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
    1. Fix CRITICAL/HIGH issues from 2.15 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.17 [ ] **[Blocks payload builder + function-context fallback - RED](plan/user-stories/06-payload-mode-selection.md)**
+### 2.17 [x] **[Blocks payload builder + function-context fallback - RED](plan/user-stories/06-payload-mode-selection.md)**
    **AC:** [06-01 Payload Builders](plan/acceptance-criteria/06-01-payload-builders.md)
    1. Analyze AC, identify testable units
    2. Write tests: `--function-context` expansion with real line numbers; per-file fallback to plain `-U10` when function-context fails or yields zero hunks for a changed file; binary file → `[binary file changed: <path>]` marker
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 2.18 [ ] **[Blocks payload builder + function-context fallback - GREEN](plan/user-stories/06-payload-mode-selection.md)**
+### 2.18 [x] **[Blocks payload builder + function-context fallback - GREEN](plan/user-stories/06-payload-mode-selection.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 2.19 [ ] **[Blocks payload builder + function-context fallback - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.18]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.18`).
+### 2.19 [x] **[Blocks payload builder + function-context fallback - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
+   **Changed Files:** internal/payload/{builder.go, diff.go, builder_test.go} (holistic review of the payload-builders unit — covers 2.14, 2.18, and 2.22).
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: payload builders`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | diff.go name-status parsing | non-ASCII / control-char paths returned C-quoted by git, breaking `git show`/`git diff -- path` (BuildFiles/BuildBlocks hard-fail on e.g. `café.go`) | Fixed in 2.20: `-c core.quotePath=false` on every git invocation + non-ASCII path test |
+   | LOW | builder.go renderWithSentinels | file without trailing newline gained a spurious one | Fixed in 2.20: preserve trailing-newline fidelity |
+   | LOW | diff.go changedFiles | unguarded `status[0]` index | Fixed in 2.20: empty-status guard |
+   | MEDIUM | builder.go renderWithSentinels | files-mode sentinels spoofable by file content | Deferred → TD-009 |
+   | LOW | diff.go functionContextFile / isBinary | genuine git errors swallowed into fallback / non-binary | Deferred → TD-010 |
+   | LOW | builder.go per-file fan-out | N×4-5 git processes on large changesets | Deferred → TD-011 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.20, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 HIGH (quoted-path break) fixed in 2.20 with a regression test, plus two LOWs; three findings deferred (TD-009 MEDIUM, TD-010/TD-011 LOW).
 
-### 2.20 [ ] **[Blocks payload builder + function-context fallback - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
+### 2.20 [x] **[Blocks payload builder + function-context fallback - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
    1. Fix CRITICAL/HIGH issues from 2.19 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 2.21 [ ] **[Files payload builder - RED](plan/user-stories/06-payload-mode-selection.md)**
+### 2.21 [x] **[Files payload builder - RED](plan/user-stories/06-payload-mode-selection.md)**
    **AC:** [06-01 Payload Builders](plan/acceptance-criteria/06-01-payload-builders.md)
    1. Analyze AC, identify testable units
    2. Write tests: full head-version content with changed-region sentinel markers; deleted file → `[deleted file: <path>]` marker; renamed file content under new path; binary marker
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 2.22 [ ] **[Files payload builder - GREEN](plan/user-stories/06-payload-mode-selection.md)**
+### 2.22 [x] **[Files payload builder - GREEN](plan/user-stories/06-payload-mode-selection.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 2.23 [ ] **[Files payload builder - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.22]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.22`).
+### 2.23 [x] **[Files payload builder - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
+   **Changed Files:** internal/payload/{builder.go, diff.go} (files builder: head content + sentinels + deleted/renamed/binary markers). Reviewed as part of the holistic payload-builders adversarial review in 2.19.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 2.19 payload review — `BuildFiles` renders full head content with changed-region sentinels and deleted/renamed/binary markers. The quoted-path HIGH (which broke files mode on non-ASCII names) was fixed in 2.20 with a regression test. Adversarial review passed.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.24, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 2.24 [ ] **[Files payload builder - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
+### 2.24 [x] **[Files payload builder - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
    1. Fix CRITICAL/HIGH issues from 2.23 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min

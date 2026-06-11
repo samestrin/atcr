@@ -55,3 +55,24 @@
 **Issue:** `resolveRef` treats any non-empty error OR empty stdout as `ErrInvalidRef`. A genuine git failure (corrupt object, I/O error) on `rev-parse --verify` would be mislabeled "does not resolve to a commit" rather than surfaced as an infrastructure error.
 **Why accepted:** With `--verify --quiet` the dominant failure mode is a non-existent ref, which the AC requires be reported as an invalid-ref error; the mislabel only occurs on rare repo corruption.
 **Fix in:** Phase 3+ — distinguish `err != nil` (wrap raw git error) from `out == "" && err == nil` (true invalid ref).
+
+## TD-009 — files-mode sentinels are spoofable by file content (MEDIUM)
+**Origin:** Phase 2, task 2.23 adversarial review, 2026-06-10
+**File:** internal/payload/builder.go:144
+**Issue:** `renderWithSentinels` emits head content verbatim. A changed file whose source legitimately or maliciously contains a line equal to `>>> CHANGED LINES n-m` or `<<< END CHANGED` injects fake changed-region markers into the reviewer payload, letting content spoof or hide marked regions.
+**Why accepted:** Very low likelihood in real source; files mode is an opt-in audit mode, and personas are instructed to treat marked regions as guidance not ground truth. Out of scope for the v1 payload builders AC.
+**Fix in:** Phase 3+ — neutralize content lines matching a sentinel (prefix-quote) or use a per-run nonce in the sentinel.
+
+## TD-010 — blocks fallback and binary detection swallow genuine git errors (LOW)
+**Origin:** Phase 2, task 2.19 adversarial review, 2026-06-10
+**File:** internal/payload/diff.go:122
+**Issue:** `functionContextFile` maps every git error to ok=false (fallback) and `isBinary` maps every git error to false. A genuine I/O failure is therefore indistinguishable from the legitimate zero-hunks / non-binary case. In practice the blocks fallback (`contextFile`) would re-surface a real error, and `isBinary` only runs on already-validated changed paths.
+**Why accepted:** The AC mandates fallback when function-context "exits nonzero OR produces zero hunks"; the swallow only masks rare infrastructure failures on already-valid paths.
+**Fix in:** Phase 3+ — inspect exit status to separate non-fatal (no diff) from fatal git errors.
+
+## TD-011 — per-file git fan-out spawns N×4-5 processes (LOW)
+**Origin:** Phase 2, task 2.19 adversarial review, 2026-06-10
+**File:** internal/payload/builder.go:114
+**Issue:** blocks/files modes invoke up to 4-5 git processes per changed file (numstat, function-context, context, show, unified=0). On large changesets this is a meaningful process-spawn cost.
+**Why accepted:** Meets the <2s/<100-file perf target; correctness-first for v1.
+**Fix in:** v2 — batch classification (`--numstat`/`--name-status` once) and split a single diff per file.
