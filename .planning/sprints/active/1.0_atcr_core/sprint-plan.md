@@ -371,12 +371,12 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** No CRITICAL/HIGH. All 9 findings fixed directly in 1.12 (no deferrals).
 
-### 1.12 [ ] **[Registry config loading - REFACTOR](plan/user-stories/02-agent-configuration.md)**
+### 1.12 [x] **[Registry config loading - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.11 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 1.13 [ ] **[Project config loading - RED](plan/user-stories/02-agent-configuration.md)**
+### 1.13 [x] **[Project config loading - RED](plan/user-stories/02-agent-configuration.md)**
    **AC:** [02-02 Provider/Agent Registry](plan/acceptance-criteria/02-02-provider-agent-registry.md)
    1. Analyze AC, identify testable units
    2. Write tests: parse project config, embedded defaults
