@@ -1111,33 +1111,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.13 [ ] **[Review directory + manifest + ID + latest pointer - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.13 [x] **[Review directory + manifest + ID + latest pointer - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-03 Review Directory Structure](plan/acceptance-criteria/01-03-review-directory-structure.md)
    1. Analyze AC, identify testable units
    2. Write tests: .atcr/reviews/<YYYY-MM-DD>_<branch-slug>/ layout (payload/, sources/, reconciled/); manifest.json fields (base/head SHAs, detection_mode, payload_modes, roster, timestamps); .atcr/latest is a text file with the review id; --id override; --id with path traversal rejected; collision → suffix; empty slug → fallback
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 3.14 [ ] **[Review directory + manifest + ID + latest pointer - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.14 [x] **[Review directory + manifest + ID + latest pointer - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 3.15 [ ] **[Review directory + manifest + ID + latest pointer - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.14]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.14`).
+### 3.15 [x] **[Review directory + manifest + ID + latest pointer - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/fanout/reviewdir.go, internal/fanout/reviewdir_test.go
+   Fresh subagent (description: `Adversarial review: 3.14`) reviewed the unit.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | reviewdir.go validateReviewID | `--id="."` accepted → Join collapses to the reviews root, breaking per-review isolation | Fixed in 3.16: positive allowlist regex `^[A-Za-z0-9][A-Za-z0-9._-]*$` rejects "."/".."/""/leading-dash |
+   | HIGH | reviewdir.go ReviewID | branch-derived ids skipped validation; slugifyBranch can emit "."/".." | Fixed in 3.16: validate computed id in both paths + all-dots slug → "review" fallback |
+   | MEDIUM | reviewdir.go validateReviewID | leading-dash ids (flag injection) accepted | Fixed in 3.16: regex requires alnum first char |
+   | MEDIUM | reviewdir.go ReviewID | collision suffix appended once, no re-probe → same-second clobber | Fixed in 3.16: resolveCollision loops suffix + counter |
+   | MEDIUM | reviewdir.go ScaffoldReviewDir | MkdirAll over a pre-existing file gives opaque error | Kept: error surfaced; AC 01-03 Error Scenario 1 message is generic by design |
+   | LOW | reviewdir.go ReadLatest | empty .atcr/latest → ("",nil) resolves to reviews root | Fixed in 3.16: empty/invalid pointer is an error |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.16, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 2 HIGH + 2 MEDIUM + 1 LOW fixed in 3.16 via an allowlist-regex redesign + collision loop + ReadLatest guard, with new tests. One MEDIUM kept by design (generic mkdir error). Escape invariant confirmed against ../absolute/Windows-separator.
 
-### 3.16 [ ] **[Review directory + manifest + ID + latest pointer - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.16 [x] **[Review directory + manifest + ID + latest pointer - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.15 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
