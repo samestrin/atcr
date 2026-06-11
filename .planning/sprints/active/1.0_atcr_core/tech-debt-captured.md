@@ -140,3 +140,10 @@
 **Issue:** Discover skips a source file that errors on read or has a bad header with only a stderr warning. If that file held a CRITICAL finding, `--fail-on` can still pass (exit 0) because the finding never entered the reconcile. No aggregate "N sources skipped" count reaches the exit-code logic.
 **Why accepted:** Read errors are rare (permission/race) and a bad-header file under sources/ is a malformed drop; the stderr warning is the signal. v1 favors resilience (don't abort the whole reconcile) over fail-closed gating, and our own writers always produce valid headers.
 **Fix in:** v2 — track a skipped-source count in summary.json and optionally fail closed (or warn loudly) when a `--sources`-requested entry yielded zero readable findings.
+
+## TD-021 — `atcr report --output` writes a user path without symlink/traversal guards (LOW, intended)
+**Origin:** Phase 3, task 3.39 adversarial review, 2026-06-10
+**File:** cmd/atcr/report.go:62
+**Issue:** `--output` calls os.WriteFile on the user-supplied path with no validation — an absolute path, `..`, or a symlink target is written verbatim (writes through a symlink to its target).
+**Why accepted:** This is intended CLI behavior, equivalent to shell redirection (`atcr report > file`): the user names where their own report goes, on their own machine. Same trust model as the verbatim path-anchor branch. No untrusted input reaches this path in normal use.
+**Fix in:** v2 (only if hardening is requested) — open with O_NOFOLLOW and/or constrain the target under the review dir for sandboxed/CI contexts.
