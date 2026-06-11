@@ -52,6 +52,9 @@ func (e *engine) drain(timeout time.Duration) {
 // zero counts so a client can pre-flight "nothing to review" without exception
 // handling (AC 04-04 Edge Case 5).
 func (e *engine) handleRange(ctx context.Context, _ *mcpsdk.CallToolRequest, in RangeArgs) (*mcpsdk.CallToolResult, RangeResult, error) {
+	if err := validateRangeArgs(in.Base, in.Head, in.MergeCommit); err != nil {
+		return nil, RangeResult{}, err
+	}
 	res, err := gitrange.Resolve(ctx, e.root, gitrange.Options{Base: in.Base, Head: in.Head, MergeCommit: in.MergeCommit})
 	if err != nil {
 		if errors.Is(err, gitrange.ErrEmptyRange) {
@@ -80,6 +83,9 @@ func (e *engine) handleRange(ctx context.Context, _ *mcpsdk.CallToolRequest, in 
 // server process (context detached from the request so it is not cancelled when
 // the handler returns); clients poll atcr_status for completion (AC 04-03).
 func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReviewArgs) (*mcpsdk.CallToolResult, ReviewResult, error) {
+	if err := validateRangeArgs(in.Base, in.Head, in.MergeCommit); err != nil {
+		return nil, ReviewResult{}, err
+	}
 	res, err := gitrange.Resolve(ctx, e.root, gitrange.Options{Base: in.Base, Head: in.Head, MergeCommit: in.MergeCommit})
 	if err != nil {
 		if errors.Is(err, gitrange.ErrNotARepository) {
@@ -259,6 +265,19 @@ func (e *engine) resolveReviewDir(idOrPath string) (dir, id string, err error) {
 		return "", "", fmt.Errorf("invalid review id %q: %w", id, verr)
 	}
 	return filepath.Join(fanout.ReviewsRoot(e.root), id), id, nil
+}
+
+// validateRangeArgs enforces the argument combinations gitrange.Options leaves
+// to its callers: the CLI guarantees them in validateRangeFlags, and the MCP
+// handlers are a second caller that must do the same. Without this, merge_commit
+// alongside base+head is silently ignored (the explicit branch wins) and
+// merge_commit+head surfaces an error naming CLI flags that do not exist in the
+// MCP arg vocabulary. The error is phrased in json field names (AC 04-04).
+func validateRangeArgs(base, head, mergeCommit string) error {
+	if mergeCommit != "" && (base != "" || head != "") {
+		return fmt.Errorf("merge_commit cannot be combined with base or head")
+	}
+	return nil
 }
 
 // changedFileCount counts the changed files in base..head by building the diff
