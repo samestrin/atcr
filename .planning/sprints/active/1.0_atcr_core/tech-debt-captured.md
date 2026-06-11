@@ -41,3 +41,17 @@
 **Issue:** `--format` help promises md/json/checklist but no enum validation exists yet, so invalid values would only fail inside the future handler.
 **Mitigation this sprint:** Task 3.37 (report renderers) implements invalid-format errors as part of its AC; this marker tracks that the flag-layer validation must land there.
 **Fix in:** Phase 3, task 3.37 — typed enum value or PreRunE validation mapping to exit 2.
+
+## TD-007 — merge-commit base uses first parent only, undocumented for non-2-parent merges (LOW)
+**Origin:** Phase 2, task 2.3 adversarial review, 2026-06-10
+**File:** internal/gitrange/resolver.go:99
+**Issue:** `--merge-commit SHA` resolves base as `SHA^` (first parent). For an octopus merge, or when the user wants the merged-in branch's actual fork point, this can produce a surprisingly large range, and the behavior is not documented in the flag help.
+**Why accepted:** `base = SHA^` is the AC-mandated decision-tree behavior (carried over verbatim); the common 2-parent merge case is correct. Refining for octopus merges is a v2 concern.
+**Fix in:** Phase 5 docs — note the first-parent assumption in docs and `--merge-commit` flag help.
+
+## TD-008 — resolveRef conflates a hard git failure with an invalid ref (LOW)
+**Origin:** Phase 2, task 2.3 adversarial review, 2026-06-10
+**File:** internal/gitrange/resolver.go:177
+**Issue:** `resolveRef` treats any non-empty error OR empty stdout as `ErrInvalidRef`. A genuine git failure (corrupt object, I/O error) on `rev-parse --verify` would be mislabeled "does not resolve to a commit" rather than surfaced as an infrastructure error.
+**Why accepted:** With `--verify --quiet` the dominant failure mode is a non-existent ref, which the AC requires be reported as an invalid-ref error; the mislabel only occurs on rare repo corruption.
+**Fix in:** Phase 3+ — distinguish `err != nil` (wrap raw git error) from `out == "" && err == nil` (true invalid ref).

@@ -619,95 +619,77 @@ Documentation available in [documentation/](plan/documentation/):
 
 **Focus:** Git range resolution, three-mode payload engine, findings stream parser, OpenAI-compatible LLM client.
 
-### 2.1 [ ] **[Range resolution decision tree + default-branch detection - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 2.1 [x] **[Range resolution decision tree + default-branch detection - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-02 Git Range Resolution](plan/acceptance-criteria/01-02-git-range-resolution.md)
    1. Analyze AC, identify testable units
    2. Write tests: explicit --base/--head, --merge-commit (base = SHA^), auto merge-base; default-branch probes origin/HEAD → origin/main → origin/master → local main → local master; DetectionMode strings ("explicit", "merge_commit", "auto")
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 2.2 [ ] **[Range resolution decision tree + default-branch detection - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 2.2 [x] **[Range resolution decision tree + default-branch detection - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 2.3 [ ] **[Range resolution decision tree + default-branch detection - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.2]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.2`).
+### 2.3 [x] **[Range resolution decision tree + default-branch detection - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/gitrange/{resolver.go, resolver_test.go}, cmd/atcr/range.go (holistic review of the gitrange unit — covers 2.2, 2.6, and 2.10).
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: gitrange`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | resolver.go mergeBase | exit-0/empty stdout could let rev-list fabricate a bogus range | Fixed in 2.4: reject empty merge-base stdout |
+   | MEDIUM | resolver.go run | not-a-repo detection matched localized stderr; non-English locale misses it | Fixed in 2.4: pin LC_ALL=C/LANG=C |
+   | MEDIUM | resolver.go merge-commit | base=SHA^ first-parent only; undocumented for octopus merges | Deferred → TD-007 (Phase 5 docs) |
+   | LOW | resolver.go run | cancelled context reported as generic git failure | Fixed in 2.4: surface ctx.Err() |
+   | LOW | resolver.go resolveRef | conflates hard git failure with invalid ref | Deferred → TD-008 |
+   | LOW | resolver_test.go | missing cancellation / leading-dash ref tests | Fixed in 2.4: added both tests |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.4, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. Four findings fixed in 2.4 (empty merge-base guard, locale pinning, ctx cancellation, `--end-of-options` leading-dash hardening + tests); two LOWs deferred (TD-007, TD-008).
 
-### 2.4 [ ] **[Range resolution decision tree + default-branch detection - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 2.4 [x] **[Range resolution decision tree + default-branch detection - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 2.3 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 2.5 [ ] **[Empty-range + shallow-clone hard errors - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 2.5 [x] **[Empty-range + shallow-clone hard errors - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-02 Git Range Resolution](plan/acceptance-criteria/01-02-git-range-resolution.md)
    1. Analyze AC, identify testable units
    2. Write tests: base==head error; 0-commit range error before any provider call; shallow clone detected → hard error with `git fetch --unshallow` guidance; invalid SHA; not a git repository
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 2.6 [ ] **[Empty-range + shallow-clone hard errors - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 2.6 [x] **[Empty-range + shallow-clone hard errors - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 2.7 [ ] **[Empty-range + shallow-clone hard errors - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.6]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.6`).
+### 2.7 [x] **[Empty-range + shallow-clone hard errors - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/gitrange/resolver.go (empty-range + shallow-clone hard errors). Reviewed as part of the holistic gitrange adversarial review in 2.3.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 2.3 gitrange review — empty-range (base==head and 0-commit) and shallow-clone hard errors were in scope. No CRITICAL/HIGH; relevant fixes landed in 2.4. Adversarial review passed.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.8, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 2.8 [ ] **[Empty-range + shallow-clone hard errors - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 2.8 [x] **[Empty-range + shallow-clone hard errors - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 2.7 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.9 [ ] **[atcr range command - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 2.9 [x] **[atcr range command - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-02 Git Range Resolution](plan/acceptance-criteria/01-02-git-range-resolution.md)
    1. Analyze AC, identify testable units
    2. Write tests: prints Resolution JSON to stdout (base/head SHAs, DetectionMode, CommitCount); exit 0 on success, exit 2 on resolution failure
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 20 min
 
-### 2.10 [ ] **[atcr range command - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 2.10 [x] **[atcr range command - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 40 min
 
-### 2.11 [ ] **[atcr range command - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.10]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.10`).
+### 2.11 [x] **[atcr range command - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** cmd/atcr/range.go (`atcr range` command wiring). Reviewed as part of the holistic gitrange adversarial review in 2.3.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 2.3 gitrange review — `atcr range` prints the Resolution JSON and maps resolution failures to exit 1 (flag-misuse stays exit 2 via addRangeFlags). No CRITICAL/HIGH. Adversarial review passed.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.12, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 2.12 [ ] **[atcr range command - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 2.12 [x] **[atcr range command - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 2.11 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
