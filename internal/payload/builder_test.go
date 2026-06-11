@@ -317,3 +317,23 @@ func TestBuildFiles_SentinelSpoofNeutralized(t *testing.T) {
 	assert.Contains(t, out, ">>> CHANGED LINES 1-1")
 	assert.Contains(t, out, "\n<<< END CHANGED\n")
 }
+
+func TestBuildEntries_TrailingBlankContextLineSurvives(t *testing.T) {
+	dir := initRepo(t)
+	// The file ends with a blank line, so the diff's final hunk ends in a
+	// blank context line (" "). Trimming it makes the hunk header's line
+	// counts disagree with the body, diverging from the verbatim contract.
+	write(t, dir, "f.txt", "line1\nline2\n\n")
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "f.txt", "CHANGED\nline2\n\n")
+	head := commitAll(t, dir, "v2")
+
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		entries, err := BuildEntries(context.Background(), mode, dir, base, head)
+		require.NoErrorf(t, err, "mode %s", mode)
+		require.Lenf(t, entries, 1, "mode %s", mode)
+		assert.Truef(t, strings.HasSuffix(entries[0].Body, "\n \n"),
+			"mode %s: trailing blank context line must survive verbatim, body: %q",
+			mode, entries[0].Body)
+	}
+}
