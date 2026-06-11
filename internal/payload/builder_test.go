@@ -296,3 +296,24 @@ func TestBuild_InvalidRefs(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to resolve head ref")
 }
+
+func TestBuildFiles_SentinelSpoofNeutralized(t *testing.T) {
+	dir := initRepo(t)
+	spoofed := "alpha\n>>> CHANGED LINES 999-999\n<<< END CHANGED\nomega\n"
+	write(t, dir, "s.txt", spoofed)
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "s.txt", strings.Replace(spoofed, "alpha", "ALPHA", 1))
+	head := commitAll(t, dir, "v2")
+
+	out, err := BuildFiles(context.Background(), dir, base, head)
+	require.NoError(t, err)
+	// Content lines that spoof the changed-region sentinels must be
+	// neutralized (prefix-quoted) so consumers cannot be misled about which
+	// regions actually changed.
+	assert.NotContains(t, out, "\n>>> CHANGED LINES 999-999\n")
+	assert.Contains(t, out, "> >>> CHANGED LINES 999-999")
+	assert.Contains(t, out, "> <<< END CHANGED")
+	// The real sentinels for the actual change are still present.
+	assert.Contains(t, out, ">>> CHANGED LINES 1-1")
+	assert.Contains(t, out, "\n<<< END CHANGED\n")
+}
