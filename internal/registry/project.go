@@ -31,6 +31,24 @@ func DefaultProjectConfigPath(root string) string {
 	return filepath.Join(root, ".atcr", "config.yaml")
 }
 
+// DefaultProjectConfigYAML renders the config.yaml content `atcr init`
+// installs: the given roster plus explicit embedded defaults, so users see
+// and can edit every knob.
+func DefaultProjectConfigYAML(roster []string) string {
+	var b strings.Builder
+	b.WriteString("# atcr project configuration — see docs/registry.md\n")
+	b.WriteString("# Roster entries must match agent names in ~/.config/atcr/registry.yaml.\n")
+	b.WriteString("agents:\n")
+	for _, name := range roster {
+		fmt.Fprintf(&b, "  - %s\n", name)
+	}
+	b.WriteString("serial_agents: []\n")
+	fmt.Fprintf(&b, "payload_mode: %s\n", DefaultPayloadMode)
+	fmt.Fprintf(&b, "timeout_secs: %d\n", DefaultTimeoutSecs)
+	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+	return b.String()
+}
+
 // LoadProjectConfig reads, strictly parses, and validates the project config
 // at path. Absent optional fields stay unset; embedded defaults are applied
 // by ResolveSettings so precedence can see what this tier actually set.

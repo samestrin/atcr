@@ -512,12 +512,12 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** No CRITICAL/HIGH. Fixed in 1.24 except two LOWs kept by design (AC-mandated message contract).
 
-### 1.24 [ ] **[Fallback chain validation - REFACTOR](plan/user-stories/02-agent-configuration.md)**
+### 1.24 [x] **[Fallback chain validation - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.23 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 1.25 [ ] **[atcr init command - RED](plan/user-stories/02-agent-configuration.md)**
+### 1.25 [x] **[atcr init command - RED](plan/user-stories/02-agent-configuration.md)**
    **AC:** [02-01 Init Command](plan/acceptance-criteria/02-01-init-command.md)
    1. Analyze AC, identify testable units
    2. Write tests: creates .atcr/ dir, writes config + 6 persona files
