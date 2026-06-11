@@ -28,6 +28,17 @@ type changedFile struct {
 	kind    changeKind
 }
 
+// pathspec returns the pathspec arguments for per-file git commands. Renames
+// must include both sides: pathspec filtering happens before rename pairing,
+// so limiting to the head path alone makes git render the file as a bare
+// addition (full file as added lines).
+func (f changedFile) pathspec() []string {
+	if f.kind == kindRenamed {
+		return []string{f.oldPath, f.path}
+	}
+	return []string{f.path}
+}
+
 // gitRunner executes git argv against a fixed directory and context. The
 // payload package wraps os/exec directly (there is no internal/git package).
 type gitRunner struct {
@@ -114,8 +125,8 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
 // whether or not differences exist, so any error is fatal (bad repo, killed
 // process, cancelled context) and propagated; an empty diff is the only
 // non-error "not binary" case.
-func (g *gitRunner) isBinary(base, head, path string) (bool, error) {
-	out, err := g.run("diff", "--numstat", base+".."+head, "--", path)
+func (g *gitRunner) isBinary(base, head string, paths ...string) (bool, error) {
+	out, err := g.run(append([]string{"diff", "--numstat", "-M", base + ".." + head, "--"}, paths...)...)
 	if err != nil {
 		return false, fmt.Errorf("git diff --numstat failed: %w", err)
 	}
@@ -132,8 +143,8 @@ func (g *gitRunner) isBinary(base, head, path string) (bool, error) {
 // ok is false with a nil error when the diff yields zero hunks, signalling the
 // caller to fall back to a plain context diff; a git failure is fatal and
 // propagated rather than masked as a fallback (TD-010).
-func (g *gitRunner) functionContextFile(base, head, path string) (out string, ok bool, err error) {
-	got, gerr := g.output("diff", "--function-context", base+".."+head, "--", path)
+func (g *gitRunner) functionContextFile(base, head string, paths ...string) (out string, ok bool, err error) {
+	got, gerr := g.output(append([]string{"diff", "--function-context", "-M", base + ".." + head, "--"}, paths...)...)
 	if gerr != nil {
 		return "", false, fmt.Errorf("git diff --function-context failed: %w", gerr)
 	}
@@ -146,8 +157,8 @@ func (g *gitRunner) functionContextFile(base, head, path string) (out string, ok
 // contextFile returns a plain -U10 context diff for a single file, verbatim
 // (the blocks fallback for no-brace languages and files where
 // function-context fails).
-func (g *gitRunner) contextFile(base, head, path string) (string, error) {
-	out, err := g.output("diff", "--unified=10", base+".."+head, "--", path)
+func (g *gitRunner) contextFile(base, head string, paths ...string) (string, error) {
+	out, err := g.output(append([]string{"diff", "--unified=10", "-M", base + ".." + head, "--"}, paths...)...)
 	if err != nil {
 		return "", err
 	}
@@ -172,8 +183,8 @@ type lineRange struct{ start, end int }
 
 // changedHeadRanges returns the head-side changed line ranges for path, parsed
 // from a zero-context diff so each range maps to real head line numbers.
-func (g *gitRunner) changedHeadRanges(base, head, path string) ([]lineRange, error) {
-	out, err := g.run("diff", "--unified=0", base+".."+head, "--", path)
+func (g *gitRunner) changedHeadRanges(base, head string, paths ...string) ([]lineRange, error) {
+	out, err := g.run(append([]string{"diff", "--unified=0", "-M", base + ".." + head, "--"}, paths...)...)
 	if err != nil {
 		return nil, err
 	}

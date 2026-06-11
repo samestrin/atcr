@@ -133,28 +133,28 @@ func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error)
 func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile) (string, error) {
 	switch mode {
 	case ModeDiff:
-		bin, err := g.isBinary(base, head, f.path)
+		bin, err := g.isBinary(base, head, f.pathspec()...)
 		if err != nil {
 			return "", err
 		}
 		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
-		out, err := g.output("diff", base+".."+head, "--", f.path)
+		out, err := g.output(append([]string{"diff", "-M", base + ".." + head, "--"}, f.pathspec()...)...)
 		if err != nil {
 			return "", fmt.Errorf("git diff failed: %w", err)
 		}
 		return ensureTrailingNewline(string(out)), nil
 
 	case ModeBlocks:
-		bin, err := g.isBinary(base, head, f.path)
+		bin, err := g.isBinary(base, head, f.pathspec()...)
 		if err != nil {
 			return "", err
 		}
 		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
-		out, ok, err := g.functionContextFile(base, head, f.path)
+		out, ok, err := g.functionContextFile(base, head, f.pathspec()...)
 		if err != nil {
 			return "", err
 		}
@@ -162,7 +162,7 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 			// Defensive-measure contract: every degradation is recorded. Without
 			// this an operator cannot tell which files got function context.
 			slog.Warn("blocks mode: function context unavailable, falling back to plain context diff", "file", f.path)
-			if out, err = g.contextFile(base, head, f.path); err != nil {
+			if out, err = g.contextFile(base, head, f.pathspec()...); err != nil {
 				return "", fmt.Errorf("git diff failed: %w", err)
 			}
 		}
@@ -172,7 +172,7 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		if f.kind == kindDeleted {
 			return fmt.Sprintf(deletedMarkerFmt+"\n", f.path), nil
 		}
-		bin, err := g.isBinary(base, head, f.path)
+		bin, err := g.isBinary(base, head, f.pathspec()...)
 		if err != nil {
 			return "", err
 		}
@@ -189,7 +189,7 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		if err != nil {
 			return "", fmt.Errorf("reading head content of %s: %w", f.path, err)
 		}
-		ranges, err := g.changedHeadRanges(base, head, f.path)
+		ranges, err := g.changedHeadRanges(base, head, f.pathspec()...)
 		if err != nil {
 			return "", err
 		}
