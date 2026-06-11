@@ -65,6 +65,14 @@ func internalImports(t *testing.T, root, name string) []string {
 		if d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return nil
 		}
+		// The dependency-direction rule governs production code only: test
+		// files do not ship and cannot create production import cycles, and
+		// cross-boundary test imports are how enum-parity tests (e.g.
+		// registry's TestPayloadModeEnumParity) detect drift between packages
+		// the boundary keeps apart.
+		if strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
 		f, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 		require.NoError(t, perr, "every Go file under internal/%s must parse", name)
 		for _, imp := range f.Imports {
