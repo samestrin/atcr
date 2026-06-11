@@ -1143,33 +1143,35 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.17 [ ] **[atcr review command (end-to-end wiring) - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.17 [x] **[atcr review command (end-to-end wiring) - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-01 End-to-End Review](plan/acceptance-criteria/01-01-end-to-end-review.md)
    1. Analyze AC, identify testable units
    2. Write tests (integration, httptest mock provider): zero-arg `atcr review` on a feature branch resolves range, builds payloads, fans out, writes artifacts; explicit --base/--head path; exit codes; payload/ recorded per mode
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 3.18 [ ] **[atcr review command (end-to-end wiring) - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.18 [x] **[atcr review command (end-to-end wiring) - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 3.19 [ ] **[atcr review command (end-to-end wiring) - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.18]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.18`).
+### 3.19 [x] **[atcr review command (end-to-end wiring) - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/fanout/review.go, internal/fanout/review_test.go, internal/fanout/engine.go (per-agent timeout), cmd/atcr/review.go, internal/gitrange/resolver.go (CurrentBranch)
+   Fresh subagent (description: `Adversarial review: 3.18`) reviewed the orchestration + cmd wiring.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | cmd/review.go | range-resolution failure returned raw → exit 1, but AC 03-02 Error Scenario 2 says pipeline failure → exit 2 | Fixed in 3.20: usageError wrap with "review failed:" message (exit 2) |
+   | MEDIUM | review.go buildPayloads | FileCount reported pre-truncation len(entries) | Fixed in 3.20: FileCount = len(kept) (what the reviewer saw) |
+   | MEDIUM | review.go buildSlots | one agent's persona/render failure aborts whole roster | Kept fail-fast (config error, nothing to preserve) — documented asymmetry vs all-fail path |
+   | LOW | review.go buildAgent/buildFallbackAgent | provider map miss → zero-value Provider (confusing invoke-time error) | Fixed in 3.20: explicit unknown-provider build error + test |
+   | LOW | review.go RunReview | empty roster scaffolds dir + repoints latest before ErrEmptyRoster | Fixed in 3.20: short-circuit empty roster before scaffolding + test |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.20, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Cleared by reviewer:** API key invoke-time only/never logged, nil Temperature omitempty, payloads built once per mode, both timeout ctxs have defer cancel, WaitGroup drains, no shell exposure.
 
-### 3.20 [ ] **[atcr review command (end-to-end wiring) - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+   **Action Required:** 1 HIGH (exit-code) + correctness MEDIUM (FileCount) + 2 LOW (provider guard, empty-roster) fixed in 3.20 with tests. 1 MEDIUM kept by design (fail-fast on config error, documented).
+
+### 3.20 [x] **[atcr review command (end-to-end wiring) - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.19 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

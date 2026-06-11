@@ -167,6 +167,20 @@ func (g *gitRunner) run(args ...string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
+// CurrentBranch returns the checked-out branch name in repoDir, or "" on a
+// detached HEAD or any error — callers derive a review id and fall back to
+// "detached" when this is empty, so a failure here is non-fatal.
+func CurrentBranch(ctx context.Context, repoDir string) string {
+	g := &gitRunner{ctx: ctx, dir: repoDir}
+	// --quiet + exit code: on detached HEAD `symbolic-ref` exits nonzero and run
+	// returns an error, which we map to "".
+	out, err := g.run("symbolic-ref", "--short", "--quiet", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 // isShallow reports whether the repository is a shallow clone. It is the first
 // probe and therefore also surfaces ErrNotARepository for non-repo dirs.
 func (g *gitRunner) isShallow() (bool, error) {

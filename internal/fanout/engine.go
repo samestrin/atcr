@@ -27,6 +27,9 @@ type Agent struct {
 	Prompt      string
 	PayloadMode string
 	Truncation  payload.Truncation
+	// TimeoutSecs bounds this single agent's call within the global deadline; 0
+	// means "use the global context deadline only".
+	TimeoutSecs int
 }
 
 // Slot is one reviewer position in the roster: a primary agent plus its
@@ -164,6 +167,13 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 // as a timeout just because a sibling slot's deadline happened to fire. The raw
 // assistant content is returned on success for the artifact layer to persist.
 func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
+	// A per-agent timeout further bounds this call within the global deadline;
+	// when it fires only this agent times out — siblings keep running.
+	if a.TimeoutSecs > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
+		defer cancel()
+	}
 	start := time.Now()
 	content, err := e.completer.Complete(ctx, a.Invocation)
 	dur := time.Since(start).Milliseconds()
