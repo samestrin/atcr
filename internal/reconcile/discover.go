@@ -18,11 +18,15 @@ const (
 // Source is a discovered reconcile source: the immediate-child name under
 // sources/ (e.g. "pool", "host") and the findings parsed from the leaf
 // findings.txt files beneath it. Skipped records malformed rows so the caller
-// can warn without failing the run.
+// can warn without failing the run. SkippedFiles records whole findings.txt
+// files dropped on a read error or bad header, so the run summary can report
+// the degradation (skipped_sources in summary.json) instead of losing it to a
+// stderr-only warning.
 type Source struct {
-	Name     string
-	Findings []stream.Finding
-	Skipped  []stream.SkippedRow
+	Name         string
+	Findings     []stream.Finding
+	Skipped      []stream.SkippedRow
+	SkippedFiles []string
 }
 
 // Discover finds reconcile sources under sourcesDir using leaf-preference: each
@@ -44,6 +48,7 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 		return nil, fmt.Errorf("reading sources dir: %w", err)
 	}
 	allowSet := toSet(allow)
+	matched := make(map[string]bool, len(allowSet))
 
 	var sources []Source
 	for _, e := range entries {
@@ -53,35 +58,66 @@ func Discover(sourcesDir string, allow []string) ([]Source, error) {
 		if len(allowSet) > 0 && !allowSet[e.Name()] {
 			continue
 		}
+		matched[e.Name()] = true
 		child := filepath.Join(sourcesDir, e.Name())
 		leaves, err := leafFindingsFiles(child)
 		if err != nil {
 			return nil, err
 		}
 		if len(leaves) == 0 {
+			if allowSet[e.Name()] {
+				fmt.Fprintf(os.Stderr, "warning: requested source %q has no findings.txt\n", e.Name())
+			}
 			continue // a child with no findings.txt anywhere is not a source
 		}
 		src := Source{Name: e.Name()}
+		readable := 0
 		for _, f := range leaves {
 			data, rerr := os.ReadFile(f)
 			if rerr != nil {
 				// A transient/permission read error on one file must not abort the
 				// whole reconcile (open extension point) — warn and skip it.
 				fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", f, rerr)
+				src.SkippedFiles = append(src.SkippedFiles, f)
 				continue
 			}
 			res, perr := stream.ParseSource(data)
 			if perr != nil {
 				fmt.Fprintf(os.Stderr, "warning: skipping %s: %v\n", f, perr)
+				src.SkippedFiles = append(src.SkippedFiles, f)
 				continue
 			}
+			readable++
 			src.Findings = append(src.Findings, res.Findings...)
 			src.Skipped = append(src.Skipped, res.Skipped...)
 		}
+		if len(allowSet) > 0 && readable == 0 {
+			// The caller asked for this source by name and got nothing readable —
+			// warn loudly but continue (v1 favors resilience over fail-closed
+			// gating; the degradation is also recorded in summary.json).
+			fmt.Fprintf(os.Stderr, "warning: requested source %q yielded zero readable findings files\n", e.Name())
+		}
 		sources = append(sources, src)
+	}
+	// A requested name with no matching child directory also yielded nothing —
+	// warn (sorted for deterministic output) but continue, same v1 stance.
+	for _, name := range sortedUnmatched(allowSet, matched) {
+		fmt.Fprintf(os.Stderr, "warning: requested source %q not found under %s\n", name, sourcesDir)
 	}
 	sort.Slice(sources, func(i, j int) bool { return sources[i].Name < sources[j].Name })
 	return sources, nil
+}
+
+// sortedUnmatched returns the allowlist names that never matched a child dir.
+func sortedUnmatched(allowSet, matched map[string]bool) []string {
+	var out []string
+	for name := range allowSet {
+		if !matched[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // leafFindingsFiles returns the leaf findings.txt paths under root: a

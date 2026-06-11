@@ -32,8 +32,13 @@ type Summary struct {
 	ClustersCollapsed     int            `json:"clusters_collapsed"`
 	SeverityDisagreements int            `json:"severity_disagreements"`
 	Partial               bool           `json:"partial"`
-	TotalFindings         int            `json:"total_findings"`
-	ReconciledAt          string         `json:"reconciled_at"`
+	// SkippedSources lists findings.txt paths Discover dropped on a read error
+	// or bad header (TD-020): warn-and-continue degradation is recorded here
+	// rather than exit-coded, mirroring the partial flag's contract.
+	SkippedSources     []string `json:"skipped_sources"`
+	SkippedSourceCount int      `json:"skipped_source_count"`
+	TotalFindings      int      `json:"total_findings"`
+	ReconciledAt       string   `json:"reconciled_at"`
 }
 
 // Reconcile runs the deterministic pipeline: cluster all findings by location,
@@ -63,6 +68,7 @@ func Reconcile(sources []Source, opts Options) Result {
 		}
 	}
 	sortMerged(merged)
+	skipped := skippedSourceFiles(sources)
 
 	return Result{
 		Findings:  merged,
@@ -73,6 +79,8 @@ func Reconcile(sources []Source, opts Options) Result {
 			ClustersCollapsed:     clustersCollapsed,
 			SeverityDisagreements: disagreements,
 			Partial:               opts.Partial,
+			SkippedSources:        skipped,
+			SkippedSourceCount:    len(skipped),
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
 		},
@@ -102,6 +110,17 @@ func sourceNames(sources []Source) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// skippedSourceFiles flattens the per-source skipped findings.txt paths into a
+// sorted list (always non-nil so summary.json serializes [] rather than null).
+func skippedSourceFiles(sources []Source) []string {
+	out := []string{}
+	for _, s := range sources {
+		out = append(out, s.SkippedFiles...)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // perSourceCounts maps each source name to its input finding count.
