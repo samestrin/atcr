@@ -40,8 +40,14 @@ type Decision struct {
 }
 
 // Adjudication is the adjudication.json document: a flat list of decisions.
+// BaselineHash binds the decisions to the ambiguous.json generation they were
+// authored against (TD-024): the Skill copies summary.json's ambiguous_hash
+// verbatim, and RunReconcile refuses to apply a decisions file whose hash does
+// not match the baseline on disk — content-addressed cluster ids alone could
+// silently re-merge from a stale prior-session file whose ids still match.
 type Adjudication struct {
-	Decisions []Decision `json:"decisions"`
+	BaselineHash string     `json:"baseline_hash"`
+	Decisions    []Decision `json:"decisions"`
 }
 
 // AmbiguousID is the stable content-addressed id for a gray-zone pair. It is
@@ -86,6 +92,11 @@ func LoadAdjudication(path string) (*Adjudication, error) {
 			return nil, fmt.Errorf("invalid adjudication decision %q for cluster %s: must be merge, distinct, or skipped", d.Decision, d.ClusterID)
 		}
 	}
+	if adj.BaselineHash == "" {
+		// v1 is unreleased — strict rejection costs nothing and tolerating a
+		// missing hash would preserve the stale-file vulnerability.
+		return nil, fmt.Errorf("adjudication.json missing baseline_hash (copy ambiguous_hash from reconciled/summary.json verbatim)")
+	}
 	return &adj, nil
 }
 
@@ -120,6 +131,12 @@ func AmbiguousIDsFromFile(path string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	return AmbiguousIDsFromBytes(data)
+}
+
+// AmbiguousIDsFromBytes parses ambiguous.json content already in memory — the
+// baseline-hash check needs the same bytes, so the caller reads once.
+func AmbiguousIDsFromBytes(data []byte) (map[string]bool, error) {
 	var clusters []AmbiguousCluster
 	if err := json.Unmarshal(data, &clusters); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", AmbiguousJSON, err)
@@ -129,6 +146,25 @@ func AmbiguousIDsFromFile(path string) (map[string]bool, error) {
 		ids[c.ID] = true
 	}
 	return ids, nil
+}
+
+// HashBytes returns the "sha256:<hex>" digest used for the adjudication
+// baseline binding.
+func HashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// AmbiguousHash returns the digest of the exact bytes Emit writes for
+// ambiguous.json, recorded in summary.json as ambiguous_hash so the Skill can
+// copy it verbatim into adjudication.json (atcr computes the hash; the host
+// model never does).
+func AmbiguousHash(clusters []AmbiguousCluster) string {
+	var buf bytes.Buffer
+	if err := renderIndentedJSON(&buf, clusters); err != nil {
+		return "" // unreachable: AmbiguousCluster marshals without error
+	}
+	return HashBytes(buf.Bytes())
 }
 
 // preserveOriginalAmbiguous copies reconDir/ambiguous.json to

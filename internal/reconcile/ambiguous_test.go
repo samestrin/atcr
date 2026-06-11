@@ -72,10 +72,15 @@ func TestAmbiguous_AlwaysWrittenEmpty(t *testing.T) {
 	assert.Empty(t, clusters)
 }
 
-// writeAdjudication writes a decisions file for the gray cluster.
+// writeAdjudication writes a decisions file for the gray cluster, copying the
+// baseline hash from summary.json the way the Skill does.
 func writeAdjudication(t *testing.T, dir, clusterID, decision string) {
 	t.Helper()
-	adj := Adjudication{Decisions: []Decision{{
+	sumData, err := os.ReadFile(filepath.Join(dir, "reconciled", SummaryJSON))
+	require.NoError(t, err)
+	var sum Summary
+	require.NoError(t, json.Unmarshal(sumData, &sum))
+	adj := Adjudication{BaselineHash: sum.AmbiguousHash, Decisions: []Decision{{
 		ClusterID: clusterID, Decision: decision, Rationale: "test", HostModel: "claude-test", Timestamp: "2026-06-11T00:00:00Z",
 	}}}
 	data, err := json.Marshal(adj)

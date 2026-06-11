@@ -37,8 +37,11 @@ type Summary struct {
 	// rather than exit-coded, mirroring the partial flag's contract.
 	SkippedSources     []string `json:"skipped_sources"`
 	SkippedSourceCount int      `json:"skipped_source_count"`
-	TotalFindings      int      `json:"total_findings"`
-	ReconciledAt       string   `json:"reconciled_at"`
+	// AmbiguousHash digests the emitted ambiguous.json bytes (TD-024); the
+	// Skill copies it verbatim into adjudication.json as baseline_hash.
+	AmbiguousHash string `json:"ambiguous_hash"`
+	TotalFindings int    `json:"total_findings"`
+	ReconciledAt  string `json:"reconciled_at"`
 }
 
 // Reconcile runs the deterministic pipeline: cluster all findings by location,
@@ -81,6 +84,7 @@ func Reconcile(sources []Source, opts Options) Result {
 			Partial:               opts.Partial,
 			SkippedSources:        skipped,
 			SkippedSourceCount:    len(skipped),
+			AmbiguousHash:         AmbiguousHash(ambiguous),
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
 		},

@@ -101,9 +101,22 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 		if _, err := os.Stat(baseline); err != nil {
 			baseline = filepath.Join(reconDir, AmbiguousJSON)
 		}
-		known, err := AmbiguousIDsFromFile(baseline)
+		baseData, err := os.ReadFile(baseline)
 		if err != nil {
 			return Result{}, fmt.Errorf("reading ambiguous baseline for adjudication: %w", err)
+		}
+		known, err := AmbiguousIDsFromBytes(baseData)
+		if err != nil {
+			return Result{}, fmt.Errorf("reading ambiguous baseline for adjudication: %w", err)
+		}
+		if len(known) == 0 {
+			return Result{}, fmt.Errorf("no clusters to adjudicate: %s has no ambiguous clusters", baseline)
+		}
+		// TD-024: refuse a decisions file authored against a different
+		// ambiguous.json generation — content-addressed ids may still match a
+		// stale prior-session file and would re-merge silently.
+		if got := HashBytes(baseData); got != adj.BaselineHash {
+			return Result{}, fmt.Errorf("adjudication baseline mismatch: decisions were authored against a different ambiguous.json generation (decisions carry %s, baseline %s is %s)", adj.BaselineHash, baseline, got)
 		}
 		if err := ValidateDecisions(adj, known); err != nil {
 			return Result{}, err

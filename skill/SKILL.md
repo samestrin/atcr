@@ -96,10 +96,11 @@ Also write a human-readable narrative to `.atcr/reviews/<id>/sources/host/review
 If you choose to adjudicate:
 
 1. Read `ambiguous.json`. For each cluster, decide whether the two findings describe the *same underlying issue* (consider file/line proximity, problem-text overlap, and category alignment).
-2. Write `.atcr/reviews/<id>/reconciled/adjudication.json`:
+2. Write `.atcr/reviews/<id>/reconciled/adjudication.json`. Copy `baseline_hash` **verbatim** from the `ambiguous_hash` field of `reconciled/summary.json` — do not compute it yourself:
 
 ```json
 {
+  "baseline_hash": "<copy ambiguous_hash from reconciled/summary.json verbatim>",
   "decisions": [
     { "cluster_id": "amb-1a2b3c4d5e6f", "decision": "merge",    "rationale": "same null-deref, different wording", "host_model": "<your model id>", "timestamp": "<RFC3339>" },
     { "cluster_id": "amb-9f8e7d6c5b4a", "decision": "distinct", "rationale": "different functions",              "host_model": "<your model id>", "timestamp": "<RFC3339>" }
@@ -108,7 +109,7 @@ If you choose to adjudicate:
 ```
 
    `decision` is `merge`, `distinct`, or `skipped`. Only `merge` collapses a cluster; `distinct` and `skipped` (and any cluster you omit) stay unmerged.
-3. Re-run `atcr reconcile <id>`. It validates each `cluster_id` against the preserved original gray set (`ambiguous.original.json` once adjudication has run, else the current `ambiguous.json`) — an unknown id is rejected — applies the merges, preserves the original sidecar as `ambiguous.original.json`, and re-emits the reconciled artifacts. Re-running with the same decisions is idempotent.
+3. Re-run `atcr reconcile <id>`. It validates the decisions file against the preserved original gray set (`ambiguous.original.json` once adjudication has run, else the current `ambiguous.json`): a missing or mismatched `baseline_hash` is rejected (decisions authored against a different generation must not re-merge silently), an unknown `cluster_id` is rejected, and a decisions file with no clusters to adjudicate is an error. It then applies the merges, preserves the original sidecar as `ambiguous.original.json`, and re-emits the reconciled artifacts. Re-running with the same decisions is idempotent.
 
 Process every cluster in one pass — do not truncate by volume. When in doubt, leave a cluster unmerged.
 
