@@ -137,8 +137,11 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 // attempt ran). Attribution stays with the primary agent name;
 // FallbackUsed/FallbackFrom record the substitution. On failure the primary's
 // payload provenance is always recorded so status.json reflects the slot, not a
-// substitute that may have seen a different payload.
+// substitute that may have seen a different payload. DurationMS covers the
+// whole chain — a failed primary's wall time counts toward the slot, so a slow
+// primary plus fast fallback is not misreported as a fast slot.
 func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
+	start := time.Now()
 	chain := append([]Agent{s.Primary}, s.Fallbacks...)
 	var last Result
 	for i, a := range chain {
@@ -159,6 +162,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 			r.Agent = s.Primary.Name // attribution follows the slot, not the substitute
 		}
 		if r.Status == StatusOK {
+			r.DurationMS = time.Since(start).Milliseconds()
 			return r
 		}
 		last = r
@@ -167,6 +171,7 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
+	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }
 
