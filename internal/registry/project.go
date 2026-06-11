@@ -71,7 +71,10 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
 	}
 
-	if len(cfg.Agents) == 0 {
+	// The roster is the union of both lanes (matching fanout's ErrEmptyRoster
+	// contract): a serial-only config is legitimate when every provider is
+	// rate-limited, so reject only when BOTH lanes are empty.
+	if len(cfg.Agents) == 0 && len(cfg.SerialAgents) == 0 {
 		return nil, errors.New("no agents selected — add at least one agent to .atcr/config.yaml")
 	}
 	for _, lane := range [][]string{cfg.Agents, cfg.SerialAgents} {
