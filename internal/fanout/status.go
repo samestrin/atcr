@@ -10,8 +10,12 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 )
 
-// Agent outcome values written to status.json. A malformed LLM response yields
-// StatusFailed with the parse error recorded in AgentStatus.Error.
+// Agent outcome values written to status.json. StatusFailed reflects a failed
+// LLM call (transport, HTTP, or auth error) after fallback resolution; a
+// successful HTTP response is StatusOK regardless of content shape —
+// unparseable finding lines are silently skipped at parse time, so an ok agent
+// whose response yielded nothing parseable legitimately records
+// findings_count 0.
 const (
 	StatusOK      = "ok"
 	StatusFailed  = "failed"
