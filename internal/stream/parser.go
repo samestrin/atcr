@@ -122,7 +122,9 @@ func ParseSource(data []byte) (ParseResult, error) {
 	return parse(data, PerSourceColumns)
 }
 
-// ParseReconciled parses a reconciled (9-column) findings file.
+// ParseReconciled parses a reconciled (9-column) findings file. Nothing in the
+// pipeline re-ingests the reconciled findings.txt today; annotations folded
+// into EVIDENCE at write time stay folded (see Finding.AsReconciled).
 func ParseReconciled(data []byte) (ParseResult, error) {
 	return parse(data, ReconciledColumns)
 }

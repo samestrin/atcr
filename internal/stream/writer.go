@@ -72,8 +72,12 @@ func escapeField(s string) string {
 
 // AsReconciled migrates a per-source Finding (single Reviewer) into a reconciled
 // Finding (Reviewers + Confidence), carrying the location and detail fields
-// across. The reconciler uses this when collapsing a cluster so a finding's
-// attribution is never silently dropped between the 8-col and 9-col shapes.
+// across. It is not on the reconcile path today: reconcile.Merge builds the
+// 9-column finding from scratch and report reads findings.json, so this helper
+// (like ParseReconciled) exists for consumers that need the shape migration.
+// Note the reconciled text format is write-only downstream — annotations folded
+// into EVIDENCE (e.g. the reconciler's disagreement note) are never parsed back
+// out into structured fields. EVIDENCE-folding is one-way by design.
 func (f Finding) AsReconciled(reviewers []string, confidence string) Finding {
 	out := f
 	out.Reviewer = ""
