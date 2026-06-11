@@ -148,8 +148,8 @@ func RenderMarkdown(w io.Writer, r Result) error {
 			fmt.Fprintf(&b, "\n### %s\n\n", esc(m.Severity))
 			lastSev = m.Severity
 		}
-		fmt.Fprintf(&b, "- `%s:%d` — confidence %s, reviewers: %s\n",
-			esc(m.File), m.Line, esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
+		fmt.Fprintf(&b, "- %s — confidence %s, reviewers: %s\n",
+			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
 		if m.Disagreement != "" {
 			fmt.Fprintf(&b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
 		}
@@ -208,6 +208,19 @@ func renderIndentedJSON(w io.Writer, v any) error {
 // newlineFlattener collapses CR/LF to a space so a free-text field cannot break
 // out of its markdown list item onto fresh lines (forged headings/bullets).
 var newlineFlattener = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
+
+// codeSpan renders FILE:LINE inside a backtick code span so a normal path is
+// byte-identical (unicode-safe). A path containing a backtick (a valid filename
+// character) would close the span and let trailing text inject live
+// markdown/HTML, so such paths — and any with CR/LF — fall back to
+// HTML-escaping instead. Same defense as internal/report/render.go codeSpan
+// (AC 01-06 Security).
+func codeSpan(file string, line int) string {
+	if strings.ContainsRune(file, '`') || strings.ContainsAny(file, "\r\n") {
+		return esc(fmt.Sprintf("%s:%d", file, line))
+	}
+	return fmt.Sprintf("`%s:%d`", file, line)
+}
 
 // esc makes a free-text field safe in markdown: newlines are flattened (so a
 // field cannot inject markdown structure) and HTML metacharacters are escaped
