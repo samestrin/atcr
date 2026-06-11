@@ -84,6 +84,10 @@ func TestSkill_AdjudicationDocumented(t *testing.T) {
 	for _, verb := range []string{"merge", "distinct", "skipped"} {
 		assert.Contains(t, SkillMD, verb)
 	}
+	// TD-024: the adjudication example must carry the baseline binding and say
+	// where the hash comes from (atcr emits it; the Skill copies it verbatim).
+	assert.Contains(t, SkillMD, "baseline_hash")
+	assert.Contains(t, SkillMD, "ambiguous_hash")
 }
 
 // TestSkill_NoAbsoluteOrClaudePaths enforces AC 05-01 Edge Case 2: the body

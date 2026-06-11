@@ -2,9 +2,12 @@ package reconcile
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +160,64 @@ func TestAdjudication_DistinctLeavesUnmerged(t *testing.T) {
 	writeAdjudication(t, dir, id, DecisionDistinct)
 	res := runRecon(t, dir)
 	assert.Len(t, res.Findings, 2, "distinct decision keeps both findings")
+}
+
+func TestSummary_CarriesAmbiguousHash(t *testing.T) {
+	// summary.json must carry ambiguous_hash = sha256 over the exact bytes of
+	// the emitted ambiguous.json, so the Skill can copy it verbatim into
+	// adjudication.json as baseline_hash (TD-024: bind decisions to the
+	// ambiguous.json generation they were authored against).
+	dir := writeGrayReview(t)
+	runRecon(t, dir)
+	sumData, err := os.ReadFile(filepath.Join(dir, "reconciled", SummaryJSON))
+	require.NoError(t, err)
+	var sum Summary
+	require.NoError(t, json.Unmarshal(sumData, &sum))
+	ambData, err := os.ReadFile(filepath.Join(dir, "reconciled", AmbiguousJSON))
+	require.NoError(t, err)
+	want := sha256.Sum256(ambData)
+	assert.Equal(t, "sha256:"+hex.EncodeToString(want[:]), sum.AmbiguousHash)
+}
+
+func TestAdjudication_MissingBaselineHashRejected(t *testing.T) {
+	// v1 is unreleased: a decisions file without the baseline binding is
+	// rejected outright — tolerating it would preserve the exact stale-file
+	// vulnerability the binding exists to close.
+	dir := writeGrayReview(t)
+	id := runRecon(t, dir).Ambiguous[0].ID
+	raw := `{"decisions":[{"cluster_id":"` + id + `","decision":"merge"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", AdjudicationJSON), []byte(raw), 0o644))
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing baseline_hash")
+}
+
+func TestAdjudication_StaleBaselineHashRejected(t *testing.T) {
+	// A decisions file authored against a different ambiguous.json generation
+	// (content-addressed ids may still match!) must refuse to apply.
+	dir := writeGrayReview(t)
+	id := runRecon(t, dir).Ambiguous[0].ID
+	raw := `{"baseline_hash":"sha256:` + strings.Repeat("0", 64) + `","decisions":[{"cluster_id":"` + id + `","decision":"merge"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", AdjudicationJSON), []byte(raw), 0o644))
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different ambiguous.json generation")
+}
+
+func TestAdjudication_NoClustersToAdjudicate(t *testing.T) {
+	// adjudication.json present but the baseline has zero gray clusters: a
+	// misfire that must hard-error explicitly, not pass silently or surface as
+	// a confusing unknown-id error.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sources", "host", "findings.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	require.NoError(t, os.WriteFile(p, []byte("# atcr-findings/v1\nHIGH|a.go:1|p|f|bug|5|e|host\n"), 0o644))
+	runRecon(t, dir)
+	raw := `{"baseline_hash":"sha256:` + strings.Repeat("0", 64) + `","decisions":[]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", AdjudicationJSON), []byte(raw), 0o644))
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no clusters to adjudicate")
 }
 
 func TestAdjudication_UnknownClusterIDRejected(t *testing.T) {
