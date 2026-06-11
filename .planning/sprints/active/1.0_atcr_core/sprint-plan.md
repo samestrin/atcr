@@ -1176,33 +1176,35 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.21 [ ] **[Source discovery + normalization - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.21 [x] **[Source discovery + normalization - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-05 Reconciliation Pipeline](plan/acceptance-criteria/01-05-reconciliation-pipeline.md)
    1. Analyze AC, identify testable units
    2. Write tests: any child of sources/ containing findings.txt is discovered (open extension point); reconciled/ never an input; --sources allowlist filters immediate children (pool, host, ...); normalization pads short rows, skips comments/blanks
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 3.22 [ ] **[Source discovery + normalization - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.22 [x] **[Source discovery + normalization - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 3.23 [ ] **[Source discovery + normalization - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.22]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.22`).
+### 3.23 [x] **[Source discovery + normalization - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/reconcile/discover.go, internal/reconcile/discover_test.go
+   Fresh subagent (description: `Adversarial review: 3.22`) reviewed the unit.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | discover.go leaf read | symlinked findings.txt could read a file outside the review dir | Fixed in 3.24: d.Type().IsRegular() gate skips symlinks/FIFOs/devices + containment test |
+   | HIGH | discover.go WalkDir cb | one unreadable subtree aborted discovery of all sources | Fixed in 3.24: warn + SkipDir/nil instead of propagating |
+   | MEDIUM | discover.go ReadFile | transient read error was fatal (inconsistent with parse-error skip) | Fixed in 3.24: warn + continue |
+   | MEDIUM | discover.go walk | FIFO/device findings.txt would block/error | Fixed in 3.24: same IsRegular gate |
+   | MEDIUM | discover.go | top-level findings.txt file directly under sources/ ignored | Documented as by-design (only child dirs are sources) |
+   | LOW | discover.go leaf check | O(n²) over dirs | Kept: realistic trees are tiny |
+   | LOW | discover.go HasPrefix | sibling-prefix (pool vs pool2) — reviewer CONFIRMED not a bug | Comment added: trailing separator is load-bearing |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.24, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 2 HIGH + 2 MEDIUM fixed in 3.24 with a symlink-containment test. Remaining items documented/kept. HasPrefix sibling-prefix concern independently confirmed NOT present.
 
-### 3.24 [ ] **[Source discovery + normalization - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.24 [x] **[Source discovery + normalization - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.23 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
