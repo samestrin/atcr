@@ -8,6 +8,25 @@ import (
 )
 
 // mf builds a per-source finding with the merge-relevant fields.
+func TestMerge_OutOfScopeFailClosed(t *testing.T) {
+	// Fail-closed: out-of-scope suppresses gating only when EVERY reviewer
+	// tagged the finding out-of-scope. A 2-vs-1 out-of-scope majority must not
+	// drop the real category — the real category wins and the finding still
+	// gates (TD: merge.go modalCategory could silently drop the tag's inverse).
+	mixed := []stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", CategoryOutOfScope, 10, "e", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", CategoryOutOfScope, 10, "e", "kai"),
+		mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "mira"),
+	}
+	assert.Equal(t, "security", Merge(mixed).Category, "real category wins over an out-of-scope majority")
+
+	unanimous := []stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", CategoryOutOfScope, 10, "e", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", CategoryOutOfScope, 10, "e", "kai"),
+	}
+	assert.Equal(t, CategoryOutOfScope, Merge(unanimous).Category, "unanimous out-of-scope stays annotated")
+}
+
 func mf(sev, file string, line int, problem, fix, category string, est int, evidence, reviewer string) stream.Finding {
 	return stream.Finding{
 		Severity: sev, File: file, Line: line, Problem: problem, Fix: fix,

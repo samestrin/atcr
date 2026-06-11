@@ -148,6 +148,29 @@ func TestRenderMarkdown_EscapesInjectionAndZeroFindings(t *testing.T) {
 	assert.Contains(t, b.String(), "&lt;script&gt;")
 }
 
+func TestReconcile_OutOfScopeAnnotatedNotGated(t *testing.T) {
+	// AC 06-04: out-of-scope findings are annotated (kept in the artifacts),
+	// counted in summary.json, listed in a separate report section, and
+	// excluded from the severity gate.
+	sources := []Source{{Name: "pool", Findings: []stream.Finding{
+		mf("CRITICAL", "a.go", 1, "pre-existing issue untouched by this change", "f", CategoryOutOfScope, 10, "e", "greta"),
+		mf("HIGH", "b.go", 2, "real issue in the change", "f", "security", 10, "e", "greta"),
+	}}}
+	res := Reconcile(sources, recAt())
+	assert.Equal(t, 1, res.Summary.OutOfScope, "summary carries the out-of-scope count")
+	assert.Equal(t, 2, res.Summary.TotalFindings, "annotated, not dropped")
+	assert.Equal(t, 1, CountAtOrAbove(res.Findings, SevHigh), "the out-of-scope CRITICAL must not trip --fail-on HIGH")
+
+	var b strings.Builder
+	require.NoError(t, RenderMarkdown(&b, res))
+	out := b.String()
+	require.Contains(t, out, "## Out-of-Scope Findings")
+	main := out[:strings.Index(out, "## Out-of-Scope Findings")]
+	assert.NotContains(t, main, "pre-existing issue", "out-of-scope finding lives only in its own section")
+	assert.Contains(t, out, "pre-existing issue", "still listed for the human reader")
+	assert.Contains(t, main, "real issue in the change")
+}
+
 func TestRenderMarkdown_BacktickFilePathRendersInert(t *testing.T) {
 	// A model-controlled File containing a backtick would close the code span
 	// and let trailing text render as live markdown — the same injection class

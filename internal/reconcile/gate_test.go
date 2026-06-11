@@ -38,6 +38,17 @@ func TestCountAtOrAbove_ThresholdInclusive(t *testing.T) {
 	assert.Equal(t, 4, CountAtOrAbove(findings, SevLow), "LOW counts everything")
 }
 
+func TestCountAtOrAbove_ExcludesOutOfScope(t *testing.T) {
+	// AC 06-04 Scenario 4: a pre-existing CRITICAL annotated out-of-scope must
+	// not trip --fail-on HIGH — the gate counts only in-scope findings.
+	findings := []Merged{
+		{Finding: stream.Finding{Severity: "CRITICAL", Category: CategoryOutOfScope}},
+		{Finding: stream.Finding{Severity: "HIGH", Category: "security"}},
+	}
+	assert.Equal(t, 1, CountAtOrAbove(findings, SevHigh), "only the in-scope HIGH counts")
+	assert.Equal(t, 0, CountAtOrAbove(findings[:1], SevHigh), "a lone out-of-scope CRITICAL never gates")
+}
+
 func TestRunReconcile_EndToEnd(t *testing.T) {
 	reviewDir := t.TempDir()
 	// Two sources agreeing on one finding.
