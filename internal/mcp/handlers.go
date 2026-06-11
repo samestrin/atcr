@@ -3,7 +3,6 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -237,7 +236,7 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		return nil, ReportResult{}, err
 	}
 
-	findings, err := readReconciledFindings(dir)
+	findings, err := reconcile.ReadReconciledFindings(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// Distinguish "fan-out still running" from "reconcile not run yet" so
@@ -348,21 +347,4 @@ func failingFindings(res reconcile.Result, threshold string) []reconcile.JSONFin
 	return out
 }
 
-// readReconciledFindings loads reviewDir/reconciled/findings.json. A missing
-// file is returned as os.ErrNotExist so the caller can surface the "run
-// atcr_reconcile first" guidance; malformed JSON surfaces a parse error.
-func readReconciledFindings(reviewDir string) ([]reconcile.JSONFinding, error) {
-	path := filepath.Join(reviewDir, "reconciled", "findings.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err // includes os.ErrNotExist
-	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, fmt.Errorf("reconciled findings.json is empty")
-	}
-	var findings []reconcile.JSONFinding
-	if err := json.Unmarshal(data, &findings); err != nil {
-		return nil, fmt.Errorf("parsing reconciled findings: %w", err)
-	}
-	return findings, nil
-}
+

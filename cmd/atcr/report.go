@@ -2,11 +2,9 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
@@ -67,23 +65,14 @@ func runReport(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// readReconciledFindings loads reviewDir/reconciled/findings.json into the
-// structured record type. A missing file is the "run reconcile first" usage
-// error; malformed JSON surfaces a parse error.
+// readReconciledFindings wraps the shared reconcile loader with the CLI's
+// guidance: a missing findings.json is the "run reconcile first" usage error.
 func readReconciledFindings(reviewDir string) ([]reconcile.JSONFinding, error) {
-	path := filepath.Join(reviewDir, "reconciled", "findings.json")
-	data, err := os.ReadFile(path)
+	findings, err := reconcile.ReadReconciledFindings(reviewDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("no reconciled data found: run 'atcr reconcile' first")
 	}
 	if err != nil {
-		return nil, err
-	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, fmt.Errorf("failed to parse findings: reconciled findings.json is empty")
-	}
-	var findings []reconcile.JSONFinding
-	if err := json.Unmarshal(data, &findings); err != nil {
 		return nil, fmt.Errorf("failed to parse findings: %w", err)
 	}
 	return findings, nil

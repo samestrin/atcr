@@ -116,6 +116,27 @@ func RenderJSON(w io.Writer, r Result) error {
 	return renderIndentedJSON(w, r.JSONFindings())
 }
 
+// ReadReconciledFindings loads reviewDir/reconciled/findings.json — the reader
+// counterpart to RenderJSON, shared by the CLI report command and the MCP
+// report handler so the findings.json contract has one loader. A missing file
+// is returned as the raw os.ErrNotExist sentinel so each caller phrases its own
+// "run reconcile first" guidance; an empty or malformed file is a parse error.
+func ReadReconciledFindings(reviewDir string) ([]JSONFinding, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, FindingsJSON)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err // includes os.ErrNotExist
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, fmt.Errorf("reconciled findings.json is empty")
+	}
+	var findings []JSONFinding
+	if err := json.Unmarshal(data, &findings); err != nil {
+		return nil, fmt.Errorf("parsing reconciled findings: %w", err)
+	}
+	return findings, nil
+}
+
 // RenderMarkdown writes the human report.md: an executive summary (counts by
 // severity x confidence) followed by findings grouped by severity. Findings
 // annotated out-of-scope are listed in their own section (AC 06-04) — they do
