@@ -172,6 +172,13 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, err
 	}
 
+	// A running fan-out is rejected before any reconcile work: reading a
+	// partially-written agent set would emit complete-looking artifacts and a
+	// pass verdict computed from a subset of agents.
+	if err := fanout.EnsureReviewComplete(dir, id); err != nil {
+		return nil, ReconcileResult{}, err
+	}
+
 	// Fail-before-emit (mirrors the CLI's resolveReviewDir pre-check): a review
 	// with no findings sources is rejected before RunReconcile so empty
 	// reconciled artifacts are never written to disk as a side effect.
@@ -228,6 +235,11 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 	findings, err := readReconciledFindings(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			// Distinguish "fan-out still running" from "reconcile not run yet" so
+			// the guidance does not send a client to atcr_reconcile mid-review.
+			if gerr := fanout.EnsureReviewComplete(dir, id); gerr != nil {
+				return nil, ReportResult{}, gerr
+			}
 			return nil, ReportResult{}, fmt.Errorf("review %s has no reconciliation results; run atcr_reconcile first", id)
 		}
 		return nil, ReportResult{}, err

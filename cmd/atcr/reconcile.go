@@ -46,6 +46,12 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return usageError(err) // missing/incomplete review → exit 2
 	}
 
+	// A fan-out-managed review that has not written its completion signal is a
+	// usage error: reconciling mid-run would silently read a partial agent set.
+	if err := fanout.EnsureReviewComplete(reviewDir, filepath.Base(reviewDir)); err != nil {
+		return usageError(err)
+	}
+
 	sources, _ := cmd.Flags().GetStringSlice("sources")
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reconcile.Options{
 		ReconciledAt: time.Now(),

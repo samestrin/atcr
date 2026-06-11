@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -85,6 +86,30 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		st.Status = RunFailed
 	}
 	return st, nil
+}
+
+// ErrReviewInProgress reports a reconcile/report attempt against a review whose
+// fan-out has not written its completion signal (summary.json) yet.
+var ErrReviewInProgress = errors.New("still in_progress")
+
+// EnsureReviewComplete rejects a fan-out-managed review that is still running,
+// so a reconcile cannot read a partially-written agent set and emit
+// complete-looking artifacts (and a pass verdict) from a subset of agents. A
+// directory with no manifest.json is not fan-out-managed (e.g. a hand-assembled
+// review anchored by path from the CLI) and passes the guard; a corrupt
+// manifest or summary surfaces as its parse error, never a guessed state.
+func EnsureReviewComplete(reviewDir, id string) error {
+	st, err := ReadReviewStatus(reviewDir, id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if st.Status == RunInProgress {
+		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
+	}
+	return nil
 }
 
 // AgentStatus is the per-agent status.json record. It is always written —
