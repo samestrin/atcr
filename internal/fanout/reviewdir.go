@@ -241,11 +241,22 @@ func WriteManifest(reviewDir string, m *payload.Manifest) error {
 	return payload.WriteManifest(filepath.Join(reviewDir, manifestFile), m)
 }
 
-// ReadManifestPartial reads the partial flag from a review's manifest.json,
-// defaulting to false when the manifest is absent or unreadable. It is the
-// single best-effort reader shared by the CLI reconcile path and the MCP
-// reconcile handler so the two never drift.
+// ReadManifestPartial reads a review's partial flag, treating
+// sources/pool/summary.json (the completion signal, and the same source of
+// truth ReadReviewStatus uses) as authoritative and falling back to
+// manifest.json when no readable summary exists (fan-out still running, or a
+// hand-assembled review). Reading the summary first means a WriteManifest
+// failure after WritePool can never report partial:false for a partial run.
+// It is the single best-effort reader shared by the CLI reconcile path and the
+// MCP reconcile handler so the two never drift; when neither artifact is
+// readable it defaults to false.
 func ReadManifestPartial(reviewDir string) bool {
+	if data, err := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile)); err == nil {
+		var ps PoolSummary
+		if json.Unmarshal(data, &ps) == nil {
+			return ps.Partial
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
 	if err != nil {
 		return false
