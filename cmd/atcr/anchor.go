@@ -20,7 +20,9 @@ func anchorDir(arg string) (string, error) {
 	if arg == "" {
 		id, err := fanout.ReadLatest(".")
 		if err != nil {
-			return "", fmt.Errorf("no review specified and no .atcr/latest pointer: run 'atcr review' first")
+			// Wrap rather than discard: ReadLatest distinguishes a missing file
+			// from a corrupt/tampered pointer, and that cause must surface.
+			return "", fmt.Errorf("no review specified and no usable .atcr/latest pointer (run 'atcr review' first): %w", err)
 		}
 		return filepath.Join(fanout.ReviewsRoot("."), id), nil
 	}
