@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
@@ -48,7 +49,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	sources, _ := cmd.Flags().GetStringSlice("sources")
 	res, err := reconcile.RunReconcile(reviewDir, sources, reconcile.Options{
 		ReconciledAt: time.Now(),
-		Partial:      readManifestPartial(reviewDir),
+		Partial:      fanout.ReadManifestPartial(reviewDir),
 	})
 	if err != nil {
 		// An I/O failure is an infrastructure/usage error (exit 2), never the

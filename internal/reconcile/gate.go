@@ -32,15 +32,27 @@ func ParseSeverity(s string) (string, error) {
 	}
 }
 
+// AtOrAbove reports whether severity sits at or above threshold in the
+// CRITICAL > HIGH > MEDIUM > LOW ordering. It is the per-finding predicate the
+// count/filter helpers share. An unknown threshold ranks 0; rather than letting
+// every finding pass an unrecognized gate (a fail-all footgun for an
+// unvalidated caller), an unknown threshold returns false.
+func AtOrAbove(severity, threshold string) bool {
+	tr, ok := severityRank[threshold]
+	if !ok {
+		return false
+	}
+	return severityRank[severity] >= tr
+}
+
 // CountAtOrAbove returns how many findings have severity at or above threshold.
 // threshold must be a canonical severity (validated via ParseSeverity). The
 // ordering is CRITICAL > HIGH > MEDIUM > LOW, so --fail-on HIGH counts HIGH and
 // CRITICAL. This is the pure helper the centralized exit-code logic uses.
 func CountAtOrAbove(findings []Merged, threshold string) int {
-	t := severityRank[threshold]
 	n := 0
 	for _, f := range findings {
-		if severityRank[f.Severity] >= t {
+		if AtOrAbove(f.Severity, threshold) {
 			n++
 		}
 	}

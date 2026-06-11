@@ -154,3 +154,10 @@
 **Issue:** (1) `Finding.AsReconciled` and `stream.ParseReconciled` have only test callers — `reconcile.Merge` builds the 9-col finding from scratch and `report` reads findings.json, so neither helper is on the integration path. (2) The reconciled `findings.txt` folds the disagreement annotation into EVIDENCE; re-parsing it carries that text back inside EVIDENCE (lossy, no dedicated column) — the 9-col round-trip is one-way in practice.
 **Why accepted:** Both are sound public surface for external consumers (the findings.txt contract is documented for downstream tools like `/reconcile-code-review`); the 9-col round-trip is covered by unit tests even if no production caller re-ingests the txt. findings.json (not findings.txt) is the structured re-read path.
 **Fix in:** v2 — if Phase 4 MCP re-ingests reconciled findings.txt, add a DISAGREEMENT column or route Merge through AsReconciled; otherwise document EVIDENCE-folding as one-way.
+
+## TD-023 — atcr_status reads manifest+summary non-atomically (MEDIUM)
+**Origin:** Phase 4, task 4.13 adversarial review, 2026-06-11
+**File:** internal/fanout/status.go:48
+**Issue:** ReadReviewStatus reads manifest.json then sources/pool/summary.json in two separate steps while the background fan-out (started by the atcr_review handler) is writing both. A status poll that lands between ExecuteReview's manifest rewrite and its summary.json write can briefly read the pre-finalized manifest roster alongside an absent summary (reported as in_progress) — eventually consistent, not torn.
+**Why accepted:** Both writes are atomic (temp + rename), so no field is ever read half-written; the Partial flag is derived solely from summary.json (never the in-progress manifest), so a completed status never reports a stale Partial. The only observable effect is one extra in_progress poll, which the Skill's bounded polling loop already tolerates.
+**Fix in:** v2 — write a single status.json snapshot at fan-out completion (or a completion sentinel) so status is read from one atomic file instead of two.

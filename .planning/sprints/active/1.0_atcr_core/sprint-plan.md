@@ -1388,126 +1388,98 @@ Documentation available in [documentation/](plan/documentation/):
 
 **Focus:** MCP server, Skill definition, end-to-end orchestration validation.
 
-### 4.1 [ ] **[MCP stdio server + stderr discipline - RED](plan/user-stories/04-mcp-integration.md)**
+### 4.1 [x] **[MCP stdio server + stderr discipline - RED](plan/user-stories/04-mcp-integration.md)**
    **AC:** [04-01 MCP Stdio Server](plan/acceptance-criteria/04-01-mcp-stdio-server.md)
    1. Analyze AC, identify testable units
    2. Write tests (InMemoryTransport): initialize handshake; slog writes to stderr only (stdout owned by protocol); stdin close → in-flight requests complete, clean exit 0; malformed JSON-RPC → protocol error response, no crash
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 4.2 [ ] **[MCP stdio server + stderr discipline - GREEN](plan/user-stories/04-mcp-integration.md)**
+### 4.2 [x] **[MCP stdio server + stderr discipline - GREEN](plan/user-stories/04-mcp-integration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 4.3 [ ] **[MCP stdio server + stderr discipline - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.2]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 4.2`).
+### 4.3 [x] **[MCP stdio server + stderr discipline - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
+   **Changed Files:** internal/mcp/{server.go, tools.go, handlers.go}, cmd/atcr/{serve.go, status.go}, internal/fanout/{review.go, status.go, reviewdir.go}, internal/reconcile/gate.go (holistic review of the whole MCP-server unit — covers 4.3, 4.7, 4.11, 4.15).
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: MCP server unit`) reviewed the whole unit (SECURITY / EDGE CASES / ERROR HANDLING / PERFORMANCE).
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | CRITICAL | handlers.go background goroutine | Fan-out goroutine had no `recover()`; a panic in ExecuteReview would crash the whole MCP server process | Fixed in 4.4: `defer recover()` logs the panic, server survives |
+   | HIGH | serve.go / handlers.go | Detached fan-out goroutines untracked; client disconnect → process exit kills in-flight reviews mid-write (orphaned, stuck in_progress) | Fixed in 4.4: engine `sync.WaitGroup` + `mcp.Serve` bounded drain (5s) on shutdown |
+   | HIGH | handlers.go handleReview | `ErrEmptyRange` not mapped → empty range scaffolds a no-op review, fires the pool at empty payloads, repoints latest | Fixed in 4.4: empty range returns "nothing to review" before PrepareReview (test: TestReviewHandler_EmptyRangeErrors) |
+   | MEDIUM | status.go ReadReviewStatus | manifest + summary read non-atomically vs. the background writer | Deferred → TD-023 (eventually-consistent; atomic writes + Partial-from-summary make it non-torn) |
+   | MEDIUM | gate.go AtOrAbove | exported helper trusts a canonical threshold; unknown threshold ranks 0 → fail-all footgun | Fixed in 4.4: unknown threshold returns false |
+   | LOW | handlers.go / anchor.go | `readManifestPartial` duplicated in MCP + CLI | Fixed in 4.4: extracted `fanout.ReadManifestPartial`, both call it |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.4, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 CRITICAL + 3 HIGH fixed inline in 4.4 (panic recover, shutdown drain, empty-range guard); 2 cheap MEDIUM/LOW also fixed (AtOrAbove guard, manifest-reader dedup); 1 MEDIUM deferred → TD-023.
 
-### 4.4 [ ] **[MCP stdio server + stderr discipline - REFACTOR](plan/user-stories/04-mcp-integration.md)**
+### 4.4 [x] **[MCP stdio server + stderr discipline - REFACTOR](plan/user-stories/04-mcp-integration.md)**
    1. Fix CRITICAL/HIGH issues from 4.3 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 4.5 [ ] **[Tool registration + typed schemas - RED](plan/user-stories/04-mcp-integration.md)**
+### 4.5 [x] **[Tool registration + typed schemas - RED](plan/user-stories/04-mcp-integration.md)**
    **AC:** [04-02 Tool Registration and Schemas](plan/acceptance-criteria/04-02-tool-registration-schemas.md)
    1. Analyze AC, identify testable units
    2. Write tests: exactly 5 tools (atcr_review, atcr_reconcile, atcr_report, atcr_range, atcr_status); schemas inferred from typed args/result structs via generic mcp.AddTool; unknown/extra arg fields rejected; duplicate registration → error at startup (no panic)
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 4.6 [ ] **[Tool registration + typed schemas - GREEN](plan/user-stories/04-mcp-integration.md)**
+### 4.6 [x] **[Tool registration + typed schemas - GREEN](plan/user-stories/04-mcp-integration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 4.7 [ ] **[Tool registration + typed schemas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.6]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 4.6`).
+### 4.7 [x] **[Tool registration + typed schemas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
+   **Changed Files:** internal/mcp/{server.go, tools.go} (tool registration + typed schemas). Reviewed as part of the holistic MCP-server adversarial review in 4.3.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 4.3 holistic review — tool registration (duplicate-name guard + panic-recover in `registerTool`) and the report format-enum schema were in scope. No CRITICAL/HIGH specific to registration. Adversarial review passed.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.8, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 4.8 [ ] **[Tool registration + typed schemas - REFACTOR](plan/user-stories/04-mcp-integration.md)**
+### 4.8 [x] **[Tool registration + typed schemas - REFACTOR](plan/user-stories/04-mcp-integration.md)**
    1. Fix CRITICAL/HIGH issues from 4.7 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 4.9 [ ] **[atcr_review + atcr_reconcile handlers - RED](plan/user-stories/04-mcp-integration.md)**
+### 4.9 [x] **[atcr_review + atcr_reconcile handlers - RED](plan/user-stories/04-mcp-integration.md)**
    **AC:** [04-03 Review and Reconcile Handlers](plan/acceptance-criteria/04-03-review-reconcile-handlers.md)
    1. Analyze AC, identify testable units
    2. Write tests (InMemoryTransport): handlers are thin wrappers over the same engine as the CLI; atcr_review returns immediately with {review_id, review_path, status: "running", agent_count} while fan-out continues (completion polled via atcr_status); atcr_reconcile defaults to .atcr/latest, fail_on filters by SEVERITY; invalid fail_on → error before execution; path containment under .atcr/reviews/
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 4.10 [ ] **[atcr_review + atcr_reconcile handlers - GREEN](plan/user-stories/04-mcp-integration.md)**
+### 4.10 [x] **[atcr_review + atcr_reconcile handlers - GREEN](plan/user-stories/04-mcp-integration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 4.11 [ ] **[atcr_review + atcr_reconcile handlers - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.10]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 4.10`).
+### 4.11 [x] **[atcr_review + atcr_reconcile handlers - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
+   **Changed Files:** internal/mcp/handlers.go (handleReview/handleReconcile), internal/fanout/review.go (Prepare/Execute split). Reviewed as part of the holistic MCP-server adversarial review in 4.3.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 4.3 holistic review — the review handler's background goroutine yielded the CRITICAL (panic recover) + two HIGH (shutdown drain, empty-range guard), all fixed in 4.4; reconcile's fail_on path and no-results error were in scope. Adversarial review passed after fixes.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.12, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 4.12 [ ] **[atcr_review + atcr_reconcile handlers - REFACTOR](plan/user-stories/04-mcp-integration.md)**
+### 4.12 [x] **[atcr_review + atcr_reconcile handlers - REFACTOR](plan/user-stories/04-mcp-integration.md)**
    1. Fix CRITICAL/HIGH issues from 4.11 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 4.13 [ ] **[atcr_report / atcr_range / atcr_status handlers - RED](plan/user-stories/04-mcp-integration.md)**
+### 4.13 [x] **[atcr_report / atcr_range / atcr_status handlers - RED](plan/user-stories/04-mcp-integration.md)**
    **AC:** [04-04 Report, Range, and Status Handlers](plan/acceptance-criteria/04-04-report-range-status-handlers.md)
    1. Analyze AC, identify testable units
    2. Write tests (InMemoryTransport): atcr_report renders md/json/checklist; invalid format rejected by schema enum (handler enum check as defense in depth); atcr_range returns Resolution JSON; atcr_status reads manifest (corrupt manifest → structured error); git ops via exec.Command argument arrays only
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 4.14 [ ] **[atcr_report / atcr_range / atcr_status handlers - GREEN](plan/user-stories/04-mcp-integration.md)**
+### 4.14 [x] **[atcr_report / atcr_range / atcr_status handlers - GREEN](plan/user-stories/04-mcp-integration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 4.15 [ ] **[atcr_report / atcr_range / atcr_status handlers - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 4.14]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 4.14`).
+### 4.15 [x] **[atcr_report / atcr_range / atcr_status handlers - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-mcp-integration.md)**
+   **Changed Files:** internal/mcp/handlers.go (handleReport/handleRange/handleStatus + resolveReviewDir containment), internal/fanout/status.go (ReadReviewStatus), internal/reconcile/gate.go (AtOrAbove). Reviewed as part of the holistic MCP-server adversarial review in 4.3.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Action Required:** Covered by the 4.3 holistic review — path containment (resolveReviewDir), the empty-diff range result, corrupt-manifest structured error, and report format-enum defense were in scope; yielded the AtOrAbove footgun (fixed in 4.4) and the status-read race (deferred → TD-023). Adversarial review passed.
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 4.16, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
-
-### 4.16 [ ] **[atcr_report / atcr_range / atcr_status handlers - REFACTOR](plan/user-stories/04-mcp-integration.md)**
+### 4.16 [x] **[atcr_report / atcr_range / atcr_status handlers - REFACTOR](plan/user-stories/04-mcp-integration.md)**
    1. Fix CRITICAL/HIGH issues from 4.15 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

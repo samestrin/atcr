@@ -92,20 +92,35 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
 	}, nil
 }
 
-// RunReview is the full review flow: build per-mode payloads, assemble the
-// roster into parallel/serial slots (with fallback chains), scaffold the review
-// directory, fan out under the global timeout, then write per-agent artifacts,
-// the merged pool, the manifest, and the latest pointer. The completer is
-// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+// PreparedReview is a scaffolded-but-not-yet-executed review: the review
+// directory exists with its payload artifacts, manifest (Partial=false,
+// finalized by ExecuteReview), and .atcr/latest pointer written, and the roster
+// is assembled into runnable slots. It is the handoff between the two review
+// phases so the MCP server can scaffold synchronously (returning the id/dir/
+// agent-count to the client immediately) and run the fan-out in the background,
+// while the CLI runs both phases inline. The fields the executor needs are
+// exported; manifest is finalized in place by ExecuteReview.
+type PreparedReview struct {
+	ID         string
+	Dir        string
+	Slots      []Slot
+	TimeoutSec int
+	manifest   *payload.Manifest
+}
+
+// AgentCount is the number of reviewer slots the prepared review will run.
+func (p *PreparedReview) AgentCount() int { return len(p.Slots) }
+
+// PrepareReview runs phase one of a review: build per-mode payloads, assemble
+// the roster into parallel/serial slots (with fallback chains), derive the
+// review id, scaffold the review directory, and write the payload artifacts, an
+// in-progress manifest, and the .atcr/latest pointer. No agent runs here, so it
+// returns quickly; ExecuteReview performs the fan-out.
 //
-// Artifacts are always persisted, even when every agent fails; in that case the
-// populated *ReviewResult is still returned alongside the wrapped
-// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
-// remains for inspection.
-func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req ReviewRequest) (*ReviewResult, error) {
-	// Reject an empty roster before scaffolding so a no-op run never creates a
-	// review directory or repoints .atcr/latest. (LoadReviewConfig also rejects
-	// this earlier; RunReview is defended for direct/MCP callers.)
+// An empty roster is rejected before scaffolding so a no-op run never creates a
+// review directory or repoints .atcr/latest. (LoadReviewConfig also rejects
+// this earlier; PrepareReview is defended for direct/MCP callers.)
+func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
 	if len(rosterNames(cfg.Project)) == 0 {
 		return nil, ErrEmptyRoster
 	}
@@ -131,19 +146,6 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 		return nil, err
 	}
 
-	runCtx := ctx
-	if cfg.Settings.TimeoutSecs > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, time.Duration(cfg.Settings.TimeoutSecs)*time.Second)
-		defer cancel()
-	}
-	results := NewEngine(completer).Run(runCtx, slots)
-
-	sum, err := WritePool(filepath.Join(dir, "sources", "pool"), results)
-	if err != nil {
-		return nil, err
-	}
-
 	m := &payload.Manifest{
 		Base:            req.Range.Base,
 		Head:            req.Range.Head,
@@ -154,22 +156,73 @@ func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req 
 		PerAgentPayload: perAgentMode,
 		Roster:          rosterNames(cfg.Project),
 		StartedAt:       req.StartedAt,
-		Partial:         sum.Partial,
+		Partial:         false, // finalized by ExecuteReview once outcomes are known
 	}
 	if err := WriteManifest(dir, m); err != nil {
 		return nil, err
 	}
+	// Point .atcr/latest at the review before fan-out so `atcr status` can find an
+	// in-progress run started by the non-blocking MCP handler.
 	if err := WriteLatest(req.Root, id); err != nil {
 		return nil, err
 	}
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, manifest: m}, nil
+}
 
-	res := &ReviewResult{ID: id, Dir: dir, Summary: sum}
+// ExecuteReview runs phase two: fan out the prepared roster under the global
+// timeout, then write per-agent artifacts, the merged pool, summary.json, and
+// the finalized manifest (Partial reflecting the outcome). The completer is
+// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+//
+// Artifacts are always persisted, even when every agent fails; in that case the
+// populated *ReviewResult is still returned alongside the wrapped
+// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+// remains for inspection. The background MCP path discards the error (status is
+// read from disk) while the CLI maps it to the process exit code.
+func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+	runCtx := ctx
+	if p.TimeoutSec > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
+		defer cancel()
+	}
+	results := NewEngine(completer).Run(runCtx, p.Slots)
+
+	sum, err := WritePool(filepath.Join(p.Dir, "sources", "pool"), results)
+	if err != nil {
+		return nil, err
+	}
+
+	// Finalize the manifest's partial flag now that the outcomes are known
+	// (PrepareReview wrote it as false). summary.json is the completion signal.
+	p.manifest.Partial = sum.Partial
+	if err := WriteManifest(p.Dir, p.manifest); err != nil {
+		return nil, err
+	}
+
+	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
 	// returned regardless so the caller knows where to look.
 	if _, outErr := Outcome(results); outErr != nil {
 		return res, outErr
 	}
 	return res, nil
+}
+
+// RunReview is the full synchronous review flow used by the CLI: prepare the
+// review directory then execute the fan-out inline. The completer is injected so
+// the CLI uses the real HTTP client and tests use a fake/httptest.
+//
+// Artifacts are always persisted, even when every agent fails; in that case the
+// populated *ReviewResult is still returned alongside the wrapped
+// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+// remains for inspection.
+func RunReview(ctx context.Context, completer Completer, cfg *ReviewConfig, req ReviewRequest) (*ReviewResult, error) {
+	p, err := PrepareReview(ctx, cfg, req)
+	if err != nil {
+		return nil, err
+	}
+	return ExecuteReview(ctx, completer, p)
 }
 
 // modePayload is one payload mode's built content shared by every agent using it.

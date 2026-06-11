@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // Agent outcome values written to status.json. A malformed LLM response yields
@@ -14,6 +16,76 @@ const (
 	StatusFailed  = "failed"
 	StatusTimeout = "timeout"
 )
+
+// Review run states reported by ReadReviewStatus (AC 04-04): in_progress until
+// the fan-out writes summary.json, then completed (≥1 agent ok) or failed (all
+// agents failed).
+const (
+	RunInProgress = "in_progress"
+	RunCompleted  = "completed"
+	RunFailed     = "failed"
+)
+
+// ReviewStatus is a review's aggregated progress, derived from manifest.json
+// (the roster) and sources/pool/summary.json (the completion signal). It is the
+// shared shape returned to the `atcr status` CLI command and the atcr_status MCP
+// tool so both report identical state.
+type ReviewStatus struct {
+	ReviewID      string `json:"review_id"`
+	Status        string `json:"status"`
+	AgentCount    int    `json:"agent_count"`
+	AgentsDone    int    `json:"agents_done"`
+	AgentsPending int    `json:"agents_pending"`
+	Partial       bool   `json:"partial"`
+}
+
+// ReadReviewStatus reports a review's progress without guessing. A missing
+// manifest surfaces as os.ErrNotExist (the caller maps it to "review not
+// found"); a present-but-corrupt manifest is a parse error (AC 04-04 Edge Case
+// 6 — never a partial garbage result). summary.json is the completion signal:
+// absent means the fan-out is still running (in_progress); present means
+// completed (≥1 agent succeeded) or failed (every agent failed).
+func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
+	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
+	if err != nil {
+		return nil, err // os.ErrNotExist → "review not found"; other I/O bubbles up
+	}
+	var m payload.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("manifest.json is corrupt: %w", err)
+	}
+
+	st := &ReviewStatus{
+		ReviewID:      id,
+		Status:        RunInProgress,
+		AgentCount:    len(m.Roster),
+		AgentsPending: len(m.Roster),
+	}
+
+	sdata, serr := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile))
+	if serr != nil {
+		return st, nil // no pool summary yet → still in progress
+	}
+	var ps PoolSummary
+	if err := json.Unmarshal(sdata, &ps); err != nil {
+		return nil, fmt.Errorf("summary.json is corrupt: %w", err)
+	}
+	if ps.Total > 0 {
+		st.AgentCount = ps.Total
+	}
+	st.AgentsDone = ps.Succeeded + ps.Failed
+	st.AgentsPending = st.AgentCount - st.AgentsDone
+	if st.AgentsPending < 0 {
+		st.AgentsPending = 0
+	}
+	st.Partial = ps.Partial
+	if ps.Succeeded > 0 {
+		st.Status = RunCompleted
+	} else {
+		st.Status = RunFailed
+	}
+	return st, nil
+}
 
 // AgentStatus is the per-agent status.json record. It is always written —
 // regardless of outcome — so post-hoc analysis can see which reviewers

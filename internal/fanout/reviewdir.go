@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -191,4 +192,20 @@ func ReadLatest(root string) (string, error) {
 // provenance-file path. It delegates the atomic encode to payload.WriteManifest.
 func WriteManifest(reviewDir string, m *payload.Manifest) error {
 	return payload.WriteManifest(filepath.Join(reviewDir, manifestFile), m)
+}
+
+// ReadManifestPartial reads the partial flag from a review's manifest.json,
+// defaulting to false when the manifest is absent or unreadable. It is the
+// single best-effort reader shared by the CLI reconcile path and the MCP
+// reconcile handler so the two never drift.
+func ReadManifestPartial(reviewDir string) bool {
+	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
+	if err != nil {
+		return false
+	}
+	var m payload.Manifest
+	if json.Unmarshal(data, &m) != nil {
+		return false
+	}
+	return m.Partial
 }

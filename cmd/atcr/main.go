@@ -90,14 +90,9 @@ func newRootCmd() *cobra.Command {
 		newReconcileCmd(),
 		newReportCmd(),
 		newRangeCmd(),
+		newStatusCmd(),
 		newInitCmd(),
 		newServeCmd(),
 	)
 	return root
-}
-
-// errNotImplemented marks subcommands whose engine wiring lands in a later
-// sprint phase.
-func errNotImplemented(name string) error {
-	return fmt.Errorf("%s: not implemented yet", name)
 }

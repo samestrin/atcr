@@ -1,14 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
-	"github.com/samestrin/atcr/internal/payload"
 )
 
 // anchorDir resolves the single id-or-path anchor argument to a review
@@ -48,19 +46,4 @@ func resolveReviewDir(arg string) (string, error) {
 		return "", fmt.Errorf("no sources found in %s: run 'atcr review' first", dir)
 	}
 	return dir, nil
-}
-
-// readManifestPartial reads the partial flag from a review's manifest.json,
-// defaulting to false when the manifest is absent or unreadable (best-effort
-// provenance for the reconcile summary).
-func readManifestPartial(reviewDir string) bool {
-	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
-	if err != nil {
-		return false
-	}
-	var m payload.Manifest
-	if json.Unmarshal(data, &m) != nil {
-		return false
-	}
-	return m.Partial
 }

@@ -31,12 +31,14 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	out, err := execute(t, "--help")
 	require.NoError(t, err)
 
-	for _, sub := range []string{"review", "reconcile", "report", "range", "init", "serve"} {
+	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve"} {
 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
 	}
 }
 
-func TestRootCmd_HasExactlySixSubcommands(t *testing.T) {
+func TestRootCmd_HasExactlySevenSubcommands(t *testing.T) {
+	// The six commands from the original surface plus `status`, added by AC 05-03
+	// for the Skill's orchestration polling loop (atcr status <id>).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -45,8 +47,8 @@ func TestRootCmd_HasExactlySixSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 6)
-	for _, sub := range []string{"review", "reconcile", "report", "range", "init", "serve"} {
+	assert.Len(t, names, 7)
+	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
