@@ -127,6 +127,22 @@ func TestRenderMarkdown_EscapesInjectionAndZeroFindings(t *testing.T) {
 	assert.Contains(t, b.String(), "&lt;script&gt;")
 }
 
+func TestRenderMarkdown_BacktickFilePathRendersInert(t *testing.T) {
+	// A model-controlled File containing a backtick would close the code span
+	// and let trailing text render as live markdown — the same injection class
+	// AC 01-06 fixed in the report view (report/render.go codeSpan). Such paths
+	// must fall back to HTML-escaped plain text instead of a code span.
+	sources := []Source{{Name: "pool", Findings: []stream.Finding{
+		mf("HIGH", "a`<i>.go", 1, "p", "f", "sec", 10, "e", "greta"),
+	}}}
+	var b strings.Builder
+	require.NoError(t, RenderMarkdown(&b, Reconcile(sources, recAt())))
+	out := b.String()
+	assert.NotContains(t, out, "`a`", "backtick in path must not open/close a code span")
+	assert.NotContains(t, out, "<i>", "HTML in path must be escaped")
+	assert.Contains(t, out, "- a`&lt;i&gt;.go:1 — ", "falls back to escaped plain text, no span")
+}
+
 func TestRenderMarkdown_FlattensNewlineInjection(t *testing.T) {
 	// A finding whose problem contains newlines must not inject markdown structure.
 	sources := []Source{{Name: "pool", Findings: []stream.Finding{
