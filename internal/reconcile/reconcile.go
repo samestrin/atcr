@@ -7,10 +7,14 @@ import (
 
 // Options parameterizes a reconcile run. ReconciledAt stamps summary.json;
 // Partial is true when at least one expected source was missing/unreadable while
-// others succeeded (threaded from the caller, e.g. the fan-out manifest).
+// others succeeded (threaded from the caller, e.g. the fan-out manifest). Merges
+// is the set of ambiguous cluster ids the Skill adjudicated as duplicates (from
+// adjudication.json on a re-invocation); each is force-merged instead of left in
+// the gray zone. Nil means no adjudication (the conservative default).
 type Options struct {
 	ReconciledAt time.Time
 	Partial      bool
+	Merges       map[string]bool
 }
 
 // Result is a completed reconciliation: the merged findings (sorted for
@@ -45,7 +49,7 @@ func Reconcile(sources []Source, opts Options) Result {
 	clustersCollapsed, disagreements := 0, 0
 
 	for _, cl := range clusters {
-		groups, amb := DedupeCluster(cl)
+		groups, amb := dedupeCluster(cl, opts.Merges)
 		ambiguous = append(ambiguous, amb...)
 		for _, g := range groups {
 			m := Merge(g)

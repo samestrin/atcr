@@ -22,10 +22,12 @@ var tokenSplit = regexp.MustCompile(`[^a-z0-9]+`)
 
 // AmbiguousCluster is a same-location pair whose PROBLEM similarity fell in the
 // gray zone. It is serialized to ambiguous.json so the Skill (or a human) can
-// adjudicate; the two findings remain unmerged in the reconciled output. Line is
-// the lower-indexed finding's line (the pair may span the ±3 window); each
-// finding's own line is in Findings.
+// adjudicate; the two findings remain unmerged in the reconciled output. ID is
+// the stable content-addressed handle the Skill references in adjudication.json.
+// Line is the lower-indexed finding's line (the pair may span the ±3 window);
+// each finding's own line is in Findings.
 type AmbiguousCluster struct {
+	ID         string           `json:"id"`
 	File       string           `json:"file"`
 	Line       int              `json:"line"`
 	Similarity float64          `json:"similarity"`
@@ -33,13 +35,22 @@ type AmbiguousCluster struct {
 }
 
 // DedupeCluster partitions one location cluster into merge groups and records
+// ambiguous pairs, with no adjudication applied. See dedupeCluster.
+func DedupeCluster(cluster []stream.Finding) ([][]stream.Finding, []AmbiguousCluster) {
+	return dedupeCluster(cluster, nil)
+}
+
+// dedupeCluster partitions one location cluster into merge groups and records
 // ambiguous pairs. Findings linked by similarity >= MergeThreshold (single-
 // linkage, transitively) form a merge group to be collapsed downstream;
 // everything else stays in its own singleton group. Every pair scoring in
-// [GrayLow, MergeThreshold) is recorded as an AmbiguousCluster but is NOT merged.
-// Group order follows first appearance for determinism. Token sets are computed
-// once per finding (not per pair) so the O(n^2) pair loop stays cheap.
-func DedupeCluster(cluster []stream.Finding) ([][]stream.Finding, []AmbiguousCluster) {
+// [GrayLow, MergeThreshold) is recorded as an AmbiguousCluster but is NOT merged
+// — UNLESS its content id is present in adjudicatedMerges, in which case the
+// Skill has adjudicated it a duplicate: the pair is unioned (merged) and not
+// re-recorded as ambiguous. Group order follows first appearance for
+// determinism. Token sets are computed once per finding (not per pair) so the
+// O(n^2) pair loop stays cheap.
+func dedupeCluster(cluster []stream.Finding, adjudicatedMerges map[string]bool) ([][]stream.Finding, []AmbiguousCluster) {
 	n := len(cluster)
 	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
@@ -55,7 +66,13 @@ func DedupeCluster(cluster []stream.Finding) ([][]stream.Finding, []AmbiguousClu
 			case relMerge:
 				uf.union(i, j)
 			case relGray:
+				id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
+				if adjudicatedMerges[id] {
+					uf.union(i, j) // Skill adjudicated this pair a duplicate
+					continue
+				}
 				ambiguous = append(ambiguous, AmbiguousCluster{
+					ID:         id,
 					File:       cluster[i].File,
 					Line:       cluster[i].Line,
 					Similarity: sim,
