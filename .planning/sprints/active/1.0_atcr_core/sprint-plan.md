@@ -477,12 +477,12 @@ Documentation available in [documentation/](plan/documentation/):
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 1.22 [ ] **[Fallback chain validation - GREEN](plan/user-stories/02-agent-configuration.md)**
+### 1.22 [x] **[Fallback chain validation - GREEN](plan/user-stories/02-agent-configuration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 1.23 [ ] **[Fallback chain validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.22]
+### 1.23 [x] **[Fallback chain validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
+   **Changed Files:** internal/registry/{graph.go, graph_test.go, config.go}
 
    **Spawn a fresh subagent** via the Agent tool to perform this review.
 
@@ -502,13 +502,15 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | graph.go:65-73 | Gray-node fall-through could loop forever after a future refactor (no fail-closed guard) | Fail closed with generic cycle error |
+   | MEDIUM | graph_test.go:45-51 | 3-node cycle test asserts only "->" substring, not full path | Exact path assertion (deterministic via sorted iteration) |
+   | MEDIUM | graph_test.go | Lead-in trim branch (cycle reached via prefix a->b->c->b) untested | Added test asserting "b -> c -> b" |
+   | LOW | graph.go:30-38 | First-error-only reporting | Kept: AC mandates exact single-error messages |
+   | LOW | graph.go:36,46 | No sentinel errors for programmatic discrimination | ErrDanglingFallback/ErrFallbackCycle added, wrapped with %w |
+   | LOW | graph.go:36 | Names interpolated with '%s' (log forging) | Kept: AC mandates the exact quoted format |
+   | LOW | graph.go:54 | Plain-arg helper + nil-slice cycle signal fragile | Method with (path, found) return |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.24, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. Fixed in 1.24 except two LOWs kept by design (AC-mandated message contract).
 
 ### 1.24 [ ] **[Fallback chain validation - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.23 (if any)

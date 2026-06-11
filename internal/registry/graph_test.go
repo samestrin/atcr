@@ -46,8 +46,27 @@ func TestFallbackChain_ThreeNodeCycle(t *testing.T) {
 	reg := agentsWithFallbacks(map[string]string{"bruce": "greta", "greta": "kai", "kai": "bruce"})
 	err := reg.ValidateFallbacks()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "fallback cycle detected")
-	assert.Contains(t, err.Error(), "->")
+	// Sorted iteration enters at "bruce", so the path is deterministic.
+	assert.Contains(t, err.Error(), "fallback cycle detected: bruce -> greta -> kai -> bruce")
+	assert.ErrorIs(t, err, ErrFallbackCycle)
+}
+
+func TestFallbackChain_CycleReachedViaPrefix(t *testing.T) {
+	// a leads into the cycle b -> c -> b; the reported path must start at
+	// the repeated node, not at the entry point.
+	reg := agentsWithFallbacks(map[string]string{"a": "b", "b": "c", "c": "b"})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fallback cycle detected: b -> c -> b")
+	assert.NotContains(t, err.Error(), "a ->", "lead-in prefix must be trimmed from the cycle path")
+}
+
+func TestFallbackChain_SentinelErrors(t *testing.T) {
+	dangling := agentsWithFallbacks(map[string]string{"bruce": "ghost"})
+	assert.ErrorIs(t, dangling.ValidateFallbacks(), ErrDanglingFallback)
+
+	cycle := agentsWithFallbacks(map[string]string{"bruce": "bruce"})
+	assert.ErrorIs(t, cycle.ValidateFallbacks(), ErrFallbackCycle)
 }
 
 func TestFallbackChain_SelfRef(t *testing.T) {

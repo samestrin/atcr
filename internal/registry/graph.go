@@ -1,9 +1,17 @@
 package registry
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+)
+
+// Sentinel errors so callers can discriminate fallback-validation failures
+// without string matching.
+var (
+	ErrDanglingFallback = errors.New("dangling fallback reference")
+	ErrFallbackCycle    = errors.New("fallback cycle")
 )
 
 // Fallback-graph node colors for DFS cycle detection. A gray→gray edge is a
@@ -33,7 +41,7 @@ func (r *Registry) ValidateFallbacks() error {
 			continue
 		}
 		if _, ok := r.Agents[fb]; !ok {
-			return fmt.Errorf("agent '%s' fallback references unknown agent '%s'", name, fb)
+			return fmt.Errorf("%w: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb)
 		}
 	}
 
@@ -42,16 +50,16 @@ func (r *Registry) ValidateFallbacks() error {
 		if color[name] != white {
 			continue
 		}
-		if path := walkFallbacks(r, name, color); path != nil {
-			return fmt.Errorf("fallback cycle detected: %s", strings.Join(path, " -> "))
+		if path, found := r.walkFallbacks(name, color); found {
+			return fmt.Errorf("%w detected: %s", ErrFallbackCycle, strings.Join(path, " -> "))
 		}
 	}
 	return nil
 }
 
 // walkFallbacks follows the (single) fallback edge from start, coloring
-// nodes. It returns the full cycle path when one is found, nil otherwise.
-func walkFallbacks(r *Registry, start string, color map[string]nodeColor) []string {
+// nodes. It reports the full cycle path when one is found.
+func (r *Registry) walkFallbacks(start string, color map[string]nodeColor) ([]string, bool) {
 	var path []string
 	node := start
 	for {
@@ -64,17 +72,19 @@ func walkFallbacks(r *Registry, start string, color map[string]nodeColor) []stri
 		}
 		if color[next] == gray {
 			// Close the loop for the error message: trim the lead-in so the
-			// path starts at the repeated node.
+			// path starts at the repeated node. The gray node is always on
+			// the current path; fail closed if that invariant ever breaks.
 			for i, n := range path {
 				if n == next {
-					return append(path[i:], next)
+					return append(path[i:], next), true
 				}
 			}
+			return path, true
 		}
 		node = next
 	}
 	for _, n := range path {
 		color[n] = black
 	}
-	return nil
+	return nil, false
 }
