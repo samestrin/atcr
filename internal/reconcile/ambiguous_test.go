@@ -125,6 +125,31 @@ func TestAdjudication_Idempotent(t *testing.T) {
 	assert.Equal(t, id, clusters[0].ID)
 }
 
+// TestPreserveOriginalAmbiguous_AtomicNoSymlinkFollow pins the preservation
+// write to writeFileAtomic (temp + rename) rather than a plain os.WriteFile: a
+// rename replaces a pre-planted dangling symlink at the destination with a
+// regular file, while a plain write would follow the symlink and create its
+// target instead (the write-through-symlink class persona resolution refuses),
+// and a crash mid-plain-write would leave a truncated baseline.
+func TestPreserveOriginalAmbiguous_AtomicNoSymlinkFollow(t *testing.T) {
+	reconDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(reconDir, AmbiguousJSON), []byte("[]\n"), 0o644))
+
+	escape := filepath.Join(t.TempDir(), "escape.json")
+	require.NoError(t, os.Symlink(escape, filepath.Join(reconDir, OriginalAmbiguousJSON)))
+
+	require.NoError(t, preserveOriginalAmbiguous(reconDir))
+
+	fi, err := os.Lstat(filepath.Join(reconDir, OriginalAmbiguousJSON))
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular(), "baseline must be a regular file written via temp+rename, not a symlink")
+	assert.NoFileExists(t, escape, "write must not pass through the planted symlink")
+
+	data, err := os.ReadFile(filepath.Join(reconDir, OriginalAmbiguousJSON))
+	require.NoError(t, err)
+	assert.Equal(t, "[]\n", string(data))
+}
+
 func TestAdjudication_DistinctLeavesUnmerged(t *testing.T) {
 	dir := writeGrayReview(t)
 	id := runRecon(t, dir).Ambiguous[0].ID
