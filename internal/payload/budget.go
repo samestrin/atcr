@@ -2,6 +2,7 @@ package payload
 
 import (
 	"fmt"
+	"math"
 	"sort"
 )
 
@@ -42,9 +43,17 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 		return copyEntries(entries), t
 	}
 
+	// Negative sizes are invalid input and must never offset real bytes, and
+	// the sum must saturate rather than wrap negative — either would make
+	// total <= budget hold spuriously and silently skip truncation.
 	var total int64
 	for _, e := range entries {
-		total += e.Size
+		sz := clampSize(e.Size)
+		if total > math.MaxInt64-sz {
+			total = math.MaxInt64
+			break
+		}
+		total += sz
 	}
 	if total <= budget {
 		return copyEntries(entries), t
@@ -72,7 +81,7 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 			break
 		}
 		dropped[i] = true
-		used -= entries[i].Size
+		used -= clampSize(entries[i].Size)
 	}
 
 	kept = make([]FileEntry, 0, len(entries))
@@ -87,6 +96,15 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 	sort.Strings(droppedPaths)
 
 	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths}
+}
+
+// clampSize treats negative sizes as zero for budget accounting so invalid
+// input can neither offset real bytes nor inflate freed space when dropped.
+func clampSize(s int64) int64 {
+	if s < 0 {
+		return 0
+	}
+	return s
 }
 
 // copyEntries returns a fresh slice so callers can mutate the result without
