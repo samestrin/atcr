@@ -31,6 +31,18 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+### Phase 3 Clarifications (recorded 2026-06-10)
+
+**Key Decisions (resolved by source-of-truth + engineering judgment, no blocker):**
+- **Review-dir/manifest/latest placement:** lives in `internal/fanout` (not a new `internal/reviewdir`). original-requirements Task #1 locks the internal package set to 9 packages and the boundary allowlist enforces it; Task #7 bundles "review-directory/manifest/latest management" into the fan-out engine; `payload.Manifest` already exists. The AC 01-03 "internal/reviewdir/creator.go" file path is superseded by the locked architecture.
+- **Per-agent artifact path:** `sources/pool/raw/agent/<agent-name>/{review.md, findings.txt, status.json}` (AC 01-03/04/05 all agree on the literal `raw/agent/` segment; supersedes the original-requirements `raw/<agent>/` shorthand).
+- **Reconcile source discovery (leaf-preference):** a directory's `findings.txt` is a reconcile input only when no subdirectory beneath it also contains a `findings.txt`. This resolves the conflict between reconciler.md's "immediate children" Quick Reference and AC 01-05 Scenario 1's nested `pool/raw/agent/*/findings.txt`: per-agent raw files become the pool inputs, the merged `pool/findings.txt` is written for downstream convenience but is NOT re-discovered (no double-count), `host/findings.txt` is read directly, and `reconciled/` is never an input. Confidence counts distinct REVIEWER values across all discovered rows.
+- **Serial lane = sequential execution** of project `serial_agents`; the config model is a `rate_limited` bool + `serial_agents` list (no rps value), so no `golang.org/x/time/rate` dependency is added (keep-deps-small constraint).
+- **Engine sets `Finding.Reviewer` = agent name** itself, ignoring any model-supplied 8th column (TD-016 remediation).
+- **Reconciled findings.txt is 9 columns** (AC 01-05 spec-alignment note; the "10 columns" heading in reconciler.md/findings-format.md is a doc typo).
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -1067,33 +1079,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.9 [ ] **[Per-agent artifacts + merged pool findings - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 3.9 [x] **[Per-agent artifacts + merged pool findings - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-04 Fan-out Agent Execution](plan/acceptance-criteria/01-04-fanout-agent-execution.md)
    1. Analyze AC, identify testable units
    2. Write tests: sources/pool/raw/<agent>/{review.md, findings.txt, status.json} written per agent (dirs created at agent start); status.json always written with status ok|failed|timeout (+ truncated/files_dropped fields); engine appends REVIEWER column to persona 7-col output; merged sources/pool/findings.txt; summary.json stats; crash-safe incremental writes
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 3.10 [ ] **[Per-agent artifacts + merged pool findings - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 3.10 [x] **[Per-agent artifacts + merged pool findings - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 3.11 [ ] **[Per-agent artifacts + merged pool findings - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.10]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.10`).
+### 3.11 [x] **[Per-agent artifacts + merged pool findings - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/fanout/artifacts.go, internal/fanout/artifacts_test.go, internal/fanout/status.go, internal/stream/parser.go (ParseModelOutput)
+   Fresh subagent (description: `Adversarial review: 3.10`) reviewed the unit.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | artifacts.go agentDir | filepath.Base leaves ".."/"."/"" intact → escape/alias | Fixed in 3.12: agentDirName rejects ".",".." ,"" explicitly + test |
+   | HIGH | artifacts.go WritePool | no dedup → distinct names sharing a base clobber silently | Fixed in 3.12: seen-set rejects duplicate agent dirs + test |
+   | MEDIUM | status.go atomicWriteFile | artifacts landed 0600 (CreateTemp default), AC mandates 0644 | Fixed in 3.12: tmp.Chmod(0644) before rename + perm test |
+   | MEDIUM | artifacts.go WritePool | pool write not transactional / no fsync durability | Deferred → TD-019 (documented; per-file atomic is the guarantee) |
+   | LOW | parser.go ParseModelOutput | degenerate "HIGH\|" rows became empty findings | Fixed in 3.12: minimum SEVERITY\|FILE:LINE\|PROBLEM guard + test |
+   | LOW | parser.go ParseModelOutput | lossy truncation of pipe-leaked columns | Fixed in 3.12: overflow folds back into EVIDENCE (no loss, forge-proof) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.12, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 2 HIGH (traversal name, dir collision) + AC-mandated 0644 perms fixed in 3.12 with tests. Overflow-into-EVIDENCE both fixes the LOW and hardens REVIEWER-forge resistance. fsync durability deferred (TD-019). Race-clean.
 
-### 3.12 [ ] **[Per-agent artifacts + merged pool findings - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 3.12 [x] **[Per-agent artifacts + merged pool findings - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 3.11 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

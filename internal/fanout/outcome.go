@@ -34,6 +34,19 @@ type Summary struct {
 // flags whether any slot failed. An empty result set is a hard failure (nothing
 // was reviewed), not a silent pass.
 func Outcome(results []Result) (Summary, error) {
+	s := summarize(results)
+	if s.Total == 0 {
+		return s, ErrEmptyRoster
+	}
+	if s.Succeeded == 0 {
+		return s, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatFailures(results))
+	}
+	return s, nil
+}
+
+// summarize counts outcomes without deciding the run-level error, so both the
+// all-fail gate (Outcome) and the pool summary.json can share the tally.
+func summarize(results []Result) Summary {
 	s := Summary{Total: len(results)}
 	for _, r := range results {
 		switch r.Status {
@@ -44,14 +57,7 @@ func Outcome(results []Result) (Summary, error) {
 		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0
-
-	if s.Total == 0 {
-		return s, ErrEmptyRoster
-	}
-	if s.Succeeded == 0 {
-		return s, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatFailures(results))
-	}
-	return s, nil
+	return s
 }
 
 // formatFailures renders "agent (reason), agent (reason)" for the all-failed

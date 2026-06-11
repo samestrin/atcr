@@ -66,6 +66,52 @@ type ParseResult struct {
 	Skipped  []SkippedRow
 }
 
+// ModelColumns is the column count a reviewer model emits: the per-source shape
+// minus the trailing REVIEWER, which the engine appends from the agent name.
+const ModelColumns = 7 // SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE
+
+// ParseModelOutput extracts findings from a model's raw review text. Unlike
+// ParseSource it requires no version header — models emit finding rows inline
+// among prose — and it reads exactly the 7 persona columns (SEVERITY..EVIDENCE).
+// Any 8th-or-later field a model emits is dropped, so a model can never
+// self-attribute a REVIEWER: the engine sets Finding.Reviewer from the agent
+// name afterward (TD-016). Non-severity-prefixed lines, blanks, and comments are
+// skipped; short rows are padded. The returned findings have an empty Reviewer.
+func ParseModelOutput(data []byte) []Finding {
+	var out []Finding
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !severityRe.MatchString(line) {
+			continue // prose
+		}
+		fields := strings.Split(line, "|")
+		// A real finding has at least SEVERITY|FILE:LINE|PROBLEM with a location;
+		// drop degenerate severity-prefixed noise like a bare "HIGH|".
+		if len(fields) < 3 || strings.TrimSpace(fields[1]) == "" {
+			continue
+		}
+		// Any overflow past the 7 persona columns — a model-supplied REVIEWER or
+		// an unescaped pipe inside EVIDENCE — is folded back into the EVIDENCE
+		// field rather than dropped. This keeps evidence text intact AND makes
+		// REVIEWER forgery impossible: a model can never land a value in the
+		// REVIEWER slot, which the engine fills from the agent name.
+		if len(fields) > ModelColumns {
+			fields[ModelColumns-1] = strings.Join(fields[ModelColumns-1:], "/")
+			fields = fields[:ModelColumns]
+		}
+		// Pad to the per-source width so the REVIEWER slot exists but stays empty
+		// until the engine fills it.
+		for len(fields) < PerSourceColumns {
+			fields = append(fields, "")
+		}
+		out = append(out, fieldsToFinding(fields, PerSourceColumns))
+	}
+	return out
+}
+
 // ParseSource parses a per-source (8-column) findings file.
 func ParseSource(data []byte) (ParseResult, error) {
 	return parse(data, PerSourceColumns)

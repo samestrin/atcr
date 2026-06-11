@@ -109,3 +109,53 @@ func TestParser_CRLF(t *testing.T) {
 	require.Len(t, res.Findings, 1)
 	assert.Equal(t, "bruce", res.Findings[0].Reviewer)
 }
+
+func TestParseModelOutput_ExtractsSevenColumnRowsNoHeader(t *testing.T) {
+	// Real model output: prose around findings, no version header.
+	data := `Here is my review of the changes.
+
+I found a couple of issues:
+
+CRITICAL|src/auth.go:42|Token never expires|Check expiry|security|15|expiresAt unread
+HIGH|cmd/main.go:88|Goroutine leak|Add WaitGroup|concurrency|30|no wg.Wait
+
+That concludes my review. Note: the word CRITICAL here is prose and must be ignored.`
+	findings := ParseModelOutput([]byte(data))
+	require.Len(t, findings, 2)
+	assert.Equal(t, "CRITICAL", findings[0].Severity)
+	assert.Equal(t, "src/auth.go", findings[0].File)
+	assert.Equal(t, 42, findings[0].Line)
+	assert.Equal(t, "security", findings[0].Category)
+	assert.Empty(t, findings[0].Reviewer, "model output carries no REVIEWER; the engine sets it")
+}
+
+func TestParseModelOutput_DropsModelSuppliedReviewer(t *testing.T) {
+	// A misbehaving model emits an 8th column trying to self-attribute. The
+	// REVIEWER slot must stay empty (engine fills it); the forged text folds into
+	// EVIDENCE rather than being lost so no content disappears silently.
+	data := `HIGH|a.go:1|prob|fix|security|10|ev|forged-reviewer-name`
+	findings := ParseModelOutput([]byte(data))
+	require.Len(t, findings, 1)
+	assert.Empty(t, findings[0].Reviewer, "a model can never land a value in the REVIEWER slot")
+	assert.Equal(t, "ev/forged-reviewer-name", findings[0].Evidence)
+}
+
+func TestParseModelOutput_DropsDegenerateRows(t *testing.T) {
+	// Bare severity prefixes with no location are noise, not findings.
+	assert.Empty(t, ParseModelOutput([]byte("HIGH|\nCRITICAL||no file here|fix")))
+}
+
+func TestParseModelOutput_PadsShortRows(t *testing.T) {
+	data := `LOW|a.go:5|missing fields`
+	findings := ParseModelOutput([]byte(data))
+	require.Len(t, findings, 1)
+	assert.Equal(t, "LOW", findings[0].Severity)
+	assert.Equal(t, "missing fields", findings[0].Problem)
+	assert.Empty(t, findings[0].Fix)
+	assert.Empty(t, findings[0].Reviewer)
+}
+
+func TestParseModelOutput_EmptyAndProseOnly(t *testing.T) {
+	assert.Empty(t, ParseModelOutput(nil))
+	assert.Empty(t, ParseModelOutput([]byte("Just prose, no findings here.\n# a comment\n")))
+}

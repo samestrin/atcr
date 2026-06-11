@@ -126,3 +126,10 @@
 **Issue:** (1) NewEngine(nil) would nil-panic inside invokeAgent rather than failing cleanly; (2) DurationMS is 0 on the ctx-short-circuit path even when real wall-clock elapsed before cancellation; (3) parallel lane passes slots[i] by arg while the serial goroutine closes over slots and indexes directly — divergent styles that invite a future closure-capture bug.
 **Why accepted:** All three are latent/defensive — current call sites never pass a nil completer, the short-circuit path only fires on already-expired contexts, and the shared-results writes are race-clean today (verified under -race with mixed lanes). No behavior is wrong for real inputs.
 **Fix in:** v2 — add a nil-completer guard, stamp elapsed time on early-return paths, and standardize slot capture to explicit parameters.
+
+## TD-019 — atomic artifact writes are not fsync-durable; pool write is not transactional (LOW)
+**Origin:** Phase 3, task 3.11 adversarial review, 2026-06-10
+**File:** internal/fanout/status.go:55 (atomicWriteFile), internal/fanout/artifacts.go (WritePool)
+**Issue:** atomicWriteFile renames a temp over the target (atomic w.r.t. readers) but never fsyncs the temp or the parent dir, so a power-loss crash between rename and metadata flush could lose the file on some filesystems. Separately, WritePool writes per-agent files then the merged findings.txt/summary.json without a pool-level transaction: an I/O failure mid-run leaves a partially-populated pool (documented behavior, error surfaced).
+**Why accepted:** Rename-over-temp gives reader-atomicity and crash-consistency on the common case; full fsync durability is a power-loss concern out of scope for a local review tool. Pool-level transactionality is unnecessary — a mid-run disk failure is a hard error (exit 1) and the preserved partial artifacts aid debugging.
+**Fix in:** v2 — fsync temp + parent dir in atomicWriteFile if durability is required; optionally stage the pool in a temp dir and rename it into place for set-atomicity.
