@@ -394,3 +394,41 @@ func TestChangedFileCount_BadRef(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "base")
 }
+
+// A renamed file with a one-line edit must keep rename pairing in per-file
+// payloads. Pathspec filtering happens before rename detection, so passing
+// only the head path makes git render the file as a full-file addition
+// (every line +, whole file wrapped in one CHANGED sentinel).
+func TestRenamedFileWithOneLineEdit_KeepsRenamePairing(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "old.go", goFileV1)
+	base := commitAll(t, dir, "v1")
+	gitCmd(t, dir, "mv", "old.go", "new.go")
+	write(t, dir, "new.go", goFileV2) // one-line edit: return 1 -> return 2
+	head := commitAll(t, dir, "v2")
+	ctx := context.Background()
+
+	diffEntries, err := BuildEntries(ctx, ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, diffEntries, 1)
+	assert.Contains(t, diffEntries[0].Body, "rename from old.go")
+	assert.NotContains(t, diffEntries[0].Body, "+func Bar() int {",
+		"unchanged function rendered as added line: rename pairing was lost")
+
+	blockEntries, err := BuildEntries(ctx, ModeBlocks, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, blockEntries, 1)
+	assert.Contains(t, blockEntries[0].Body, "+\treturn 2")
+	assert.NotContains(t, blockEntries[0].Body, "+func Bar() int {",
+		"unchanged function rendered as added line: rename pairing was lost")
+
+	fileEntries, err := BuildEntries(ctx, ModeFiles, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, fileEntries, 1)
+	body := fileEntries[0].Body
+	assert.Contains(t, body, "(renamed from old.go)")
+	assert.Equal(t, 1, strings.Count(body, changedStartPrefix),
+		"expected exactly one changed region")
+	assert.Contains(t, body, "CHANGED LINES 4-4",
+		"only the edited line must be marked changed, not the whole file")
+}
