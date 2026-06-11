@@ -133,3 +133,10 @@
 **Issue:** atomicWriteFile renames a temp over the target (atomic w.r.t. readers) but never fsyncs the temp or the parent dir, so a power-loss crash between rename and metadata flush could lose the file on some filesystems. Separately, WritePool writes per-agent files then the merged findings.txt/summary.json without a pool-level transaction: an I/O failure mid-run leaves a partially-populated pool (documented behavior, error surfaced).
 **Why accepted:** Rename-over-temp gives reader-atomicity and crash-consistency on the common case; full fsync durability is a power-loss concern out of scope for a local review tool. Pool-level transactionality is unnecessary — a mid-run disk failure is a hard error (exit 1) and the preserved partial artifacts aid debugging.
 **Fix in:** v2 — fsync temp + parent dir in atomicWriteFile if durability is required; optionally stage the pool in a temp dir and rename it into place for set-atomicity.
+
+## TD-020 — an unreadable source file is silently dropped, which can let a gate pass (LOW)
+**Origin:** Phase 3, task 3.35 adversarial review, 2026-06-10
+**File:** internal/reconcile/discover.go:66, internal/reconcile/gate.go
+**Issue:** Discover skips a source file that errors on read or has a bad header with only a stderr warning. If that file held a CRITICAL finding, `--fail-on` can still pass (exit 0) because the finding never entered the reconcile. No aggregate "N sources skipped" count reaches the exit-code logic.
+**Why accepted:** Read errors are rare (permission/race) and a bad-header file under sources/ is a malformed drop; the stderr warning is the signal. v1 favors resilience (don't abort the whole reconcile) over fail-closed gating, and our own writers always produce valid headers.
+**Fix in:** v2 — track a skipped-source count in summary.json and optionally fail closed (or warn loudly) when a `--sources`-requested entry yielded zero readable findings.

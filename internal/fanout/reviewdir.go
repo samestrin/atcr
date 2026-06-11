@@ -86,6 +86,11 @@ func validateReviewID(id string) error {
 	return nil
 }
 
+// ValidateReviewID is the exported guard the CLI applies to a bare review-id
+// anchor argument (so "..", "/...", or a leading dash can never resolve to a
+// directory outside .atcr/reviews/).
+func ValidateReviewID(id string) error { return validateReviewID(id) }
+
 // slugifyBranch strips a known git-flow prefix then collapses every run of
 // characters outside [A-Za-z0-9._-] into a single '-', preserving case and
 // existing separators (feature/JIRA-123-add-auth → JIRA-123-add-auth). Leading

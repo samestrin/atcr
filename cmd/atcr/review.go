@@ -7,6 +7,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
+	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	addRangeFlags(cmd)
 	return cmd
 }
@@ -36,6 +38,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	head, _ := cmd.Flags().GetString("head")
 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
 	idOverride, _ := cmd.Flags().GetString("id")
+
+	// Validate --fail-on before any review work (no wasted API calls on a bad
+	// threshold), per AC 03-02 Security.
+	threshold, err := failOnThreshold(cmd)
+	if err != nil {
+		return err
+	}
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
@@ -72,7 +81,25 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 	}
-	return err // all-agents-failed (ErrAllAgentsFailed) → exit 1
+	if err != nil {
+		return err // all-agents-failed (exit 1) or range/config (exit 2)
+	}
+
+	// One-shot mode: reconcile in-process and gate on the threshold. Review
+	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
+	// them for inspection (AC 03-02 Error Scenario 3).
+	if threshold != "" {
+		rec, rerr := reconcile.RunReconcile(result.Dir, nil, reconcile.Options{
+			ReconciledAt: time.Now(),
+			Partial:      result.Summary.Partial,
+		})
+		if rerr != nil {
+			return usageError(fmt.Errorf("review failed: %w", rerr))
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+		return gateFindings(rec, threshold)
+	}
+	return nil
 }
 
 // cliOverrides reads the shared-settings flags actually set on cmd.

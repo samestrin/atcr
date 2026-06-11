@@ -1273,33 +1273,35 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 3.33 [ ] **[atcr reconcile --fail-on + one-shot review --fail-on - RED](plan/user-stories/03-ci-integration.md)**
+### 3.33 [x] **[atcr reconcile --fail-on + one-shot review --fail-on - RED](plan/user-stories/03-ci-integration.md)**
    **AC:** [03-01 Fail-on Severity Threshold](plan/acceptance-criteria/03-01-fail-on-severity-threshold.md), [03-02 CI One-Shot Mode](plan/acceptance-criteria/03-02-ci-one-shot-and-example.md)
    1. Analyze ACs, identify testable units
    2. Write tests: exit 1 when findings at/above SEVERITY threshold survive, 0 below, 2 on usage/config errors; threshold validated against enum before any I/O; one-shot `atcr review --fail-on` runs review + reconcile + gate in-process; exit-code mapping centralized in main()
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 3.34 [ ] **[atcr reconcile --fail-on + one-shot review --fail-on - GREEN](plan/user-stories/03-ci-integration.md)**
+### 3.34 [x] **[atcr reconcile --fail-on + one-shot review --fail-on - GREEN](plan/user-stories/03-ci-integration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 3.35 [ ] **[atcr reconcile --fail-on + one-shot review --fail-on - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-ci-integration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 3.34]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 3.34`).
+### 3.35 [x] **[atcr reconcile --fail-on + one-shot review --fail-on - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-ci-integration.md)**
+   **Changed Files:** internal/reconcile/gate.go, cmd/atcr/reconcile.go, cmd/atcr/anchor.go, cmd/atcr/review.go (+ tests)
+   Fresh subagent (description: `Adversarial review: 3.34`) reviewed the unit.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | reconcile.go gate | RunReconcile I/O failure mapped to exit 1 (gate code), inconsistent with one-shot's exit 2 | Fixed in 3.36: usageError wrap (exit 2) |
+   | HIGH | anchor.go id branch | bare ".." id escaped .atcr/reviews/ (skipped validation) | Fixed in 3.36: fanout.ValidateReviewID on id branch + traversal-id test |
+   | MEDIUM | anchor.go | ".." misclassified as id (no separator) | Fixed by same id-branch validation |
+   | LOW | discover.go/gate.go | unreadable source silently dropped → gate could pass | Deferred → TD-020 (stderr-warns; v1 favors resilience) |
+   | LOW | gate.go CountAtOrAbove | unknown severity rank 0; non-canonical threshold counts all | Non-issue: all call sites validate threshold first; parser only emits valid severities |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 3.36, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Note:** verbatim path-anchor branch (absolute/relative path) is intentionally permissive — the user may point at a review dir anywhere on their own machine.
 
-### 3.36 [ ] **[atcr reconcile --fail-on + one-shot review --fail-on - REFACTOR](plan/user-stories/03-ci-integration.md)**
+   **Action Required:** 2 HIGH (exit-code consistency, traversal-id) + 1 MEDIUM fixed in 3.36 with tests. 1 LOW deferred (TD-020), 1 LOW non-issue.
+
+### 3.36 [x] **[atcr reconcile --fail-on + one-shot review --fail-on - REFACTOR](plan/user-stories/03-ci-integration.md)**
    1. Fix CRITICAL/HIGH issues from 3.35 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
