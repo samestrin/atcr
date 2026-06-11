@@ -1,14 +1,11 @@
 package registry
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-
-	"gopkg.in/yaml.v3"
+	"strings"
 )
 
 // Embedded defaults for project-level settings (the lowest precedence tier).
@@ -19,11 +16,13 @@ const (
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
 // the agent roster, payload mode, global timeout, and CI gate threshold.
+// TimeoutSecs is a pointer so an explicit zero is caught by validation
+// instead of being silently replaced by the default.
 type ProjectConfig struct {
 	Agents       []string `yaml:"agents"`
 	SerialAgents []string `yaml:"serial_agents,omitempty"`
 	PayloadMode  string   `yaml:"payload_mode,omitempty"`
-	TimeoutSecs  int      `yaml:"timeout_secs,omitempty"`
+	TimeoutSecs  *int     `yaml:"timeout_secs,omitempty"`
 	FailOn       string   `yaml:"fail_on,omitempty"`
 }
 
@@ -37,6 +36,7 @@ func DefaultProjectConfigPath(root string) string {
 func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
+		// Message text mandated by AC 01-01 (Error Scenario 1).
 		return nil, fmt.Errorf("no roster found: .atcr/config.yaml not found (looked at %s) — run 'atcr init'", path)
 	}
 	if err != nil {
@@ -45,22 +45,22 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 
 	base := filepath.Base(path)
 	var cfg ProjectConfig
-	if len(bytes.TrimSpace(data)) > 0 {
-		dec := yaml.NewDecoder(bytes.NewReader(data))
-		dec.KnownFields(true)
-		if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("failed to parse %s: %w", base, err)
-		}
-		if err := dec.Decode(new(ProjectConfig)); !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("failed to parse %s: unexpected second YAML document", base)
-		}
+	if err := decodeStrictYAML(data, &cfg); err != nil && !errors.Is(err, errEmptyDocument) {
+		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
 	}
 
 	if len(cfg.Agents) == 0 {
 		return nil, errors.New("no agents selected — add at least one agent to .atcr/config.yaml")
 	}
-	if cfg.TimeoutSecs < 0 {
-		return nil, fmt.Errorf("%s: timeout_secs must not be negative", base)
+	for _, lane := range [][]string{cfg.Agents, cfg.SerialAgents} {
+		for _, name := range lane {
+			if strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("%s: roster entries must not be empty", base)
+			}
+		}
+	}
+	if cfg.TimeoutSecs != nil && *cfg.TimeoutSecs <= 0 {
+		return nil, fmt.Errorf("%s: timeout_secs must be positive", base)
 	}
 
 	cfg.applyDefaults()
@@ -72,8 +72,9 @@ func (c *ProjectConfig) applyDefaults() {
 	if c.PayloadMode == "" {
 		c.PayloadMode = DefaultPayloadMode
 	}
-	if c.TimeoutSecs == 0 {
-		c.TimeoutSecs = DefaultTimeoutSecs
+	if c.TimeoutSecs == nil {
+		secs := DefaultTimeoutSecs
+		c.TimeoutSecs = &secs
 	}
 	if c.FailOn == "" {
 		c.FailOn = DefaultFailOn
@@ -83,6 +84,9 @@ func (c *ProjectConfig) applyDefaults() {
 // ValidateAgainst checks that every roster entry (parallel and serial lane)
 // exists in the registry, appears only once, and sits in exactly one lane.
 func (c *ProjectConfig) ValidateAgainst(reg *Registry) error {
+	if reg == nil {
+		return errors.New("cannot validate roster: registry is nil")
+	}
 	seen := map[string]string{} // agent -> lane
 	check := func(lane string, names []string) error {
 		for _, name := range names {

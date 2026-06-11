@@ -1,17 +1,13 @@
 package registry
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Defaults applied to optional agent fields at load time. Payload has no
@@ -73,25 +69,12 @@ func LoadRegistry(path string) (*Registry, error) {
 	}
 
 	base := filepath.Base(path)
-	emptyErr := fmt.Errorf("%s is empty: define providers and agents", base)
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, emptyErr
-	}
-
 	var reg Registry
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
-	if err := dec.Decode(&reg); err != nil {
-		if errors.Is(err, io.EOF) {
-			// Comments-only or otherwise content-free YAML.
-			return nil, emptyErr
+	if err := decodeStrictYAML(data, &reg); err != nil {
+		if errors.Is(err, errEmptyDocument) {
+			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
 		}
 		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
-	}
-	// Strictness covers the whole file: trailing documents are an error, not
-	// silently discarded config.
-	if err := dec.Decode(new(Registry)); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("failed to parse %s: unexpected second YAML document", base)
 	}
 
 	if err := reg.validate(); err != nil {

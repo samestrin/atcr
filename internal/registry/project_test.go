@@ -46,7 +46,8 @@ fail_on: MEDIUM
 	assert.Equal(t, []string{"bruce", "greta"}, cfg.Agents)
 	assert.Equal(t, []string{"kai"}, cfg.SerialAgents)
 	assert.Equal(t, "diff", cfg.PayloadMode)
-	assert.Equal(t, 900, cfg.TimeoutSecs)
+	require.NotNil(t, cfg.TimeoutSecs)
+	assert.Equal(t, 900, *cfg.TimeoutSecs)
 	assert.Equal(t, "MEDIUM", cfg.FailOn)
 }
 
@@ -56,7 +57,8 @@ agents: [bruce]
 `))
 	require.NoError(t, err)
 	assert.Equal(t, "blocks", cfg.PayloadMode, "payload_mode defaults to blocks")
-	assert.Equal(t, 600, cfg.TimeoutSecs, "timeout_secs defaults to 600")
+	require.NotNil(t, cfg.TimeoutSecs)
+	assert.Equal(t, 600, *cfg.TimeoutSecs, "timeout_secs defaults to 600")
 	assert.Equal(t, "HIGH", cfg.FailOn, "fail_on defaults to HIGH")
 	assert.Empty(t, cfg.SerialAgents)
 }
@@ -91,13 +93,49 @@ serial_agnets: [kai]
 	assert.Contains(t, err.Error(), "serial_agnets")
 }
 
-func TestProjectConfig_NegativeTimeout(t *testing.T) {
-	_, err := LoadProjectConfig(writeProject(t, `
-agents: [bruce]
-timeout_secs: -1
-`))
+func TestProjectConfig_TimeoutValidation(t *testing.T) {
+	for name, content := range map[string]string{
+		"negative timeout": "agents: [bruce]\ntimeout_secs: -1\n",
+		"zero timeout":     "agents: [bruce]\ntimeout_secs: 0\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadProjectConfig(writeProject(t, content))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "timeout_secs must be positive")
+		})
+	}
+}
+
+func TestProjectConfig_TrailingDocumentSeparatorTolerated(t *testing.T) {
+	cfg, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n---\n"))
+	require.NoError(t, err, "a trailing --- is a single logical document, not a second one")
+	assert.Equal(t, []string{"bruce"}, cfg.Agents)
+}
+
+func TestProjectConfig_SecondDocumentWithContentRejected(t *testing.T) {
+	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n---\nagents: [greta]\n"))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "timeout_secs")
+	assert.Contains(t, err.Error(), "second YAML document")
+}
+
+func TestProjectConfig_EmptyRosterEntries(t *testing.T) {
+	for name, content := range map[string]string{
+		"empty string agent":      "agents: [\"\"]\n",
+		"whitespace agent":        "agents: [\"  \"]\n",
+		"whitespace serial agent": "agents: [bruce]\nserial_agents: [\" \"]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadProjectConfig(writeProject(t, content))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "roster entries must not be empty")
+		})
+	}
+}
+
+func TestProjectConfig_ValidateAgainstNilRegistry(t *testing.T) {
+	cfg, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
+	require.NoError(t, err)
+	assert.Error(t, cfg.ValidateAgainst(nil), "nil registry must error, not panic")
 }
 
 func TestProjectConfig_ValidateAgainstRegistry(t *testing.T) {
@@ -148,5 +186,14 @@ func TestProjectConfig_ValidateAgainstRegistry(t *testing.T) {
 		err = cfg.ValidateAgainst(reg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "bruce")
+	})
+
+	t.Run("duplicate within serial lane rejected", func(t *testing.T) {
+		cfg, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nserial_agents: [kai, kai]\n"))
+		require.NoError(t, err)
+		err = cfg.ValidateAgainst(reg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "kai")
+		assert.Contains(t, err.Error(), "serial_agents")
 	})
 }

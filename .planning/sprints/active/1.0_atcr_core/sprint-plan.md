@@ -383,12 +383,12 @@ Documentation available in [documentation/](plan/documentation/):
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 1.14 [ ] **[Project config loading - GREEN](plan/user-stories/02-agent-configuration.md)**
+### 1.14 [x] **[Project config loading - GREEN](plan/user-stories/02-agent-configuration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 1.15 [ ] **[Project config loading - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.14]
+### 1.15 [x] **[Project config loading - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
+   **Changed Files:** internal/registry/{project.go, project_test.go}
 
    **Spawn a fresh subagent** via the Agent tool to perform this review.
 
@@ -408,13 +408,14 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | project.go:54 | Trailing `---\n` (single logical doc) rejected as "second YAML document" — also affects config.go | Shared strict-decode helper tolerating a null second doc |
+   | MEDIUM | project.go:62-76 | Explicit timeout_secs: 0 silently rewritten to 600 | *int, "must be positive" validation |
+   | LOW | project.go:59-61 | Empty/whitespace roster entries pass load validation | Reject at load with clear message |
+   | LOW | project.go:85-89 | ValidateAgainst(nil) panics | Nil guard |
+   | LOW | project.go:40 | Not-found message hardcodes .atcr/config.yaml | Kept: exact message is AC-mandated (01-01 Error Scenario 1); path is included |
+   | LOW | project_test.go | Gaps: serial-lane duplicate, trailing ---, empty file, zero timeout | Added with fixes |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.16, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. All fixed in 1.16 except the AC-mandated error string (kept by design).
 
 ### 1.16 [ ] **[Project config loading - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.15 (if any)
