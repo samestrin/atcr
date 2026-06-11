@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,15 @@ import (
 // knob exposes truncation yet, and the budget machinery (payload.ApplyByteBudget)
 // stays wired so a future setting needs no plumbing change.
 const byteBudget int64 = 0
+
+// ErrNoReviewableContent reports a resolved range whose commits changed no
+// reviewable files (e.g. only merge or empty commits), so every payload mode
+// built empty. gitrange.ErrEmptyRange catches zero-commit ranges earlier;
+// this is the complementary guard for commit-bearing ranges with no file
+// changes. PrepareReview returns it before scaffolding, so a vacuous review
+// never creates a directory, repoints .atcr/latest, or reaches the provider
+// pool.
+var ErrNoReviewableContent = errors.New("no reviewable content in range")
 
 // ReviewConfig bundles the loaded configuration a review needs. Built by
 // LoadReviewConfig so both the CLI and the MCP server discover config the same way.
@@ -127,6 +137,16 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
 	if err != nil {
 		return nil, err
+	}
+	empty := true
+	for _, mp := range payloads {
+		if mp.FileCount > 0 {
+			empty = false
+			break
+		}
+	}
+	if empty {
+		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
 	}
 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range)
 	if err != nil {
