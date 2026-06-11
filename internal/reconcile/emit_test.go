@@ -198,3 +198,40 @@ func TestRenderMarkdown_FlattensNewlineInjection(t *testing.T) {
 	assert.NotContains(t, out, "\n## Forged Heading", "newlines flattened — no injected heading")
 	assert.Contains(t, out, "line one ## Forged Heading - forged bullet")
 }
+
+// TestReadReconciledFindings_SharedLoaderContract pins the single shared loader
+// both the CLI report command and the MCP report handler must use (TD
+// report.go:71 dedup): a missing findings.json surfaces the raw os.ErrNotExist
+// sentinel so each layer phrases its own guidance, an empty or malformed file
+// is a parse error, and a valid file round-trips the JSONFinding records.
+func TestReadReconciledFindings_SharedLoaderContract(t *testing.T) {
+	reviewDir := t.TempDir()
+
+	// Missing file → os.ErrNotExist sentinel, not a wrapped guidance string.
+	_, err := ReadReconciledFindings(reviewDir)
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	path := filepath.Join(reviewDir, reconciledSubdir, FindingsJSON)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+
+	// Empty file → parse error.
+	require.NoError(t, os.WriteFile(path, []byte("  \n"), 0o644))
+	_, err = ReadReconciledFindings(reviewDir)
+	require.ErrorContains(t, err, "empty")
+
+	// Malformed JSON → parse error.
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
+	_, err = ReadReconciledFindings(reviewDir)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, os.ErrNotExist)
+
+	// Valid file → records round-trip.
+	body, jerr := json.Marshal([]JSONFinding{{Severity: "HIGH", File: "a.go", Line: 7, Problem: "p"}})
+	require.NoError(t, jerr)
+	require.NoError(t, os.WriteFile(path, body, 0o644))
+	got, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "a.go", got[0].File)
+	assert.Equal(t, 7, got[0].Line)
+}
