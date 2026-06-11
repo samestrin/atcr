@@ -1,0 +1,88 @@
+# Acceptance Criteria: End-to-End Review Workflow
+
+**Related User Story:** [01: CLI Review Workflow](../user-stories/01-cli-review-workflow.md)
+
+## Implementation Technology
+| Component | Technology | Notes |
+|-----------|------------|-------|
+| CLI Commands | Go + Cobra | `review`, `reconcile`, `report` subcommands |
+| Test Framework | testify | assertions and suite |
+| Key Dependencies | cobra, os/exec, sync | orchestration, git calls, concurrency |
+
+## Related Files
+- `cmd/atcr/main.go` - create: root Cobra command registration
+- `cmd/atcr/review.go` - create: `atcr review` subcommand entry point
+- `cmd/atcr/reconcile.go` - create: `atcr reconcile` subcommand entry point
+- `cmd/atcr/report.go` - create: `atcr report` subcommand entry point
+
+## Happy Path Scenarios
+
+**Scenario 1: Full zero-argument workflow on feature branch**
+- **Given** user is on a feature branch with commits ahead of default branch
+- **When** user runs `atcr review && atcr reconcile && atcr report`
+- **Then** review directory is created, agents are invoked, findings are reconciled, and a human-readable report is rendered
+
+**Scenario 2: Workflow with explicit flags**
+- **Given** user specifies `--base` and `--head` flags
+- **When** user runs `atcr review --base abc123 --head def456`
+- **Then** the specified range is used instead of auto-detection, and the workflow completes successfully
+
+**Scenario 3: Single-agent minimal review**
+- **Given** only one agent is configured in `.atcr/config.yaml` roster
+- **When** user runs `atcr review`
+- **Then** the single agent processes the diff and produces findings; reconcile succeeds with ≥1 finding captured
+
+## Edge Cases
+
+**Edge Case 1: All agents fail**
+- **Given** all configured agents return errors (network, auth, timeout)
+- **When** `atcr review` completes
+- **Then** CLI exits with non-zero status and error message indicating total failure
+
+**Edge Case 2: Partial agent failure**
+- **Given** 2 of 3 configured agents succeed, 1 fails
+- **When** `atcr review` completes
+- **Then** review succeeds with `partial: true` in manifest.json; only successful agent findings are reconciled
+
+**Edge Case 3: No findings from any agent**
+- **Given** all agents return empty findings (no issues detected)
+- **When** `atcr reconcile` runs
+- **Then** reconciled output contains empty findings list; report renders with "No findings" message
+
+## Error Conditions
+
+**Error Scenario 1: No config.yaml found**
+- Error message: "no roster found: .atcr/config.yaml not found"
+- Exit code: 1
+
+**Error Scenario 2: No providers configured**
+- Error message: "no providers configured in ~/.config/atcr/registry.yaml"
+- Exit code: 1
+
+## Performance Requirements
+- **Response Time:** Full workflow (review + reconcile + report) completes within 120 seconds for a diff of 50 files
+- **Throughput:** Fan-out invokes all configured agents concurrently (parallel lane)
+
+## Security Considerations
+- **Authentication/Authorization:** API keys loaded from registry.yaml; never logged or included in output artifacts
+- **Input Validation:** Validate base/head SHAs are valid git refs before invoking agents
+
+## Test Implementation Guidance
+**Test Type:** INTEGRATION
+**Test Data Requirements:** Mock git repo with 2-3 commits, mock LLM responses, sample roster config
+**Mock/Stub Requirements:** Mock HTTP server for LLM API calls; mock git commands via test fixtures
+
+## Definition of Done
+**Auto-Verified:**
+- [ ] All tests passing
+- [ ] No linting errors
+- [ ] Build succeeds
+
+**Story-Specific:**
+- [ ] `atcr review && atcr reconcile && atcr report` completes end-to-end with zero arguments
+- [ ] Partial failure semantics work correctly (partial:true in manifest)
+- [ ] All three subcommands registered and accessible via `atcr --help`
+- [ ] Exit codes are correct (0 success, 1 failure)
+
+**Manual Review:**
+- [ ] Code reviewed and approved

@@ -7,7 +7,7 @@ This is a feature plan with 6 user stories covering CLI workflow, agent configur
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/1.0_atcr_core/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/1.0_atcr_core/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/1.0_atcr_core/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/1.0_atcr_core/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/1.0_atcr_core/`
 

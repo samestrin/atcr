@@ -30,7 +30,16 @@
 - **Relevant:** Maximizes review quality by matching payload to model capability
 - **Time-bound:** Implemented in task 4 (payload engine)
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-payload-builders.md) | Payload Builders (diff, blocks, files) | Unit |
+| [06-02](../acceptance-criteria/06-02-payload-mode-configuration.md) | Payload Mode Configuration and Per-Agent Override | Unit |
+| [06-03](../acceptance-criteria/06-03-byte-budget-truncation.md) | Byte Budget, Truncation, and Manifest Recording | Unit |
+| [06-04](../acceptance-criteria/06-04-payload-templates-documentation.md) | Payload Template Variables, Scope Rules, and Documentation | Unit |
+
+## Original Criteria Overview
 
 1. Three payload builders: diff (unified diff), blocks (--function-context expansion), files (full head content with changed regions marked)
 2. Default payload mode: blocks (configurable in .atcr/config.yaml)
@@ -45,8 +54,6 @@
 11. Payload template vars available in persona prompts: {{.Payload}}, {{.PayloadMode}}, {{.FileCount}}, {{.BaseRef}}, {{.HeadRef}}
 12. Per-payload scope rules in persona prompts (files mode surfaces pre-existing issues; reconcile flags findings outside changed ranges)
 13. Documentation in docs/payload-modes.md explains when to use each mode
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/1.0_atcr_core/`_
 
 ## Technical Considerations
 
@@ -87,4 +94,4 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 ---
 
 **Created:** June 10, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Generated

@@ -30,7 +30,14 @@
 - **Relevant:** Enables atcr as a PR gate — core integration point for CI pipelines
 - **Time-bound:** Implemented alongside reconciler (task 9) and CLI (task 1)
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-fail-on-severity-threshold.md) | Fail-on Severity Threshold | Unit |
+| [03-02](../acceptance-criteria/03-02-ci-one-shot-and-example.md) | CI One-Shot Mode and Example | Integration |
+
+## Original Criteria Overview
 
 1. `atcr reconcile --fail-on CRITICAL` returns nonzero only when CRITICAL findings survive
 2. `atcr reconcile --fail-on HIGH` returns nonzero when HIGH or CRITICAL findings survive
@@ -42,8 +49,6 @@
 8. Exit-code logic centralized in main(), not scattered across commands
 9. CI example provided in examples/ci-gate.sh
 10. Documentation in README.md explains CI integration
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/1.0_atcr_core/`_
 
 ## Technical Considerations
 

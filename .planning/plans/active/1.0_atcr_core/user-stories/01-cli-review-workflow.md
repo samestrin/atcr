@@ -30,7 +30,19 @@
 - **Relevant:** Core value proposition — panel review with deterministic reconciliation
 - **Time-bound:** Implemented in tasks 1, 3, 7, 9 (scaffold, gitrange, fan-out, reconciler)
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-end-to-end-review.md) | End-to-End Review Workflow | Integration |
+| [01-02](../acceptance-criteria/01-02-git-range-resolution.md) | Git Range Resolution | Unit |
+| [01-03](../acceptance-criteria/01-03-review-directory-structure.md) | Review Directory Structure | Unit |
+| [01-04](../acceptance-criteria/01-04-fanout-agent-execution.md) | Fan-out Agent Execution | Unit |
+| [01-05](../acceptance-criteria/01-05-reconciliation-pipeline.md) | Reconciliation Pipeline | Unit |
+| [01-06](../acceptance-criteria/01-06-report-rendering.md) | Report Rendering | Unit |
+
+<details>
+<summary>Original Criteria Overview</summary>
 
 1. `atcr review` resolves git range using decision tree (explicit → merge-commit → auto)
 2. Review directory created at .atcr/reviews/YYYY-MM-DD_branch-slug/ with manifest.json
@@ -43,7 +55,7 @@
 9. .atcr/latest pointer updated with review ID
 10. Empty range produces hard error before any provider call
 
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/1.0_atcr_core/`_
+</details>
 
 ## Technical Considerations
 
@@ -78,4 +90,4 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 ---
 
 **Created:** June 10, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Draft - Acceptance Criteria Defined

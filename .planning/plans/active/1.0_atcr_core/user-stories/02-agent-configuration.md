@@ -30,7 +30,16 @@
 - **Relevant:** Enables BYO-keys, multi-provider support — key differentiator from single-vendor tools
 - **Time-bound:** Implemented in task 2 (config + init)
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-init-command.md) | atcr init Command | Unit + Integration |
+| [02-02](../acceptance-criteria/02-02-provider-agent-registry.md) | Provider and Agent Registry Configuration | Unit |
+| [02-03](../acceptance-criteria/02-03-precedence-and-validation.md) | Configuration Precedence and Validation | Unit |
+| [02-04](../acceptance-criteria/02-04-persona-resolution-override.md) | Persona Resolution and Override | Unit |
+
+## Original Criteria Overview
 
 1. `atcr init` writes .atcr/config.yaml with default roster (all six personas), payload mode (blocks), timeouts, fail_on
 2. `atcr init` writes six editable persona files to .atcr/personas/{bruce,greta,kai,mira,dax,otto}.md
@@ -42,8 +51,6 @@
 8. Strict parsing: unknown fields in YAML produce error (KnownFields(true))
 9. Persona resolution: agent's persona ref > <agent>.md in registry dir > _base.md > embedded default
 10. `--task-message` CLI flag overrides all persona resolution
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/1.0_atcr_core/`_
 
 ## Technical Considerations
 

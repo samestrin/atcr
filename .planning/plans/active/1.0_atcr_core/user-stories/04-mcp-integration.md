@@ -30,7 +30,16 @@
 - **Relevant:** Enables IDE/agent integration — expands atcr's reach beyond CLI users
 - **Time-bound:** Implemented in task 11 (MCP server)
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-mcp-stdio-server.md) | MCP Stdio Server Startup | Unit/Integration |
+| [04-02](../acceptance-criteria/04-02-tool-registration-schemas.md) | Tool Registration and Typed Schemas | Unit |
+| [04-03](../acceptance-criteria/04-03-review-reconcile-handlers.md) | Review and Reconcile Tool Handlers | Unit/Integration |
+| [04-04](../acceptance-criteria/04-04-report-range-status-handlers.md) | Report, Range, and Status Tool Handlers | Unit/Integration |
+
+## Original Criteria Overview
 
 1. `atcr serve` starts MCP stdio server
 2. Five tools registered: atcr_review, atcr_reconcile, atcr_report, atcr_range, atcr_status
@@ -43,8 +52,6 @@
 9. Handlers call same internal packages as CLI (no logic duplication)
 10. stdout reserved for MCP protocol; all logs/errors to stderr
 11. InMemoryTransport available for testing
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/1.0_atcr_core/`_
 
 ## Technical Considerations
 

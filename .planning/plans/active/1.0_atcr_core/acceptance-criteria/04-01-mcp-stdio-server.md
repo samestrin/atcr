@@ -1,0 +1,111 @@
+# Acceptance Criteria: MCP Stdio Server Startup
+
+**Related User Story:** [04: MCP Integration](../user-stories/04-mcp-integration.md)
+
+## Implementation Technology
+| Component | Technology | Notes |
+|-----------|------------|-------|
+| MCP Server | Go `modelcontextprotocol/go-sdk` v1.6.1 | Generic MCP server with stdio transport |
+| Transport | `mcp.StdioTransport` | Stdout reserved for protocol; stderr for logs |
+| CLI Subcommand | Go `cobra` subcommand | `atcr serve` |
+| Test Framework | `testify` (assert, require) | Table-driven tests |
+| Test Transport | `mcp.InMemoryTransport` | In-process testing without stdio |
+
+## Related Files
+- `cmd/atcr/serve.go` - create: `atcr serve` cobra subcommand that starts MCP stdio server
+- `internal/mcp/server.go` - create: MCP server construction, tool registration, transport setup
+- `internal/mcp/server_test.go` - create: Unit and integration tests for server startup and transport
+- `cmd/atcr/serve_test.go` - create: Integration tests for serve command lifecycle
+
+## Happy Path Scenarios
+
+**Scenario 1: `atcr serve` starts MCP stdio server and listens on stdin/stdout**
+- **Given** the atcr binary is built and available in PATH
+- **When** an MCP client launches `atcr serve` as a subprocess
+- **Then** the server initializes a stdio transport bound to stdin/stdout
+- **And** the server sends an MCP `initialize` response with protocol version and capabilities
+- **And** all human-readable log output is directed to stderr
+
+**Scenario 2: Server completes MCP initialize handshake**
+- **Given** the server is running via `atcr serve`
+- **When** the client sends an `initialize` request with supported protocol version
+- **Then** the server responds with `serverInfo` containing name `atcr` and version
+- **And** the server advertises `tools` capability with the list of registered tool names
+
+**Scenario 3: InMemoryTransport enables in-process testing**
+- **Given** a test creates an MCP server with `InMemoryTransport`
+- **When** the test sends tool calls through the in-memory transport
+- **Then** the server processes requests without requiring stdin/stdout
+- **And** no output leaks to stdout during test execution
+
+## Edge Cases
+
+**Edge Case 1: Stdin closed before initialize**
+- **Given** `atcr serve` is started but stdin is immediately closed
+- **When** the server attempts to read the first request
+- **Then** the server logs a diagnostic to stderr and exits with code 0 (clean shutdown)
+
+**Edge Case 2: Unsupported protocol version from client**
+- **Given** the server is running via `atcr serve`
+- **When** the client sends `initialize` with an unsupported protocol version
+- **Then** the server responds with the highest supported protocol version
+- **And** does not crash or hang
+
+**Edge Case 3: Multiple rapid client disconnects and reconnects**
+- **Given** the server is running via `atcr serve`
+- **When** a client disconnects abruptly mid-request
+- **Then** the server cleans up the request context
+- **And** remains available for the next client connection on the same stdio streams
+
+## Error Conditions
+
+**Error Scenario 1: Stdin is not a pipe (interactive terminal)**
+- Error message: "atcr serve requires stdin/stdout pipe; use atcr review for interactive mode"
+- Exit code: 1
+
+**Error Scenario 2: Stdout write fails (broken pipe)**
+- Error message (to stderr): "stdout write failed: broken pipe — MCP client disconnected"
+- Exit code: 1
+
+## Performance Requirements
+- **Startup Time:** Server accepts first request within 50ms of process start
+- **Handshake Latency:** MCP initialize round-trip completes in < 10ms (local process)
+- **Throughput:** Server handles sequential tool calls with < 5ms overhead per call (excluding tool execution time)
+
+## Security Considerations
+- **Input Validation:** Server validates all incoming JSON-RPC requests conform to MCP schema before dispatching
+- **No code execution:** Server does not eval or exec any client-provided code; tools only invoke internal packages
+- **Stdout integrity:** Stdout is exclusively owned by MCP protocol; no log, debug, or human-readable output leaks to stdout
+
+## Test Implementation Guidance
+**Test Type:** UNIT + INTEGRATION
+**Test Data Requirements:**
+- Valid MCP initialize request JSON
+- Tool call request payloads for each registered tool
+**Mock/Stub Requirements:**
+- Use `InMemoryTransport` for all tests (no stdio needed)
+- Mock internal packages (fanout, reconcile) to verify handler dispatch without real LLM calls
+
+**Test Cases:**
+1. `TestServe_InitializeHandshake` — verify server responds to initialize with correct capabilities
+2. `TestServe_StderrOnlyLogging` — verify no output to stdout except protocol messages
+3. `TestServe_InMemoryTransport` — verify server works with in-memory transport in tests
+4. `TestServe_StdinClosed` — verify clean exit when stdin closes
+5. `TestServe_UnsupportedVersion` — verify graceful handling of version mismatch
+
+## Definition of Done
+**Auto-Verified:**
+- [ ] All tests passing (unit + integration)
+- [ ] No linting errors (`golangci-lint run`)
+- [ ] Build succeeds (`go build ./cmd/atcr`)
+- [ ] `atcr serve` starts and completes MCP initialize handshake
+
+**Story-Specific:**
+- [ ] Stdio transport is the only transport configured (no HTTP/SSE)
+- [ ] All log/human output goes to stderr; stdout reserved for MCP protocol
+- [ ] InMemoryTransport available and used in tests
+- [ ] Server startup completes within 50ms
+
+**Manual Review:**
+- [ ] Code reviewed and approved
+- [ ] Stderr discipline verified by manual inspection of serve.go

@@ -30,7 +30,16 @@
 - **Relevant:** Enables confidence signal with minimal setup (single API key + host review)
 - **Time-bound:** Implemented in task 12 (Skill)
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-skill-structure-and-installation.md) | Skill Structure and Installation | Unit + Integration |
+| [05-02](../acceptance-criteria/05-02-host-review-findings-generation.md) | Host Review Findings Generation | Unit + Integration |
+| [05-03](../acceptance-criteria/05-03-orchestration-loop.md) | Orchestration Loop | Integration |
+| [05-04](../acceptance-criteria/05-04-adversarial-review-and-adjudication.md) | Adversarial Review and Ambiguity Adjudication | Unit + Integration |
+
+## Original Criteria Overview
 
 1. Skill installed in .claude/skills/atcr/ (or equivalent)
 2. Skill runs host-model review: reads payload, generates findings in v1 format
@@ -42,8 +51,6 @@
 8. Skill accepts git range/branch/PR as input (no sprint knowledge)
 9. Skill outputs review directory path
 10. Host review is adversarial (finds problems, not praise)
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/1.0_atcr_core/`_
 
 ## Technical Considerations
 
