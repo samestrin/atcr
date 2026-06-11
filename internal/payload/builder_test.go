@@ -361,3 +361,36 @@ func TestFileBody_BlocksFallbackLeavesRecord(t *testing.T) {
 	assert.Contains(t, buf.String(), "function context unavailable")
 	assert.Contains(t, buf.String(), "a.txt")
 }
+
+func TestChangedFileCount_MatchesDiffEntries(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	write(t, dir, "b.go", "package p\n\nfunc B() int { return 1 }\n")
+	write(t, dir, "c.go", "package p\n\nfunc C() int { return 1 }\n")
+	base := commitAll(t, dir, "v1")
+	// One deleted, one renamed (content unchanged so -M pairs it), one
+	// modified, one added: count must be 4, same as len(BuildEntries).
+	require.NoError(t, os.Remove(filepath.Join(dir, "a.go")))
+	gitCmd(t, dir, "mv", "b.go", "d.go")
+	write(t, dir, "c.go", "package p\n\nfunc C() int { return 2 }\n")
+	write(t, dir, "e.go", "package p\n\nfunc E() int { return 1 }\n")
+	head := commitAll(t, dir, "v2")
+
+	count, err := ChangedFileCount(context.Background(), dir, base, head)
+	require.NoError(t, err)
+	assert.Equal(t, 4, count)
+
+	entries, err := BuildEntries(context.Background(), ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	assert.Equal(t, len(entries), count)
+}
+
+func TestChangedFileCount_BadRef(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "a.go", goFileV1)
+	commitAll(t, dir, "v1")
+
+	_, err := ChangedFileCount(context.Background(), dir, "nope", "HEAD")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "base")
+}
