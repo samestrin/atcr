@@ -16,10 +16,16 @@ import (
 
 var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "otto"}
 
+// initDir runs a fresh init into dir, failing the test on error.
+func initDir(t *testing.T, dir string) {
+	t.Helper()
+	require.NoError(t, runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{}))
+}
+
 func TestInit_FreshDirectory(t *testing.T) {
 	dir := t.TempDir()
 	out := &bytes.Buffer{}
-	require.NoError(t, runInit(dir, false, out))
+	require.NoError(t, runInit(dir, false, out, &bytes.Buffer{}))
 
 	// Config exists, parses strictly, and carries the documented defaults.
 	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
@@ -47,7 +53,7 @@ func TestInit_FilePermissions(t *testing.T) {
 		t.Skip("POSIX permissions")
 	}
 	dir := t.TempDir()
-	require.NoError(t, runInit(dir, false, &bytes.Buffer{}))
+	initDir(t, dir)
 
 	dirInfo, err := os.Stat(filepath.Join(dir, ".atcr", "personas"))
 	require.NoError(t, err)
@@ -60,9 +66,9 @@ func TestInit_FilePermissions(t *testing.T) {
 
 func TestInit_PersonaContent(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, runInit(dir, false, &bytes.Buffer{}))
+	initDir(t, dir)
 
-	for _, name := range personaNames {
+	for _, name := range append([]string{"_base"}, personaNames...) {
 		data, err := os.ReadFile(filepath.Join(dir, ".atcr", "personas", name+".md"))
 		require.NoError(t, err)
 		content := string(data)
@@ -76,13 +82,13 @@ func TestInit_PersonaContent(t *testing.T) {
 
 func TestInit_AlreadyExists(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, runInit(dir, false, &bytes.Buffer{}))
+	initDir(t, dir)
 
 	// Tamper with a persona so we can prove nothing is modified.
 	brucePath := filepath.Join(dir, ".atcr", "personas", "bruce.md")
 	require.NoError(t, os.WriteFile(brucePath, []byte("EDITED"), 0o644))
 
-	err := runInit(dir, false, &bytes.Buffer{})
+	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "config already exists at .atcr/config.yaml")
 	assert.Contains(t, err.Error(), "--force")
@@ -92,20 +98,66 @@ func TestInit_AlreadyExists(t *testing.T) {
 	assert.Equal(t, "EDITED", string(data), "existing files must not be modified without --force")
 }
 
+func TestInit_GuardCoversPersonasWithoutConfig(t *testing.T) {
+	// Customized personas must survive even when config.yaml is missing
+	// (e.g. deleted, or a previous init failed midway).
+	dir := t.TempDir()
+	initDir(t, dir)
+	require.NoError(t, os.Remove(filepath.Join(dir, ".atcr", "config.yaml")))
+
+	brucePath := filepath.Join(dir, ".atcr", "personas", "bruce.md")
+	require.NoError(t, os.WriteFile(brucePath, []byte("CUSTOMIZED"), 0o644))
+
+	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
+	require.Error(t, err, "existing persona files must trigger the overwrite guard")
+
+	data, err := os.ReadFile(brucePath)
+	require.NoError(t, err)
+	assert.Equal(t, "CUSTOMIZED", string(data))
+}
+
 func TestInit_Force(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, runInit(dir, false, &bytes.Buffer{}))
+	initDir(t, dir)
 
 	brucePath := filepath.Join(dir, ".atcr", "personas", "bruce.md")
 	require.NoError(t, os.WriteFile(brucePath, []byte("EDITED"), 0o644))
 
 	out := &bytes.Buffer{}
-	require.NoError(t, runInit(dir, true, out))
-	assert.Contains(t, out.String(), "Overwriting existing configuration and persona files")
+	errOut := &bytes.Buffer{}
+	require.NoError(t, runInit(dir, true, out, errOut))
+	assert.Contains(t, errOut.String(), "Overwriting existing configuration and persona files",
+		"warning goes to stderr, not stdout")
+	assert.NotContains(t, out.String(), "Overwriting")
 
 	data, err := os.ReadFile(brucePath)
 	require.NoError(t, err)
 	assert.NotEqual(t, "EDITED", string(data), "--force must restore defaults")
+}
+
+func TestInit_ForceDoesNotWriteThroughSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	dir := t.TempDir()
+	initDir(t, dir)
+
+	// Replace a persona with a symlink to an external file.
+	external := filepath.Join(t.TempDir(), "external.md")
+	require.NoError(t, os.WriteFile(external, []byte("EXTERNAL"), 0o644))
+	brucePath := filepath.Join(dir, ".atcr", "personas", "bruce.md")
+	require.NoError(t, os.Remove(brucePath))
+	require.NoError(t, os.Symlink(external, brucePath))
+
+	require.NoError(t, runInit(dir, true, &bytes.Buffer{}, &bytes.Buffer{}))
+
+	data, err := os.ReadFile(external)
+	require.NoError(t, err)
+	assert.Equal(t, "EXTERNAL", string(data), "symlink target outside the workspace must not be written through")
+
+	info, err := os.Lstat(brucePath)
+	require.NoError(t, err)
+	assert.Zero(t, info.Mode()&os.ModeSymlink, "persona path must be a regular file after --force")
 }
 
 func TestInit_ReadOnlyDir(t *testing.T) {
@@ -116,7 +168,7 @@ func TestInit_ReadOnlyDir(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 
-	err := runInit(dir, false, &bytes.Buffer{})
+	err := runInit(dir, false, &bytes.Buffer{}, &bytes.Buffer{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot create .atcr/")
 }

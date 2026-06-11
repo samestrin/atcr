@@ -524,12 +524,12 @@ Documentation available in [documentation/](plan/documentation/):
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 1.26 [ ] **[atcr init command - GREEN](plan/user-stories/02-agent-configuration.md)**
+### 1.26 [x] **[atcr init command - GREEN](plan/user-stories/02-agent-configuration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 1.27 [ ] **[atcr init command - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.26]
+### 1.27 [x] **[atcr init command - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
+   **Changed Files:** cmd/atcr/{init.go, init_test.go}, personas/* (8 files), internal/registry/project.go
 
    **Spawn a fresh subagent** via the Agent tool to perform this review.
 
@@ -549,13 +549,17 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | init.go:38 | Overwrite guard keys only on config.yaml; customized personas silently overwritten when config absent | Guard checks all target paths |
+   | MEDIUM | init.go:38 | Non-NotExist Stat errors swallowed (guard bypass) | Surface stat errors |
+   | MEDIUM | init.go:38-60 | TOCTOU between concurrent inits | O_CREATE/O_EXCL when not forcing |
+   | MEDIUM | init_test.go:54,58 | Permission assertions umask-dependent | Chmod after create pins documented modes |
+   | LOW | init.go:52 | WriteFile follows symlinks under --force | Remove target before write when forcing |
+   | LOW | personas.go:27-31 | Underlying embed error discarded | Wrap with %w |
+   | LOW | init.go:40 | Message hardcodes .atcr/config.yaml | Kept: dir-relative display matches AC text |
+   | LOW | init.go:42 | --force warning mixed into stdout | Routed to stderr |
+   | LOW | init_test.go:65-74 | _base.md content never asserted | Included in content loop |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.28, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 HIGH — fixed in 1.28 along with all MEDIUM/LOW (one LOW kept by design).
 
 ### 1.28 [ ] **[atcr init command - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.27 (if any)

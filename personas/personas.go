@@ -26,7 +26,7 @@ func Names() []string {
 func Get(name string) (string, error) {
 	data, err := files.ReadFile(name + ".md")
 	if err != nil {
-		return "", fmt.Errorf("internal error: embedded persona %s not found", name)
+		return "", fmt.Errorf("internal error: embedded persona %s not found: %w", name, err)
 	}
 	return string(data), nil
 }
@@ -35,7 +35,7 @@ func Get(name string) (string, error) {
 func Base() (string, error) {
 	data, err := files.ReadFile("_base.md")
 	if err != nil {
-		return "", fmt.Errorf("internal error: embedded persona _base not found")
+		return "", fmt.Errorf("internal error: embedded persona _base not found: %w", err)
 	}
 	return string(data), nil
 }
