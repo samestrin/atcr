@@ -214,6 +214,17 @@ func TestRunReview_UnknownProviderIsBuildError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown provider")
 }
 
+// A payloads map missing the agent's effective mode must be an explicit build
+// error (like the adjacent unknown-agent/unknown-provider lookups), never a
+// silently empty payload that produces a plausible-looking vacuous review.
+func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "greta")
+	assert.Contains(t, err.Error(), "blocks")
+}
+
 func TestLoadReviewConfig_DiscoversConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
