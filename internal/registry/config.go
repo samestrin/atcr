@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,6 +22,9 @@ const (
 	DefaultTimeoutSecs = 600
 )
 
+// envVarName matches valid POSIX environment variable names.
+var envVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // Provider is an OpenAI-compatible endpoint definition. API keys are never
 // stored; APIKeyEnv names the environment variable resolved at invoke time.
 type Provider struct {
@@ -28,13 +32,14 @@ type Provider struct {
 	BaseURL   string `yaml:"base_url,omitempty"`
 }
 
-// AgentConfig binds a provider+model to a reviewer persona.
+// AgentConfig binds a provider+model to a reviewer persona. Temperature and
+// TimeoutSecs are pointers so an explicit zero survives default application.
 type AgentConfig struct {
 	Provider    string   `yaml:"provider"`
 	Model       string   `yaml:"model"`
 	Persona     string   `yaml:"persona,omitempty"`
 	Temperature *float64 `yaml:"temperature,omitempty"`
-	TimeoutSecs int      `yaml:"timeout_secs,omitempty"`
+	TimeoutSecs *int     `yaml:"timeout_secs,omitempty"`
 	RateLimited bool     `yaml:"rate_limited,omitempty"`
 	Fallback    string   `yaml:"fallback,omitempty"`
 	Payload     string   `yaml:"payload,omitempty"`
@@ -66,19 +71,31 @@ func LoadRegistry(path string) (*Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading registry: %w", err)
 	}
+
+	base := filepath.Base(path)
+	emptyErr := fmt.Errorf("%s is empty: define providers and agents", base)
 	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, fmt.Errorf("%s is empty: define providers and agents", filepath.Base(path))
+		return nil, emptyErr
 	}
 
 	var reg Registry
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	if err := dec.Decode(&reg); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("failed to parse %s: %w", filepath.Base(path), err)
+	if err := dec.Decode(&reg); err != nil {
+		if errors.Is(err, io.EOF) {
+			// Comments-only or otherwise content-free YAML.
+			return nil, emptyErr
+		}
+		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
+	}
+	// Strictness covers the whole file: trailing documents are an error, not
+	// silently discarded config.
+	if err := dec.Decode(new(Registry)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("failed to parse %s: unexpected second YAML document", base)
 	}
 
 	if err := reg.validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 	reg.applyDefaults()
 	return &reg, nil
@@ -87,17 +104,29 @@ func LoadRegistry(path string) (*Registry, error) {
 // validate checks required fields and reference integrity.
 func (r *Registry) validate() error {
 	for name, p := range r.Providers {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("providers: provider name must not be empty")
+		}
 		if p.APIKeyEnv == "" {
 			return fmt.Errorf("providers.%s: required field 'api_key_env' is missing", name)
+		}
+		if !envVarName.MatchString(p.APIKeyEnv) {
+			return fmt.Errorf("providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
 		}
 		if p.BaseURL != "" {
 			u, err := url.Parse(p.BaseURL)
 			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
 				return fmt.Errorf("providers.%s: base_url must be a valid http or https URL", name)
 			}
+			if u.User != nil {
+				return fmt.Errorf("providers.%s: base_url must not embed credentials (userinfo)", name)
+			}
 		}
 	}
 	for name, a := range r.Agents {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("agents: agent name must not be empty")
+		}
 		if a.Provider == "" {
 			return fmt.Errorf("agent '%s': required field 'provider' is missing", name)
 		}
@@ -107,11 +136,11 @@ func (r *Registry) validate() error {
 		if _, ok := r.Providers[a.Provider]; !ok {
 			return fmt.Errorf("agent '%s' references unknown provider '%s'", name, a.Provider)
 		}
-		if a.TimeoutSecs < 0 {
-			return fmt.Errorf("agent '%s': timeout_secs must not be negative", name)
+		if a.TimeoutSecs != nil && *a.TimeoutSecs <= 0 {
+			return fmt.Errorf("agent '%s': timeout_secs must be positive", name)
 		}
-		if strings.TrimSpace(name) == "" {
-			return errors.New("agents: agent name must not be empty")
+		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
+			return fmt.Errorf("agent '%s': temperature must be within [0, 2]", name)
 		}
 	}
 	return nil
@@ -129,8 +158,9 @@ func (r *Registry) applyDefaults() {
 			temp := DefaultTemperature
 			a.Temperature = &temp
 		}
-		if a.TimeoutSecs == 0 {
-			a.TimeoutSecs = DefaultTimeoutSecs
+		if a.TimeoutSecs == nil {
+			secs := DefaultTimeoutSecs
+			a.TimeoutSecs = &secs
 		}
 		r.Agents[name] = a
 	}

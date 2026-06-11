@@ -334,12 +334,12 @@ Documentation available in [documentation/](plan/documentation/):
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 1.10 [ ] **[Registry config loading - GREEN](plan/user-stories/02-agent-configuration.md)**
+### 1.10 [x] **[Registry config loading - GREEN](plan/user-stories/02-agent-configuration.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 1.11 [ ] **[Registry config loading - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.10]
+### 1.11 [x] **[Registry config loading - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-agent-configuration.md)**
+   **Changed Files:** internal/registry/{config.go, config_test.go}
 
    **Spawn a fresh subagent** via the Agent tool to perform this review.
 
@@ -359,13 +359,17 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | config.go:69-78 | Comments-only file: Decode returns io.EOF which is swallowed; zero-value Registry passes validation | Treat io.EOF as the "is empty" error |
+   | MEDIUM | config.go:37,132-133 | Explicit timeout_secs: 0 indistinguishable from unset, silently rewritten to 600 | TimeoutSecs *int for parity with Temperature |
+   | MEDIUM | config.go:74-78 | Only first YAML document parsed; trailing docs silently discarded | Second Decode must return io.EOF |
+   | LOW | config.go:113-115 | Empty-name check runs last; whitespace names pass | TrimSpace check first, both loops |
+   | LOW | config.go:89-98 | Provider names never validated | Same TrimSpace check |
+   | LOW | config.go:90 | api_key_env format unvalidated | ^[A-Za-z_][A-Za-z0-9_]*$ |
+   | LOW | config.go:93-98 | base_url with embedded userinfo accepted (credential in plaintext config) | Reject u.User != nil |
+   | LOW | config.go:100-116 | Temperature unbounded | Reject outside [0, 2] |
+   | LOW | config_test.go | Missing tests for the above validation paths | Added with fixes |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.12, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No CRITICAL/HIGH. All 9 findings fixed directly in 1.12 (no deferrals).
 
 ### 1.12 [ ] **[Registry config loading - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.11 (if any)

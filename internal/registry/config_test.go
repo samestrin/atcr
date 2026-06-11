@@ -56,7 +56,8 @@ func TestRegistryLoad_ValidConfig(t *testing.T) {
 	assert.Equal(t, "greta", greta.Persona)
 	require.NotNil(t, greta.Temperature)
 	assert.InDelta(t, 0.3, *greta.Temperature, 1e-9)
-	assert.Equal(t, 120, greta.TimeoutSecs)
+	require.NotNil(t, greta.TimeoutSecs)
+	assert.Equal(t, 120, *greta.TimeoutSecs)
 	assert.True(t, greta.RateLimited)
 	assert.Equal(t, "bruce", greta.Fallback)
 	assert.Equal(t, "diff", greta.Payload)
@@ -70,7 +71,8 @@ func TestRegistryLoad_OptionalFieldDefaults(t *testing.T) {
 	assert.Equal(t, "bruce", bruce.Persona, "persona defaults to the agent name")
 	require.NotNil(t, bruce.Temperature)
 	assert.InDelta(t, 0.7, *bruce.Temperature, 1e-9, "temperature defaults to 0.7")
-	assert.Equal(t, 600, bruce.TimeoutSecs, "timeout_secs defaults to 600")
+	require.NotNil(t, bruce.TimeoutSecs)
+	assert.Equal(t, 600, *bruce.TimeoutSecs, "timeout_secs defaults to 600")
 	assert.False(t, bruce.RateLimited, "rate_limited defaults to false")
 	assert.Empty(t, bruce.Payload, "payload stays empty when unset (inherits project default)")
 	assert.Empty(t, bruce.Fallback)
@@ -232,6 +234,83 @@ agents:
 `))
 	require.NoError(t, err)
 	assert.Equal(t, "ATCR_TEST_UNSET_KEY", reg.Providers["p"].APIKeyEnv)
+}
+
+func TestRegistryLoad_ValidationRejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			"comments-only file",
+			"# just a comment\n# another\n",
+			"empty",
+		},
+		{
+			"trailing second document",
+			validRegistry + "\n---\nproviders: {}\n",
+			"second YAML document",
+		},
+		{
+			"zero timeout",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    timeout_secs: 0\n",
+			"timeout_secs must be positive",
+		},
+		{
+			"negative timeout",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    timeout_secs: -5\n",
+			"timeout_secs must be positive",
+		},
+		{
+			"temperature out of range",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    temperature: 9.5\n",
+			"temperature",
+		},
+		{
+			"whitespace agent name",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  \" \":\n    provider: p\n    model: m\n",
+			"agent name must not be empty",
+		},
+		{
+			"whitespace provider name",
+			"providers:\n  \" \":\n    api_key_env: KEY\nagents: {}\n",
+			"provider name must not be empty",
+		},
+		{
+			"invalid api_key_env format",
+			"providers:\n  p:\n    api_key_env: \"MY KEY\"\nagents: {}\n",
+			"not a valid environment variable name",
+		},
+		{
+			"base_url with embedded credentials",
+			"providers:\n  p:\n    api_key_env: KEY\n    base_url: https://user:secret@host/v1\nagents: {}\n",
+			"must not embed credentials",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadRegistry(writeRegistry(t, tt.yaml))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestRegistryLoad_ExplicitZeroTemperatureSurvives(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  a:
+    provider: p
+    model: m
+    temperature: 0
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Agents["a"].Temperature)
+	assert.Zero(t, *reg.Agents["a"].Temperature, "explicit temperature 0 must not be rewritten to the default")
 }
 
 func TestRegistryLoad_YAML11BooleanQuirk(t *testing.T) {
