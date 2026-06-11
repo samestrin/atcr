@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -127,6 +128,12 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 	}
 
 	endpoint := strings.TrimRight(inv.BaseURL, "/") + "/chat/completions"
+	// Defensively drop any userinfo embedded in the base URL so transport and
+	// request-creation errors (which echo the endpoint) cannot surface it.
+	if u, err := url.Parse(endpoint); err == nil && u.User != nil {
+		u.User = nil
+		endpoint = u.String()
+	}
 
 	var lastErr error
 	delay := c.initialBackoff
