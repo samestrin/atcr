@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,6 +203,24 @@ func TestComplete_Temperature(t *testing.T) {
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m", Temperature: &temp,
 	})
 	require.NoError(t, err)
+}
+
+func TestComplete_UserinfoStrippedFromErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		okResponse(w, "x")
+	}))
+	// Close immediately so every attempt fails at the transport level with the
+	// endpoint URL embedded in the error.
+	srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	base := strings.Replace(srv.URL, "http://", "http://leakuser:leakpass@", 1)
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: base, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "leakuser")
+	assert.NotContains(t, err.Error(), "leakpass")
 }
 
 func TestComplete_ContextTimeout(t *testing.T) {
