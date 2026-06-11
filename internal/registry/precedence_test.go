@@ -7,8 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func strPtr(s string) *string { return &s }
-func intPtr(i int) *int       { return &i }
+func strPtr(s string) *string  { return &s }
+func intPtr(i int) *int        { return &i }
+func int64Ptr(i int64) *int64  { return &i }
 
 // resolve is a test helper asserting resolution succeeds.
 func resolve(t *testing.T, cli CLIOverrides, proj *ProjectConfig, reg *Registry) Settings {
@@ -76,6 +77,57 @@ func TestPrecedence_NoOverride(t *testing.T) {
 	s := resolve(t, CLIOverrides{}, proj, nil)
 	assert.Equal(t, DefaultPayloadMode, s.PayloadMode, "embedded default used when nothing overrides")
 	assert.Equal(t, DefaultTimeoutSecs, s.TimeoutSecs)
+}
+
+func TestPrecedence_ByteBudgetDefault(t *testing.T) {
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, nil)
+	assert.Equal(t, int64(DefaultPayloadByteBudget), s.PayloadByteBudget, "embedded default used when nothing overrides")
+	assert.Equal(t, int64(524288), s.PayloadByteBudget, "v1 ships a 512 KiB default")
+}
+
+func TestPrecedence_ByteBudgetChain(t *testing.T) {
+	reg := loadRegistryWith(t, "payload_byte_budget: 1000\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\npayload_byte_budget: 2000\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, reg)
+	assert.Equal(t, int64(2000), s.PayloadByteBudget, "project config wins over registry")
+
+	s = resolve(t, CLIOverrides{PayloadByteBudget: int64Ptr(3000)}, proj, reg)
+	assert.Equal(t, int64(3000), s.PayloadByteBudget, "CLI flag wins over the full chain")
+}
+
+func TestPrecedence_ByteBudgetExplicitZeroIsUnlimited(t *testing.T) {
+	// 0 is the documented unlimited escape hatch (AC 06-03) and must survive
+	// default application: an explicit zero is a real override, not "unset".
+	reg := loadRegistryWith(t, "payload_byte_budget: 1000\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\npayload_byte_budget: 0\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, reg)
+	assert.Equal(t, int64(0), s.PayloadByteBudget, "explicit 0 overrides both registry and embedded default")
+}
+
+func TestPrecedence_ByteBudgetCLINegativeRejected(t *testing.T) {
+	_, err := ResolveSettings(CLIOverrides{PayloadByteBudget: int64Ptr(-1)}, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "byte budget")
+}
+
+func TestRegistry_ByteBudgetNegativeRejectedAtLoad(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  bruce: {provider: p, model: m}
+payload_byte_budget: -5
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payload_byte_budget")
 }
 
 func TestPrecedence_EachFieldIndependent(t *testing.T) {

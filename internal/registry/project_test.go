@@ -116,6 +116,12 @@ func TestProjectConfig_TimeoutValidation(t *testing.T) {
 	}
 }
 
+func TestProjectConfig_ByteBudgetNegativeRejectedAtLoad(t *testing.T) {
+	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\npayload_byte_budget: -1\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payload_byte_budget")
+}
+
 func TestProjectConfig_TrailingDocumentSeparatorTolerated(t *testing.T) {
 	cfg, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n---\n"))
 	require.NoError(t, err, "a trailing --- is a single logical document, not a second one")

@@ -214,6 +214,53 @@ func TestRunReview_UnknownProviderIsBuildError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown provider")
 }
 
+// AC 06-03: a configured byte budget must surface as Truncated=true with the
+// dropped files recorded in each agent's status.json — never silent. This is
+// the integration proof that the payload_byte_budget knob actually feeds
+// buildPayloads (the budget machinery was previously wired to a hardcoded 0).
+func TestRunReview_ConfiguredBudgetRecordsTruncation(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	dir := t.TempDir()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-q")
+	run("config", "commit.gpgsign", "false")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "small.go"), []byte("package main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.go"), []byte("package main\n"), 0o644))
+	run("add", ".")
+	run("commit", "-q", "-m", "base")
+	base := run("rev-parse", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "small.go"), []byte("package main\n\nfunc s() {}\n"), 0o644))
+	big := "package main\n\nfunc b() {\n" + strings.Repeat("\t_ = \"padding padding padding padding\"\n", 400) + "}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.go"), []byte(big), 0o644))
+	run("add", ".")
+	run("commit", "-q", "-m", "head")
+	head := run("rev-parse", "HEAD")
+
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+	cfg.Settings.PayloadByteBudget = 2048 // fits small.go's blocks, not big.go's
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(dir, dir, base, head))
+	require.NoError(t, err)
+
+	for _, agent := range []string{"greta", "kai"} {
+		data, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", agent, "status.json"))
+		require.NoError(t, err)
+		var st AgentStatus
+		require.NoError(t, json.Unmarshal(data, &st))
+		assert.True(t, st.Truncated, "agent %s: configured budget must record truncation", agent)
+		assert.Contains(t, st.FilesDropped, "big.go", "agent %s: dropped file must be listed", agent)
+	}
+}
+
 // A range whose only commit is an empty commit has CommitCount > 0 but zero
 // changed files, so every payload mode builds empty. PrepareReview must refuse
 // before scaffolding — never fire the provider pool at an empty payload — and
