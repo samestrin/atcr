@@ -144,6 +144,26 @@ func TestDiscover_BadHeaderFileSkippedNotFatal(t *testing.T) {
 	assert.Len(t, host.Findings, 1)
 }
 
+func TestDiscover_SkippedFilesTrackedPerSource(t *testing.T) {
+	dir := t.TempDir()
+	// ci's only findings.txt has no version header → skipped on parse; the skip
+	// must be recorded on the Source (not just warned to stderr) so the summary
+	// can carry it (TD-020: skipped-source count in summary.json).
+	badFile := filepath.Join(dir, "ci", "findings.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(badFile), 0o755))
+	require.NoError(t, os.WriteFile(badFile, []byte("HIGH|a.go:1|p|f|sec|10|ev|ci\n"), 0o644))
+	writeFindings(t, dir, "host/findings.txt", "HIGH|b.go:2|p|f|sec|10|ev|host\n")
+
+	sources, err := Discover(dir, nil)
+	require.NoError(t, err)
+	ci, ok := sourceByName(sources, "ci")
+	require.True(t, ok)
+	require.Len(t, ci.SkippedFiles, 1, "bad-header file recorded as skipped")
+	assert.Equal(t, badFile, ci.SkippedFiles[0])
+	host, _ := sourceByName(sources, "host")
+	assert.Empty(t, host.SkippedFiles)
+}
+
 func TestDiscover_SymlinkFindingsFileSkipped(t *testing.T) {
 	dir := t.TempDir()
 	// A secret file outside the review tree, with a valid header so it WOULD

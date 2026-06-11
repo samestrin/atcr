@@ -98,6 +98,27 @@ func TestEmit_WritesAllFiveArtifacts(t *testing.T) {
 	assert.ElementsMatch(t, []string{"pool", "host"}, sum.SourcesScanned)
 }
 
+func TestSummary_SkippedSourcesRecorded(t *testing.T) {
+	// Files Discover skipped (read error / bad header) must surface in
+	// summary.json as skipped_sources + skipped_source_count (TD-020) — v1 is
+	// warn-and-continue, so the record is the loud signal, not a non-zero exit.
+	sources := []Source{
+		{Name: "ci", SkippedFiles: []string{"sources/ci/findings.txt"}},
+		{Name: "host", Findings: []stream.Finding{
+			mf("HIGH", "a.go", 1, "p", "f", "sec", 10, "e", "host"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	assert.Equal(t, []string{"sources/ci/findings.txt"}, res.Summary.SkippedSources)
+	assert.Equal(t, 1, res.Summary.SkippedSourceCount)
+
+	// Zero-skip runs serialize as an empty array, not null.
+	res2 := Reconcile(nil, recAt())
+	assert.NotNil(t, res2.Summary.SkippedSources)
+	assert.Empty(t, res2.Summary.SkippedSources)
+	assert.Equal(t, 0, res2.Summary.SkippedSourceCount)
+}
+
 func TestEmit_DeterministicOutput(t *testing.T) {
 	sources := []Source{{Name: "pool", Findings: []stream.Finding{
 		mf("HIGH", "a.go", 1, "alpha", "f", "sec", 10, "e", "greta"),
