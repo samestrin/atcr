@@ -172,15 +172,23 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, err
 	}
 
+	// Fail-before-emit (mirrors the CLI's resolveReviewDir pre-check): a review
+	// with no findings sources is rejected before RunReconcile so empty
+	// reconciled artifacts are never written to disk as a side effect.
+	sources, err := reconcile.Discover(filepath.Join(dir, "sources"), nil)
+	if err != nil {
+		return nil, ReconcileResult{}, err
+	}
+	if len(sources) == 0 {
+		return nil, ReconcileResult{}, fmt.Errorf("no agent results found in review %s; run atcr_review first", id)
+	}
+
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err
-	}
-	if len(res.Summary.SourcesScanned) == 0 {
-		return nil, ReconcileResult{}, fmt.Errorf("no agent results found in review %s; run atcr_review first", id)
 	}
 
 	out := ReconcileResult{
