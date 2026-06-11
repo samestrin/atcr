@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -76,13 +78,25 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		IDOverride: idOverride,
 	}
 
-	result, err := fanout.RunReview(ctx, llmclient.New(), cfg, req)
+	// Run the two review phases separately so build-phase failures (persona
+	// resolution, unknown provider, prompt render — configuration errors per
+	// AC 03-02) map to exit 2, while an all-agents-failed execution stays the
+	// plain exit 1 with artifacts preserved on disk.
+	prep, err := fanout.PrepareReview(ctx, cfg, req)
+	if err != nil {
+		return usageError(err)
+	}
+	if err := preflightAPIKeys(prep.Slots); err != nil {
+		return err // no slot can authenticate → exit 2 before any provider call
+	}
+
+	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
 	if result != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 	}
 	if err != nil {
-		return err // all-agents-failed (exit 1) or range/config (exit 2)
+		return err // all-agents-failed → exit 1, artifacts preserved
 	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
@@ -100,6 +114,35 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return gateFindings(rec, threshold)
 	}
 	return nil
+}
+
+// preflightAPIKeys fails fast (exit 2, per AC 03-02 Error Scenario 1) when no
+// slot's chain — primary plus fallbacks — has its API key env var set: the
+// fan-out cannot possibly produce a single success. Any one keyed agent
+// anywhere lets the run proceed, because keys resolve per-invocation and
+// partial success (≥1 agent) is a binding exit-0 contract. Runs after
+// PrepareReview (slots carry the resolved chains), so a doomed run leaves its
+// scaffolded review dir behind — consistent with the artifacts-preserved
+// contract, and reconcile/report reject in-progress reviews.
+func preflightAPIKeys(slots []fanout.Slot) error {
+	seen := map[string]bool{}
+	var missing []string
+	for _, s := range slots {
+		for _, a := range append([]fanout.Agent{s.Primary}, s.Fallbacks...) {
+			env := a.Invocation.APIKeyEnv
+			if os.Getenv(env) != "" {
+				return nil
+			}
+			if !seen[env] {
+				seen[env] = true
+				missing = append(missing, env)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil // empty roster is rejected earlier by PrepareReview
+	}
+	return usageError(fmt.Errorf("API key env var not set: %s", strings.Join(missing, ", ")))
 }
 
 // cliOverrides reads the shared-settings flags actually set on cmd.
