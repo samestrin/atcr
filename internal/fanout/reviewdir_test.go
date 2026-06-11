@@ -104,6 +104,54 @@ func TestReviewExists_AndCollisionProbe(t *testing.T) {
 	assert.True(t, ReviewExists(root, "2026-06-10_x"))
 }
 
+// Two concurrent claims of the same derived id must land in distinct
+// directories: directory creation itself is the atomic claim, so the
+// Stat-probe TOCTOU window (both probes pass, both scaffold one dir) is gone.
+func TestClaimReviewDir_ConcurrentSameIDGetDistinctDirs(t *testing.T) {
+	root := t.TempDir()
+	const id = "2026-06-10_race"
+
+	type claim struct {
+		id  string
+		dir string
+		err error
+	}
+	results := make(chan claim, 2)
+	start := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			cid, dir, err := claimReviewDir(root, id, "143022")
+			results <- claim{cid, dir, err}
+		}()
+	}
+	close(start)
+	a, b := <-results, <-results
+	require.NoError(t, a.err)
+	require.NoError(t, b.err)
+	assert.NotEqual(t, a.dir, b.dir, "concurrent claims of one id must yield distinct review dirs")
+	for _, c := range []claim{a, b} {
+		for _, sub := range []string{"payload", "sources", "reconciled"} {
+			assert.DirExists(t, filepath.Join(c.dir, sub))
+		}
+	}
+}
+
+// Sequential claims follow the same candidate sequence the probe-based
+// resolver used: base id, then id-suffix, then id-suffix-2.
+func TestClaimReviewDir_SecondClaimAppendsSuffix(t *testing.T) {
+	root := t.TempDir()
+	id1, _, err := claimReviewDir(root, "2026-06-10_x", "143022")
+	require.NoError(t, err)
+	id2, _, err := claimReviewDir(root, "2026-06-10_x", "143022")
+	require.NoError(t, err)
+	id3, _, err := claimReviewDir(root, "2026-06-10_x", "143022")
+	require.NoError(t, err)
+	assert.Equal(t, "2026-06-10_x", id1)
+	assert.Equal(t, "2026-06-10_x-143022", id2)
+	assert.Equal(t, "2026-06-10_x-143022-2", id3)
+}
+
 func TestWriteAndReadLatest(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, WriteLatest(root, "2026-06-10_feature"))
