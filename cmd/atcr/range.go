@@ -11,8 +11,9 @@ import (
 // newRangeCmd builds `atcr range`: pre-flight range resolution that prints
 // the resolution JSON without invoking any provider. Flag-relationship
 // violations surface as usage errors (exit 2) via addRangeFlags; resolution
-// failures (empty range, shallow clone, invalid ref) bubble up as plain
-// errors (exit 1) per AC 01-02.
+// failures (empty range, shallow clone, invalid ref) are usage/configuration
+// errors (exit 2) too, matching how `atcr review` classifies the identical
+// gitrange.Resolve failure — exit 1 stays reserved for gate failures.
 func newRangeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "range",
@@ -29,7 +30,7 @@ func newRangeCmd() *cobra.Command {
 				MergeCommit: mergeCommit,
 			})
 			if err != nil {
-				return err
+				return usageError(err)
 			}
 
 			out, err := json.MarshalIndent(res, "", "  ")
