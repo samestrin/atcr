@@ -33,8 +33,10 @@ func ValidateBudget(budget int64) error {
 }
 
 // ApplyByteBudget keeps as many files as fit within budget bytes, dropping
-// whole files deterministically: smallest first, then by path alphabetically
-// for equal sizes. A budget of 0 means unlimited (nothing dropped). Kept files
+// whole files deterministically: largest first, then by path alphabetically
+// for equal sizes. Dropping largest-first maximizes the number of kept files,
+// preferentially shedding huge generated files/lockfiles over many small
+// source files. A budget of 0 means unlimited (nothing dropped). Kept files
 // retain their original order; the dropped list is returned sorted by path so
 // the same input always produces the same Truncation.
 func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Truncation) {
@@ -59,7 +61,7 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 		return copyEntries(entries), t
 	}
 
-	// Drop order: smallest first, path-alphabetical tie-break. Index into the
+	// Drop order: largest first, path-alphabetical tie-break. Index into the
 	// original slice so duplicate paths are accounted for independently — keying
 	// on Path would over-drop and miscount when two entries share a path.
 	idx := make([]int, len(entries))
@@ -69,7 +71,7 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 	sort.SliceStable(idx, func(a, b int) bool {
 		ei, ej := entries[idx[a]], entries[idx[b]]
 		if ei.Size != ej.Size {
-			return ei.Size < ej.Size
+			return ei.Size > ej.Size
 		}
 		return ei.Path < ej.Path
 	})

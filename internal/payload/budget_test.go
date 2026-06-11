@@ -32,13 +32,13 @@ func TestBudget_UnderLimit(t *testing.T) {
 	assert.Len(t, kept, 4)
 }
 
-func TestBudget_OverLimit_DropsSmallestFirst(t *testing.T) {
-	// A=60KB B=30KB C=20KB D=10KB, budget 100KB → drop D then C → keep A,B.
+func TestBudget_OverLimit_DropsLargestFirst(t *testing.T) {
+	// A=60KB B=30KB C=20KB D=10KB, budget 100KB → drop A → keep B,C,D.
 	in := entries("A", 60000, "B", 30000, "C", 20000, "D", 10000)
 	kept, tr := ApplyByteBudget(in, 100000)
 	assert.True(t, tr.Truncated)
-	assert.Equal(t, []string{"C", "D"}, tr.FilesDropped)
-	assert.ElementsMatch(t, []string{"A", "B"}, keptPaths(kept))
+	assert.Equal(t, []string{"A"}, tr.FilesDropped)
+	assert.ElementsMatch(t, []string{"B", "C", "D"}, keptPaths(kept))
 }
 
 func TestBudget_SingleFileExceeds(t *testing.T) {
@@ -96,10 +96,10 @@ func TestBudget_DuplicatePaths(t *testing.T) {
 		{Path: "small", Size: 5000},
 	}
 	kept, tr := ApplyByteBudget(in, 50000)
-	// total 85000 > 50000. Drop smallest-first: small(5000)→80000 over,
-	// then a dup(40000)→40000 under. Two files dropped, one dup remains.
+	// total 85000 > 50000. Drop largest-first: one dup(40000)→45000 under.
+	// One file dropped, the other dup and small remain.
 	assert.True(t, tr.Truncated)
-	assert.Len(t, tr.FilesDropped, 2)
+	assert.Len(t, tr.FilesDropped, 1)
 	var keptBytes int64
 	for _, e := range kept {
 		keptBytes += e.Size
@@ -109,11 +109,12 @@ func TestBudget_DuplicatePaths(t *testing.T) {
 
 func TestBudget_ZeroSizeFiles(t *testing.T) {
 	in := entries("empty", 0, "big", 60000, "small", 10000)
-	_, tr := ApplyByteBudget(in, 50000)
-	// zero-size files sort first (smallest); they are dropped per the
-	// smallest-first rule even though they free no bytes.
+	kept, tr := ApplyByteBudget(in, 50000)
+	// Largest-first dropping sheds only the over-budget big file; zero-size
+	// files cost nothing and are kept.
 	assert.True(t, tr.Truncated)
-	assert.Contains(t, tr.FilesDropped, "empty")
+	assert.Equal(t, []string{"big"}, tr.FilesDropped)
+	assert.ElementsMatch(t, []string{"empty", "small"}, keptPaths(kept))
 }
 
 func TestBudget_NegativeBudget(t *testing.T) {
