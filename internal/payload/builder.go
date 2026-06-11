@@ -19,12 +19,13 @@ const (
 // changed-region sentinel lines for files mode (language-agnostic, not
 // comment-prefixed) and the binary/deleted file markers.
 const (
-	changedStartFmt  = ">>> CHANGED LINES %d-%d"
-	changedEnd       = "<<< END CHANGED"
-	binaryMarkerFmt  = "[binary file changed: %s]"
-	deletedMarkerFmt = "[deleted file: %s]"
-	fileHeaderFmt    = "=== FILE: %s ==="
-	renamedHeaderFmt = "=== FILE: %s (renamed from %s) ==="
+	changedStartPrefix = ">>> CHANGED LINES"
+	changedStartFmt    = changedStartPrefix + " %d-%d"
+	changedEnd         = "<<< END CHANGED"
+	binaryMarkerFmt    = "[binary file changed: %s]"
+	deletedMarkerFmt   = "[deleted file: %s]"
+	fileHeaderFmt      = "=== FILE: %s ==="
+	renamedHeaderFmt   = "=== FILE: %s (renamed from %s) ==="
 )
 
 // Build dispatches to the builder for mode. An unknown mode is a hard error
@@ -205,6 +206,12 @@ func renderWithSentinels(content string, ranges []lineRange) string {
 			if r.start == ln {
 				fmt.Fprintf(&b, changedStartFmt+"\n", r.start, r.end)
 			}
+		}
+		// Neutralize content lines that would spoof a sentinel: a head file
+		// containing a literal sentinel line could otherwise mislead consumers
+		// about which regions changed.
+		if strings.HasPrefix(line, changedStartPrefix) || strings.HasPrefix(line, changedEnd) {
+			b.WriteString("> ")
 		}
 		b.WriteString(line)
 		if i < len(lines)-1 || hadTrailingNewline {
