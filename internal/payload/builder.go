@@ -133,7 +133,11 @@ func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error)
 func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile) (string, error) {
 	switch mode {
 	case ModeDiff:
-		if g.isBinary(base, head, f.path) {
+		bin, err := g.isBinary(base, head, f.path)
+		if err != nil {
+			return "", err
+		}
+		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
 		out, err := g.output("diff", base+".."+head, "--", f.path)
@@ -143,15 +147,21 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		return ensureTrailingNewline(string(out)), nil
 
 	case ModeBlocks:
-		if g.isBinary(base, head, f.path) {
+		bin, err := g.isBinary(base, head, f.path)
+		if err != nil {
+			return "", err
+		}
+		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
-		out, ok := g.functionContextFile(base, head, f.path)
+		out, ok, err := g.functionContextFile(base, head, f.path)
+		if err != nil {
+			return "", err
+		}
 		if !ok {
 			// Defensive-measure contract: every degradation is recorded. Without
 			// this an operator cannot tell which files got function context.
 			slog.Warn("blocks mode: function context unavailable, falling back to plain context diff", "file", f.path)
-			var err error
 			if out, err = g.contextFile(base, head, f.path); err != nil {
 				return "", fmt.Errorf("git diff failed: %w", err)
 			}
@@ -162,7 +172,11 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		if f.kind == kindDeleted {
 			return fmt.Sprintf(deletedMarkerFmt+"\n", f.path), nil
 		}
-		if g.isBinary(base, head, f.path) {
+		bin, err := g.isBinary(base, head, f.path)
+		if err != nil {
+			return "", err
+		}
+		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
 		var b strings.Builder

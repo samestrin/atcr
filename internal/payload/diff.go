@@ -110,27 +110,37 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
 }
 
 // isBinary reports whether path is a binary file in the base..head diff.
-// git numstat prints "-\t-\t<path>" for binary files.
-func (g *gitRunner) isBinary(base, head, path string) bool {
+// git numstat prints "-\t-\t<path>" for binary files. git diff exits zero
+// whether or not differences exist, so any error is fatal (bad repo, killed
+// process, cancelled context) and propagated; an empty diff is the only
+// non-error "not binary" case.
+func (g *gitRunner) isBinary(base, head, path string) (bool, error) {
 	out, err := g.run("diff", "--numstat", base+".."+head, "--", path)
-	if err != nil || out == "" {
-		return false
+	if err != nil {
+		return false, fmt.Errorf("git diff --numstat failed: %w", err)
+	}
+	if out == "" {
+		return false, nil
 	}
 	first := strings.Split(out, "\n")[0]
 	fields := strings.SplitN(first, "\t", 3)
-	return len(fields) >= 2 && fields[0] == "-" && fields[1] == "-"
+	return len(fields) >= 2 && fields[0] == "-" && fields[1] == "-", nil
 }
 
 // functionContextFile returns the function-context diff for a single file,
 // verbatim (raw bytes, no trimming — diff payloads ship to reviewers as-is).
-// ok is false (no error) when git fails or yields zero hunks, signalling the
-// caller to fall back to a plain context diff.
-func (g *gitRunner) functionContextFile(base, head, path string) (out string, ok bool) {
-	got, err := g.output("diff", "--function-context", base+".."+head, "--", path)
-	if err != nil || len(bytes.TrimSpace(got)) == 0 {
-		return "", false
+// ok is false with a nil error when the diff yields zero hunks, signalling the
+// caller to fall back to a plain context diff; a git failure is fatal and
+// propagated rather than masked as a fallback (TD-010).
+func (g *gitRunner) functionContextFile(base, head, path string) (out string, ok bool, err error) {
+	got, gerr := g.output("diff", "--function-context", base+".."+head, "--", path)
+	if gerr != nil {
+		return "", false, fmt.Errorf("git diff --function-context failed: %w", gerr)
 	}
-	return string(got), true
+	if len(bytes.TrimSpace(got)) == 0 {
+		return "", false, nil
+	}
+	return string(got), true, nil
 }
 
 // contextFile returns a plain -U10 context diff for a single file, verbatim
