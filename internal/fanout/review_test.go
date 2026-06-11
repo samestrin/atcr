@@ -214,6 +214,32 @@ func TestRunReview_UnknownProviderIsBuildError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown provider")
 }
 
+// A range whose only commit is an empty commit has CommitCount > 0 but zero
+// changed files, so every payload mode builds empty. PrepareReview must refuse
+// before scaffolding — never fire the provider pool at an empty payload — and
+// leave no review dir or latest pointer behind.
+func TestPrepareReview_OnlyEmptyCommitsRejectedBeforeScaffold(t *testing.T) {
+	repo, _, head := initRepo(t)
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+		return strings.TrimSpace(string(out))
+	}
+	run("commit", "-q", "--allow-empty", "-m", "empty")
+	emptyHead := run("rev-parse", "HEAD")
+
+	cfg := twoAgentConfig("http://unused")
+	req := reviewReq(repo, repo, head, emptyHead)
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNoReviewableContent)
+	assert.NoDirExists(t, filepath.Join(repo, ".atcr", "reviews"), "no review dir may be scaffolded for an empty payload")
+}
+
 // A client retry of atcr_review with the same explicit id (plausible while the
 // first run still shows running) must not launch a second fan-out into the SAME
 // review directory — the second PrepareReview must refuse, not scaffold.
