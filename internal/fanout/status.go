@@ -125,7 +125,10 @@ func WriteStatus(path string, s *AgentStatus) error {
 
 // atomicWriteFile writes data to a sibling temp file then renames it over path.
 // The temp is chmod'd to 0644 before the rename so artifacts land with the
-// AC 01-03 file mode rather than os.CreateTemp's 0600 default.
+// AC 01-03 file mode rather than os.CreateTemp's 0600 default. The temp is
+// fsync'd before the rename and the parent directory after it, so a power-loss
+// crash cannot leave the rename visible without the data (or lose the file
+// entirely) on filesystems that defer metadata flushes.
 func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -142,8 +145,22 @@ func atomicWriteFile(path string, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// Best-effort: directory fsync is unsupported on some platforms (Windows
+	// rejects FlushFileBuffers on a read-only directory handle), and the data
+	// itself is already durable via the temp-file Sync above.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
