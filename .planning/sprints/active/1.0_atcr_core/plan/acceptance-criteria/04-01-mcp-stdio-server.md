@@ -23,11 +23,11 @@
 This AC is implemented against the following project documentation. Read before implementation:
 
 - [MCP Server Implementation](../documentation/mcp-server.md) — Authoritative spec for `atcr serve`, `mcp.StdioTransport`, generic `mcp.AddTool` with typed args/result, `InMemoryTransport` for tests, stderr discipline, and the 5-tool tool table.
-- [CLI Architecture](../documentation/cli-architecture.md) — `cmd.OutOrStderr()` is the only safe writer in `atcr serve` mode; `cmd.OutOrStdout()` is forbidden because stdout is owned by the protocol.
+- [CLI Architecture](../documentation/cli-architecture.md) — `cmd.ErrOrStderr()` is the only safe writer in `atcr serve` mode; `cmd.OutOrStdout()` is forbidden because stdout is owned by the protocol.
 
 ### Spec alignment notes
 
-- **Stderr discipline is non-negotiable in serve mode**: any human-readable log, debug message, or diagnostic print that escapes to stdout will corrupt the MCP protocol and disconnect the client. Use `cmd.ErrOrStderr()` or `os.Stderr` directly. Test with `InMemoryTransport` plus a stderr-buffer capture to assert no protocol leakage.
+- **Stderr discipline is non-negotiable in serve mode**: any human-readable log, debug message, or diagnostic print that escapes to stdout will corrupt the MCP protocol and disconnect the client. The slog logger is initialized to os.Stderr at serve startup; cobra command output uses `cmd.ErrOrStderr()` (which is os.Stderr in serve mode). Test with `InMemoryTransport` plus a stderr-buffer capture to assert no protocol leakage.
 - **`mcp-go-sdk` version**: pinned to **v1.6.1** per `.planning/specifications/packages/registry.yaml`. Use the generic `mcp.AddTool` (not the older non-generic `Server.AddTool`).
 - **InMemoryTransport is the test transport** — never `os/exec` the binary for unit tests; reserve that for end-to-end smoke tests.
 - **Handshake** is initiated by the client; the server's `initialize` response advertises `serverInfo` (`name: "atcr"`, version from build) and the registered `tools` capability list.
@@ -64,14 +64,20 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 2: Unsupported protocol version from client**
 - **Given** the server is running via `atcr serve`
 - **When** the client sends `initialize` with an unsupported protocol version
-- **Then** the server responds with the highest supported protocol version
-- **And** does not crash or hang
+- **Then** the server responds with a JSON-RPC error and remains responsive
+- **And** responsiveness is verified by a subsequent valid initialize/request succeeding in the same test
 
-**Edge Case 3: Multiple rapid client disconnects and reconnects**
-- **Given** the server is running via `atcr serve`
-- **When** a client disconnects abruptly mid-request
-- **Then** the server cleans up the request context
-- **And** remains available for the next client connection on the same stdio streams
+**Edge Case 3: Client closes stdin during operation**
+- **Given** the server is running via `atcr serve` and the client closes stdin
+- **When** in-flight requests complete
+- **Then** the server exits 0 cleanly
+- **And** no reconnect handling is needed: a stdio MCP server has exactly one client for its process lifetime (clients reconnect by spawning a new process)
+
+**Edge Case 4: Malformed JSON-RPC payload**
+- **Given** the client sends a malformed JSON-RPC payload (invalid JSON or missing `jsonrpc` field)
+- **When** the server reads it
+- **Then** the server responds with a protocol-level error (or ignores per JSON-RPC spec for unparseable messages) and does not crash
+- **And** subsequent valid requests still succeed
 
 ## Error Conditions
 

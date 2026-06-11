@@ -101,10 +101,10 @@ This AC is implemented against the following project documentation. Read before 
 - **Then** the tool returns an error: "agent 'bruce': required field 'model' is missing"
 
 **Edge Case 4: registry.yaml does not exist**
-- **Given** `~/.config/atcr/registry.yaml` does not exist
-- **When** atcr loads the registry
-- **Then** atcr uses embedded defaults (default provider and agent configurations)
-- **And** prints an informational message: "no registry found, using embedded defaults"
+- **Given** no `~/.config/atcr/registry.yaml` exists
+- **When** config loads for a command that needs agents
+- **Then** loading fails with error: "registry not found at ~/.config/atcr/registry.yaml: run 'atcr init' and create your provider/agent registry (see docs/registry.md)"
+- **And** providers and agents are never defaulted; only personas and project-config defaults ship embedded
 
 **Edge Case 5: Empty agents list in project config**
 - **Given** `.atcr/config.yaml` contains `agents: []`
@@ -115,6 +115,11 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** `.atcr/config.yaml` contains `agents: [unknown-agent]`
 - **When** atcr loads configuration
 - **Then** the tool returns an error: "agent 'unknown-agent' in project config not found in registry"
+
+**Edge Case 7: registry.yaml exists but is empty**
+- **Given** registry.yaml exists but is zero bytes / empty
+- **When** the registry loads
+- **Then** loading fails with "registry.yaml is empty: define providers and agents"
 
 ## Error Conditions
 
@@ -143,7 +148,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Authentication:** API keys are NEVER stored in config files — only env var names are referenced
 - **Input Validation:** All YAML parsed with `KnownFields(true)` to catch typos
 - **Secret Resolution:** API keys read from environment at invoke time only, not persisted
-- **Path Traversal:** `base_url` is not validated for scheme but should be user-controlled (local endpoints)
+- **Path Traversal:** `base_url` must use http or https scheme (validated at load time); any host is allowed, including local endpoints
 
 ## Test Implementation Guidance
 **Test Type:** UNIT
@@ -155,7 +160,7 @@ This AC is implemented against the following project documentation. Read before 
 **Mock/Stub Requirements:**
 - Filesystem: use `t.TempDir()` with test fixture files
 - Environment: use `t.Setenv()` to set/unset API key env vars
-- Home directory: override via `HOME` env var or inject path parameter
+- The registry loader takes the registry path as a parameter; tests inject a temp path (HOME is resolved only in the default-path helper)
 
 **Test Cases:**
 1. `TestRegistryLoad_ValidConfig` — parse valid YAML, verify all fields
@@ -163,7 +168,7 @@ This AC is implemented against the following project documentation. Read before 
 3. `TestRegistryLoad_MissingModel` — verify error for missing required field
 4. `TestRegistryLoad_UnknownField` — verify strict mode catches typos
 5. `TestRegistryLoad_DanglingProviderRef` — verify agent referencing unknown provider errors
-6. `TestRegistryLoad_NoRegistryFile` — verify embedded defaults used
+6. `TestRegistryLoad_NoRegistryFile` — verify loading fails with the "registry not found" error (no embedded provider/agent defaults)
 7. `TestRegistryLoad_APIKeyNotReadAtLoad` — verify key NOT read during load (unset env var, no error)
 8. `TestRegistryLoad_APIKeyResolvedAtInvoke` — verify key IS read at invoke time
 9. `TestRegistryLoad_CustomBaseURL` — verify base_url stored correctly

@@ -14,7 +14,6 @@
 - `internal/mcp/server.go` - create: Tool registration using `mcp.AddTool` for all five tools
 - `internal/mcp/tools.go` - create: Typed args and result struct definitions for all tools
 - `internal/mcp/tools_test.go` - create: Unit tests verifying schema generation and type correctness
-- `internal/mcp/server.go` - modify: Register tools during server initialization
 
 ## Documentation References
 
@@ -27,7 +26,7 @@ This AC is implemented against the following project documentation. Read before 
 - **The 5 tools are exactly**: `atcr_review`, `atcr_reconcile`, `atcr_report`, `atcr_range`, `atcr_status`. Tool names are part of the public contract — do not rename without a coordinated v2 bump.
 - **Generic `mcp.AddTool` is the recommended pattern in v1.6.1**. Manual `Server.AddTool` is reserved for untyped/raw cases. Schema inference reads `jsonschema:"..."` struct tags.
 - **Per-tool result shape** (per `mcp-server.md`, `user-stories/04-mcp-integration.md` original criterion #12, and AC 04-03 happy path Scenario 1):
-  - `atcr_review` → `{review_id, review_path, agent_count, partial}` (returns immediately after fan-out completes; long-running reviews do not block the MCP client — clients poll `atcr_status` for progress)
+  - `atcr_review` → `{review_id, review_path, status: "running", agent_count}` (returns immediately once the review directory is created and fan-out has started; fan-out continues in the server process — clients poll `atcr_status` for completion; the `partial` flag is reported by `atcr_status` / `manifest.json` at completion, not by `atcr_review`)
   - `atcr_reconcile` → reconciliation summary with `pass` field (true/false based on `--fail-on` threshold)
   - `atcr_report` → rendered content (markdown, JSON, or checklist)
   - `atcr_range` → `{base, head, commit_count, file_count}`
@@ -60,7 +59,7 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 1: Tool name collision during registration**
 - **Given** a developer accidentally registers two tools with the same name
 - **When** `mcp.AddTool` is called for the second tool
-- **Then** the second registration panics or returns an error (fail-fast)
+- **Then** the second registration returns an error and `atcr serve` exits 1 at startup (fail-fast; no panic)
 - **And** the server does not start with ambiguous tool names
 
 **Edge Case 2: Optional vs required fields in args schema**
@@ -74,6 +73,11 @@ This AC is implemented against the following project documentation. Read before 
 - **When** the client calls a tool named `atcr_unknown`
 - **Then** the server returns a standard MCP error: "tool not found: atcr_unknown"
 - **And** does not crash or hang
+
+**Edge Case 4: Extra field not in the schema**
+- **Given** a client calls a tool with an extra field not in the schema
+- **When** validation runs
+- **Then** the call is rejected with a schema validation error before the handler executes
 
 ## Error Conditions
 
@@ -91,7 +95,7 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Security Considerations
 - **Input Validation:** MCP SDK validates incoming args against generated JSON Schema before handler dispatch
-- **No arbitrary fields:** Extra fields in client args are rejected by strict schema validation
+- **No arbitrary fields:** Extra fields in client args are rejected by strict schema validation (verified by Edge Case 4)
 - **Type safety:** Go generics ensure handlers receive correctly typed args; no runtime type assertions needed
 
 ## Test Implementation Guidance
@@ -123,7 +127,7 @@ This AC is implemented against the following project documentation. Read before 
 - [ ] Each tool uses `mcp.AddTool` with generic typed args and result structs
 - [ ] All args fields are optional (client can call with `{}`)
 - [ ] atcr_report `format` field accepts enum: `md`, `json`, `checklist`
-- [ ] Tool descriptions are clear and actionable for MCP clients
+- [ ] Each tool description is non-empty and states the tool's effect and its required/optional arguments
 
 **Manual Review:**
 - [ ] Code reviewed and approved

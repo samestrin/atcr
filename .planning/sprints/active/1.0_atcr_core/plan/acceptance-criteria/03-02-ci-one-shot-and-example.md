@@ -11,7 +11,7 @@
 | Test Framework | testify | Integration tests for one-shot review+reconcile flow |
 
 ## Related Files
-- `cmd/atcr/review.go` - create: `review` cobra command with `--fail-on` flag for one-shot mode
+- `cmd/atcr/review.go` - modify (created by the Phase 1 scaffold): `review` cobra command with `--fail-on` flag for one-shot mode
 - `cmd/atcr/main.go` - modify: wire one-shot exit-code logic after review+reconcile
 - `examples/ci-gate.sh` - create: example CI gate script showing atcr in a pipeline
 - `README.md` - modify: add CI integration section documenting `--fail-on` and example usage
@@ -26,7 +26,7 @@ This AC is implemented against the following project documentation. Read before 
 
 ### Spec alignment notes
 
-- **One-shot mode is compositional**: `atcr review --fail-on HIGH` runs `atcr range` → `atcr review` → `atcr reconcile` → threshold check, all in one invocation. The Skill uses this for orchestration (see AC 05-03).
+- **One-shot mode runs in-process**: `atcr review --fail-on HIGH` calls the same internal engine functions in-process (range resolution, review, reconcile, threshold gate); it never spawns atcr subprocesses. The Skill uses this for orchestration (see AC 05-03).
 - **CI gate script** (`examples/ci-gate.sh`): a thin shell wrapper that runs `atcr review --fail-on HIGH` and surfaces the exit code. The script itself should be ≤20 lines — no business logic, just plumbing.
 - **CI provider portability**: GitHub Actions, GitLab CI, and Jenkins all consume the same exit code semantics. No provider-specific glue code lives in atcr.
 - **API key handling in CI**: keys come from CI secrets (e.g., `secrets.OPENAI_API_KEY`); `atcr` reads them at invoke time per `original-requirements.md` (never from a config file). The CI workflow is responsible for masking secrets in logs.
@@ -71,9 +71,15 @@ This AC is implemented against the following project documentation. Read before 
 - Error message: `review failed: <reason>`
 - Exit code: 2 (does not reach reconcile/exit-code check)
 
+**Error Scenario 3: Reconcile fails after a successful review in one-shot mode**
+- **Given** review succeeds but reconcile fails (e.g. unreadable findings file)
+- **When** `atcr review --fail-on HIGH` runs
+- **Then** it exits 2 with the reconcile error
+- **And** review artifacts are preserved on disk for inspection
+
 ## Performance Requirements
-- **Response Time:** One-shot mode completes within global timeout (configurable via context)
-- **Throughput:** CI gate script exits immediately on threshold violation
+- **Response Time:** One-shot mode completes within the configured global timeout (default 600s)
+- **Throughput:** The gate script exits with the documented code as soon as the threshold check completes
 
 ## Security Considerations
 - **Authentication:** API key read from environment variable only, never hardcoded
@@ -94,7 +100,7 @@ This AC is implemented against the following project documentation. Read before 
 - [ ] `atcr review --fail-on <severity>` runs review + reconcile + exit-code check in one command
 - [ ] examples/ci-gate.sh script exists and is executable
 - [ ] README.md documents CI integration with `--fail-on` flag and exit codes
-- [ ] CI example works in GitHub Actions syntax
+- [ ] examples/ci-gate.sh passes `bash -n` and `shellcheck` with zero errors; the GitHub Actions snippet in README is valid YAML
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -24,11 +24,11 @@ This AC is implemented against the following project documentation. Read before 
 - [MCP Server Implementation](../documentation/mcp-server.md) — Authoritative spec for the 5-tool table; thin handlers call the same `internal/` packages as the CLI.
 - [Range Resolution](../documentation/range-resolution.md) — `atcr_range` handler invokes the resolver; returns the `Resolution` JSON shape documented in the spec.
 - [Reconciler & Findings Stream](../documentation/reconciler.md) — `atcr_report` handler reads from `reconciled/findings.json`; `report.md` shape documented in the spec.
-- [CLI Architecture](../documentation/cli-architecture.md) — `atcr_report` default format is `md`; format enum `md|json|checklist` enforced at the schema level (not in the handler).
+- [CLI Architecture](../documentation/cli-architecture.md) — `atcr_report` default format is `md`; format enum `md|json|checklist` enforced at the schema level, with a handler-side enum check as defense in depth.
 
 ### Spec alignment notes
 
-- **atcr_report default format is `md`** when `format` arg is omitted. The format enum `md|json|checklist` is enforced by the JSON Schema (not in the handler) — clients sending an invalid value receive a schema-validation error before the handler runs.
+- **atcr_report default format is `md`** when `format` arg is omitted. The format enum `md|json|checklist` is enforced by the JSON Schema — the enum rejects invalid formats before the handler runs, so clients see the schema validation error. The handler additionally defends with its own enum check (defense in depth, covers programmatic/in-process calls).
 - **atcr_range returns the `Resolution` struct** as JSON: `{base, head, commit_count, file_count}` (with `detection_mode`, `default_branch`, `shallow`, `resolved_at` available for clients that need them). The empty-diff case is **not** an error — it returns `commit_count: 0, file_count: 0` so pre-flight checks can detect "nothing to review" without exception handling.
 - **atcr_status reads from `manifest.json`** to derive status; if the manifest is missing required fields, the handler returns an error rather than guessing. Status values: `in_progress`, `completed`, `failed` (mapped from per-agent `status.json` aggregation).
 - **Path containment** on `id_or_path` (same invariant as AC 04-03): paths must resolve under `.atcr/reviews/`.
@@ -92,9 +92,9 @@ This AC is implemented against the following project documentation. Read before 
 
 **Edge Case 2: Report with invalid format**
 - **Given** the MCP client calls `atcr_report` with `{"format": "xml"}`
-- **When** the handler validates args
-- **Then** the handler returns error: "invalid format: xml; must be one of: md, json, checklist"
-- **Note:** Schema enum validation should catch this before the handler runs
+- **When** the request is validated
+- **Then** the JSON Schema enum rejects the invalid format before the handler runs, and the client sees the schema validation error
+- **And** the handler additionally defends with its own enum check returning "invalid format: xml; must be one of: md, json, checklist" (defense in depth, covers programmatic/in-process calls)
 
 **Edge Case 3: atcr_range in non-git directory**
 - **Given** `atcr_range` is called outside a git repository
@@ -111,6 +111,11 @@ This AC is implemented against the following project documentation. Read before 
 - **When** `atcr_range` is called
 - **Then** the handler returns `{base, head, commit_count: 0, file_count: 0}`
 - **And** does not error
+
+**Edge Case 6: atcr_status with corrupt manifest**
+- **Given** a review directory whose `manifest.json` is corrupt or truncated
+- **When** `atcr_status` is called
+- **Then** the handler returns a structured JSON-RPC error citing the manifest parse failure (no crash, no partial garbage result)
 
 ## Error Conditions
 
@@ -134,7 +139,7 @@ This AC is implemented against the following project documentation. Read before 
 ## Security Considerations
 - **Path Traversal:** `id_or_path` validated to prevent directory traversal; only `.atcr/reviews/` paths allowed
 - **Format Validation:** Format field constrained to enum (`md`, `json`, `checklist`); enforced by JSON Schema
-- **No user input in shell commands:** All git operations use Go git library or `exec.Command` with argument arrays (no shell interpolation)
+- **No user input in shell commands:** All git operations use `exec.Command` with argument arrays (os/exec only; no git library dependency; no shell interpolation)
 
 ## Test Implementation Guidance
 **Test Type:** UNIT + INTEGRATION

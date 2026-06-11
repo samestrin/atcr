@@ -61,7 +61,8 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** a finding references line numbers outside the changed ranges
 - **When** the reconciler processes the finding against the payload scope
 - **Then** the finding is annotated as "outside changed range"
-- **And** the finding's confidence score may be adjusted downward
+- **And** the reconciler annotates the finding with category `out-of-scope` and lists it in a separate report section; severity and confidence are computed by the standard rules (no adjustment)
+- **Note:** out-of-scope annotation is reconciler behavior implemented in `internal/reconcile` (see AC 01-05); this scenario validates the cross-package integration
 
 **Scenario 5: Documentation explains when to use each mode**
 - **Given** `docs/payload-modes.md` exists
@@ -76,8 +77,7 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 1: Template with missing variable**
 - **Given** a persona prompt template containing `{{.UnknownVar}}`
 - **When** `RenderPrompt` is called
-- **Then** the tool returns an error: "template references unknown variable 'UnknownVar'"
-- **Or** the variable renders as empty string with a warning (depending on template option)
+- **Then** the tool returns a hard error via `Option("missingkey=error")`: "template references unknown variable 'UnknownVar'" (matches the spec note and `TestRenderPrompt_UnknownVar`)
 
 **Edge Case 2: Template with no payload variables**
 - **Given** a persona prompt template with no `{{.Payload*}}` variables
@@ -95,6 +95,12 @@ This AC is implemented against the following project documentation. Read before 
 - **When** the template renders
 - **Then** `{{.Payload}}` renders as empty string
 - **And** `{{.FileCount}}` renders as "0"
+
+**Edge Case 5: Payload content contains template syntax**
+- **Given** the payload content itself contains `{{` template syntax
+- **When** the persona prompt renders
+- **Then** the payload is injected as data (never parsed as a template)
+- **And** the payload appears verbatim in the rendered prompt
 
 ## Error Conditions
 

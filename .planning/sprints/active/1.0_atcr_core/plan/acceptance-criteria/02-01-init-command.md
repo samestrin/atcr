@@ -54,7 +54,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** `atcr init` has completed successfully
 - **When** the developer opens `.atcr/personas/bruce.md`
 - **Then** the file contains a valid persona prompt template with `{{.Payload}}` and `{{.AgentName}}` placeholders
-- **And** the file is structured with clear frontmatter or section headers
+- **And** the file is structured with markdown section headers (## Role, ## Focus, ## Severity Rubric, ## Output Format)
 
 ## Edge Cases
 
@@ -87,9 +87,10 @@ This AC is implemented against the following project documentation. Read before 
 - Exit code: 1
 - Partial cleanup: already-created files remain; developer can fix permissions and retry
 
-**Error Scenario 3: Embedded defaults missing (build error)**
+**Error Scenario 3: Embedded defaults missing (internal error)**
 - Error message: "internal error: embedded persona <name> not found"
-- This should never happen in a correct build; panics during development
+- Exit code: 1
+- This should never happen in a correct build; the command prints the error and exits 1 — no panic
 
 ## Performance Requirements
 - **Response Time:** `atcr init` completes in < 100ms on local filesystem
@@ -105,7 +106,7 @@ This AC is implemented against the following project documentation. Read before 
 **Test Data Requirements:** None (uses embedded defaults)
 **Mock/Stub Requirements:**
 - Filesystem: use `t.TempDir()` to create isolated test directories
-- Override working directory with `os.Chdir()` or pass path as parameter to enable testing without polluting project
+- The init function takes the target directory as a parameter; tests pass a temp dir (no os.Chdir, no global state)
 
 **Test Cases:**
 1. `TestInit_FreshDirectory` — verify all files created with correct content
@@ -132,4 +133,4 @@ This AC is implemented against the following project documentation. Read before 
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Persona file templates are clear, editable, and contain expected placeholders
+- [ ] Persona files contain the documented section headers and the expected template placeholders

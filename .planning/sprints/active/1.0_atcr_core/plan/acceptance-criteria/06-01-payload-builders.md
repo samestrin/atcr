@@ -7,16 +7,16 @@
 |-----------|------------|-------|
 | Payload Builder | Go package `internal/payload` | Three builder functions |
 | Git Integration | `os/exec` — `git diff`, `git diff --function-context`, `git show` | Shell out to git |
-| Blocks Fallback | `git diff -U<n>` | When `--function-context` fails (no-brace languages, binary files) |
-| Files Mode Marker | Go `text/template` or string builder | Changed region markers in full file content |
+| Blocks Fallback | `git diff -U10` | When `--function-context` exits nonzero or produces zero hunks (no-brace languages); binary files excluded with a marker |
+| Files Mode Marker | string builder (fmt/strings — no template engine) | Changed region markers in full file content |
 | Test Framework | `testify` (assert, require) | Table-driven tests with git repo fixtures |
 
 ## Related Files
 - `internal/payload/builder.go` - create: `BuildDiff()`, `BuildBlocks()`, `BuildFiles()` builder functions
 - `internal/payload/builder_test.go` - create: Tests for all three payload modes and fallback logic
 - `internal/payload/testdata/` - create: Golden files for expected diff/blocks/files output
-- `internal/git/diff.go` - create or modify: Git command wrappers for diff variants
-- `internal/payload/budget.go` - create: byte budget enforcement with deterministic truncation
+- `internal/payload/diff.go` - create: Git command wrappers for diff variants (payload package wraps os/exec directly; there is no internal/git package)
+- `internal/payload/budget.go` - reference (created in AC 06-03): byte budget enforcement with deterministic truncation
 
 ## Documentation References
 
@@ -28,8 +28,8 @@ This AC is implemented against the following project documentation. Read before 
 ### Spec alignment notes
 
 - **Default payload mode is `blocks`** per `plan.md` and `original-requirements.md`. Diff is more compact and token-friendly; docs/payload-modes.md will state this clearly. Files is the highest-cost mode for audit-style review.
-- **blocks fallback is per-file**, not per-run: when `git diff --function-context` fails on a single file (e.g., no-brace language like Python/YAML, binary file), fall back to `git diff -U<n>` for that file only. The rest of the range still uses function-context. Per `plan.md` Risk Mitigation.
-- **files mode markers**: the builder marks changed regions with comment-style markers (e.g., `// <<<<<<< CHANGED ... >>>>>>> UNCHANGED`) so reviewers can visually distinguish. The exact marker syntax is documented in `docs/payload-modes.md`.
+- **blocks fallback is per-file**, not per-run: fallback to plain `-U10` triggers when `git diff --function-context` exits nonzero OR produces zero hunks for a file that has changes (e.g., no-brace language like Python/YAML). The fallback applies to that file only; the rest of the range still uses function-context. Binary files do not use the fallback — they are excluded with a `[binary file changed: <path>]` marker. Per `plan.md` Risk Mitigation.
+- **files mode markers**: changed regions are delimited by sentinel lines `>>> CHANGED LINES <start>-<end>` before and `<<< END CHANGED` after each region (language-agnostic, not comment-prefixed); full syntax documented in `docs/payload-modes.md`.
 - **Git command selection** (per `range-resolution.md`):
   - diff mode: `git diff <base>..<head>`
   - blocks mode: `git diff --function-context <base>..<head>` (with per-file fallback to `-U<n>`)
@@ -55,7 +55,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** a git repository with changed files between base and head
 - **When** `BuildFiles(baseRef, headRef)` is called
 - **Then** the output contains the full head-version content of each changed file
-- **And** changed regions are marked (e.g., with comment markers or annotations)
+- **And** changed regions are delimited by `>>> CHANGED LINES <start>-<end>` / `<<< END CHANGED` sentinel lines
 - **And** unchanged regions are present but visually distinguishable
 
 **Scenario 4: Builder dispatches on mode string**
@@ -67,17 +67,17 @@ This AC is implemented against the following project documentation. Read before 
 ## Edge Cases
 
 **Edge Case 1: blocks mode falls back when --function-context fails on no-brace languages**
-- **Given** a changed Python file (no braces) where `git diff --function-context` fails or produces empty
+- **Given** a changed Python file (no braces) where `git diff --function-context` exits nonzero or produces zero hunks for a file that has changes
 - **When** `BuildBlocks(baseRef, headRef)` is called
 - **Then** the builder detects the failure
-- **And** falls back to `git diff -U<n>` context diff for that file
-- **And** the fallback payload is still useful for review
+- **And** falls back to `git diff -U10` context diff for that file
+- **And** the fallback payload contains the changed lines plus 10 lines of context (`-U10`) per file
 
-**Edge Case 2: blocks mode falls back for binary files**
+**Edge Case 2: binary files are excluded with a marker**
 - **Given** a changed binary file (e.g., image, compiled asset)
-- **When** `BuildBlocks(baseRef, headRef)` is called
-- **Then** `--function-context` fails for the binary file
-- **And** the builder falls back to plain diff or excludes the binary with a note
+- **When** `BuildBlocks(baseRef, headRef)` or `BuildFiles(baseRef, headRef)` is called
+- **Then** the binary file is excluded from the payload content
+- **And** it is represented by a one-line marker: `[binary file changed: <path>]`
 
 **Edge Case 3: No changes between base and head**
 - **Given** base and head refs point to the same commit
@@ -89,6 +89,13 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** only one file changed between base and head
 - **When** any builder is called
 - **Then** the payload contains exactly that one file's contribution
+
+**Edge Case 5: Deleted and renamed files (files mode)**
+- **Given** a changed file was deleted between base and head
+- **When** `BuildFiles(baseRef, headRef)` builds the payload
+- **Then** the file is represented by a `[deleted file: <path>]` marker (no `git show` failure leaks)
+- **Given** a renamed file
+- **Then** its content appears under the new path with the rename noted
 
 ## Error Conditions
 
@@ -128,14 +135,14 @@ This AC is implemented against the following project documentation. Read before 
 - Golden files for expected output comparison
 
 **Mock/Stub Requirements:**
-- Git commands: run real git in temp repos (no mocking — integration-level fidelity)
+- Git commands: integration-style unit tests — real git in temp repos (deliberate fidelity choice; still run under `go test ./...`)
 - For pure unit tests: mock `exec.Command` via an interface (`CommandRunner`)
 
 **Test Cases:**
 1. `TestBuildDiff_BasicChanges` — verify unified diff output
 2. `TestBuildBlocks_FunctionExpansion` — verify --function-context expansion for brace languages
 3. `TestBuildBlocks_FallbackPython` — verify fallback for no-brace languages
-4. `TestBuildBlocks_FallbackBinary` — verify fallback for binary files
+4. `TestBuildBlocks_BinaryExcludedWithMarker` — verify binary files are excluded and represented by the `[binary file changed: <path>]` marker
 5. `TestBuildFiles_FullContentWithMarkers` — verify full content with changed region markers
 6. `TestBuild_DispatchByMode` — verify mode string dispatches correctly
 7. `TestBuild_EmptyDiff` — verify no error on empty diff
@@ -151,9 +158,9 @@ This AC is implemented against the following project documentation. Read before 
 
 **Story-Specific:**
 - [ ] `BuildDiff` produces standard unified diff via `git diff base..head`
-- [ ] `BuildBlocks` uses `git diff --function-context` and falls back to `-U<n>` on failure
+- [ ] `BuildBlocks` uses `git diff --function-context` and falls back to `-U10` when it exits nonzero or produces zero hunks for a changed file
 - [ ] `BuildFiles` reads full head-version content and marks changed regions
-- [ ] Blocks fallback triggers for no-brace languages and binary files
+- [ ] Binary files are excluded from payload content and represented by the `[binary file changed: <path>]` marker
 - [ ] Invalid mode returns descriptive error
 
 **Manual Review:**

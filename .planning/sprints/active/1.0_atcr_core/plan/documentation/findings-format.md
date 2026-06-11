@@ -123,8 +123,8 @@ func WriteReconciled(path string, findings []Finding) error {
             fi.Problem, fi.Fix, fi.Category,
             strconv.Itoa(fi.EstMinutes),
             fi.Evidence,
-            strings.Join(fi.Reviewers, ","),  // 9th: REVIEWERS
-            fi.Confidence,                     // 10th: CONFIDENCE
+            strings.Join(fi.Reviewers, ","),  // 8th: REVIEWERS
+            fi.Confidence,                     // 9th: CONFIDENCE
         }
         for i, c := range cols {
             cols[i] = strings.ReplaceAll(c, "|", "/")  // escape

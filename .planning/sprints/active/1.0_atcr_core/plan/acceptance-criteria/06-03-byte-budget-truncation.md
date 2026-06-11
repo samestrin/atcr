@@ -17,7 +17,7 @@
 - `internal/payload/manifest.go` - create: manifest.json generation with payload mode recording
 - `internal/payload/manifest_test.go` - create: Tests for manifest structure and content
 - `internal/fanout/status.go` - modify: Add truncation recording fields to status.json
-- `cmd/atcr/main.go` - reference: zero/negative budget validation surfaces as a usage error (exit 2) before any review
+- `cmd/atcr/main.go` - reference: negative budget validation surfaces as a usage error (exit 2) before any review; zero is valid and means unlimited
 
 ## Documentation References
 
@@ -131,7 +131,7 @@ This AC is implemented against the following project documentation. Read before 
 
 **Error Scenario 1: Negative byte budget**
 - Error message: "byte budget must be >= 0, got <n>"
-- Exit code: 1
+- Exit code: 2 (usage/config error; zero is valid and means unlimited)
 
 **Error Scenario 2: Failed to write manifest.json**
 - Error message: "failed to write manifest.json: <detail>"

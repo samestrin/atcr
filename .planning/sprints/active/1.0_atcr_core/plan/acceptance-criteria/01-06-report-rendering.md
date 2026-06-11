@@ -68,11 +68,17 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** finding PROBLEM text exceeds 500 characters
 - **When** report renders to markdown
 - **Then** text truncated with `...` suffix and full text available in JSON output
+- **Note:** truncation applies to PROBLEM, FIX, and EVIDENCE in md and checklist formats; the json format is never truncated
 
 **Edge Case 3: Special characters in file paths**
 - **Given** finding references file with unicode characters `src/café/main.go`
 - **When** report renders
 - **Then** the unicode file path `src/café/main.go` is byte-identical to the input across md, json, and checklist output (no escaping, no truncation, no normalization)
+
+**Edge Case 4: HTML and markdown injection in finding text**
+- **Given** a finding whose PROBLEM contains `<script>alert(1)</script>` and a markdown link payload `](http://evil)`
+- **When** the md report renders
+- **Then** the HTML is escaped and the text appears inert (no raw HTML or active link in the output)
 
 ## Error Conditions
 
@@ -93,7 +99,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Throughput:** N/A (single output generation)
 
 ## Security Considerations
-- **Input Validation:** Finding text sanitized for markdown injection (no raw HTML passthrough in md format)
+- **Input Validation:** HTML special characters (&, <, >) in PROBLEM/FIX/EVIDENCE are escaped in md/checklist output — raw HTML never passes through; file paths are rendered inside backtick code spans, which neutralizes markdown without altering the path bytes
 - **Output Safety:** JSON output uses encoding/json for proper escaping
 
 ## Test Implementation Guidance
@@ -111,7 +117,7 @@ This AC is implemented against the following project documentation. Read before 
 - [ ] Three formats render correctly: md, json, checklist
 - [ ] Default format is markdown when --format not specified
 - [ ] --output flag writes to file; default writes to stdout
-- [ ] Zero-findings case renders gracefully
+- [ ] Zero-findings case renders the documented "No findings" message (Edge Case 1)
 - [ ] Golden file tests pass for each format
 
 **Manual Review:**

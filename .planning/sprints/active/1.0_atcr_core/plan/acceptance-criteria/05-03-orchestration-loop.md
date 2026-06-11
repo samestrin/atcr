@@ -7,7 +7,7 @@
 |-----------|------------|-------|
 | Orchestration | Skill instructions (Markdown) | Agent follows sequential steps |
 | CLI Invocation | `os/exec` via agent shell | Calls to `atcr` binary |
-| Background Polling | `atcr status` / `atcr review --wait` | Poll for review completion |
+| Background Polling | `atcr status <id>` polled by the Skill | `atcr review` runs as a background process; no `--wait` flag in v1 |
 | Timeout | Configurable max retries | Prevents infinite hangs |
 | Test Framework | `testify` (assert, suite) | Integration tests with mock atcr binary |
 
@@ -29,8 +29,8 @@ This AC is implemented against the following project documentation. Read before 
 ### Spec alignment notes
 
 - **Orchestration is exactly**: `atcr range` → `atcr review` (background, polled) → host review → `atcr reconcile` → `atcr report` → present `report.md`. Per `plan.md` (The atcr Skill section) and `user-stories/05-host-review-via-skill.md` original criterion #6.
-- **Polling interval** is 5 seconds with max 60 retries (5-minute default timeout); both are configurable via skill arguments.
-- **Background review**: `atcr review` can run in the background (e.g., `&` or via `atcr review --wait` if implemented); the Skill polls `atcr status` rather than blocking.
+- **Polling interval** is 10 seconds with max 60 polls (10-minute default timeout); both are configurable via skill arguments.
+- **Background review**: there is no `--wait` flag in v1. The Skill launches `atcr review` as a background process and polls `atcr status <id>` in a bounded loop (max 60 polls at a 10-second interval, then a timeout error); the Skill never blocks on the review command.
 - **Host review is the +1 reviewer**: the Skill writes `sources/host/findings.txt` so reconcile always has 2+ sources (host + pool agents), which produces HIGH confidence when they agree. Per `user-stories/05-host-review-via-skill.md` background.
 - **No sprint knowledge** in the Skill: input is a git range, branch, or PR; output is the review directory path. Per `user-stories/05-host-review-via-skill.md` original criterion #11.
 - **Timeout enforcement** at the Skill level prevents runaway orchestration: the Skill aborts if any step exceeds the configured per-step timeout and reports the failure to the user with a clear next-step suggestion.
@@ -102,6 +102,23 @@ This AC is implemented against the following project documentation. Read before 
 - **Then** the review directory uses the custom ID
 - **And** all subsequent commands (reconcile, report) default to it via `.atcr/latest`
 
+**Edge Case 5: Zero findings from all sources (clean review)**
+- **Given** all sources produced `findings.txt` files but none contain any findings
+- **When** `atcr reconcile` and `atcr report` run
+- **Then** the orchestration reports "no issues found" and exits 0
+- **And** this is a success path, not an error
+
+**Edge Case 6: Partial pool agent failure**
+- **Given** some pool agents fail during review (partial success)
+- **When** orchestration continues
+- **Then** reconcile proceeds with the successful sources
+- **And** the presented report notes `partial: true`
+
+**Edge Case 7: `.atcr/latest` missing or stale**
+- **Given** `.atcr/latest` is missing or stale
+- **When** the Skill orchestrates
+- **Then** it passes the explicit review id (captured from the `atcr review` output) to reconcile/report rather than relying on the pointer
+
 ## Error Conditions
 
 **Error Scenario 1: `atcr range` fails (empty range)**
@@ -112,9 +129,13 @@ This AC is implemented against the following project documentation. Read before 
 - Error message: "Review timed out after <N> seconds. Check 'atcr status' for details."
 - Skill behavior: Stop polling, report timeout, suggest checking individual agent logs
 
-**Error Scenario 3: `atcr reconcile` fails (no findings from any source)**
-- Error message: "No findings to reconcile. All agents returned empty results."
-- Skill behavior: Report that no issues were found; exit gracefully
+**Error Scenario 3: `atcr reconcile` fails (no reconcile sources)**
+- **Given** `sources/` contains no source directories with `findings.txt` at all (the review never produced artifacts)
+- **When** `atcr reconcile` runs
+- **Then** it exits with an error
+- Error message: "no reconcile sources found under sources/"
+- Skill behavior: Halt orchestration and report the error to the user
+- Note: zero findings from sources that did produce `findings.txt` is NOT this scenario — that is the success path (Edge Case 5)
 
 **Error Scenario 4: `atcr` command not found during orchestration**
 - Error message: "atcr binary not found in PATH. Install atcr before using the skill."
@@ -122,10 +143,10 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Performance Requirements
 - **Range Resolution:** `atcr range` completes in < 5 seconds for repositories with < 10,000 commits
-- **Review Polling:** Status polling interval is 5 seconds with max 60 retries (5-minute timeout default)
-- **Host Review:** Host review completes within the agent's normal response time
+- **Review Polling:** Status polling interval is 10 seconds with max 60 polls (10-minute timeout default)
+- **Host Review:** The host-review step issues no atcr calls other than status polling
 - **Reconcile:** `atcr reconcile` completes in < 10 seconds for < 100 findings across < 10 sources
-- **End-to-End:** Total orchestration time dominated by LLM calls; atcr command overhead < 20 seconds total
+- **End-to-End:** atcr command overhead < 20 seconds total
 
 ## Security Considerations
 - **Command injection prevention:** All `atcr` command arguments are validated; no user input passed through shell interpolation

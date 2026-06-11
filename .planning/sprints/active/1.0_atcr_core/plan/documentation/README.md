@@ -22,7 +22,7 @@
 | File | Focus |
 |------|-------|
 | [reconciler.md](reconciler.md) | Deterministic reconciler pipeline (cluster, dedupe, merge, confidence, ambiguous sidecar) — the net-new core of v1 |
-| [findings-format.md](findings-format.md) | `atcr-findings/v1` pipe-delimited format (per-source 8 cols, reconciled 10 cols) — the public contract with downstream tools |
+| [findings-format.md](findings-format.md) | `atcr-findings/v1` pipe-delimited format (per-source 8 cols, reconciled 9 cols) — the public contract with downstream tools |
 | [cli-architecture.md](cli-architecture.md) | Cobra CLI framework, command structure, flag validation, exit codes, context propagation |
 | [mcp-server.md](mcp-server.md) | MCP stdio server, generic `mcp.AddTool` with typed args/result, stderr discipline |
 | [llm-client-fanout.md](llm-client-fanout.md) | OpenAI-compatible client, retry policy, parallel/serial lanes, timeout handling |

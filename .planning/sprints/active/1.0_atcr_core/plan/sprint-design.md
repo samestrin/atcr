@@ -118,9 +118,10 @@ payload builder function-context git diff
 | Diff payload builder | US-06 | `git diff base..head` output verbatim | Unit |
 | Blocks payload builder | US-06 | `--function-context` expansion, fallback to -U10 | Unit |
 | Files payload builder | US-06 | Head version with changed-region sentinels | Unit |
-| Byte budget truncation | US-06 | Deterministic drop largest-first, record in status.json | Unit |
+| Byte budget truncation | US-06 | Deterministic drop smallest-first (alphabetical tie-break), record in status.json | Unit |
 | Per-agent payload override | US-06 | Registry `payload:` field overrides project default | Unit |
 | Findings stream parser (v1 format) | US-01 | Strict severity-prefix regex, pipe escaping, short-row padding | Unit |
+| Persona resolution chain + six embedded personas | US-02 | Six-level resolution chain, template rendering, missing-ref hard error, per-mode scope rules | Unit |
 | OpenAI-compatible HTTP client | US-01 | POST to /chat/completions, auth header, JSON decode | Unit |
 | Retry policy (429/5xx, ~500ms/1.5x backoff) | US-01 | httptest mock with retryable/non-retryable responses | Unit |
 
@@ -315,7 +316,7 @@ Each internal package is a black box replaceable via its interface. The engine s
 |------|---------------|--------|----------|
 | Fan-out Engine | 6+ concurrent LLM API calls | All agents complete within global timeout (default 600s) | Parallel lane via WaitGroup; per-agent derived context timeouts; serial lane for rate-limited agents; retry backoff must not exhaust agent timeout |
 | Reconciler Clustering | 100-500 findings across 6 sources | Sub-second clustering and deduplication | Map-based bucket key (file, line/3); O(n) clustering; Jaccard computed only within clusters, not pairwise across all findings |
-| Payload Construction (files mode) | Large changed file sets (50+ files) | Payload built within 5 seconds | Byte budget with deterministic truncation; sort by size rank, drop largest first; never silently drop content |
+| Payload Construction (files mode) | Large changed file sets (50+ files) | Payload built within 5 seconds | Byte budget with deterministic truncation; drop whole files smallest-first by size rank (alphabetical tie-break); never silently drop content |
 | MCP Protocol | Concurrent tool calls from IDE/agent | No blocking; context cancellation honored | Handler functions receive and honor ctx; fan-out operations propagate client timeout; stdout reserved for protocol |
 
 ### Edge Case Categories

@@ -32,7 +32,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Conservative default is non-negotiable**: unadjudicated ambiguous clusters remain **unmerged** in the final output. False positives in CI gates are worse than false negatives. Per `reconciler.md` (Anti-Patterns to Avoid section).
 - **Audit trail**: adjudication decisions are written to `reconciled/adjudication.json` (not just logged). Each entry records: cluster ID, decision (`merge` | `distinct` | `skipped`), rationale, host-model SHA, timestamp. This enables post-hoc review of how the Skill affected the merge.
 - **Re-invocation**: after adjudication, the Skill re-invokes `atcr reconcile` with the decision file. The reconciler applies the decisions and re-emits the four reconciled artifacts. The original `ambiguous.json` is preserved (renamed `ambiguous.original.json`) so the audit chain is intact.
-- **Jaccard thresholds** (per `reconciler.md`): merge ≥ 0.7, separate < 0.4, ambiguous [0.4, 0.7). The thresholds are tunable via a future config knob but defaults are conservative.
+- **Jaccard thresholds** (per `reconciler.md`): merge ≥ 0.7, separate < 0.4, ambiguous [0.4, 0.7). Thresholds are fixed in v1: merge at Jaccard ≥ 0.7, gray zone 0.4–0.7 (not configurable).
 
 ## Happy Path Scenarios
 
@@ -41,7 +41,7 @@ This AC is implemented against the following project documentation. Read before 
 - **When** the host agent generates findings
 - **Then** findings focus on bugs, security issues, logic errors, and code quality problems
 - **And** findings do not include praise, compliments, or positive observations
-- **And** the review.md tone is direct and critical, not congratulatory
+- **And** review.md contains no praise-only content: every section either ties to a finding or states "no issues found in <area>"
 
 **Scenario 2: Ambiguous clusters written to ambiguous.json**
 - **Given** the reconciler finds clusters with text-similarity below the dedupe threshold but above zero
@@ -74,7 +74,7 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 1: No ambiguous clusters**
 - **Given** all findings are clearly duplicates or clearly distinct
 - **When** `atcr reconcile` runs
-- **Then** `ambiguous.json` is either empty or not created
+- **Then** `ambiguous.json` is always written and contains an empty `clusters` array when no gray-zone clusters exist
 - **And** the skill skips the adjudication step
 
 **Edge Case 2: Ambiguous cluster with findings from host and pool agent**
@@ -95,11 +95,23 @@ This AC is implemented against the following project documentation. Read before 
 - **Then** no findings are merged
 - **And** the reconciled output is identical to the pre-adjudication output
 
+**Edge Case 5: Adjudication references unknown cluster ID**
+- **Given** an adjudication decision references a cluster ID not present in `ambiguous.json`
+- **When** reconcile re-runs with the decisions
+- **Then** it rejects the adjudication file with an error naming the unknown cluster ID
+
+**Edge Case 6: Partial adjudication**
+- **Given** the host adjudicates only some clusters
+- **When** reconcile re-runs
+- **Then** decided clusters are applied
+- **And** undecided clusters remain unmerged (conservative default)
+
 ## Error Conditions
 
 **Error Scenario 1: ambiguous.json is malformed**
 - Error message: "Failed to parse ambiguous.json: <parse error>. Skipping adjudication."
 - Skill behavior: Skip adjudication, proceed with unmerged findings
+- Clarification: a zero-byte `ambiguous.json` is treated as malformed (this scenario), distinct from a valid file with an empty `clusters` array (Edge Case 1)
 
 **Error Scenario 2: Reconcile fails after adjudication re-invocation**
 - Error message: "Reconcile failed after adjudication: <error>. Original findings preserved."
@@ -110,7 +122,7 @@ This AC is implemented against the following project documentation. Read before 
 - Skill behavior: Leave the cluster unmerged (conservative fallback)
 
 ## Performance Requirements
-- **Adjudication Time:** Each cluster adjudication completes within the host's normal response time (typically < 30 seconds per cluster)
+- **Adjudication Time:** Adjudication of up to 20 clusters completes in a single host response (one pass, no per-cluster round-trips)
 - **Ambiguous.json Size:** File remains under 100KB for typical reviews (< 50 clusters)
 - **Re-invocation Overhead:** Re-running reconcile after adjudication adds < 5 seconds to total time
 
@@ -142,6 +154,7 @@ This AC is implemented against the following project documentation. Read before 
 7. `TestAdjudication_ConservativeDefault` — verify unadjudicated clusters remain unmerged
 8. `TestAdjudication_ReconcileReinvocation` — verify reconcile applies adjudication decisions
 9. `TestAdjudication_MalformedJSON` — verify graceful handling of invalid ambiguous.json
+10. `TestAdjudication_PersistsDecisionsAndOriginal` — verify decisions written to `reconciled/adjudication.json` and the pre-adjudication sidecar preserved as `ambiguous.original.json`
 
 ## Definition of Done
 **Auto-Verified:**
@@ -157,6 +170,7 @@ This AC is implemented against the following project documentation. Read before 
 - [ ] Skill can adjudicate clusters and re-invoke reconcile
 - [ ] Conservative default preserves unmerged findings when adjudication is skipped
 - [ ] Adjudication decisions are logged for audit
+- [ ] Adjudication decisions are persisted to reconciled/adjudication.json and the pre-adjudication sidecar is preserved as ambiguous.original.json (both verified by test)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
