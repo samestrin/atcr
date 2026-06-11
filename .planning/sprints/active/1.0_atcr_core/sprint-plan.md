@@ -1579,7 +1579,7 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 4.33 [ ] **Phase 4 DoD Validation**
+### 4.33 [x] **Phase 4 DoD Validation**
    1. Run `go test ./...` - all passing
    2. Run `go vet ./...` - clean
    3. Run `golangci-lint run` - clean
@@ -1588,7 +1588,7 @@ Documentation available in [documentation/](plan/documentation/):
    6. Update metadata.md with Phase 4 completion metrics
    **Duration:** 30 min
 
-### 4.34 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.34 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)** — GATE: PASS
    **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool (subagent_type: `general-purpose`, description: `Phase 4 gate review`) with a self-contained brief:
@@ -1602,16 +1602,15 @@ Documentation available in [documentation/](plan/documentation/):
    - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
    - Required output: ONLY the findings table (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings table (hostile integrator over all Phase 4 changes):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | handlers.go handleReconcile | atcr_reconcile runs Reconcile+Emit before the no-sources guard → empty reconciled artifacts written to disk on the error path (CLI rejects earlier, writes nothing) | Deferred → TD-025 (both layers still error; no false success) |
+   | LOW | handlers.go handleRange | empty base/head echoed on ErrEmptyRange (empty strings in no-arg auto case) → zero-count result lacks resolved-ref provenance | Deferred → TD-025 |
+   | LOW | SKILL.md status shape | documented status JSON omitted the `partial` field | Fixed: added `partial` to SKILL.md status shape + tools.go atcr_status description |
+   | LOW | SKILL.md adjudication | wording said "validates against current ambiguous.json"; actual baseline is ambiguous.original.json once adjudication has run | Fixed: reworded to match the idempotent baseline behavior |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
-   - None found -> Note "Phase gate passed" and proceed to phase stop
+   **Action Required:** No CRITICAL/HIGH. Gate verdict: **GATE: PASS** — fresh hostile-integrator subagent independently verified CLI/MCP share one engine (RunReconcile, ReadManifestPartial, ReadReviewStatus, gitrange.Resolve, report.Render — no logic forks), the PrepareReview/ExecuteReview split preserves RunReview's artifacts-on-failure + ErrAllAgentsFailed semantics, the public DedupeCluster signature/output is unchanged when no adjudication is present, `atcr status` is correctly wired as the 7th subcommand routing failures through exit 2, and adjudication re-invocation is idempotent and never drops/false-merges. Two SKILL.md doc nits fixed inline (Phase 5 docs depend on them); 1 MEDIUM + 1 LOW deferred → TD-025.
    **Duration:** 15-30 min
 
 ---

@@ -42,17 +42,17 @@
 
 _Populated by `/execute-sprint` upon completion_
 
-**Executed:** Started 2026-06-10 (Phases 1–3 complete)
+**Executed:** Started 2026-06-10 (Phases 1–4 complete)
 **Runtime:** _TBD_
-**Status:** In Progress — gated at Phase 3 boundary
+**Status:** In Progress — gated at Phase 4 boundary
 
 ### Progress
-- **Phases:** 3/5 (Foundation + Core Systems + Engines complete)
-- **Work Items:** 122/173 tasks (Phase 1: 30, Phase 2: 48, Phase 3: 42, includes DoD 3.41 + gate 3.42)
+- **Phases:** 4/5 (Foundation + Core Systems + Engines + Integration complete)
+- **Work Items:** 156/173 tasks (Phase 1: 30, Phase 2: 48, Phase 3: 42, Phase 4: 34 incl. DoD 4.33 + gate 4.34)
 
 ### Quality
-- **Tests:** all passing (9 test packages, race-clean)
-- **Coverage:** 84.4% total (≥70% baseline); reconcile 92%, report 94%, fanout 83%
+- **Tests:** all passing (10 test packages + skill, race-clean)
+- **Coverage:** 82.4% total (≥70% baseline)
 - **Lint:** Clean (golangci-lint, go vet, gofmt)
 
 ### Changes
@@ -82,3 +82,12 @@ _Populated by `/execute-sprint` upon completion_
 - stream: ParseModelOutput (7-col model output, engine-set REVIEWER — TD-016 resolved)
 - Adversarial reviews: 10 unit reviews run; fixed inline — 1 CRITICAL (backtick code-span injection), HIGHs (error misclassification, traversal-id, symlink read, markdown newline injection, exit-code consistency, REVIEWER forge); deferred TD-017..021
 - DoD: tests race-clean, vet/lint clean, coverage 84.4%, end-to-end smoke verified (2 sources at lines 42/43 → 1 merged CRITICAL/HIGH-confidence; reconcile→report md/checklist; --fail-on exit 0/1/2)
+
+### Phase 4 Completion Notes (2026-06-11)
+- MCP server (internal/mcp): `atcr serve` over StdioTransport (modelcontextprotocol/go-sdk v1.6.1); 5 generic typed tools (atcr_review/reconcile/report/range/status) with schema inference + report format-enum schema; fail-fast registration (duplicate-name guard + panic-recover); thin handlers over the same engine packages as the CLI; stderr discipline (slog→stderr, stdout owned by protocol); InMemoryTransport tests + no-stdout-leak assertion
+- Non-blocking review: split fanout.RunReview into PrepareReview (scaffold + manifest + latest) + ExecuteReview (fan-out); atcr_review returns {review_id, review_path, status:"running", agent_count} immediately and runs fan-out in a tracked background goroutine (recover-guarded), drained (bounded 5s) on shutdown via mcp.Serve
+- `atcr status` CLI command + fanout.ReadReviewStatus (manifest roster + pool summary.json → in_progress/completed/failed); 7th subcommand (added by AC 05-03 for the Skill polling loop)
+- Skill (skill/SKILL.md + go:embed structure test): host (+1) adversarial review writing v1 8-col findings (REVIEWER=host), orchestration loop (range→review→status-poll→host→reconcile→report), untrusted-input clause, ambiguity-adjudication instructions; docs/skill-usage.md install guide
+- Adjudication (internal/reconcile/ambiguous.go): content-addressed 128-bit cluster ids, adjudication.json decisions (merge/distinct/skipped) applied on reconcile re-invocation, validated against the preserved ambiguous.original.json baseline (idempotent re-runs), unknown-id + malformed rejection, conservative unmerged default
+- Adversarial reviews: 2 holistic subagent reviews (MCP unit, skill+adjudication). Fixed inline — 1 CRITICAL (background-goroutine panic recover), 4 HIGH (shutdown drain, empty-range guard on review, adjudication idempotency, manifest-reader dedup) + cheap MEDIUM/LOW (AtOrAbove unknown-threshold guard, prompt-injection clause, 128-bit ids); deferred TD-023 (status read race), TD-024 (adjudication baseline binding)
+- New dependency: github.com/modelcontextprotocol/go-sdk v1.6.1 (go directive bumped 1.24→1.25); go vet/lint clean, coverage 82.4%

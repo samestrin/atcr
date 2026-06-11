@@ -38,7 +38,7 @@ Run these in order. Each step is a single `atcr` CLI invocation; never reach int
 
 2. **Start the review (background)** — `atcr review [--base X --head Y]`. There is no `--wait` flag: the review runs the pool fan-out and may take minutes. Capture the printed review id. Run it as a background process and poll for completion in step 3 — never block on it.
 
-3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); both are configurable. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
+3. **Poll status** — `atcr status <id>` returns JSON `{review_id, status, agent_count, agents_done, agents_pending, partial}`. Poll every **10 seconds**, up to **60 times** (a 10-minute default timeout); both are configurable. Stop polling when `status` is `completed` or `failed`. On timeout, halt: `Review timed out after <N> seconds. Check 'atcr status' for details.` If the review completes on the first poll, proceed immediately.
 
 4. **Host review (your +1 pass)** — read the payload from `.atcr/reviews/<id>/payload/` and write your findings to `.atcr/reviews/<id>/sources/host/findings.txt` (see *Host Review Instructions*). The host-review step reads only files under the review directory and issues no atcr calls of its own.
 
@@ -108,7 +108,7 @@ If you choose to adjudicate:
 ```
 
    `decision` is `merge`, `distinct`, or `skipped`. Only `merge` collapses a cluster; `distinct` and `skipped` (and any cluster you omit) stay unmerged.
-3. Re-run `atcr reconcile <id>`. It validates each `cluster_id` against the current `ambiguous.json` (an unknown id is rejected), applies the merges, preserves the original sidecar as `ambiguous.original.json`, and re-emits the reconciled artifacts.
+3. Re-run `atcr reconcile <id>`. It validates each `cluster_id` against the preserved original gray set (`ambiguous.original.json` once adjudication has run, else the current `ambiguous.json`) — an unknown id is rejected — applies the merges, preserves the original sidecar as `ambiguous.original.json`, and re-emits the reconciled artifacts. Re-running with the same decisions is idempotent.
 
 Process every cluster in one pass — do not truncate by volume. When in doubt, leave a cluster unmerged.
 

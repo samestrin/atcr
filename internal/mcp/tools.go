@@ -119,7 +119,7 @@ const (
 	descRange = "Resolve a git review range without calling any provider. " +
 		"Returns {base, head, commit_count, file_count}. Optional args: base, head, merge_commit (defaults to the current branch vs. the default branch)."
 	descStatus = "Report a review's fan-out progress. " +
-		"Returns {review_id, status, agent_count, agents_done, agents_pending}. Optional args: id_or_path (defaults to the latest review)."
+		"Returns {review_id, status, agent_count, agents_done, agents_pending, partial}. Optional args: id_or_path (defaults to the latest review)."
 )
 
 // reportInputSchema builds the atcr_report input schema with the format property
