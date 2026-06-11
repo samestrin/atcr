@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,4 +122,30 @@ func TestBudget_NegativeBudget(t *testing.T) {
 	assert.Contains(t, err.Error(), "byte budget must be >= 0, got -1")
 	assert.NoError(t, ValidateBudget(0))
 	assert.NoError(t, ValidateBudget(1000))
+}
+
+func TestBudget_NegativeSizeCannotBypassTruncation(t *testing.T) {
+	// A negative size must not offset real bytes: the real 60000-byte file
+	// exceeds the 50000 budget, so the pass must truncate, never silently
+	// keep an over-budget payload.
+	in := []FileEntry{
+		{Path: "big", Size: 60000},
+		{Path: "neg", Size: -59000},
+	}
+	_, tr := ApplyByteBudget(in, 50000)
+	assert.True(t, tr.Truncated)
+	assert.NotEmpty(t, tr.FilesDropped)
+}
+
+func TestBudget_OverflowCannotBypassTruncation(t *testing.T) {
+	// Summing pathological sizes must saturate, not wrap negative — a wrapped
+	// total would compare <= budget and skip truncation entirely.
+	in := []FileEntry{
+		{Path: "huge1", Size: math.MaxInt64},
+		{Path: "huge2", Size: math.MaxInt64},
+		{Path: "tiny", Size: 100},
+	}
+	_, tr := ApplyByteBudget(in, 1000)
+	assert.True(t, tr.Truncated)
+	assert.NotEmpty(t, tr.FilesDropped)
 }
