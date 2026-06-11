@@ -1,10 +1,23 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestAnchorDir_CorruptLatestPointerSurfacesCause(t *testing.T) {
+	// A corrupt/tampered .atcr/latest must surface ReadLatest's invalid-id
+	// message, not be misreported as an absent pointer.
+	isolate(t)
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte("../escape\n"), 0o644))
+	_, err := anchorDir("")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid review id")
+}
 
 func TestAnchorDir_SeparatorDetectionIsPlatformUniform(t *testing.T) {
 	// The path-vs-id contract must not depend on filepath.Separator: a
