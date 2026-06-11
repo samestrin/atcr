@@ -149,3 +149,14 @@ func TestBudget_OverflowCannotBypassTruncation(t *testing.T) {
 	assert.True(t, tr.Truncated)
 	assert.NotEmpty(t, tr.FilesDropped)
 }
+
+func TestBudget_KeepsMostFiles_DropsLargestFirst(t *testing.T) {
+	// The TD-flagged case: sizes [1,2,3,4,90], budget 90. Keep-most-files
+	// policy drops the single 90-byte file (generated/lockfile shaped) and
+	// keeps the four small source files — not the inverse.
+	in := entries("e", 90, "a", 1, "b", 2, "c", 3, "d", 4)
+	kept, tr := ApplyByteBudget(in, 90)
+	assert.True(t, tr.Truncated)
+	assert.Equal(t, []string{"e"}, tr.FilesDropped)
+	assert.ElementsMatch(t, []string{"a", "b", "c", "d"}, keptPaths(kept))
+}
