@@ -17,6 +17,11 @@ const Version = "# atcr-findings/v1"
 // be reported distinctly from a missing one.
 const versionPrefix = "# atcr-findings/"
 
+// versionTokenRe matches a well-formed version token (e.g. "v1", "v10") after
+// versionPrefix. Only a well-formed token earns ErrUnknownVersion; a garbage
+// suffix ("v1x", "v1.2") is a malformed header, not an unsupported version.
+var versionTokenRe = regexp.MustCompile(`^v[0-9]+$`)
+
 // Column counts for the two stream shapes.
 const (
 	PerSourceColumns  = 8 // ...|EVIDENCE|REVIEWER
@@ -140,7 +145,7 @@ func parse(data []byte, cols int) (ParseResult, error) {
 			case strings.TrimSpace(line) == Version:
 				headerSeen = true
 				continue
-			case strings.HasPrefix(line, versionPrefix):
+			case strings.HasPrefix(line, versionPrefix) && versionTokenRe.MatchString(strings.TrimSpace(strings.TrimPrefix(line, versionPrefix))):
 				return res, fmt.Errorf("%w: %q (want %q)", ErrUnknownVersion, strings.TrimSpace(line), Version)
 			default:
 				return res, fmt.Errorf("%w: first line must be %q", ErrMissingHeader, Version)
