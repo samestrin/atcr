@@ -576,7 +576,7 @@ Documentation available in [documentation/](plan/documentation/):
    7. Update metadata.md with Phase 1 completion metrics
    **Duration:** 30 min
 
-### 1.30 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.30 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)** — GATE: PASS (re-run after fixes)
    **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional, to avoid bias from having built the integration. Do NOT review inline.
@@ -606,6 +606,8 @@ Documentation available in [documentation/](plan/documentation/):
    - MEDIUM/LOW found -> Append to `tech-debt-captured.md` (same pipeline as N.X.A findings)
    - None found -> Note "Phase gate passed" and proceed to phase stop
    **Duration:** 15-30 min
+
+   **Gate findings (first run):** 1 HIGH (docs/registry.md "reserved fields parsed, inert" contradicted strict parser — doc corrected), 4 MEDIUM (project timeout bound fixed; enum validation → TD-004 / planned 2.25+3.33; personas template contract → TD-005 / planned 2.33+2.45; init explicit defaults kept per AC 02-01 → TD-006), 5 LOW (go.mod reclassified, PreRunE chained, boundaries comment fixed, EffectivePayloadMode added; init message kept per AC). **Re-run verdict: GATE: PASS** — all 9 claims independently verified by fresh subagent.
 
 ---
 
