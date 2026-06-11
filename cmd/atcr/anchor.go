@@ -24,7 +24,10 @@ func anchorDir(arg string) (string, error) {
 		}
 		return filepath.Join(fanout.ReviewsRoot("."), id), nil
 	}
-	if filepath.IsAbs(arg) || strings.ContainsRune(arg, filepath.Separator) || arg == "." {
+	// Both '/' and '\\' mark an explicit path regardless of platform, so the
+	// path-vs-id contract is uniform (a forward-slash path on Windows must not
+	// fall into bare-id validation). ValidateReviewID rejects both anyway.
+	if filepath.IsAbs(arg) || strings.ContainsAny(arg, `/\`) || arg == "." {
 		return arg, nil // explicit path: user-provided, used verbatim
 	}
 	// Bare id: validate so "..", a leading dash, etc. cannot escape the reviews dir.
