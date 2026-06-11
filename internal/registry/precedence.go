@@ -13,10 +13,14 @@ const MaxTimeoutSecs = 86400
 // resolution: CLI flag > project config > registry > embedded default.
 // Each field resolves independently; a tier participates only where it
 // explicitly sets a value.
+//
+// fail_on is deliberately absent: the CI gate is opt-in (no embedded
+// default), so gate resolution lives in ResolveGateThreshold with its own
+// tier-specific error semantics. DefaultFailOn seeds only the config
+// template `atcr init` generates.
 type Settings struct {
 	PayloadMode string
 	TimeoutSecs int
-	FailOn      string
 }
 
 // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
@@ -24,7 +28,6 @@ type Settings struct {
 type CLIOverrides struct {
 	PayloadMode *string
 	TimeoutSecs *int
-	FailOn      *string
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
@@ -34,14 +37,13 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	s := Settings{
 		PayloadMode: DefaultPayloadMode,
 		TimeoutSecs: DefaultTimeoutSecs,
-		FailOn:      DefaultFailOn,
 	}
 
 	if reg != nil {
-		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.FailOn)
+		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs)
 	}
 	if proj != nil {
-		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.FailOn)
+		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs)
 	}
 
 	if cli.TimeoutSecs != nil {
@@ -59,23 +61,17 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		s.PayloadMode = v
 	}
-	if v := deref(cli.FailOn); v != "" {
-		s.FailOn = v
-	}
 	return s, nil
 }
 
 // applyTier overlays one configuration tier's explicitly-set values onto s.
 // Whitespace-only strings count as unset.
-func applyTier(s *Settings, payloadMode string, timeoutSecs *int, failOn string) {
+func applyTier(s *Settings, payloadMode string, timeoutSecs *int) {
 	if v := strings.TrimSpace(payloadMode); v != "" {
 		s.PayloadMode = v
 	}
 	if timeoutSecs != nil {
 		s.TimeoutSecs = *timeoutSecs
-	}
-	if v := strings.TrimSpace(failOn); v != "" {
-		s.FailOn = v
 	}
 }
 

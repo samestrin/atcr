@@ -9,6 +9,9 @@ import (
 )
 
 // Embedded defaults for project-level settings (the lowest precedence tier).
+// DefaultFailOn seeds ONLY the config template `atcr init` generates — it
+// never participates in gate resolution, which is opt-in (see
+// ResolveGateThreshold and the reconcile gate).
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"

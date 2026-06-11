@@ -80,7 +80,7 @@ fail_on: HIGH
 | `serial_agents` | `[]` | The serial-lane roster (sequential execution, for rate-limited providers). |
 | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
 | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
-| `fail_on` | `HIGH` | Default CI gate threshold (see [ci-integration.md](ci-integration.md)). |
+| `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
 
@@ -92,7 +92,7 @@ The shared review settings (`payload_mode`, `timeout_secs`, `fail_on`) resolve *
 CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
 ```
 
-A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload` or out-of-range `--timeout` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `fail_on=HIGH`.
+A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload` or out-of-range `--timeout` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
 
 ## Persona resolution chain
 

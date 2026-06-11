@@ -76,7 +76,6 @@ func TestPrecedence_NoOverride(t *testing.T) {
 	s := resolve(t, CLIOverrides{}, proj, nil)
 	assert.Equal(t, DefaultPayloadMode, s.PayloadMode, "embedded default used when nothing overrides")
 	assert.Equal(t, DefaultTimeoutSecs, s.TimeoutSecs)
-	assert.Equal(t, DefaultFailOn, s.FailOn)
 }
 
 func TestPrecedence_EachFieldIndependent(t *testing.T) {
@@ -87,14 +86,12 @@ func TestPrecedence_EachFieldIndependent(t *testing.T) {
 	s := resolve(t, CLIOverrides{PayloadMode: strPtr("diff")}, proj, reg)
 	assert.Equal(t, "diff", s.PayloadMode, "from CLI")
 	assert.Equal(t, 900, s.TimeoutSecs, "from project")
-	assert.Equal(t, "LOW", s.FailOn, "from registry")
 }
 
 func TestPrecedence_NilTiersFallThrough(t *testing.T) {
 	s := resolve(t, CLIOverrides{}, nil, nil)
 	assert.Equal(t, DefaultPayloadMode, s.PayloadMode)
 	assert.Equal(t, DefaultTimeoutSecs, s.TimeoutSecs)
-	assert.Equal(t, DefaultFailOn, s.FailOn)
 }
 
 func TestPrecedence_CLITimeoutValidated(t *testing.T) {
@@ -115,9 +112,8 @@ func TestPrecedence_EmptyCLIStringTreatedAsUnset(t *testing.T) {
 	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\npayload_mode: diff\n"))
 	require.NoError(t, err)
 
-	s := resolve(t, CLIOverrides{PayloadMode: strPtr(""), FailOn: strPtr("  ")}, proj, nil)
+	s := resolve(t, CLIOverrides{PayloadMode: strPtr("")}, proj, nil)
 	assert.Equal(t, "diff", s.PayloadMode, "empty CLI string must not clobber lower tiers")
-	assert.Equal(t, DefaultFailOn, s.FailOn, "whitespace CLI string must not clobber lower tiers")
 }
 
 func TestPrecedence_WhitespaceTierValuesIgnored(t *testing.T) {
