@@ -24,6 +24,23 @@ func initGitRepo(t *testing.T) {
 	}
 	run("init", "-q")
 	run("commit", "--allow-empty", "-q", "-m", "init")
+	run("commit", "--allow-empty", "-q", "-m", "second")
+}
+
+func TestRangeCmd_BaseOnlyDefaultsHeadToHEAD(t *testing.T) {
+	// The shipped CI integrations invoke `atcr range/review --base <ref>`
+	// alone; head defaults to HEAD (clarification 2026-06-11).
+	isolate(t)
+	initGitRepo(t)
+	out, err := execute(t, "range", "--base", "HEAD^")
+	require.NoError(t, err)
+	require.Contains(t, out, `"detection_mode": "explicit"`)
+}
+
+func TestRangeCmd_HeadOnlyIsUsageError(t *testing.T) {
+	isolate(t)
+	initGitRepo(t)
+	require.Equal(t, 2, execCmd(t, "range", "--head", "HEAD"))
 }
 
 func TestRangeCmd_ResolutionFailureIsUsageError(t *testing.T) {

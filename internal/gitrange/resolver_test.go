@@ -63,6 +63,20 @@ func TestResolve_Explicit(t *testing.T) {
 	assert.False(t, res.ResolvedAt.IsZero())
 }
 
+func TestResolve_BaseOnlyDefaultsHeadToHEAD(t *testing.T) {
+	// Base-only is the natural CI-gate invocation (the shipped Actions snippet
+	// and ci-gate.sh pass --base alone): head defaults to HEAD, and the mode is
+	// still recorded as explicit (clarification 2026-06-11).
+	dir, base := initRepo(t)
+	head := writeCommit(t, dir, "a.txt", "one\ntwo\n", "second")
+
+	res, err := Resolve(context.Background(), dir, Options{Base: base})
+	require.NoError(t, err)
+	assert.Equal(t, base, res.Base)
+	assert.Equal(t, head, res.Head)
+	assert.Equal(t, ModeExplicit, res.DetectionMode)
+}
+
 func TestResolve_ExplicitRequiresBoth(t *testing.T) {
 	dir, _ := initRepo(t)
 	writeCommit(t, dir, "a.txt", "one\ntwo\n", "second")
