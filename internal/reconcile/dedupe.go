@@ -59,6 +59,7 @@ func dedupeCluster(cluster []stream.Finding, adjudicatedMerges map[string]bool) 
 
 	uf := newUnionFind(n)
 	var ambiguous []AmbiguousCluster
+	var ambiguousPairs [][2]int // index pair behind each ambiguous entry, for the post-loop root check
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			rel, sim := classify(tokens[i], tokens[j])
@@ -78,9 +79,23 @@ func dedupeCluster(cluster []stream.Finding, adjudicatedMerges map[string]bool) 
 					Similarity: sim,
 					Findings:   []stream.Finding{cluster[i], cluster[j]},
 				})
+				ambiguousPairs = append(ambiguousPairs, [2]int{i, j})
 			}
 		}
 	}
+
+	// A gray pair whose two findings ended up under the same union-find root
+	// (transitively merged via a third finding) is no longer adjudicable: a
+	// "merge" decision would be a silent no-op and "distinct" cannot be honored
+	// since the pair is already collapsed. Drop those entries so ambiguous.json
+	// never contradicts findings.txt.
+	kept := ambiguous[:0]
+	for k, p := range ambiguousPairs {
+		if uf.find(p[0]) != uf.find(p[1]) {
+			kept = append(kept, ambiguous[k])
+		}
+	}
+	ambiguous = kept
 
 	groupMap := map[int][]stream.Finding{}
 	var roots []int
