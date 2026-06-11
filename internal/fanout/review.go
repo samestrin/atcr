@@ -133,12 +133,21 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		return nil, err
 	}
 
-	id, err := ReviewID(req.IDOverride, req.Branch, req.Date, req.TimeSuffix,
-		func(candidate string) bool { return ReviewExists(req.Root, candidate) })
+	id, err := ReviewID(req.IDOverride, req.Branch, req.Date, req.TimeSuffix, nil)
 	if err != nil {
 		return nil, err
 	}
-	dir, err := ScaffoldReviewDir(req.Root, id)
+	var dir string
+	if req.IDOverride != "" {
+		// Explicit overrides are honored verbatim (existing contract), so the
+		// scaffold stays non-exclusive.
+		dir, err = ScaffoldReviewDir(req.Root, id)
+	} else {
+		// Derived ids claim their directory atomically: creation is the
+		// collision check, so two reviews of the same branch in the same second
+		// get distinct dirs instead of interleaving writes in one.
+		id, dir, err = claimReviewDir(req.Root, id, req.TimeSuffix)
+	}
 	if err != nil {
 		return nil, err
 	}

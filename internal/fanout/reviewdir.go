@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,19 +64,30 @@ func ReviewID(override, branch, date, collisionSuffix string, exists func(id str
 	return id, nil
 }
 
+// collisionCandidate returns the nth candidate in the collision sequence: the
+// base id for n==0, then id-suffix, then id-suffix-2, id-suffix-3, ...
+func collisionCandidate(id, suffix string, n int) string {
+	switch {
+	case n == 0:
+		return id
+	case n == 1:
+		return id + "-" + suffix
+	default:
+		return fmt.Sprintf("%s-%s-%d", id, suffix, n)
+	}
+}
+
 // resolveCollision returns the first non-colliding id, appending the suffix then
 // an incrementing counter so two reviews of the same branch within the same
 // second never scaffold into one another's directory. The loop is bounded by a
 // generous cap to avoid spinning on a pathological exists predicate.
 func resolveCollision(id, suffix string, exists func(string) bool) string {
-	if !exists(id) {
-		return id
+	for n := 0; n < 10000; n++ {
+		if candidate := collisionCandidate(id, suffix, n); !exists(candidate) {
+			return candidate
+		}
 	}
-	candidate := id + "-" + suffix
-	for n := 2; exists(candidate) && n < 10000; n++ {
-		candidate = fmt.Sprintf("%s-%s-%d", id, suffix, n)
-	}
-	return candidate
+	return collisionCandidate(id, suffix, 10000)
 }
 
 // validateReviewID rejects ids that could escape the reviews directory. The
@@ -141,15 +153,50 @@ func ReviewsRoot(root string) string {
 }
 
 // ReviewExists reports whether a review directory with id already exists under
-// root — the probe ReviewID's collision check uses.
+// root. It is an advisory probe only — derived-id collision handling claims the
+// directory atomically via claimReviewDir rather than relying on this check.
 func ReviewExists(root, id string) bool {
 	_, err := os.Stat(filepath.Join(ReviewsRoot(root), id))
 	return err == nil
 }
 
+// claimReviewDir atomically claims a review directory for a derived id: the
+// directory creation itself (os.Mkdir, which fails on an existing dir) is the
+// claim, so two reviews racing the same id can never scaffold into one
+// another's directory — the loser sees EEXIST and retries with the next
+// collision candidate. This replaces the Stat-probe-then-MkdirAll sequence,
+// whose check/use window let concurrent runs interleave writes in one dir.
+// Returns the claimed id and its review-dir path.
+func claimReviewDir(root, id, suffix string) (string, string, error) {
+	if err := os.MkdirAll(ReviewsRoot(root), 0o755); err != nil {
+		return "", "", fmt.Errorf("failed to create review directory: %w", err)
+	}
+	for n := 0; n < 10000; n++ {
+		candidate := collisionCandidate(id, suffix, n)
+		dir := filepath.Join(ReviewsRoot(root), candidate)
+		err := os.Mkdir(dir, 0o755)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", "", fmt.Errorf("failed to create review directory: %w", err)
+		}
+		for _, sub := range reviewSubdirs {
+			if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+				return "", "", fmt.Errorf("failed to create review directory: %w", err)
+			}
+		}
+		return candidate, dir, nil
+	}
+	return "", "", fmt.Errorf("failed to create review directory: too many collisions for id %q", id)
+}
+
 // ScaffoldReviewDir creates .atcr/reviews/<id>/ and its top-level subdirs (0755),
 // returning the review-dir path. Parent directories are created as needed
 // (AC 01-03 Edge Case 3). A creation failure carries the AC 01-03 message.
+// Creation is non-exclusive (MkdirAll): explicit id overrides are honored
+// verbatim even when the directory exists. Derived ids go through
+// claimReviewDir instead, which makes creation the atomic collision claim.
 func ScaffoldReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	for _, sub := range reviewSubdirs {
