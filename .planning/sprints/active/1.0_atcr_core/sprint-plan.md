@@ -465,12 +465,12 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** No CRITICAL/HIGH. All 8 findings fixed in 1.20.
 
-### 1.20 [ ] **[Precedence resolution - REFACTOR](plan/user-stories/02-agent-configuration.md)**
+### 1.20 [x] **[Precedence resolution - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.19 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 1.21 [ ] **[Fallback chain validation - RED](plan/user-stories/02-agent-configuration.md)**
+### 1.21 [x] **[Fallback chain validation - RED](plan/user-stories/02-agent-configuration.md)**
    **AC:** [02-03 Precedence and Validation](plan/acceptance-criteria/02-03-precedence-and-validation.md)
    1. Analyze AC, identify testable units
    2. Write tests: DFS cycle detection, dangling ref detection

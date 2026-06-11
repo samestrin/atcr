@@ -89,6 +89,9 @@ func LoadRegistry(path string) (*Registry, error) {
 	if err := reg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
+	if err := reg.ValidateFallbacks(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
 	reg.applyDefaults()
 	return &reg, nil
 }
