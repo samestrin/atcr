@@ -158,9 +158,14 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // on fail_on. fail_on is validated before any work (AC 04-03 Edge Case 5). A
 // review with no agent results is an error, not an empty success (Edge Case 3).
 func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReconcileArgs) (*mcpsdk.CallToolResult, ReconcileResult, error) {
+	// Gate precedence parity with the CLI: explicit fail_on argument > project
+	// config > user-global registry (no embedded default). Resolved and
+	// validated before any work (AC 04-03 Edge Case 5).
 	threshold := ""
-	if in.FailOn != "" {
-		t, err := reconcile.ParseSeverity(in.FailOn)
+	if raw, err := registry.ResolveGateThreshold(e.root, in.FailOn); err != nil {
+		return nil, ReconcileResult{}, err
+	} else if raw != "" {
+		t, err := reconcile.ParseSeverity(raw)
 		if err != nil {
 			return nil, ReconcileResult{}, err
 		}

@@ -199,6 +199,7 @@ func isolateUserConfig(t *testing.T) {
 // --- atcr_reconcile ------------------------------------------------------
 
 func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
+	isolateUserConfig(t)
 	root := t.TempDir()
 	reviewFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
@@ -275,6 +276,7 @@ func TestReconcileHandler_PreCancelledContext(t *testing.T) {
 }
 
 func TestReconcileHandler_NoResults(t *testing.T) {
+	isolateUserConfig(t)
 	root := t.TempDir()
 	id := "2026-06-10_empty"
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr", "reviews", id, "sources"), 0o755))
@@ -289,6 +291,7 @@ func TestReconcileHandler_NoResults(t *testing.T) {
 // --- atcr_report ---------------------------------------------------------
 
 func TestReportHandler_Formats(t *testing.T) {
+	isolateUserConfig(t)
 	root := t.TempDir()
 	id := reviewFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
@@ -308,6 +311,7 @@ func TestReportHandler_Formats(t *testing.T) {
 }
 
 func TestReportHandler_InvalidFormatRejected(t *testing.T) {
+	isolateUserConfig(t)
 	root := t.TempDir()
 	reviewFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})
