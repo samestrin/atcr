@@ -302,14 +302,16 @@ func (e *engine) resolveReviewDir(idOrPath string) (dir, id string, err error) {
 // to its callers: the CLI guarantees them in validateRangeFlags, and the MCP
 // handlers are a second caller that must do the same. Without this, merge_commit
 // alongside base+head is silently ignored (the explicit branch wins) and
-// merge_commit+head surfaces an error naming CLI flags that do not exist in the
-// MCP arg vocabulary. The error is phrased in json field names (AC 04-04).
+// invalid pairings surface errors naming CLI flags that do not exist in the MCP
+// arg vocabulary. The rules mirror validateRangeFlags: base-only is valid (head
+// defaults to HEAD, the natural CI-gate invocation); head requires base. Errors
+// are phrased in json field names (AC 04-04).
 func validateRangeArgs(base, head, mergeCommit string) error {
 	if mergeCommit != "" && (base != "" || head != "") {
 		return fmt.Errorf("merge_commit cannot be combined with base or head")
 	}
-	if (base == "") != (head == "") {
-		return fmt.Errorf("base and head must be provided together")
+	if head != "" && base == "" {
+		return fmt.Errorf("head requires base")
 	}
 	return nil
 }
