@@ -138,7 +138,10 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	empty := true
+	// Only a roster that resolved to payload modes can be "empty": a roster of
+	// unknown agents builds zero modes and must keep its "not found in
+	// registry" diagnostic from buildSlots below.
+	empty := len(payloads) > 0
 	for _, mp := range payloads {
 		if mp.FileCount > 0 {
 			empty = false
