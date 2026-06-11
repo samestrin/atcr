@@ -119,8 +119,9 @@ type chatResponse struct {
 }
 
 // Complete invokes the provider and returns the assistant message content.
-// Retries on 429/5xx with tuned backoff; other non-2xx statuses and parse
-// failures fail immediately. The API key value never appears in any error.
+// Retries on 429/5xx and transport-level errors with tuned backoff; other
+// non-2xx statuses and parse failures fail immediately. The API key value
+// never appears in any error.
 func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 	key := os.Getenv(inv.APIKeyEnv)
 	if key == "" {
@@ -157,8 +158,18 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 		content, status, err := c.attempt(ctx, endpoint, key, body)
 		switch {
 		case status == 0:
-			// Transport-level failure (context, connection). Not retried.
-			return "", err
+			// Context cancellation/deadline must return immediately so timeout
+			// classification stays correct; other transport-level failures
+			// (connection reset, EOF, DNS blip) are as transient as a 5xx and
+			// get the same backoff schedule.
+			if ctx.Err() != nil {
+				return "", err
+			}
+			lastErr = err
+			if attempt < c.maxRetries {
+				continue
+			}
+			return "", fmt.Errorf("exhausted retries: %w", lastErr)
 		case status == http.StatusOK:
 			// A 200 with an unparseable body is a hard failure, not a retry.
 			if err != nil {
