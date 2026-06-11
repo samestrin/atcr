@@ -89,7 +89,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
 	// them for inspection (AC 03-02 Error Scenario 3).
 	if threshold != "" {
-		rec, rerr := reconcile.RunReconcile(result.Dir, nil, reconcile.Options{
+		rec, rerr := reconcile.RunReconcile(cmd.Context(), result.Dir, nil, reconcile.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
 		})

@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,16 +64,24 @@ func CountAtOrAbove(findings []Merged, threshold string) int {
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic
 // pipeline, and writes the artifacts to reviewDir/reconciled, returning the
 // Result. allow restricts which immediate source children are read (empty = open
-// discovery). It is the single engine entry the CLI and MCP both call.
+// discovery). It is the single engine entry the CLI and MCP both call. ctx is
+// checked between the Discover, Reconcile, and Emit stages so a client cancel or
+// server shutdown aborts the pipeline without emitting partial artifacts.
 //
 // Adjudication re-invocation: if reviewDir/reconciled/adjudication.json exists
 // (written by the Skill), its decisions are validated against the prior
 // ambiguous.json, the merge decisions are applied, and the pre-adjudication
 // ambiguous.json is preserved as ambiguous.original.json before re-emit (AC
 // 05-04). An unknown cluster id or a malformed decisions file is a hard error.
-func RunReconcile(reviewDir string, allow []string, opts Options) (Result, error) {
+func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Options) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	sources, err := Discover(filepath.Join(reviewDir, sourcesSubdir), allow)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
 
@@ -104,6 +113,10 @@ func RunReconcile(reviewDir string, allow []string, opts Options) (Result, error
 	}
 
 	res := Reconcile(sources, opts)
+
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 
 	// Preserve the pre-adjudication sidecar before Emit overwrites ambiguous.json,
 	// so the audit chain (original gray-zone clusters) survives the re-invocation.

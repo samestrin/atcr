@@ -47,7 +47,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	sources, _ := cmd.Flags().GetStringSlice("sources")
-	res, err := reconcile.RunReconcile(reviewDir, sources, reconcile.Options{
+	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reconcile.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
 	})

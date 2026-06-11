@@ -157,7 +157,7 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // handleReconcile merges a review's sources into reconciled artifacts and gates
 // on fail_on. fail_on is validated before any work (AC 04-03 Edge Case 5). A
 // review with no agent results is an error, not an empty success (Edge Case 3).
-func (e *engine) handleReconcile(_ context.Context, _ *mcpsdk.CallToolRequest, in ReconcileArgs) (*mcpsdk.CallToolResult, ReconcileResult, error) {
+func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReconcileArgs) (*mcpsdk.CallToolResult, ReconcileResult, error) {
 	threshold := ""
 	if in.FailOn != "" {
 		t, err := reconcile.ParseSeverity(in.FailOn)
@@ -172,7 +172,7 @@ func (e *engine) handleReconcile(_ context.Context, _ *mcpsdk.CallToolRequest, i
 		return nil, ReconcileResult{}, err
 	}
 
-	res, err := reconcile.RunReconcile(dir, nil, reconcile.Options{
+	res, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 	})
@@ -200,7 +200,10 @@ func (e *engine) handleReconcile(_ context.Context, _ *mcpsdk.CallToolRequest, i
 // handleReport renders a view over a review's reconciled findings. The format is
 // validated both by the JSON Schema enum (before dispatch) and here as defense
 // in depth for programmatic/in-process callers (AC 04-04 Edge Case 2).
-func (e *engine) handleReport(_ context.Context, _ *mcpsdk.CallToolRequest, in ReportArgs) (*mcpsdk.CallToolResult, ReportResult, error) {
+func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in ReportArgs) (*mcpsdk.CallToolResult, ReportResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, ReportResult{}, err
+	}
 	format := in.Format
 	if format == "" {
 		format = report.FormatMarkdown
@@ -232,7 +235,10 @@ func (e *engine) handleReport(_ context.Context, _ *mcpsdk.CallToolRequest, in R
 // handleStatus reports a review's fan-out progress, read from manifest.json and
 // the pool summary.json. A missing review is "not found"; a corrupt manifest is
 // a structured error, never a guessed result (AC 04-04 Edge Case 6).
-func (e *engine) handleStatus(_ context.Context, _ *mcpsdk.CallToolRequest, in StatusArgs) (*mcpsdk.CallToolResult, StatusResult, error) {
+func (e *engine) handleStatus(ctx context.Context, _ *mcpsdk.CallToolRequest, in StatusArgs) (*mcpsdk.CallToolResult, StatusResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, StatusResult{}, err
+	}
 	dir, id, err := e.resolveReviewDir(in.IDOrPath)
 	if err != nil {
 		return nil, StatusResult{}, err

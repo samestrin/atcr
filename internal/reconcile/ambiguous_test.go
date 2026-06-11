@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -37,7 +38,7 @@ func writeGrayReview(t *testing.T) string {
 
 func runRecon(t *testing.T, dir string) Result {
 	t.Helper()
-	res, err := RunReconcile(dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	res, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
 	require.NoError(t, err)
 	return res
 }
@@ -162,7 +163,7 @@ func TestAdjudication_UnknownClusterIDRejected(t *testing.T) {
 	dir := writeGrayReview(t)
 	runRecon(t, dir)
 	writeAdjudication(t, dir, "amb-deadbeef", DecisionMerge)
-	_, err := RunReconcile(dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown cluster id")
 }
@@ -172,7 +173,7 @@ func TestAdjudication_MalformedRejected(t *testing.T) {
 	runRecon(t, dir)
 	// Zero-byte adjudication.json is malformed.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", AdjudicationJSON), nil, 0o644))
-	_, err := RunReconcile(dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
 	require.Error(t, err)
 }
 
@@ -180,7 +181,7 @@ func TestAdjudication_InvalidDecisionVerb(t *testing.T) {
 	dir := writeGrayReview(t)
 	id := runRecon(t, dir).Ambiguous[0].ID
 	writeAdjudication(t, dir, id, "frobnicate")
-	_, err := RunReconcile(dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid adjudication decision")
 }

@@ -46,7 +46,7 @@ func TestRunReconcile_EndToEnd(t *testing.T) {
 	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
 		"HIGH|a.go:1|same issue text|fix|security|10|ev|host\n")
 
-	res, err := RunReconcile(reviewDir, nil, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
 	require.NoError(t, err)
 	require.Len(t, res.Findings, 1)
 	assert.Equal(t, ConfHigh, res.Findings[0].Confidence)
@@ -73,14 +73,14 @@ func TestRunReconcile_PreCancelledContext(t *testing.T) {
 
 func TestRunReconcile_MissingSourcesDirErrors(t *testing.T) {
 	// No sources/ dir at all → discovery error (caller maps to exit 2).
-	_, err := RunReconcile(t.TempDir(), nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
+	_, err := RunReconcile(context.Background(), t.TempDir(), nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
 	assert.Error(t, err)
 }
 
 func TestRunReconcile_EmptySourcesProducesEmptyArtifacts(t *testing.T) {
 	reviewDir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(reviewDir, "sources"), 0o755))
-	res, err := RunReconcile(reviewDir, nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
 	require.NoError(t, err)
 	assert.Equal(t, 0, res.Summary.TotalFindings)
 	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevLow), "no findings → gate passes")
