@@ -193,7 +193,6 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 	return "", fmt.Errorf("exhausted retries: %w", lastErr)
 }
 
-
 // httpStatusError formats a non-200 failure, appending the sanitized
 // error-body snippet when the provider sent one.
 func httpStatusError(status int, snippet string) error {
