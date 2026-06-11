@@ -274,24 +274,24 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** No CRITICAL/HIGH. MEDIUMs + cheap LOWs fixed in 1.4; remaining LOWs appended to `tech-debt-captured.md` (TD-001..TD-003).
 
-### 1.4 [ ] **[Scaffold Go module + cobra CLI - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 1.4 [x] **[Scaffold Go module + cobra CLI - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 1.3 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 1.5 [ ] **[Internal package boundaries - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 1.5 [x] **[Internal package boundaries - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-01 End-to-End Review](plan/acceptance-criteria/01-01-end-to-end-review.md)
    1. Analyze AC, identify testable units
    2. Write tests: package imports compile, no circular deps
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 20 min
 
-### 1.6 [ ] **[Internal package boundaries - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 1.6 [x] **[Internal package boundaries - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 40 min
 
-### 1.7 [ ] **[Internal package boundaries - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 1.6]
+### 1.7 [x] **[Internal package boundaries - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/boundaries_test.go, internal/*/doc.go (9 packages)
 
    **Spawn a fresh subagent** via the Agent tool to perform this review.
 
@@ -311,13 +311,16 @@ Documentation available in [documentation/](plan/documentation/):
    **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | internal/boundaries_test.go:46 | TestImports/XTestImports ignored — test files can import forbidden packages undetected | Union all import sets |
+   | HIGH | internal/boundaries_test.go:51,60 | Allowlist completeness never enforced — new internal package escapes review | Compare directory listing vs allowlist keys |
+   | HIGH | internal/boundaries_test.go:44 | ImportDir non-recursive — subpackages bypass the check | WalkDir the internal/ tree |
+   | MEDIUM | internal/boundaries_test.go:44 | Host build constraints exclude tagged files from the check | Parse all .go files with go/parser ImportsOnly |
+   | LOW | internal/boundaries_test.go:70 | cmd prefix match also matches cmdutil | Match modulePath+"/cmd/" or equality |
+   | LOW | internal/boundaries_test.go:67 | Module-root import falls through checks | Treat imp == modulePath as in-module |
+   | LOW | internal/boundaries_test.go:36-38 | runtime.Caller path breaks under -trimpath | Walk up from cwd to go.mod |
+   | LOW | internal/boundaries_test.go:21-31 | Allowlist itself never checked for cycles | DFS acyclicity assertion |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 1.8, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 3 HIGH — fixed in 1.8 (full rewrite of the boundary test addressing all 8 findings) before proceeding.
 
 ### 1.8 [ ] **[Internal package boundaries - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 1.7 (if any)
