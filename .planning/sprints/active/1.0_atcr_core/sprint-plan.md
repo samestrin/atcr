@@ -834,33 +834,35 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.33 [ ] **[Payload template vars + per-mode scope rules - RED](plan/user-stories/06-payload-mode-selection.md)**
+### 2.33 [x] **[Payload template vars + per-mode scope rules - RED](plan/user-stories/06-payload-mode-selection.md)**
    **AC:** [06-04 Payload Templates and Documentation](plan/acceptance-criteria/06-04-payload-templates-documentation.md)
    1. Analyze AC, identify testable units
    2. Write tests: {{.Payload}}, {{.PayloadMode}}, {{.FileCount}}, {{.BaseRef}}, {{.HeadRef}}, {{.AgentName}} render; `Option("missingkey=error")` → unknown variable is an error; payload content containing `{{` treated as data (never parsed); per-mode scope rule injection
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 2.34 [ ] **[Payload template vars + per-mode scope rules - GREEN](plan/user-stories/06-payload-mode-selection.md)**
+### 2.34 [x] **[Payload template vars + per-mode scope rules - GREEN](plan/user-stories/06-payload-mode-selection.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1 hour
 
-### 2.35 [ ] **[Payload template vars + per-mode scope rules - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.34]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.34`).
+### 2.35 [x] **[Payload template vars + per-mode scope rules - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
+   **Changed Files:** internal/payload/{template.go, scope.go, template_test.go}. docs/payload-modes.md already satisfies AC 06-04 (decision table + per-mode guidance from the Phase 1 stub; Phase 5 polishes).
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: templates`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH→info | template.go RenderPrompt | persona `{{define}}`/`{{template}}` directives are honored | Not a vuln: personas are developer-controlled/trusted per AC 06-04; documented as intended in 2.36. Untrusted diff reaches only `{{.Payload}}` as data (proven by new round-trip test) |
+   | MEDIUM | template.go missingkey comment | comment implied missingkey guards struct fields (it only guards map keys) | Fixed in 2.36: comment corrected |
+   | MEDIUM | template.go unknown-field regex | Go-version-coupled error wording | Already covered: TestRenderPrompt_UnknownVar asserts exact Field extraction (golden test breaks if wording changes) |
+   | LOW | template.go Error() | `switch{}` boolean precedence readability | Fixed in 2.36: explicit if-guards |
+   | LOW | template_test.go | payload-with-directives threat not asserted | Fixed in 2.36: added directive round-trip test |
+   | LOW | template_test.go docs check | relative-path docs test is non-hermetic | Kept: AC 06-04 test case 10 mandates a docs-existence check |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.36, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** No genuine CRITICAL/HIGH — the flagged directive behavior is safe under the trusted-persona model and now documented + proven. MEDIUM/LOW addressed inline or already covered. Adversarial review passed. (TD-005 typed PayloadContext contract now defined; all-personas-render test lands in 2.45.)
 
-### 2.36 [ ] **[Payload template vars + per-mode scope rules - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
+### 2.36 [x] **[Payload template vars + per-mode scope rules - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
    1. Fix CRITICAL/HIGH issues from 2.35 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
