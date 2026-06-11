@@ -233,6 +233,8 @@ func TestReconcileHandler_NoResults(t *testing.T) {
 	cs := connectTest(t, root, fakeCompleter{})
 	msg := callErr(t, cs, ToolReconcile, map[string]any{})
 	assert.Contains(t, msg, "no agent results found")
+	assert.NoDirExists(t, filepath.Join(root, ".atcr", "reviews", id, "reconciled"),
+		"fail-before-emit: an empty review must not get reconciled artifacts as a side effect")
 }
 
 // --- atcr_report ---------------------------------------------------------
