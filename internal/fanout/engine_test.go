@@ -255,6 +255,26 @@ func TestRun_SerialShortCircuitStampsElapsedDuration(t *testing.T) {
 		"short-circuited slot must record elapsed wall-clock, not 0")
 }
 
+// DurationMS is slot wall time: a slot whose primary burned time before
+// failing must report primary + fallback duration, not just the winner's.
+func TestInvokeSlot_DurationCoversWholeChain(t *testing.T) {
+	f := newFake()
+	f.delay = 30 * time.Millisecond // every attempt takes ~30ms
+	f.failFor["primary"] = errors.New("boom")
+	e := NewEngine(f)
+
+	slot := Slot{
+		Primary:   Agent{Name: "primary", Invocation: llmclient.Invocation{Model: "primary"}},
+		Fallbacks: []Agent{{Name: "fb", Invocation: llmclient.Invocation{Model: "fb"}}},
+	}
+	r := e.invokeSlot(context.Background(), slot)
+
+	require.Equal(t, StatusOK, r.Status)
+	require.True(t, r.FallbackUsed)
+	assert.GreaterOrEqual(t, r.DurationMS, int64(60),
+		"slot duration must cover the failed primary attempt plus the fallback, not just the winner")
+}
+
 func TestRun_EmptyRosterReturnsNoResults(t *testing.T) {
 	e := NewEngine(newFake())
 	results := e.Run(context.Background(), nil)
