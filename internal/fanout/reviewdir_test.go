@@ -165,6 +165,38 @@ func TestWriteAndReadLatest(t *testing.T) {
 	assert.Equal(t, "2026-06-10_feature", got)
 }
 
+// A WriteManifest failure after WritePool leaves manifest.json saying
+// partial:false while summary.json (the completion signal) says true.
+// ReadManifestPartial must agree with the summary — the same source of truth
+// ReadReviewStatus uses — not the stale manifest.
+func TestReadManifestPartial_SummaryIsSourceOfTruth(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_partial")
+	require.NoError(t, err)
+
+	// Stale manifest: finalization failed, Partial still false.
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{Partial: false}))
+
+	// Completed summary: the run was partial.
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	sum, err := json.Marshal(PoolSummary{Total: 2, Succeeded: 1, Failed: 1, Partial: true})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), sum, 0o644))
+
+	assert.True(t, ReadManifestPartial(dir), "summary.json says partial:true; stale manifest must not override it")
+}
+
+// Without a summary (fan-out still running, or a hand-assembled review) the
+// manifest remains the only available signal and is still honored.
+func TestReadManifestPartial_FallsBackToManifestWhenNoSummary(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_fallback")
+	require.NoError(t, err)
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{Partial: true}))
+	assert.True(t, ReadManifestPartial(dir))
+}
+
 func TestWriteManifest_AtReviewRootWithFields(t *testing.T) {
 	root := t.TempDir()
 	dir, err := ScaffoldReviewDir(root, "2026-06-10_feature")
