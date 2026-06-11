@@ -226,6 +226,35 @@ func TestInvokeAgent_RealErrorUnderCancelledCtxIsFailedNotTimeout(t *testing.T) 
 	assert.ErrorContains(t, r.Err, "401")
 }
 
+// A nil completer is a programming error; it must fail loudly at construction
+// rather than nil-panicking deep inside the first agent invocation.
+func TestNewEngine_NilCompleterPanics(t *testing.T) {
+	assert.Panics(t, func() { NewEngine(nil) },
+		"NewEngine(nil) must panic at construction, not inside invokeAgent")
+}
+
+// A serial slot short-circuited by cancellation must record the wall-clock that
+// elapsed before the cancellation, not 0.
+func TestRun_SerialShortCircuitStampsElapsedDuration(t *testing.T) {
+	f := newFake()
+	f.delay = time.Hour // first serial slot blocks until the deadline fires
+	e := NewEngine(f)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	slots := []Slot{
+		{Primary: Agent{Name: "s1", Invocation: llmclient.Invocation{Model: "s1"}}, Serial: true},
+		{Primary: Agent{Name: "s2", Invocation: llmclient.Invocation{Model: "s2"}}, Serial: true},
+	}
+	results := e.Run(ctx, slots)
+
+	require.Len(t, results, 2)
+	assert.Equal(t, StatusTimeout, results[1].Status)
+	assert.Greater(t, results[1].DurationMS, int64(0),
+		"short-circuited slot must record elapsed wall-clock, not 0")
+}
+
 func TestRun_EmptyRosterReturnsNoResults(t *testing.T) {
 	e := NewEngine(newFake())
 	results := e.Run(context.Background(), nil)
