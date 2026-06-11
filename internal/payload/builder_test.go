@@ -432,3 +432,28 @@ func TestRenamedFileWithOneLineEdit_KeepsRenamePairing(t *testing.T) {
 	assert.Contains(t, body, "CHANGED LINES 4-4",
 		"only the edited line must be marked changed, not the whole file")
 }
+
+// The flat Build* entry points must be byte-identical to joining BuildEntries
+// — a caller picking the obvious top-level API must see exactly what the
+// persisted payload/<mode>.txt artifacts contain. A binary file is included
+// because that is where verbatim git diff output (raw binary-diff lines)
+// diverges from the entries path's binary marker.
+func TestBuild_EquivalentToJoinedEntries(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "foo.go", goFileV1)
+	commitAll(t, dir, "v1")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{0x00, 0x01, 0x02, 0x00, 0xff}, 0o644))
+	base := commitAll(t, dir, "add binary")
+	write(t, dir, "foo.go", goFileV2)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{0xff, 0x00, 0x01, 0x00}, 0o644))
+	head := commitAll(t, dir, "v2")
+	ctx := context.Background()
+
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks, ModeFiles} {
+		flat, err := Build(ctx, mode, dir, base, head)
+		require.NoError(t, err, "mode %s", mode)
+		joined, err := joinEntries(BuildEntries(ctx, mode, dir, base, head))
+		require.NoError(t, err, "mode %s", mode)
+		assert.Equal(t, joined, flat, "Build(%s) diverges from joined BuildEntries", mode)
+	}
+}
