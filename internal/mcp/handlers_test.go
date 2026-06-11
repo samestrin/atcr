@@ -103,6 +103,22 @@ func reviewFixture(t *testing.T, root string) string {
 	return id
 }
 
+// inProgressFixture builds a review whose fan-out is still running: manifest
+// and a host source exist, but the pool summary.json (the completion signal)
+// has not been written. Returns the review id.
+func inProgressFixture(t *testing.T, root string) string {
+	t.Helper()
+	id := "2026-06-10_running"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	writeFindingsFile(t, filepath.Join(dir, "sources", "host", "findings.txt"),
+		"CRITICAL|auth.go:3|Unchecked call to b()|Guard the call|security|15|b() unchecked|host")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"aaa","head":"bbb","roster":["greta"],"partial":false}`), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	return id
+}
+
 // pollStatus polls atcr_status until the review leaves the in_progress state
 // (the background fan-out writes summary.json on completion).
 func pollStatus(t *testing.T, cs *mcpsdk.ClientSession, id string) StatusResult {
@@ -211,6 +227,21 @@ func TestReconcileHandler_InvalidFailOn(t *testing.T) {
 	assert.Contains(t, msg, "invalid severity")
 }
 
+// TestReconcileHandler_InProgressRejected verifies reconciling a review whose
+// fan-out has not finished (summary.json absent) is rejected before any
+// reconcile work, instead of silently emitting a verdict from a partial agent
+// set or the misleading "no agent results found" error.
+func TestReconcileHandler_InProgressRejected(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	id := inProgressFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolReconcile, map[string]any{})
+	assert.Contains(t, msg, "still in_progress")
+	assert.NoDirExists(t, filepath.Join(root, ".atcr", "reviews", id, "reconciled"),
+		"an in-progress review must not get reconciled artifacts")
+}
+
 // TestReconcileHandler_PreCancelledContext verifies the handler passes its ctx
 // through to RunReconcile instead of discarding it: a pre-cancelled context
 // aborts the reconcile pipeline (risk profile: handlers honor ctx cancellation).
@@ -273,6 +304,16 @@ func TestReportHandler_InvalidFormatRejected(t *testing.T) {
 		require.True(t, res.IsError, "invalid format must be rejected")
 		assert.Contains(t, contentText(res), "xml")
 	}
+}
+
+// TestReportHandler_InProgressRejected verifies the missing-findings path
+// distinguishes "fan-out still running" from "reconcile not run yet".
+func TestReportHandler_InProgressRejected(t *testing.T) {
+	root := t.TempDir()
+	inProgressFixture(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolReport, map[string]any{})
+	assert.Contains(t, msg, "still in_progress")
 }
 
 func TestReportHandler_NoReconciliation(t *testing.T) {

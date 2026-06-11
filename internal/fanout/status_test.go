@@ -10,6 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestEnsureReviewComplete(t *testing.T) {
+	dir := t.TempDir()
+	// Not fan-out-managed (no manifest.json, e.g. a hand-assembled CLI anchor):
+	// nothing to guard.
+	require.NoError(t, EnsureReviewComplete(dir, "x"))
+	// Manifest present, no pool summary: the fan-out is still running.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"partial":false}`), 0o644))
+	err := EnsureReviewComplete(dir, "x")
+	require.ErrorIs(t, err, ErrReviewInProgress)
+	assert.Contains(t, err.Error(), "still in_progress")
+	// Summary written: fan-out complete, guard passes.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
+	require.NoError(t, EnsureReviewComplete(dir, "x"))
+}
+
 func TestStatusJSON_RecordsTruncation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	s := &AgentStatus{

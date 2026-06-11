@@ -47,6 +47,19 @@ func fixtureReview(t *testing.T, id string, files map[string]string) {
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte(id+"\n"), 0o644))
 }
 
+// TestReconcileCmd_InProgressReviewRejected verifies a fan-out-managed review
+// (manifest.json present) without its completion signal (summary.json) is a
+// usage error rather than a silent partial reconcile.
+func TestReconcileCmd_InProgressReviewRejected(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|x|f|sec|10|ev|host\n",
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "reviews", "r", "manifest.json"),
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"partial":false}`), 0o644))
+	require.Equal(t, 2, execCmd(t, "reconcile", "r"))
+}
+
 func TestReconcileCmd_FailOnExitCodes(t *testing.T) {
 	isolate(t)
 	fixtureReview(t, "2026-06-10_feat", map[string]string{
