@@ -78,7 +78,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 
 	result, err := fanout.RunReview(ctx, llmclient.New(), cfg, req)
 	if result != nil {
-		fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 	}
 	if err != nil {
@@ -96,7 +96,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
 		return gateFindings(rec, threshold)
 	}
 	return nil

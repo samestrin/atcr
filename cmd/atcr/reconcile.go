@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -25,9 +26,10 @@ func newReconcileCmd() *cobra.Command {
 }
 
 func runReconcile(cmd *cobra.Command, args []string) error {
-	// Validate --fail-on against the closed enum BEFORE any I/O so a bad value
-	// fails fast as a usage error (exit 2), never after partial work.
-	threshold, err := failOnThreshold(cmd)
+	// Resolve the gate threshold (validated against the closed enum) BEFORE any
+	// I/O so a bad value fails fast as a usage error (exit 2). The --fail-on flag
+	// wins; absent it, the project config's fail_on is the default gate.
+	threshold, err := resolveGateThreshold(cmd)
 	if err != nil {
 		return err
 	}
@@ -52,7 +54,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		return usageError(err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s) from %d source(s) -> %s\n",
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
 
@@ -61,13 +63,39 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 
 // failOnThreshold reads and validates the --fail-on flag, returning the
 // canonical threshold ("" when the flag is unset). An invalid value is a usage
-// error (exit 2).
+// error (exit 2). Used by the one-shot review path, where the flag presence is
+// itself the trigger.
 func failOnThreshold(cmd *cobra.Command) (string, error) {
 	v, _ := cmd.Flags().GetString("fail-on")
 	if v == "" {
 		return "", nil
 	}
 	t, err := reconcile.ParseSeverity(v)
+	if err != nil {
+		return "", usageError(err)
+	}
+	return t, nil
+}
+
+// resolveGateThreshold resolves the reconcile gate threshold honoring the
+// AC 03-02 precedence: the explicit --fail-on flag overrides the project
+// config's fail_on (the project-level default gate). When neither is set — an
+// unconfigured project with no flag — the gate is a no-op (""), so reconcile
+// stays opt-in rather than spuriously failing on the embedded default. An
+// invalid value at either source is a usage error (exit 2).
+func resolveGateThreshold(cmd *cobra.Command) (string, error) {
+	if v, _ := cmd.Flags().GetString("fail-on"); v != "" {
+		t, err := reconcile.ParseSeverity(v)
+		if err != nil {
+			return "", usageError(err)
+		}
+		return t, nil
+	}
+	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
+	if err != nil || proj.FailOn == "" {
+		return "", nil // no project config or no configured default → no gate
+	}
+	t, err := reconcile.ParseSeverity(proj.FailOn)
 	if err != nil {
 		return "", usageError(err)
 	}

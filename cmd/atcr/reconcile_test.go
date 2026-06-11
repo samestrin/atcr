@@ -53,6 +53,24 @@ func TestReconcileCmd_FailOnExitCodes(t *testing.T) {
 	require.Equal(t, 1, execCmd(t, "reconcile", "--fail-on", "high", "2026-06-10_feat"))
 }
 
+func TestReconcileCmd_ProjectConfigFailOnGatesByDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|x|f|sec|10|ev|host\n",
+	})
+	// No .atcr/config.yaml → no default gate → exit 0 even with a HIGH finding.
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+
+	// A project config with fail_on: HIGH gates by default (no flag) → exit 1.
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents:\n  - host\nfail_on: HIGH\n"), 0o644))
+	require.Equal(t, 1, execCmd(t, "reconcile", "r"))
+
+	// An explicit --fail-on CRITICAL flag overrides the config default → exit 0.
+	require.Equal(t, 0, execCmd(t, "reconcile", "--fail-on", "CRITICAL", "r"))
+}
+
 func TestReconcileCmd_InvalidFailOnIsUsageError(t *testing.T) {
 	t.Chdir(t.TempDir())
 	fixtureReview(t, "r", map[string]string{

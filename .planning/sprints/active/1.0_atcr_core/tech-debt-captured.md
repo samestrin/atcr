@@ -147,3 +147,10 @@
 **Issue:** `--output` calls os.WriteFile on the user-supplied path with no validation — an absolute path, `..`, or a symlink target is written verbatim (writes through a symlink to its target).
 **Why accepted:** This is intended CLI behavior, equivalent to shell redirection (`atcr report > file`): the user names where their own report goes, on their own machine. Same trust model as the verbatim path-anchor branch. No untrusted input reaches this path in normal use.
 **Fix in:** v2 (only if hardening is requested) — open with O_NOFOLLOW and/or constrain the target under the review dir for sandboxed/CI contexts.
+
+## TD-022 — unused stream migration helpers + one-way disagreement folding (LOW)
+**Origin:** Phase 3, task 3.42 gate review, 2026-06-10
+**File:** internal/stream/writer.go:77 (AsReconciled), internal/stream/parser.go (ParseReconciled), internal/reconcile/emit.go (RenderText)
+**Issue:** (1) `Finding.AsReconciled` and `stream.ParseReconciled` have only test callers — `reconcile.Merge` builds the 9-col finding from scratch and `report` reads findings.json, so neither helper is on the integration path. (2) The reconciled `findings.txt` folds the disagreement annotation into EVIDENCE; re-parsing it carries that text back inside EVIDENCE (lossy, no dedicated column) — the 9-col round-trip is one-way in practice.
+**Why accepted:** Both are sound public surface for external consumers (the findings.txt contract is documented for downstream tools like `/reconcile-code-review`); the 9-col round-trip is covered by unit tests even if no production caller re-ingests the txt. findings.json (not findings.txt) is the structured re-read path.
+**Fix in:** v2 — if Phase 4 MCP re-ingests reconciled findings.txt, add a DISAGREEMENT column or route Merge through AsReconciled; otherwise document EVIDENCE-folding as one-way.
