@@ -148,7 +148,10 @@ func preserveOriginalAmbiguous(reconDir string) error {
 	if err != nil {
 		return fmt.Errorf("reading ambiguous.json to preserve: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(reconDir, OriginalAmbiguousJSON), data, 0o644); err != nil {
+	// writeFileAtomic (temp + rename), like every other reconciled/ artifact: a
+	// crash mid-write must never leave a truncated baseline — the stat guard
+	// above would then block it from ever being repaired from the true original.
+	if err := writeFileAtomic(filepath.Join(reconDir, OriginalAmbiguousJSON), data); err != nil {
 		return fmt.Errorf("writing %s: %w", OriginalAmbiguousJSON, err)
 	}
 	return nil
