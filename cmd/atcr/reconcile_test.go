@@ -10,6 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// isolate chdirs into a fresh temp working dir AND points HOME/XDG at another
+// temp dir, so resolveGateThreshold's registry probe (~/.config/atcr) cannot
+// pick up a real registry on the dev machine — tests stay hermetic.
+func isolate(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Chdir(t.TempDir())
+}
+
 // execCmd runs the atcr command tree with args and returns the resolved exit
 // code (the same mapping main() applies).
 func execCmd(t *testing.T, args ...string) int {
@@ -37,7 +48,7 @@ func fixtureReview(t *testing.T, id string, files map[string]string) {
 }
 
 func TestReconcileCmd_FailOnExitCodes(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReview(t, "2026-06-10_feat", map[string]string{
 		"sources/pool/raw/agent/greta/findings.txt": "HIGH|a.go:1|same issue here|fix|security|10|ev|greta\n",
 		"sources/host/findings.txt":                 "HIGH|a.go:1|same issue here|fix|security|10|ev|host\n",
@@ -54,7 +65,7 @@ func TestReconcileCmd_FailOnExitCodes(t *testing.T) {
 }
 
 func TestReconcileCmd_ProjectConfigFailOnGatesByDefault(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "HIGH|a.go:1|x|f|sec|10|ev|host\n",
 	})
@@ -71,8 +82,21 @@ func TestReconcileCmd_ProjectConfigFailOnGatesByDefault(t *testing.T) {
 	require.Equal(t, 0, execCmd(t, "reconcile", "--fail-on", "CRITICAL", "r"))
 }
 
+func TestReconcileCmd_BrokenProjectConfigFailsLoudly(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|x|f|sec|10|ev|host\n",
+	})
+	// A present-but-invalid project config must fail (exit 2), not silently
+	// disable the gate.
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents: []\n"), 0o644)) // empty roster → load error
+	require.Equal(t, 2, execCmd(t, "reconcile", "r"))
+}
+
 func TestReconcileCmd_InvalidFailOnIsUsageError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReview(t, "r", map[string]string{
 		"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
 	})
@@ -81,7 +105,7 @@ func TestReconcileCmd_InvalidFailOnIsUsageError(t *testing.T) {
 }
 
 func TestReconcileCmd_DefaultsToLatest(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReview(t, "2026-06-10_latest", map[string]string{
 		"sources/host/findings.txt": "CRITICAL|a.go:1|boom|f|security|10|ev|host\n",
 	})
@@ -92,21 +116,21 @@ func TestReconcileCmd_DefaultsToLatest(t *testing.T) {
 }
 
 func TestReconcileCmd_MissingReviewIsUsageError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	// No review at all → exit 2 (run atcr review first).
 	require.Equal(t, 2, execCmd(t, "reconcile"))
 	require.Equal(t, 2, execCmd(t, "reconcile", "nonexistent-id"))
 }
 
 func TestReconcileCmd_TraversalIdRejected(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	// A bare ".." id must not resolve above .atcr/reviews/ — exit 2, not a read
 	// of the parent directory.
 	require.Equal(t, 2, execCmd(t, "reconcile", ".."))
 }
 
 func TestReconcileCmd_SourcesAllowlist(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReview(t, "r", map[string]string{
 		"sources/pool/raw/agent/greta/findings.txt": "HIGH|a.go:1|p|f|sec|10|ev|greta\n",
 		"sources/host/findings.txt":                 "CRITICAL|b.go:2|p|f|sec|10|ev|host\n",

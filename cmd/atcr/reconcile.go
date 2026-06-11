@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -77,29 +79,58 @@ func failOnThreshold(cmd *cobra.Command) (string, error) {
 	return t, nil
 }
 
-// resolveGateThreshold resolves the reconcile gate threshold honoring the
-// AC 03-02 precedence: the explicit --fail-on flag overrides the project
-// config's fail_on (the project-level default gate). When neither is set — an
-// unconfigured project with no flag — the gate is a no-op (""), so reconcile
-// stays opt-in rather than spuriously failing on the embedded default. An
-// invalid value at either source is a usage error (exit 2).
+// resolveGateThreshold resolves the reconcile gate severity honoring the
+// documented file-tier precedence (original-requirements): --fail-on flag >
+// project config > registry. The embedded default is deliberately NOT applied —
+// an unconfigured project stays opt-in (no gate) rather than spuriously failing
+// on the default HIGH. The chosen value is enum-validated here because config
+// fail_on is not validated at load time. Error handling: a present-but-broken
+// project config is a usage error (exit 2, the repo's own config); a missing
+// config is skipped; a broken user-global registry is skipped best-effort so it
+// never blocks reconcile.
 func resolveGateThreshold(cmd *cobra.Command) (string, error) {
-	if v, _ := cmd.Flags().GetString("fail-on"); v != "" {
-		t, err := reconcile.ParseSeverity(v)
+	if v, _ := cmd.Flags().GetString("fail-on"); strings.TrimSpace(v) != "" {
+		return validateGate(v)
+	}
+
+	// Project config tier (primary): exists+broken → exit 2; missing → skip.
+	projPath := registry.DefaultProjectConfigPath(".")
+	if fileExists(projPath) {
+		proj, err := registry.LoadProjectConfig(projPath)
 		if err != nil {
 			return "", usageError(err)
 		}
-		return t, nil
+		if v := strings.TrimSpace(proj.FailOn); v != "" {
+			return validateGate(v)
+		}
 	}
-	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
-	if err != nil || proj.FailOn == "" {
-		return "", nil // no project config or no configured default → no gate
+
+	// Registry tier (user-global, lower precedence): best-effort — a broken
+	// registry should not block a reconcile that does not otherwise need it.
+	if regPath, err := registry.DefaultRegistryPath(); err == nil && fileExists(regPath) {
+		if reg, err := registry.LoadRegistry(regPath); err == nil {
+			if v := strings.TrimSpace(reg.FailOn); v != "" {
+				return validateGate(v)
+			}
+		}
 	}
-	t, err := reconcile.ParseSeverity(proj.FailOn)
+	return "", nil // no configured gate → opt-in no-op
+}
+
+// validateGate canonicalizes and enum-validates a gate severity; an invalid
+// value is a usage error (exit 2).
+func validateGate(v string) (string, error) {
+	t, err := reconcile.ParseSeverity(v)
 	if err != nil {
 		return "", usageError(err)
 	}
 	return t, nil
+}
+
+// fileExists reports whether path exists (any non-stat-error).
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // gateFindings returns a plain error (exit 1) when any finding at/above the

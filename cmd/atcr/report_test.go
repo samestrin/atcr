@@ -22,7 +22,7 @@ func fixtureReconciled(t *testing.T, id, findingsJSON string) {
 const oneFinding = `[{"severity":"CRITICAL","file":"a.go","line":1,"problem":"boom","fix":"f","category":"security","est_minutes":10,"evidence":"e","reviewers":["greta","host"],"confidence":"HIGH"}]`
 
 func TestReportCmd_DefaultFormatAndOutputFile(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReconciled(t, "2026-06-10_r", oneFinding)
 
 	out := filepath.Join(t.TempDir(), "report.md")
@@ -34,13 +34,13 @@ func TestReportCmd_DefaultFormatAndOutputFile(t *testing.T) {
 }
 
 func TestReportCmd_InvalidFormatIsUsageError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReconciled(t, "r", oneFinding)
 	require.Equal(t, 2, execCmd(t, "report", "--format", "xml", "r"))
 }
 
 func TestReportCmd_MissingReconciledDataIsUsageError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	// A review dir exists but no reconciled/findings.json.
 	require.NoError(t, os.MkdirAll(filepath.Join(".atcr", "reviews", "r", "sources"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte("r\n"), 0o644))
@@ -48,14 +48,14 @@ func TestReportCmd_MissingReconciledDataIsUsageError(t *testing.T) {
 }
 
 func TestReportCmd_DefaultsToLatest(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReconciled(t, "2026-06-10_latest", oneFinding)
 	// No anchor arg → resolves .atcr/latest.
 	require.Equal(t, 0, execCmd(t, "report", "--format", "checklist"))
 }
 
 func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
-	t.Chdir(t.TempDir())
+	isolate(t)
 	fixtureReconciled(t, "r", "") // 0-byte findings.json → malformed, not "no findings"
 	require.Equal(t, 2, execCmd(t, "report", "r"))
 }
