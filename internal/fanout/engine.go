@@ -65,8 +65,13 @@ type Engine struct {
 	completer Completer
 }
 
-// NewEngine builds an Engine over the given completer.
+// NewEngine builds an Engine over the given completer. A nil completer is a
+// programming error and panics at construction rather than nil-panicking deep
+// inside the first agent invocation.
 func NewEngine(c Completer) *Engine {
+	if c == nil {
+		panic("fanout: NewEngine called with nil Completer")
+	}
 	return &Engine{completer: c}
 }
 
@@ -77,6 +82,7 @@ func NewEngine(c Completer) *Engine {
 // ctx is cancelled mid-flight — so no goroutine is leaked. A cancelled context
 // surfaces as StatusTimeout for the affected slots; other slots still complete.
 func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
+	start := time.Now()
 	results := make([]Result, len(slots))
 	var wg sync.WaitGroup
 
@@ -97,24 +103,28 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 
 	if len(serialIdx) > 0 {
 		wg.Add(1)
-		go func() {
+		go func(slots []Slot, serialIdx []int) {
 			defer wg.Done()
 			for _, i := range serialIdx {
+				s := slots[i]
 				// Honor cancellation before starting each serial invocation so a
-				// cancelled run does not keep firing requests down the lane.
+				// cancelled run does not keep firing requests down the lane. The
+				// short-circuited slot records the wall-clock elapsed since Run
+				// started, not 0 — real time passed before the cancellation.
 				if err := ctx.Err(); err != nil {
 					results[i] = Result{
-						Agent:       slots[i].Primary.Name,
+						Agent:       s.Primary.Name,
 						Status:      classifyStatus(err),
 						Err:         err,
-						PayloadMode: slots[i].Primary.PayloadMode,
-						Truncation:  slots[i].Primary.Truncation,
+						DurationMS:  time.Since(start).Milliseconds(),
+						PayloadMode: s.Primary.PayloadMode,
+						Truncation:  s.Primary.Truncation,
 					}
 					continue
 				}
-				results[i] = e.invokeSlot(ctx, slots[i])
+				results[i] = e.invokeSlot(ctx, s)
 			}
-		}()
+		}(slots, serialIdx)
 	}
 
 	wg.Wait()
