@@ -277,6 +277,9 @@ func validateRangeArgs(base, head, mergeCommit string) error {
 	if mergeCommit != "" && (base != "" || head != "") {
 		return fmt.Errorf("merge_commit cannot be combined with base or head")
 	}
+	if (base == "") != (head == "") {
+		return fmt.Errorf("base and head must be provided together")
+	}
 	return nil
 }
 

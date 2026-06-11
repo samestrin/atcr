@@ -282,6 +282,17 @@ func TestRangeHandler_NoGit(t *testing.T) {
 	assert.Contains(t, msg, "not a git repository")
 }
 
+// TestRangeHandler_BaseWithoutHeadRejected verifies the base/head pairing rule
+// the CLI enforces in validateRangeFlags is also enforced at the MCP layer, in
+// json field vocabulary.
+func TestRangeHandler_BaseWithoutHeadRejected(t *testing.T) {
+	root, base, _ := gitRepo(t)
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolRange, map[string]any{"base": base})
+	assert.Contains(t, msg, "base and head must be provided together")
+	assert.NotContains(t, msg, "--base", "error must use json field names, not CLI flags")
+}
+
 // TestRangeHandler_MergeCommitWithHeadRejected verifies merge_commit combined
 // with head is rejected with an error phrased in the MCP json arg vocabulary —
 // not the "--base and --head must be provided together" CLI flag wording that
