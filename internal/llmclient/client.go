@@ -25,6 +25,11 @@ const (
 	// maxErrorBodyBytes bounds how much of a non-200 response body is read for
 	// error reporting; the remainder is drained so the connection can be reused.
 	maxErrorBodyBytes = 4 << 10
+
+	// maxResponseBodyBytes caps how much of a 200 response body is decoded so a
+	// misbehaving or hostile endpoint cannot stream unbounded memory into a
+	// long-lived process. Generous: real completions are far smaller.
+	maxResponseBodyBytes = 32 << 20
 )
 
 // retryableStatus is the set of HTTP statuses worth retrying. Every other
@@ -222,8 +227,14 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 		return snippet, resp.StatusCode, nil
 	}
 
+	// N is cap+1 so crossing the cap is distinguishable from a body that is
+	// exactly cap bytes.
+	limited := &io.LimitedReader{R: resp.Body, N: maxResponseBodyBytes + 1}
 	var parsed chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(limited).Decode(&parsed); err != nil {
+		if limited.N <= 0 {
+			return "", resp.StatusCode, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
+		}
 		return "", resp.StatusCode, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
