@@ -101,6 +101,9 @@ func (r *Registry) validate() error {
 	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
 		return fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs)
 	}
+	if !payloadModeValid(r.PayloadMode) {
+		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
+	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {
 			return errors.New("providers: provider name must not be empty")
@@ -139,6 +142,9 @@ func (r *Registry) validate() error {
 		}
 		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
 			return fmt.Errorf("agent '%s': temperature must be within [0, 2]", name)
+		}
+		if !payloadModeValid(a.Payload) {
+			return fmt.Errorf("agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
 		}
 	}
 	return nil

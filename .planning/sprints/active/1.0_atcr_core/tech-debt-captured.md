@@ -76,3 +76,10 @@
 **Issue:** blocks/files modes invoke up to 4-5 git processes per changed file (numstat, function-context, context, show, unified=0). On large changesets this is a meaningful process-spawn cost.
 **Why accepted:** Meets the <2s/<100-file perf target; correctness-first for v1.
 **Fix in:** v2 — batch classification (`--numstat`/`--name-status` once) and split a single diff per file.
+
+## TD-012 — payload-mode enum duplicated across registry and payload with no drift guard (LOW)
+**Origin:** Phase 2, task 2.27 adversarial review, 2026-06-10
+**File:** internal/registry/payload.go:9
+**Issue:** The frozen {diff,blocks,files} enum is hand-duplicated in `registry.validPayloadModes` and `payload.validModes` because the package boundary forbids `registry` importing `payload`. No automated test asserts the two sets stay in sync; adding a v2 mode to one and not the other would mis-validate at one tier yet pass all current tests.
+**Why accepted:** The enum is frozen for v1; drift can only occur with a deliberate future edit. A cross-package guard test needs a package that may import both (fanout/mcp), which do not exist until Phase 3/4.
+**Fix in:** Phase 3/4 — add an enum-parity test from a package permitted to import both registry and payload (e.g. fanout or an e2e test package).

@@ -81,6 +81,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if cfg.TimeoutSecs != nil && (*cfg.TimeoutSecs <= 0 || *cfg.TimeoutSecs > MaxTimeoutSecs) {
 		return nil, fmt.Errorf("%s: timeout_secs must be positive (max %d)", base, MaxTimeoutSecs)
 	}
+	if !payloadModeValid(cfg.PayloadMode) {
+		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
+	}
 
 	// Absent optional fields stay unset here; embedded defaults are applied
 	// by ResolveSettings so the precedence chain can see what each tier

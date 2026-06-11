@@ -51,6 +51,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		s.TimeoutSecs = *cli.TimeoutSecs
 	}
 	if v := deref(cli.PayloadMode); v != "" {
+		// The CLI tier bypasses the file-load enum checks, so validate here:
+		// an invalid --payload value must fail before any review work, not
+		// surface deep inside payload.Build.
+		if !payloadModeValid(v) {
+			return Settings{}, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", v)
+		}
 		s.PayloadMode = v
 	}
 	if v := deref(cli.FailOn); v != "" {

@@ -769,33 +769,33 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
 
-### 2.25 [ ] **[Payload mode configuration + per-agent override - RED](plan/user-stories/06-payload-mode-selection.md)**
+### 2.25 [x] **[Payload mode configuration + per-agent override - RED](plan/user-stories/06-payload-mode-selection.md)**
    **AC:** [06-02 Payload Mode Configuration](plan/acceptance-criteria/06-02-payload-mode-configuration.md)
    1. Analyze AC, identify testable units
    2. Write tests: default `blocks`; project config override; registry per-agent `payload:` override wins over project default; enum validation {diff, blocks, files} (lowercase only, invalid → load error)
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 30 min
 
-### 2.26 [ ] **[Payload mode configuration + per-agent override - GREEN](plan/user-stories/06-payload-mode-selection.md)**
+### 2.26 [x] **[Payload mode configuration + per-agent override - GREEN](plan/user-stories/06-payload-mode-selection.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 45 min
 
-### 2.27 [ ] **[Payload mode configuration + per-agent override - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.26]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.26`).
+### 2.27 [x] **[Payload mode configuration + per-agent override - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-payload-mode-selection.md)**
+   **Changed Files:** internal/payload/{resolve.go, resolve_test.go}, internal/registry/{payload.go, payload_test.go, config.go, project.go, precedence.go}.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: payload config`) reviewed the unit.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | precedence.go:53 | CLI `--payload` tier skipped enum validation, contradicting the comment + AC load-time contract (TD-004) | Fixed in 2.28: ResolveSettings now enum-validates the CLI payload_mode override + test |
+   | MEDIUM | resolve.go ResolveMode | dead code with a divergent 2-tier precedence vs the real 4-tier ResolveSettings | Fixed in 2.28: removed ResolveMode; precedence stays single-sourced in registry |
+   | MEDIUM | payload.go / resolve.go | duplicated enum across registry+payload has no drift guard | Deferred → TD-012 (cross-package parity test needs fanout/mcp) |
+   | LOW | payload_test.go | whitespace-around-valid value untested | Fixed in 2.28: added `"  diff  "` validate+resolve test |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.28, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 HIGH (CLI enum gap) fixed in 2.28; one MEDIUM resolved by deleting dead code; enum-drift guard deferred (TD-012). Per-agent > project > default resolution is covered by `registry.EffectivePayloadMode` tests (precedence_test.go).
 
-### 2.28 [ ] **[Payload mode configuration + per-agent override - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
+### 2.28 [x] **[Payload mode configuration + per-agent override - REFACTOR](plan/user-stories/06-payload-mode-selection.md)**
    1. Fix CRITICAL/HIGH issues from 2.27 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 20 min
