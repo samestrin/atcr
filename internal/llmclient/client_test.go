@@ -240,6 +240,22 @@ func TestComplete_ErrorBodySnippetOnExhaustedRetries(t *testing.T) {
 	assert.NotContains(t, err.Error(), "\n")
 }
 
+func TestComplete_ErrorBodySnippetNeverEchoesKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad token: `+r.Header.Get("Authorization")+`"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bad token")
+	assert.NotContains(t, err.Error(), testKey)
+}
+
 func TestComplete_ErrorBodySnippetBounded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

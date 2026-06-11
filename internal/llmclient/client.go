@@ -216,8 +216,10 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 
 	if resp.StatusCode != http.StatusOK {
 		// Capture a bounded snippet for error reporting; the provider's JSON
-		// error body carries the actionable root cause.
-		return readErrorSnippet(resp.Body), resp.StatusCode, nil
+		// error body carries the actionable root cause. Scrub the key in case
+		// the provider echoes the Authorization header back.
+		snippet := strings.ReplaceAll(readErrorSnippet(resp.Body), key, "[redacted]")
+		return snippet, resp.StatusCode, nil
 	}
 
 	var parsed chatResponse
