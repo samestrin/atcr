@@ -21,6 +21,10 @@ const (
 	defaultInitialBackoff = 500 * time.Millisecond
 	defaultBackoffFactor  = 1.5
 	defaultHTTPTimeout    = 120 * time.Second
+
+	// maxErrorBodyBytes bounds how much of a non-200 response body is read for
+	// error reporting; the remainder is drained so the connection can be reused.
+	maxErrorBodyBytes = 4 << 10
 )
 
 // retryableStatus is the set of HTTP statuses worth retrying. Every other
@@ -157,7 +161,7 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 			}
 			return content, nil
 		case retryableStatus[status]:
-			lastErr = fmt.Errorf("provider returned HTTP %d", status)
+			lastErr = httpStatusError(status, content)
 			if attempt < c.maxRetries {
 				continue
 			}
@@ -167,15 +171,35 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			return "", fmt.Errorf("provider returned HTTP %d", status)
+			return "", httpStatusError(status, content)
 		}
 	}
 	return "", fmt.Errorf("exhausted retries: %w", lastErr)
 }
 
-// attempt performs a single request. It returns the parsed content (on 200),
-// the HTTP status (0 on a transport error), and an error. A 200 with an
-// unparseable body returns the parse error with status 200.
+
+// httpStatusError formats a non-200 failure, appending the sanitized
+// error-body snippet when the provider sent one.
+func httpStatusError(status int, snippet string) error {
+	if snippet == "" {
+		return fmt.Errorf("provider returned HTTP %d", status)
+	}
+	return fmt.Errorf("provider returned HTTP %d: %s", status, snippet)
+}
+
+// readErrorSnippet reads a bounded prefix of a non-200 response body and
+// collapses it to a single whitespace-normalized line. The remainder of the
+// body is drained so the connection can be reused.
+func readErrorSnippet(r io.Reader) string {
+	b, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
+	_, _ = io.Copy(io.Discard, r)
+	return strings.Join(strings.Fields(string(b)), " ")
+}
+
+// attempt performs a single request. It returns the parsed content (on 200)
+// or a sanitized error-body snippet (on non-200), the HTTP status (0 on a
+// transport error), and an error. A 200 with an unparseable body returns the
+// parse error with status 200.
 func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) (string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -191,9 +215,9 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		// Drain so the connection can be reused, then report the status.
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return "", resp.StatusCode, nil
+		// Capture a bounded snippet for error reporting; the provider's JSON
+		// error body carries the actionable root cause.
+		return readErrorSnippet(resp.Body), resp.StatusCode, nil
 	}
 
 	var parsed chatResponse
