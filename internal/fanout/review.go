@@ -332,7 +332,13 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
 	}
 	mode := ac.EffectivePayloadMode(cfg.Settings)
-	mp := payloads[mode]
+	mp, ok := payloads[mode]
+	if !ok {
+		// Defensive: payloads is built by neededModes over the same roster, so a
+		// miss means the two derivations diverged — fail loudly rather than
+		// invoking the agent with an empty payload and a vacuous review.
+		return Agent{}, "", fmt.Errorf("agent %q: no payload built for mode %q", name, mode)
+	}
 
 	persona, err := registry.ResolvePersona(name, ac.Persona, nil, cfg.PersonaDirs)
 	if err != nil {
