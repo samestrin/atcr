@@ -100,10 +100,10 @@ func TestFlagRelationships(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"review base without head", []string{"review", "--base", "abc"}},
+		{"review head without base", []string{"review", "--head", "def"}},
 		{"review base with merge-commit", []string{"review", "--base", "abc", "--head", "def", "--merge-commit", "fff"}},
 		{"review head with merge-commit", []string{"review", "--head", "def", "--merge-commit", "fff"}},
-		{"range base without head", []string{"range", "--base", "abc"}},
+		{"range head without base", []string{"range", "--head", "def"}},
 		{"range head with merge-commit", []string{"range", "--head", "def", "--merge-commit", "fff"}},
 	}
 	for _, tt := range tests {

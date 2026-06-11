@@ -37,8 +37,9 @@ var (
 )
 
 // Options carries the user's range intent. Exactly one branch of the decision
-// tree fires based on which fields are set; the CLI layer guarantees --base and
-// --head travel together and never combine with --merge-commit.
+// tree fires based on which fields are set; the CLI layer guarantees --head
+// never appears without --base and neither combines with --merge-commit. A
+// base without a head defaults the head to HEAD.
 type Options struct {
 	Base        string
 	Head        string
@@ -81,13 +82,17 @@ func Resolve(ctx context.Context, repoDir string, opts Options) (*Resolution, er
 
 	switch {
 	case opts.Base != "" || opts.Head != "":
-		if opts.Base == "" || opts.Head == "" {
-			return nil, fmt.Errorf("%w: --base and --head must be provided together", ErrInvalidRef)
+		if opts.Base == "" {
+			return nil, fmt.Errorf("%w: --head requires --base", ErrInvalidRef)
+		}
+		headRef := opts.Head
+		if headRef == "" {
+			headRef = "HEAD" // base-only: the natural CI-gate invocation
 		}
 		if base, err = g.resolveRef(opts.Base); err != nil {
 			return nil, err
 		}
-		if head, err = g.resolveRef(opts.Head); err != nil {
+		if head, err = g.resolveRef(headRef); err != nil {
 			return nil, err
 		}
 		mode = ModeExplicit

@@ -12,7 +12,7 @@ The range resolver is the entry point of every `atcr` run. It translates user in
 
 The resolver evaluates input in this exact order:
 
-1. **Explicit `--base X --head Y`** — used as-is. `MarkFlagsMutuallyExclusive` in cobra prevents `--merge-commit` from being combined with `--base`.
+1. **Explicit `--base X [--head Y]`** — used as-is; `--head` defaults to `HEAD` when omitted (clarification 2026-06-11). `MarkFlagsMutuallyExclusive` in cobra prevents `--merge-commit` from being combined with `--base`.
 2. **`--merge-commit SHA`** — base = `SHA^`, head = `SHA`. The single carry-over from the source system's sprint pipeline.
 3. **Auto-detect** — `git merge-base HEAD <default-branch>` where `<default-branch>` is the first existing ref in this list: `origin/HEAD` (via `git symbolic-ref`) → `origin/main` → `origin/master` → local `main` → local `master`.
 4. **No match** — hard error with guidance to set a default branch or pass `--base`/`--head` explicitly.
@@ -102,7 +102,7 @@ This struct is written to `manifest.json` so every downstream tool reads provena
 
 | Flag | Resolver behavior |
 |------|-------------------|
-| `--base X --head Y` | Use as-is, mode = `explicit` |
+| `--base X [--head Y]` | Use as-is, mode = `explicit`; `--head` defaults to `HEAD` when omitted (base-only is the CI-gate invocation; clarification 2026-06-11) |
 | `--merge-commit SHA` | base = `SHA^`, head = `SHA`, mode = `merge_commit` |
 | (no flag) | Auto-detect default branch, mode = `auto` |
 | (any case, 0 commits) | Hard error before any provider call |

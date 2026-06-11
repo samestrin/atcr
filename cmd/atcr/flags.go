@@ -7,8 +7,9 @@ import (
 )
 
 // addRangeFlags declares the shared review-range flags on cmd and installs a
-// PreRunE enforcing their relationships: --base/--head travel together, and
-// neither may combine with --merge-commit. Validation lives here (not in
+// PreRunE enforcing their relationships: --base may appear alone (head
+// defaults to HEAD — the natural CI-gate invocation), --head requires --base,
+// and neither may combine with --merge-commit. Validation lives here (not in
 // cobra flag groups) so violations surface as coded usage errors (exit 2).
 func addRangeFlags(cmd *cobra.Command) {
 	cmd.Flags().String("base", "", "base ref for the review range")
@@ -35,8 +36,8 @@ func validateRangeFlags(cmd *cobra.Command) error {
 	head := cmd.Flags().Changed("head")
 	mergeCommit := cmd.Flags().Changed("merge-commit")
 
-	if base != head {
-		return usageError(errors.New("--base and --head must be used together"))
+	if head && !base {
+		return usageError(errors.New("--head requires --base"))
 	}
 	if (base || head) && mergeCommit {
 		return usageError(errors.New("--merge-commit cannot be combined with --base/--head"))
