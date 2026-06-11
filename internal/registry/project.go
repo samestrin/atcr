@@ -78,8 +78,8 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 			}
 		}
 	}
-	if cfg.TimeoutSecs != nil && *cfg.TimeoutSecs <= 0 {
-		return nil, fmt.Errorf("%s: timeout_secs must be positive", base)
+	if cfg.TimeoutSecs != nil && (*cfg.TimeoutSecs <= 0 || *cfg.TimeoutSecs > MaxTimeoutSecs) {
+		return nil, fmt.Errorf("%s: timeout_secs must be positive (max %d)", base, MaxTimeoutSecs)
 	}
 
 	// Absent optional fields stay unset here; embedded defaults are applied

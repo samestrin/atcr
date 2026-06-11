@@ -169,3 +169,13 @@ func (a AgentConfig) EffectiveTimeoutSecs(s Settings) int {
 	}
 	return s.TimeoutSecs
 }
+
+// EffectivePayloadMode returns the agent's own payload override when set,
+// otherwise the resolved shared payload mode. (Enum validation of payload
+// values is the payload-configuration stage's concern.)
+func (a AgentConfig) EffectivePayloadMode(s Settings) string {
+	if v := strings.TrimSpace(a.Payload); v != "" {
+		return v
+	}
+	return s.PayloadMode
+}

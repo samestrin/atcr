@@ -154,7 +154,10 @@ func TestInternalPackages_DependencyDirection(t *testing.T) {
 
 				rest, ok := strings.CutPrefix(imp, modulePath+"/internal/")
 				if !ok {
-					continue // other in-module path (none exist today)
+					// Non-internal in-module packages (currently only
+					// personas/, embedded data) are deliberately importable
+					// from anywhere.
+					continue
 				}
 				top := rest
 				if i := strings.Index(rest, "/"); i >= 0 {

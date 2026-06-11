@@ -14,8 +14,17 @@ func addRangeFlags(cmd *cobra.Command) {
 	cmd.Flags().String("base", "", "base ref for the review range")
 	cmd.Flags().String("head", "", "head ref for the review range")
 	cmd.Flags().String("merge-commit", "", "merge commit SHA (base = SHA^, head = SHA)")
-	cmd.PreRunE = func(cmd *cobra.Command, _ []string) error {
-		return validateRangeFlags(cmd)
+	// Chain rather than assign: a later phase may install its own PreRunE,
+	// and neither hook may silently vanish.
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if err := validateRangeFlags(cmd); err != nil {
+			return err
+		}
+		if prev != nil {
+			return prev(cmd, args)
+		}
+		return nil
 	}
 }
 

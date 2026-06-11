@@ -157,6 +157,16 @@ func TestProjectConfig_AbsentFieldsStayUnset(t *testing.T) {
 	assert.Empty(t, cfg.FailOn)
 }
 
+func TestEffectivePayloadMode(t *testing.T) {
+	s := Settings{PayloadMode: "blocks"}
+	withOwn := AgentConfig{Payload: "diff"}
+	without := AgentConfig{}
+	whitespace := AgentConfig{Payload: "  "}
+	assert.Equal(t, "diff", withOwn.EffectivePayloadMode(s), "agent's own payload override wins")
+	assert.Equal(t, "blocks", without.EffectivePayloadMode(s), "unset payload inherits resolved settings")
+	assert.Equal(t, "blocks", whitespace.EffectivePayloadMode(s), "whitespace payload counts as unset")
+}
+
 func TestEffectiveTimeoutSecs(t *testing.T) {
 	s := Settings{TimeoutSecs: 900}
 	withOwn := AgentConfig{TimeoutSecs: intPtr(120)}

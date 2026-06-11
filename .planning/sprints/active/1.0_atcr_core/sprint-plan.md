@@ -561,12 +561,12 @@ Documentation available in [documentation/](plan/documentation/):
 
    **Action Required:** 1 HIGH — fixed in 1.28 along with all MEDIUM/LOW (one LOW kept by design).
 
-### 1.28 [ ] **[atcr init command - REFACTOR](plan/user-stories/02-agent-configuration.md)**
+### 1.28 [x] **[atcr init command - REFACTOR](plan/user-stories/02-agent-configuration.md)**
    1. Fix CRITICAL/HIGH issues from 1.27 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 1.29 [ ] **Phase 1 DoD Validation**
+### 1.29 [x] **Phase 1 DoD Validation** — tests ✅, vet ✅, lint ✅, build ✅, help shows 6 subcommands ✅, init smoke test ✅, coverage 81.4% ✅
    1. Run `go test ./...` - all passing
    2. Run `go vet ./...` - clean
    3. Run `golangci-lint run` - clean
