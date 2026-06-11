@@ -16,6 +16,21 @@
 - `internal/skill/install.go` - create: Skill installation helper (copies skill/SKILL.md to target project)
 - `docs/skill-usage.md` - create: User-facing documentation for skill installation and usage
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — Skill's orchestration calls into the same cobra commands; nothing custom.
+- [Range Resolution](../documentation/range-resolution.md) — Skill uses `atcr range` as the pre-flight step; result JSON shape is documented in the spec.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — Skill's reconciliation step uses the same `atcr reconcile` CLI; the Skill reads `reconciled/report.md` to present results.
+
+### Spec alignment notes
+
+- **Skill input contract** (per `user-stories/05-host-review-via-skill.md` original criterion #11): a git range, branch, or PR reference. **No sprint paths, no `.planning/` coupling, no DoD checks.** Output contract is the review directory path. Keeps the skill portable to any repo without atcr-specific project state.
+- **Skill installation** is by file copy: `skill/SKILL.md` lives in this repo and is installable into `.claude/skills/atcr/`. The agent's standard skill-resolution rules apply (local project copy wins over shipped copy).
+- **Skill file is plain Markdown** — no frontmatter required by the v1 spec, but frontmatter is permitted. Required sections per the AC: overview, input format, orchestration steps, host review instructions, and findings format reference.
+- **PR URL extraction** uses the standard format `https://github.com/<owner>/<repo>/pull/<n>` and resolves `base`/`head` via `gh pr view <n> --json baseRefName,headRefName`. If `gh` is not available, the Skill halts with installation guidance.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Skill file exists at expected location**

@@ -16,8 +16,23 @@
 - `internal/registry/config.go` - create: Config struct definitions and default values
 - `internal/registry/config_test.go` - create: Unit tests for init behavior
 - `cmd/atcr/init_test.go` - create: Integration tests for init command (creates files, validates output)
-- `personas/bruce.md` - create: Embedded default persona file (and 5 others)
+- `personas/bruce.md` - create: Embedded default persona file (and 5 others: greta, kai, mira, dax, otto)
 - `personas/_base.md` - create: Base persona template used by all agents
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Configuration & Registry](../documentation/configuration-management.md) — Authoritative spec for two-tier config (`registry.yaml` + `.atcr/config.yaml`), strict parsing with `KnownFields(true)`, precedence rules.
+- [CLI Architecture](../documentation/cli-architecture.md) — Cobra `RunE` for the `init` subcommand; `os.MkdirAll` for `.atcr/` scaffolding; no `os.Exit` calls in handlers.
+
+### Spec alignment notes
+
+- The shipped six personas are the **only** defaults installed by `atcr init`; environment-specific provider wiring stays in the user's `~/.config/atcr/registry.yaml` (not shipped). Per `plan.md` clarifications (2026-06-10).
+- Each persona's **prompt body is ported from the battle-tested llm-tools registry prompts** — adversarial personality clause ("find problems the author would prefer you didn't", no-flattery rules), priority-ordered focus areas, inline output example row. Updated for atcr: emit 7 columns with the engine appending `REVIEWER`; severity rubric defined directly as `CRITICAL/HIGH/MEDIUM/LOW`; per-payload-mode scope rules added. Per `plan.md` clarifications (2026-06-10).
+- Persona domain assignments (per `plan.md`): bruce (generalist/correctness), greta (algorithmic correctness), kai (architecture/design fit), mira (production feasibility), dax (test coverage/error paths), otto (style/readability/idiom).
+- `atcr init` does **not** write API keys — only env-var names. No secrets on disk.
+- Embedded defaults use Go `embed` package per `standard-library.md`; an `atcr init` failure that reveals a missing embedded default is a build error, not a runtime error.
 
 ## Happy Path Scenarios
 

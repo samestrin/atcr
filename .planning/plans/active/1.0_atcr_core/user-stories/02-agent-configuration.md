@@ -51,6 +51,11 @@
 8. Strict parsing: unknown fields in YAML produce error (KnownFields(true))
 9. Persona resolution: agent's persona ref > <agent>.md in registry dir > _base.md > embedded default
 10. `--task-message` CLI flag overrides all persona resolution
+11. Persona/agent decoupling (per `plan.md` clarifications): `persona` is a first-class registry concept (a named prompt with lens, personality, severity rubric); `agent` is a provider+model binding that references one via `persona: <name>`. Fallback agents reference the **same persona** as their primary — never duplicated prompt text. This replaces the source registry's copy-paste pattern (e.g., `bruce-backup` carrying a full copy of bruce's prompt)
+12. Persona prompt format (per `plan.md` clarifications): personas emit **7-column** findings (no REVIEWER column); the engine appends the `REVIEWER` field when writing `findings.txt`, so models never self-attribute
+13. Severity rubric in personas uses `CRITICAL|HIGH|MEDIUM|LOW` directly (per `plan.md` clarifications) — not blocking/significant/minor with implicit translation
+14. Persona prompts carry **per-payload-mode scope rules** (per `plan.md` clarifications): e.g., `files` mode surfaces only findings on changed regions; pre-existing issues in unchanged regions of changed files use category `out-of-scope` and the reconciler annotates them rather than promoting to reconciled findings
+15. Shipped defaults are the six personas (bruce, greta, kai, mira, dax, otto) with their domain assignments (generalist/correctness, algorithmic, architecture, production, testing, style). The registry's environment-specific wiring (providers, model bindings, fallback pairs, local endpoints) does **NOT** ship as defaults — it stays in the user's personal `~/.config/atcr/registry.yaml`
 
 ## Technical Considerations
 

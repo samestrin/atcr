@@ -17,6 +17,24 @@
 - `cmd/atcr/status_test.go` - create: Tests for status command output and exit codes
 - `internal/review/manifest.go` - create: Review manifest reader (used by skill to find review directory)
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — Skill calls the same cobra commands; orchestration is a sequence of CLI invocations, not custom Go code.
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — The fan-out's per-agent `status.json` and the `summary.json` shape the `atcr status` command reads.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — The Skill's reconcile step uses the same `atcr reconcile` CLI; the Skill reads `reconciled/report.md` to present results.
+- [Range Resolution](../documentation/range-resolution.md) — `atcr range` pre-flight result JSON shape; the Skill uses it to validate the input before triggering fan-out.
+
+### Spec alignment notes
+
+- **Orchestration is exactly**: `atcr range` → `atcr review` (background, polled) → host review → `atcr reconcile` → `atcr report` → present `report.md`. Per `plan.md` (The atcr Skill section) and `user-stories/05-host-review-via-skill.md` original criterion #6.
+- **Polling interval** is 5 seconds with max 60 retries (5-minute default timeout); both are configurable via skill arguments.
+- **Background review**: `atcr review` can run in the background (e.g., `&` or via `atcr review --wait` if implemented); the Skill polls `atcr status` rather than blocking.
+- **Host review is the +1 reviewer**: the Skill writes `sources/host/findings.txt` so reconcile always has 2+ sources (host + pool agents), which produces HIGH confidence when they agree. Per `user-stories/05-host-review-via-skill.md` background.
+- **No sprint knowledge** in the Skill: input is a git range, branch, or PR; output is the review directory path. Per `user-stories/05-host-review-via-skill.md` original criterion #11.
+- **Timeout enforcement** at the Skill level prevents runaway orchestration: the Skill aborts if any step exceeds the configured per-step timeout and reports the failure to the user with a clear next-step suggestion.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Full orchestration loop completes successfully**
@@ -60,10 +78,10 @@
 ## Edge Cases
 
 **Edge Case 1: Pool agents complete before host review starts**
-- **Given** `atcr review` finishes quickly (small diff, fast models)
+- **Given** `atcr review` completes in under 5 seconds (small diff with fast models)
 - **When** the agent checks `atcr status`
-- **Then** the status shows completed
-- **And** the agent proceeds immediately to host review without additional polling
+- **Then** the status shows completed on the first poll
+- **And** the agent proceeds immediately to host review without additional polling intervals
 
 **Edge Case 2: Review ID already exists (re-run)**
 - **Given** a review with the same ID already exists in `.atcr/reviews/`

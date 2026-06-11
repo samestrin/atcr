@@ -16,6 +16,23 @@
 - `internal/stream/parser.go` - create: Findings v1 parser (validates format, extracts columns)
 - `internal/stream/parser_test.go` - create: Parser tests with valid/invalid fixture data
 - `docs/findings-format.md` - create: Canonical v1 findings format specification
+- `personas/_base.md` - reference: Skill uses the same adversarial personality clause from the base persona
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Findings Format v1](../documentation/findings-format.md) — Authoritative spec for the `# atcr-findings/v1` header, 8-col per-source format, severity enum, extraction regex `^(CRITICAL|HIGH|MEDIUM|LOW)\|`, pipe escape `|` → `/`, short-row padding.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — How the host's `findings.txt` is consumed by the source-discovery rule in reconcile.
+- [Configuration & Registry](../documentation/configuration-management.md) — How the host agent's `REVIEWER` column gets set to `host` (the engine appends, the Skill writes the literal string).
+
+### Spec alignment notes
+
+- **Host emits 7 columns** (no `REVIEWER`); the engine appends the `REVIEWER` field at write time, with the value `host`. Per `plan.md` clarifications (2026-06-10) and `user-stories/05-host-review-via-skill.md` original criterion #5.
+- **Adversarial personality clause** is required: the host review finds problems (bugs, security issues, logic errors, code quality), **not praise**. No-flattery rules; no positive observations. This mirrors the ported persona prompts in `personas/_base.md` per `plan.md` clarifications (2026-06-10).
+- **Severity rubric** uses the closed enum: `CRITICAL|HIGH|MEDIUM|LOW`. No severity like `BLOCKER`, `INFO`, or `NIT` — the format spec rejects new severities without a coordinated minor version bump.
+- **Files-mode scope rule** applies to the host too: in `files` payload mode, the host should focus on changed regions; pre-existing issues in unchanged regions of changed files use category `out-of-scope`. The reconciler will annotate rather than promote to reconciled findings.
+- **`sources/host/` is the second source directory** alongside `sources/pool/`. Both are first-class per the source-discovery rule; the Skill contributes `host` so a user with a single API key still gets 2+ sources for the confidence signal.
 
 ## Happy Path Scenarios
 

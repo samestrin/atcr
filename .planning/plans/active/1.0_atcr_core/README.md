@@ -8,7 +8,7 @@ This is a feature plan with 6 user stories covering CLI workflow, agent configur
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/1.0_atcr_core/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/1.0_atcr_core/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/1.0_atcr_core/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/1.0_atcr_core/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/1.0_atcr_core/`
 
 ## Timeline & Milestones
@@ -18,7 +18,7 @@ This is a feature plan with 6 user stories covering CLI workflow, agent configur
 | Plan created | 2026-06-10 | ✅ Complete |
 | User stories generated | TBD | Pending |
 | Acceptance criteria generated | TBD | Pending |
-| Sprint designed | TBD | Pending |
+| Sprint designed | 2026-06-10 | ✅ Complete |
 | Sprint created | TBD | Pending |
 | Implementation complete | TBD | Pending |
 | Code review complete | TBD | Pending |
@@ -96,5 +96,6 @@ Full documentation index: [documentation/README.md](documentation/README.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [Package Recommendations](package-recommendations.md)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [Sprint Design](sprint-design.md)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)

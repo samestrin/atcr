@@ -17,6 +17,24 @@
 - `internal/payload/manifest.go` - create: manifest.json generation with payload mode recording
 - `internal/payload/manifest_test.go` - create: Tests for manifest structure and content
 - `internal/fanout/status.go` - modify: Add truncation recording fields to status.json
+- `cmd/atcr/main.go` - reference: zero/negative budget validation surfaces as a usage error (exit 2) before any review
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Payload Engine](../documentation/payload-engine.md) — Authoritative spec for byte budget enforcement, deterministic truncation strategy (drop whole files by size rank, smallest first), and recording in `status.json`.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — `manifest.json` shape: `payload_mode` (default), `per_agent_payload` (map), `roster`, `started_at`/`completed_at`, `partial` flag, `detection_mode`, `base`/`head` SHAs.
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — Per-agent `status.json` consumer; `truncated` and `files_dropped` fields are read by downstream tools and the report.
+
+### Spec alignment notes
+
+- **Truncation invariant: never silent**. The bytes-math code path must always update the agent's `status.json` with `truncated: true` and `files_dropped: [...]` whenever files are dropped. This is enforced by code structure (the truncation function always returns the dropped list as part of its return value).
+- **Deterministic ordering**: drop smallest files first, then by filename alphabetical for ties. The same input must always produce the same output (test invariant).
+- **Tie-breaking rule**: when two files have the same size, the file whose path sorts alphabetically first is dropped first. This makes the drop order reproducible across runs and across machines.
+- **Byte budget = 0 means unlimited** per the AC edge case; `payload_byte_budget: 0` in config is the documented escape hatch.
+- **Per-agent byte budget** is the model: each agent's fan-out invocation has its own budget; one agent's truncation does not affect another's. This matches the per-agent `payload_mode` override.
+- **`manifest.json` always records who saw what** even when no truncation occurred. The `per_agent_payload` map is unconditional; the `truncated` field is per-agent.
 
 ## Happy Path Scenarios
 

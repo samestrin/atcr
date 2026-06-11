@@ -14,6 +14,22 @@
 - `internal/report/renderer_test.go` - create: tests with golden files for each format
 - `cmd/atcr/report.go` - modify: integrate renderer into report command with --format flag
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — `cmd.OutOrStdout()` for stdout routing; flag validation via cobra's typed flag registration; exit codes centralized in `main()`.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — Authoritative spec for `report.md` content: executive summary (counts by severity × confidence, panel table with per-reviewer status/model/duration/finding count), findings grouped by severity with problem/fix/evidence/reviewers/disagreements.
+- [Findings Format v1](../documentation/findings-format.md) — `findings.json` schema (severity, file, line, problem, fix, category, est_minutes, evidence, reviewers, confidence).
+
+### Spec alignment notes
+
+- Default `--format` is `md` when not specified (per `plan.md`).
+- `--output <file>` writes to a file path instead of stdout; default writes to stdout.
+- The `checklist` format is render-only markdown with `- [ ]` items; **no global numbering, no persistence, no state** — explicitly out-of-scope for backlog management per `original-requirements.md`.
+- `report.md` is **human-readable**; `findings.json` is the **machine contract** for downstream tools (including the source system's `/reconcile-code-review`).
+- Per `plan.md` extended scope: `report.md` panel table includes per-reviewer `status`, `model`, `duration`, `finding count` — not just names.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Markdown report rendered**
@@ -56,7 +72,7 @@
 **Edge Case 3: Special characters in file paths**
 - **Given** finding references file with unicode characters `src/café/main.go`
 - **When** report renders
-- **Then** file path displayed correctly in all output formats
+- **Then** the unicode file path `src/café/main.go` is byte-identical to the input across md, json, and checklist output (no escaping, no truncation, no normalization)
 
 ## Error Conditions
 

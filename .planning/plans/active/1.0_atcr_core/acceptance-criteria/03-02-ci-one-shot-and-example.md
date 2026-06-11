@@ -16,6 +16,22 @@
 - `examples/ci-gate.sh` - create: example CI gate script showing atcr in a pipeline
 - `README.md` - modify: add CI integration section documenting `--fail-on` and example usage
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — `atcr review --fail-on` shares the same exit-code logic as `atcr reconcile --fail-on`; both flow through centralized `main()` mapping.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — `--fail-on` exit-code gate; severity ordering and threshold semantics.
+- [Configuration & Registry](../documentation/configuration-management.md) — `fail_on` field in `.atcr/config.yaml` is the project-level default; `--fail-on` flag overrides it.
+
+### Spec alignment notes
+
+- **One-shot mode is compositional**: `atcr review --fail-on HIGH` runs `atcr range` → `atcr review` → `atcr reconcile` → threshold check, all in one invocation. The Skill uses this for orchestration (see AC 05-03).
+- **CI gate script** (`examples/ci-gate.sh`): a thin shell wrapper that runs `atcr review --fail-on HIGH` and surfaces the exit code. The script itself should be ≤20 lines — no business logic, just plumbing.
+- **CI provider portability**: GitHub Actions, GitLab CI, and Jenkins all consume the same exit code semantics. No provider-specific glue code lives in atcr.
+- **API key handling in CI**: keys come from CI secrets (e.g., `secrets.OPENAI_API_KEY`); `atcr` reads them at invoke time per `original-requirements.md` (never from a config file). The CI workflow is responsible for masking secrets in logs.
+- **README CI integration section** should include: (1) the `--fail-on` flag and its semantics, (2) a copy-pasteable GitHub Actions snippet using `examples/ci-gate.sh`, (3) the exit-code table (0/1/2) and what each means.
+
 ## Happy Path Scenarios
 
 **Scenario 1: One-shot review with passing findings**

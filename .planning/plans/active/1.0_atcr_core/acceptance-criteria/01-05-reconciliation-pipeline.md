@@ -16,7 +16,25 @@
 - `internal/reconcile/merger_test.go` - create: tests for each pipeline stage
 - `internal/reconcile/cluster.go` - create: FILE+LINE±3 clustering logic
 - `internal/reconcile/dedupe.go` - create: token-set similarity deduplication
+- `internal/reconcile/ambiguous.go` - create: ambiguity sidecar types and JSON serialization
 - `cmd/atcr/reconcile.go` - modify: integrate merger into reconcile command
+- `cmd/atcr/main.go` - modify: wire `--fail-on <severity>` centralized exit-code logic
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — Authoritative spec for the pipeline stages, merge rules table (REVIEWERS joined, SEVERITY max with disagreement annotation, PROBLEM/FIX longest, CATEGORY modal, EST_MINUTES max), ambiguity threshold (Jaccard ≥ 0.7 merge, < 0.4 separate, [0.4, 0.7) → ambiguous.json), and reconciled output files.
+- [Findings Format v1](../documentation/findings-format.md) — `^(CRITICAL|HIGH|MEDIUM|LOW)\|` extraction regex; pipe escape `|` → `/`; short-row padding; per-source 8-col vs reconciled 9-col.
+- [CLI Architecture](../documentation/cli-architecture.md) — `--fail-on` flag, centralized exit-code logic in `main()` (exit 0 = pass, 1 = threshold violation, 2 = usage/config error).
+
+### Spec alignment notes
+
+- **Reconciled column count**: per `original-requirements.md`, reconciled `findings.txt` is **9 columns** (per-source 8 with `REVIEWERS` plural + `CONFIDENCE`). The `documentation/findings-format.md` heading reads "10 columns" — treat that heading as a spec-doc typo. The example row, the `Finding` struct in `documentation/reconciler.md`, and `original-requirements.md` are all authoritative for 9 columns in v1.
+- **Confidence** mapping: `HIGH` = 2+ distinct reviewers; `MEDIUM` = single reviewer; `LOW` = reserved for untrusted sources.
+- **Source discovery rule** (open extension point): any child of `sources/` containing `findings.txt` is a reconcile source. `reconciled/` is never an input source. Per `plan.md`.
+- **Severity disagreement** annotation preserved inline: when lower severities appear alongside the max, `disagreement: <lo> vs <hi>` is kept in the merged record.
+- **All four reconciled artifacts emitted**: `findings.txt` (9-col), `findings.json`, `report.md`, `summary.json` — plus the `ambiguous.json` sidecar (always written; may be empty array if no gray-zone clusters).
 
 ## Happy Path Scenarios
 

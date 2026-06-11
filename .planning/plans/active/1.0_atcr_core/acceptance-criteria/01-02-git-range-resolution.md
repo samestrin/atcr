@@ -13,6 +13,21 @@
 - `internal/gitrange/resolver.go` - create: range resolution decision tree and default branch detection
 - `internal/gitrange/resolver_test.go` - create: unit tests for resolver logic
 - `cmd/atcr/review.go` - modify: integrate resolver into review command
+- `cmd/atcr/range.go` - create: `atcr range` pre-flight command that prints `Resolution` JSON without invoking any provider
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Range Resolution](../documentation/range-resolution.md) — Authoritative spec for the decision tree, default-branch fallback chain, empty-range hard error, shallow-clone guard, and `Resolution` struct shape written to `manifest.json`.
+- [CLI Architecture](../documentation/cli-architecture.md) — `MarkFlagsMutuallyExclusive` for `--base` / `--merge-commit`; `os/exec` `CommandContext` patterns; argv-only (no shell -c) for git invocations.
+
+### Spec alignment notes
+
+- The decision tree order is exact: explicit `--base`/`--head` → `--merge-commit SHA` (base = `SHA^`, head = `SHA`) → auto (`merge-base HEAD` against `origin/HEAD` → `origin/main` → `origin/master` → local `main` → local `master`).
+- Empty range (0 commits OR `base == head`) is a **hard error before any provider call** — never a silent zero-findings pass. The error message must name the resolved SHAs.
+- Shallow-clone detection via `git rev-parse --is-shallow-repository` produces a hard error with `git fetch --unshallow` guidance. The resolver does **not** auto-unshallow.
+- `Resolution` struct: `Base`, `Head`, `DetectionMode` (`"explicit" | "merge_commit" | "auto"`), `DefaultBranch`, `CommitCount` (always ≥1), `Shallow`, `ResolvedAt`.
 
 ## Happy Path Scenarios
 

@@ -16,6 +16,25 @@
 - `internal/payload/builder_test.go` - create: Tests for all three payload modes and fallback logic
 - `internal/payload/testdata/` - create: Golden files for expected diff/blocks/files output
 - `internal/git/diff.go` - create or modify: Git command wrappers for diff variants
+- `internal/payload/budget.go` - create: byte budget enforcement with deterministic truncation
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Payload Engine](../documentation/payload-engine.md) — Authoritative spec for the three builders, the function-context fallback (`git diff -U<n>` per file when `--function-context` fails), the byte budget + deterministic truncation, and template-var injection.
+- [CLI Architecture](../documentation/cli-architecture.md) — `os/exec` `CommandContext` patterns for git invocations; argv-only (no shell -c) to avoid shell-injection on user-provided refs.
+
+### Spec alignment notes
+
+- **Default payload mode is `blocks`** per `plan.md` and `original-requirements.md`. Diff is more compact and token-friendly; docs/payload-modes.md will state this clearly. Files is the highest-cost mode for audit-style review.
+- **blocks fallback is per-file**, not per-run: when `git diff --function-context` fails on a single file (e.g., no-brace language like Python/YAML, binary file), fall back to `git diff -U<n>` for that file only. The rest of the range still uses function-context. Per `plan.md` Risk Mitigation.
+- **files mode markers**: the builder marks changed regions with comment-style markers (e.g., `// <<<<<<< CHANGED ... >>>>>>> UNCHANGED`) so reviewers can visually distinguish. The exact marker syntax is documented in `docs/payload-modes.md`.
+- **Git command selection** (per `range-resolution.md`):
+  - diff mode: `git diff <base>..<head>`
+  - blocks mode: `git diff --function-context <base>..<head>` (with per-file fallback to `-U<n>`)
+  - files mode: `git show <head>:<file>` per changed file, concatenated with markers
+- **Refs validation**: base and head are validated as git refs via `git rev-parse --verify` before any builder is invoked. Invalid refs produce a hard error before any provider call.
 
 ## Happy Path Scenarios
 

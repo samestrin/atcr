@@ -51,6 +51,7 @@
 8. Skill accepts git range/branch/PR as input (no sprint knowledge)
 9. Skill outputs review directory path
 10. Host review is adversarial (finds problems, not praise)
+11. Skill input contract is a git range, branch, or PR reference (no sprint paths, no `.planning/` coupling, no DoD checks); output contract is the review directory path. This keeps the skill portable to any repo without atcr-specific project state
 
 ## Technical Considerations
 

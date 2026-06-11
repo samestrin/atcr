@@ -54,6 +54,11 @@
 8. `atcr report` renders human-readable report from reconciled data
 9. .atcr/latest pointer updated with review ID
 10. Empty range produces hard error before any provider call
+11. Default review ID scheme is `<YYYY-MM-DD>_<branch-slug>`; `--id` flag overrides; resolved ID is also written to `.atcr/latest` so subsequent `atcr reconcile` / `atcr report` calls default to it without arguments
+12. Source-discovery rule: any child of `sources/` containing a `findings.txt` is a reconcile source — `sources/` is an open extension point (CI or other tools can drop `sources/<name>/findings.txt` and reconcile picks it up with zero config); `reconciled/` is never an input source
+13. Reconciled `summary.json` records run stats: sources scanned, per-source finding counts, clusters collapsed, severity disagreements, and the `partial` flag
+14. Shallow clone detection produces a **hard error** (not a warning) with `git fetch --unshallow` guidance — the resolver never attempts to unshallow automatically; prevents silent zero-findings CI gate clears on incomplete history
+15. Reconciled `findings.txt` is 9 columns: per-source 8 with `REVIEWER` (singular) replaced by `REVIEWERS` (plural, comma-joined) plus `CONFIDENCE` (column 9). Note: `documentation/findings-format.md` header reads "10 columns" — this is a spec-doc bug (the example and `original-requirements.md` both show 9 columns); reconcile against the example and the original requirements at implementation time
 
 </details>
 

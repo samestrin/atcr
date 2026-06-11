@@ -16,6 +16,23 @@
 - `internal/reconcile/ambiguous.go` - create: Ambiguous cluster types and JSON serialization
 - `internal/reconcile/ambiguous_test.go` - create: Tests for ambiguous cluster detection and output
 - `docs/findings-format.md` - modify: Document ambiguous.json sidecar format and adjudication flow
+- `personas/_base.md` - reference: shared adversarial personality clause
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — Authoritative spec for the `ambiguous.json` sidecar format and the Jaccard similarity thresholds (≥ 0.7 merge, < 0.4 separate, [0.4, 0.7) → ambiguous.json).
+- [Findings Format v1](../documentation/findings-format.md) — Cluster entry shape (cluster ID, member findings, similarity scores); version header policy.
+- [Configuration & Registry](../documentation/configuration-management.md) — The Skill reads the merged findings as data, not as instructions; persona name (host) is treated as a string literal in the source-discovery rule.
+
+### Spec alignment notes
+
+- **Adversarial personality clause** (port from battle-tested llm-tools registry prompts per `plan.md` clarification 2026-06-10): "find problems the author would prefer you didn't", no-flattery rules, priority-ordered focus areas, inline output example row. The Skill's host review prompt must include this clause verbatim.
+- **Conservative default is non-negotiable**: unadjudicated ambiguous clusters remain **unmerged** in the final output. False positives in CI gates are worse than false negatives. Per `reconciler.md` (Anti-Patterns to Avoid section).
+- **Audit trail**: adjudication decisions are written to `reconciled/adjudication.json` (not just logged). Each entry records: cluster ID, decision (`merge` | `distinct` | `skipped`), rationale, host-model SHA, timestamp. This enables post-hoc review of how the Skill affected the merge.
+- **Re-invocation**: after adjudication, the Skill re-invokes `atcr reconcile` with the decision file. The reconciler applies the decisions and re-emits the four reconciled artifacts. The original `ambiguous.json` is preserved (renamed `ambiguous.original.json`) so the audit chain is intact.
+- **Jaccard thresholds** (per `reconciler.md`): merge ≥ 0.7, separate < 0.4, ambiguous [0.4, 0.7). The thresholds are tunable via a future config knob but defaults are conservative.
 
 ## Happy Path Scenarios
 

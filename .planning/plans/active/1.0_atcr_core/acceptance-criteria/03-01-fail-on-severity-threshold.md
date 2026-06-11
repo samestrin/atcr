@@ -12,8 +12,24 @@
 ## Related Files
 - `cmd/atcr/main.go` - create: centralized exit-code logic mapping severity threshold to exit code
 - `cmd/atcr/reconcile.go` - create: `reconcile` cobra command with `--fail-on` flag
+- `cmd/atcr/review.go` - modify: one-shot mode `atcr review --fail-on <severity>` runs review + reconcile + exit-code check
 - `internal/reconcile/merger.go` - create: severity constants and threshold comparison logic
 - `internal/reconcile/merger_test.go` - create: tests for severity threshold check
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — Authoritative spec for centralized exit-code logic in `main()` (handlers return errors from `RunE`; the root maps them to exit codes). No `os.Exit` calls scattered across handlers.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — `--fail-on` exit-code gate section: "exits nonzero if any finding at or above the threshold survives reconciliation". Severity ordering CRITICAL > HIGH > MEDIUM > LOW; severity values from the closed enum.
+
+### Spec alignment notes
+
+- **Exit codes are exact and centralized**: `0` = pass (no findings at/above threshold), `1` = fail (finding at/above threshold), `2` = error (usage, config, missing file, malformed findings). Per `plan.md` Filesystem Discipline and CLI Architecture.
+- **Severity threshold comparison is case-insensitive** at the input boundary; internally normalized to uppercase. Per `user-stories/03-ci-integration.md` original criterion #5.
+- **Threshold includes the named severity**: `--fail-on HIGH` triggers on HIGH **or CRITICAL** findings (≥); `--fail-on MEDIUM` triggers on MEDIUM, HIGH, or CRITICAL.
+- **Centralization invariant**: `--fail-on` exit-code logic lives in `main()` after `Execute()` returns — not in any handler. The `RunE` pattern is the only way handlers signal outcome.
+- **One-shot mode** (`atcr review --fail-on <severity>`): `cmd/atcr/review.go` invokes fan-out, then `atcr reconcile`, then the same threshold check. Total exit-code logic stays centralized in `main()` regardless of which command was invoked.
 
 ## Happy Path Scenarios
 

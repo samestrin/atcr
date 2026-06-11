@@ -15,6 +15,21 @@
 - `internal/reviewdir/creator_test.go` - create: tests for directory creation and manifest
 - `cmd/atcr/review.go` - modify: call directory creator after range resolution
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — `cmd.OutOrStdout()` and `cmd.OutOrStderr()` for testable output routing; central manifest creation stays in the engine, not in CLI handlers.
+- [Range Resolution](../documentation/range-resolution.md) — The `Resolution` struct is written verbatim into `manifest.json` so downstream tools read provenance from disk rather than re-running the resolver.
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — `manifest.json` shape (default + per-agent `payload_mode`, `roster`, `started_at`/`completed_at`, `partial` flag) consumed by fan-out.
+
+### Spec alignment notes
+
+- Review ID sanitization: agent names and review IDs are passed through `filepath.Base` against path traversal. Branch slug strips `feature/`, `fix/`, etc. prefixes; replaces non-alphanumeric runs with `-`.
+- Directory permissions: 0755 for directories, 0644 for files per `plan.md` filesystem discipline.
+- Default review-id scheme `<YYYY-MM-DD>_<branch-slug>`: collision suffix is timestamp `HHMMSS` (per `plan.md`); `--id` flag overrides the entire id.
+- `.atcr/latest` is a text file containing the review id (one line); subsequent `atcr reconcile` / `atcr report` calls default to it without arguments.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Directory created with correct structure**

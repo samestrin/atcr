@@ -16,6 +16,25 @@
 - `internal/mcp/tools_test.go` - create: Unit tests verifying schema generation and type correctness
 - `internal/mcp/server.go` - modify: Register tools during server initialization
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [MCP Server Implementation](../documentation/mcp-server.md) — Authoritative spec for the generic `mcp.AddTool` pattern (typed `args` and result structs, `jsonschema` struct tags), the 5-tool table, and the `ReviewArgs`/`ReviewResult` example code.
+
+### Spec alignment notes
+
+- **The 5 tools are exactly**: `atcr_review`, `atcr_reconcile`, `atcr_report`, `atcr_range`, `atcr_status`. Tool names are part of the public contract — do not rename without a coordinated v2 bump.
+- **Generic `mcp.AddTool` is the recommended pattern in v1.6.1**. Manual `Server.AddTool` is reserved for untyped/raw cases. Schema inference reads `jsonschema:"..."` struct tags.
+- **Per-tool result shape** (per `mcp-server.md`):
+  - `atcr_review` → `{review_dir, partial, findings}` (plus internal `agent_count` from engine output)
+  - `atcr_reconcile` → reconciliation summary with `pass` field (true/false based on `--fail-on` threshold)
+  - `atcr_report` → rendered content (markdown, JSON, or checklist)
+  - `atcr_range` → `{base, head, commit_count, file_count}`
+  - `atcr_status` → `{review_id, status, agent_count, agents_done, agents_pending}`
+- **All tool args are optional** by design (clients call with `{}` to use defaults). The handler applies defaults (e.g., head=HEAD, base from git auto-detect).
+- **Schema size budget**: each tool's input schema is < 2KB JSON per the AC perf target. Avoid large enum lists in tags; reference constants instead.
+
 ## Happy Path Scenarios
 
 **Scenario 1: All five tools are registered on server startup**

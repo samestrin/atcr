@@ -16,6 +16,22 @@
 - `internal/mcp/server.go` - create: MCP server construction, tool registration, transport setup
 - `internal/mcp/server_test.go` - create: Unit and integration tests for server startup and transport
 - `cmd/atcr/serve_test.go` - create: Integration tests for serve command lifecycle
+- `internal/mcp/handlers.go` - create: thin handler functions for each of the 5 tools (`atcr_review`, `atcr_reconcile`, `atcr_report`, `atcr_range`, `atcr_status`)
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [MCP Server Implementation](../documentation/mcp-server.md) — Authoritative spec for `atcr serve`, `mcp.StdioTransport`, generic `mcp.AddTool` with typed args/result, `InMemoryTransport` for tests, stderr discipline, and the 5-tool tool table.
+- [CLI Architecture](../documentation/cli-architecture.md) — `cmd.OutOrStderr()` is the only safe writer in `atcr serve` mode; `cmd.OutOrStdout()` is forbidden because stdout is owned by the protocol.
+
+### Spec alignment notes
+
+- **Stderr discipline is non-negotiable in serve mode**: any human-readable log, debug message, or diagnostic print that escapes to stdout will corrupt the MCP protocol and disconnect the client. Use `cmd.ErrOrStderr()` or `os.Stderr` directly. Test with `InMemoryTransport` plus a stderr-buffer capture to assert no protocol leakage.
+- **`mcp-go-sdk` version**: pinned to **v1.6.1** per `.planning/specifications/packages/registry.yaml`. Use the generic `mcp.AddTool` (not the older non-generic `Server.AddTool`).
+- **InMemoryTransport is the test transport** — never `os/exec` the binary for unit tests; reserve that for end-to-end smoke tests.
+- **Handshake** is initiated by the client; the server's `initialize` response advertises `serverInfo` (`name: "atcr"`, version from build) and the registered `tools` capability list.
+- **No business logic in handlers** — handlers are thin wrappers that call into the same internal packages as the CLI commands (`internal/fanout`, `internal/reconcile`, `internal/gitrange`, `internal/report`). Per `mcp-server.md`.
 
 ## Happy Path Scenarios
 

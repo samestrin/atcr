@@ -17,6 +17,22 @@
 - `internal/report/report.go` - create/reuse: Report renderer called by both CLI and MCP handler
 - `internal/gitrange/resolve.go` - create/reuse: Git range resolver called by atcr_range handler
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [MCP Server Implementation](../documentation/mcp-server.md) — Authoritative spec for the 5-tool table; thin handlers call the same `internal/` packages as the CLI.
+- [Range Resolution](../documentation/range-resolution.md) — `atcr_range` handler invokes the resolver; returns the `Resolution` JSON shape documented in the spec.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — `atcr_report` handler reads from `reconciled/findings.json`; `report.md` shape documented in the spec.
+- [CLI Architecture](../documentation/cli-architecture.md) — `atcr_report` default format is `md`; format enum `md|json|checklist` enforced at the schema level (not in the handler).
+
+### Spec alignment notes
+
+- **atcr_report default format is `md`** when `format` arg is omitted. The format enum `md|json|checklist` is enforced by the JSON Schema (not in the handler) — clients sending an invalid value receive a schema-validation error before the handler runs.
+- **atcr_range returns the `Resolution` struct** as JSON: `{base, head, commit_count, file_count}` (with `detection_mode`, `default_branch`, `shallow`, `resolved_at` available for clients that need them). The empty-diff case is **not** an error — it returns `commit_count: 0, file_count: 0` so pre-flight checks can detect "nothing to review" without exception handling.
+- **atcr_status reads from `manifest.json`** to derive status; if the manifest is missing required fields, the handler returns an error rather than guessing. Status values: `in_progress`, `completed`, `failed` (mapped from per-agent `status.json` aggregation).
+- **Path containment** on `id_or_path` (same invariant as AC 04-03): paths must resolve under `.atcr/reviews/`.
+
 ## Happy Path Scenarios
 
 **Scenario 1: atcr_report renders markdown by default**

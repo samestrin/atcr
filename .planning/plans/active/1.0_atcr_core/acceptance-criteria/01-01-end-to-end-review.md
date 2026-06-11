@@ -15,6 +15,22 @@
 - `cmd/atcr/reconcile.go` - create: `atcr reconcile` subcommand entry point
 - `cmd/atcr/report.go` - create: `atcr report` subcommand entry point
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [CLI Architecture](../documentation/cli-architecture.md) — Cobra patterns, `RunE`, `ExecuteContext` for global timeout, centralized exit-code logic in `main()`.
+- [Range Resolution](../documentation/range-resolution.md) — Decision tree that `atcr review` invokes (explicit → merge-commit → auto) before any provider call.
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — Parallel/serial lanes, partial-success semantics, fallback chain.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — Pipeline invoked by `atcr reconcile` (discover → normalize → cluster → dedupe → merge → confidence → emit).
+- [Findings Format v1](../documentation/findings-format.md) — `# atcr-findings/v1` header, 8-col per-source, 9-col reconciled; the contract between stages.
+
+### Spec alignment notes
+
+- Per `original-requirements.md` (line 100-110), reconciled `findings.txt` is **9 columns** (per-source 8 with `REVIEWERS` plural + `CONFIDENCE`). The `documentation/findings-format.md` heading reads "10 columns" — treat that heading as a spec-doc typo; the example row and `original-requirements.md` are authoritative for v1.
+- Default review-id scheme: `<YYYY-MM-DD>_<branch-slug>` written to `.atcr/latest`; `--id` flag overrides.
+- Partial-success semantics: `atcr review` returns exit code 0 when ≥1 agent succeeded (with `partial: true` in `manifest.json`); all-fail produces nonzero exit.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Full zero-argument workflow on feature branch**
@@ -71,6 +87,8 @@
 **Test Type:** INTEGRATION
 **Test Data Requirements:** Mock git repo with 2-3 commits, mock LLM responses, sample roster config
 **Mock/Stub Requirements:** Mock HTTP server for LLM API calls; mock git commands via test fixtures
+**Test Framework:** `github.com/stretchr/testify` (assert/require/suite) per [Testing Patterns](../documentation/testing-patterns.md). Use `httptest.NewServer` for provider mocks with `atomic.Int32` high-water mark for parallelism verification. Build tag `//go:build integration` for the end-to-end scenario tests.
+**Coverage Target:** ≥70% per `plan.md` success criteria.
 
 ## Definition of Done
 **Auto-Verified:**

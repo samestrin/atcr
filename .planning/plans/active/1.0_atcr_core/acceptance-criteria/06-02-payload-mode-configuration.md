@@ -17,6 +17,22 @@
 - `internal/payload/resolve.go` - create: Resolution logic — effective mode per agent
 - `internal/payload/resolve_test.go` - create: Tests for config resolution and override
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Payload Engine](../documentation/payload-engine.md) — Authoritative spec for the three modes (`diff`, `blocks`, `files`), default `blocks`, per-agent override, and resolution logic.
+- [Configuration & Registry](../documentation/configuration-management.md) — Two-tier config (project-level default + registry-level per-agent override); `KnownFields(true)` strict mode; precedence chain.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — How `manifest.json`'s `per_agent_payload` map is consumed by downstream tools (the `atcr_status` and `report.md` panel table use it).
+
+### Spec alignment notes
+
+- **Resolution order is exact**: per-agent `payload` (registry) > project-level `payload_mode` (`.atcr/config.yaml`) > built-in default (`blocks`). This is the same precedence pattern as the rest of the config system.
+- **`PayloadMode` is a typed enum** in Go (e.g., `type PayloadMode string` with constants `PayloadDiff`, `PayloadBlocks`, `PayloadFiles`); YAML decoder uses `KnownFields(true)` to reject unknown values like `payload_mode: invalid` at load time.
+- **Default is `blocks`** per `original-requirements.md` clarification (2026-06-10). Small MoE models produce better findings from real code than from unified diffs; `diff` is the more compact choice for frontier models on large ranges.
+- **Per-agent override allows mixing modes in one run**: a single `atcr review` can have one agent on `diff` and another on `blocks`. The fan-out engine uses the effective mode for each agent; `manifest.json` records `payload_mode` (default) and `per_agent_payload` (map).
+- **Empty string handling**: an empty `payload_mode` (project) or `payload` (agent) value falls back to the next-priority level (default `blocks`). This matches the rest of the config system (empty is treated as unset).
+
 ## Happy Path Scenarios
 
 **Scenario 1: Default payload mode is blocks when not configured**

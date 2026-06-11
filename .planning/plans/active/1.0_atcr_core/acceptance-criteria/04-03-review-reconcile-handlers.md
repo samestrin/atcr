@@ -18,6 +18,22 @@
 - `internal/fanout/fanout.go` - create/reuse: Fanout engine called by both CLI and MCP handler
 - `internal/reconcile/reconcile.go` - create/reuse: Reconciler called by both CLI and MCP handler
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [MCP Server Implementation](../documentation/mcp-server.md) — Authoritative spec for thin handlers over the shared engine; no business logic in handlers; same `internal/` packages as CLI.
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — `atcr_review` handler invokes the fan-out engine with the same args it would receive from the CLI command.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — `atcr_reconcile` handler invokes the same reconciler pipeline that `cmd/atcr/reconcile.go` invokes.
+
+### Spec alignment notes
+
+- **atcr_review returns immediately** with `{review_id, review_path, agent_count, partial}` after the fan-out completes (per `user-stories/04-mcp-integration.md` original criterion #12). Clients poll `atcr_status` for progress on long-running reviews. This avoids blocking the MCP client on multi-minute fan-out across N agents.
+- **atcr_reconcile arg `id_or_path` defaults to `.atcr/latest`** (per `user-stories/04-mcp-integration.md` original criterion #5). Handler reads the latest pointer when arg is empty.
+- **Path containment invariant**: `id_or_path` is validated to be under `.atcr/reviews/` and not contain `..` or absolute paths. Reject with `MCP error code -32602` (Invalid params) on violation.
+- **No partial-result surprise**: `partial: true` in the result is always set when ≥1 agent fails but ≥1 succeeds. Handler does not retry; the client decides whether to re-invoke with a new review id.
+- **`atcr_reconcile` with `fail_on`** returns `pass: true|false`; when `pass: false`, the failing findings are included in the result so the MCP client can render them inline without a follow-up `atcr_report` call.
+
 ## Happy Path Scenarios
 
 **Scenario 1: atcr_review triggers review with default resolution**

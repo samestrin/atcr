@@ -17,6 +17,22 @@
 - `internal/registry/graph_test.go` - create: Unit tests for graph validation (cycles, dangling refs)
 - `cmd/atcr/review.go` - modify: Apply CLI flags to override config at runtime
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Configuration & Registry](../documentation/configuration-management.md) — Authoritative spec for the precedence chain, `KnownFields(true)` strict mode (`NewDecoder().KnownFields(true)`), and the fallback-chain validation invariants.
+- [CLI Architecture](../documentation/cli-architecture.md) — `MarkFlagsRequiredTogether` / `MarkFlagsOneRequired` for flag-relationship declarations on cobra commands.
+
+### Spec alignment notes
+
+- **Precedence order is exact and unidirectional**: CLI flag > project config (`~/.config/atcr/config.yaml` and `.atcr/config.yaml`) > registry > embedded default. No merge semantics; each level is a full override of the value defined at the next-priority level.
+- **Fallback validation runs at config load time** (before any review or provider call). Two failure modes both produce hard errors: dangling reference (e.g., `bruce` falls back to `unknown-agent`) and cycle (e.g., `A → B → A`, including self-references `A → A`).
+- **Diamond shapes are not cycles** (e.g., `A → C` and `B → C` is fine); the validator must distinguish shared-fallback-targets from cycles. The classic DFS-with-coloring algorithm handles this naturally.
+- **Diamond break**: when a `fallback` chain has multiple roots sharing a single fallback, the cycle detector must not flag the shared target as a cycle. Use DFS with three colors (`white`/`gray`/`black`) — `gray → gray` edge triggers a cycle; `gray → black` does not.
+- **Strict mode is non-negotiable**: a single unknown field in a registry or project config aborts the entire load. No partial loading. Per `configuration-management.md`.
+- **Cycle error message includes the full path**: e.g., `fallback cycle detected: bruce -> greta -> kai -> bruce`. The path aids debugging.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Precedence — CLI flag overrides project config**

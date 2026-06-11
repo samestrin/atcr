@@ -52,6 +52,7 @@
 9. Handlers call same internal packages as CLI (no logic duplication)
 10. stdout reserved for MCP protocol; all logs/errors to stderr
 11. InMemoryTransport available for testing
+12. `atcr_review` returns immediately with `review_id` (and `review_path`, `partial`, `agent_count`); clients poll `atcr_status` for completion. This avoids blocking MCP clients on long-running reviews (multi-minute fan-out across N agents)
 
 ## Technical Considerations
 

@@ -19,6 +19,24 @@
 - `personas/_base.md` - create: Base persona template with shared instructions
 - `personas/bruce.md` - create: Bruce-specific persona (and 5 others)
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Configuration & Registry](../documentation/configuration-management.md) — Authoritative spec for the persona/agent decoupling; how `AgentConfig.persona` references a named persona.
+- [CLI Architecture](../documentation/cli-architecture.md) — `text/template` rendering with `Option("missingkey=error")` and parse-error demotion to fallback template (preserves the resolution chain rather than aborting).
+- [Testing Patterns](../documentation/testing-patterns.md) — Use `testing/fstest.MapFS` to override the embedded FS in tests without touching real files.
+
+### Spec alignment notes
+
+- **Persona resolution chain** (per `plan.md`): `--task-message` CLI flag > agent's `persona:` ref > `<agent>.md` in registry dir > `_base.md` > embedded default. Each step falls through to the next on miss/empty.
+- **Template variables** available in persona prompts: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`. Per `original-requirements.md`.
+- **Persona/agent decoupling** (per `plan.md` clarification 2026-06-10): a `persona` is a named prompt; an `agent` is a provider+model binding that references one. **Fallback agents reference the same persona as their primary** — never duplicated prompt text. This replaces the source registry's `bruce-backup`-style copy-paste pattern.
+- **Persona prompt format** (per `plan.md` clarification): personas emit **7 columns** (no `REVIEWER`); the engine appends `REVIEWER` when writing per-source `findings.txt`. Models never self-attribute.
+- **Severity rubric** (per `plan.md` clarification): personas use `CRITICAL|HIGH|MEDIUM|LOW` directly — not blocking/significant/minor with implicit translation.
+- **Per-payload-mode scope rules** (per `plan.md` clarification, new in v1): `files` mode surfaces only findings on changed regions; pre-existing issues in unchanged regions of changed files use category `out-of-scope` and the reconciler annotates them rather than promoting to reconciled findings.
+- **Adversarial personality clause** (port from battle-tested llm-tools registry prompts): "find problems the author would prefer you didn't", no-flattery rules, priority-ordered focus areas, inline output example row. Per `plan.md` clarification (2026-06-10).
+
 ## Happy Path Scenarios
 
 **Scenario 1: Agent uses explicit persona reference**

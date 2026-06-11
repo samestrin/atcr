@@ -17,6 +17,26 @@
 - `internal/prompt/scope.go` - create: Per-payload scope rule constants/functions
 - `docs/payload-modes.md` - create: User-facing documentation for diff, blocks, files modes
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Payload Engine](../documentation/payload-engine.md) — Authoritative spec for the `PayloadContext` struct, template variables, and per-payload-mode scope rules.
+- [Configuration & Registry](../documentation/configuration-management.md) — How persona prompt files are resolved (registry dir > project dir > embedded); `text/template` rendering with `Option("missingkey=error")`.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — How the reconciler annotates out-of-scope findings; the `out-of-scope` category convention from `plan.md` clarifications (2026-06-10).
+
+### Spec alignment notes
+
+- **Template variables are exactly**: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`. Per `original-requirements.md`. No additional variables are injected; persona authors must use only these.
+- **Per-payload-mode scope rules** (per `plan.md` clarifications 2026-06-10):
+  - `diff` mode: focus only on changed regions; findings outside the diff lines are out of scope.
+  - `blocks` mode: same as diff — changed regions only; function-context expansion does not change the scope rule.
+  - `files` mode: full file content is provided, pre-existing issues may be visible. Findings on unchanged regions use the `out-of-scope` category so the reconciler can annotate rather than promote.
+- **Adversarial personality clause** must be injected into every persona prompt: "find problems the author would prefer you didn't", no-flattery rules, priority-ordered focus areas. Per `plan.md` clarification (2026-06-10) and AC 02-04.
+- **Severity rubric in persona prompt**: `CRITICAL|HIGH|MEDIUM|LOW` directly, not blocking/significant/minor with implicit translation. The reconciler matches on the canonical values.
+- **`docs/payload-modes.md` decision table** must include: (1) when to use diff (frontier models, large ranges, token-constrained environments), (2) when to use blocks (small MoE models, default for v1), (3) when to use files (audit-style review of small ranges, when you want out-of-scope findings to be reported but flagged). Per `plan.md` task 13.
+- **`text/template` security**: persona files are developer-controlled and trusted; no untrusted input reaches the template context. Render with `Option("missingkey=error")` so unknown variables fail loudly rather than silently rendering as empty.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Template renders all payload variables**

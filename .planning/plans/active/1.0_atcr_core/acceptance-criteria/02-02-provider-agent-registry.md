@@ -17,6 +17,21 @@
 - `internal/registry/testdata/` - create: Test YAML fixtures (valid configs, invalid configs)
 - `docs/registry.md` - create: User-facing documentation for registry.yaml schema
 
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [Configuration & Registry](../documentation/configuration-management.md) — Authoritative spec for two-tier config, `KnownFields(true)` strict parsing, `yaml.v3` pinned to v3.0.1, YAML 1.1 boolean quirk (`yes`/`no`/`on`/`off` decode as bool).
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — How `api_key_env` is resolved at invoke time and passed to the OpenAI-compatible client; `Authorization: Bearer ${api_key_env}` header.
+
+### Spec alignment notes
+
+- Per `plan.md` clarification (2026-06-10), the registry uses **persona/agent decoupling**: a `persona` is a first-class registry concept (named prompt: lens, personality, severity rubric); an `agent` is a provider+model binding that references one via `persona: <name>`. The `AgentConfig.persona` field defaults to the agent name when omitted.
+- The shipped `registry.yaml` does **not** ship with environment-specific wiring (providers, model bindings, fallback pairs, local endpoints) — those stay in the user's personal `~/.config/atcr/registry.yaml`. Only the six named personas ship as defaults.
+- AgentConfig fields per `plan.md` and the registry schema in `original-requirements.md`: `provider` (required), `model` (required), `persona` (optional, defaults to agent name), `temperature` (optional, default 0.7), `timeout_secs` (optional, default 600), `rate_limited` (optional, default `false`), `fallback` (optional, validated at load), `payload` (optional per-agent override).
+- Project-level `.atcr/config.yaml` fields per `original-requirements.md`: `agents` (roster), `serial_agents` (rate-limited), `payload_mode` (default), `timeout_secs` (global), `fail_on` (CI gate).
+- `api_key_env` is **never** resolved at config load time; resolution happens in the LLM client at invoke time. A missing env var produces a clear error like `API key env var OPENAI_API_KEY not set (required by provider 'openai')`.
+
 ## Happy Path Scenarios
 
 **Scenario 1: Developer configures a provider with API key env var**

@@ -15,6 +15,23 @@
 - `internal/fanout/engine_test.go` - create: tests for concurrent execution and failure modes
 - `internal/llmclient/client.go` - create: HTTP client for OpenAI-compatible chat completions API
 - `internal/stream/parser.go` - create: SSE stream parser for LLM responses
+- `internal/fanout/status.go` - create: per-agent `status.json` writer with `ok | failed | timeout | parse_error` outcomes
+
+## Documentation References
+
+This AC is implemented against the following project documentation. Read before implementation:
+
+- [LLM Client & Fan-out](../documentation/llm-client-fanout.md) — Authoritative spec for the OpenAI-compatible client, retry policy, parallel/serial lanes, partial-success semantics, per-agent artifacts.
+- [Findings Format v1](../documentation/findings-format.md) — 8-col per-source format; the engine appends `REVIEWER` to model output (7-col → 8-col). Models never self-attribute.
+- [Reconciler & Findings Stream](../documentation/reconciler.md) — How the fan-out's `findings.txt` and `status.json` feed the reconciler's source-discovery rule.
+
+### Spec alignment notes
+
+- **Models emit 7 columns** (no `REVIEWER`); the engine appends the `REVIEWER` field when writing per-source `findings.txt`. Per `plan.md` clarifications (2026-06-10).
+- **Severity rubric** uses `CRITICAL|HIGH|MEDIUM|LOW` directly in persona prompts; not blocking/significant/minor with implicit translation.
+- Retry policy: 429/500/502/503/504 only, ~500ms initial delay, 1.5× backoff. Other 4xx fail immediately. Retry budget must not exhaust the per-agent or global timeout.
+- API keys resolved from env vars at invoke time (not load time). Agent names sanitized via `filepath.Base` against path traversal.
+- Per-agent `status.json`: `{"agent", "status", "findings_count", "duration_ms", "payload_mode", "truncated", "files_dropped"}`. `partial: true` in `summary.json` when ≥1 agent fails but ≥1 succeeds.
 
 ## Happy Path Scenarios
 
