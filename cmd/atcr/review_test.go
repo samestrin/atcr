@@ -1,0 +1,97 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/stretchr/testify/require"
+)
+
+// slotWithKeys builds a one-slot chain whose agents read the given env vars.
+func slotWithKeys(envs ...string) fanout.Slot {
+	s := fanout.Slot{Primary: fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: envs[0]}}}
+	for _, e := range envs[1:] {
+		s.Fallbacks = append(s.Fallbacks, fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: e}})
+	}
+	return s
+}
+
+func TestPreflightAPIKeys_AllChainsKeylessIsUsageError(t *testing.T) {
+	// AC 03-02 Error Scenario 1: a missing API key is a configuration error
+	// (exit 2) naming the env var — never the gate's exit 1.
+	err := preflightAPIKeys([]fanout.Slot{
+		slotWithKeys("ATCR_TEST_KEY_A", "ATCR_TEST_KEY_B"),
+		slotWithKeys("ATCR_TEST_KEY_C"),
+	})
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "API key env var not set")
+	require.Contains(t, err.Error(), "ATCR_TEST_KEY_A")
+	require.Contains(t, err.Error(), "ATCR_TEST_KEY_C")
+}
+
+func TestPreflightAPIKeys_KeyedFallbackRescuesRun(t *testing.T) {
+	// Partial success is binding (original-requirements: exit 0 if ≥1 agent
+	// succeeds), so the pre-flight must pass when ANY agent in any slot's
+	// chain can authenticate — keys resolve per-invocation at run time.
+	t.Setenv("ATCR_TEST_KEY_FB", "k")
+	require.NoError(t, preflightAPIKeys([]fanout.Slot{
+		slotWithKeys("ATCR_TEST_KEY_A", "ATCR_TEST_KEY_FB"),
+	}))
+}
+
+// writeReviewFixtureConfig writes a user registry (under the isolated HOME)
+// and a project .atcr/config.yaml with a single agent whose provider key env
+// is never set.
+func writeReviewFixtureConfig(t *testing.T) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(`providers:
+  testprov:
+    api_key_env: ATCR_TEST_REVIEW_KEY
+    base_url: http://127.0.0.1:1/v1
+agents:
+  bruce:
+    provider: testprov
+    model: test-model
+`), 0o644))
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte("agents: [bruce]\n"), 0o644))
+}
+
+// initGitRepoWithChange creates a repo in the current dir with two commits
+// that differ in file content, so payload building has a real diff.
+func initGitRepoWithChange(t *testing.T) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t.invalid",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t.invalid",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v: %s", args, out)
+	}
+	run("init", "-q")
+	require.NoError(t, os.WriteFile("a.txt", []byte("one\n"), 0o644))
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "init")
+	require.NoError(t, os.WriteFile("a.txt", []byte("one\ntwo\n"), 0o644))
+	run("add", "a.txt")
+	run("commit", "-q", "-m", "second")
+}
+
+func TestReviewCmd_MissingAPIKeyIsUsageError(t *testing.T) {
+	isolate(t)
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t)
+	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
+}
