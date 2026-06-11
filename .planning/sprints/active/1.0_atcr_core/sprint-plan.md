@@ -900,33 +900,34 @@ Documentation available in [documentation/](plan/documentation/):
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min
 
-### 2.41 [ ] **[OpenAI-compatible LLM client + retry policy - RED](plan/user-stories/01-cli-review-workflow.md)**
+### 2.41 [x] **[OpenAI-compatible LLM client + retry policy - RED](plan/user-stories/01-cli-review-workflow.md)**
    **AC:** [01-04 Fan-out Agent Execution](plan/acceptance-criteria/01-04-fanout-agent-execution.md)
    1. Analyze AC, identify testable units
    2. Write tests (httptest provider mocks): POST /chat/completions with Bearer auth from env var at invoke time; retry on 429/5xx (up to 2 retries, ~500ms initial delay, 1.5× backoff); other 4xx fails immediately; per-agent temperature/timeout; API key never logged
    3. Verify tests fail correctly
    **Files:** `tests` | **Duration:** 45 min
 
-### 2.42 [ ] **[OpenAI-compatible LLM client + retry policy - GREEN](plan/user-stories/01-cli-review-workflow.md)**
+### 2.42 [x] **[OpenAI-compatible LLM client + retry policy - GREEN](plan/user-stories/01-cli-review-workflow.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT
    **Files:** `impl` | **Duration:** 1.5 hours
 
-### 2.43 [ ] **[OpenAI-compatible LLM client + retry policy - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
-   **Changed Files:** [LIST FILES MODIFIED IN 2.42]
-   Run the **Adversarial Review Protocol** (Sprint Conventions) with a fresh subagent (description: `Adversarial review: 2.42`).
+### 2.43 [x] **[OpenAI-compatible LLM client + retry policy - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-cli-review-workflow.md)**
+   **Changed Files:** internal/llmclient/{client.go, client_test.go}.
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   Fresh subagent (description: `Adversarial review: LLM client`) reviewed the unit. The reviewer confirmed the core contract holds: key resolved at invoke time, key never in any error, retry only on 429/5xx, 3 attempts max, body re-created per attempt, backoff respects context, 200+badjson fails without retry, bodies drained/closed.
+
+   **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | client.go retry loop | a retryable status on the LAST attempt fell through to a bare "HTTP 502"; "exhausted retries" message was dead code | Fixed in 2.44: last-attempt retryable returns the exhausted-retries error + assertion |
+   | MEDIUM | client.go New | default client auto-followed redirects, forwarding the Bearer header on a same-host 3xx | Fixed in 2.44: CheckRedirect → ErrUseLastResponse (3xx is a hard failure) |
+   | MEDIUM | client.go | base_url with embedded userinfo could leak via wrapped errors | Deferred → TD-015 (registry already rejects userinfo at load) |
+   | LOW | client.go decode | trailing JSON garbage accepted; empty content indistinguishable | Accepted: empty completion is valid; trailing-garbage risk negligible |
+   | LOW | client_test.go | timeout test weak; no cancel-during-backoff / race coverage | Fixed in 2.44: timeout asserts DeadlineExceeded+promptness, added cancel-during-backoff test, verified `go test -race` clean |
 
-   **Action Required:**
-   - CRITICAL/HIGH found -> List issues for 2.44, do NOT proceed until fixed
-   - MEDIUM/LOW found -> Append to `clarifications/tech-debt-captured.md`
-   - None found -> Note "Adversarial review passed" and proceed
+   **Action Required:** 1 HIGH (dead exhausted-retries path) + 1 MEDIUM (redirect Bearer forwarding) fixed in 2.44 with tests; base_url-cred leak deferred (TD-015, already mitigated by registry). Adversarial review passed.
 
-### 2.44 [ ] **[OpenAI-compatible LLM client + retry policy - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
+### 2.44 [x] **[OpenAI-compatible LLM client + retry policy - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 2.43 (if any)
    2. Improve code and tests (T1), validate (T3), COMMIT
    **Duration:** 30 min

@@ -97,3 +97,10 @@
 **Issue:** (1) `# atcr-findings/v1x`, `v10`, `v1.2` all match the `# atcr-findings/` prefix and are reported as `ErrUnknownVersion` rather than a clean version-token comparison, so a consumer cannot distinguish a well-formed-but-unsupported version from a garbage header. (2) `escapeField` now neutralizes pipes and CR/LF, but other control bytes (NUL, etc.) still pass through into the wire contract.
 **Why accepted:** Reporting any non-v1 `atcr-findings/*` header as unknown-version is a reasonable v1 classification; control bytes other than newlines do not occur in real findings text (severity-prefixed lines from LLMs). The structural defects (newline split, comma-forged reviewers, trailing-pipe drop) were all fixed inline in 2.40.
 **Fix in:** v2 — parse the version token exactly; optionally strip remaining control characters in escapeField.
+
+## TD-015 — base_url with embedded credentials could leak via wrapped transport errors (LOW)
+**Origin:** Phase 2, task 2.43 adversarial review, 2026-06-10
+**File:** internal/llmclient/client.go:121
+**Issue:** If a provider base_url embedded userinfo (`https://user:pass@host`), a request-creation or transport error wraps the full URL via `%w`, which could surface the credential in logs — the same risk class as the (already-prevented) API-key leak.
+**Mitigation this sprint:** The registry loader already rejects any `base_url` containing userinfo at load time (internal/registry/config.go validate), so an embedded-credential URL never reaches the client in practice.
+**Fix in:** v2 — defensively strip userinfo (or scrub the URL) before building the request, so the client is safe independent of registry validation.
