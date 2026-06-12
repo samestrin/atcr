@@ -236,6 +236,28 @@ type errWriter struct{ err error }
 
 func (e *errWriter) Write(p []byte) (int, error) { return 0, e.err }
 
+func TestRenderTable_DetailPrefixedWhenHintEmpty(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusNetworkError, Detail: "connection refused"},
+	}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	out := b.String()
+	assert.Contains(t, out, "error: connection refused", "Detail should be prefixed with 'error: ' when Hint is empty")
+	assert.NotContains(t, out, "\tconnection refused", "undecorated Detail must not appear as-is in the HINT column")
+}
+
+func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusNetworkError, Hint: "check firewall", Detail: "connection refused"},
+	}}
+	var b strings.Builder
+	RenderTable(&b, rep)
+	out := b.String()
+	assert.Contains(t, out, "check firewall", "Hint should appear when set")
+	assert.NotContains(t, out, "connection refused", "Detail must not appear when Hint is set")
+}
+
 func TestRenderTableError_SurfacesFlushError(t *testing.T) {
 	rep := &Report{Agents: []AgentResult{
 		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK},
