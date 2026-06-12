@@ -98,6 +98,11 @@ func Resolve(ctx context.Context, repoDir string, opts Options) (*Resolution, er
 		mode = ModeExplicit
 
 	case opts.MergeCommit != "":
+		// base is SHA^ — the merge commit's FIRST parent (the tip of the branch
+		// the PR merged into). A merge commit's second parent is the merged-in
+		// branch; reviewing the first-parent delta matches how a merge-gate reads
+		// "what landed on the target branch". Non-merge or octopus commits where
+		// SHA^ is not the intended base are out of scope for this mode.
 		if head, err = g.resolveRef(opts.MergeCommit); err != nil {
 			return nil, err
 		}
