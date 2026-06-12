@@ -117,6 +117,14 @@ func LoadMergedRegistry(regPath, root string) (*Registry, error) {
 	if err := reg.validateMerged(); err != nil {
 		return nil, err
 	}
+
+	// Security gate: a project-defined provider must be explicitly trusted
+	// before it can ever receive a key. No-op when no project providers exist
+	// (project agents on user providers pass freely).
+	if err := reg.enforceProjectTrust(filepath.Dir(regPath)); err != nil {
+		return nil, err
+	}
+
 	reg.applyDefaults()
 	return reg, nil
 }
