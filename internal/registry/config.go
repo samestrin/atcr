@@ -61,10 +61,10 @@ type AgentConfig struct {
 	Payload     string   `yaml:"payload,omitempty"`
 
 	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
-	Tools           bool   `yaml:"tools,omitempty"`             // Stage 2 — enables the tool loop
-	MaxTurns        *int   `yaml:"max_turns,omitempty"`         // Stage 2 — agent-loop turn cap
-	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes,omitempty"` // Stage 2 — cumulative tool-result budget
-	Role            string `yaml:"role,omitempty"`              // Stage 3/4 — reviewer | skeptic | judge
+	Tools           bool   `yaml:"tools"`             // Stage 2 — enables the tool loop
+	MaxTurns        *int   `yaml:"max_turns"`         // Stage 2 — agent-loop turn cap
+	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget
+	Role            string `yaml:"role"`              // Stage 3/4 — reviewer | skeptic | judge
 }
 
 // roleValid reports whether r is an allowed reserved role. The empty string is
