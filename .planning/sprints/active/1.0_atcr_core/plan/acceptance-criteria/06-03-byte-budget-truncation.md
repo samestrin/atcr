@@ -17,7 +17,7 @@
 - `internal/payload/manifest.go` - create: manifest.json generation with payload mode recording
 - `internal/payload/manifest_test.go` - create: Tests for manifest structure and content
 - `internal/fanout/status.go` - modify: Add truncation recording fields to status.json
-- `cmd/atcr/main.go` - reference: zero/negative budget validation surfaces as a usage error (exit 2) before any review
+- `cmd/atcr/main.go` - reference: negative budget validation surfaces as a usage error (exit 2) before any review; zero is valid and means unlimited
 
 ## Documentation References
 
@@ -131,7 +131,7 @@ This AC is implemented against the following project documentation. Read before 
 
 **Error Scenario 1: Negative byte budget**
 - Error message: "byte budget must be >= 0, got <n>"
-- Exit code: 1
+- Exit code: 2 (usage/config error; zero is valid and means unlimited)
 
 **Error Scenario 2: Failed to write manifest.json**
 - Error message: "failed to write manifest.json: <detail>"
@@ -177,18 +177,18 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Truncation ordering verified against expected output
-- [ ] manifest.json and status.json match expected schemas
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Truncation ordering verified against expected output
+- [x] manifest.json and status.json match expected schemas
 
 **Story-Specific:**
-- [ ] Byte budget drops whole files by size rank (smallest first) deterministically
-- [ ] Truncation always recorded in status.json — `truncated: bool` and `files_dropped: []`
-- [ ] Truncation is never silent — invariant enforced in code
-- [ ] manifest.json records `payload_mode` (default) and `per_agent_payload` (map)
-- [ ] Each agent's truncation is independent
+- [x] Byte budget drops whole files by size rank (smallest first) deterministically
+- [x] Truncation always recorded in status.json — `truncated: bool` and `files_dropped: []`
+- [x] Truncation is never silent — invariant enforced in code
+- [x] manifest.json records `payload_mode` (default) and `per_agent_payload` (map)
+- [x] Each agent's truncation is independent
 
 **Manual Review:**
 - [ ] Code reviewed and approved

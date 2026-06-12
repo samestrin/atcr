@@ -8,7 +8,7 @@
 | Reconciler | Go package | internal/reconcile/merger.go |
 | Clustering | Go maps | FILE + LINE±3 bucketing |
 | Deduplication | Go strings | token-set Jaccard similarity |
-| Confidence Scoring | Go math | weighted average by agent authority |
+| Confidence Assignment | Go package | categorical: HIGH (2+ reviewers), MEDIUM (single), LOW (untrusted) |
 | Test Framework | testify | table-driven tests |
 
 ## Related Files
@@ -49,14 +49,14 @@ This AC is implemented against the following project documentation. Read before 
 - **Then** both findings are placed in the same cluster (same file, lines within ±3)
 
 **Scenario 3: Deduplicate by token-set similarity**
-- **Given** two findings in same cluster with PROBLEM text token overlap >80%
+- **Given** two findings in same cluster with PROBLEM text Jaccard token-set similarity ≥ 0.7
 - **When** deduplication runs
-- **Then** findings merged into single finding; REVIEWER field lists both reviewers; PROBLEM text uses highest-authority version
+- **Then** findings merged into single finding; REVIEWER field lists both reviewers; PROBLEM and FIX use the longest (most detailed) text among duplicates
 
-**Scenario 4: Confidence scoring**
+**Scenario 4: Confidence assignment**
 - **Given** a merged finding agreed on by 2 of 3 agents
-- **When** confidence computed
-- **Then** confidence = (agreeing_agents / total_agents) * authority_weight; result written as 9th column in findings.txt
+- **When** confidence is assigned
+- **Then** CONFIDENCE = HIGH (2+ distinct reviewers agree on the merged cluster); a single-reviewer finding gets CONFIDENCE = MEDIUM; LOW is reserved for untrusted sources; the value is written as the 9th column in findings.txt
 
 **Scenario 5: Reconciled artifacts written**
 - **Given** reconciliation completes
@@ -81,18 +81,19 @@ This AC is implemented against the following project documentation. Read before 
 - **Then** only `pool` and `host` are read; `ci-extras` is skipped (recorded in `summary.json.sources_scanned` as not included)
 - **And** the reconciled output reflects only the allowlisted sources
 - **And** if the allowlist is empty or omitted, all sources under `sources/` (excluding `reconciled/`) are processed (default open-discovery behavior per `plan.md` Reconciler step 1)
+- **Note:** `--sources` filters the immediate children of `sources/` (e.g. pool, host); within an allowed source, discovery still finds any nested `findings.txt` (e.g. `pool/raw/agent/<agent>/`); `reconciled/` is never an input.
 
 ## Edge Cases
 
 **Edge Case 1: Single agent finding**
 - **Given** only 1 agent produced findings (partial review)
 - **When** reconciliation runs
-- **Then** findings included with confidence = 1.0 (single source); REVIEWER field shows single agent
+- **Then** findings included with CONFIDENCE = MEDIUM (single reviewer); REVIEWER field shows single agent
 
 **Edge Case 2: Conflicting findings on same line**
-- **Given** agent-a says `main.go:42` is CRITICAL; agent-b says same line is INFO
+- **Given** agent-a says `main.go:42` is CRITICAL; agent-b says same line is LOW
 - **When** merge runs
-- **Then** higher severity wins; confidence reflects disagreement (lower score)
+- **Then** the merged finding keeps SEVERITY = max with a `disagreement: <lo> vs <hi>` annotation preserved; CONFIDENCE follows the reviewer-count rule (disagreement does not change confidence)
 
 **Edge Case 3: Agent with malformed findings.txt**
 - **Given** agent produced findings.txt with wrong column count (6 instead of 8)
@@ -103,6 +104,16 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** all agents found zero issues
 - **When** reconciliation runs
 - **Then** reconciled findings.txt is empty; summary.json records `total_findings: 0`
+
+**Edge Case 5: Gray-zone similarity goes to ambiguous.json**
+- **Given** two findings at the same location with PROBLEM similarity in the gray zone (0.4–0.7)
+- **When** deduplication runs
+- **Then** the cluster is written to ambiguous.json and both findings remain unmerged in the output (conservative default); ambiguous.json is always written, containing an empty clusters array when no gray-zone clusters exist
+
+**Edge Case 6: LINE±3 clustering boundary**
+- **Given** two findings in the same file at lines N and N+3
+- **When** clustering runs
+- **Then** they share a cluster; at lines N and N+4 they do not (LINE±3 boundary)
 
 ## Error Conditions
 
@@ -129,19 +140,19 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Pipeline stages execute in order: discover → normalize → cluster → dedupe → merge → confidence → emit
-- [ ] Clustering uses FILE + LINE±3 bucketing correctly
-- [ ] Deduplication uses token-set Jaccard similarity with configurable threshold
-- [ ] Confidence score computed and added as 9th column in reconciled findings.txt
-- [ ] All 4 reconciled artifacts written: findings.txt, findings.json, report.md, summary.json
-- [ ] `summary.json` contains: `sources_scanned`, `per_source_counts`, `clusters_collapsed`, `severity_disagreements`, `partial`, `total_findings`, `reconciled_at` (per US-01 #13)
-- [ ] `--sources <list>` allowlist flag restricts reconciled source directories; omitted/empty means open discovery (all sources except `reconciled/`)
-- [ ] Malformed findings.txt rows skipped with warning (not fatal)
+- [x] Pipeline stages execute in order: discover → normalize → cluster → dedupe → merge → confidence → emit
+- [x] Clustering uses FILE + LINE±3 bucketing correctly
+- [x] Deduplication uses token-set Jaccard similarity with fixed v1 thresholds: merge at Jaccard ≥ 0.7; gray zone 0.4–0.7 goes to ambiguous.json (thresholds are not configurable in v1)
+- [x] Confidence score computed and added as 9th column in reconciled findings.txt
+- [x] All 4 reconciled artifacts written: findings.txt, findings.json, report.md, summary.json
+- [x] `summary.json` contains: `sources_scanned`, `per_source_counts`, `clusters_collapsed`, `severity_disagreements`, `partial`, `total_findings`, `reconciled_at` (per US-01 #13)
+- [x] `--sources <list>` allowlist flag restricts reconciled source directories; omitted/empty means open discovery (all sources except `reconciled/`)
+- [x] Malformed findings.txt rows skipped with warning (not fatal)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

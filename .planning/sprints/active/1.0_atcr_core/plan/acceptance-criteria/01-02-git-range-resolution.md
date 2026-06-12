@@ -27,7 +27,7 @@ This AC is implemented against the following project documentation. Read before 
 - The decision tree order is exact: explicit `--base`/`--head` → `--merge-commit SHA` (base = `SHA^`, head = `SHA`) → auto (`merge-base HEAD` against `origin/HEAD` → `origin/main` → `origin/master` → local `main` → local `master`).
 - Empty range (0 commits OR `base == head`) is a **hard error before any provider call** — never a silent zero-findings pass. The error message must name the resolved SHAs.
 - Shallow-clone detection via `git rev-parse --is-shallow-repository` produces a hard error with `git fetch --unshallow` guidance. The resolver does **not** auto-unshallow.
-- `Resolution` struct: `Base`, `Head`, `DetectionMode` (`"explicit" | "merge_commit" | "auto"`), `DefaultBranch`, `CommitCount` (always ≥1), `Shallow`, `ResolvedAt`.
+- `Resolution` struct: `Base`, `Head`, `DetectionMode` (`"explicit" | "merge_commit" | "auto"`), `DefaultBranch`, `CommitCount` (always ≥1), `Shallow`, `ResolvedAt`. The empty-range hard error is raised before any Resolution struct is emitted; every successful Resolution therefore has CommitCount ≥ 1.
 
 ## Happy Path Scenarios
 
@@ -39,7 +39,7 @@ This AC is implemented against the following project documentation. Read before 
 **Scenario 2: Merge-commit detection**
 - **Given** user provides `--merge-commit abc123` flag
 - **When** range resolution runs
-- **Then** resolver uses `git rev-parse abc123^` as base and `abc123` as head with mode "merge-commit"
+- **Then** resolver uses `git rev-parse abc123^` as base and `abc123` as head with mode "merge_commit"
 
 **Scenario 3: Auto-detection via default branch**
 - **Given** no range flags provided; user is on feature branch `feature/foo`
@@ -104,15 +104,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Decision tree resolves correctly for explicit, merge-commit, and auto modes
-- [ ] Default branch fallback chain: origin/HEAD → origin/main → origin/master → local main → local master
-- [ ] Empty range (base==head) produces hard error before any provider call
-- [ ] Shallow clone produces HARD ERROR (not warning) with `git fetch --unshallow` guidance; resolver does NOT auto-unshallow
+- [x] Decision tree resolves correctly for explicit, merge_commit, and auto modes
+- [x] Default branch fallback chain: origin/HEAD → origin/main → origin/master → local main → local master
+- [x] Empty range (base==head) produces hard error before any provider call
+- [x] Shallow clone produces HARD ERROR (not warning) with `git fetch --unshallow` guidance; resolver does NOT auto-unshallow
 
 **Manual Review:**
 - [ ] Code reviewed and approved

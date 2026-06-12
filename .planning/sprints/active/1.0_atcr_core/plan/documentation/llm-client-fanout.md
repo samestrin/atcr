@@ -6,7 +6,7 @@ The LLM client and fan-out engine form the core execution layer of atcr, enablin
 
 The fan-out engine orchestrates these agents through two execution lanes: a parallel lane for concurrent invocations using `sync.WaitGroup` with context cancellation safety, and a serial lane for rate-limited agents that checks the global timeout before each call. Each agent receives its own derived context with per-agent timeouts, ensuring that individual slow responders cannot block the entire review process. The system implements partial-success semantics—an error is only returned if ALL agents fail—and writes per-agent status files (`status.json`) alongside merged findings.
 
-Retry logic handles transient provider failures (429/500/502/503/504) with exponential backoff starting at ~500ms delay with 1.5x multiplier, preventing premature exhaustion of agent timeouts while respecting provider rate limits.
+Retry logic handles transient provider failures (429/500/502/503/504) and transport-level errors (connection reset, EOF, DNS failure) with exponential backoff starting at ~500ms delay with 1.5x multiplier, preventing premature exhaustion of agent timeouts while respecting provider rate limits. Context cancellation and deadline expiry return immediately so timeout classification stays correct.
 
 > Source: [.planning/specifications/packages/standard-library.md:net/http + encoding/json section]
 
@@ -34,7 +34,7 @@ req.Header.Set("Authorization", "Bearer "+key)
 
 ### Retry Logic
 
-Transient provider errors trigger retry with exponential backoff. The policy retries on HTTP status codes 429, 500, 502, 503, and 504 with an initial delay of approximately 500ms and a 1.5x backoff multiplier. This prevents retries from exhausting the agent timeout while handling common failure modes gracefully.
+Transient provider errors trigger retry with exponential backoff. The policy retries on HTTP status codes 429, 500, 502, 503, and 504, and on transport-level errors (connection reset, EOF, DNS failure) while the context is still live — context cancellation or deadline expiry returns immediately. Initial delay is approximately 500ms with a 1.5x backoff multiplier. This prevents retries from exhausting the agent timeout while handling common failure modes gracefully.
 
 > Source: [.planning/specifications/packages/standard-library.md:net/http + encoding/json — provider client]
 
@@ -73,7 +73,7 @@ An error is only returned if ALL agents fail. Individual agent failures are reco
 
 ### Per-Agent Status Tracking
 
-Each agent writes a `status.json` file recording its outcome: "ok" for successful completion, "failed" for non-retryable errors or persistent failures after retries exhausted, or "timeout" when the per-agent or global deadline is exceeded. This enables post-hoc analysis of which reviewers participated in a given review.
+Each agent writes a `status.json` file recording its outcome: "ok" for successful completion, "failed" for non-retryable errors (e.g. other 4xx) or persistent failures after retries exhausted (including transport-level errors, which are retried before failing), or "timeout" when the per-agent or global deadline is exceeded. This enables post-hoc analysis of which reviewers participated in a given review.
 
 > Source: [.planning/plans/active/1.0_atcr_core/codebase-discovery.json:architecture_notes section]
 
@@ -191,9 +191,9 @@ server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *htt
 | Provider mocks | `net/http/httptest` | Test server for retry/concurrency verification |
 | Atomic counters | `sync/atomic.Int32` | High-water mark for parallelism verification in tests |
 
-| Retry Status Codes | Initial Delay | Backoff Multiplier |
+| Retry Triggers | Initial Delay | Backoff Multiplier |
 |-------------------|--------------|-------------------|
-| 429, 500, 502, 503, 504 | ~500ms | 1.5x |
+| 429, 500, 502, 503, 504; transport-level errors (ctx cancellation/deadline returns immediately) | ~500ms | 1.5x |
 
 | Agent Status Values | Meaning |
 |--------------------|---------|

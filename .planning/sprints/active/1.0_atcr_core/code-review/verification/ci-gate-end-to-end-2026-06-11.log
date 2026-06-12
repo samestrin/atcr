@@ -1,0 +1,31 @@
+### atcr ci-gate.sh end-to-end evidence (2026-06-12T02:17:24Z)
+provider: local OpenAI-shape stub at 127.0.0.1:18473 (no cloud keys); agent greta (embedded persona)
+repo: /tmp/atcr-cigate.aO4jSG/repo  base=5e1476b9e2860aa95d745bc428c41c4d75997b75  (atcr on PATH via $WORK)
+
+--- Scenario 1: CRITICAL survives, --fail-on high  => expect exit 1 (gate failure) ---
+review 2026-06-11_main: 1/1 agents succeeded (.atcr/reviews/2026-06-11_main)
+reconciled 1 finding(s)
+atcr: 1 finding(s) at or above HIGH survived reconciliation
+exit1=1
+
+--- Scenario 2: LOW only, --fail-on high  => expect exit 0 (pass) ---
+review 2026-06-11_main-191724: 1/1 agents succeeded (.atcr/reviews/2026-06-11_main-191724)
+reconciled 1 finding(s)
+exit2=0
+
+--- Scenario 3: bogus base ref  => expect exit 2 (usage/config error) ---
+atcr: review failed: invalid git ref: 'bogus-ref-xyz' does not resolve to a commit
+exit3=2
+
+### Supplementary: real-inference run (2026-06-12T02:24:47Z)
+Upgrades the stub run above to genuine LLM inference (no cloud keys; local proxy).
+provider: LiteLLM proxy at orchestrator.lan:4000/v1 ; model: llm-large (local, 5090)
+note: gpt-oss-20b (mac mini) attempted first but its backend was offline — litellm
+      returned HTTP 500 "Connection error / no fallback for gpt-oss-20b"; switched to llm-large.
+
+ci-gate.sh <base>  --fail-on high  => exit 1 (gate failure)
+  greta: status=ok, 2 findings, 2012ms — real model output parsed clean into atcr-findings/v1:
+    CRITICAL auth.go:6  weak prefix password check (pw[:5]=="admin" matches any "admin*")
+    HIGH     auth.go:11 ReadFile error ignored
+  reconciled 2 finding(s); "2 finding(s) at or above HIGH survived reconciliation" -> exit 1
+Confirms: real provider call -> real inference -> v1 8-col parse (REVIEWER=greta) -> reconcile -> gate.

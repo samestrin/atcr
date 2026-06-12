@@ -24,12 +24,12 @@
 This AC is implemented against the following project documentation. Read before implementation:
 
 - [Configuration & Registry](../documentation/configuration-management.md) — Authoritative spec for the persona/agent decoupling; how `AgentConfig.persona` references a named persona.
-- [CLI Architecture](../documentation/cli-architecture.md) — `text/template` rendering with `Option("missingkey=error")` and parse-error demotion to fallback template (preserves the resolution chain rather than aborting).
+- [CLI Architecture](../documentation/cli-architecture.md) — `text/template` rendering with `Option("missingkey=error")` and parse-error demotion to fallback template (superseded: in atcr, persona template parse errors are hard errors — exit 1, no demotion to fallback; see Error Scenario 1 and Edge Case 3).
 - [Testing Patterns](../documentation/testing-patterns.md) — Use `testing/fstest.MapFS` to override the embedded FS in tests without touching real files.
 
 ### Spec alignment notes
 
-- **Persona resolution chain** (per `plan.md`): `--task-message` CLI flag > agent's `persona:` ref > `<agent>.md` in registry dir > `_base.md` > embedded default. Each step falls through to the next on miss/empty.
+- **Persona resolution chain** (per `plan.md`, six levels): `--task-message` flag > agent's `persona:` ref (named persona file) > `<agent>.md` in `.atcr/personas/` (project) > `<agent>.md` in `~/.config/atcr/` (registry dir) > `_base.md` (project dir first, then registry dir) > embedded default. Each step falls through to the next on miss/empty.
 - **Template variables** available in persona prompts: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`. Per `original-requirements.md`.
 - **Persona/agent decoupling** (per `plan.md` clarification 2026-06-10): a `persona` is a named prompt; an `agent` is a provider+model binding that references one. **Fallback agents reference the same persona as their primary** — never duplicated prompt text. This replaces the source registry's `bruce-backup`-style copy-paste pattern.
 - **Persona prompt format** (per `plan.md` clarification): personas emit **7 columns** (no `REVIEWER`); the engine appends `REVIEWER` when writing per-source `findings.txt`. Models never self-attribute.
@@ -121,10 +121,16 @@ This AC is implemented against the following project documentation. Read before 
 - **When** atcr resolves the persona
 - **Then** the project-level file `.atcr/personas/custom.md` takes precedence over registry dir
 
+**Edge Case 7: Explicit persona ref with no matching file at any level**
+- **Given** an agent declares `persona: missing-name` and no file for it exists at any resolution level
+- **When** config loads
+- **Then** loading fails with `persona "missing-name" not found in .atcr/personas/ or ~/.config/atcr/`
+- **Note:** An explicit persona ref never silently falls through to `_base.md` or embedded defaults
+
 ## Error Conditions
 
 **Error Scenario 1: Template parse error in persona file**
-- Error message: "persona template parse error in <file>: <detail>"
+- Error message: `persona file <path>: template parse error at line <n>: <detail>` (line number taken from the `text/template` error)
 - Exit code: 1
 
 **Error Scenario 2: Template execution error (undefined variable)**
@@ -175,22 +181,22 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Persona resolution chain works through all four levels
-- [ ] Template rendering substitutes all supported variables
-- [ ] `--task-message` completely bypasses persona file resolution
-- [ ] Empty persona files fall through to next level with warning
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Persona resolution chain works through all six levels
+- [x] Template rendering substitutes all supported variables
+- [x] `--task-message` completely bypasses persona file resolution
+- [x] Empty persona files fall through to next level with warning
 
 **Story-Specific:**
-- [ ] Resolution order: agent's persona ref > `<agent>.md` in project > `_base.md` in project > registry dir > embedded default
-- [ ] `--task-message` CLI flag overrides ALL persona resolution
-- [ ] Supported template variables: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`
-- [ ] Persona names are sanitized (no path traversal)
-- [ ] Template parse errors include file path and line number
-- [ ] Template execution errors name the undefined field
-- [ ] Multiple agents resolve personas independently (no shared state)
+- [x] Resolution order: `--task-message` flag > agent's `persona:` ref (named persona file) > `<agent>.md` in `.atcr/personas/` (project) > `<agent>.md` in `~/.config/atcr/` (registry dir) > `_base.md` (project dir first, then registry dir) > embedded default
+- [x] `--task-message` CLI flag overrides ALL persona resolution
+- [x] Supported template variables: `{{.Payload}}`, `{{.PayloadMode}}`, `{{.FileCount}}`, `{{.BaseRef}}`, `{{.HeadRef}}`, `{{.AgentName}}`
+- [x] Persona names are sanitized (no path traversal)
+- [x] Template parse errors include file path and line number
+- [x] Template execution errors name the undefined field
+- [x] Multiple agents resolve personas independently (no shared state)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

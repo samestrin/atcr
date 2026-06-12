@@ -15,7 +15,7 @@
 - `internal/fanout/engine_test.go` - create: tests for concurrent execution and failure modes
 - `internal/llmclient/client.go` - create: HTTP client for OpenAI-compatible chat completions API
 - `internal/stream/parser.go` - create: SSE stream parser for LLM responses
-- `internal/fanout/status.go` - create: per-agent `status.json` writer with `ok | failed | timeout | parse_error` outcomes
+- `internal/fanout/status.go` - create: per-agent `status.json` writer with `ok | failed | timeout` outcomes (a malformed LLM response yields status "failed" with the parse error recorded in an `error` field)
 
 ## Documentation References
 
@@ -29,7 +29,7 @@ This AC is implemented against the following project documentation. Read before 
 
 - **Models emit 7 columns** (no `REVIEWER`); the engine appends the `REVIEWER` field when writing per-source `findings.txt`. Per `plan.md` clarifications (2026-06-10).
 - **Severity rubric** uses `CRITICAL|HIGH|MEDIUM|LOW` directly in persona prompts; not blocking/significant/minor with implicit translation.
-- Retry policy: 429/500/502/503/504 only, ~500ms initial delay, 1.5× backoff. Other 4xx fail immediately. Retry budget must not exhaust the per-agent or global timeout.
+- Retry policy: up to 2 retries (3 attempts total), ~500ms initial delay, 1.5× backoff, applied to 429/5xx (429/500/502/503/504) and transport-level errors (connection reset, EOF, DNS failure); context cancellation/deadline returns immediately. Other 4xx fail immediately. Retry budget must not exhaust the per-agent or global timeout. *(Transport-error retry recorded in sprint-plan.md TD Resolution Clarifications, 2026-06-11.)*
 - API keys resolved from env vars at invoke time (not load time). Agent names sanitized via `filepath.Base` against path traversal.
 - Per-agent `status.json`: `{"agent", "status", "findings_count", "duration_ms", "payload_mode", "truncated", "files_dropped"}`. `partial: true` in `summary.json` when ≥1 agent fails but ≥1 succeeds.
 
@@ -53,7 +53,7 @@ This AC is implemented against the following project documentation. Read before 
 **Scenario 4: status.json records outcome**
 - **Given** agent completes with 5 findings
 - **When** status.json is written
-- **Then** file contains: `{"agent": "reviewer-a", "status": "success", "findings_count": 5, "duration_ms": 3200}`
+- **Then** file contains: `{"agent": "reviewer-a", "status": "ok", "findings_count": 5, "duration_ms": 3200}`
 
 ## Edge Cases
 
@@ -65,7 +65,7 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 2: Agent returns non-200 HTTP status**
 - **Given** LLM API returns 503 Service Unavailable
 - **When** client receives response
-- **Then** retry up to 2 times with exponential backoff; if still failing, status.json records `status: "error"`
+- **Then** retry up to 2 times with exponential backoff; if still failing, status.json records `status: "failed"`
 
 **Edge Case 3: Fallback chain exhausted**
 - **Given** primary agent has 2 fallbacks; all 3 return errors
@@ -75,7 +75,12 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 4: Mixed parallel and serial lanes**
 - **Given** 2 agents in parallel lane, 1 agent in serial lane
 - **When** fan-out engine executes
-- **Then** parallel agents run concurrently; serial agent runs after parallel lane completes (or independently based on design)
+- **Then** parallel agents run concurrently; the serial lane runs its agents sequentially (ctx.Err() checked before each invocation) and executes concurrently with the parallel lane
+
+**Edge Case 5: Payload truncated by byte budget**
+- **Given** an agent's payload was truncated by the byte budget
+- **When** the agent completes
+- **Then** its status.json records `truncated: true` and the `files_dropped` list (per AC 06-03); truncation is never silent
 
 ## Error Conditions
 
@@ -89,15 +94,15 @@ This AC is implemented against the following project documentation. Read before 
 
 **Error Scenario 3: Malformed response from LLM**
 - Error message: "agent reviewer-a: failed to parse response: unexpected EOF"
-- Recorded in status.json as `status: "parse_error"`
+- Recorded in status.json as `status: "failed"` with the parse error in the `error` field
 
 ## Performance Requirements
 - **Response Time:** Parallel lane completes within max(single agent time) + 500ms overhead
-- **Throughput:** Supports up to 10 concurrent agent calls without resource exhaustion
+- **Throughput:** Supports 10 concurrent agent calls; all goroutines drain on completion or cancellation (verified via WaitGroup completion in tests)
 
 ## Security Considerations
 - **Authentication/Authorization:** API keys loaded from registry.yaml per-provider; passed via `Authorization: Bearer` header
-- **Input Validation:** Diff payload sanitized before inclusion in LLM prompt; no shell metacharacters injected
+- **Input Validation:** Payload is transmitted only as a JSON string field in the HTTPS request body (encoding/json escaping); payloads are never passed through a shell
 - **Timeout Enforcement:** Global context timeout prevents runaway requests
 
 ## Test Implementation Guidance
@@ -107,17 +112,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Parallel lane uses sync.WaitGroup for concurrent agent invocation
-- [ ] Serial lane respects rate limiting between calls
-- [ ] Per-agent artifacts (review.md, findings.txt, status.json) written to correct paths
-- [ ] Global timeout context cancels in-flight requests
-- [ ] Fallback chain attempts alternatives before marking agent as failed
-- [ ] Partial-success semantics: review succeeds if ≥1 agent succeeds
+- [x] Parallel lane uses sync.WaitGroup for concurrent agent invocation
+- [x] Serial lane respects rate limiting between calls
+- [x] Per-agent artifacts (review.md, findings.txt, status.json) written to correct paths
+- [x] Global timeout context cancels in-flight requests
+- [x] Fallback chain attempts alternatives before marking agent as failed
+- [x] Partial-success semantics: review succeeds if ≥1 agent succeeds
 
 **Manual Review:**
 - [ ] Code reviewed and approved

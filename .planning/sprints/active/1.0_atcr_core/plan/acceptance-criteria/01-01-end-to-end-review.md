@@ -27,7 +27,7 @@ This AC is implemented against the following project documentation. Read before 
 
 ### Spec alignment notes
 
-- Per `original-requirements.md` (line 100-110), reconciled `findings.txt` is **9 columns** (per-source 8 with `REVIEWERS` plural + `CONFIDENCE`). The `documentation/findings-format.md` heading reads "10 columns" — treat that heading as a spec-doc typo; the example row and `original-requirements.md` are authoritative for v1.
+- Per `original-requirements.md` (line 100-110), reconciled `findings.txt` is **9 columns** (per-source 8 with `REVIEWERS` plural + `CONFIDENCE`). `documentation/findings-format.md` has been corrected to 9 columns and matches `original-requirements.md`.
 - Default review-id scheme: `<YYYY-MM-DD>_<branch-slug>` written to `.atcr/latest`; `--id` flag overrides.
 - Partial-success semantics: `atcr review` returns exit code 0 when ≥1 agent succeeded (with `partial: true` in `manifest.json`); all-fail produces nonzero exit.
 
@@ -41,7 +41,7 @@ This AC is implemented against the following project documentation. Read before 
 **Scenario 2: Workflow with explicit flags**
 - **Given** user specifies `--base` and `--head` flags
 - **When** user runs `atcr review --base abc123 --head def456`
-- **Then** the specified range is used instead of auto-detection, and the workflow completes successfully
+- **Then** the specified range is used instead of auto-detection, and the command exits 0 with reconciled/report.md written
 
 **Scenario 3: Single-agent minimal review**
 - **Given** only one agent is configured in `.atcr/config.yaml` roster
@@ -92,15 +92,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `atcr review && atcr reconcile && atcr report` completes end-to-end with zero arguments
-- [ ] Partial failure semantics work correctly (partial:true in manifest)
-- [ ] All three subcommands registered and accessible via `atcr --help`
-- [ ] Exit codes are correct (0 success, 1 failure)
+- [x] `atcr review && atcr reconcile && atcr report` completes end-to-end with zero arguments
+- [x] Partial failure: manifest.json records partial:true, exit code is 0 when ≥1 agent succeeded, and failed agents contribute no rows to sources/pool/findings.txt
+- [x] All three subcommands registered and accessible via `atcr --help`
+- [x] Exit codes are correct (0 success, 1 failure)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

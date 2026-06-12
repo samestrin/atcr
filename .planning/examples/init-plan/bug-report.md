@@ -1,5 +1,7 @@
 # Bug Report: Payment Processing Timeout on Large Orders
 
+**Estimated Durations**: TBD
+
 ## Summary
 
 Orders with 50+ line items fail with timeout errors during payment processing, causing customer frustration and lost revenue.

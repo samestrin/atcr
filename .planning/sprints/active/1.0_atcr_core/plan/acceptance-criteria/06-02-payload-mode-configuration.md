@@ -28,7 +28,7 @@ This AC is implemented against the following project documentation. Read before 
 ### Spec alignment notes
 
 - **Resolution order is exact**: per-agent `payload` (registry) > project-level `payload_mode` (`.atcr/config.yaml`) > built-in default (`blocks`). This is the same precedence pattern as the rest of the config system.
-- **`PayloadMode` is a typed enum** in Go (e.g., `type PayloadMode string` with constants `PayloadDiff`, `PayloadBlocks`, `PayloadFiles`); YAML decoder uses `KnownFields(true)` to reject unknown values like `payload_mode: invalid` at load time.
+- **`PayloadMode` is a typed enum** in Go (e.g., `type PayloadMode string` with constants `PayloadDiff`, `PayloadBlocks`, `PayloadFiles`); YAML decoder uses `KnownFields(true)` to reject unknown KEYS; payload-mode VALUES are validated against the enum {`diff`, `blocks`, `files`} by a separate load-time check.
 - **Default is `blocks`** per `original-requirements.md` clarification (2026-06-10). Small MoE models produce better findings from real code than from unified diffs; `diff` is the more compact choice for frontier models on large ranges.
 - **Per-agent override allows mixing modes in one run**: a single `atcr review` can have one agent on `diff` and another on `blocks`. The fan-out engine uses the effective mode for each agent; `manifest.json` records `payload_mode` (default) and `per_agent_payload` (map).
 - **Empty string handling**: an empty `payload_mode` (project) or `payload` (agent) value falls back to the next-priority level (default `blocks`). This matches the rest of the config system (empty is treated as unset).
@@ -87,6 +87,11 @@ This AC is implemented against the following project documentation. Read before 
 - **When** atcr resolves the payload mode for "bruce"
 - **Then** the effective mode is the default from project config
 
+**Edge Case 5: Uppercase or mixed-case payload mode values are rejected**
+- **Given** `.atcr/config.yaml` contains `payload_mode: "DIFF"` or registry.yaml has an agent with `payload: "Blocks"`
+- **When** atcr loads the config or registry
+- **Then** the enum check rejects the value with the same invalid-mode error (payload mode values are lowercase; no case normalization is performed)
+
 ## Error Conditions
 
 **Error Scenario 1: Unknown payload mode in project config**
@@ -129,17 +134,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Config validation rejects invalid payload modes
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Config validation rejects invalid payload modes
 
 **Story-Specific:**
-- [ ] `PayloadMode` type defined with allowed values: `"diff"`, `"blocks"`, `"files"`
-- [ ] Default payload mode is `"blocks"` when not configured
-- [ ] Project config `.atcr/config.yaml` supports `payload_mode` field
-- [ ] Registry agent config supports `payload` field as per-agent override
-- [ ] Resolution logic: per-agent override > project config default > built-in default (`"blocks"`)
+- [x] `PayloadMode` type defined with allowed values: `"diff"`, `"blocks"`, `"files"`
+- [x] Default payload mode is `"blocks"` when not configured
+- [x] Project config `.atcr/config.yaml` supports `payload_mode` field
+- [x] Registry agent config supports `payload` field as per-agent override
+- [x] Resolution logic: per-agent override > project config default > built-in default (`"blocks"`)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

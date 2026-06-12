@@ -7,7 +7,7 @@
 |-----------|------------|-------|
 | Directory Layout | Go os package | mkdir, file creation |
 | Manifest Serialization | encoding/json | manifest.json |
-| Latest Pointer | Go os package | symlink or text file |
+| Latest Pointer | Go os package | text file containing the review id |
 | Test Framework | testify | assertions |
 
 ## Related Files
@@ -36,6 +36,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Given** range resolution succeeded with base=abc123, head=def456
 - **When** review directory is created
 - **Then** directory `.atcr/reviews/YYYY-MM-DD_branch-slug/` exists with subdirs: `payload/`, `sources/pool/raw/agent/{agent-name}/`, `sources/host/`, `reconciled/`
+- **Note:** `sources/pool/raw/agent/{agent-name}/` directories are created by the fan-out engine when each agent starts — `atcr review` scaffolding creates only `payload/`, `sources/`, and `reconciled/`.
 
 **Scenario 2: manifest.json contains required fields**
 - **Given** review directory is created
@@ -69,6 +70,16 @@ This AC is implemented against the following project documentation. Read before 
 - **When** review directory creation runs
 - **Then** `.atcr/` and `.atcr/reviews/` are created automatically via MkdirAll
 
+**Edge Case 4: --id with path traversal characters**
+- **Given** a user runs `atcr review --id "../escape"` (or any id containing `..`, `/`, or an absolute path)
+- **When** the review directory is created
+- **Then** the command exits with an error "invalid review id: must not contain path separators or '..'" and nothing is written outside `.atcr/reviews/`
+
+**Edge Case 5: Empty branch slug or detached HEAD**
+- **Given** the branch name sanitizes to an empty slug (e.g. only non-alphanumeric characters) or HEAD is detached
+- **When** the review ID is generated
+- **Then** the slug falls back to "detached" (detached HEAD) or "review" (empty slug), producing a valid `<YYYY-MM-DD>_<slug>` id
+
 ## Error Conditions
 
 **Error Scenario 1: Permission denied creating directory**
@@ -94,15 +105,15 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Directory structure matches spec: `payload/`, `sources/pool/raw/agent/`, `sources/host/`, `reconciled/`
-- [ ] manifest.json contains all required fields (base, head, detection_mode, payload_modes, roster, timestamps, partial)
-- [ ] `.atcr/latest` pointer updated to most recent review ID
-- [ ] Slug generation strips branch prefixes and sanitizes special characters
+- [x] Directory structure matches spec: `payload/`, `sources/pool/raw/agent/`, `sources/host/`, `reconciled/`
+- [x] manifest.json contains all required fields (base, head, detection_mode, payload_modes, roster, timestamps, partial)
+- [x] `.atcr/latest` pointer updated to most recent review ID
+- [x] Slug generation strips branch prefixes and sanitizes special characters
 
 **Manual Review:**
 - [ ] Code reviewed and approved

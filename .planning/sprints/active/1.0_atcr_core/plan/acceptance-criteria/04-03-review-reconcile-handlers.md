@@ -28,10 +28,10 @@ This AC is implemented against the following project documentation. Read before 
 
 ### Spec alignment notes
 
-- **atcr_review returns immediately** with `{review_id, review_path, agent_count, partial}` after the fan-out completes (per `user-stories/04-mcp-integration.md` original criterion #12). Clients poll `atcr_status` for progress on long-running reviews. This avoids blocking the MCP client on multi-minute fan-out across N agents.
+- **atcr_review returns immediately** once the review directory is created and fan-out has started (per `user-stories/04-mcp-integration.md` original criterion #12), with result `{review_id, review_path, status: "running", agent_count}`. Fan-out continues in the server process; clients poll `atcr_status` for completion. The `partial` flag is reported by `atcr_status` / `manifest.json` at completion, not by `atcr_review`. This avoids blocking the MCP client on multi-minute fan-out across N agents.
 - **atcr_reconcile arg `id_or_path` defaults to `.atcr/latest`** (per `user-stories/04-mcp-integration.md` original criterion #5). Handler reads the latest pointer when arg is empty.
 - **Path containment invariant**: `id_or_path` is validated to be under `.atcr/reviews/` and not contain `..` or absolute paths. Reject with `MCP error code -32602` (Invalid params) on violation.
-- **No partial-result surprise**: `partial: true` in the result is always set when ≥1 agent fails but ≥1 succeeds. Handler does not retry; the client decides whether to re-invoke with a new review id.
+- **No partial-result surprise**: `partial: true` is always set in `manifest.json` (and reported by `atcr_status`) at completion when ≥1 agent fails but ≥1 succeeds. The engine does not retry; the client decides whether to re-invoke with a new review id.
 - **`atcr_reconcile` with `fail_on`** returns `pass: true|false`; when `pass: false`, the failing findings are included in the result so the MCP client can render them inline without a follow-up `atcr_report` call.
 
 ## Happy Path Scenarios
@@ -41,7 +41,7 @@ This AC is implemented against the following project documentation. Read before 
 - **When** the handler receives the call
 - **Then** the handler resolves head=HEAD and base from git (merge-base or default branch)
 - **And** the handler invokes the fanout package to run all configured personas
-- **And** the result contains: `review_id` (string), `review_path` (string), `agent_count` (int), `partial` (bool)
+- **And** the result contains: `review_id` (string), `review_path` (string), `status` (`"running"`), `agent_count` (int)
 - **And** the review artifacts are written to `.atcr/reviews/<review_id>/`
 
 **Scenario 2: atcr_review with explicit base and head**
@@ -58,9 +58,10 @@ This AC is implemented against the following project documentation. Read before 
 
 **Scenario 4: atcr_review returns immediately (non-blocking)**
 - **Given** the MCP client calls `atcr_review`
-- **When** the fanout starts executing
-- **Then** the handler returns the result with `review_id` and `partial: false` after completion
-- **And** the client can poll `atcr_status` for progress if needed
+- **When** the review directory is created and fan-out has started
+- **Then** the handler returns immediately with `{review_id, review_path, status: "running", agent_count}`
+- **And** fan-out continues in the server process
+- **And** the client polls `atcr_status` for completion; the `partial` flag is reported by `atcr_status` / `manifest.json` at completion, not by `atcr_review`
 
 **Scenario 5: atcr_reconcile processes latest review by default**
 - **Given** a completed review exists at `.atcr/reviews/20260610-120000/`
@@ -79,7 +80,7 @@ This AC is implemented against the following project documentation. Read before 
 
 **Scenario 7: atcr_reconcile with fail_on threshold**
 - **Given** the MCP client calls `atcr_reconcile` with `{"fail_on": "MEDIUM"}`
-- **When** reconciliation finds findings at MEDIUM confidence
+- **When** reconciliation finds findings at MEDIUM severity or above (fail_on thresholds the SEVERITY column: CRITICAL|HIGH|MEDIUM|LOW; confidence is a separate column and plays no role in fail_on)
 - **Then** the result includes a `pass: false` field indicating threshold breach
 - **And** the finding details are included in the result
 
@@ -103,22 +104,28 @@ This AC is implemented against the following project documentation. Read before 
 
 **Edge Case 4: Reconcile with fail_on but no findings exceed threshold**
 - **Given** `atcr_reconcile` called with `{"fail_on": "HIGH"}`
-- **When** all findings are below HIGH confidence
+- **When** all findings are below HIGH severity
 - **Then** the result includes `pass: true`
+
+**Edge Case 5: Reconcile with invalid fail_on value**
+- **Given** `atcr_reconcile` is called with an invalid `fail_on` value (e.g., `"SEVERE"`)
+- **When** schema/enum validation runs
+- **Then** the call is rejected with an error before any reconciliation work executes
+
+**Edge Case 6: All agents fail during a review**
+- **Given** all agents fail during a review started via `atcr_review`
+- **When** the client polls `atcr_status`
+- **Then** status reports the run as failed (not partial) with per-agent error detail from the manifest/status files
 
 ## Error Conditions
 
 **Error Scenario 1: Fanout fails (one or more agents error)**
 - Error message: "review completed with errors: <agent_name> failed: <error>"
-- Behavior: Review is partial; result includes `partial: true` and list of failed agents
+- Behavior: Review is partial; `manifest.json` records `partial: true` and the list of failed agents, reported via `atcr_status` at completion
 
 **Error Scenario 2: Review path does not exist**
 - Error message: "review not found: <id_or_path>"
 - MCP error code: -32602 (Invalid params)
-
-**Error Scenario 3: Handler calls wrong internal function (logic duplication)**
-- This is prevented by design: handlers import and call `internal/fanout` and `internal/reconcile` directly
-- Code review must verify no business logic exists in handler files
 
 ## Performance Requirements
 - **Handler Overhead:** MCP handler adds < 5ms overhead beyond internal package execution
@@ -153,20 +160,21 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] Handler files contain zero business logic (only delegation to internal packages)
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] Handler files contain zero business logic (only delegation to internal packages)
 
 **Story-Specific:**
-- [ ] `atcr_review` returns `{review_id, review_path, agent_count, partial}`
-- [ ] `atcr_reconcile` returns reconciliation summary with pass/fail status
-- [ ] Handlers call `internal/fanout` and `internal/reconcile` directly (no duplicated logic)
-- [ ] `atcr_review` supports args: id, base, head, merge_commit (all optional)
-- [ ] `atcr_reconcile` supports args: id_or_path, fail_on (all optional)
-- [ ] Default id_or_path resolves via `.atcr/latest` pointer
+- [x] `atcr_review` returns `{review_id, review_path, status: "running", agent_count}` immediately once the review directory is created and fan-out has started
+- [x] `atcr_reconcile` returns reconciliation summary with pass/fail status
+- [x] Handlers call `internal/fanout` and `internal/reconcile` directly (no duplicated logic)
+- [x] `atcr_review` supports args: id, base, head, merge_commit (all optional)
+- [x] `atcr_reconcile` supports args: id_or_path, fail_on (all optional)
+- [x] Default id_or_path resolves via `.atcr/latest` pointer
 
 **Manual Review:**
 - [ ] Code reviewed and approved
 - [ ] Handler logic verified as thin wrapper (no business logic)
+- [ ] Handlers are verified in code review to call the same internal engine functions as the CLI — no duplicated logic
 - [ ] Error messages are clear and actionable

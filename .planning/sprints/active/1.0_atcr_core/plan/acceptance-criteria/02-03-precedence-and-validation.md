@@ -6,7 +6,7 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Precedence Resolver | Go function chain | CLI > project > registry > embedded |
-| Graph Validation | Custom Go (DFS/BFS) | Cycle and dangling ref detection |
+| Graph Validation | Custom Go (DFS with three-color marking) | Cycle and dangling ref detection |
 | YAML Parsing | `yaml.v3` | `KnownFields(true)` strict mode |
 | Test Framework | `testify` (assert, require) | Table-driven precedence and graph tests |
 
@@ -26,7 +26,7 @@ This AC is implemented against the following project documentation. Read before 
 
 ### Spec alignment notes
 
-- **Precedence order is exact and unidirectional**: CLI flag > project config (`~/.config/atcr/config.yaml` and `.atcr/config.yaml`) > registry > embedded default. No merge semantics; each level is a full override of the value defined at the next-priority level.
+- **Precedence order is exact and unidirectional**: CLI flag > project config (`.atcr/config.yaml` only; `~/.config/atcr/` is the registry tier — registry.yaml plus user persona files) > registry > embedded default. No merge semantics; each level is a full override of the value defined at the next-priority level.
 - **Fallback validation runs at config load time** (before any review or provider call). Two failure modes both produce hard errors: dangling reference (e.g., `bruce` falls back to `unknown-agent`) and cycle (e.g., `A → B → A`, including self-references `A → A`).
 - **Diamond shapes are not cycles** (e.g., `A → C` and `B → C` is fine); the validator must distinguish shared-fallback-targets from cycles. The classic DFS-with-coloring algorithm handles this naturally.
 - **Diamond break**: when a `fallback` chain has multiple roots sharing a single fallback, the cycle detector must not flag the shared target as a cycle. Use DFS with three colors (`white`/`gray`/`black`) — `gray → gray` edge triggers a cycle; `gray → black` does not.
@@ -123,7 +123,7 @@ This AC is implemented against the following project documentation. Read before 
 - Exit code: 1
 
 **Error Scenario 3: Unknown YAML field (strict mode)**
-- Error message: "<file>: unknown field '<field>' at agents.<name>"
+- Error message: `<file> <path>: unknown field "<field>"` — e.g. `registry.yaml agents.bruce: unknown field "typo_field"`
 - Exit code: 1
 
 **Error Scenario 4: Invalid value type (e.g., string where int expected)**
@@ -169,23 +169,23 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
-- [ ] Precedence chain correctly resolves for all four levels
-- [ ] Cycle detection catches 2-node, 3-node, and self-ref cycles
-- [ ] Dangling reference detection catches unknown agent refs
-- [ ] Strict mode rejects unknown fields with descriptive errors
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
+- [x] Precedence chain correctly resolves for all four levels
+- [x] Cycle detection catches 2-node, 3-node, and self-ref cycles
+- [x] Dangling reference detection catches unknown agent refs
+- [x] Strict mode rejects unknown fields with descriptive errors
 
 **Story-Specific:**
-- [ ] Precedence order documented: CLI flag > project config > registry > embedded default
-- [ ] Fallback validation runs at config load time, before any review
-- [ ] Cycle error message includes the full cycle path (e.g., "bruce -> greta -> bruce")
-- [ ] Dangling ref error message names both the agent and the missing reference
-- [ ] `KnownFields(true)` is set on all YAML decoders
-- [ ] Diamond-shaped fallback graphs (multiple agents pointing to same fallback) do NOT trigger false cycle detection
+- [x] Precedence order documented: CLI flag > project config > registry > embedded default
+- [x] Fallback validation runs at config load time, before any review
+- [x] Cycle error message includes the full cycle path (e.g., "bruce -> greta -> bruce")
+- [x] Dangling ref error message names both the agent and the missing reference
+- [x] `KnownFields(true)` is set on all YAML decoders
+- [x] Diamond-shaped fallback graphs (multiple agents pointing to same fallback) do NOT trigger false cycle detection
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Cycle detection algorithm verified (DFS with coloring or similar)
-- [ ] Error messages are clear, include full context, and suggest fixes
+- [ ] Cycle detection algorithm verified (DFS with three-color marking)
+- [ ] Error messages name the file, the offending field or agent, and the expected valid values

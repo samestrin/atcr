@@ -1,5 +1,7 @@
 # Infrastructure: Add Preview Environments for Pull Requests
 
+**Estimated Durations**: TBD
+
 ## Context
 
 Our team of 12 developers shares 2 staging environments. This creates bottlenecks during code review and QA, with developers waiting hours for environment availability.

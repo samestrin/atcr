@@ -6,11 +6,11 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | CLI Command | Go (cobra) | `atcr reconcile --fail-on <severity>` |
-| Severity Logic | Go | Centralized threshold check in cmd/atcr/main.go |
+| Severity Logic | Go | internal/reconcile exposes a pure helper `CountAtOrAbove(findings, severity)`; cmd/atcr/main.go owns the exit-code mapping (0 pass / 1 threshold breached / 2 usage-config error) |
 | Test Framework | testify | assert/require for exit code and severity checks |
 
 ## Related Files
-- `cmd/atcr/main.go` - create: centralized exit-code logic mapping severity threshold to exit code
+- `cmd/atcr/main.go` - modify (created by the Phase 1 scaffold): centralized exit-code logic mapping severity threshold to exit code
 - `cmd/atcr/reconcile.go` - create: `reconcile` cobra command with `--fail-on` flag
 - `cmd/atcr/review.go` - modify: one-shot mode `atcr review --fail-on <severity>` runs review + reconcile + exit-code check
 - `internal/reconcile/merger.go` - create: severity constants and threshold comparison logic
@@ -28,7 +28,7 @@ This AC is implemented against the following project documentation. Read before 
 - **Exit codes are exact and centralized**: `0` = pass (no findings at/above threshold), `1` = fail (finding at/above threshold), `2` = error (usage, config, missing file, malformed findings). Per `plan.md` Filesystem Discipline and CLI Architecture.
 - **Severity threshold comparison is case-insensitive** at the input boundary; internally normalized to uppercase. Per `user-stories/03-ci-integration.md` original criterion #5.
 - **Threshold includes the named severity**: `--fail-on HIGH` triggers on HIGH **or CRITICAL** findings (≥); `--fail-on MEDIUM` triggers on MEDIUM, HIGH, or CRITICAL.
-- **Centralization invariant**: `--fail-on` exit-code logic lives in `main()` after `Execute()` returns — not in any handler. The `RunE` pattern is the only way handlers signal outcome.
+- **Centralization invariant**: internal/reconcile exposes a pure helper `CountAtOrAbove(findings, severity)`; cmd/atcr/main.go owns the exit-code mapping (0 pass / 1 threshold breached / 2 usage-config error). `--fail-on` exit-code logic lives in `main()` after `Execute()` returns — not in any handler. The `RunE` pattern is the only way handlers signal outcome.
 - **One-shot mode** (`atcr review --fail-on <severity>`): `cmd/atcr/review.go` invokes fan-out, then `atcr reconcile`, then the same threshold check. Total exit-code logic stays centralized in `main()` regardless of which command was invoked.
 
 ## Happy Path Scenarios
@@ -80,6 +80,11 @@ This AC is implemented against the following project documentation. Read before 
 - **When** `atcr reconcile --fail-on HIGH` is executed
 - **Then** exit code is 2 with message: `failed to parse findings: <parse error>`
 
+**Edge Case 5: Unknown severity value in findings.json**
+- **Given** findings.json contains a finding with an unknown severity value (e.g. "BLOCKER")
+- **When** the threshold check loads it
+- **Then** loading fails with exit code 2 ("invalid severity in findings.json") — the enum is closed
+
 ## Error Conditions
 
 **Error Scenario 1: Unknown flag value**
@@ -92,7 +97,7 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Performance Requirements
 - **Response Time:** Exit-code check completes in <10ms after findings.json is loaded
-- **Throughput:** Handles findings files up to 10MB without degradation
+- **Throughput:** Parses a 10MB findings.json in under 1 second
 
 ## Security Considerations
 - **Input Validation:** Severity flag validated against enum before any file I/O
@@ -105,17 +110,17 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--fail-on CRITICAL` returns 1 only when CRITICAL findings exist
-- [ ] `--fail-on HIGH` returns 1 when HIGH or CRITICAL findings exist
-- [ ] `--fail-on MEDIUM` returns 1 when MEDIUM, HIGH, or CRITICAL findings exist
-- [ ] `--fail-on LOW` returns 1 when any finding exists
-- [ ] Exit code 0 when no findings at/above threshold
-- [ ] Severity comparison is case-insensitive
+- [x] `--fail-on CRITICAL` returns 1 only when CRITICAL findings exist
+- [x] `--fail-on HIGH` returns 1 when HIGH or CRITICAL findings exist
+- [x] `--fail-on MEDIUM` returns 1 when MEDIUM, HIGH, or CRITICAL findings exist
+- [x] `--fail-on LOW` returns 1 when any finding exists
+- [x] Exit code 0 when no findings at/above threshold
+- [x] Severity comparison is case-insensitive
 
 **Manual Review:**
 - [ ] Code reviewed and approved

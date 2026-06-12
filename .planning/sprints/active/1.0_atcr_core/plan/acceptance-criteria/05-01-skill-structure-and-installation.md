@@ -12,8 +12,7 @@
 
 ## Related Files
 - `skill/SKILL.md` - create: Agent skill definition with host review instructions, orchestration loop, and input handling
-- `skill/SKILL_test.go` - create: Structural tests for SKILL.md content (required sections, format examples)
-- `internal/skill/install.go` - create: Skill installation helper (copies skill/SKILL.md to target project)
+- `skill/skill_test.go` - create: Structural tests for SKILL.md content (package skill; embeds the skill file via `//go:embed SKILL.md`; required sections, format examples)
 - `docs/skill-usage.md` - create: User-facing documentation for skill installation and usage
 
 ## Documentation References
@@ -27,8 +26,8 @@ This AC is implemented against the following project documentation. Read before 
 ### Spec alignment notes
 
 - **Skill input contract** (per `user-stories/05-host-review-via-skill.md` original criterion #11): a git range, branch, or PR reference. **No sprint paths, no `.planning/` coupling, no DoD checks.** Output contract is the review directory path. Keeps the skill portable to any repo without atcr-specific project state.
-- **Skill installation** is by file copy: `skill/SKILL.md` lives in this repo and is installable into `.claude/skills/atcr/`. The agent's standard skill-resolution rules apply (local project copy wins over shipped copy).
-- **Skill file is plain Markdown** — no frontmatter required by the v1 spec, but frontmatter is permitted. Required sections per the AC: overview, input format, orchestration steps, host review instructions, and findings format reference.
+- **Skill installation** is by file copy: `skill/SKILL.md` lives in this repo and is installable into `.claude/skills/atcr/` via a documented copy (`cp -r skill/ .claude/skills/atcr/`); there is no `internal/skill/install.go` helper in v1. The agent's standard skill-resolution rules apply (local project copy wins over shipped copy).
+- **Skill file format**: SKILL.md begins with YAML frontmatter (`name: atcr`, `description: ...`) per the Agent Skills format. Required sections per the AC: overview, input format, orchestration steps, host review instructions, and findings format reference.
 - **PR URL extraction** uses the standard format `https://github.com/<owner>/<repo>/pull/<n>` and resolves `base`/`head` via `gh pr view <n> --json baseRefName,headRefName`. If `gh` is not available, the Skill halts with installation guidance.
 
 ## Happy Path Scenarios
@@ -68,7 +67,7 @@ This AC is implemented against the following project documentation. Read before 
 **Edge Case 2: Skill installed in non-standard location**
 - **Given** the user places `SKILL.md` in a project-specific skill directory (e.g., `.claude/skills/atcr/`)
 - **When** the agent loads the skill
-- **Then** the skill functions identically regardless of installation path
+- **Then** the SKILL.md body references only the `atcr` binary and review-directory-relative paths — no absolute paths and no `.claude/`-specific paths (verifiable by grep)
 - **And** no hardcoded paths are used in skill instructions
 
 **Edge Case 3: Multiple skill versions on disk**
@@ -91,8 +90,13 @@ This AC is implemented against the following project documentation. Read before 
 - Error message: "Not a git repository. Run the skill from within a git working tree."
 - Skill behavior: Halt orchestration immediately
 
+**Error Scenario 4: PR URL provided but `gh` CLI is missing or unauthenticated**
+- **Given** the user passes a PR URL but the `gh` CLI is missing or unauthenticated
+- **When** the skill parses input
+- **Then** it reports that PR resolution requires `gh` and asks for an explicit `--base`/`--head` range instead (no crash, no partial review)
+
 ## Performance Requirements
-- **Skill Loading:** Skill file parses and is ready for agent consumption in < 100ms
+- **Skill Structure:** SKILL.md is valid markdown with frontmatter and all required sections present (verified by the structure test)
 - **Input Parsing:** Range/branch/PR input resolves in < 2 seconds (git operations only)
 - **Installation:** Skill file copy completes in < 500ms
 
@@ -121,16 +125,16 @@ This AC is implemented against the following project documentation. Read before 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (unit + integration)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./cmd/atcr`)
-- [ ] `skill/SKILL.md` exists and contains all required sections
+- [x] All tests passing (unit + integration)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./cmd/atcr`)
+- [x] `skill/SKILL.md` exists and contains all required sections
 
 **Story-Specific:**
-- [ ] Skill accepts git range, branch name, and PR URL as input
-- [ ] Skill defaults to current branch when no input provided
-- [ ] Skill installation path is documented
-- [ ] No hardcoded paths in skill instructions
+- [x] Skill accepts git range, branch name, and PR URL as input
+- [x] Skill defaults to current branch when no input provided
+- [x] Skill installation path is documented
+- [x] No hardcoded paths in skill instructions
 
 **Manual Review:**
 - [ ] Code reviewed and approved

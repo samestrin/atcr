@@ -1,5 +1,7 @@
 # Tech Debt: Migrate from Moment.js to date-fns
 
+**Estimated Durations**: TBD
+
 ## Current State
 
 The codebase uses Moment.js for date manipulation across 45+ files. Moment.js is:
