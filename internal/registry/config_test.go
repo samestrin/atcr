@@ -357,7 +357,7 @@ agents:
 	require.NotNil(t, a.MaxTurns)
 	assert.Equal(t, 5, *a.MaxTurns, "max_turns parsed")
 	require.NotNil(t, a.ToolBudgetBytes)
-	assert.Equal(t, 4096, *a.ToolBudgetBytes, "tool_budget_bytes parsed")
+	assert.Equal(t, int64(4096), *a.ToolBudgetBytes, "tool_budget_bytes parsed")
 	assert.Equal(t, "skeptic", a.Role, "role parsed")
 }
 
