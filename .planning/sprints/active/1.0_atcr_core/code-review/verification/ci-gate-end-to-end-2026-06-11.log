@@ -16,3 +16,16 @@ exit2=0
 --- Scenario 3: bogus base ref  => expect exit 2 (usage/config error) ---
 atcr: review failed: invalid git ref: 'bogus-ref-xyz' does not resolve to a commit
 exit3=2
+
+### Supplementary: real-inference run (2026-06-12T02:24:47Z)
+Upgrades the stub run above to genuine LLM inference (no cloud keys; local proxy).
+provider: LiteLLM proxy at orchestrator.lan:4000/v1 ; model: llm-large (local, 5090)
+note: gpt-oss-20b (mac mini) attempted first but its backend was offline — litellm
+      returned HTTP 500 "Connection error / no fallback for gpt-oss-20b"; switched to llm-large.
+
+ci-gate.sh <base>  --fail-on high  => exit 1 (gate failure)
+  greta: status=ok, 2 findings, 2012ms — real model output parsed clean into atcr-findings/v1:
+    CRITICAL auth.go:6  weak prefix password check (pw[:5]=="admin" matches any "admin*")
+    HIGH     auth.go:11 ReadFile error ignored
+  reconciled 2 finding(s); "2 finding(s) at or above HIGH survived reconciliation" -> exit 1
+Confirms: real provider call -> real inference -> v1 8-col parse (REVIEWER=greta) -> reconcile -> gate.
