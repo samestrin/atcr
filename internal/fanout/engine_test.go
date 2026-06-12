@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,6 +107,9 @@ func TestRun_ParallelAgentsRunConcurrently(t *testing.T) {
 }
 
 func TestRun_SerialLaneRunsSequentially(t *testing.T) {
+	// Note: this test verifies serial lane serialization, not the max_parallel
+	// semaphore cap. Serial slots always run in a single goroutine sequentially
+	// regardless of cap. For cap coverage, see TestRun_MaxParallelBoundsPeakConcurrency.
 	f := newFake()
 	f.delay = 20 * time.Millisecond
 	e := NewEngine(f)
@@ -130,7 +134,7 @@ func TestRun_SerialAndParallelLanesRunConcurrently(t *testing.T) {
 	for _, m := range models {
 		f.block[m] = make(chan struct{})
 	}
-	started := make(chan string, len(models))
+	started := make(chan string, 5) // buffer for all agents so onStart never blocks
 	f.onStart = func(m string) { started <- m }
 	e := NewEngine(f)
 
@@ -305,11 +309,35 @@ func parallelSlots(n int) []Slot {
 
 func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
 	f := newFake()
-	f.delay = 30 * time.Millisecond
+	// Gate the first cap agents so peak deterministically reaches the cap
+	// before any agent completes, removing timing dependence on delay.
+	models := []string{"a0", "a1"}
+	for _, m := range models {
+		f.block[m] = make(chan struct{})
+	}
+	started := make(chan string, 5) // buffer all agents so onStart never blocks
+	f.onStart = func(m string) { started <- m }
 	e := NewEngine(f, WithMaxParallel(2))
 
-	results := e.Run(context.Background(), parallelSlots(5))
+	done := make(chan []Result, 1)
+	go func() { done <- e.Run(context.Background(), parallelSlots(5)) }()
 
+	// Wait for both capped agents to enter Complete — peak is deterministically 2.
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case m := <-started:
+			seen[m] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d agents started; semaphore did not admit cap agents", len(seen))
+		}
+	}
+	// Release the gates so all agents can complete.
+	for _, m := range models {
+		close(f.block[m])
+	}
+
+	results := <-done
 	require.Len(t, results, 5)
 	for _, r := range results {
 		assert.Equal(t, StatusOK, r.Status)
@@ -343,6 +371,9 @@ func TestRun_MaxParallelLargerThanRosterIsUnbounded(t *testing.T) {
 }
 
 func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
+	// Verify no goroutine leak: count goroutines before and after Run.
+	before := runtime.NumGoroutine()
+
 	// The semaphore must not defeat the WaitGroup drain guarantee: with a roster
 	// larger than the cap, queued goroutines whose ctx-aware acquire loses to
 	// cancellation still resolve to a timeout result and Done() — no leak.
@@ -366,4 +397,18 @@ func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return under the cap — semaphore blocked the WaitGroup drain")
 	}
+
+	// Poll for goroutine cleanup (similar to goleak): give the runtime a short
+	// window to reclaim goroutines, then assert no persistent leak.
+	var after int
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		after = runtime.NumGoroutine()
+		if after <= before+2 {
+			break
+		}
+	}
+	assert.LessOrEqual(t, after, before+2,
+		"goroutine count must not permanently increase after Run — WaitGroup drain guarantee")
 }

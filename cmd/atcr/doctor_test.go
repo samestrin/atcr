@@ -7,15 +7,17 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// echoProvider returns a chat-completions server that echoes the user prompt
-// back as the assistant message, so the doctor's nonce marker round-trips and
-// the endpoint classifies as ok. failStatus > 0 makes it fail instead.
+// echoProvider returns a chat-completions server that extracts and returns the
+// nonce marker from the prompt, so classify() sees the standalone marker rather
+// than the full prompt text (which classify() strips before checking). failStatus
+// > 0 makes it return an HTTP error instead.
 func echoProvider(t *testing.T, failStatus int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +35,12 @@ func echoProvider(t *testing.T, failStatus int) *httptest.Server {
 		_ = json.Unmarshal(body, &req)
 		content := ""
 		if len(req.Messages) > 0 {
-			content = req.Messages[0].Content
+			msg := req.Messages[0].Content
+			// Return only the marker token so it survives classify()'s prompt-strip
+			// check (which removes the full prompt before looking for the marker).
+			if i := strings.Index(msg, "ATCR-OK-"); i >= 0 {
+				content = msg[i:]
+			}
 		}
 		resp := map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}},

@@ -1,0 +1,14 @@
+{
+  "sources": ["claude", "multi-agent"],
+  "per_source_counts": {
+    "claude": 14,
+    "multi-agent": 0
+  },
+  "merged_count": 14,
+  "clusters_collapsed": "0 raw findings reduced into 14 merged (no dedup needed — all single-source)",
+  "severity_disagreements": 0,
+  "intent_annotations": 0,
+  "claude_role": "intent_verifier",
+  "parse_warnings": "2 rows (overlay.go:30, config.go:161) had pipe characters in PROBLEM text that caused column misalignment in group_td output — manual correction needed in TD README",
+  "timestamp": "2026-06-12T13:46:00Z"
+}

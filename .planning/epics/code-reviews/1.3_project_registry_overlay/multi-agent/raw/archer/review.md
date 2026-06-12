@@ -1,0 +1,4 @@
+HIGH|cmd/atcr/main.go:103|Missing input validation|Add length check for command-line arguments|security|5|user input passed directly to query|bruce
+HIGH|cmd/atcr/trust.go:90|Missing input validation|Validate provider name length and characters|security|5|user input passed directly to trust operation|bruce
+LOW|internal/registry/gate.go:39|Improper error handling|ResolveGateThreshold reads fail_on only from the unmerged user registry, so a project registry cannot influence the reconcile gate|correctness|20|inconsistent with uniform project-over-user precedence now advertised in docs|bruce
+LOW|cmd/atcr/trust.go:90|Inadequate error message|The trust summary count reflects only newly-written entries, so a mixed run (some already-trusted, some new) can under-report what the user expects persisted|correctness|10|misleading feedback to user about trust state|bruce

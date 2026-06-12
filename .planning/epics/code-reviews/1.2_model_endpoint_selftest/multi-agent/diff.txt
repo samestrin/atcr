@@ -1,0 +1,1546 @@
+diff --git a/.planning/epics/active/1.2_model_endpoint_selftest.md b/.planning/epics/active/1.2_model_endpoint_selftest.md
+index ad2e2a1..4277fdb 100644
+--- a/.planning/epics/active/1.2_model_endpoint_selftest.md
++++ b/.planning/epics/active/1.2_model_endpoint_selftest.md
+@@ -71,3 +71,27 @@ A new `atcr doctor` subcommand (name open — see Clarifications) that:
+ 
+ - **Q: Command name?** Proposed `atcr doctor` (familiar from `brew doctor`/`flutter doctor`); alternatives: `atcr selftest`, `atcr check`. Decide at /init-plan time. (2026-06-11)
+ - **Q: New epic vs existing?** No existing epic covers configuration diagnostics (1.1 is schema-only; 2.0–5.0 are agentic stages). Numbered 1.2 to ride behind the 1.x core line as a small utility epic. (2026-06-11)
++
++### Recorded 2026-06-11 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Command name is `atcr doctor` (matches `brew doctor`/`flutter doctor`; no collision with existing review/reconcile/report/range/status/init/serve; `atcr check` rejected as a false-friend of `report --format checklist`).
++- `serial_agents` is a REAL field: `ProjectConfig.SerialAgents []string` in the project-config layer (`.atcr/config.yaml`, `internal/registry/project.go`), distinct from the registry-level per-agent `rate_limited` flag. The effective roster = union of `cfg.Agents` + `cfg.SerialAgents` (both project-config lanes) + all agents reachable via `fallback` chains in the registry. No schema change.
++- Task 2 scope confirmed: error-body snippet capture is ALREADY implemented (`client.go:236`, bounded 4KB, key-redacted). The remaining gap is structural — promote `httpStatusError` to an exported `*HTTPStatusError{Status int, Snippet string}` so callers classify HTTP status via `errors.As`; and add `MaxTokens` to `Invocation` + `max_tokens` to `chatRequest` (absent today).
++
++**Scope Boundaries:**
++- IN scope: roster resolution+dedup (project-config Agents+SerialAgents + registry fallback walk), pre-flight (key/url) checks, one invocation per distinct (provider, model, base_url) target, classification, human table + `--json`, exit codes 0/1/2, structured `*HTTPStatusError` + `MaxTokens`, docs.
++- OUT of scope: persona/payload validation, cost estimation, scheduled/continuous health checks, MCP exposure of doctor, auto-fixing config, any registry schema change.
++
++**Technical Approach:**
++- Concurrency: a simple bounded worker pool (e.g. semaphore-limited goroutines), NOT the full `fanout.Engine`, since doctor needs no persona/payload rendering.
++- Per-call budget via flags: `--max-tokens` (default 2048) and `--timeout` (default 60s, applied as a per-call context deadline). Registry path override flag consistent with existing commands.
++- Classification by HTTP status via `errors.As(*HTTPStatusError)`: auth_failed (401/403), not_found (404), rate_limited (429), provider_error (5xx); plus missing_key (no network), invalid_config, network_error, timeout; ok (marker found) and ok-with-warning (200 but marker absent/empty content → hint to raise `--max-tokens`).
++
++**Original Questions and Answers:**
++1. Q: Command name — `atcr doctor` vs `selftest`/`check`?
++   A: `atcr doctor` (universal recognition; no collision; `check` is a false-friend of report's `--format checklist`).
++2. Q: Is `serial_agents` a real schema field; what is the effective roster?
++   A: Yes — `ProjectConfig.SerialAgents []string` is first-class. Roster = `cfg.Agents` + `cfg.SerialAgents` + fallback-reachable agents. No schema change.
++3. Q: Is Task 2 = structured `*HTTPStatusError` + `MaxTokens` (snippet capture already done)?
++   A: Yes — capture is already bounded/redacted; the only gap is surfacing status to callers via a struct, plus adding the absent `max_tokens`.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index e6c4b8d..d1c934d 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -22,6 +22,17 @@ technical-debt/
+ 4. **After resolution**: Move items from active to completed
+ 
+ 
++### [2026-06-11] From Sprint: epic-1.2
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/doctor/run.go:200 | StatusNetworkError detail surfaces bounded(err.Error()) which can embed the provider base_url host/path (never the API key, which lives only in the Authorization header) in the table and JSON output. | Document that base_url (never the key) may appear in network_error detail so users avoid embedding credentials in base_url. | SECURITY | 10 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/doctor/render.go:25 | RenderTable returns no error and discards the tabwriter Flush error, so a failed/truncated table write is silent while RenderJSON's error is checked. | Have RenderTable return an error like RenderJSON, or at least surface the Flush error to the caller. | CORRECTNESS | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/doctor/render.go:35 | RenderTable folds Detail into the HINT column when Hint is empty, so a raw provider error snippet appears under the HINT header with no visual distinction from an actionable hint. | Keep Detail in its own column or prefix substituted detail (e.g. 'error: ...') so the table does not mislabel a raw snippet as a hint. | UNDER_ENGINEERING | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/doctor/run.go:165 | base_url pre-flight accepts any http(s) URL with a non-empty host but does not reject a path already ending in /chat/completions or containing query/fragment, which llmclient then concatenates into a malformed endpoint reported only as network_error. | Warn on a base_url whose path extends beyond the version segment, or document the expected base_url shape in registry.md. | EDGE_CASES | 20 | execute-epic-independent |
++| U | [ ] | MEDIUM | .gitignore:3 | Binary-ignore patterns 'atcr', 'atcr-mcp', 'atcr-mcp-ssee' are unanchored, so they also match the source dirs cmd/atcr/ and cmd/atcr-mcp/. New files under cmd/atcr/ are silently ignored (had to be force-added) and cmd/atcr-mcp/ source appears untracked entirely (git ls-files cmd/atcr-mcp is empty). | Anchor each binary pattern to repo root (/atcr, /atcr-mcp, /atcr-mcp-ssee) so only root-level build artifacts are ignored, then verify cmd/atcr-mcp/ source is tracked and add it if missing. | CONFIG_DRIFT | 15 | execute-epic-cumulative |
++| U | [ ] | LOW | cmd/atcr/doctor.go:90 | doctor folds all problems into per-agent statuses with no overall stderr summary line, so a CI log scan that does not parse the table gets no signal; the plan mentioned logs to stderr. | Emit a one-line stderr summary (n ok / n failed) so non-table and CI consumers get a status-independent signal. | OBSERVABILITY | 20 | execute-epic-independent |
++
+ ### [2026-06-11] From Sprint: epic-1.1
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+@@ -117,7 +128,7 @@ technical-debt/
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 0 | 2 |
+-| MEDIUM | 0 | 6 | 25 |
+-| LOW | 4 | 1 | 41 |
++| MEDIUM | 1 | 6 | 25 |
++| LOW | 9 | 1 | 41 |
+ 
+-**Last Modified:** 2026-06-11 | **Open Items:** 4 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 79
++**Last Modified:** 2026-06-11 | **Open Items:** 10 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 85
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 3445785..184e166 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,19 @@
++## [1.2.0] - 2026-06-11
++
++### Added
++
++- `atcr doctor` command: self-tests every configured model endpoint with a trivial nonce prompt and a generous default token budget (2048, override with `--max-tokens`), so misconfigured providers, models, API keys, and base URLs are caught before a real review run burns time and tokens
++- Per-agent doctor report (human table or `--json`) classifying each endpoint as `ok`, `ok_warning` (HTTP 200 but the marker is absent/empty — raise `--max-tokens`), `auth_failed`, `not_found`, `rate_limited`, `provider_error`, `network_error`, `timeout`, `missing_key`, or `invalid_config`; the key and base_url pre-flight checks run with no network call
++- `atcr doctor` resolves the effective roster (agents + serial_agents, including fallback chains), deduplicates to distinct (provider, model, base_url) targets, and invokes each target at most once
++- `--agents` flag to self-test a subset of the roster and `--timeout` for a per-call deadline independent of the review timeout
++- Exit-code contract for `atcr doctor`: `0` when every agent has a working invocation path (primary or fallback), `1` when any agent has none, `2` for usage/configuration errors
++
++### Changed
++
++- `llmclient` now surfaces a structured `*HTTPStatusError` (HTTP status + bounded, secret-redacted body snippet) so callers can classify provider failures by status via `errors.As`, and exposes a per-call `max_tokens` request option (previously absent)
++
++*Shipped via /execute-epic (epic 1.2)*
++
+ ## [1.1.0] - 2026-06-11
+ 
+ ### Added
+diff --git a/README.md b/README.md
+index 6348e4d..5da8cf3 100644
+--- a/README.md
++++ b/README.md
+@@ -46,13 +46,18 @@ atcr init
+ #    (~/.config/atcr/registry.yaml — see docs/registry.md)
+ export OPENROUTER_API_KEY=sk-...
+ 
+-# 4. Run the panel on the current feature branch, then reconcile — zero arguments
++# 4. Verify every configured endpoint before spending a real review on it
++atcr doctor
++
++# 5. Run the panel on the current feature branch, then reconcile — zero arguments
+ atcr review && atcr reconcile
+ 
+-# 5. Read the report
++# 6. Read the report
+ atcr report --format md
+ ```
+ 
++`atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
++
+ `atcr review` resolves the range against the default branch, fans the change out to the roster, and records the review id in `.atcr/latest`. Every later command takes an id or path as its single anchor argument and defaults to `latest`, so the two-command pipeline above just works on a feature branch.
+ 
+ ## Commands
+@@ -66,12 +71,14 @@ atcr report --format md
+ | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
+ | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
+ | `atcr serve` | Run the MCP stdio server over the same engine |
++| `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json` |
+ 
+ Key flags:
+ 
+ - `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+ - `atcr report --format md|json|checklist` / `--output <file>`
++- `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+ 
+ ## Payload modes
+ 
+diff --git a/cmd/atcr/doctor.go b/cmd/atcr/doctor.go
+new file mode 100644
+index 0000000..6c15226
+--- /dev/null
++++ b/cmd/atcr/doctor.go
+@@ -0,0 +1,145 @@
++package main
++
++import (
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/doctor"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/spf13/cobra"
++)
++
++// newDoctorCmd builds `atcr doctor`: a pre-flight self-test that invokes every
++// configured model endpoint once and reports which agents can actually be
++// reached, so misconfiguration is caught before a real review run.
++func newDoctorCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "doctor",
++		Short: "Self-test every configured model endpoint",
++		Long: "Resolve the effective roster (agents + serial_agents, including fallback\n" +
++			"chains), deduplicate to distinct (provider, model, base_url) targets, and\n" +
++			"invoke each one once with a trivial nonce prompt. Reports a per-agent table\n" +
++			"(or --json) and exits 0 when every agent has a working invocation path, 1\n" +
++			"when any agent has none, and 2 for usage/configuration errors.",
++		Args: usageArgs(cobra.NoArgs),
++		RunE: runDoctor,
++	}
++	cmd.Flags().Int("max-tokens", 2048, "completion budget per self-test call (high enough that thinking models emit the marker)")
++	cmd.Flags().Int("timeout", 60, "per-call timeout in seconds")
++	cmd.Flags().Bool("json", false, "emit machine-readable JSON to stdout instead of the table")
++	cmd.Flags().String("agents", "", "comma-separated subset of listed agents to test (default: all)")
++	return cmd
++}
++
++// runDoctor loads config, resolves targets, probes them, and renders the
++// report. Config/usage problems map to exit 2; an unreachable agent maps to
++// exit 1 with the report still printed.
++func runDoctor(cmd *cobra.Command, _ []string) error {
++	maxTokens, _ := cmd.Flags().GetInt("max-tokens")
++	timeoutSecs, _ := cmd.Flags().GetInt("timeout")
++	asJSON, _ := cmd.Flags().GetBool("json")
++	agentsFilter, _ := cmd.Flags().GetString("agents")
++
++	if maxTokens <= 0 {
++		return usageError(fmt.Errorf("--max-tokens must be positive"))
++	}
++	if timeoutSecs <= 0 {
++		return usageError(fmt.Errorf("--timeout must be positive (seconds)"))
++	}
++
++	regPath, err := registry.DefaultRegistryPath()
++	if err != nil {
++		return usageError(err)
++	}
++	reg, err := registry.LoadRegistry(regPath)
++	if err != nil {
++		return usageError(err)
++	}
++	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
++	if err != nil {
++		return usageError(err)
++	}
++	if err := proj.ValidateAgainst(reg); err != nil {
++		return usageError(err)
++	}
++
++	if agentsFilter != "" {
++		proj, err = filterRoster(proj, agentsFilter)
++		if err != nil {
++			return usageError(err)
++		}
++	}
++
++	res, err := doctor.Resolve(reg, proj)
++	if err != nil {
++		return usageError(err)
++	}
++
++	nonce, err := doctor.RandomNonce()
++	if err != nil {
++		return usageError(fmt.Errorf("generating self-test nonce: %w", err))
++	}
++
++	rep := doctor.Run(cmd.Context(), llmclient.New(), res, doctor.Options{
++		MaxTokens: maxTokens,
++		Timeout:   time.Duration(timeoutSecs) * time.Second,
++		Nonce:     nonce,
++	})
++
++	if asJSON {
++		if err := doctor.RenderJSON(cmd.OutOrStdout(), rep); err != nil {
++			return err
++		}
++	} else {
++		doctor.RenderTable(cmd.OutOrStdout(), rep)
++	}
++
++	if rep.ExitCode != 0 {
++		// Plain error → exit 1. The report is already on stdout; the summary
++		// line goes to stderr via main's centralized handler.
++		return fmt.Errorf("one or more agents have no working endpoint")
++	}
++	return nil
++}
++
++// filterRoster restricts the roster to the named subset, preserving each
++// agent's original lane. Every requested name must be a directly-listed agent.
++func filterRoster(proj *registry.ProjectConfig, csv string) (*registry.ProjectConfig, error) {
++	want := map[string]bool{}
++	for _, name := range strings.Split(csv, ",") {
++		if n := strings.TrimSpace(name); n != "" {
++			want[n] = true
++		}
++	}
++	if len(want) == 0 {
++		return nil, fmt.Errorf("--agents was set but lists no agent names")
++	}
++
++	listed := map[string]bool{}
++	for _, n := range proj.Agents {
++		listed[n] = true
++	}
++	for _, n := range proj.SerialAgents {
++		listed[n] = true
++	}
++	for n := range want {
++		if !listed[n] {
++			return nil, fmt.Errorf("--agents: %q is not a listed agent in .atcr/config.yaml", n)
++		}
++	}
++
++	out := &registry.ProjectConfig{}
++	for _, n := range proj.Agents {
++		if want[n] {
++			out.Agents = append(out.Agents, n)
++		}
++	}
++	for _, n := range proj.SerialAgents {
++		if want[n] {
++			out.SerialAgents = append(out.SerialAgents, n)
++		}
++	}
++	return out, nil
++}
+diff --git a/cmd/atcr/doctor_test.go b/cmd/atcr/doctor_test.go
+new file mode 100644
+index 0000000..421bbf7
+--- /dev/null
++++ b/cmd/atcr/doctor_test.go
+@@ -0,0 +1,150 @@
++package main
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// echoProvider returns a chat-completions server that echoes the user prompt
++// back as the assistant message, so the doctor's nonce marker round-trips and
++// the endpoint classifies as ok. failStatus > 0 makes it fail instead.
++func echoProvider(t *testing.T, failStatus int) *httptest.Server {
++	t.Helper()
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if failStatus > 0 {
++			w.WriteHeader(failStatus)
++			_, _ = io.WriteString(w, `{"error":{"message":"simulated failure"}}`)
++			return
++		}
++		var req struct {
++			Messages []struct {
++				Content string `json:"content"`
++			} `json:"messages"`
++		}
++		body, _ := io.ReadAll(r.Body)
++		_ = json.Unmarshal(body, &req)
++		content := ""
++		if len(req.Messages) > 0 {
++			content = req.Messages[0].Content
++		}
++		resp := map[string]any{
++			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}},
++		}
++		_ = json.NewEncoder(w).Encode(resp)
++	}))
++	t.Cleanup(srv.Close)
++	return srv
++}
++
++// setupDoctorEnv writes a registry + project config wired to baseURL and points
++// HOME and the working directory at fresh temp dirs.
++func setupDoctorEnv(t *testing.T, baseURL string) {
++	t.Helper()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	regDir := filepath.Join(home, ".config", "atcr")
++	require.NoError(t, os.MkdirAll(regDir, 0o755))
++	registryYAML := "" +
++		"providers:\n" +
++		"  mock:\n" +
++		"    api_key_env: ATCR_DOCTOR_TEST_KEY\n" +
++		"    base_url: " + baseURL + "/v1\n" +
++		"agents:\n" +
++		"  bruce:\n" +
++		"    provider: mock\n" +
++		"    model: test-model\n"
++	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(registryYAML), 0o644))
++
++	work := t.TempDir()
++	t.Chdir(work)
++	atcrDir := filepath.Join(work, ".atcr")
++	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
++	projYAML := "" +
++		"agents:\n" +
++		"  - bruce\n" +
++		"payload_mode: blocks\n" +
++		"timeout_secs: 600\n" +
++		"fail_on: HIGH\n"
++	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"), []byte(projYAML), 0o644))
++}
++
++func TestDoctor_JSONHappyPath(t *testing.T) {
++	srv := echoProvider(t, 0)
++	setupDoctorEnv(t, srv.URL)
++	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
++
++	out, err := execute(t, "doctor", "--json")
++	require.NoError(t, err, "all agents healthy → exit 0")
++
++	var parsed struct {
++		Agents []struct {
++			Agent  string `json:"agent"`
++			Status string `json:"status"`
++		} `json:"agents"`
++	}
++	require.NoError(t, json.Unmarshal([]byte(out), &parsed))
++	require.Len(t, parsed.Agents, 1)
++	assert.Equal(t, "bruce", parsed.Agents[0].Agent)
++	assert.Equal(t, "ok", parsed.Agents[0].Status)
++}
++
++func TestDoctor_MissingKeyExits1(t *testing.T) {
++	srv := echoProvider(t, 0)
++	setupDoctorEnv(t, srv.URL)
++	// ATCR_DOCTOR_TEST_KEY deliberately unset.
++
++	out, err := execute(t, "doctor")
++	require.Error(t, err, "an agent with no working path → exit 1")
++	assert.Equal(t, 1, exitCode(err))
++	assert.Contains(t, out, "missing_key")
++}
++
++func TestDoctor_AuthFailureExits1(t *testing.T) {
++	srv := echoProvider(t, http.StatusUnauthorized)
++	setupDoctorEnv(t, srv.URL)
++	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-bad")
++
++	out, err := execute(t, "doctor", "--max-tokens", "256", "--timeout", "5")
++	require.Error(t, err)
++	assert.Equal(t, 1, exitCode(err))
++	assert.Contains(t, out, "auth_failed")
++}
++
++func TestDoctor_NoConfigIsUsageError(t *testing.T) {
++	// HOME has a registry but the working dir has no .atcr/config.yaml.
++	srv := echoProvider(t, 0)
++	setupDoctorEnv(t, srv.URL)
++	require.NoError(t, os.Remove(filepath.Join(".atcr", "config.yaml")))
++
++	_, err := execute(t, "doctor")
++	require.Error(t, err)
++	assert.Equal(t, 2, exitCode(err), "missing config is a usage/config error")
++}
++
++func TestDoctor_UnknownAgentFilterIsUsageError(t *testing.T) {
++	srv := echoProvider(t, 0)
++	setupDoctorEnv(t, srv.URL)
++	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
++
++	_, err := execute(t, "doctor", "--agents", "ghost")
++	require.Error(t, err)
++	assert.Equal(t, 2, exitCode(err))
++}
++
++func TestDoctor_AgentsFilterSubset(t *testing.T) {
++	srv := echoProvider(t, 0)
++	setupDoctorEnv(t, srv.URL)
++	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
++
++	out, err := execute(t, "doctor", "--agents", "bruce", "--json")
++	require.NoError(t, err)
++	assert.Contains(t, out, "bruce")
++}
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index 5e3320d..0f10251 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -102,6 +102,7 @@ func newRootCmd() *cobra.Command {
+ 		newStatusCmd(),
+ 		newInitCmd(),
+ 		newServeCmd(),
++		newDoctorCmd(),
+ 	)
+ 	return root
+ }
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index 20685b6..a9f5605 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -31,14 +31,13 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
+ 	out, err := execute(t, "--help")
+ 	require.NoError(t, err)
+ 
+-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve"} {
++	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor"} {
+ 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
+ 	}
+ }
+ 
+-func TestRootCmd_HasExactlySevenSubcommands(t *testing.T) {
+-	// The six commands from the original surface plus `status`, added by AC 05-03
+-	// for the Skill's orchestration polling loop (atcr status <id>).
++func TestRootCmd_HasExactlyEightSubcommands(t *testing.T) {
++	// The seven prior commands plus `doctor` (epic 1.2), the endpoint self-test.
+ 	root := newRootCmd()
+ 	names := map[string]bool{}
+ 	for _, c := range root.Commands() {
+@@ -47,8 +46,8 @@ func TestRootCmd_HasExactlySevenSubcommands(t *testing.T) {
+ 		}
+ 		names[c.Name()] = true
+ 	}
+-	assert.Len(t, names, 7)
+-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve"} {
++	assert.Len(t, names, 8)
++	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor"} {
+ 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
+ 	}
+ }
+diff --git a/docs/registry.md b/docs/registry.md
+index fbc67bc..43aa495 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -133,3 +133,63 @@ The v1 schema is strict — unknown keys fail the load — but the following age
+ | `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
+ 
+ The **planned default** column documents the value each field's owning stage will assume when it activates; 1.x applies none of these. An out-of-range value (e.g. `max_turns: 0`, an unknown `role`) is a load error even though the field is otherwise inert, so a config targeting a future stage is still caught early.
++
++## Verifying the configuration (`atcr doctor`)
++
++`atcr doctor` is the recommended check to run right after `atcr init` and after any registry edit. It resolves the **effective roster** — every agent in `agents` and `serial_agents`, plus every agent reachable through `fallback` chains — deduplicates it to the distinct `(provider, model, base_url)` targets, and invokes each target **once** with a trivial nonce prompt. Success is verified by the marker appearing in the response content, not merely by HTTP 200.
++
++```bash
++atcr doctor                      # human-readable table
++atcr doctor --json               # machine-readable, stable schema
++atcr doctor --agents bruce,kai   # test only these listed agents (their fallback chains are still probed)
++atcr doctor --max-tokens 4096    # raise the completion budget for thinking models
++atcr doctor --timeout 30         # per-call timeout in seconds
++```
++
++Flags: `--max-tokens` (default `2048`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>` (restrict to a subset of the directly-listed agents — each selected agent's fallback chain is still probed so its health verdict stays accurate). The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted.
++
++### Status classes
++
++| Status | Meaning | Typical fix |
++|--------|---------|-------------|
++| `ok` | Marker returned in visible content | — |
++| `ok_warning` | HTTP 200 but the marker was absent/empty (often a thinking model that spent the whole budget reasoning) | Raise `--max-tokens` |
++| `auth_failed` | 401/403 | Check the API key in the provider's `api_key_env` |
++| `not_found` | 404 | Check the `model` name and the provider `base_url` |
++| `rate_limited` | 429 | Retry later, or test a smaller `--agents` subset |
++| `provider_error` | 5xx or other non-classified HTTP error | Inspect the bounded error-body snippet in the row |
++| `network_error` | Transport-level failure (DNS, connection, TLS) | Check connectivity and `base_url` host |
++| `timeout` | Per-call deadline exceeded | Raise `--timeout` |
++| `missing_key` | The provider's `api_key_env` variable is unset — reported **without any network call** | `export` the named variable |
++| `invalid_config` | `base_url` empty or malformed — reported **without any network call** | Set a valid `http(s)` `base_url` |
++
++A failure class always references the **environment variable name**, never its value: no secret is ever logged.
++
++### Exit codes
++
++- **0** — every directly-listed agent has at least one working invocation path (its primary target *or* any fallback in its chain). A `fallback` that works covers a failing primary.
++- **1** — at least one listed agent has no working path.
++- **2** — usage/configuration error (missing or invalid registry / project config, bad flag value, unknown `--agents` name).
++
++### JSON schema (`--json`)
++
++A stable top-level object with an `agents` array; one entry per effective-roster agent (fallback agents included):
++
++```json
++{
++  "agents": [
++    {
++      "agent": "bruce",
++      "serial": false,
++      "provider": "openrouter",
++      "model": "anthropic/claude-3.5-sonnet",
++      "status": "ok",
++      "latency_ms": 412,
++      "hint": "",
++      "detail": ""
++    }
++  ]
++}
++```
++
++`hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index c362022..8e63c6b 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -28,6 +28,7 @@ var allowedInternalImports = map[string][]string{
+ 	"registry":  {},
+ 	"payload":   {"gitrange"},
+ 	"llmclient": {"registry"},
++	"doctor":    {"llmclient", "registry"},
+ 	"fanout":    {"llmclient", "registry", "stream", "payload"},
+ 	"reconcile": {"stream"},
+ 	"report":    {"stream", "reconcile"},
+diff --git a/internal/doctor/render.go b/internal/doctor/render.go
+new file mode 100644
+index 0000000..5980e3e
+--- /dev/null
++++ b/internal/doctor/render.go
+@@ -0,0 +1,42 @@
++package doctor
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"text/tabwriter"
++)
++
++// RenderJSON writes the report as stable, indented JSON. The schema is the
++// AgentResult struct tags; see docs/registry.md for the documented contract.
++func RenderJSON(w io.Writer, rep *Report) error {
++	// Marshal a wrapper so the top-level shape is a stable object, never null.
++	out := struct {
++		Agents []AgentResult `json:"agents"`
++	}{Agents: rep.Agents}
++	if out.Agents == nil {
++		out.Agents = []AgentResult{}
++	}
++	enc := json.NewEncoder(w)
++	enc.SetIndent("", "  ")
++	return enc.Encode(out)
++}
++
++// RenderTable writes an aligned human-readable table: one row per
++// effective-roster agent.
++func RenderTable(w io.Writer, rep *Report) {
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSTATUS\tLATENCY\tHINT")
++	for _, a := range rep.Agents {
++		latency := "-"
++		if a.LatencyMS > 0 {
++			latency = fmt.Sprintf("%dms", a.LatencyMS)
++		}
++		hint := a.Hint
++		if hint == "" && a.Detail != "" {
++			hint = a.Detail
++		}
++		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Status, latency, hint)
++	}
++	_ = tw.Flush()
++}
+diff --git a/internal/doctor/resolve.go b/internal/doctor/resolve.go
+new file mode 100644
+index 0000000..e53e812
+--- /dev/null
++++ b/internal/doctor/resolve.go
+@@ -0,0 +1,119 @@
++// Package doctor implements `atcr doctor`: a pre-flight self-test that invokes
++// every configured model endpoint once with a trivial nonce prompt and reports
++// which agents have a working invocation path, so misconfigured providers,
++// models, keys, and base URLs are caught before a real review run.
++package doctor
++
++import (
++	"fmt"
++
++	"github.com/samestrin/atcr/internal/registry"
++)
++
++// Target is a distinct (provider, model, base_url) invocation target. The
++// doctor invokes each target at most once; several roster agents may share one.
++type Target struct {
++	Provider  string
++	Model     string
++	BaseURL   string
++	APIKeyEnv string
++}
++
++// AgentTarget binds one effective-roster agent to the index of the Target it
++// invokes. Serial marks agents drawn from the serial_agents lane.
++type AgentTarget struct {
++	Agent     string
++	Serial    bool
++	TargetIdx int
++}
++
++// Resolution is the deduplicated invocation plan for a roster: the distinct
++// targets to probe, every effective-roster agent (the directly-listed agents
++// plus every agent reachable through fallback chains) bound to its target, and
++// each listed agent's ordered invocation path used for the exit-code verdict.
++type Resolution struct {
++	Targets []Target
++	Agents  []AgentTarget
++	// Paths maps each directly-listed agent (agents + serial_agents) to its
++	// ordered invocation path: the agent itself followed by its fallback chain.
++	// A listed agent is healthy when any agent on its path has a working target.
++	Paths map[string][]string
++}
++
++// Resolve walks the effective roster (project Agents + SerialAgents, plus every
++// fallback-reachable agent) and returns the deduplicated invocation plan. Each
++// distinct (provider, model, base_url) tuple becomes a single Target; results
++// map back to every agent that uses it. The fallback graph is validated acyclic
++// at registry load; a defensive seen-set guards against malformed input.
++func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution, error) {
++	res := &Resolution{Paths: map[string][]string{}}
++	targetIdx := map[string]int{}
++	agentSeen := map[string]bool{}
++
++	addTarget := func(ac registry.AgentConfig) (int, error) {
++		prov, ok := reg.Providers[ac.Provider]
++		if !ok {
++			return 0, fmt.Errorf("references unknown provider %q", ac.Provider)
++		}
++		// NUL separates fields so no model/base_url value can forge a collision.
++		key := ac.Provider + "\x00" + ac.Model + "\x00" + prov.BaseURL
++		if idx, ok := targetIdx[key]; ok {
++			return idx, nil
++		}
++		idx := len(res.Targets)
++		res.Targets = append(res.Targets, Target{
++			Provider:  ac.Provider,
++			Model:     ac.Model,
++			BaseURL:   prov.BaseURL,
++			APIKeyEnv: prov.APIKeyEnv,
++		})
++		targetIdx[key] = idx
++		return idx, nil
++	}
++
++	addAgent := func(name string, serial bool) error {
++		ac, ok := reg.Agents[name]
++		if !ok {
++			return fmt.Errorf("agent %q not found in registry", name)
++		}
++		idx, err := addTarget(ac)
++		if err != nil {
++			return fmt.Errorf("agent %q %w", name, err)
++		}
++		if !agentSeen[name] {
++			agentSeen[name] = true
++			res.Agents = append(res.Agents, AgentTarget{Agent: name, Serial: serial, TargetIdx: idx})
++		}
++		return nil
++	}
++
++	// walk follows a listed agent's primary + fallback chain, registering each
++	// node as an effective-roster row and recording the ordered path.
++	walk := func(start string, serial bool) error {
++		seen := map[string]bool{}
++		var path []string
++		for node := start; node != "" && !seen[node]; node = reg.Agents[node].Fallback {
++			seen[node] = true
++			path = append(path, node)
++			// Only the listed head carries the lane marker; fallback steps are
++			// invoked identically (once per target) regardless of lane.
++			if err := addAgent(node, serial && node == start); err != nil {
++				return err
++			}
++		}
++		res.Paths[start] = path
++		return nil
++	}
++
++	for _, name := range proj.Agents {
++		if err := walk(name, false); err != nil {
++			return nil, err
++		}
++	}
++	for _, name := range proj.SerialAgents {
++		if err := walk(name, true); err != nil {
++			return nil, err
++		}
++	}
++	return res, nil
++}
+diff --git a/internal/doctor/resolve_test.go b/internal/doctor/resolve_test.go
+new file mode 100644
+index 0000000..9e0b640
+--- /dev/null
++++ b/internal/doctor/resolve_test.go
+@@ -0,0 +1,142 @@
++package doctor
++
++import (
++	"testing"
++
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// regWith builds a registry from a provider map and agent map for tests.
++func regWith(providers map[string]registry.Provider, agents map[string]registry.AgentConfig) *registry.Registry {
++	return &registry.Registry{Providers: providers, Agents: agents}
++}
++
++// targetForAgent returns the resolved Target a named agent row maps to.
++func targetForAgent(t *testing.T, res *Resolution, name string) Target {
++	t.Helper()
++	for _, at := range res.Agents {
++		if at.Agent == name {
++			return res.Targets[at.TargetIdx]
++		}
++	}
++	t.Fatalf("agent %q not present in resolution", name)
++	return Target{}
++}
++
++func TestResolve_DedupsSharedTarget(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{
++			"a": {Provider: "p", Model: "m1"},
++			"b": {Provider: "p", Model: "m1"}, // same provider+model+base_url as a
++		},
++	)
++	proj := &registry.ProjectConfig{Agents: []string{"a", "b"}}
++
++	res, err := Resolve(reg, proj)
++	require.NoError(t, err)
++	assert.Len(t, res.Targets, 1, "shared (provider,model,base_url) collapses to one target")
++	assert.Len(t, res.Agents, 2, "both agents still get their own row")
++	assert.Equal(t, targetForAgent(t, res, "a"), targetForAgent(t, res, "b"))
++}
++
++func TestResolve_DistinctModelsAreSeparateTargets(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{
++			"a": {Provider: "p", Model: "m1"},
++			"b": {Provider: "p", Model: "m2"},
++		},
++	)
++	proj := &registry.ProjectConfig{Agents: []string{"a", "b"}}
++
++	res, err := Resolve(reg, proj)
++	require.NoError(t, err)
++	assert.Len(t, res.Targets, 2)
++}
++
++func TestResolve_IncludesFallbackAgents(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{
++			"p1": {APIKeyEnv: "K1", BaseURL: "https://a.example/v1"},
++			"p2": {APIKeyEnv: "K2", BaseURL: "https://b.example/v1"},
++		},
++		map[string]registry.AgentConfig{
++			"a": {Provider: "p1", Model: "m1", Fallback: "b"},
++			"b": {Provider: "p2", Model: "m2"},
++		},
++	)
++	proj := &registry.ProjectConfig{Agents: []string{"a"}}
++
++	res, err := Resolve(reg, proj)
++	require.NoError(t, err)
++	// Effective roster includes the fallback agent as its own row + target.
++	assert.Len(t, res.Targets, 2)
++	names := map[string]bool{}
++	for _, at := range res.Agents {
++		names[at.Agent] = true
++	}
++	assert.True(t, names["a"] && names["b"], "fallback agent b must be tested too")
++	assert.Equal(t, []string{"a", "b"}, res.Paths["a"], "listed agent path = self + fallback chain")
++}
++
++func TestResolve_SerialLaneMarked(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{
++			"par": {Provider: "p", Model: "m1"},
++			"ser": {Provider: "p", Model: "m2"},
++		},
++	)
++	proj := &registry.ProjectConfig{Agents: []string{"par"}, SerialAgents: []string{"ser"}}
++
++	res, err := Resolve(reg, proj)
++	require.NoError(t, err)
++	serialOf := map[string]bool{}
++	for _, at := range res.Agents {
++		serialOf[at.Agent] = at.Serial
++	}
++	assert.False(t, serialOf["par"])
++	assert.True(t, serialOf["ser"])
++	assert.Contains(t, res.Paths, "par")
++	assert.Contains(t, res.Paths, "ser")
++}
++
++func TestResolve_SerialOnlyRosterValid(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{"ser": {Provider: "p", Model: "m"}},
++	)
++	proj := &registry.ProjectConfig{SerialAgents: []string{"ser"}}
++
++	res, err := Resolve(reg, proj)
++	require.NoError(t, err)
++	assert.Len(t, res.Agents, 1)
++	assert.Len(t, res.Targets, 1)
++}
++
++func TestResolve_UnknownProviderErrors(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{"a": {Provider: "missing", Model: "m"}},
++	)
++	proj := &registry.ProjectConfig{Agents: []string{"a"}}
++
++	_, err := Resolve(reg, proj)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "provider")
++}
++
++func TestResolve_UnknownAgentErrors(t *testing.T) {
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m"}},
++	)
++	proj := &registry.ProjectConfig{Agents: []string{"ghost"}}
++
++	_, err := Resolve(reg, proj)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "ghost")
++}
+diff --git a/internal/doctor/run.go b/internal/doctor/run.go
+new file mode 100644
+index 0000000..5742299
+--- /dev/null
++++ b/internal/doctor/run.go
+@@ -0,0 +1,248 @@
++package doctor
++
++import (
++	"context"
++	"crypto/rand"
++	"encoding/hex"
++	"errors"
++	"net/url"
++	"os"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++)
++
++// Status classes for a single endpoint probe. ok means the nonce marker came
++// back in visible content; the rest are failure or warning classes.
++const (
++	StatusOK            = "ok"             // marker found in response content
++	StatusOKWarning     = "ok_warning"     // HTTP 200 but marker absent/empty
++	StatusAuthFailed    = "auth_failed"    // 401/403
++	StatusNotFound      = "not_found"      // 404 (model or base_url)
++	StatusRateLimited   = "rate_limited"   // 429
++	StatusProviderError = "provider_error" // 5xx or other non-classified HTTP error
++	StatusNetworkError  = "network_error"  // transport-level failure
++	StatusTimeout       = "timeout"        // per-call deadline exceeded
++	StatusMissingKey    = "missing_key"    // API key env var unset (no network call)
++	StatusInvalidConfig = "invalid_config" // base_url empty/malformed (no network call)
++)
++
++// defaultConcurrency bounds simultaneous target probes when Options leaves it
++// unset. Targets are independent; a small pool keeps a large roster civil to
++// providers without serializing the self-test.
++const defaultConcurrency = 8
++
++// healthy reports whether a status counts as a working invocation path.
++func healthy(status string) bool { return status == StatusOK || status == StatusOKWarning }
++
++// Completer is the subset of llmclient.Client the doctor needs. Tests inject a
++// fake; production passes a real *llmclient.Client.
++type Completer interface {
++	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
++}
++
++// Options tune the self-test.
++type Options struct {
++	MaxTokens   int           // completion budget (generous so thinking models emit the marker)
++	Timeout     time.Duration // per-call deadline (0 = inherit ctx only)
++	Nonce       string        // marker token embedded in the prompt
++	Concurrency int           // max concurrent probes (0 = defaultConcurrency)
++}
++
++// Marker is the exact token a healthy endpoint must echo back.
++func Marker(nonce string) string { return "ATCR-OK-" + nonce }
++
++// Prompt is the trivial echo prompt sent to each endpoint.
++func Prompt(nonce string) string { return "Reply with exactly: " + Marker(nonce) }
++
++// RandomNonce returns a fresh per-run nonce so a cached or replayed response
++// cannot masquerade as a live success.
++func RandomNonce() (string, error) {
++	var b [8]byte
++	if _, err := rand.Read(b[:]); err != nil {
++		return "", err
++	}
++	return hex.EncodeToString(b[:]), nil
++}
++
++// AgentResult is one row of the doctor report.
++type AgentResult struct {
++	Agent     string `json:"agent"`
++	Serial    bool   `json:"serial"`
++	Provider  string `json:"provider"`
++	Model     string `json:"model"`
++	Status    string `json:"status"`
++	LatencyMS int64  `json:"latency_ms"`
++	Hint      string `json:"hint,omitempty"`
++	Detail    string `json:"detail,omitempty"` // bounded provider error snippet
++}
++
++// Report is the full doctor outcome. ExitCode is 0 when every directly-listed
++// roster agent has a working invocation path, 1 otherwise.
++type Report struct {
++	Agents   []AgentResult `json:"agents"`
++	ExitCode int           `json:"-"`
++}
++
++// probeResult is the outcome of one distinct target.
++type probeResult struct {
++	status    string
++	latencyMS int64
++	hint      string
++	detail    string
++}
++
++// Run probes every distinct target once (bounded concurrency), maps results
++// back to every effective-roster agent, and computes the exit verdict. It never
++// returns an error: configuration/transport problems are encoded as per-agent
++// statuses so the report is always complete.
++func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Report {
++	results := make([]probeResult, len(res.Targets))
++
++	conc := opts.Concurrency
++	if conc <= 0 {
++		conc = defaultConcurrency
++	}
++	sem := make(chan struct{}, conc)
++	var wg sync.WaitGroup
++	for i := range res.Targets {
++		wg.Add(1)
++		sem <- struct{}{}
++		go func(i int) {
++			defer wg.Done()
++			defer func() { <-sem }()
++			results[i] = probe(ctx, c, res.Targets[i], opts)
++		}(i)
++	}
++	wg.Wait()
++
++	rep := &Report{}
++	for _, at := range res.Agents {
++		tgt := res.Targets[at.TargetIdx]
++		pr := results[at.TargetIdx]
++		rep.Agents = append(rep.Agents, AgentResult{
++			Agent:     at.Agent,
++			Serial:    at.Serial,
++			Provider:  tgt.Provider,
++			Model:     tgt.Model,
++			Status:    pr.status,
++			LatencyMS: pr.latencyMS,
++			Hint:      pr.hint,
++			Detail:    pr.detail,
++		})
++	}
++	rep.ExitCode = exitVerdict(res, results)
++	return rep
++}
++
++// exitVerdict returns 0 when every directly-listed agent has at least one
++// healthy target along its path (primary or any fallback), 1 otherwise.
++func exitVerdict(res *Resolution, results []probeResult) int {
++	statusOf := map[string]string{}
++	for _, at := range res.Agents {
++		statusOf[at.Agent] = results[at.TargetIdx].status
++	}
++	for _, path := range res.Paths {
++		working := false
++		for _, node := range path {
++			if healthy(statusOf[node]) {
++				working = true
++				break
++			}
++		}
++		if !working {
++			return 1
++		}
++	}
++	return 0
++}
++
++// probe runs pre-flight checks (no network) then a single invocation, and
++// classifies the outcome.
++func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResult {
++	if strings.TrimSpace(tgt.BaseURL) == "" {
++		return probeResult{status: StatusInvalidConfig, hint: "provider base_url is empty — set it in registry.yaml"}
++	}
++	if u, err := url.Parse(tgt.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
++		return probeResult{status: StatusInvalidConfig, hint: "provider base_url is not a valid http(s) URL"}
++	}
++	if os.Getenv(tgt.APIKeyEnv) == "" {
++		return probeResult{status: StatusMissingKey, hint: "set the " + tgt.APIKeyEnv + " environment variable"}
++	}
++
++	callCtx := ctx
++	if opts.Timeout > 0 {
++		var cancel context.CancelFunc
++		callCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
++		defer cancel()
++	}
++	var maxTokens *int
++	if opts.MaxTokens > 0 {
++		v := opts.MaxTokens
++		maxTokens = &v
++	}
++
++	start := time.Now()
++	content, err := c.Complete(callCtx, llmclient.Invocation{
++		BaseURL:   tgt.BaseURL,
++		APIKeyEnv: tgt.APIKeyEnv,
++		Model:     tgt.Model,
++		MaxTokens: maxTokens,
++		Prompt:    Prompt(opts.Nonce),
++	})
++	latency := time.Since(start).Milliseconds()
++	return classify(content, err, opts.Nonce, latency, tgt)
++}
++
++// maxDetailBytes bounds a network-error detail string so a hostile or verbose
++// transport error cannot bloat the report.
++const maxDetailBytes = 512
++
++// classify turns a completion result into a probe outcome.
++func classify(content string, err error, nonce string, latencyMS int64, tgt Target) probeResult {
++	if err == nil {
++		if strings.Contains(content, Marker(nonce)) {
++			return probeResult{status: StatusOK, latencyMS: latencyMS}
++		}
++		return probeResult{
++			status:    StatusOKWarning,
++			latencyMS: latencyMS,
++			hint:      "HTTP 200 but marker absent/empty — raise --max-tokens (thinking models spend the budget on reasoning)",
++		}
++	}
++
++	var se *llmclient.HTTPStatusError
++	if errors.As(err, &se) {
++		status, hint := StatusProviderError, ""
++		switch se.Status {
++		case 401, 403:
++			status, hint = StatusAuthFailed, "check the API key in "+tgt.APIKeyEnv
++		case 404:
++			status, hint = StatusNotFound, "check the model name and the provider base_url"
++		case 429:
++			status, hint = StatusRateLimited, "provider rate limit — retry later or test a smaller --agents subset"
++		}
++		return probeResult{status: status, latencyMS: latencyMS, hint: hint, detail: se.Snippet}
++	}
++
++	if errors.Is(err, context.DeadlineExceeded) {
++		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "raise --timeout"}
++	}
++	if errors.Is(err, context.Canceled) {
++		// Parent-context cancellation (e.g. Ctrl-C) is a teardown, not a slow
++		// endpoint: keep the timeout class but do not advise raising --timeout.
++		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "self-test canceled before the endpoint responded"}
++	}
++
++	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: bounded(err.Error())}
++}
++
++// bounded clamps a detail string to maxDetailBytes.
++func bounded(s string) string {
++	if len(s) > maxDetailBytes {
++		return s[:maxDetailBytes]
++	}
++	return s
++}
+diff --git a/internal/doctor/run_test.go b/internal/doctor/run_test.go
+new file mode 100644
+index 0000000..58cb34f
+--- /dev/null
++++ b/internal/doctor/run_test.go
+@@ -0,0 +1,245 @@
++package doctor
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++const testNonce = "nonce123"
++
++// fakeCompleter records calls per model and returns a scripted result.
++type fakeCompleter struct {
++	mu    sync.Mutex
++	calls map[string]int
++	fn    func(inv llmclient.Invocation) (string, error)
++}
++
++func newFake(fn func(inv llmclient.Invocation) (string, error)) *fakeCompleter {
++	return &fakeCompleter{calls: map[string]int{}, fn: fn}
++}
++
++func (f *fakeCompleter) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
++	f.mu.Lock()
++	f.calls[inv.Model]++
++	f.mu.Unlock()
++	return f.fn(inv)
++}
++
++func (f *fakeCompleter) count(model string) int {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return f.calls[model]
++}
++
++func twoAgentSharedTarget(t *testing.T) *Resolution {
++	t.Helper()
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: "https://api.example/v1"}},
++		map[string]registry.AgentConfig{
++			"a": {Provider: "p", Model: "m"},
++			"b": {Provider: "p", Model: "m"},
++		},
++	)
++	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a", "b"}})
++	require.NoError(t, err)
++	return res
++}
++
++func TestRun_SharedTargetInvokedOnce(t *testing.T) {
++	t.Setenv("ATCR_DOCTOR_KEY", "k")
++	res := twoAgentSharedTarget(t)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) {
++		return Marker(testNonce), nil
++	})
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
++	assert.Equal(t, 1, fake.count("m"), "a shared target must be invoked at most once")
++	require.Len(t, rep.Agents, 2)
++	for _, ar := range rep.Agents {
++		assert.Equal(t, StatusOK, ar.Status)
++	}
++	assert.Equal(t, 0, rep.ExitCode)
++}
++
++func TestRun_MarkerAbsentIsWarning(t *testing.T) {
++	t.Setenv("ATCR_DOCTOR_KEY", "k")
++	res := twoAgentSharedTarget(t)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) {
++		return "", nil // HTTP 200 but empty content
++	})
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 8})
++	assert.Equal(t, StatusOKWarning, rep.Agents[0].Status)
++	assert.Contains(t, rep.Agents[0].Hint, "max-tokens")
++	assert.Equal(t, 0, rep.ExitCode, "a warning still counts as a working path")
++}
++
++func TestRun_MissingKeySkipsNetwork(t *testing.T) {
++	// ATCR_DOCTOR_KEY deliberately unset.
++	res := twoAgentSharedTarget(t)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) {
++		return Marker(testNonce), nil
++	})
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
++	assert.Equal(t, 0, fake.count("m"), "missing key must short-circuit before any network call")
++	assert.Equal(t, StatusMissingKey, rep.Agents[0].Status)
++	assert.Contains(t, rep.Agents[0].Hint, "ATCR_DOCTOR_KEY")
++	assert.Equal(t, 1, rep.ExitCode)
++}
++
++func TestRun_InvalidBaseURLIsConfigError(t *testing.T) {
++	t.Setenv("ATCR_DOCTOR_KEY", "k")
++	reg := regWith(
++		map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_DOCTOR_KEY", BaseURL: ""}},
++		map[string]registry.AgentConfig{"a": {Provider: "p", Model: "m"}},
++	)
++	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
++	require.NoError(t, err)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) { return "", nil })
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
++	assert.Equal(t, 0, fake.count("m"))
++	assert.Equal(t, StatusInvalidConfig, rep.Agents[0].Status)
++	assert.Equal(t, 1, rep.ExitCode)
++}
++
++func TestRun_FallbackProvidesWorkingPath(t *testing.T) {
++	t.Setenv("K1", "k")
++	t.Setenv("K2", "k")
++	reg := regWith(
++		map[string]registry.Provider{
++			"p1": {APIKeyEnv: "K1", BaseURL: "https://a.example/v1"},
++			"p2": {APIKeyEnv: "K2", BaseURL: "https://b.example/v1"},
++		},
++		map[string]registry.AgentConfig{
++			"a": {Provider: "p1", Model: "bad", Fallback: "b"},
++			"b": {Provider: "p2", Model: "good"},
++		},
++	)
++	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"a"}})
++	require.NoError(t, err)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) {
++		if inv.Model == "bad" {
++			return "", &llmclient.HTTPStatusError{Status: http.StatusNotFound, Snippet: "model not found"}
++		}
++		return Marker(testNonce), nil
++	})
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
++	// Primary 'a' fails (not_found), fallback 'b' works → listed agent has a path → exit 0.
++	assert.Equal(t, 0, rep.ExitCode, "fallback supplies a working path for the listed agent")
++	statusByAgent := map[string]string{}
++	for _, ar := range rep.Agents {
++		statusByAgent[ar.Agent] = ar.Status
++	}
++	assert.Equal(t, StatusNotFound, statusByAgent["a"])
++	assert.Equal(t, StatusOK, statusByAgent["b"])
++}
++
++func TestRun_NoWorkingPathExits1(t *testing.T) {
++	t.Setenv("ATCR_DOCTOR_KEY", "k")
++	res := twoAgentSharedTarget(t)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) {
++		return "", &llmclient.HTTPStatusError{Status: http.StatusUnauthorized, Snippet: "bad key"}
++	})
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
++	assert.Equal(t, StatusAuthFailed, rep.Agents[0].Status)
++	assert.Equal(t, 1, rep.ExitCode)
++}
++
++func TestClassify_StatusMapping(t *testing.T) {
++	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
++	cases := []struct {
++		name string
++		err  error
++		want string
++	}{
++		{"auth401", &llmclient.HTTPStatusError{Status: 401}, StatusAuthFailed},
++		{"auth403", &llmclient.HTTPStatusError{Status: 403}, StatusAuthFailed},
++		{"notfound", &llmclient.HTTPStatusError{Status: 404}, StatusNotFound},
++		{"ratelimited", &llmclient.HTTPStatusError{Status: 429}, StatusRateLimited},
++		{"server500", &llmclient.HTTPStatusError{Status: 500}, StatusProviderError},
++		{"server503", &llmclient.HTTPStatusError{Status: 503}, StatusProviderError},
++		{"timeout", context.DeadlineExceeded, StatusTimeout},
++		{"network", fmt.Errorf("dial tcp: connection refused"), StatusNetworkError},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			got := classify("", tc.err, testNonce, 5, tgt)
++			assert.Equal(t, tc.want, got.status)
++		})
++	}
++}
++
++func TestClassify_CanceledIsTimeoutWithoutRaiseHint(t *testing.T) {
++	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
++	got := classify("", context.Canceled, testNonce, 5, tgt)
++	assert.Equal(t, StatusTimeout, got.status)
++	// A cancellation (Ctrl-C) must not advise changing --timeout.
++	assert.NotContains(t, got.hint, "raise --timeout")
++}
++
++func TestClassify_ErrorBodySnippetSurfaced(t *testing.T) {
++	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
++	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt)
++	assert.Equal(t, StatusNotFound, got.status)
++	assert.Contains(t, got.detail, "does not exist")
++}
++
++func TestRenderJSON_Stable(t *testing.T) {
++	rep := &Report{Agents: []AgentResult{
++		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK, LatencyMS: 12},
++	}}
++	var b strings.Builder
++	require.NoError(t, RenderJSON(&b, rep))
++	var parsed struct {
++		Agents []struct {
++			Agent  string `json:"agent"`
++			Status string `json:"status"`
++		} `json:"agents"`
++	}
++	require.NoError(t, json.Unmarshal([]byte(b.String()), &parsed))
++	require.Len(t, parsed.Agents, 1)
++	assert.Equal(t, "a", parsed.Agents[0].Agent)
++	assert.Equal(t, StatusOK, parsed.Agents[0].Status)
++}
++
++func TestRenderTable_HumanReadable(t *testing.T) {
++	rep := &Report{Agents: []AgentResult{
++		{Agent: "bruce", Provider: "openai", Model: "gpt-4", Status: StatusOK, LatencyMS: 120},
++		{Agent: "kai", Provider: "anthropic", Model: "claude", Status: StatusMissingKey, Hint: "set ANTHROPIC_KEY"},
++	}}
++	var b strings.Builder
++	RenderTable(&b, rep)
++	out := b.String()
++	assert.Contains(t, out, "bruce")
++	assert.Contains(t, out, "AGENT")
++	assert.Contains(t, out, StatusMissingKey)
++	assert.Contains(t, out, "set ANTHROPIC_KEY")
++}
++
++func TestPromptAndMarker(t *testing.T) {
++	assert.Equal(t, "ATCR-OK-"+testNonce, Marker(testNonce))
++	assert.Contains(t, Prompt(testNonce), Marker(testNonce))
++}
++
++func TestRandomNonce_NonEmptyAndUnique(t *testing.T) {
++	n1, err := RandomNonce()
++	require.NoError(t, err)
++	n2, err := RandomNonce()
++	require.NoError(t, err)
++	assert.NotEmpty(t, n1)
++	assert.NotEqual(t, n1, n2)
++}
+diff --git a/internal/llmclient/client.go b/internal/llmclient/client.go
+index 876cf2c..1ce62b7 100644
+--- a/internal/llmclient/client.go
++++ b/internal/llmclient/client.go
+@@ -98,7 +98,12 @@ type Invocation struct {
+ 	APIKeyEnv   string
+ 	Model       string
+ 	Temperature *float64
+-	Prompt      string
++	// MaxTokens caps the completion budget (OpenAI max_tokens). Nil omits the
++	// field so the provider's own default applies. Reasoning/thinking models
++	// spend this budget on internal reasoning, so callers that need visible
++	// output (e.g. the doctor self-test) must set it generously.
++	MaxTokens *int
++	Prompt    string
+ }
+ 
+ type message struct {
+@@ -110,6 +115,7 @@ type chatRequest struct {
+ 	Model       string    `json:"model"`
+ 	Messages    []message `json:"messages"`
+ 	Temperature *float64  `json:"temperature,omitempty"`
++	MaxTokens   *int      `json:"max_tokens,omitempty"`
+ }
+ 
+ type chatResponse struct {
+@@ -132,6 +138,7 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
+ 		Model:       inv.Model,
+ 		Messages:    []message{{Role: "user", Content: inv.Prompt}},
+ 		Temperature: inv.Temperature,
++		MaxTokens:   inv.MaxTokens,
+ 	})
+ 	if err != nil {
+ 		return "", fmt.Errorf("encoding request: %w", err)
+@@ -193,13 +200,29 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
+ 	return "", fmt.Errorf("exhausted retries: %w", lastErr)
+ }
+ 
+-// httpStatusError formats a non-200 failure, appending the sanitized
+-// error-body snippet when the provider sent one.
+-func httpStatusError(status int, snippet string) error {
+-	if snippet == "" {
+-		return fmt.Errorf("provider returned HTTP %d", status)
++// HTTPStatusError is a non-2xx provider response surfaced to callers so they
++// can classify the failure by HTTP status (via errors.As) instead of parsing
++// the message string. Snippet is the bounded, whitespace-collapsed,
++// key-redacted prefix of the provider's error body (empty when none was sent).
++// It survives the exhausted-retries wrapper, so errors.As reaches it for both
++// retryable (429/5xx) and non-retryable (401/403/404) failures.
++type HTTPStatusError struct {
++	Status  int
++	Snippet string
++}
++
++// Error preserves the original message format so existing callers and tests
++// that match on the text continue to work unchanged.
++func (e *HTTPStatusError) Error() string {
++	if e.Snippet == "" {
++		return fmt.Sprintf("provider returned HTTP %d", e.Status)
+ 	}
+-	return fmt.Errorf("provider returned HTTP %d: %s", status, snippet)
++	return fmt.Sprintf("provider returned HTTP %d: %s", e.Status, e.Snippet)
++}
++
++// httpStatusError builds an *HTTPStatusError for a non-200 failure.
++func httpStatusError(status int, snippet string) error {
++	return &HTTPStatusError{Status: status, Snippet: snippet}
+ }
+ 
+ // readErrorSnippet reads a bounded prefix of a non-200 response body and
+diff --git a/internal/llmclient/client_test.go b/internal/llmclient/client_test.go
+index 9002a00..9a2663a 100644
+--- a/internal/llmclient/client_test.go
++++ b/internal/llmclient/client_test.go
+@@ -3,6 +3,7 @@ package llmclient
+ import (
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+@@ -350,3 +351,76 @@ func TestComplete_ContextTimeout(t *testing.T) {
+ 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+ 	assert.Less(t, time.Since(start), 80*time.Millisecond, "must return before the 100ms server sleep")
+ }
++
++// --- Epic 1.2 Task 2: structured HTTPStatusError + MaxTokens ---
++
++func TestComplete_HTTPStatusErrorSurfacedForClassification(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.WriteHeader(http.StatusNotFound)
++		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
++		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
++	})
++	require.Error(t, err)
++
++	var se *HTTPStatusError
++	require.True(t, errors.As(err, &se), "callers must be able to classify by status via errors.As")
++	assert.Equal(t, http.StatusNotFound, se.Status)
++	assert.Contains(t, se.Snippet, "model not found")
++	// Error() text contract preserved for existing callers.
++	assert.Contains(t, err.Error(), "HTTP 404")
++	assert.Contains(t, err.Error(), "model not found")
++}
++
++func TestComplete_HTTPStatusErrorSurfacedThroughExhaustedRetries(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.WriteHeader(http.StatusServiceUnavailable)
++		_, _ = io.WriteString(w, `{"error":{"message":"upstream down"}}`)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
++		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
++	})
++	require.Error(t, err)
++
++	var se *HTTPStatusError
++	require.True(t, errors.As(err, &se), "errors.As must unwrap through the exhausted-retries wrapper")
++	assert.Equal(t, http.StatusServiceUnavailable, se.Status)
++}
++
++func TestComplete_MaxTokensIncludedWhenSet(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, _ := io.ReadAll(r.Body)
++		assert.Contains(t, string(body), `"max_tokens":2048`)
++		okResponse(w, "x")
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	mt := 2048
++	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
++		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m", MaxTokens: &mt,
++	})
++	require.NoError(t, err)
++}
++
++func TestComplete_MaxTokensOmittedWhenNil(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, _ := io.ReadAll(r.Body)
++		assert.NotContains(t, string(body), "max_tokens")
++		okResponse(w, "x")
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
++		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
++	})
++	require.NoError(t, err)
++}

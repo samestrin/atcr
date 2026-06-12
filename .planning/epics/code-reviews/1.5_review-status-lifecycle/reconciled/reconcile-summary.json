@@ -1,0 +1,12 @@
+{
+  "sources": ["claude"],
+  "per_source_counts": {
+    "claude": 7
+  },
+  "merged_count": 7,
+  "clusters_collapsed": "0 raw findings collapsed into 0 merged (single source, no duplicates)",
+  "severity_disagreements": 0,
+  "intent_annotations": 1,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-12T14:22:00Z"
+}

@@ -1,0 +1,1888 @@
+diff --git a/.gitignore b/.gitignore
+index f5c2df0..eb0ee3c 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,8 +1,10 @@
+ # Go Binaries and Build Artifacts
++# Anchored to repo root so they match the built binaries, not the cmd/atcr
++# source directory (a bare `atcr` pattern also ignores cmd/atcr/*).
+ bin/
+-atcr
+-atcr-mcp
+-atcr-mcp-ssee
++/atcr
++/atcr-mcp
++/atcr-mcp-ssee
+ *.exe
+ *.exe~
+ *.dll
+diff --git a/.planning/epics/active/1.3_project_registry_overlay.md b/.planning/epics/active/1.3_project_registry_overlay.md
+index 6366633..1921e2c 100644
+--- a/.planning/epics/active/1.3_project_registry_overlay.md
++++ b/.planning/epics/active/1.3_project_registry_overlay.md
+@@ -77,3 +77,28 @@ A repo-defined provider means a cloned repository can direct requests to an arbi
+ - **Q: Separate `.atcr/registry.yaml` or new sections in `.atcr/config.yaml`?** Leaning separate file: keeps config.yaml's "selection + settings" role clean, mirrors the user-level file name, and lets `atcr init --team` scaffold it independently. Decide at /init-plan. (2026-06-11)
+ - **Q: Is this already covered by 1.0?** Only partially: settings precedence, roster selection, and persona shadowing are shipped; provider/agent *definitions* are user-tier only — that gap is this epic. (2026-06-11)
+ - **Q: Global dir name?** Current shipped location is `~/.config/atcr/` (XDG-style), not `~/.atcr/`; this epic does not move it. (2026-06-11)
++
++### Recorded 2026-06-11 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- File shape: project definitions live in a **dedicated `.atcr/registry.yaml`** (mirrors the user-level filename; keeps `.atcr/config.yaml` as a pure selection+settings file). The new file reuses the existing `Provider`/`AgentConfig` structs and `decodeStrictYAML` (KnownFields parity, incl. Epic 1.1 reserved fields).
++- Merge: load the project registry, merge whole-entry into the user `Registry` (project wins by name, new names added), then run `ValidateFallbacks` + validation + `ValidateAgainst` over the merged view. Each effective entry carries a source tier (`project` | `user` | `embedded`).
++- Trust model: **option (a) + (c)** — `atcr trust` (new cobra subcommand → `internal/registry/trust.go`) writes a hash-pinned allow file at `~/.config/atcr/trusted_providers.yaml`; the hash is SHA-256 over `base_url + "\x00" + api_key_env` (reuse `HashBytes` from `internal/reconcile/ambiguous.go`). A project-defined provider that is not trusted produces a hard `usageError` that points the user at `atcr trust` (the gate). A loud first-use banner naming each active project provider's base_url + key env is printed after the gate passes (UX confirmation, not the control). Project **agents** that reference an existing user-defined provider need no trust prompt.
++- Provenance: extend **`atcr doctor`** — add a `SOURCE` column to the table (`internal/doctor/render.go`) and a `source` field (omitempty) to `AgentResult` (`internal/doctor/run.go`). No separate `atcr config dump` command in this epic.
++
++**Scope Boundaries:**
++- IN scope: `.atcr/registry.yaml` loader, whole-entry name-keyed merge (project wins), merged-view validation with tier-aware error attribution, `atcr trust` gate + hash-pinned allow file + first-use banner, `atcr doctor` SOURCE provenance, docs/registry.md overlay section + precedence diagram + `atcr init` template comment.
++- OUT of scope: field-level deep merge of entries, remote/shared registries, relocating `~/.config/atcr/`, storing API keys in any config file, a standalone `atcr config dump` command.
++
++**Technical Approach:**
++- Project registry discovery follows the existing convention: located relative to `root="."` (no walk-up; matches how `cmd/atcr` resolves `.atcr/config.yaml` today).
++- Trust check inserts at the overlay-merge step in the load path: after merging project providers, each project-tier provider is checked against the allow file before any invocation reaches `llmclient.Complete`. Missing entry → `usageError`.
++- Source tagging is threaded from the load layer (registry merge) through to the render layer (doctor); embedded defaults tag as `embedded`.
++
++**Original Questions and Answers:**
++1. Q: File shape — dedicated `.atcr/registry.yaml` or new `providers:`/`agents:` sections inside `.atcr/config.yaml`?
++   A: Dedicated `.atcr/registry.yaml`. config.yaml stays a pure selection+settings file; a separate file mirrors the user-level filename and lets `ValidateAgainst()` merge the two registries before checking roster references without touching `ProjectConfig`.
++2. Q: Trust mitigation for project-defined providers — (a) explicit `atcr trust` gate, (b) api_key_env allowlist, (c) loud banner only, or (d) a combination?
++   A: Option (d) = (a) + (c). `atcr trust` is the hard gate (missing trust entry is a `usageError` that blocks execution); the loud first-use banner is a UX aid printed after the gate passes, not the security control. Reuses the existing `HashBytes`/sha256 pattern; pins (base_url, api_key_env). Option (b) rejected — it does not pin base_url, so a "trusted" env name could still be sent to an attacker host.
++3. Q: Provenance surface — extend `atcr doctor` or add a separate `atcr config dump`?
++   A: Extend `atcr doctor`. Add a `SOURCE` column to the table and a `source` (`project|user|embedded`, omitempty) field to `AgentResult`. A separate `config dump` command is out-of-scope scope expansion the success criterion does not require.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index d1c934d..d1c8659 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -22,6 +22,15 @@ technical-debt/
+ 4. **After resolution**: Move items from active to completed
+ 
+ 
++### [2026-06-11] From Sprint: epic-1.3
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 2 | [ ] | LOW | internal/registry/graph.go:54 | A cross-tier fallback cycle is attributed to path[0] (alphabetically-first DFS entry), so the file-name prefix may name the user registry even when the project entry is the one to edit; the full cycle path is still listed. | Attribute the cycle to a project-tier node when the cycle spans tiers, or list every file/tier the cycle touches. | OBSERVABILITY | 30 | execute-epic-independent |
++| 2 | [ ] | LOW | internal/registry/trust.go:178 | The first-use banner emits a raw U+26A0 warning emoji to stderr, which can mojibake on legacy/Windows consoles and garble the security confirmation. | Use an ASCII marker (e.g. "WARNING:") or gate the emoji behind a terminal-capability check. | OBSERVABILITY | 10 | execute-epic-independent |
++| 2 | [ ] | LOW | internal/registry/gate.go:39 | ResolveGateThreshold reads fail_on only from the unmerged user registry, so a project registry cannot influence the reconcile gate — inconsistent with the uniform project-over-user precedence now advertised in docs. | Document that fail_on is user/project-config-tier only (not the registry overlay), or resolve it from the merged view. | CORRECTNESS | 20 | execute-epic-independent |
++| U | [ ] | LOW | cmd/atcr/trust.go:90 | The trust summary count reflects only newly-written entries, so a mixed run (some already-trusted, some new) can under-report what the user expects persisted. | Report both newly-trusted and already-trusted counts, or phrase the summary as "N new entries written". | CORRECTNESS | 10 | execute-epic-independent |
++
+ ### [2026-06-11] From Sprint: epic-1.2
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+@@ -129,6 +138,6 @@ technical-debt/
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 0 | 2 |
+ | MEDIUM | 1 | 6 | 25 |
+-| LOW | 9 | 1 | 41 |
++| LOW | 13 | 1 | 41 |
+ 
+-**Last Modified:** 2026-06-11 | **Open Items:** 10 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 85
++**Last Modified:** 2026-06-11 | **Open Items:** 14 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 89
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 184e166..380301c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,20 @@
++## [1.3.0] - 2026-06-11
++
++### Added
++
++- Project registry overlay: a repo can ship `.atcr/registry.yaml` defining its own providers and agents, merged over the user-level `~/.config/atcr/registry.yaml` so a clone is self-contained — no contributor has to mirror agent definitions by hand. Project entries shadow same-named user entries whole (no field-level merge); new names are added. Strictly parsed like every other config file
++- `atcr trust` command to authorize project-defined providers: lists project providers and their status (`atcr trust`), pins one by the sha256 of its `(base_url, api_key_env)` pair (`atcr trust <name>` / `--all`) in `~/.config/atcr/trusted_providers.yaml`. Only the env var name is ever stored — never the key value
++- Trust gate: a project-defined provider cannot receive a key until trusted, so a cloned repo cannot silently redirect a key to an arbitrary endpoint; `atcr review` and `atcr doctor` fail fast (exit 2) naming the provider and the `atcr trust` remedy. A project agent that references an existing user-defined provider needs no trust prompt
++- Loud first-use banner naming each active project provider's `base_url` and key env on stderr
++- `SOURCE` (user/project) provenance column in the `atcr doctor` table and a `source` field in its `--json` output, so overlay shadowing is visible rather than silent
++
++### Changed
++
++- Registry validation (roster references, fallback dangling/cycle checks, range checks) now runs over the merged user+project view; cross-tier fallback chains are supported, and every load error names the file that defined the offending entry (`registry.yaml` vs `.atcr/registry.yaml`)
++- `docs/registry.md` documents the overlay, whole-entry merge semantics, the trust model, and a unified `CLI > project > user > embedded` precedence diagram now uniform across settings, personas, and definitions
++
++*Shipped via /execute-epic (epic 1.3)*
++
+ ## [1.2.0] - 2026-06-11
+ 
+ ### Added
+diff --git a/README.md b/README.md
+index 5da8cf3..bf138ea 100644
+--- a/README.md
++++ b/README.md
+@@ -71,7 +71,8 @@ atcr report --format md
+ | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
+ | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
+ | `atcr serve` | Run the MCP stdio server over the same engine |
+-| `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json` |
++| `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
++| `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
+ 
+ Key flags:
+ 
+@@ -84,6 +85,10 @@ Key flags:
+ 
+ `atcr` ships three payload modes that control what each reviewer agent sees. The default is `blocks`; set per-agent overrides in `~/.config/atcr/registry.yaml` when a model handles a different format better.
+ 
++## Project-defined providers and agents
++
++A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlaying the user registry so a clone is self-contained — project entries shadow same-named user entries whole; new names are added. Because a project-defined provider could direct a key to an arbitrary endpoint, atcr gates them: run `atcr trust` to authorize a project provider (it pins the `base_url` + `api_key_env` pair) before any review or `atcr doctor` will use it. See [docs/registry.md](docs/registry.md#project-registry-overlay).
++
+ | Mode | What the reviewer sees | When to use |
+ |------|------------------------|-------------|
+ | `diff` | Unified diff | **The most compact and token-friendly mode.** Right choice for frontier models and large ranges. |
+diff --git a/cmd/atcr/doctor.go b/cmd/atcr/doctor.go
+index 6c15226..60474fd 100644
+--- a/cmd/atcr/doctor.go
++++ b/cmd/atcr/doctor.go
+@@ -53,10 +53,15 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
+ 	if err != nil {
+ 		return usageError(err)
+ 	}
+-	reg, err := registry.LoadRegistry(regPath)
++	// Merge the optional project registry overlay so doctor self-tests project
++	// definitions too; the merged loader enforces the project-provider trust gate.
++	reg, err := registry.LoadMergedRegistry(regPath, ".")
+ 	if err != nil {
+ 		return usageError(err)
+ 	}
++	if banner := reg.ProjectProviderBanner(); banner != "" {
++		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
++	}
+ 	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
+ 	if err != nil {
+ 		return usageError(err)
+diff --git a/cmd/atcr/doctor_test.go b/cmd/atcr/doctor_test.go
+index 421bbf7..00952d3 100644
+--- a/cmd/atcr/doctor_test.go
++++ b/cmd/atcr/doctor_test.go
+@@ -148,3 +148,34 @@ func TestDoctor_AgentsFilterSubset(t *testing.T) {
+ 	require.NoError(t, err)
+ 	assert.Contains(t, out, "bruce")
+ }
++
++func TestDoctor_ShowsProjectProvenance(t *testing.T) {
++	// A project-defined agent (on a user provider — no trust needed) self-tests
++	// and is labeled source=project in the doctor report.
++	srv := echoProvider(t, 0)
++	setupDoctorEnv(t, srv.URL)
++	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
++
++	// Define a project agent and add it to the roster.
++	atcrDir := filepath.Join(".atcr")
++	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "registry.yaml"),
++		[]byte("agents:\n  team:\n    provider: mock\n    model: test-model\n"), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"),
++		[]byte("agents:\n  - bruce\n  - team\n"), 0o644))
++
++	out, err := execute(t, "doctor", "--json")
++	require.NoError(t, err)
++	var parsed struct {
++		Agents []struct {
++			Agent  string `json:"agent"`
++			Source string `json:"source"`
++		} `json:"agents"`
++	}
++	require.NoError(t, json.Unmarshal([]byte(out), &parsed))
++	src := map[string]string{}
++	for _, a := range parsed.Agents {
++		src[a.Agent] = a.Source
++	}
++	assert.Equal(t, "project", src["team"], "project-defined agent is labeled project")
++	assert.Equal(t, "user", src["bruce"], "user-defined agent is labeled user")
++}
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index 0f10251..21f69cc 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -103,6 +103,7 @@ func newRootCmd() *cobra.Command {
+ 		newInitCmd(),
+ 		newServeCmd(),
+ 		newDoctorCmd(),
++		newTrustCmd(),
+ 	)
+ 	return root
+ }
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index a9f5605..5ed9fcf 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -31,13 +31,14 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
+ 	out, err := execute(t, "--help")
+ 	require.NoError(t, err)
+ 
+-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor"} {
++	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor", "trust"} {
+ 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
+ 	}
+ }
+ 
+-func TestRootCmd_HasExactlyEightSubcommands(t *testing.T) {
+-	// The seven prior commands plus `doctor` (epic 1.2), the endpoint self-test.
++func TestRootCmd_HasExactlyNineSubcommands(t *testing.T) {
++	// The eight prior commands plus `trust` (epic 1.3), the project-provider
++	// authorization gate.
+ 	root := newRootCmd()
+ 	names := map[string]bool{}
+ 	for _, c := range root.Commands() {
+@@ -46,8 +47,8 @@ func TestRootCmd_HasExactlyEightSubcommands(t *testing.T) {
+ 		}
+ 		names[c.Name()] = true
+ 	}
+-	assert.Len(t, names, 8)
+-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor"} {
++	assert.Len(t, names, 9)
++	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor", "trust"} {
+ 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
+ 	}
+ }
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index c69cdb4..7bcc1e2 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -60,6 +60,9 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	if err != nil {
+ 		return usageError(err) // missing/invalid config → exit 2
+ 	}
++	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
++		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
++	}
+ 
+ 	now := time.Now()
+ 	req := fanout.ReviewRequest{
+diff --git a/cmd/atcr/trust.go b/cmd/atcr/trust.go
+new file mode 100644
+index 0000000..16cc987
+--- /dev/null
++++ b/cmd/atcr/trust.go
+@@ -0,0 +1,128 @@
++package main
++
++import (
++	"fmt"
++	"path/filepath"
++	"sort"
++	"text/tabwriter"
++
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/spf13/cobra"
++)
++
++// newTrustCmd builds `atcr trust`: review and authorize the providers a project
++// defines in .atcr/registry.yaml. A project-defined provider can direct requests
++// to an arbitrary base_url under any api_key_env, so it cannot receive a key
++// until it is explicitly trusted here. Project agents that reference an existing
++// user-defined provider need no authorization.
++//
++//	atcr trust            list project providers and their trust status
++//	atcr trust <name>...  authorize the named project providers
++//	atcr trust --all      authorize every project provider
++func newTrustCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "trust [provider...]",
++		Short: "Authorize project-defined providers (.atcr/registry.yaml)",
++		Long: "Project-defined providers can direct requests to an arbitrary base_url under\n" +
++			"any api_key_env, so atcr refuses to send a key to one until you authorize it.\n" +
++			"Run with no arguments to list project providers and their trust status; pass\n" +
++			"provider names (or --all) to pin them in ~/.config/atcr/trusted_providers.yaml.\n" +
++			"Trust pins the (base_url, api_key_env) pair: change either and you must re-trust.",
++		Args: usageArgs(cobra.ArbitraryArgs),
++		RunE: runTrust,
++	}
++	cmd.Flags().Bool("all", false, "authorize every project-defined provider")
++	return cmd
++}
++
++// runTrust lists or authorizes project-defined providers. Configuration
++// problems map to exit 2.
++func runTrust(cmd *cobra.Command, args []string) error {
++	all, _ := cmd.Flags().GetBool("all")
++
++	pr, err := registry.LoadProjectRegistry(registry.DefaultProjectRegistryPath("."))
++	if err != nil {
++		return usageError(err)
++	}
++	if pr == nil || len(pr.Providers) == 0 {
++		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No project-defined providers in .atcr/registry.yaml.")
++		return nil
++	}
++
++	regPath, err := registry.DefaultRegistryPath()
++	if err != nil {
++		return usageError(err)
++	}
++	storePath := registry.DefaultTrustStorePath(filepath.Dir(regPath))
++	store, err := registry.LoadTrustStore(storePath)
++	if err != nil {
++		return usageError(err)
++	}
++
++	// No selection → list status and exit.
++	if !all && len(args) == 0 {
++		listProjectProviders(cmd, pr, store)
++		return nil
++	}
++
++	// Resolve the selection.
++	want := args
++	if all {
++		want = sortedProviderNames(pr)
++	}
++	var trusted int
++	for _, name := range want {
++		p, ok := pr.Providers[name]
++		if !ok {
++			return usageError(fmt.Errorf("%q is not a project-defined provider in .atcr/registry.yaml", name))
++		}
++		if store.IsTrusted(p) {
++			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already trusted: %s\n", name)
++			continue
++		}
++		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
++			"trusting %s → base_url=%s  api_key_env=%s\n", name, p.BaseURL, p.APIKeyEnv)
++		store.Trust(name, p)
++		trusted++
++	}
++	if trusted > 0 {
++		if err := store.Save(); err != nil {
++			return usageError(err)
++		}
++		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %d trust entr%s to %s\n", trusted, plural(trusted), storePath)
++	}
++	return nil
++}
++
++// listProjectProviders prints each project provider with its endpoint and a
++// trusted/untrusted marker.
++func listProjectProviders(cmd *cobra.Command, pr *registry.ProjectRegistry, store *registry.TrustStore) {
++	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
++	_, _ = fmt.Fprintln(tw, "PROVIDER\tBASE_URL\tAPI_KEY_ENV\tTRUST")
++	for _, name := range sortedProviderNames(pr) {
++		p := pr.Providers[name]
++		status := "UNTRUSTED"
++		if store.IsTrusted(p) {
++			status = "trusted"
++		}
++		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, p.BaseURL, p.APIKeyEnv, status)
++	}
++	_ = tw.Flush()
++}
++
++// sortedProviderNames returns the project provider names in sorted order.
++func sortedProviderNames(pr *registry.ProjectRegistry) []string {
++	names := make([]string, 0, len(pr.Providers))
++	for name := range pr.Providers {
++		names = append(names, name)
++	}
++	sort.Strings(names)
++	return names
++}
++
++func plural(n int) string {
++	if n == 1 {
++		return "y"
++	}
++	return "ies"
++}
+diff --git a/cmd/atcr/trust_test.go b/cmd/atcr/trust_test.go
+new file mode 100644
+index 0000000..df8e354
+--- /dev/null
++++ b/cmd/atcr/trust_test.go
+@@ -0,0 +1,103 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// setupTrustEnv points HOME at a temp dir and writes a project .atcr/registry.yaml
++// defining one project provider, returning the trust store path under HOME.
++func setupTrustEnv(t *testing.T) string {
++	t.Helper()
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++
++	work := t.TempDir()
++	t.Chdir(work)
++	atcrDir := filepath.Join(work, ".atcr")
++	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
++	projReg := "" +
++		"providers:\n" +
++		"  team-llm:\n" +
++		"    base_url: https://llm.team.example/v1\n" +
++		"    api_key_env: TEAM_LLM_KEY\n" +
++		"agents:\n" +
++		"  reviewer:\n" +
++		"    provider: team-llm\n" +
++		"    model: m\n"
++	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "registry.yaml"), []byte(projReg), 0o644))
++
++	return filepath.Join(home, ".config", "atcr", "trusted_providers.yaml")
++}
++
++func TestTrust_ListShowsUntrusted(t *testing.T) {
++	setupTrustEnv(t)
++	out, err := execute(t, "trust")
++	require.NoError(t, err)
++	assert.Contains(t, out, "team-llm")
++	assert.Contains(t, out, "https://llm.team.example/v1")
++	assert.Contains(t, out, "TEAM_LLM_KEY")
++	assert.Contains(t, out, "UNTRUSTED")
++}
++
++func TestTrust_AuthorizesProvider(t *testing.T) {
++	storePath := setupTrustEnv(t)
++	out, err := execute(t, "trust", "team-llm")
++	require.NoError(t, err)
++	assert.Contains(t, out, "trusting team-llm")
++
++	_, statErr := os.Stat(storePath)
++	require.NoError(t, statErr, "trust store written under HOME")
++
++	// listing now reports trusted
++	out, err = execute(t, "trust")
++	require.NoError(t, err)
++	assert.Contains(t, out, "trusted")
++	assert.NotContains(t, out, "UNTRUSTED")
++}
++
++func TestTrust_AllAuthorizesEveryProvider(t *testing.T) {
++	setupTrustEnv(t)
++	out, err := execute(t, "trust", "--all")
++	require.NoError(t, err)
++	assert.Contains(t, out, "trusting team-llm")
++}
++
++func TestTrust_UnknownProviderIsUsageError(t *testing.T) {
++	setupTrustEnv(t)
++	_, err := execute(t, "trust", "no-such-provider")
++	require.Error(t, err)
++	assert.Equal(t, 2, exitCode(err))
++}
++
++func TestTrust_NoProjectProviders(t *testing.T) {
++	home := t.TempDir()
++	t.Setenv("HOME", home)
++	t.Chdir(t.TempDir()) // no .atcr/registry.yaml
++	out, err := execute(t, "trust")
++	require.NoError(t, err)
++	assert.Contains(t, out, "No project-defined providers")
++}
++
++func TestTrust_GatesReviewUntilTrusted(t *testing.T) {
++	// A project provider blocks `atcr review` config load until trusted; this is
++	// the end-to-end security contract at the command boundary.
++	setupTrustEnv(t)
++	// Also need a user registry + project config so review reaches the gate.
++	home, _ := os.UserHomeDir()
++	regDir := filepath.Join(home, ".config", "atcr")
++	require.NoError(t, os.MkdirAll(regDir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"),
++		[]byte("providers:\n  u:\n    api_key_env: U_KEY\nagents:\n  bruce:\n    provider: u\n    model: m\n"), 0o644))
++	work, _ := os.Getwd()
++	require.NoError(t, os.WriteFile(filepath.Join(work, ".atcr", "config.yaml"),
++		[]byte("agents:\n  - reviewer\n"), 0o644))
++
++	_, err := execute(t, "review")
++	require.Error(t, err, "untrusted project provider blocks review")
++	assert.Equal(t, 2, exitCode(err))
++}
+diff --git a/docs/registry.md b/docs/registry.md
+index 43aa495..d41b2e4 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -1,11 +1,13 @@
+ # Configuration Reference
+ 
+-atcr reads configuration from two files plus embedded defaults, resolved by a strict precedence chain. Both files are strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout.
++atcr reads configuration from a user file, optional project files, and embedded defaults, resolved by a strict precedence chain. Every file is strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout.
+ 
+ | File | Scope | Holds |
+ |------|-------|-------|
+ | `~/.config/atcr/registry.yaml` | User | Providers, agents, and user-level defaults for the shared review settings. Personas live as `.md` files beside it. |
+ | `.atcr/config.yaml` | Project | The agent roster (which agents run, in which lane) and project defaults. Written by `atcr init`. |
++| `.atcr/registry.yaml` | Project (optional) | Project-defined providers and agents, merged over the user registry (project entries win by name). Lets a repo ship a self-contained review setup. See [Project registry overlay](#project-registry-overlay). |
++| `~/.config/atcr/trusted_providers.yaml` | User | Allow list pinning which project-defined providers may receive a key. Managed by `atcr trust`. |
+ 
+ ## Three concepts, deliberately decoupled
+ 
+@@ -87,6 +89,37 @@ fail_on: HIGH
+ 
+ An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
+ 
++## Project registry overlay
++
++A repository can ship its own providers and agents in **`.atcr/registry.yaml`**, so a clone is self-contained — no contributor has to mirror agent definitions into `~/.config/atcr/registry.yaml` by hand. The overlay reuses the exact `providers:` / `agents:` shapes documented above (including the reserved fields) and is strictly parsed like every other config file. It carries **definitions only** — shared settings such as `payload_mode` belong in `.atcr/config.yaml`, so a settings key here is an unknown-field load error.
++
++```yaml
++# .atcr/registry.yaml — project-defined providers and agents (optional).
++providers:
++  team-llm:
++    base_url: https://llm.team.example/v1
++    api_key_env: TEAM_LLM_KEY
++agents:
++  team-reviewer:
++    provider: team-llm        # a project provider…
++    model: team-model
++    fallback: bruce           # …may fall back to a user-defined agent, and vice versa
++```
++
++**Merge semantics — whole-entry shadowing, project wins.** The effective registry is the user registry with project entries merged in by name: a project provider or agent with the same name as a user one **replaces it entirely** (no field-level deep merge — drop the project entry to restore the user definition), and a new name is simply added. Validation — roster references, fallback dangling/cycle checks, persona refs, and range checks — all run over the **merged** view, so a chain may span tiers; any error names the file that defined the offending entry (`registry.yaml` vs `.atcr/registry.yaml`).
++
++### Trust model for project-defined providers
++
++A project provider names a `base_url` and an `api_key_env`, so a cloned repo could otherwise direct one of your keys to an arbitrary endpoint. atcr therefore **refuses to send a key to a project-defined provider until you explicitly trust it**:
++
++```bash
++atcr trust                 # list project providers and their trust status
++atcr trust team-llm        # authorize one (prints its base_url + key env first)
++atcr trust --all           # authorize every project provider
++```
++
++`atcr trust` pins the provider's `(base_url, api_key_env)` pair by sha256 in `~/.config/atcr/trusted_providers.yaml`. Change either field and trust must be re-granted — this is what stops a repo from silently re-pointing a trusted key at a new host. **Only `api_key_env` (the variable name) is ever stored; the key value never enters any file.** A project **agent** that references an existing **user-defined** provider needs no trust prompt — only project-defined *providers* are gated. Until a project provider is trusted, `atcr review` and `atcr doctor` fail fast (exit 2) naming the provider and the `atcr trust` remedy. On a run that does use trusted project providers, a one-time banner names each provider's `base_url` and key env on stderr (confirmation, not the gate).
++
+ ## Precedence
+ 
+ The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `fail_on`) resolve **per field, independently**, in this order:
+@@ -97,6 +130,14 @@ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
+ 
+ A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload` or out-of-range `--timeout` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+ 
++The same **project-over-user** rule now applies uniformly across all three kinds of configuration — settings, personas, and definitions:
++
++```
++CLI flag  >  .atcr/*  (project)  >  ~/.config/atcr/*  (user)  >  embedded default
++```
++
++Settings resolve per field (above); personas resolve per file (`.atcr/personas/` shadows `~/.config/atcr/personas/`, chain below); and provider/agent **definitions** merge whole-entry (`.atcr/registry.yaml` shadows `~/.config/atcr/registry.yaml`, [overlay](#project-registry-overlay) above). There is no embedded tier for definitions — providers and agents must be defined in at least one registry file.
++
+ **Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
+ 
+ ## Persona resolution chain
+@@ -186,10 +227,11 @@ A stable top-level object with an `agents` array; one entry per effective-roster
+       "status": "ok",
+       "latency_ms": 412,
+       "hint": "",
+-      "detail": ""
++      "detail": "",
++      "source": "user"
+     }
+   ]
+ }
+ ```
+ 
+-`hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
++`hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. `source` is the agent's definition tier — `user` or `project` — surfaced so overlay shadowing is visible rather than silent; the human-readable table shows it as a `SOURCE` column. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
+diff --git a/internal/doctor/render.go b/internal/doctor/render.go
+index 5980e3e..785e549 100644
+--- a/internal/doctor/render.go
++++ b/internal/doctor/render.go
+@@ -26,7 +26,7 @@ func RenderJSON(w io.Writer, rep *Report) error {
+ // effective-roster agent.
+ func RenderTable(w io.Writer, rep *Report) {
+ 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+-	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSTATUS\tLATENCY\tHINT")
++	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSOURCE\tSTATUS\tLATENCY\tHINT")
+ 	for _, a := range rep.Agents {
+ 		latency := "-"
+ 		if a.LatencyMS > 0 {
+@@ -36,7 +36,11 @@ func RenderTable(w io.Writer, rep *Report) {
+ 		if hint == "" && a.Detail != "" {
+ 			hint = a.Detail
+ 		}
+-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Status, latency, hint)
++		source := a.Source
++		if source == "" {
++			source = "user"
++		}
++		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, source, a.Status, latency, hint)
+ 	}
+ 	_ = tw.Flush()
+ }
+diff --git a/internal/doctor/resolve.go b/internal/doctor/resolve.go
+index e53e812..2027309 100644
+--- a/internal/doctor/resolve.go
++++ b/internal/doctor/resolve.go
+@@ -20,11 +20,13 @@ type Target struct {
+ }
+ 
+ // AgentTarget binds one effective-roster agent to the index of the Target it
+-// invokes. Serial marks agents drawn from the serial_agents lane.
++// invokes. Serial marks agents drawn from the serial_agents lane. Source is the
++// agent's definition tier (user | project) for provenance display.
+ type AgentTarget struct {
+ 	Agent     string
+ 	Serial    bool
+ 	TargetIdx int
++	Source    string
+ }
+ 
+ // Resolution is the deduplicated invocation plan for a roster: the distinct
+@@ -82,7 +84,12 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
+ 		}
+ 		if !agentSeen[name] {
+ 			agentSeen[name] = true
+-			res.Agents = append(res.Agents, AgentTarget{Agent: name, Serial: serial, TargetIdx: idx})
++			res.Agents = append(res.Agents, AgentTarget{
++				Agent:     name,
++				Serial:    serial,
++				TargetIdx: idx,
++				Source:    reg.AgentTier(name),
++			})
+ 		}
+ 		return nil
+ 	}
+diff --git a/internal/doctor/run.go b/internal/doctor/run.go
+index 5742299..118552e 100644
+--- a/internal/doctor/run.go
++++ b/internal/doctor/run.go
+@@ -77,6 +77,7 @@ type AgentResult struct {
+ 	LatencyMS int64  `json:"latency_ms"`
+ 	Hint      string `json:"hint,omitempty"`
+ 	Detail    string `json:"detail,omitempty"` // bounded provider error snippet
++	Source    string `json:"source,omitempty"` // definition tier: user | project
+ }
+ 
+ // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
+@@ -131,6 +132,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
+ 			LatencyMS: pr.latencyMS,
+ 			Hint:      pr.hint,
+ 			Detail:    pr.detail,
++			Source:    at.Source,
+ 		})
+ 	}
+ 	rep.ExitCode = exitVerdict(res, results)
+diff --git a/internal/doctor/source_test.go b/internal/doctor/source_test.go
+new file mode 100644
+index 0000000..1adf287
+--- /dev/null
++++ b/internal/doctor/source_test.go
+@@ -0,0 +1,77 @@
++package doctor
++
++import (
++	"context"
++	"strings"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// mergedRegWithProjectAgent builds a registry where agent "team" is project-tier
++// and agent "bruce" is user-tier (source maps set as the merge path would).
++func mergedRegWithProjectAgent() *registry.Registry {
++	return &registry.Registry{
++		Providers: map[string]registry.Provider{"p": {APIKeyEnv: "K", BaseURL: "https://api.example/v1"}},
++		Agents: map[string]registry.AgentConfig{
++			"bruce": {Provider: "p", Model: "m"},
++			"team":  {Provider: "p", Model: "m"},
++		},
++		AgentSource: map[string]registry.EntrySource{
++			"bruce": {Tier: registry.SourceUser},
++			"team":  {Tier: registry.SourceProject},
++		},
++	}
++}
++
++func TestResolve_CarriesSourceTier(t *testing.T) {
++	reg := mergedRegWithProjectAgent()
++	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"bruce", "team"}})
++	require.NoError(t, err)
++
++	src := map[string]string{}
++	for _, at := range res.Agents {
++		src[at.Agent] = at.Source
++	}
++	assert.Equal(t, registry.SourceUser, src["bruce"])
++	assert.Equal(t, registry.SourceProject, src["team"])
++}
++
++func TestRun_PopulatesSource(t *testing.T) {
++	t.Setenv("K", "key")
++	reg := mergedRegWithProjectAgent()
++	res, err := Resolve(reg, &registry.ProjectConfig{Agents: []string{"bruce", "team"}})
++	require.NoError(t, err)
++	fake := newFake(func(inv llmclient.Invocation) (string, error) { return Marker(testNonce), nil })
++
++	rep := Run(context.Background(), fake, res, Options{Nonce: testNonce, MaxTokens: 2048})
++	got := map[string]string{}
++	for _, ar := range rep.Agents {
++		got[ar.Agent] = ar.Source
++	}
++	assert.Equal(t, registry.SourceProject, got["team"])
++	assert.Equal(t, registry.SourceUser, got["bruce"])
++}
++
++func TestRenderTable_ShowsSourceColumn(t *testing.T) {
++	rep := &Report{Agents: []AgentResult{
++		{Agent: "team", Provider: "p", Model: "m", Status: StatusOK, LatencyMS: 10, Source: registry.SourceProject},
++	}}
++	var b strings.Builder
++	RenderTable(&b, rep)
++	out := b.String()
++	assert.Contains(t, out, "SOURCE")
++	assert.Contains(t, out, registry.SourceProject)
++}
++
++func TestRenderJSON_IncludesSource(t *testing.T) {
++	rep := &Report{Agents: []AgentResult{
++		{Agent: "team", Provider: "p", Model: "m", Status: StatusOK, Source: registry.SourceProject},
++	}}
++	var b strings.Builder
++	require.NoError(t, RenderJSON(&b, rep))
++	assert.Contains(t, b.String(), `"source": "project"`)
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 2b7d444..cf77345 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -71,7 +71,9 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	reg, err := registry.LoadRegistry(regPath)
++	// Merge the optional project registry overlay (.atcr/registry.yaml) onto the
++	// user registry; the merged loader enforces the project-provider trust gate.
++	reg, err := registry.LoadMergedRegistry(regPath, root)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/internal/registry/attribution.go b/internal/registry/attribution.go
+new file mode 100644
+index 0000000..c6a4a8f
+--- /dev/null
++++ b/internal/registry/attribution.go
+@@ -0,0 +1,67 @@
++package registry
++
++import (
++	"errors"
++	"fmt"
++)
++
++// Entry kinds for source attribution of a validation failure.
++const (
++	entryProvider = "provider"
++	entryAgent    = "agent"
++)
++
++// entryError tags a validation failure with the offending entry (kind + name)
++// so a merged-view load can attribute it to the file that defined the entry.
++// Its Error() string is exactly the underlying message, so single-file callers
++// (LoadRegistry) and their tests see no change; Unwrap preserves any wrapped
++// sentinel (ErrDanglingFallback / ErrFallbackCycle) for errors.Is.
++type entryError struct {
++	kind string // entryProvider | entryAgent
++	name string
++	msg  string
++	err  error // optional wrapped sentinel
++}
++
++func (e *entryError) Error() string { return e.msg }
++func (e *entryError) Unwrap() error { return e.err }
++
++// agentErrf builds an entryError attributed to agent name.
++func agentErrf(name, format string, a ...any) error {
++	return &entryError{kind: entryAgent, name: name, msg: fmt.Sprintf(format, a...)}
++}
++
++// providerErrf builds an entryError attributed to provider name.
++func providerErrf(name, format string, a ...any) error {
++	return &entryError{kind: entryProvider, name: name, msg: fmt.Sprintf(format, a...)}
++}
++
++// agentSentinelErr builds an entryError that also wraps a sentinel so
++// errors.Is(err, sentinel) keeps working through attribution.
++func agentSentinelErr(name string, sentinel error, msg string) error {
++	return &entryError{kind: entryAgent, name: name, msg: msg, err: sentinel}
++}
++
++// attribute wraps an entry-specific validation error with the file that defined
++// the offending entry, so a merged-view failure names project vs user. Plain
++// (non-entry) errors and entries with no recorded source pass through unchanged.
++func (r *Registry) attribute(err error) error {
++	var ee *entryError
++	if !errors.As(err, &ee) {
++		// Non-entry failures are top-level settings faults (payload_mode,
++		// timeout_secs, ...) which only the user registry carries; preserve the
++		// "registry.yaml: " framing LoadRegistry attaches in the single-file path.
++		return fmt.Errorf("%s: %w", userRegistryLabel, err)
++	}
++	var src EntrySource
++	switch ee.kind {
++	case entryProvider:
++		src = r.ProviderSource[ee.name]
++	case entryAgent:
++		src = r.AgentSource[ee.name]
++	}
++	if src.File == "" {
++		return err
++	}
++	return fmt.Errorf("%s: %w", src.File, err)
++}
+diff --git a/internal/registry/attribution_test.go b/internal/registry/attribution_test.go
+new file mode 100644
+index 0000000..e5be4f1
+--- /dev/null
++++ b/internal/registry/attribution_test.go
+@@ -0,0 +1,117 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// userRegistryWithBruce is a minimal user registry: one provider, one agent.
++const userRegistryWithBruce = `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++`
++
++func TestMergedValidation_ProjectAgentUnknownProvider(t *testing.T) {
++	regPath := writeUserRegistry(t, userRegistryWithBruce)
++	root := t.TempDir()
++	writeProjectRegistry(t, root, `
++agents:
++  team:
++    provider: ghost-provider
++    model: m
++`)
++	_, err := LoadMergedRegistry(regPath, root)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), projectRegistryLabel, "error names the project file that defined the bad agent")
++	assert.Contains(t, err.Error(), "ghost-provider")
++}
++
++func TestMergedValidation_ProjectAgentRangeError(t *testing.T) {
++	regPath := writeUserRegistry(t, userRegistryWithBruce)
++	root := t.TempDir()
++	writeProjectRegistry(t, root, `
++agents:
++  team:
++    provider: openai
++    model: m
++    temperature: 5.0
++`)
++	_, err := LoadMergedRegistry(regPath, root)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), projectRegistryLabel)
++	assert.Contains(t, err.Error(), "temperature")
++}
++
++func TestMergedValidation_CrossTierDangling(t *testing.T) {
++	regPath := writeUserRegistry(t, userRegistryWithBruce)
++	root := t.TempDir()
++	writeProjectRegistry(t, root, `
++agents:
++  team:
++    provider: openai
++    model: m
++    fallback: ghost
++`)
++	_, err := LoadMergedRegistry(regPath, root)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrDanglingFallback, "sentinel survives attribution wrapping")
++	assert.Contains(t, err.Error(), projectRegistryLabel, "dangling error names the project file")
++	assert.Contains(t, err.Error(), "unknown agent 'ghost'")
++}
++
++func TestMergedValidation_CrossTierCycle(t *testing.T) {
++	// User bruce falls back to project agent team; team falls back to bruce.
++	// The cycle only exists in the merged view.
++	regPath := writeUserRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++    fallback: team
++`)
++	root := t.TempDir()
++	writeProjectRegistry(t, root, `
++agents:
++  team:
++    provider: openai
++    model: m
++    fallback: bruce
++`)
++	_, err := LoadMergedRegistry(regPath, root)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrFallbackCycle, "cross-tier cycle fails fast at load")
++	assert.Contains(t, err.Error(), "fallback cycle detected")
++	// Sorted DFS enters at "bruce" (user tier), so the file named is the user
++	// registry; the full cycle path is present regardless.
++	assert.Contains(t, err.Error(), "bruce -> team -> bruce")
++	assert.Contains(t, err.Error(), userRegistryLabel)
++}
++
++func TestMergedValidation_UserSettingsErrorNamesFile(t *testing.T) {
++	// A top-level settings fault in the USER registry must keep the
++	// "registry.yaml:" prefix in the merged path (parity with LoadRegistry).
++	regPath := writeUserRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++payload_mode: nonsense
++`)
++	_, err := LoadMergedRegistry(regPath, t.TempDir())
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), userRegistryLabel)
++	assert.Contains(t, err.Error(), "payload_mode")
++}
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index 21df3e6..2a6c25a 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -90,6 +90,13 @@ type Registry struct {
+ 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
+ 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+ 	FailOn            string `yaml:"fail_on,omitempty"`
++
++	// ProviderSource and AgentSource record the tier (and defining file) each
++	// effective entry came from after the project overlay merge — user or
++	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
++	// mergeProject (project). An entry absent from the map is treated as user.
++	ProviderSource map[string]EntrySource `yaml:"-"`
++	AgentSource    map[string]EntrySource `yaml:"-"`
+ }
+ 
+ // DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
+@@ -104,23 +111,12 @@ func DefaultRegistryPath() (string, error) {
+ // LoadRegistry reads, strictly parses, and validates the registry at path.
+ // API key env vars are NOT resolved here; that happens at invoke time.
+ func LoadRegistry(path string) (*Registry, error) {
+-	data, err := os.ReadFile(path)
+-	if errors.Is(err, os.ErrNotExist) {
+-		return nil, fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
+-	}
++	reg, err := parseRegistryFile(path)
+ 	if err != nil {
+-		return nil, fmt.Errorf("reading registry: %w", err)
++		return nil, err
+ 	}
+ 
+ 	base := filepath.Base(path)
+-	var reg Registry
+-	if err := decodeStrictYAML(data, &reg); err != nil {
+-		if errors.Is(err, errEmptyDocument) {
+-			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
+-		}
+-		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
+-	}
+-
+ 	if err := reg.validate(); err != nil {
+ 		return nil, fmt.Errorf("%s: %w", base, err)
+ 	}
+@@ -128,7 +124,7 @@ func LoadRegistry(path string) (*Registry, error) {
+ 		return nil, fmt.Errorf("%s: %w", base, err)
+ 	}
+ 	reg.applyDefaults()
+-	return &reg, nil
++	return reg, nil
+ }
+ 
+ // validate checks required fields and reference integrity.
+@@ -147,18 +143,18 @@ func (r *Registry) validate() error {
+ 			return errors.New("providers: provider name must not be empty")
+ 		}
+ 		if p.APIKeyEnv == "" {
+-			return fmt.Errorf("providers.%s: required field 'api_key_env' is missing", name)
++			return providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name)
+ 		}
+ 		if !envVarName.MatchString(p.APIKeyEnv) {
+-			return fmt.Errorf("providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
++			return providerErrf(name, "providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
+ 		}
+ 		if p.BaseURL != "" {
+ 			u, err := url.Parse(p.BaseURL)
+ 			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+-				return fmt.Errorf("providers.%s: base_url must be a valid http or https URL", name)
++				return providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name)
+ 			}
+ 			if u.User != nil {
+-				return fmt.Errorf("providers.%s: base_url must not embed credentials (userinfo)", name)
++				return providerErrf(name, "providers.%s: base_url must not embed credentials (userinfo)", name)
+ 			}
+ 		}
+ 	}
+@@ -167,32 +163,32 @@ func (r *Registry) validate() error {
+ 			return errors.New("agents: agent name must not be empty")
+ 		}
+ 		if a.Provider == "" {
+-			return fmt.Errorf("agent '%s': required field 'provider' is missing", name)
++			return agentErrf(name, "agent '%s': required field 'provider' is missing", name)
+ 		}
+ 		if a.Model == "" {
+-			return fmt.Errorf("agent '%s': required field 'model' is missing", name)
++			return agentErrf(name, "agent '%s': required field 'model' is missing", name)
+ 		}
+ 		if _, ok := r.Providers[a.Provider]; !ok {
+-			return fmt.Errorf("agent '%s' references unknown provider '%s'", name, a.Provider)
++			return agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider)
+ 		}
+ 		if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
+-			return fmt.Errorf("agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
++			return agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
+ 		}
+ 		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
+-			return fmt.Errorf("agent '%s': temperature must be within [0, 2]", name)
++			return agentErrf(name, "agent '%s': temperature must be within [0, 2]", name)
+ 		}
+ 		if !payloadModeValid(a.Payload) {
+-			return fmt.Errorf("agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
++			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+ 		}
+ 		// Reserved agentic-stage fields: validated at load (inert in 1.x).
+ 		if !roleValid(a.Role) {
+-			return fmt.Errorf("agent '%s': role must be one of reviewer, skeptic, judge", name)
++			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
+ 		}
+ 		if a.MaxTurns != nil && *a.MaxTurns <= 0 {
+-			return fmt.Errorf("agent '%s': max_turns must be > 0", name)
++			return agentErrf(name, "agent '%s': max_turns must be > 0", name)
+ 		}
+ 		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
+-			return fmt.Errorf("agent '%s': tool_budget_bytes must be >= 0", name)
++			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0", name)
+ 		}
+ 	}
+ 	return nil
+diff --git a/internal/registry/graph.go b/internal/registry/graph.go
+index d81e746..bcd2192 100644
+--- a/internal/registry/graph.go
++++ b/internal/registry/graph.go
+@@ -41,7 +41,8 @@ func (r *Registry) ValidateFallbacks() error {
+ 			continue
+ 		}
+ 		if _, ok := r.Agents[fb]; !ok {
+-			return fmt.Errorf("%w: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb)
++			return agentSentinelErr(name, ErrDanglingFallback,
++				fmt.Sprintf("%s: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb))
+ 		}
+ 	}
+ 
+@@ -51,7 +52,9 @@ func (r *Registry) ValidateFallbacks() error {
+ 			continue
+ 		}
+ 		if path, found := r.walkFallbacks(name, color); found {
+-			return fmt.Errorf("%w detected: %s", ErrFallbackCycle, strings.Join(path, " -> "))
++			// Attribute to the repeated node (path[0]); the lead-in is trimmed.
++			return agentSentinelErr(path[0], ErrFallbackCycle,
++				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> ")))
+ 		}
+ 	}
+ 	return nil
+diff --git a/internal/registry/overlay.go b/internal/registry/overlay.go
+new file mode 100644
+index 0000000..2794a25
+--- /dev/null
++++ b/internal/registry/overlay.go
+@@ -0,0 +1,206 @@
++package registry
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++)
++
++// Source tiers for an effective registry entry after the project overlay
++// merge. Definitions come from at most two tiers — the user registry and the
++// project overlay — since there are no embedded provider/agent defaults.
++const (
++	SourceUser    = "user"
++	SourceProject = "project"
++)
++
++// File labels used for error attribution and the doctor provenance column.
++// The user and project registries share the base name "registry.yaml", so the
++// project label is qualified with its directory to keep them distinguishable.
++const (
++	userRegistryLabel    = "registry.yaml"
++	projectRegistryLabel = ".atcr/registry.yaml"
++)
++
++// EntrySource records the tier (and defining file) an effective provider or
++// agent came from, so validation errors can name the file and `atcr doctor`
++// can show provenance.
++type EntrySource struct {
++	Tier string // SourceUser | SourceProject | SourceEmbedded
++	File string // display label of the defining file
++}
++
++// ProjectRegistry is the project-level provider/agent overlay from
++// .atcr/registry.yaml. It carries definitions only — shared settings stay in
++// .atcr/config.yaml — so the two project files keep distinct roles. It reuses
++// the Provider and AgentConfig shapes (including the Epic 1.1 reserved fields)
++// and is parsed with the same strict (KnownFields) decoder.
++type ProjectRegistry struct {
++	Providers map[string]Provider    `yaml:"providers,omitempty"`
++	Agents    map[string]AgentConfig `yaml:"agents,omitempty"`
++}
++
++// DefaultProjectRegistryPath returns .atcr/registry.yaml under root.
++func DefaultProjectRegistryPath(root string) string {
++	return filepath.Join(root, ".atcr", "registry.yaml")
++}
++
++// parseRegistryFile reads and strictly parses a user-level registry, stamping
++// every entry with the user source tier. Validation is the caller's job — done
++// standalone by LoadRegistry, or over the merged view by LoadMergedRegistry.
++func parseRegistryFile(path string) (*Registry, error) {
++	data, err := os.ReadFile(path)
++	if errors.Is(err, os.ErrNotExist) {
++		return nil, fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
++	}
++	if err != nil {
++		return nil, fmt.Errorf("reading registry: %w", err)
++	}
++
++	base := filepath.Base(path)
++	var reg Registry
++	if err := decodeStrictYAML(data, &reg); err != nil {
++		if errors.Is(err, errEmptyDocument) {
++			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
++		}
++		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
++	}
++	reg.stampSource(SourceUser)
++	return &reg, nil
++}
++
++// LoadProjectRegistry reads and strictly parses the project registry overlay
++// at path. An absent or empty file is NOT an error: the overlay is optional and
++// yields a nil *ProjectRegistry so callers fall back to the user registry.
++func LoadProjectRegistry(path string) (*ProjectRegistry, error) {
++	data, err := os.ReadFile(path)
++	if errors.Is(err, os.ErrNotExist) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, fmt.Errorf("reading project registry: %w", err)
++	}
++
++	var pr ProjectRegistry
++	if err := decodeStrictYAML(data, &pr); err != nil {
++		if errors.Is(err, errEmptyDocument) {
++			return nil, nil // an empty overlay file is treated as no overlay
++		}
++		return nil, fmt.Errorf("failed to parse %s: %w", projectRegistryLabel, err)
++	}
++	return &pr, nil
++}
++
++// LoadMergedRegistry loads the user registry at regPath, overlays the optional
++// project registry at <root>/.atcr/registry.yaml (project entries shadow
++// same-named user entries whole, by name; new names are added), enforces the
++// trust gate for project-defined providers, and validates the merged view.
++//
++// Validation, fallback-chain, and range checks all run over the merged
++// registry, so a project agent may fall back to a user agent and vice versa;
++// errors name the file that defined the offending entry.
++func LoadMergedRegistry(regPath, root string) (*Registry, error) {
++	reg, err := parseRegistryFile(regPath)
++	if err != nil {
++		return nil, err
++	}
++
++	pr, err := LoadProjectRegistry(DefaultProjectRegistryPath(root))
++	if err != nil {
++		return nil, err
++	}
++	if pr != nil {
++		reg.mergeProject(pr)
++	}
++
++	if err := reg.validateMerged(); err != nil {
++		return nil, err
++	}
++
++	// Security gate: a project-defined provider must be explicitly trusted
++	// before it can ever receive a key. No-op when no project providers exist
++	// (project agents on user providers pass freely).
++	if err := reg.enforceProjectTrust(filepath.Dir(regPath)); err != nil {
++		return nil, err
++	}
++
++	reg.applyDefaults()
++	return reg, nil
++}
++
++// stampSource tags every current provider and agent with the given source
++// tier and its file label, initializing the source maps if needed.
++func (r *Registry) stampSource(tier string) {
++	if r.ProviderSource == nil {
++		r.ProviderSource = make(map[string]EntrySource, len(r.Providers))
++	}
++	if r.AgentSource == nil {
++		r.AgentSource = make(map[string]EntrySource, len(r.Agents))
++	}
++	src := EntrySource{Tier: tier, File: registryLabelFor(tier)}
++	for name := range r.Providers {
++		r.ProviderSource[name] = src
++	}
++	for name := range r.Agents {
++		r.AgentSource[name] = src
++	}
++}
++
++// AgentTier returns the source tier (user | project) recorded for an agent,
++// defaulting to user when no overlay merge stamped it (e.g. a registry built
++// directly without LoadMergedRegistry).
++func (r *Registry) AgentTier(name string) string {
++	if src, ok := r.AgentSource[name]; ok && src.Tier != "" {
++		return src.Tier
++	}
++	return SourceUser
++}
++
++// registryLabelFor maps a source tier to the file label used in messages.
++func registryLabelFor(tier string) string {
++	if tier == SourceProject {
++		return projectRegistryLabel
++	}
++	return userRegistryLabel
++}
++
++// mergeProject overlays a project registry onto r: project providers and agents
++// replace same-named user entries whole (no field-level merge) and new names
++// are added. Source tiers are restamped so provenance is visible downstream.
++func (r *Registry) mergeProject(pr *ProjectRegistry) {
++	if r.Providers == nil {
++		r.Providers = map[string]Provider{}
++	}
++	if r.Agents == nil {
++		r.Agents = map[string]AgentConfig{}
++	}
++	if r.ProviderSource == nil {
++		r.ProviderSource = map[string]EntrySource{}
++	}
++	if r.AgentSource == nil {
++		r.AgentSource = map[string]EntrySource{}
++	}
++	src := EntrySource{Tier: SourceProject, File: projectRegistryLabel}
++	for name, p := range pr.Providers {
++		r.Providers[name] = p
++		r.ProviderSource[name] = src
++	}
++	for name, a := range pr.Agents {
++		r.Agents[name] = a
++		r.AgentSource[name] = src
++	}
++}
++
++// validateMerged runs the standard validation and fallback-chain checks over
++// the merged registry, attributing any entry-specific failure to the file that
++// defined the offending entry (project vs user).
++func (r *Registry) validateMerged() error {
++	if err := r.validate(); err != nil {
++		return r.attribute(err)
++	}
++	if err := r.ValidateFallbacks(); err != nil {
++		return r.attribute(err)
++	}
++	return nil
++}
+diff --git a/internal/registry/overlay_test.go b/internal/registry/overlay_test.go
+new file mode 100644
+index 0000000..2c30f9b
+--- /dev/null
++++ b/internal/registry/overlay_test.go
+@@ -0,0 +1,144 @@
++package registry
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// writeUserRegistry writes a user-level registry.yaml in its own temp dir and
++// returns the file path (its directory also hosts the trust store).
++func writeUserRegistry(t *testing.T, content string) string {
++	t.Helper()
++	dir := t.TempDir()
++	path := filepath.Join(dir, "registry.yaml")
++	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
++	return path
++}
++
++// writeProjectRegistry writes .atcr/registry.yaml under root.
++func writeProjectRegistry(t *testing.T, root, content string) {
++	t.Helper()
++	dir := filepath.Join(root, ".atcr")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "registry.yaml"), []byte(content), 0o644))
++}
++
++func TestLoadProjectRegistry_Absent(t *testing.T) {
++	pr, err := LoadProjectRegistry(filepath.Join(t.TempDir(), ".atcr", "registry.yaml"))
++	require.NoError(t, err, "an absent project registry is not an error — the overlay is optional")
++	assert.Nil(t, pr, "absent overlay yields a nil ProjectRegistry")
++}
++
++func TestLoadProjectRegistry_StrictUnknownField(t *testing.T) {
++	root := t.TempDir()
++	// payload_mode is a settings field — it belongs in .atcr/config.yaml, not the
++	// definitions overlay. Strict parsing must reject it.
++	writeProjectRegistry(t, root, "providers: {}\nagents: {}\npayload_mode: blocks\n")
++	_, err := LoadProjectRegistry(DefaultProjectRegistryPath(root))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "registry.yaml")
++}
++
++func TestMergeProject_AddsNewEntries(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
++		Agents:    map[string]AgentConfig{"bruce": {Provider: "openai", Model: "gpt-4"}},
++	}
++	reg.stampSource(SourceUser)
++	pr := &ProjectRegistry{
++		Agents: map[string]AgentConfig{"team": {Provider: "openai", Model: "gpt-4o"}},
++	}
++	reg.mergeProject(pr)
++
++	require.Contains(t, reg.Agents, "team")
++	assert.Equal(t, "gpt-4o", reg.Agents["team"].Model)
++	assert.Equal(t, SourceProject, reg.AgentSource["team"].Tier)
++	assert.Equal(t, SourceUser, reg.AgentSource["bruce"].Tier)
++	assert.Equal(t, SourceUser, reg.ProviderSource["openai"].Tier)
++}
++
++func TestMergeProject_ShadowsWholeEntry(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY", BaseURL: "https://api.openai.com/v1"}},
++		Agents: map[string]AgentConfig{
++			"bruce": {Provider: "openai", Model: "gpt-4", Persona: "bruce", Fallback: "x"},
++		},
++	}
++	reg.stampSource(SourceUser)
++	pr := &ProjectRegistry{
++		// Project bruce omits Fallback — whole-entry shadowing means the user's
++		// fallback must NOT survive (no field-level merge).
++		Agents: map[string]AgentConfig{"bruce": {Provider: "openai", Model: "gpt-5"}},
++	}
++	reg.mergeProject(pr)
++
++	got := reg.Agents["bruce"]
++	assert.Equal(t, "gpt-5", got.Model, "project entry replaces the model")
++	assert.Empty(t, got.Fallback, "whole-entry shadowing drops the user's fallback")
++	assert.Equal(t, SourceProject, reg.AgentSource["bruce"].Tier)
++}
++
++func TestMergeProject_ProviderShadow(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"p": {APIKeyEnv: "USER_KEY", BaseURL: "https://user.example/v1"}},
++		Agents:    map[string]AgentConfig{},
++	}
++	reg.stampSource(SourceUser)
++	pr := &ProjectRegistry{
++		Providers: map[string]Provider{"p": {APIKeyEnv: "PROJ_KEY", BaseURL: "https://proj.example/v1"}},
++	}
++	reg.mergeProject(pr)
++
++	assert.Equal(t, "PROJ_KEY", reg.Providers["p"].APIKeyEnv)
++	assert.Equal(t, SourceProject, reg.ProviderSource["p"].Tier)
++	assert.Equal(t, projectRegistryLabel, reg.ProviderSource["p"].File)
++}
++
++func TestLoadMergedRegistry_NoOverlay(t *testing.T) {
++	regPath := writeUserRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++`)
++	reg, err := LoadMergedRegistry(regPath, t.TempDir())
++	require.NoError(t, err)
++	require.Contains(t, reg.Agents, "bruce")
++	assert.Equal(t, SourceUser, reg.AgentSource["bruce"].Tier)
++	// defaults still apply over the merged view
++	assert.Equal(t, "bruce", reg.Agents["bruce"].Persona)
++}
++
++func TestLoadMergedRegistry_ProjectAgentUsesUserProvider(t *testing.T) {
++	regPath := writeUserRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++`)
++	root := t.TempDir()
++	// A project agent that references a USER provider needs no trust gate and
++	// must validate against the merged view.
++	writeProjectRegistry(t, root, `
++agents:
++  team-reviewer:
++    provider: openai
++    model: gpt-4o
++    fallback: bruce
++`)
++	reg, err := LoadMergedRegistry(regPath, root)
++	require.NoError(t, err)
++	require.Contains(t, reg.Agents, "team-reviewer")
++	assert.Equal(t, SourceProject, reg.AgentSource["team-reviewer"].Tier)
++	assert.Equal(t, "bruce", reg.Agents["team-reviewer"].Fallback, "cross-tier fallback resolves")
++}
+diff --git a/internal/registry/project.go b/internal/registry/project.go
+index 97abefb..d0c8e03 100644
+--- a/internal/registry/project.go
++++ b/internal/registry/project.go
+@@ -48,7 +48,8 @@ func DefaultProjectConfigPath(root string) string {
+ func DefaultProjectConfigYAML(roster []string) string {
+ 	var b strings.Builder
+ 	b.WriteString("# atcr project configuration — see docs/registry.md\n")
+-	b.WriteString("# Roster entries must match agent names in ~/.config/atcr/registry.yaml.\n")
++	b.WriteString("# Roster entries must match agent names defined in ~/.config/atcr/registry.yaml,\n")
++	b.WriteString("# or, for a self-contained repo, in .atcr/registry.yaml (project overlay).\n")
+ 	b.WriteString("agents:\n")
+ 	for _, name := range roster {
+ 		fmt.Fprintf(&b, "  - %s\n", name)
+diff --git a/internal/registry/trust.go b/internal/registry/trust.go
+new file mode 100644
+index 0000000..07854fe
+--- /dev/null
++++ b/internal/registry/trust.go
+@@ -0,0 +1,233 @@
++package registry
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++
++	"gopkg.in/yaml.v3"
++)
++
++// TrustStoreFile is the user-level allow file for project-defined providers,
++// co-located with registry.yaml under ~/.config/atcr/.
++const TrustStoreFile = "trusted_providers.yaml"
++
++// ErrUntrustedProvider is the sentinel for the project-provider trust gate, so
++// callers (and the `atcr trust` command) can recognize the failure class.
++var ErrUntrustedProvider = errors.New("untrusted project-defined provider")
++
++// providerTrustHash pins a provider by the sha256 of (base_url, api_key_env).
++// The NUL separator prevents any base_url/key-env pair from forging another's
++// digest. Changing either field changes the hash, so trust must be re-granted —
++// this is what stops a cloned repo from silently redirecting a key to a new
++// endpoint.
++func providerTrustHash(p Provider) string {
++	sum := sha256.Sum256([]byte(p.BaseURL + "\x00" + p.APIKeyEnv))
++	return "sha256:" + hex.EncodeToString(sum[:])
++}
++
++// trustEntry is one pinned provider. base_url and api_key_env are stored for
++// human audit of the file; the gate compares the hash, which is authoritative.
++type trustEntry struct {
++	Provider  string `yaml:"provider"`
++	BaseURL   string `yaml:"base_url,omitempty"`
++	APIKeyEnv string `yaml:"api_key_env"`
++	Hash      string `yaml:"hash"`
++}
++
++type trustFile struct {
++	Trusted []trustEntry `yaml:"trusted"`
++}
++
++// TrustStore is the parsed allow file: the entries plus an index of their
++// hashes for O(1) membership checks.
++type TrustStore struct {
++	path    string
++	entries []trustEntry
++	hashes  map[string]bool
++}
++
++// DefaultTrustStorePath returns the trust store path inside the registry dir.
++func DefaultTrustStorePath(regDir string) string {
++	return filepath.Join(regDir, TrustStoreFile)
++}
++
++// LoadTrustStore reads and strictly parses the trust store at path. An absent
++// or empty file is NOT an error — it yields an empty store (nothing trusted).
++func LoadTrustStore(path string) (*TrustStore, error) {
++	store := &TrustStore{path: path, hashes: map[string]bool{}}
++
++	data, err := os.ReadFile(path)
++	if errors.Is(err, os.ErrNotExist) {
++		return store, nil
++	}
++	if err != nil {
++		return nil, fmt.Errorf("reading trust store: %w", err)
++	}
++
++	var tf trustFile
++	if err := decodeStrictYAML(data, &tf); err != nil {
++		if errors.Is(err, errEmptyDocument) {
++			return store, nil
++		}
++		return nil, fmt.Errorf("failed to parse %s: %w", TrustStoreFile, err)
++	}
++	store.entries = tf.Trusted
++	for _, e := range tf.Trusted {
++		store.hashes[e.Hash] = true
++	}
++	return store, nil
++}
++
++// IsTrusted reports whether p's pinned hash is present in the store.
++func (s *TrustStore) IsTrusted(p Provider) bool {
++	return s.hashes[providerTrustHash(p)]
++}
++
++// Trust adds a pin for provider p under the given name. It is idempotent: a
++// provider whose (base_url, api_key_env) is already pinned is not duplicated.
++func (s *TrustStore) Trust(name string, p Provider) {
++	h := providerTrustHash(p)
++	if s.hashes[h] {
++		return
++	}
++	s.entries = append(s.entries, trustEntry{
++		Provider:  name,
++		BaseURL:   p.BaseURL,
++		APIKeyEnv: p.APIKeyEnv,
++		Hash:      h,
++	})
++	s.hashes[h] = true
++}
++
++// Save writes the trust store to disk with restrictive (0600) permissions,
++// creating the parent directory if needed. The write is atomic (temp file +
++// rename in the same dir) so a crash or a concurrent `atcr trust` can never
++// truncate the file into a corrupt, review-blocking state.
++func (s *TrustStore) Save() error {
++	dir := filepath.Dir(s.path)
++	if err := os.MkdirAll(dir, 0o700); err != nil {
++		return fmt.Errorf("creating trust store dir: %w", err)
++	}
++	body, err := yaml.Marshal(trustFile{Trusted: s.entries})
++	if err != nil {
++		return fmt.Errorf("encoding trust store: %w", err)
++	}
++	header := "# atcr trusted project-defined providers — see docs/registry.md\n" +
++		"# Each entry pins a .atcr/registry.yaml provider by the sha256 of its\n" +
++		"# (base_url, api_key_env). Remove an entry to revoke trust.\n"
++	content := append([]byte(header), body...)
++
++	tmp, err := os.CreateTemp(dir, ".trusted_providers-*.tmp")
++	if err != nil {
++		return fmt.Errorf("creating trust store temp: %w", err)
++	}
++	tmpName := tmp.Name()
++	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
++	if err := tmp.Chmod(0o600); err != nil {
++		_ = tmp.Close()
++		return fmt.Errorf("securing trust store temp: %w", err)
++	}
++	if _, err := tmp.Write(content); err != nil {
++		_ = tmp.Close()
++		return fmt.Errorf("writing trust store temp: %w", err)
++	}
++	if err := tmp.Close(); err != nil {
++		return fmt.Errorf("closing trust store temp: %w", err)
++	}
++	if err := os.Rename(tmpName, s.path); err != nil {
++		return fmt.Errorf("replacing trust store: %w", err)
++	}
++	return nil
++}
++
++// ProviderRef is a project provider's identifying fields for the trust gate
++// error and the first-use banner.
++type ProviderRef struct {
++	Name      string
++	BaseURL   string
++	APIKeyEnv string
++}
++
++// projectProviders returns the project-tier providers in the merged registry,
++// sorted by name for deterministic output.
++func (r *Registry) projectProviders() []ProviderRef {
++	var refs []ProviderRef
++	for name, src := range r.ProviderSource {
++		if src.Tier != SourceProject {
++			continue
++		}
++		p := r.Providers[name]
++		refs = append(refs, ProviderRef{Name: name, BaseURL: p.BaseURL, APIKeyEnv: p.APIKeyEnv})
++	}
++	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
++	return refs
++}
++
++// untrustedProviderError reports project-defined providers missing from the
++// trust store. It names each provider's base_url + key env and the remedy, and
++// wraps ErrUntrustedProvider for errors.Is.
++type untrustedProviderError struct {
++	refs []ProviderRef
++}
++
++func (e *untrustedProviderError) Error() string {
++	var b strings.Builder
++	b.WriteString("untrusted project-defined provider(s) in " + projectRegistryLabel + ":\n")
++	for _, r := range e.refs {
++		fmt.Fprintf(&b, "  - %s → base_url=%s  api_key_env=%s\n", r.Name, r.BaseURL, r.APIKeyEnv)
++	}
++	b.WriteString("a cloned repo cannot direct your key to these endpoints until you authorize them — run 'atcr trust' to review and approve")
++	return b.String()
++}
++
++func (e *untrustedProviderError) Unwrap() error { return ErrUntrustedProvider }
++
++// enforceProjectTrust blocks any project-defined provider not present in the
++// trust store under regDir. It is the security gate: a cloned repo cannot
++// direct a key to an arbitrary endpoint until the user runs `atcr trust`. It is
++// a no-op when no project providers are present (project agents that reference
++// user providers need no trust).
++func (r *Registry) enforceProjectTrust(regDir string) error {
++	refs := r.projectProviders()
++	if len(refs) == 0 {
++		return nil
++	}
++	store, err := LoadTrustStore(DefaultTrustStorePath(regDir))
++	if err != nil {
++		return err
++	}
++	var untrusted []ProviderRef
++	for _, ref := range refs {
++		if !store.IsTrusted(r.Providers[ref.Name]) {
++			untrusted = append(untrusted, ref)
++		}
++	}
++	if len(untrusted) == 0 {
++		return nil
++	}
++	return &untrustedProviderError{refs: untrusted}
++}
++
++// ProjectProviderBanner returns a loud first-use banner naming each active
++// project-defined provider's base_url and key env, or "" when there are none.
++// Callers print it to stderr after a successful load (UX confirmation that the
++// gate passed — not the security control itself).
++func (r *Registry) ProjectProviderBanner() string {
++	refs := r.projectProviders()
++	if len(refs) == 0 {
++		return ""
++	}
++	var b strings.Builder
++	fmt.Fprintf(&b, "⚠ Using project-defined provider(s) from %s:\n", projectRegistryLabel)
++	for _, ref := range refs {
++		fmt.Fprintf(&b, "  - %s → base_url=%s  api_key_env=%s\n", ref.Name, ref.BaseURL, ref.APIKeyEnv)
++	}
++	b.WriteString("  These endpoints will receive the named API keys (trusted via 'atcr trust').")
++	return b.String()
++}
+diff --git a/internal/registry/trust_test.go b/internal/registry/trust_test.go
+new file mode 100644
+index 0000000..5a1cbdc
+--- /dev/null
++++ b/internal/registry/trust_test.go
+@@ -0,0 +1,173 @@
++package registry
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestProviderTrustHash_PinsBaseURLAndKeyEnv(t *testing.T) {
++	base := Provider{BaseURL: "https://llm.example/v1", APIKeyEnv: "TEAM_KEY"}
++	h := providerTrustHash(base)
++	assert.Equal(t, h, providerTrustHash(base), "deterministic")
++	assert.NotEqual(t, h, providerTrustHash(Provider{BaseURL: "https://evil.example/v1", APIKeyEnv: "TEAM_KEY"}),
++		"a different base_url must not match the pinned hash")
++	assert.NotEqual(t, h, providerTrustHash(Provider{BaseURL: "https://llm.example/v1", APIKeyEnv: "OTHER_KEY"}),
++		"a different api_key_env must not match the pinned hash")
++	assert.Contains(t, h, "sha256:")
++}
++
++func TestTrustStore_AbsentIsEmpty(t *testing.T) {
++	store, err := LoadTrustStore(filepath.Join(t.TempDir(), TrustStoreFile))
++	require.NoError(t, err, "an absent trust store is empty, not an error")
++	assert.False(t, store.IsTrusted(Provider{BaseURL: "https://x/v1", APIKeyEnv: "K"}))
++}
++
++func TestTrustStore_TrustSaveReload(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "sub", TrustStoreFile)
++	store, err := LoadTrustStore(path)
++	require.NoError(t, err)
++
++	p := Provider{BaseURL: "https://llm.example/v1", APIKeyEnv: "TEAM_KEY"}
++	store.Trust("team", p)
++	require.NoError(t, store.Save())
++
++	// file is restrictive (lives under ~/.config/atcr)
++	info, err := os.Stat(path)
++	require.NoError(t, err)
++	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
++
++	reloaded, err := LoadTrustStore(path)
++	require.NoError(t, err)
++	assert.True(t, reloaded.IsTrusted(p), "trust survives a save/reload round trip")
++	assert.False(t, reloaded.IsTrusted(Provider{BaseURL: "https://moved.example/v1", APIKeyEnv: "TEAM_KEY"}),
++		"moving the base_url revokes trust")
++}
++
++func TestTrustStore_TrustIsIdempotent(t *testing.T) {
++	store, err := LoadTrustStore(filepath.Join(t.TempDir(), TrustStoreFile))
++	require.NoError(t, err)
++	p := Provider{BaseURL: "https://llm.example/v1", APIKeyEnv: "TEAM_KEY"}
++	store.Trust("team", p)
++	store.Trust("team", p)
++	assert.Len(t, store.entries, 1, "trusting the same provider twice adds one entry")
++}
++
++// projectRegWithProvider builds a merged registry whose provider "team" came
++// from the project tier, for gate/banner tests.
++func projectRegWithProvider(t *testing.T) *Registry {
++	t.Helper()
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
++		Agents:    map[string]AgentConfig{"bruce": {Provider: "openai", Model: "gpt-4"}},
++	}
++	reg.stampSource(SourceUser)
++	reg.mergeProject(&ProjectRegistry{
++		Providers: map[string]Provider{"team": {BaseURL: "https://llm.team/v1", APIKeyEnv: "TEAM_KEY"}},
++		Agents:    map[string]AgentConfig{"reviewer": {Provider: "team", Model: "m"}},
++	})
++	return reg
++}
++
++func TestEnforceProjectTrust_BlocksUntrusted(t *testing.T) {
++	reg := projectRegWithProvider(t)
++	dir := t.TempDir() // no trust store
++	err := reg.enforceProjectTrust(dir)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrUntrustedProvider)
++	// the error must name the provider, its base_url, key env, file, and remedy
++	msg := err.Error()
++	assert.Contains(t, msg, "team")
++	assert.Contains(t, msg, "https://llm.team/v1")
++	assert.Contains(t, msg, "TEAM_KEY")
++	assert.Contains(t, msg, projectRegistryLabel)
++	assert.Contains(t, msg, "atcr trust")
++}
++
++func TestEnforceProjectTrust_AllowsTrusted(t *testing.T) {
++	reg := projectRegWithProvider(t)
++	dir := t.TempDir()
++	store, err := LoadTrustStore(DefaultTrustStorePath(dir))
++	require.NoError(t, err)
++	store.Trust("team", reg.Providers["team"])
++	require.NoError(t, store.Save())
++
++	assert.NoError(t, reg.enforceProjectTrust(dir))
++}
++
++func TestEnforceProjectTrust_NoProjectProvidersIsNoop(t *testing.T) {
++	// project agent on a USER provider — no project-defined provider → no gate
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
++		Agents:    map[string]AgentConfig{"bruce": {Provider: "openai", Model: "gpt-4"}},
++	}
++	reg.stampSource(SourceUser)
++	reg.mergeProject(&ProjectRegistry{Agents: map[string]AgentConfig{"team": {Provider: "openai", Model: "m"}}})
++	assert.NoError(t, reg.enforceProjectTrust(t.TempDir()))
++}
++
++func TestProjectProviderBanner(t *testing.T) {
++	reg := projectRegWithProvider(t)
++	banner := reg.ProjectProviderBanner()
++	assert.Contains(t, banner, "team")
++	assert.Contains(t, banner, "https://llm.team/v1")
++	assert.Contains(t, banner, "TEAM_KEY")
++	assert.Contains(t, banner, projectRegistryLabel)
++
++	// a registry with no project providers yields no banner
++	userOnly := &Registry{Providers: map[string]Provider{"p": {APIKeyEnv: "K"}}}
++	userOnly.stampSource(SourceUser)
++	assert.Empty(t, userOnly.ProjectProviderBanner())
++}
++
++func TestLoadMergedRegistry_ProjectProviderTrustGate(t *testing.T) {
++	regPath := writeUserRegistry(t, userRegistryWithBruce)
++	root := t.TempDir()
++	writeProjectRegistry(t, root, `
++providers:
++  team:
++    base_url: https://llm.team/v1
++    api_key_env: TEAM_KEY
++agents:
++  reviewer:
++    provider: team
++    model: m
++`)
++	// untrusted → load fails
++	_, err := LoadMergedRegistry(regPath, root)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrUntrustedProvider)
++
++	// trust it, then load succeeds
++	store, err := LoadTrustStore(DefaultTrustStorePath(filepath.Dir(regPath)))
++	require.NoError(t, err)
++	store.Trust("team", Provider{BaseURL: "https://llm.team/v1", APIKeyEnv: "TEAM_KEY"})
++	require.NoError(t, store.Save())
++
++	reg, err := LoadMergedRegistry(regPath, root)
++	require.NoError(t, err)
++	assert.Equal(t, SourceProject, reg.ProviderSource["team"].Tier)
++}
++
++func TestEnforceProjectTrust_ShadowingUserProviderNameIsGated(t *testing.T) {
++	// A malicious repo defines a provider whose NAME shadows a trusted user
++	// provider ("openai") but points base_url at an attacker host. The merge
++	// stamps the shadowing entry project-tier, so it must still be gated — the
++	// user's prior (implicit) trust of "openai" must not carry over.
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY", BaseURL: "https://api.openai.com/v1"}},
++		Agents:    map[string]AgentConfig{},
++	}
++	reg.stampSource(SourceUser)
++	reg.mergeProject(&ProjectRegistry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY", BaseURL: "https://evil.example/v1"}},
++	})
++
++	err := reg.enforceProjectTrust(t.TempDir())
++	require.Error(t, err, "a project provider shadowing a user name is still gated")
++	assert.ErrorIs(t, err, ErrUntrustedProvider)
++	assert.Contains(t, err.Error(), "https://evil.example/v1")
++}

@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/status.go:156|Integer overflow in stale deadline calculation|Use saturating arithmetic or bounds check|correctness|15|time.Duration(m.TimeoutSecs+staleGraceSecs) * time.Second overflows for large TimeoutSecs|bruce

@@ -54,7 +54,7 @@ Build a multi-tenant analytics dashboard that provides:
 3. Exports summary for executive presentation
 4. Identifies top/bottom performing accounts
 
-## Success Criteria
+## Acceptance Criteria
 
 ### Functional
 - [ ] Dashboard loads portfolio view in < 2 seconds

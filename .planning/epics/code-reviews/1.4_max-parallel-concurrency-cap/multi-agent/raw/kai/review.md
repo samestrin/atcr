@@ -1,0 +1,1 @@
+(No in-scope issues identified in the diff. All changes align with the sprint plan: the `max_parallel` precedence chain, engine semaphore, validation, CLI flag, docs, and tests are correctly implemented and well-covered.)
