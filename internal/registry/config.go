@@ -161,7 +161,7 @@ func (r *Registry) validate() error {
 		}
 		if p.BaseURL != "" {
 			u, err := url.Parse(p.BaseURL)
-			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 				return providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name)
 			}
 			if u.User != nil {
