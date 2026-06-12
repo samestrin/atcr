@@ -167,8 +167,12 @@ func probe(ctx context.Context, c Completer, tgt Target, opts Options) probeResu
 	if strings.TrimSpace(tgt.BaseURL) == "" {
 		return probeResult{status: StatusInvalidConfig, hint: "provider base_url is empty — set it in registry.yaml"}
 	}
-	if u, err := url.Parse(tgt.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	u, err := url.Parse(tgt.BaseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return probeResult{status: StatusInvalidConfig, hint: "provider base_url is not a valid http(s) URL"}
+	}
+	if strings.HasSuffix(u.Path, "/chat/completions") || u.RawQuery != "" || u.Fragment != "" {
+		return probeResult{status: StatusInvalidConfig, hint: "provider base_url should be the API base (e.g. https://api.openai.com/v1), not a full endpoint path or URL with query/fragment"}
 	}
 	if os.Getenv(tgt.APIKeyEnv) == "" {
 		return probeResult{status: StatusMissingKey, hint: "set the " + tgt.APIKeyEnv + " environment variable"}
