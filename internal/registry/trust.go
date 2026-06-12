@@ -159,6 +159,15 @@ type ProviderRef struct {
 	APIKeyEnv string
 }
 
+// Line returns the provider identification line used across the gate error,
+// the first-use banner, and the `atcr trust` command. A single shared
+// formatter prevents the -> vs → drift and ensures any change to how a
+// provider is identified is edited in one place. Uses ASCII -> to keep the
+// banner (printed to stderr) safe for legacy/Windows consoles.
+func (r ProviderRef) Line() string {
+	return fmt.Sprintf("%s -> base_url=%s  api_key_env=%s", r.Name, r.BaseURL, r.APIKeyEnv)
+}
+
 // projectProviders returns the project-tier providers in the merged registry,
 // sorted by name for deterministic output.
 func (r *Registry) projectProviders() []ProviderRef {
@@ -185,7 +194,7 @@ func (e *untrustedProviderError) Error() string {
 	var b strings.Builder
 	b.WriteString("untrusted project-defined provider(s) in " + projectRegistryLabel + ":\n")
 	for _, r := range e.refs {
-		fmt.Fprintf(&b, "  - %s → base_url=%s  api_key_env=%s\n", r.Name, r.BaseURL, r.APIKeyEnv)
+		fmt.Fprintf(&b, "  - %s\n", r.Line())
 	}
 	b.WriteString("a cloned repo cannot direct your key to these endpoints until you authorize them — run 'atcr trust' to review and approve")
 	return b.String()
@@ -236,7 +245,7 @@ func (r *Registry) ProjectProviderBanner() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "WARNING: Using project-defined provider(s) from %s:\n", projectRegistryLabel)
 	for _, ref := range refs {
-		fmt.Fprintf(&b, "  - %s -> base_url=%s  api_key_env=%s\n", ref.Name, ref.BaseURL, ref.APIKeyEnv)
+		fmt.Fprintf(&b, "  - %s\n", ref.Line())
 	}
 	b.WriteString("  These endpoints will receive the named API keys (trusted via 'atcr trust').")
 	return b.String()
