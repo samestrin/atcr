@@ -107,9 +107,14 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 // review simply has no summary.json — stale inference then promotes it out of
 // in_progress once its timeout elapses. No new sentinel artifact is introduced.
 func writeFailureSummary(poolDir string, roster int) {
-	_ = os.MkdirAll(poolDir, 0o755)
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "atcr: warning: writeFailureSummary: mkdir %s: %v\n", poolDir, err)
+		return
+	}
 	ps := PoolSummary{Total: roster, Failed: roster}
-	_ = writeJSON(filepath.Join(poolDir, summaryFile), ps)
+	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
+		fmt.Fprintf(os.Stderr, "atcr: warning: writeFailureSummary: write summary: %v\n", err)
+	}
 }
 
 // findingsFor parses an agent's raw review content into findings and stamps the
