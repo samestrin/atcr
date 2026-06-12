@@ -52,8 +52,16 @@ func (r *Registry) ValidateFallbacks() error {
 			continue
 		}
 		if path, found := r.walkFallbacks(name, color); found {
-			// Attribute to the repeated node (path[0]); the lead-in is trimmed.
-			return agentSentinelErr(path[0], ErrFallbackCycle,
+			// Prefer a project-tier node for attribution so errors name
+			// .atcr/registry.yaml when the cycle spans tiers.
+			attributed := path[0]
+			for _, n := range path {
+				if r.AgentTier(n) == SourceProject {
+					attributed = n
+					break
+				}
+			}
+			return agentSentinelErr(attributed, ErrFallbackCycle,
 				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> ")))
 		}
 	}
