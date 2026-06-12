@@ -130,7 +130,7 @@ func TestRun_SerialAndParallelLanesRunConcurrently(t *testing.T) {
 	for _, m := range models {
 		f.block[m] = make(chan struct{})
 	}
-	started := make(chan string, len(models))
+	started := make(chan string, 5) // buffer for all agents so onStart never blocks
 	f.onStart = func(m string) { started <- m }
 	e := NewEngine(f)
 
@@ -305,11 +305,35 @@ func parallelSlots(n int) []Slot {
 
 func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
 	f := newFake()
-	f.delay = 30 * time.Millisecond
+	// Gate the first cap agents so peak deterministically reaches the cap
+	// before any agent completes, removing timing dependence on delay.
+	models := []string{"a0", "a1"}
+	for _, m := range models {
+		f.block[m] = make(chan struct{})
+	}
+	started := make(chan string, 5) // buffer all agents so onStart never blocks
+	f.onStart = func(m string) { started <- m }
 	e := NewEngine(f, WithMaxParallel(2))
 
-	results := e.Run(context.Background(), parallelSlots(5))
+	done := make(chan []Result, 1)
+	go func() { done <- e.Run(context.Background(), parallelSlots(5)) }()
 
+	// Wait for both capped agents to enter Complete — peak is deterministically 2.
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case m := <-started:
+			seen[m] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d agents started; semaphore did not admit cap agents", len(seen))
+		}
+	}
+	// Release the gates so all agents can complete.
+	for _, m := range models {
+		close(f.block[m])
+	}
+
+	results := <-done
 	require.Len(t, results, 5)
 	for _, r := range results {
 		assert.Equal(t, StatusOK, r.Status)
