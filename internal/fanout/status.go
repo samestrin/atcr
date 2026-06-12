@@ -48,7 +48,11 @@ const (
 const staleGraceSecs = 60
 
 // nowFunc is the clock ReadReviewStatus consults for stale inference; a package
-// var so tests can pin it for deterministic window assertions.
+// var so tests can pin it for deterministic window assertions. Swapping nowFunc
+// is NOT safe concurrent with readers: tests that reassign it must do so before
+// reader goroutines start and restore it after they join, or guard access via
+// atomic.Value. The current stale-clock tests are non-parallel by design to
+// avoid this data race.
 var nowFunc = time.Now
 
 // ReviewStatus is a review's aggregated progress, derived from manifest.json
