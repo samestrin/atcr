@@ -35,7 +35,7 @@ func RenderTableError(w io.Writer, rep *Report) error {
 		}
 		hint := a.Hint
 		if hint == "" && a.Detail != "" {
-			hint = a.Detail
+			hint = "error: " + a.Detail
 		}
 		source := a.Source
 		if source == "" {
