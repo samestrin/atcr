@@ -98,6 +98,20 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 	return sum, nil
 }
 
+// writeFailureSummary writes a best-effort minimal summary.json marking every
+// roster agent failed, so a post-fan-out persistence failure (a WritePool error
+// in ExecuteReview) surfaces as `failed` through the existing summary-derived
+// reader path (succeeded==0 → RunFailed) instead of an eternal in_progress.
+// Errors are deliberately swallowed: this is a last-resort marker written while
+// the normal write path is already failing, and if it too cannot be written the
+// review simply has no summary.json — stale inference then promotes it out of
+// in_progress once its timeout elapses. No new sentinel artifact is introduced.
+func writeFailureSummary(poolDir string, roster int) {
+	_ = os.MkdirAll(poolDir, 0o755)
+	ps := PoolSummary{Total: roster, Failed: roster}
+	_ = writeJSON(filepath.Join(poolDir, summaryFile), ps)
+}
+
 // findingsFor parses an agent's raw review content into findings and stamps the
 // REVIEWER as the agent name itself — never trusting any model-supplied column
 // (TD-016). A failed agent (no content) yields no findings.

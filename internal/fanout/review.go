@@ -229,8 +229,14 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	}
 	results := NewEngine(completer, WithMaxParallel(p.MaxParallel)).Run(runCtx, p.Slots)
 
-	sum, err := WritePool(filepath.Join(p.Dir, "sources", "pool"), results)
+	poolDir := filepath.Join(p.Dir, "sources", "pool")
+	sum, err := WritePool(poolDir, results)
 	if err != nil {
+		// Persistence failed after the fan-out ran. Write a best-effort failure
+		// marker so the status reader reports `failed` rather than leaving the
+		// review stuck in_progress forever (Epic 1.5); if even this cannot be
+		// written, stale inference covers it once the timeout elapses.
+		writeFailureSummary(poolDir, len(p.Slots))
 		return nil, err
 	}
 
