@@ -90,6 +90,9 @@ type Registry struct {
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
+	// application in ResolveSettings.
+	MaxParallel *int `yaml:"max_parallel,omitempty"`
 
 	// ProviderSource and AgentSource record the tier (and defining file) each
 	// effective entry came from after the project overlay merge — user or
@@ -134,6 +137,9 @@ func (r *Registry) validate() error {
 	}
 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
 		return fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget)
+	}
+	if r.MaxParallel != nil && *r.MaxParallel < 0 {
+		return fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel)
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))

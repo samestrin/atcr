@@ -22,6 +22,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+### [2026-06-12] From Sprint: epic-1.4
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/payload/manifest.go:22 | The resolved max_parallel value is not recorded in manifest.json/status (only payload_mode is), so a throttled run gives no on-disk evidence of the active cap when diagnosing slow fan-outs in prod. | Record the effective max_parallel (and timeout_secs) in the manifest for post-hoc diagnosis, or accept parity with the existing un-recorded timeout_secs. | OBSERVABILITY | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/fanout/engine.go:112 | The cap bounds only the parallel lane; the concurrently-running serial lane adds one more in-flight provider call, so true peak provider concurrency is max_parallel+1 rather than max_parallel. | Clarify in docs/registry.md that the cap governs the parallel lane only and total concurrency may be N+1 with serial agents present. | CORRECTNESS | 5 | execute-epic-independent |
+| U | [ ] | LOW | internal/registry/precedence.go:399 | Default max_parallel=10 silently changes behavior for existing rosters larger than 10 agents (previously all fired at once, now throttled to 10) with no migration notice. | Note the behavior change in CHANGELOG so >10-agent users understand the new throttle (otherwise acceptable per plan). | REGRESSION_RISK | 5 | execute-epic-independent |
+| U | [ ] | LOW | internal/fanout/engine.go:131 | Under cancellation a queued goroutine that loses the acquire race bypasses the semaphore and calls invokeSlot without a token; correct for drain but the cap is not enforced during cancellation windows (only timeout results are produced, so no real provider burst occurs). | No code fix needed; behavior is correct since the bypassed path makes no provider call. Confirm intent in a code comment. | EDGE_CASES | 5 | execute-epic-independent |
+
 ### [2026-06-11] From Sprint: epic-1.3
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
@@ -138,6 +147,6 @@ technical-debt/
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 2 |
 | MEDIUM | 1 | 6 | 25 |
-| LOW | 13 | 1 | 41 |
+| LOW | 17 | 1 | 41 |
 
-**Last Modified:** 2026-06-11 | **Open Items:** 14 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 89
+**Last Modified:** 2026-06-12 | **Open Items:** 18 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 93
