@@ -209,7 +209,11 @@ const maxDetailBytes = 512
 // classify turns a completion result into a probe outcome.
 func classify(content string, err error, nonce string, latencyMS int64, tgt Target) probeResult {
 	if err == nil {
-		if strings.Contains(content, Marker(nonce)) {
+		// Strip the prompt text before checking for the marker so an endpoint
+		// that echoes the request verbatim (a common misconfiguration) does not
+		// produce a false-positive StatusOK.
+		stripped := strings.ReplaceAll(content, Prompt(nonce), "")
+		if strings.Contains(stripped, Marker(nonce)) {
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
 		return probeResult{
