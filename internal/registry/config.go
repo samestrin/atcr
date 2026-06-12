@@ -63,7 +63,7 @@ type AgentConfig struct {
 	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
 	Tools           bool   `yaml:"tools,omitempty"`             // Stage 2 — enables the tool loop
 	MaxTurns        *int   `yaml:"max_turns,omitempty"`         // Stage 2 — agent-loop turn cap
-	ToolBudgetBytes *int   `yaml:"tool_budget_bytes,omitempty"` // Stage 2 — cumulative tool-result budget
+	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes,omitempty"` // Stage 2 — cumulative tool-result budget
 	Role            string `yaml:"role,omitempty"`              // Stage 3/4 — reviewer | skeptic | judge
 }
 
