@@ -175,14 +175,14 @@ func (r *Registry) mergeProject(pr *ProjectRegistry) {
 }
 
 // validateMerged runs the standard validation and fallback-chain checks over
-// the merged registry. Tier-aware attribution of entry-specific failures to the
-// defining file is layered on in Task 2.
+// the merged registry, attributing any entry-specific failure to the file that
+// defined the offending entry (project vs user).
 func (r *Registry) validateMerged() error {
 	if err := r.validate(); err != nil {
-		return err
+		return r.attribute(err)
 	}
 	if err := r.ValidateFallbacks(); err != nil {
-		return err
+		return r.attribute(err)
 	}
 	return nil
 }
