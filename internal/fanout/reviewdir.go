@@ -67,10 +67,10 @@ func ReviewID(override, branch, date, collisionSuffix string, exists func(id str
 // collisionCandidate returns the nth candidate in the collision sequence: the
 // base id for n==0, then id-suffix, then id-suffix-2, id-suffix-3, ...
 func collisionCandidate(id, suffix string, n int) string {
-	switch {
-	case n == 0:
+	switch n {
+	case 0:
 		return id
-	case n == 1:
+	case 1:
 		return id + "-" + suffix
 	default:
 		return fmt.Sprintf("%s-%s-%d", id, suffix, n)
