@@ -49,6 +49,9 @@ func WriteManifest(path string, m *Manifest) error {
 	if m.PerAgentPayload == nil {
 		m.PerAgentPayload = map[string]string{}
 	}
+	if m.Stages == nil {
+		m.Stages = []string{"review"}
+	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to write manifest.json: %w", err)

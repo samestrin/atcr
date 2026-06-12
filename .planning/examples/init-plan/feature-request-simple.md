@@ -10,7 +10,7 @@ Users need to export their data for backup or migration purposes. Currently ther
 
 Add a data export feature that allows users to download their data in common formats (JSON, CSV).
 
-## Success Criteria
+## Acceptance Criteria
 
 - Users can export their profile data
 - Users can export their activity history

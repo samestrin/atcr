@@ -1,0 +1,657 @@
+diff --git a/.planning/epics/active/1.4_max-parallel-concurrency-cap.md b/.planning/epics/active/1.4_max-parallel-concurrency-cap.md
+index fada338..e1735fa 100644
+--- a/.planning/epics/active/1.4_max-parallel-concurrency-cap.md
++++ b/.planning/epics/active/1.4_max-parallel-concurrency-cap.md
+@@ -56,3 +56,44 @@ Every non-serial slot spawns its own goroutine with no semaphore or worker-pool
+ |------|------------|--------|------------|
+ | Semaphore interacts badly with cancellation drain | Low | Medium | Acquire with ctx-awareness; existing TestRun_GlobalTimeoutCancelsAndDrains guards the invariant |
+ | Default surprises existing users | Low | Low | Default preserves current effective behavior for ≤10-agent rosters |
++
++## Clarifications
++
++### Recorded 2026-06-12 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Embedded default `max_parallel` = **10** — preserves current effective behavior for v1
++  rosters (≤~10 agents) and matches AC 01-04's "10 concurrent agent calls" target. A
++  larger/misconfigured roster is now bounded instead of bursting one goroutine per slot.
++- `max_parallel: 0` = **unbounded** (escape hatch), mirroring `payload_byte_budget`'s
++  `0 = unlimited` contract. Negative values are a usage error (exit 2). Project/registry/CLI
++  tiers carry `*int` pointers so an explicit `0` survives default application (a real
++  override, not "unset").
++
++**Scope Boundaries:**
++- IN scope: the single global `max_parallel` knob (CLI `--max-parallel` > `.atcr/config.yaml`
++  > `registry.yaml` > embedded default 10), a buffered semaphore bounding the parallel lane
++  in `Engine.Run`, validation, and docs (registry.md + `atcr init` template comment).
++- OUT of scope: rate limiting (requests/second) and per-provider/per-agent concurrency
++  bounds — a single global knob only.
++
++**Technical Approach:**
++- The semaphore bounds concurrent **provider calls** (the work inside `Completer.Complete`),
++  which is what the fake completer's peak counter measures and what Success Criterion 2
++  asserts — not the goroutine-spawn count.
++- `Engine` gains an optional functional-option constructor (`NewEngine(c, WithMaxParallel(n))`)
++  so all existing `NewEngine(c)` / `e.Run(ctx, slots)` call sites stay unchanged. `Run` builds
++  a buffered `chan struct{}` of size n; each parallel goroutine does a ctx-aware acquire
++  before `invokeSlot` and releases after. `maxParallel <= 0` => no semaphore (unbounded).
++- The WaitGroup drain guarantee is preserved: a goroutine whose ctx-aware acquire loses to
++  `ctx.Done()` still calls `invokeSlot` (which returns a `StatusTimeout` result for the un-run
++  slot) and `wg.Done()`s — no leaked goroutine, no missing result.
++- The resolved value threads through `PreparedReview` into `ExecuteReview` exactly like
++  `TimeoutSec`.
++
++**Original Questions and Answers:**
++1. Q: What embedded default value should `max_parallel` use?
++   A: 10 — matches the AC's 10-concurrent-calls target and preserves current behavior.
++2. Q: Should `max_parallel` adopt 0 as an "unbounded" escape hatch (mirroring
++   `payload_byte_budget`'s 0 = unlimited), with only negative values rejected?
++   A: Yes — 0 = unbounded; negative is a usage error.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index d1c8659..503df44 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -22,6 +22,15 @@ technical-debt/
+ 4. **After resolution**: Move items from active to completed
+ 
+ 
++### [2026-06-12] From Sprint: epic-1.4
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/payload/manifest.go:22 | The resolved max_parallel value is not recorded in manifest.json/status (only payload_mode is), so a throttled run gives no on-disk evidence of the active cap when diagnosing slow fan-outs in prod. | Record the effective max_parallel (and timeout_secs) in the manifest for post-hoc diagnosis, or accept parity with the existing un-recorded timeout_secs. | OBSERVABILITY | 15 | execute-epic-independent |
++| U | [ ] | LOW | internal/fanout/engine.go:112 | The cap bounds only the parallel lane; the concurrently-running serial lane adds one more in-flight provider call, so true peak provider concurrency is max_parallel+1 rather than max_parallel. | Clarify in docs/registry.md that the cap governs the parallel lane only and total concurrency may be N+1 with serial agents present. | CORRECTNESS | 5 | execute-epic-independent |
++| U | [ ] | LOW | internal/registry/precedence.go:399 | Default max_parallel=10 silently changes behavior for existing rosters larger than 10 agents (previously all fired at once, now throttled to 10) with no migration notice. | Note the behavior change in CHANGELOG so >10-agent users understand the new throttle (otherwise acceptable per plan). | REGRESSION_RISK | 5 | execute-epic-independent |
++| U | [ ] | LOW | internal/fanout/engine.go:131 | Under cancellation a queued goroutine that loses the acquire race bypasses the semaphore and calls invokeSlot without a token; correct for drain but the cap is not enforced during cancellation windows (only timeout results are produced, so no real provider burst occurs). | No code fix needed; behavior is correct since the bypassed path makes no provider call. Confirm intent in a code comment. | EDGE_CASES | 5 | execute-epic-independent |
++
+ ### [2026-06-11] From Sprint: epic-1.3
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+@@ -138,6 +147,6 @@ technical-debt/
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 0 | 2 |
+ | MEDIUM | 1 | 6 | 25 |
+-| LOW | 13 | 1 | 41 |
++| LOW | 17 | 1 | 41 |
+ 
+-**Last Modified:** 2026-06-11 | **Open Items:** 14 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 89
++**Last Modified:** 2026-06-12 | **Open Items:** 18 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 93
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 380301c..cc98da2 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,16 @@
++## [1.4.0] - 2026-06-12
++
++### Added
++
++- `max_parallel` setting: bounds the fan-out engine's parallel lane with a buffered semaphore so a large roster cannot burst every provider call at once. Resolved through the usual `CLI --max-parallel > .atcr/config.yaml > registry.yaml > embedded default` precedence; `0` = unbounded escape hatch, negative is rejected as a usage error (exit 2). The serial lane is unaffected
++- `--max-parallel N` flag on `atcr review`, a `max_parallel` key in the `atcr init` config template, and documentation in `docs/registry.md`
++
++### Changed
++
++- The embedded default for `max_parallel` is `10`, matching the prior effective fan-out for typical (≤10-agent) rosters. A roster larger than 10 agents that previously fired every call at once is now throttled to 10 concurrent provider calls by default — raise the cap or set `max_parallel: 0` to restore the old unbounded behavior
++
++*Shipped via /execute-epic (epic 1.4)*
++
+ ## [1.3.0] - 2026-06-11
+ 
+ ### Added
+diff --git a/cmd/atcr/init_test.go b/cmd/atcr/init_test.go
+index a52580d..1ee8366 100644
+--- a/cmd/atcr/init_test.go
++++ b/cmd/atcr/init_test.go
+@@ -35,6 +35,8 @@ func TestInit_FreshDirectory(t *testing.T) {
+ 	require.NotNil(t, cfg.TimeoutSecs)
+ 	assert.Equal(t, 600, *cfg.TimeoutSecs)
+ 	assert.Equal(t, "HIGH", cfg.FailOn)
++	require.NotNil(t, cfg.MaxParallel, "template must carry max_parallel so the knob is visible")
++	assert.Equal(t, registry.DefaultMaxParallel, *cfg.MaxParallel)
+ 
+ 	// Six persona files plus the base template.
+ 	for _, name := range append([]string{"_base"}, personaNames...) {
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 7bcc1e2..2a7eea6 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -27,6 +27,7 @@ func newReviewCmd() *cobra.Command {
+ 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
+ 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
+ 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
++	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (overrides config)")
+ 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
+ 	addRangeFlags(cmd)
+ 	return cmd
+@@ -164,5 +165,9 @@ func cliOverrides(cmd *cobra.Command) registry.CLIOverrides {
+ 		v, _ := cmd.Flags().GetInt64("byte-budget")
+ 		o.PayloadByteBudget = &v
+ 	}
++	if cmd.Flags().Changed("max-parallel") {
++		v, _ := cmd.Flags().GetInt("max-parallel")
++		o.MaxParallel = &v
++	}
+ 	return o
+ }
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 2dca42b..c93211b 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -20,6 +20,21 @@ func slotWithKeys(envs ...string) fanout.Slot {
+ 	return s
+ }
+ 
++func TestCLIOverrides_MaxParallelSet(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags([]string{"--max-parallel", "3"}))
++	o := cliOverrides(cmd)
++	require.NotNil(t, o.MaxParallel, "--max-parallel must populate the override")
++	require.Equal(t, 3, *o.MaxParallel)
++}
++
++func TestCLIOverrides_MaxParallelUnset(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags(nil))
++	o := cliOverrides(cmd)
++	require.Nil(t, o.MaxParallel, "an unset flag must not override lower tiers")
++}
++
+ func TestPreflightAPIKeys_AllChainsKeylessIsUsageError(t *testing.T) {
+ 	// AC 03-02 Error Scenario 1: a missing API key is a configuration error
+ 	// (exit 2) naming the env var — never the gate's exit 1.
+diff --git a/docs/registry.md b/docs/registry.md
+index d41b2e4..0edd090 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -40,6 +40,7 @@ agents:
+ payload_mode: blocks
+ timeout_secs: 600
+ payload_byte_budget: 524288
++max_parallel: 10
+ fail_on: HIGH
+ ```
+ 
+@@ -75,6 +76,7 @@ serial_agents: []
+ payload_mode: blocks
+ timeout_secs: 600
+ payload_byte_budget: 524288
++max_parallel: 10
+ fail_on: HIGH
+ ```
+ 
+@@ -85,6 +87,7 @@ fail_on: HIGH
+ | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
+ | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
+ | `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. |
++| `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once; the serial lane is unaffected. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
+ | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
+ 
+ An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
+@@ -122,13 +125,13 @@ atcr trust --all           # authorize every project provider
+ 
+ ## Precedence
+ 
+-The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `fail_on`) resolve **per field, independently**, in this order:
++The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `fail_on`) resolve **per field, independently**, in this order:
+ 
+ ```
+ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
+ ```
+ 
+-A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload` or out-of-range `--timeout` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
++A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+ 
+ The same **project-over-user** rule now applies uniformly across all three kinds of configuration — settings, personas, and definitions:
+ 
+@@ -138,7 +141,7 @@ CLI flag  >  .atcr/*  (project)  >  ~/.config/atcr/*  (user)  >  embedded defaul
+ 
+ Settings resolve per field (above); personas resolve per file (`.atcr/personas/` shadows `~/.config/atcr/personas/`, chain below); and provider/agent **definitions** merge whole-entry (`.atcr/registry.yaml` shadows `~/.config/atcr/registry.yaml`, [overlay](#project-registry-overlay) above). There is no embedded tier for definitions — providers and agents must be defined in at least one registry file.
+ 
+-**Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
++**Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
+ 
+ ## Persona resolution chain
+ 
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index a250864..e432129 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -63,16 +63,34 @@ type Result struct {
+ // serial lane (rate-limited providers), both running concurrently.
+ type Engine struct {
+ 	completer Completer
++	// maxParallel bounds concurrent parallel-lane agent calls; 0 (the default)
++	// means unbounded, preserving the original goroutine-per-slot behavior.
++	maxParallel int
++}
++
++// EngineOption configures an Engine at construction.
++type EngineOption func(*Engine)
++
++// WithMaxParallel bounds concurrent parallel-lane agent calls to n. n <= 0
++// leaves the lane unbounded (the documented escape hatch). The serial lane is
++// unaffected — it is already sequential.
++func WithMaxParallel(n int) EngineOption {
++	return func(e *Engine) { e.maxParallel = n }
+ }
+ 
+ // NewEngine builds an Engine over the given completer. A nil completer is a
+ // programming error and panics at construction rather than nil-panicking deep
+-// inside the first agent invocation.
+-func NewEngine(c Completer) *Engine {
++// inside the first agent invocation. Options tune optional behavior (e.g.
++// WithMaxParallel); the zero-option call preserves the original unbounded lane.
++func NewEngine(c Completer, opts ...EngineOption) *Engine {
+ 	if c == nil {
+ 		panic("fanout: NewEngine called with nil Completer")
+ 	}
+-	return &Engine{completer: c}
++	e := &Engine{completer: c}
++	for _, opt := range opts {
++		opt(e)
++	}
++	return e
+ }
+ 
+ // Run executes every slot and returns one Result per slot in input order.
+@@ -86,6 +104,15 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
+ 	results := make([]Result, len(slots))
+ 	var wg sync.WaitGroup
+ 
++	// A buffered semaphore bounds how many parallel-lane agents call a provider
++	// at once. maxParallel <= 0 leaves sem nil (unbounded). Zero-size elements
++	// keep the buffer cheap regardless of cap. Each goroutine still spawns; only
++	// the provider call is gated, which is the resource the cap protects.
++	var sem chan struct{}
++	if e.maxParallel > 0 {
++		sem = make(chan struct{}, e.maxParallel)
++	}
++
+ 	// Serial slots share one goroutine so they never overlap; parallel slots
+ 	// each get their own. Both lanes start together and the WaitGroup joins them.
+ 	var serialIdx []int
+@@ -97,6 +124,19 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
+ 		wg.Add(1)
+ 		go func(i int, s Slot) {
+ 			defer wg.Done()
++			// Acquire a slot before invoking. The acquire is ctx-aware so a
++			// cancelled run never blocks the WaitGroup drain waiting for a slot:
++			// on cancellation, invokeSlot short-circuits to a timeout result
++			// without a provider call. A won acquire is always released.
++			if sem != nil {
++				select {
++				case sem <- struct{}{}:
++					defer func() { <-sem }()
++				case <-ctx.Done():
++					results[i] = e.invokeSlot(ctx, s)
++					return
++				}
++			}
+ 			results[i] = e.invokeSlot(ctx, s)
+ 		}(i, slots[i])
+ 	}
+diff --git a/internal/fanout/engine_test.go b/internal/fanout/engine_test.go
+index 3894059..3ef9ffc 100644
+--- a/internal/fanout/engine_test.go
++++ b/internal/fanout/engine_test.go
+@@ -294,3 +294,76 @@ func TestRun_ResultsPreserveInputOrder(t *testing.T) {
+ 		assert.Equal(t, fmt.Sprintf("a%d", i), r.Agent, "result %d out of order", i)
+ 	}
+ }
++
++func parallelSlots(n int) []Slot {
++	var slots []Slot
++	for i := 0; i < n; i++ {
++		slots = append(slots, agentSlot(fmt.Sprintf("a%d", i)))
++	}
++	return slots
++}
++
++func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
++	f := newFake()
++	f.delay = 30 * time.Millisecond
++	e := NewEngine(f, WithMaxParallel(2))
++
++	results := e.Run(context.Background(), parallelSlots(5))
++
++	require.Len(t, results, 5)
++	for _, r := range results {
++		assert.Equal(t, StatusOK, r.Status)
++	}
++	assert.Equal(t, int32(2), atomic.LoadInt32(&f.peak),
++		"max_parallel=2 must cap a 5-agent roster at 2 concurrent calls")
++}
++
++func TestRun_MaxParallelZeroIsUnbounded(t *testing.T) {
++	f := newFake()
++	f.delay = 30 * time.Millisecond
++	e := NewEngine(f, WithMaxParallel(0))
++
++	results := e.Run(context.Background(), parallelSlots(5))
++
++	require.Len(t, results, 5)
++	assert.Equal(t, int32(5), atomic.LoadInt32(&f.peak),
++		"max_parallel=0 is unbounded: all five agents run at once (current behavior)")
++}
++
++func TestRun_MaxParallelLargerThanRosterIsUnbounded(t *testing.T) {
++	f := newFake()
++	f.delay = 30 * time.Millisecond
++	e := NewEngine(f, WithMaxParallel(50))
++
++	results := e.Run(context.Background(), parallelSlots(3))
++
++	require.Len(t, results, 3)
++	assert.Equal(t, int32(3), atomic.LoadInt32(&f.peak),
++		"a cap above the roster size never blocks: all three run at once")
++}
++
++func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
++	// The semaphore must not defeat the WaitGroup drain guarantee: with a roster
++	// larger than the cap, queued goroutines whose ctx-aware acquire loses to
++	// cancellation still resolve to a timeout result and Done() — no leak.
++	f := newFake()
++	f.delay = time.Hour // every started agent blocks until the deadline fires
++	e := NewEngine(f, WithMaxParallel(2))
++
++	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
++	defer cancel()
++
++	done := make(chan []Result, 1)
++	go func() { done <- e.Run(ctx, parallelSlots(5)) }()
++
++	select {
++	case results := <-done:
++		require.Len(t, results, 5)
++		for _, r := range results {
++			assert.Equal(t, StatusTimeout, r.Status, "every slot must surface timeout under the cap")
++			assert.Error(t, r.Err)
++		}
++	case <-time.After(2 * time.Second):
++		t.Fatal("Run did not return under the cap — semaphore blocked the WaitGroup drain")
++	}
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index cf77345..70896d6 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -114,11 +114,12 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
+ // while the CLI runs both phases inline. The fields the executor needs are
+ // exported; manifest is finalized in place by ExecuteReview.
+ type PreparedReview struct {
+-	ID         string
+-	Dir        string
+-	Slots      []Slot
+-	TimeoutSec int
+-	manifest   *payload.Manifest
++	ID          string
++	Dir         string
++	Slots       []Slot
++	TimeoutSec  int
++	MaxParallel int
++	manifest    *payload.Manifest
+ }
+ 
+ // AgentCount is the number of reviewer slots the prepared review will run.
+@@ -204,7 +205,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 	if err := WriteLatest(req.Root, id); err != nil {
+ 		return nil, err
+ 	}
+-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, manifest: m}, nil
++	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, manifest: m}, nil
+ }
+ 
+ // ExecuteReview runs phase two: fan out the prepared roster under the global
+@@ -224,7 +225,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
+ 		defer cancel()
+ 	}
+-	results := NewEngine(completer).Run(runCtx, p.Slots)
++	results := NewEngine(completer, WithMaxParallel(p.MaxParallel)).Run(runCtx, p.Slots)
+ 
+ 	sum, err := WritePool(filepath.Join(p.Dir, "sources", "pool"), results)
+ 	if err != nil {
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index 2a6c25a..c3e09c7 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -90,6 +90,9 @@ type Registry struct {
+ 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
+ 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+ 	FailOn            string `yaml:"fail_on,omitempty"`
++	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
++	// application in ResolveSettings.
++	MaxParallel *int `yaml:"max_parallel,omitempty"`
+ 
+ 	// ProviderSource and AgentSource record the tier (and defining file) each
+ 	// effective entry came from after the project overlay merge — user or
+@@ -135,6 +138,9 @@ func (r *Registry) validate() error {
+ 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
+ 		return fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget)
+ 	}
++	if r.MaxParallel != nil && *r.MaxParallel < 0 {
++		return fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel)
++	}
+ 	if !payloadModeValid(r.PayloadMode) {
+ 		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
+ 	}
+diff --git a/internal/registry/precedence.go b/internal/registry/precedence.go
+index 56a7661..23c81a6 100644
+--- a/internal/registry/precedence.go
++++ b/internal/registry/precedence.go
+@@ -9,6 +9,12 @@ import (
+ // would overflow time.Duration arithmetic long before being useful.
+ const MaxTimeoutSecs = 86400
+ 
++// DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
++// agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
++// AC 01-04's "10 concurrent agent calls" target) while capping a larger or
++// misconfigured roster. 0 is the documented unbounded escape hatch.
++const DefaultMaxParallel = 10
++
+ // Settings are the effective shared review settings after precedence
+ // resolution: CLI flag > project config > registry > embedded default.
+ // Each field resolves independently; a tier participates only where it
+@@ -25,6 +31,9 @@ type Settings struct {
+ 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
+ 	// (AC 06-03).
+ 	PayloadByteBudget int64
++	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
++	// engine; 0 is the documented unbounded escape hatch.
++	MaxParallel int
+ }
+ 
+ // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
+@@ -33,6 +42,7 @@ type CLIOverrides struct {
+ 	PayloadMode       *string
+ 	TimeoutSecs       *int
+ 	PayloadByteBudget *int64
++	MaxParallel       *int
+ }
+ 
+ // ResolveSettings applies the precedence chain. proj and reg may be nil;
+@@ -43,13 +53,14 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 		PayloadMode:       DefaultPayloadMode,
+ 		TimeoutSecs:       DefaultTimeoutSecs,
+ 		PayloadByteBudget: DefaultPayloadByteBudget,
++		MaxParallel:       DefaultMaxParallel,
+ 	}
+ 
+ 	if reg != nil {
+-		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget)
++		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
+ 	}
+ 	if proj != nil {
+-		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget)
++		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
+ 	}
+ 
+ 	if cli.PayloadByteBudget != nil {
+@@ -66,6 +77,15 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 		}
+ 		s.TimeoutSecs = *cli.TimeoutSecs
+ 	}
++	if cli.MaxParallel != nil {
++		// The CLI tier bypasses the file-load checks; validate here. 0 is the
++		// unbounded escape hatch (parallels payload_byte_budget), only negative
++		// is rejected.
++		if *cli.MaxParallel < 0 {
++			return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *cli.MaxParallel)
++		}
++		s.MaxParallel = *cli.MaxParallel
++	}
+ 	if v := deref(cli.PayloadMode); v != "" {
+ 		// The CLI tier bypasses the file-load enum checks, so validate here:
+ 		// an invalid --payload value must fail before any review work, not
+@@ -79,9 +99,10 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ }
+ 
+ // applyTier overlays one configuration tier's explicitly-set values onto s.
+-// Whitespace-only strings count as unset. byteBudget is a pointer so an
+-// explicit 0 (the unlimited escape hatch) survives default application.
+-func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *int64) {
++// Whitespace-only strings count as unset. byteBudget and maxParallel are
++// pointers so an explicit 0 (the unlimited/unbounded escape hatch) survives
++// default application.
++func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *int64, maxParallel *int) {
+ 	if v := strings.TrimSpace(payloadMode); v != "" {
+ 		s.PayloadMode = v
+ 	}
+@@ -91,6 +112,9 @@ func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *in
+ 	if byteBudget != nil {
+ 		s.PayloadByteBudget = *byteBudget
+ 	}
++	if maxParallel != nil {
++		s.MaxParallel = *maxParallel
++	}
+ }
+ 
+ // deref returns the trimmed value of p, or "" when p is nil.
+diff --git a/internal/registry/precedence_test.go b/internal/registry/precedence_test.go
+index ff70942..3861491 100644
+--- a/internal/registry/precedence_test.go
++++ b/internal/registry/precedence_test.go
+@@ -195,6 +195,7 @@ func TestRegistryGlobals_AbsentStayUnset(t *testing.T) {
+ 	assert.Empty(t, reg.PayloadMode)
+ 	assert.Nil(t, reg.TimeoutSecs)
+ 	assert.Empty(t, reg.FailOn)
++	assert.Nil(t, reg.MaxParallel)
+ }
+ 
+ func TestProjectConfig_AbsentFieldsStayUnset(t *testing.T) {
+@@ -203,6 +204,7 @@ func TestProjectConfig_AbsentFieldsStayUnset(t *testing.T) {
+ 	assert.Empty(t, cfg.PayloadMode)
+ 	assert.Nil(t, cfg.TimeoutSecs)
+ 	assert.Empty(t, cfg.FailOn)
++	assert.Nil(t, cfg.MaxParallel)
+ }
+ 
+ func TestEffectivePayloadMode(t *testing.T) {
+@@ -222,3 +224,75 @@ func TestEffectiveTimeoutSecs(t *testing.T) {
+ 	assert.Equal(t, 120, withOwn.EffectiveTimeoutSecs(s), "agent's own timeout wins")
+ 	assert.Equal(t, 900, without.EffectiveTimeoutSecs(s), "unset agent timeout inherits resolved settings")
+ }
++
++func TestPrecedence_MaxParallelDefault(t *testing.T) {
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, nil)
++	assert.Equal(t, DefaultMaxParallel, s.MaxParallel, "embedded default used when nothing overrides")
++	assert.Equal(t, 10, s.MaxParallel, "v1 ships a max_parallel default of 10")
++}
++
++func TestPrecedence_MaxParallelChain(t *testing.T) {
++	reg := loadRegistryWith(t, "max_parallel: 4\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_parallel: 6\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, 6, s.MaxParallel, "project config wins over registry")
++
++	s = resolve(t, CLIOverrides{MaxParallel: intPtr(8)}, proj, reg)
++	assert.Equal(t, 8, s.MaxParallel, "CLI flag wins over the full chain")
++}
++
++func TestPrecedence_MaxParallelRegistryOverridesEmbedded(t *testing.T) {
++	reg := loadRegistryWith(t, "max_parallel: 4\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, 4, s.MaxParallel, "registry wins over embedded default")
++}
++
++func TestPrecedence_MaxParallelExplicitZeroIsUnbounded(t *testing.T) {
++	// 0 is the documented unbounded escape hatch and must survive default
++	// application: an explicit zero is a real override, not "unset".
++	reg := loadRegistryWith(t, "max_parallel: 4\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_parallel: 0\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, 0, s.MaxParallel, "explicit 0 overrides both registry and embedded default")
++}
++
++func TestPrecedence_MaxParallelCLIZeroAllowed(t *testing.T) {
++	s, err := ResolveSettings(CLIOverrides{MaxParallel: intPtr(0)}, nil, nil)
++	require.NoError(t, err)
++	assert.Equal(t, 0, s.MaxParallel, "CLI 0 is the unbounded escape hatch, not an error")
++}
++
++func TestPrecedence_MaxParallelCLINegativeRejected(t *testing.T) {
++	_, err := ResolveSettings(CLIOverrides{MaxParallel: intPtr(-1)}, nil, nil)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_parallel")
++}
++
++func TestRegistry_MaxParallelNegativeRejectedAtLoad(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m}
++max_parallel: -5
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_parallel")
++}
++
++func TestProject_MaxParallelNegativeRejectedAtLoad(t *testing.T) {
++	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_parallel: -1\n"))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_parallel")
++}
+diff --git a/internal/registry/project.go b/internal/registry/project.go
+index d0c8e03..f8c7f99 100644
+--- a/internal/registry/project.go
++++ b/internal/registry/project.go
+@@ -35,6 +35,9 @@ type ProjectConfig struct {
+ 	// default application.
+ 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+ 	FailOn            string `yaml:"fail_on,omitempty"`
++	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
++	// application in ResolveSettings.
++	MaxParallel *int `yaml:"max_parallel,omitempty"`
+ }
+ 
+ // DefaultProjectConfigPath returns .atcr/config.yaml under root.
+@@ -58,6 +61,8 @@ func DefaultProjectConfigYAML(roster []string) string {
+ 	fmt.Fprintf(&b, "payload_mode: %s\n", DefaultPayloadMode)
+ 	fmt.Fprintf(&b, "timeout_secs: %d\n", DefaultTimeoutSecs)
+ 	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
++	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls; 0 = unbounded.\n")
++	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
+ 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+ 	return b.String()
+ }
+@@ -100,6 +105,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
+ 	if cfg.PayloadByteBudget != nil && *cfg.PayloadByteBudget < 0 {
+ 		return nil, fmt.Errorf("%s: payload_byte_budget must be >= 0 (0 = unlimited)", base)
+ 	}
++	if cfg.MaxParallel != nil && *cfg.MaxParallel < 0 {
++		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)
++	}
+ 	if !payloadModeValid(cfg.PayloadMode) {
+ 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
+ 	}

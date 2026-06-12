@@ -1,0 +1,7 @@
+{
+  "agent_name": "bob",
+  "model": "bob-model",
+  "status": "failed",
+  "duration_ms": 320591,
+  "error": "max retries exceeded: request failed: Post \"http://192.168.68.109:4000/v1/chat/completions\": read tcp 192.168.68.115:56051-\u003e192.168.68.109:4000: read: no route to host"
+}

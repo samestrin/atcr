@@ -1,0 +1,4 @@
+
+LOW|internal/fanout/status.go:122|Inconsistent integer width for byte counter (ToolBytes *int64 vs ToolBudgetBytes *int)|Change ToolBudgetBytes to *int64 for consistency|correctness|15|ToolBytes *int64 vs ToolBudgetBytes *int|reviewer
+LOW|internal/reconcile/emit.go:30|Verification.Verdict and Verification.Skeptic lack omitempty, so empty values appear in output|Add omitempty to Verdict and Skeptic fields|correctness|5|Verdict string `json:\"verdit\"` lacks omitempty|reviewer
+LOW|internal/registry/config.go:64|yaml omitempty on input-only reserved fields is inert (Registry only decoded)|Remove omitempty from yaml tags for reserved fields|maintainability|5|tools bool `yaml:\"tools,omitempty\"` has unnecessary omitempty|reviewer

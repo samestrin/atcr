@@ -76,7 +76,7 @@ Sequential inventory validation is O(n) with no batching. Combined with network 
 
 ### Recommended: Option A
 
-## Success Criteria
+## Acceptance Criteria
 
 - [ ] Orders with 100+ items complete in < 10 seconds
 - [ ] No increase in inventory over-sell rate

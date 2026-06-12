@@ -1,0 +1,13 @@
+{
+  "sources": ["claude", "multi-agent"],
+  "per_source_counts": {
+    "claude": 4,
+    "multi-agent": 0
+  },
+  "merged_count": 4,
+  "clusters_collapsed": "0 raw findings reduced into 4 merged (no dedup needed — all single-source)",
+  "severity_disagreements": 0,
+  "intent_annotations": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-12T13:28:00Z"
+}

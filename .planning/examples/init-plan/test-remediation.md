@@ -117,7 +117,7 @@ const order = fixtures.order({ user, items: 5 })
 - Request/response schema validation
 - Backward compatibility checks
 
-## Success Criteria
+## Acceptance Criteria
 
 - [ ] Test utilities created and documented
 - [ ] All critical endpoints have tests (5 endpoints)

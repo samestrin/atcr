@@ -96,7 +96,7 @@ Use Vercel for frontend previews + AWS Lambda for API previews. Best balance of 
 - Performance testing environments
 - Long-running preview environments (max 7 days)
 
-## Success Criteria
+## Acceptance Criteria
 
 - [ ] PR opens trigger automatic deployment
 - [ ] Preview URL available within 5 minutes

@@ -1,0 +1,7 @@
+{
+  "agent_name": "brad",
+  "model": "poolside-laguna",
+  "status": "timeout",
+  "duration_ms": 482386,
+  "error": "max retries exceeded: request failed: Post \"http://192.168.68.109:4000/v1/chat/completions\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
+}

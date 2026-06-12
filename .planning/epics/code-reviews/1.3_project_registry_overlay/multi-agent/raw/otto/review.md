@@ -1,0 +1,5 @@
+```
+LOW|internal/registry/graph.go:56|Cycle attribution defaults to first node|Attribute the cycle to a project-tier node if the cycle spans tiers, or list all involved files|observability|30|`return agentSentinelErr(path[0], ErrFallbackCycle, ...)` attributes the error to the first node in the DFS path, which may be a user-tier agent even if the project-tier agent is the one causing the cycle|otto
+LOW|internal/registry/trust.go:225|Potential mojibake with warning emoji|Use an ASCII marker (e.g., "WARNING:") or check terminal capabilities|observability|10|`fmt.Fprintf(&b, "⚠ Using project-defined provider(s)...")` uses U+26A0 which may not render correctly on legacy Windows consoles|otto
+LOW|cmd/atcr/trust.go:90|Under-reporting of trusted entries|Report both newly-trusted and already-trusted counts, or clarify "N new entries written"|correctness|10|The `trusted` counter only increments for new entries, but the summary says "wrote N trust entr[ies]", which is ambiguous if some were already trusted|otto
+```

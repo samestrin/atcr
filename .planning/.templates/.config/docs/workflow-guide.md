@@ -42,7 +42,7 @@ Complete reference for TDD sprint workflow with command sequences, flags, and be
 | Command | Purpose | Flags |
 |---------|---------|-------|
 | `/code-review` | Automated code review with DoD | `--deep` `--run-tests` `--run-regression` `--dry-run` |
-| `/validate-sprint` | Validate sprint completeness | (path only) |
+| `/refine-sprint` | Validate sprint completeness | (path only) |
 | `/sprint-complete` | TDD compliance check, alignment | `--quick` `--comprehensive` `--dry-run` `--keep-sprint-active` |
 | `/finalize-sprint` | Merge PR, cleanup | `--dry-run` `--no-merge` |
 
@@ -129,7 +129,7 @@ QUALITY PHASE
 │   - --run-regression: Execute full test suite
 │   - --dry-run: Preview without modifying files
 │
-├── Step 10: /validate-sprint @.planning/sprints/active/X.X_name/
+├── Step 10: /refine-sprint @.planning/sprints/active/X.X_name/
 │   (Optional) Additional validation checks
 │
 ├── Step 11: /sprint-complete @.planning/sprints/active/X.X_name/
@@ -453,8 +453,8 @@ After `/finalize-sprint` shows CI failing:
 **Q: Which command creates user stories vs tasks?**
 A: Use `/create-user-stories` for feature plans, `/create-tasks` for bugfix/tech-debt/infrastructure plans.
 
-**Q: What's the difference between /validate-sprint and /sprint-complete?**
-A: `/validate-sprint` is a quick validation check. `/sprint-complete` is the full TDD compliance check with alignment verification and cleanup.
+**Q: What's the difference between /refine-sprint and /sprint-complete?**
+A: `/refine-sprint` is a quick validation check. `/sprint-complete` is the full TDD compliance check with alignment verification and cleanup.
 
 **Q: When should I use --comprehensive vs --quick on /sprint-complete?**
 A: Use `--quick` during development for fast feedback. Use `--comprehensive` (or no flag) for final validation before `/finalize-sprint`.

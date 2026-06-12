@@ -1,0 +1,2021 @@
+diff --git a/.planning/epics/active/1.1_schema_reservations.md b/.planning/epics/active/1.1_schema_reservations.md
+index b1278f8..861c04d 100644
+--- a/.planning/epics/active/1.1_schema_reservations.md
++++ b/.planning/epics/active/1.1_schema_reservations.md
+@@ -59,3 +59,26 @@ Epic 1.0 tasks 2 (config), 7 (fan-out artifacts), 8 (stream package), 13 (docs)
+ ## Clarifications
+ 
+ - **Q: Why a separate 1.1 instead of folding into 1.0?** A: 1.0 is already in detailed planning (`.planning/plans/active/1.0_atcr_core/`); this rides immediately behind it as a small numbered step so the reservation lands before any public release, without churning the in-flight plan. (2026-06-10)
++
++### Recorded 2026-06-11 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- Reverse the shipped `docs/registry.md` "Reserved field names (rejected by the v1 parser)" decision: the four reserved agent fields (`tools`, `max_turns`, `tool_budget_bytes`, `role`) must now LOAD cleanly — added to `AgentConfig` so `decodeStrictYAML` (which uses `KnownFields(true)`) accepts them, type/range-validated in `validate()`, but inert. Rewrite the registry.md section to "parsed and validated, inert in 1.x."
++- Reserved registry fields stay at Go zero values in 1.x (`tools=false`, `max_turns=0`, `tool_budget_bytes=0`, `role=""`). Do NOT touch `applyDefaults()`. Planned defaults (`tools=false`, `max_turns=10`, `role=reviewer`) are documented in the registry.md reserved-fields table only — no code counterpart. This keeps the 1.x behavior footprint exactly zero.
++- The findings `verification` object lives in the structured JSON form (`internal/reconcile/emit.go` `JSONFinding` → `reconciled/findings.json`), not the flat `findings.txt` pipe-delimited stream. `docs/findings-format.md` already documents it there.
++- `manifest.json` `stages` = the fanout `payload.Manifest` (`internal/payload/manifest.go`), set to `["review"]` at the construction site `internal/fanout/review.go`.
++- `status.json` reserved counters = optional pointer fields on `AgentStatus` (`internal/fanout/status.go`), absent in 1.x via `omitempty`.
++
++**Scope Boundaries:**
++- IN scope: reserved schema fields + load-time validation + tolerant read/write + tests + doc updates (findings-format.md, registry.md).
++- OUT of scope: any behavior behind the reserved fields (Epics 2.0/3.0); applying runtime defaults for the reserved fields.
++
++**Technical Approach:**
++- Optional reserved fields use pointers + `omitempty` (or natural zero value) so they are genuinely absent/zero in 1.x output and tolerant readers see nil.
++- Only `manifest.stages` is actively populated (`["review"]`); all other reserved fields remain nil/zero/unset in 1.x.
++
++**Original Questions and Answers:**
++1. Q: Reverse the registry.md "rejected by the v1 parser" decision so the four reserved fields load cleanly (validated, inert), and rewrite the doc section?
++   A: Yes — reverse unconditionally. Add the four fields to `AgentConfig`, add type/range validation in `validate()`, rewrite the registry.md section to "parsed and validated, inert in 1.x." Epic Success Criterion 1 overrides the shipped doc wording; 1.0 has not shipped.
++2. Q: For the inert reserved registry fields, apply explicit defaults at load time (b) or leave zero-valued and document planned defaults only (a)?
++   A: Option (a) — document only. Leave fields at Go zero values, do not add them to `applyDefaults()`; planned defaults appear in the registry.md reserved-fields table only.
+diff --git a/.planning/epics/active/1.8_output-dir-support.md b/.planning/epics/active/1.8_output-dir-support.md
+new file mode 100644
+index 0000000..cd61b3d
+--- /dev/null
++++ b/.planning/epics/active/1.8_output-dir-support.md
+@@ -0,0 +1,67 @@
++# Epic Plan 1.8: Output Directory Override (`--output-dir`)
++
++**Estimated Durations**: 1 day
++
++## Objective
++
++Add a `--output-dir` flag to `atcr review` and `atcr reconcile` so the entire review directory tree is written to an arbitrary path instead of `.atcr/reviews/<id>/`. This enables external orchestrators (skills, CI pipelines, wrapper scripts) to direct atcr's output to a location they control without post-hoc file moves.
++
++## Context
++
++Epic 1.0 establishes the review directory at `.atcr/reviews/<id>/` with a `.atcr/latest` pointer — the right default for interactive CLI use. But external consumers need to place output in a specific location: the existing `execute-code-review` skill writes to `${SPRINT_PATH}code-review/multi-agent/`, and CI pipelines may want output under an artifacts directory. Without `--output-dir`, these consumers must move files after the run, which is fragile (partial writes, lost crash-state) and defeats the purpose of the deterministic directory layout.
++
++## Problem Statement
++
++1. `atcr review` always creates the review directory under `.atcr/reviews/<id>/`. There is no way to redirect output to an external path.
++2. External orchestrators that need output at a specific location must either (a) move files post-run (losing crash-safety guarantees) or (b) symlink `.atcr/reviews/` (fragile, platform-dependent).
++3. The `.atcr/latest` pointer is updated on every run, which is wrong when an external consumer directs output elsewhere — the "latest" pointer should track interactive runs only.
++
++## Proposed Solution
++
++1. **New flag `--output-dir <path>`** on `atcr review`:
++   - When specified, the review directory tree (manifest.json, payload/, sources/, reconciled/) is created at `<path>` instead of `.atcr/reviews/<id>/`.
++   - The path must not already exist (or must be empty) — fail with exit 2 if it contains files, to prevent accidental overwrites.
++   - The `.atcr/latest` pointer is NOT updated when `--output-dir` is used.
++   - The `<id>` is still generated (for manifest.json) but is not used for path construction.
++
++2. **`atcr reconcile` inherits the output directory** from the review directory it operates on. No separate flag needed — reconcile discovers its paths from the review directory's manifest.
++
++3. **`atcr report` reads from the review directory** — no change needed. It already takes an id-or-path argument.
++
++4. **Validation**: `--output-dir` and `--id` are mutually exclusive (the id is meaningless when the path is explicit). `--output-dir` with a relative path resolves against CWD.
++
++## Success Criteria
++
++- [ ] `atcr review --output-dir /tmp/test-review` creates the full review tree at `/tmp/test-review/` (manifest.json, payload/, sources/).
++- [ ] `.atcr/latest` is NOT updated when `--output-dir` is used.
++- [ ] `--output-dir` with a non-empty existing directory fails with exit 2 and an actionable message.
++- [ ] `--output-dir` and `--id` together fail with exit 2 (mutually exclusive).
++- [ ] `atcr reconcile` operates correctly on a review directory created with `--output-dir`.
++- [ ] Existing behavior (no `--output-dir`) is unchanged — `.atcr/reviews/<id>/` and `.atcr/latest` work as before.
++- [ ] Unit tests cover the flag parsing, path validation, and the `.atcr/latest` skip logic.
++
++## Task Breakdown
++
++1. CLI: add `--output-dir` flag to `atcr review` command, wire into the review directory creation logic.
++2. Review directory: when `--output-dir` is set, create the tree at that path; skip `.atcr/latest` update.
++3. Validation: mutual exclusion with `--id`, non-empty directory check, relative path resolution.
++4. Tests: flag parsing, path creation, latest-pointer skip, validation errors.
++5. Docs: CLI help text, README usage example for external orchestrators.
++
++## Out of Scope
++
++- Changing the review directory layout (the tree structure is unchanged).
++- Output filename aliases or format compatibility — external consumers read atcr's actual output format.
++- `atcr reconcile` or `atcr report` getting their own `--output-dir` flags (reconcile inherits; report reads in place).
++
++## Dependencies
++
++- Epic 1.0 review directory management (task 7) — complete, in code review.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Non-empty directory check misses edge cases (symlinks, hidden files) | Low | Medium | Use `os.ReadDir` and check for any entry; document the check |
++| Relative path resolution surprises users | Low | Low | Resolve against CWD at flag-parse time; document behavior |
++| Crash recovery is harder with external output dirs | Low | Low | Document that `--output-dir` runs are not tracked by `.atcr/latest`; crash recovery is the orchestrator's responsibility |
+diff --git a/.planning/epics/active/6.0_skill_integration.md b/.planning/epics/active/6.0_skill_integration.md
+new file mode 100644
+index 0000000..5fb8121
+--- /dev/null
++++ b/.planning/epics/active/6.0_skill_integration.md
+@@ -0,0 +1,72 @@
++# Epic Plan 6.0: Skill Integration
++
++**Estimated Durations**: 2-3 weeks (one sprint)
++
++## Objective
++
++Replace the `llm-support` CLI backend in the existing `execute-code-review` skill's multi-agent mode with `atcr`, so the skill's multi-agent fan-out uses atcr's heterogeneous reviewer panel and deterministic reconciler instead of the legacy `review_direct` / `multi_review` commands.
++
++## Context
++
++The existing `execute-code-review` skill (in `~/Documents/GitHub/claude-prompts/.claude/skills/execute-code-review/`) has two modes:
++
++1. **Default mode** (phases 1-8): Sprint verification pipeline — work-item review, test execution, coverage gates, adversarial risk analysis. This is sprint-coupled and stays as-is.
++2. **Multi-agent mode** (`--multi-agent`): Thin orchestration over `llm-support review_direct` or `llm-support multi_review` CLI calls. The CLI handles range resolution, fan-out, and merge.
++
++ATCR replaces the reviewer panel — heterogeneous personas, deterministic reconcile with clustering/dedupe/confidence, payload modes, and a clean findings format. Epic 1.8 adds `--output-dir` so atcr's output can be directed to the skill's expected location.
++
++The end state: the skill's multi-agent mode calls `atcr review --output-dir ${CR_OUT_DIR}` + `atcr reconcile`, reads atcr's actual output format (not aliases), and the downstream `/reconcile-code-review` skill accepts atcr's output structure.
++
++## Problem Statement
++
++1. The existing multi-agent mode shells out to `llm-support review_direct` / `multi_review`, which are single-backend (openclaw or direct API) with no cross-reviewer agreement scoring.
++2. ATCR provides the differentiated capability (heterogeneous panel, deterministic reconcile, confidence scoring) but the existing skill cannot consume it.
++3. The two systems produce different output structures: the skill expects `td-stream.txt` + `multi-review-summary.json`; atcr writes `sources/pool/findings.txt` + `sources/pool/summary.json` + `reconciled/` artifacts.
++
++## Proposed Solution
++
++### Epic 1.8 (ATCR side — prerequisite)
++
++`--output-dir` flag on `atcr review` so the review tree is created at the skill's expected location. No output format changes — atcr's output is clean and consistent.
++
++### This epic (skill side)
++
++1. **Modify `multi-agent.md`** to invoke `atcr review --output-dir ${CR_OUT_DIR}` (background, polled) followed by `atcr reconcile`, replacing the `llm-support review_direct` / `multi_review` invocation.
++2. **Update output verification** (Step 8) to check for atcr's actual output files: `sources/pool/findings.txt`, `sources/pool/summary.json`, `reconciled/findings.txt`, `reconciled/summary.json`.
++3. **Update summary reporting** (Step 9) to read atcr's `reconciled/summary.json` and extract the relevant fields (source count, finding count, partial flag). The skill's display format is unchanged; only the data source changes.
++4. **Update `/reconcile-code-review`** (in `claude-prompts`) to accept atcr's output structure as a source. The reconcile skill currently auto-discovers sources by looking for `td-stream.txt` files; it gains atcr's `reconciled/findings.txt` as an additional source pattern.
++5. **Findings format compatibility**: atcr's per-source `findings.txt` is 8-column pipe-delimited (same as the skill's `td-stream.txt`). The reconciled `findings.txt` is 9-column (adds REVIEWERS + CONFIDENCE). The reconcile skill must handle both formats.
++
++## Scope
++
++This epic is one plan (6.1) because the work is tightly coupled — modifying the skill without updating reconcile leaves a broken pipeline, and the validation is inseparable from the changes.
++
++## Success Criteria
++
++- [ ] The existing skill's multi-agent mode invokes `atcr review --output-dir ${CR_OUT_DIR}` + `atcr reconcile` instead of `llm-support review_direct` / `multi_review`.
++- [ ] Output verification checks atcr's actual output files and reports success.
++- [ ] Summary reporting reads atcr's `reconciled/summary.json` and displays finding count, source count, partial flag.
++- [ ] `/reconcile-code-review` accepts atcr's `reconciled/findings.txt` as a source (in addition to the legacy `td-stream.txt`).
++- [ ] A sprint review run through the modified skill produces correct output that `/reconcile-code-review` can consume.
++- [ ] The `llm-support` backend is decommissioned from the skill (no dead code paths).
++
++## Out of Scope
++
++- Modifying the skill's default (host Claude) review mode — it stays as-is.
++- Changing atcr's output format for compatibility — the skill adapts to atcr's format.
++- Sprint verification logic (phases 1-5, 7-8) — unchanged.
++
++## Dependencies
++
++- Epic 1.8 (`--output-dir` support) — must land first.
++- ATCR binary built and installed from the `atcr` repo.
++- The `claude-prompts` repo (where the skill and reconcile skill live).
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Atcr's summary.json fields don't map cleanly to the skill's expected fields | Medium | Medium | Read atcr's actual schema; the skill's display is simple (counts + partial flag) and easy to adapt |
++| Reconcile skill's source discovery breaks with atcr's directory structure | Medium | High | Add atcr's `reconciled/findings.txt` as an explicit source pattern; keep `td-stream.txt` for legacy compatibility |
++| Findings format column mismatch (8-col vs 9-col) | Low | High | Atcr's per-source is 8-col (same as legacy); reconciled is 9-col. The reconcile skill must handle both — document the format difference |
++| Parallel-run validation reveals behavioral differences | Medium | Medium | Run both backends on the same sprint, compare output; differences in findings count/severity are expected (different reconcilers) but the pipeline must not break |
+diff --git a/.planning/epics/active/6.1_skill_backend_swap.md b/.planning/epics/active/6.1_skill_backend_swap.md
+new file mode 100644
+index 0000000..f50acc7
+--- /dev/null
++++ b/.planning/epics/active/6.1_skill_backend_swap.md
+@@ -0,0 +1,137 @@
++# Epic Plan 6.1: Skill Backend Swap
++
++**Estimated Durations**: 2-3 weeks
++
++## Objective
++
++Modify the existing `execute-code-review` skill's multi-agent mode to invoke `atcr` instead of `llm-support`, and update `/reconcile-code-review` to accept atcr's output structure. This is the sole sub-plan of Epic 6.0 — the work is tightly coupled and cannot be split without leaving a broken pipeline.
++
++## Context
++
++Epic 6.0 describes the integration strategy: the skill's multi-agent mode replaces `llm-support review_direct` / `multi_review` with `atcr review --output-dir` + `atcr reconcile`, and the reconcile skill gains atcr's output as a source. This plan is the execution.
++
++The skill lives in `~/Documents/GitHub/claude-prompts/.claude/skills/execute-code-review/multi-agent.md`. The reconcile skill lives in `~/Documents/GitHub/claude-prompts/.claude/skills/reconcile-code-review/`.
++
++## Problem Statement
++
++1. `multi-agent.md` Phase 2 Step 6 invokes `llm-support review_direct` or `llm-support multi_review`. These commands must be replaced with `atcr review --output-dir ${CR_OUT_DIR}` followed by `atcr reconcile`.
++2. Step 8 verifies output files `td-stream.txt` and `multi-review-summary.json`. These must be replaced with atcr's actual output files.
++3. Step 9 reads `multi-review-summary.json` for `reviewers`, `totalFindings`, `partial` fields. This must read atcr's `reconciled/summary.json` instead.
++4. `/reconcile-code-review` auto-discovers sources by `td-stream.txt` filename. It must also discover atcr's `reconciled/findings.txt`.
++
++## Proposed Solution
++
++### Changes to `multi-agent.md`
++
++**Phase 2, Step 6** — replace the `llm-support` invocation:
++
++Before:
++```
++llm-support review_direct \
++  --config "${CONFIG_PATH}" \
++  --repo "${REPO_ROOT}" \
++  ${RANGE_FLAGS} \
++  ${SCOPE_FLAG} \
++  --output-dir "${CR_OUT_DIR}"
++```
++
++After:
++```
++atcr review \
++  --output-dir "${CR_OUT_DIR}" \
++  ${RANGE_FLAGS}
++```
++
++Followed by:
++```
++atcr reconcile "${CR_OUT_DIR}"
++```
++
++Notes:
++- `--config` and `--repo` are not needed — atcr reads config from `.atcr/config.yaml` and `~/.config/atcr/registry.yaml`, and the repo is the CWD.
++- `${SCOPE_FLAG}` (`--sprint-plan`) is dropped — atcr has no sprint-plan concept (out of scope per 1.0). Reviewers fall back to diff-touched-line scope.
++- `${RANGE_FLAGS}` maps directly: `--base`, `--head`, `--merge-commit` are the same in atcr.
++- The `atcr review` command creates the review directory at `--output-dir`. `atcr reconcile` operates on that directory.
++
++**Phase 3, Step 8** — update output verification:
++
++Before:
++```
++paths: ["${CR_OUT_DIR}td-stream.txt", "${CR_OUT_DIR}multi-review-summary.json"]
++```
++
++After:
++```
++paths: [
++  "${CR_OUT_DIR}sources/pool/findings.txt",
++  "${CR_OUT_DIR}sources/pool/summary.json",
++  "${CR_OUT_DIR}reconciled/findings.txt",
++  "${CR_OUT_DIR}reconciled/summary.json"
++]
++```
++
++**Phase 3, Step 9** — update summary reporting:
++
++Before: read `multi-review-summary.json` for `reviewers`, `totalFindings`, `partial`.
++
++After: read `reconciled/summary.json` for `sources` (count), `total_findings`, `partial`. The display format is unchanged — only the data source changes.
++
++### Changes to `/reconcile-code-review`
++
++The reconcile skill auto-discovers sources by scanning for `td-stream.txt` files under `code-review/`. It must also discover atcr's output:
++
++1. Add `reconciled/findings.txt` as an additional source pattern (in addition to `td-stream.txt`).
++2. When a source is `reconciled/findings.txt`, read it as 9-column format (SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWERS|CONFIDENCE) instead of 8-column.
++3. Sources under `.atcr/reviews/` are NOT auto-discovered — only sources under the sprint's `code-review/` directory (which is where `--output-dir` points).
++
++### Pre-flight check
++
++Add a pre-flight check in Phase 1 Step 3 (backend selection) to verify the `atcr` binary is installed:
++
++```
++atcr --version
++```
++
++If the binary is not found, display an actionable error and HARD STOP.
++
++## Success Criteria
++
++- [ ] `multi-agent.md` invokes `atcr review --output-dir` + `atcr reconcile` instead of `llm-support review_direct` / `multi_review`.
++- [ ] Output verification checks atcr's actual output files.
++- [ ] Summary reporting reads atcr's `reconciled/summary.json`.
++- [ ] `/reconcile-code-review` discovers and reads atcr's `reconciled/findings.txt` (9-column format).
++- [ ] `/reconcile-code-review` still reads legacy `td-stream.txt` (8-column format) for backwards compatibility.
++- [ ] A sprint review run through the modified skill produces output that `/reconcile-code-review` can consume end-to-end.
++- [ ] The `llm-support` invocation paths are removed from `multi-agent.md` (no dead code).
++
++## Task Breakdown
++
++1. Modify `multi-agent.md` Phase 2 Step 6: replace `llm-support` invocation with `atcr review` + `atcr reconcile`.
++2. Modify `multi-agent.md` Phase 3 Step 8: update output file verification.
++3. Modify `multi-agent.md` Phase 3 Step 9: update summary reporting to read atcr's summary.json.
++4. Add `atcr --version` pre-flight check in Phase 1 Step 3.
++5. Update `/reconcile-code-review` source discovery to accept `reconciled/findings.txt` (9-column format).
++6. End-to-end validation: run a sprint review through the modified skill, verify reconcile consumes the output.
++7. Remove dead `llm-support` invocation paths from `multi-agent.md`.
++
++## Out of Scope
++
++- Modifying the skill's default (host Claude) review mode.
++- Changing atcr's output format.
++- Sprint verification logic.
++- Updating the `llm-support` CLI itself (it continues to exist for other consumers).
++
++## Dependencies
++
++- Epic 1.8 (`--output-dir` support in atcr) — must land first.
++- ATCR binary built and installed.
++- Access to `~/Documents/GitHub/claude-prompts/` to modify the skill and reconcile skill.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Atcr's summary.json schema doesn't have the fields the skill expects | Medium | Medium | Read atcr's actual schema before implementation; the skill's display needs only source count, finding count, partial flag — easy to map |
++| Reconcile skill's 9-column parser is not implemented | Medium | High | The 9-column format is documented in atcr's findings-format spec; implement the parser as part of this plan |
++| Parallel-run validation reveals finding count discrepancies | Medium | Low | Expected — atcr's reconciler uses different dedupe/confidence logic. The pipeline must not break, but finding counts may differ. Document this in the skill |
++| `--sprint-plan` scope flag is lost | Low | Medium | Atcr has no sprint-plan concept. Reviewers fall back to diff-touched-line scope. Document this behavioral change in the skill |
+diff --git a/.planning/epics/active/1.0_atcr_core.md b/.planning/epics/completed/1.0_atcr_core.md
+similarity index 100%
+rename from .planning/epics/active/1.0_atcr_core.md
+rename to .planning/epics/completed/1.0_atcr_core.md
+diff --git a/.planning/product/concepts/README.md b/.planning/product/concepts/README.md
+new file mode 100644
+index 0000000..e154505
+--- /dev/null
++++ b/.planning/product/concepts/README.md
+@@ -0,0 +1,58 @@
++# ATCR Product Concepts — Ranked Index
++
++**Last Updated:** 2026-06-11
++**Concepts:** 6
++
++This directory holds productization concepts for ATCR. Each file is a standalone analysis (problem, solution, effort, moat, risks). This README is the **source of truth for ranking** — where an individual file's `Priority` field and this table disagree, this table wins.
++
++---
++
++## Executive Summary
++
++ATCR's defensible asset is the **deterministic reconciler** — cluster → dedupe → confidence-by-cross-model-agreement, with disagreements preserved instead of flattened. Every concept below should be judged by one question: *does it sell something that emerges from that architecture, or does it bolt on infrastructure anyone could build?*
++
++That lens produces a clear pattern. **The highest-ROI ideas surface data the engine already produces and throws away** — they are cheap, pure-OSS, and uniquely possible *because* of the reconciler. The lowest-ROI-per-week ideas build new infrastructure (dashboards, hosted services, enterprise plumbing) that carries real revenue ceilings but long timelines, maintenance burden, and little architectural moat.
++
++Three structural findings:
++
++1. **Two near-free wins are sitting in the existing output.** *Disagreement Radar* (~1.5 wks) and the local half of the *Model-Eval Leaderboard* (~2 wks) are mostly projections over `ambiguous.json` and reconcile records that already exist. They are the most ATCR-native ideas, the cheapest, and the most "OSS fun" — they make the core thesis *visible* and demoable.
++
++2. **The eval/leaderboard angle is the genuine differentiator and it compounds with the roadmap.** Corroboration is a weak proxy today, but the planned agent ladder turns it into near-ground-truth for free: *survived-a-skeptic* (Epic 3.0) and *demonstrated-by-repro* (Epic 5.0) are real quality labels. No competitor that flattens output can produce this measurement.
++
++3. **Revenue concepts should be sequenced behind adoption, not ahead of it.** *Team Edition* has the highest revenue ceiling but the longest build, longest sales cycle, and least architectural moat — it is the eventual monetization, not the next move. *CI Integration* is not a differentiator at all; it is table-stakes distribution that gates adoption of everything else, so a thin slice of it should land early.
++
++**Recommended near-term sequence:** Disagreement Radar → local Model-Eval scorecard/CLI → a thin CI slice (GitHub Action + `--fail-on`) to unblock adoption → revisit Reconciler Library / public Leaderboard once there are real users → Team Edition only after OSS pull is proven.
++
++---
++
++## Ranked by ROI
++
++ROI = strategic payoff ÷ engineering cost, weighted toward OSS-native ideas that leverage what already exists. "Depends on" notes architectural or sequencing prerequisites.
++
++| # | Concept | Dev Time | ROI | Type | Depends on | One-line rationale |
++|---|---------|----------|-----|------|------------|--------------------|
++| 1 | [Disagreement Radar](disagreement-radar.md) | ~1.5 wks | **Very High** | OSS feature | reconciler (built) | Projection over data already kept; most ATCR-native; cheapest; high talkability |
++| 2 | [Model-Eval Leaderboard](model-eval-leaderboard.md) | 2 wks local / ~5 full | **High** | OSS feature → optional revenue | reconciler (built); sharpened by 3.0/5.0 | The real differentiator; a trusted measurement that falls out of the design; top-of-funnel magnet |
++| 3 | [Reconciler Library](reconciler-library.md) | 5-7 wks | **High (long-term)** | OSS infra / standards play | reconciler extract | The core innovation as the reference impl; standards gravity, but heavier and adoption-by-others is speculative |
++| 4 | [CI Integration](ci-integration.md) | 4-5 wks | **Medium (prerequisite)** | OSS distribution | — | Not a differentiator — table stakes that gate adoption; ship a thin slice early, defer history/dashboard |
++| 5 | [Persona Ecosystem](persona-ecosystem.md) | 3-4 wks | **Medium** | OSS ecosystem | community participation | Network-effect/adoption play, no direct revenue; complements the leaderboard (more personas → richer eval matrix) |
++| 6 | [Team Edition](team-edition.md) | 6-10 wks | **Medium (high ceiling, slow)** | Revenue | history, CI, audit plumbing | Highest revenue ceiling but longest build + sales cycle + least moat; the eventual monetization, not the next move |
++
++### Tiering
++
++- **Tier 1 — Do next (OSS, cheap, architecture-leveraged):** Disagreement Radar, Model-Eval Leaderboard (local half).
++- **Tier 2 — Adoption enablers:** CI Integration (thin slice), Persona Ecosystem.
++- **Tier 3 — Bigger bets, sequence behind adoption:** Reconciler Library, public Leaderboard, Team Edition.
++
++---
++
++## Cross-concept dependencies
++
++- **Model-Eval Leaderboard** consumes the same per-finding reviewer-attribution the **Reconciler Library** would expose, and its headline metrics only become rigorous once **Epic 3.0 (adversarial verification)** and **Epic 5.0 (executing reviewers)** land — so its credibility tracks the roadmap.
++- **Disagreement Radar** is the input queue for **Epic 4.0 (cross-examination)**: the radar *surfaces* tension, 4.0 *resolves* it.
++- **Persona Ecosystem** widens the model×persona matrix the **Leaderboard** scores — more personas make the eval richer.
++- **Team Edition** reuses **CI Integration's** finding-history and audit primitives; building CI history first de-risks it.
++
++## See also
++
++- `../roadmap/README.md` — the engineering ladder (Epics 1.0→5.0) these concepts ride on top of.
+diff --git a/.planning/product/concepts/ci-integration.md b/.planning/product/concepts/ci-integration.md
+new file mode 100644
+index 0000000..d0f2cdd
+--- /dev/null
++++ b/.planning/product/concepts/ci-integration.md
+@@ -0,0 +1,142 @@
++# Concept: First-Class CI Integration + Finding History
++
++**Status:** Conceptual  
++**Created:** 2026-06-11  
++**Priority:** Medium  
++
++## Problem
++
++ATCR is CLI-first, which is CI-friendly, but:
++- No official GitHub Action / GitLab CI template (teams roll their own)
++- No PR comment posting (findings are in artifacts, not inline on the PR)
++- No finding history (each run is isolated; no trend visibility)
++- No block-merge on severity (teams want to block on CRITICAL findings)
++
++Without these, adoption is friction-heavy:
++- Teams write custom CI scripts (error-prone, not portable)
++- Findings are buried in artifacts (low visibility)
++- No way to answer: "has this package gotten better or worse over time?"
++
++## Solution
++
++### Official CI Templates
++
++**GitHub Action:**
++```yaml
++name: ATCR Review
++on: [pull_request]
++jobs:
++  review:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: atcr/action@v1
++        with:
++          fail-on: HIGH  # block merge on HIGH+ findings
++          post-comments: true  # post findings as PR comments
++```
++
++**GitLab CI:**
++```yaml
++atcr-review:
++  image: atcr/atcr:latest
++  script:
++    - atcr review --fail-on HIGH
++    - atcr report --format sarif > findings.sarif
++  artifacts:
++    reports:
++      codequality: findings.sarif
++```
++
++### PR Comment Posting
++
++- `atcr report --format pr-comment` generates markdown for inline PR comments
++- GitHub Action posts comments on the PR (one per finding, or a summary comment)
++- Comments include: severity, file:line, problem, fix, reviewers, confidence
++- Deduplication: don't re-post findings that were already posted in a previous run
++
++### Finding History
++
++- Every `atcr review` run appends to a `findings-history.jsonl` in the repo:
++  ```json
++  {
++    "timestamp": "2026-06-11T10:00:00Z",
++    "base": "abc123",
++    "head": "def456",
++    "findings": [
++      {"severity": "HIGH", "file": "auth.go", "line": 42, "problem": "..."}
++    ]
++  }
++  ```
++- Query interface: `atcr history --package internal/auth --since 30d`
++- Trend analysis: `atcr history --trend` outputs finding counts over time
++
++### Block-Merge on Severity
++
++- `atcr reconcile --fail-on CRITICAL` exits non-zero if any CRITICAL findings survive
++- CI blocks the merge until findings are resolved or explicitly waived
++- Waiver mechanism: `atcr waive --finding-id abc123 --reason "false positive"`
++
++## Key Features
++
++| Feature | Description | Effort |
++|---------|-------------|--------|
++| GitHub Action | Official `atcr/action@v1` with `fail-on`, `post-comments` | 1 week |
++| GitLab CI template | Official `.gitlab-ci.yml` template | 3 days |
++| PR comment posting | `atcr report --format pr-comment` + GitHub API integration | 1 week |
++| Finding history | JSONL append-only log, query CLI | 1 week |
++| Trend analysis | `atcr history --trend` outputs counts over time | 3 days |
++| Block-merge | `--fail-on` exit code semantics (already in 1.0) | Already done |
++| Waiver mechanism | `atcr waive` to mark findings as false positives | 1 week |
++
++## Revenue Model
++
++**OSS (free):**
++- GitHub Action, GitLab CI template, PR comments, finding history
++- All the above is free and OSS — it's distribution, not revenue
++
++**Optional hosted dashboard (paid):**
++- Hosted finding history (for teams that don't want to query JSONL)
++- Trend dashboard (web UI)
++- $X/month per repo
++- This is optional — teams can also just use the JSONL + their own dashboard
++
++## Engineering Effort
++
++| Component | Effort | Notes |
++|-----------|--------|-------|
++| GitHub Action | 1 week | Docker-based action, inputs for `fail-on`, `post-comments` |
++| GitLab CI template | 3 days | YAML template, similar to GitHub Action |
++| PR comment posting | 1 week | `atcr report --format pr-comment`, GitHub API client |
++| Finding history | 1 week | JSONL writer, query CLI (`atcr history`) |
++| Trend analysis | 3 days | Aggregation over JSONL, markdown table output |
++| Waiver mechanism | 1 week | `atcr waive`, waiver log, reconcile skips waived findings |
++| **Total** | **4-5 weeks** | Can be phased: Action first, history later |
++
++## Moat / Differentiation
++
++- **CI integration is table stakes** — without it, adoption is friction-heavy. This is not a differentiator; it's a prerequisite.
++- **Finding history is a natural extension** — ATCR already produces deterministic artifacts. The history is just appending to a file.
++- **Trend analysis is valuable on its own** — "your auth module has 3x the finding density of the rest of the codebase" is actionable insight.
++- **PR comments increase visibility** — findings in artifacts are buried; findings inline on the PR are impossible to ignore.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| GitHub Action becomes a maintenance burden | Medium | Medium | Keep it simple — just a Docker wrapper around `atcr`. No complex logic |
++| PR comment spam (too many findings) | Medium | High | Post a summary comment with top N findings; full list in artifacts |
++| Finding history grows unbounded | Low | Medium | Rotate history (keep last 90 days); archive older entries |
++| Waiver mechanism is abused | Low | Medium | Waivers are logged; audit trail shows who waived what and why |
++
++## Open Questions
++
++- **Where does history live?** Repo-local (each repo has its own `findings-history.jsonl`) or team-shared (one history DB for all repos)?
++- **PR comment format?** One comment per finding (detailed, but spammy) or one summary comment (concise, but less visible)?
++- **Waiver scope?** Per-finding (specific file:line) or per-category (all "missing error check" findings)?
++- **Hosted dashboard?** Is this worth building, or should teams just use the JSONL + their own tools?
++
++## References
++
++- GitHub Super-Linter: official GitHub Action for linting, widely adopted
++- CodeClimate: CI-integrated code quality, PR comments, trend dashboard
++- SonarCloud: CI-integrated static analysis, quality gates (block merge on severity)
+diff --git a/.planning/product/concepts/disagreement-radar.md b/.planning/product/concepts/disagreement-radar.md
+new file mode 100644
+index 0000000..74ce06c
+--- /dev/null
++++ b/.planning/product/concepts/disagreement-radar.md
+@@ -0,0 +1,81 @@
++# Concept: Disagreement Radar
++
++**Status:** Conceptual
++**Created:** 2026-06-11
++**Priority:** High
++
++## Problem
++
++Every other multi-reviewer tool **flattens** model output — it merges or concatenates, and the disagreements are gone. ATCR is the only one that *structurally preserves* disagreement: the reconciler already writes gray-zone clusters to `ambiguous.json` and keeps severity conflicts inline instead of averaging them away.
++
++But that preserved signal is currently treated as **residue** — the stuff the deterministic merge couldn't resolve, punted to a human or (later) to cross-examination. That undersells it. Where two strong, independent models *disagree* on a diff is exactly where the ambiguity, the subtle risk, and the genuinely interesting design tension live. Nobody else can surface this, because nobody else kept it.
++
++## Solution
++
++Promote disagreement from residue to a **first-class output**: a "radar" that points reviewers at the highest-tension spots in a change.
++
++### What it surfaces
++
++- **Severity splits** — model A says CRITICAL, model B says LOW on the same location. The spread itself is the signal.
++- **Caught-by-one** — a finding only one strong model raised (not noise to discard, but a spot the others may have missed).
++- **Gray-zone clusters** — the existing `ambiguous.json` contents, presented as insight rather than overflow.
++- **Persona tension** — the correctness reviewer and the design reviewer pulling in opposite directions on the same hunk.
++
++### Surfaces
++
++- `atcr report --disagreements` — a focused view: ranked list of the N highest-tension spots in the diff, with each model's position side by side.
++- A "Review Radar" section in the standard report.md — top disagreements above the consensus findings, because the disagreements are where human attention is worth the most.
++- Feeds Epic 4.0 (cross-examination): the radar is the *queue* of what cross-examination resolves; until 4.0 lands, it is the human's queue.
++
++This is almost entirely a **presentation/projection** over data the reconciler already produces. Low engineering cost, high conceptual payoff, pure OSS.
++
++## Key Features
++
++| Feature | Description | Effort |
++|---------|-------------|--------|
++| Disagreement scoring | Rank clusters by severity spread + reviewer split | 3 days |
++| `--disagreements` report mode | Focused side-by-side view of top-tension spots | 3 days |
++| Radar section in report.md | Disagreements surfaced above consensus findings | 2 days |
++| Cross-exam handoff format | Stable schema so 4.0 consumes the radar as its queue | 2 days |
++
++## Revenue Model
++
++**None direct — this is a feature, not a product.** Its value is:
++- **Talkability** — "the tool that shows you where the AI reviewers *disagree*" is a memorable, demoable hook that gets the repo shared.
++- **Differentiation reinforcement** — it makes the disagreement-preservation thesis visible instead of buried in a sidecar file.
++- **Sets up Epic 4.0** — cross-examination has an obvious input and a visible before/after story.
++
++## Engineering Effort
++
++| Component | Effort | Notes |
++|-----------|--------|-------|
++| Disagreement scoring | 3 days | Rank existing clusters; no new analysis |
++| Report modes | 1 week | `--disagreements` + report.md section |
++| Handoff schema | 2 days | Stable contract for 4.0 |
++| **Total** | **~1.5 weeks** | Mostly a view over existing `ambiguous.json` + inline conflicts |
++
++## Moat / Differentiation
++
++- **Only possible because ATCR kept the disagreement.** Competitors that flattened cannot retrofit this without rebuilding their merge.
++- **Most ATCR-native idea on the board** — it directly dramatizes the core thesis ("preserve disagreements instead of flattening them").
++- **Near-zero new surface area** — the data exists; this is how it's shown.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Disagreement is mostly noise, not signal | Medium | Medium | Rank by reviewer *strength* and independence, not raw count; only surface splits among trusted reviewers |
++| Overlaps/duplicates Epic 4.0 | Medium | Low | Radar *surfaces*; 4.0 *resolves*. Radar remains useful as 4.0's input and for the spots 4.0 doesn't auto-close |
++| Adds report noise for simple diffs | Low | Low | Section is empty/collapsed when there are no meaningful disagreements |
++
++## Open Questions
++
++- **Ranking signal?** Severity spread, reviewer-strength-weighted split, or both combined?
++- **How many to surface?** Top N, or everything above a tension threshold?
++- **Default-on?** Always show the radar section, or opt-in via `--disagreements`?
++
++## References
++
++- ATCR's own thesis: "preserve disagreements instead of flattening them" (README)
++- Epic 4.0 Cross-Examination — the resolution stage this concept feeds
++- Inter-rater reliability (Cohen's kappa): the academic framing of "where do raters disagree, and does it matter"
+diff --git a/.planning/product/concepts/model-eval-leaderboard.md b/.planning/product/concepts/model-eval-leaderboard.md
+new file mode 100644
+index 0000000..f1c224a
+--- /dev/null
++++ b/.planning/product/concepts/model-eval-leaderboard.md
+@@ -0,0 +1,125 @@
++# Concept: Model-Eval Engine + Public Leaderboard
++
++**Status:** Conceptual
++**Created:** 2026-06-11
++**Priority:** High
++
++## Problem
++
++There is no trusted, reproducible answer to a question every team building with LLMs now asks: **which model is actually good at code review, and at what cost?**
++
++The existing options are weak:
++- Generic leaderboards (lmarena, MMLU, SWE-bench) measure task-solving, not *review* quality — finding real defects in a diff is a different skill from writing a patch.
++- Vendor benchmarks are self-reported and non-reproducible.
++- "Vibes" — teams pick a model because it's the default in their tool.
++
++Meanwhile ATCR is **already generating the exact data that answers this** and throwing it away after each run. Every reconcile records which model/persona raised which finding, and which findings were corroborated by independent reviewers. Corroboration-by-other-models is a cheap, imperfect, but real quality proxy. The byproduct of doing the work *is* an evaluation dataset.
++
++## Solution
++
++Treat ATCR as a **model-evaluation engine** and expose the accumulated signal as a leaderboard.
++
++### Per-run scorecard (the foundation)
++
++After reconcile, emit a normalized eval record per reviewer per run:
++
++```json
++{
++  "run_id": "2026-06-11T10:00:00Z-abc123",
++  "model": "claude-sonnet-4-6",
++  "persona": "bruce",
++  "findings_raised": 12,
++  "findings_corroborated": 7,
++  "findings_solo": 5,
++  "corroboration_rate": 0.58,
++  "cost_usd": 0.04,
++  "tokens": 18200,
++  "latency_ms": 9100
++}
++```
++
++The reconciler already computes everything needed — this is a *persistence + projection* step, not new analysis.
++
++### Quality axes (improve as the roadmap lands)
++
++The proxy gets sharper as the agent ladder advances:
++- **Stage 1 (today):** corroboration rate — caught-by-2+ vs. solo.
++- **Stage 3 (adversarial verification):** *survived-a-skeptic* rate — a far stronger label than corroboration. "This model's findings survive hostile refutation 80% of the time" is near-ground-truth.
++- **Stage 5 (executing reviewers):** *demonstrated* rate — findings backed by a failing repro command are objectively true. This is real ground truth.
++
++So the leaderboard's credibility compounds with the roadmap already planned — it is not a side quest.
++
++### Derived metrics
++
++- **Precision proxy** — corroborated / raised (and later survived / raised).
++- **Cost-per-corroborated-finding** — the metric teams actually care about (`$/real bug`).
++- **Persona×model matrix** — which combinations agree, which flake, which are redundant.
++- **Recall proxy** — share of the panel's union of corroborated findings that each model caught.
++
++### Surfaces
++
++- `atcr leaderboard` — local CLI over the user's own accumulated runs ("for *my* codebase, sonnet beats gpt on cost-per-finding").
++- Public leaderboard — opt-in submission format + aggregation; a static site. Methodology is published and reproducible (the reconciler is deterministic and OSS).
++- Private team leaderboards — "did our review quality regress after the model upgrade?" (overlaps team-edition).
++
++## Key Features
++
++| Feature | Description | Effort |
++|---------|-------------|--------|
++| Per-run scorecard emitter | Normalized eval record per reviewer, written alongside artifacts | 1 week |
++| Local `atcr leaderboard` | Aggregate scorecards into per-model/persona metrics | 1 week |
++| Survived-skeptic axis | Wire Stage 3 verdicts into the scorecard (after Epic 3.0) | 3 days (post-3.0) |
++| Public submission format | Versioned, anonymizable run-summary schema | 1 week |
++| Public leaderboard site | Static site rendering aggregated submissions | 2 weeks |
++
++## Revenue Model
++
++**OSS-first; revenue is downstream and optional:**
++- The local scorecard + `atcr leaderboard` are free OSS — they make ATCR stickier and self-evidently useful.
++- The public leaderboard is a top-of-funnel attention magnet (the lmarena-of-code-review), not a paid product.
++
++**Optional later:**
++- Sponsored evals (a vendor pays to have a new model run through the standard suite).
++- Private team leaderboards / regression tracking (folds into team-edition).
++- Benchmark-as-a-service: BYO private review suite, scored by the standard methodology.
++
++The asset sold is **a trusted measurement**, not infrastructure — and it falls out of the architecture already built.
++
++## Engineering Effort
++
++| Component | Effort | Notes |
++|-----------|--------|-------|
++| Scorecard emitter | 1 week | Persistence + projection over existing reconcile output |
++| Local leaderboard CLI | 1 week | Aggregation + table/json rendering |
++| Public submission + site | 3 weeks | Schema, anonymization, static site |
++| **Total** | **2 weeks (local) / ~5 weeks (full public)** | Local half is independently valuable; public half is phase 2 |
++
++## Moat / Differentiation
++
++- **The reconciler is the moat.** Anyone can call N models; almost nobody has a deterministic, reproducible way to score whose findings were *right*. ATCR already is that.
++- **Compounds with the roadmap** — survived-skeptic (3.0) and demonstrated-bug (5.0) turn a proxy into near-ground-truth, raising leaderboard credibility for free.
++- **Standards gravity** — if "the ATCR review benchmark" becomes the cited number, ATCR is the reference, the way SWE-bench is for agents.
++- **Differentiated from every other concept** — this sells a measurement that emerges from the design, not a feature bolted on.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Corroboration is a biased proxy (popular-but-wrong findings agree) | High | High | Be explicit it is a proxy at Stage 1; lead with survived-skeptic (3.0) and demonstrated (5.0) as the headline metrics; never claim ground truth before earning it |
++| Correlated reviewers inflate agreement | Medium | Medium | Track persona×model independence; down-weight near-duplicate reviewers in the metric |
++| Public leaderboard gets gamed / cherry-picked submissions | Medium | Medium | Standard fixed diff suite for the public board; only reproducible runs count |
++| Vendor model churn makes the board stale fast | High | Low | Automate the standard-suite run; date-stamp every row |
++
++## Open Questions
++
++- **Public suite contents?** A fixed, curated set of diffs with known defects (best, but labor) vs. crowd-submitted runs (cheap, noisier)?
++- **Anonymization?** What must be stripped from a run summary before it can be published?
++- **Where does the local scorecard live?** Alongside each review dir, or a rolled-up `~/.config/atcr/eval/`?
++- **Headline metric?** Lead with cost-per-corroborated-finding (pragmatic) or survived-skeptic rate (rigorous)?
++
++## References
++
++- SWE-bench: became the cited agent benchmark by being reproducible; the methodology is the brand
++- lmarena (Chatbot Arena): pairwise-comparison leaderboard, top-of-funnel for the whole space
++- MTEB: embedding leaderboard — a measurement that anchored a category
++- Related ATCR concepts: depends conceptually on `reconciler-library` data, sharpened by Epics 3.0/5.0
+diff --git a/.planning/product/concepts/persona-ecosystem.md b/.planning/product/concepts/persona-ecosystem.md
+new file mode 100644
+index 0000000..a727beb
+--- /dev/null
++++ b/.planning/product/concepts/persona-ecosystem.md
+@@ -0,0 +1,145 @@
++# Concept: Persona Ecosystem (Community-Driven)
++
++**Status:** Conceptual  
++**Created:** 2026-06-11  
++**Priority:** Low  
++
++## Problem
++
++ATCR ships with 6 personas (bruce, greta, kai, mira, dax, otto) covering general review dimensions:
++- Correctness, algorithmic correctness, design fit, production feasibility, test coverage, style
++
++But teams have domain-specific review needs:
++- **Security** — OWASP Top 10, injection, auth bypass, secrets leakage
++- **Performance** — N+1 queries, memory leaks, algorithmic complexity
++- **Accessibility** — WCAG compliance, ARIA attributes, keyboard navigation
++- **Compliance** — regulatory requirements (HIPAA, GDPR, SOX)
++- **Language-specific** — Go idioms, Rust ownership, Python type hints
++- **Framework-specific** — React hooks, Django ORM, Rails conventions
++
++Without domain-specific personas, teams either:
++- Write their own persona prompts (inconsistent, not shared)
++- Skip domain-specific review (risk)
++- Use a SaaS tool that has built-in domain reviewers (vendor lock-in)
++
++## Solution
++
++A **curated collection of domain-specific personas** in a community repo:
++
++```
++github.com/atcr/personas
++```
++
++### Structure
++
++```
++personas/
++  security/
++    owasp.md          # OWASP Top 10 reviewer
++    secrets.md        # Secrets leakage detector
++  performance/
++    sql.md            # SQL query performance
++    memory.md         # Memory leak detector
++  accessibility/
++    wcag.md           # WCAG 2.1 compliance
++  compliance/
++    hipaa.md          # HIPAA compliance
++    gdpr.md           # GDPR compliance
++  language/
++    go-idioms.md      # Go idioms and best practices
++    rust-ownership.md # Rust borrow checker patterns
++  framework/
++    react-hooks.md    # React hooks best practices
++    django-orm.md     # Django ORM anti-patterns
++```
++
++### Quality Bar
++
++Each persona must have:
++- **Prompt template** — the persona's instructions (markdown)
++- **Test fixture** — a sample code snippet the persona should flag
++- **Expected findings** — the findings the persona should produce for the fixture
++- **Documentation** — what the persona reviews, when to use it, example output
++
++### Contribution Model
++
++- **Community submissions** — anyone can submit a persona via PR
++- **Review process** — ATCR maintainers review for quality (prompt clarity, fixture coverage)
++- **Testing** — CI runs the persona against its fixture; must produce expected findings
++- **Versioning** — personas are versioned (v1, v2); breaking changes require a major version bump
++
++### Installation
++
++```bash
++# Install all personas
++atcr personas install --all
++
++# Install specific persona
++atcr personas install security/owasp
++
++# List installed personas
++atcr personas list
++```
++
++Installed personas land in `~/.config/atcr/personas/` and are available for use in the registry.
++
++## Key Features
++
++| Feature | Description | Effort |
++|---------|-------------|--------|
++| Persona repo | `github.com/atcr/personas` with curated collection | 1 week (initial 10-15 personas) |
++| Quality bar | Test fixture + expected findings for each persona | Ongoing (per persona) |
++| CLI integration | `atcr personas install/list/remove` | 1 week |
++| Contribution guide | Documentation for submitting personas | 3 days |
++| CI testing | Automated testing of personas against fixtures | 1 week |
++
++## Revenue Model
++
++**No direct revenue** — this is ecosystem building, not productization.
++
++**Indirect benefits:**
++- **Adoption** — domain-specific personas make ATCR useful for more teams
++- **Community** — contributors become advocates; word-of-mouth growth
++- **Enterprise licensing** — teams that love the OSS personas want the team edition (shared registry, audit trail)
++- **Consulting** — custom persona development for enterprise clients
++
++## Engineering Effort
++
++| Component | Effort | Notes |
++|-----------|--------|-------|
++| Initial personas | 1 week | 10-15 high-quality personas (security, performance, accessibility, compliance, language) |
++| CLI integration | 1 week | `atcr personas install/list/remove` |
++| Contribution guide | 3 days | Documentation, template, examples |
++| CI testing | 1 week | Automated fixture testing, expected findings validation |
++| Ongoing curation | Ongoing | Review community submissions, maintain quality |
++| **Total** | **3-4 weeks** (initial) | Ongoing maintenance is community-driven |
++
++## Moat / Differentiation
++
++- **Personas are the personality** — a rich ecosystem makes ATCR the go-to for "serious" code review
++- **Community lock-in** — contributors invest time writing personas; they're unlikely to switch to a competing tool
++- **Quality bar** — curated collection (not a free-for-all) builds trust
++- **Domain coverage** — teams with specific needs (security, compliance) find off-the-shelf personas
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Low community participation | High | Medium | Seed the repo with 10-15 high-quality personas; document the contribution process clearly |
++| Persona quality is inconsistent | Medium | High | Strict review process; automated fixture testing; reject low-quality submissions |
++| Personas become stale | Medium | Medium | Version personas; deprecate old versions; automated testing catches regressions |
++| Overlap with built-in personas | Low | Low | Built-in personas are generalist; community personas are domain-specific; document the difference |
++
++## Open Questions
++
++- **License?** CC-BY-SA (share-alike) or Apache 2.0 (permissive)? CC-BY-SA ensures contributions stay open; Apache 2.0 is more friendly to commercial use.
++- **Hosting?** GitHub repo (simple, universal) or a dedicated registry (like npm, PyPI)?
++- **Versioning?** Semver per persona (v1.0, v1.1) or global version (all personas v1, v2)?
++- **Discovery?** How do users find personas? Searchable website? CLI search (`atcr personas search security`)?
++
++## References
++
++- Homebrew taps: community-contributed packages, curated by maintainers
++- VS Code extensions: marketplace with quality bar (verified publishers, ratings)
++- Grafana dashboards: community-contributed dashboards, shared via grafana.com
++- ESLint plugins: community-contributed rules, installed via npm
+diff --git a/.planning/product/concepts/reconciler-library.md b/.planning/product/concepts/reconciler-library.md
+new file mode 100644
+index 0000000..d50c4da
+--- /dev/null
++++ b/.planning/product/concepts/reconciler-library.md
+@@ -0,0 +1,169 @@
++# Concept: Reconciler as an Embeddable Library
++
++**Status:** Conceptual  
++**Created:** 2026-06-11  
++**Priority:** High  
++
++## Problem
++
++ATCR's reconciler is genuinely unique:
++- Deterministic clustering (FILE, LINE ± 3)
++- Text-similarity dedupe (Jaccard with configurable threshold)
++- Confidence scoring (2+ reviewers = HIGH, single = MEDIUM)
++- Ambiguity sidecar (gray-zone clusters written to `ambiguous.json`)
++- Disagreement annotation (severity conflicts preserved inline)
++
++**Nobody else ships this.** Other multi-reviewer tools (CodeRabbit, Qodo, Copilot) either:
++- Don't merge at all (N walls of prose)
++- Do prompt-based dedupe (non-deterministic, opaque)
++- Do simple concatenation (no dedupe, no confidence)
++
++The reconciler is the hardest part of multi-reviewer merge, and it's already built.
++
++## Solution
++
++Extract `internal/reconcile` into a **standalone Go module** that other tools can embed:
++
++```
++github.com/atcr/reconcile
++```
++
++### API Surface
++
++```go
++package reconcile
++
++// Input: N source streams (8-column pipe-delimited)
++type Source struct {
++    Name      string   // e.g., "bruce", "greta", "host"
++    Findings  []Finding
++}
++
++type Finding struct {
++    Severity   string
++    File       string
++    Line       int
++    Problem    string
++    Fix        string
++    Category   string
++    EstMinutes int
++    Evidence   string
++}
++
++// Output: reconciled findings (9-column)
++type ReconciledFinding struct {
++    Finding
++    Reviewers  []string  // comma-joined in output
++    Confidence string    // HIGH, MEDIUM, LOW
++}
++
++// Main entry point
++func Reconcile(sources []Source, opts Options) (*Result, error)
++
++type Result struct {
++    Findings   []ReconciledFinding
++    Ambiguous  []AmbiguousCluster  // gray-zone clusters
++    Summary    Summary             // counts, stats
++}
++
++type Options struct {
++    LineTolerance    int     // ±3 lines for clustering
++    SimilarityThreshold float64  // Jaccard threshold for dedupe
++    // ... extensible
++}
++```
++
++### Usage
++
++Other review tools embed the reconciler:
++
++```go
++import "github.com/atcr/reconcile"
++
++// Run your reviewers however you want
++reviewer1Findings := runReviewer1(diff)
++reviewer2Findings := runReviewer2(diff)
++
++// Reconcile with ATCR's deterministic merge
++result, err := reconcile.Reconcile([]reconcile.Source{
++    {Name: "reviewer1", Findings: reviewer1Findings},
++    {Name: "reviewer2", Findings: reviewer2Findings},
++}, reconcile.Options{
++    LineTolerance: 3,
++    SimilarityThreshold: 0.6,
++})
++
++// result.Findings is deduped, confidence-scored, disagreement-annotated
++```
++
++### White-Label Option
++
++For competitors who don't want to embed Go:
++- **HTTP/gRPC service** — `atcr reconcile` as a microservice
++- Input: POST findings streams (8-column)
++- Output: reconciled findings (9-column)
++- Self-hosted or cloud-hosted
++
++## Key Features
++
++| Feature | Description | Effort |
++|---------|-------------|--------|
++| Standalone module | Extract `internal/reconcile` into `github.com/atcr/reconcile` | 1 week |
++| Clean API | Documented Go API with examples | 3 days |
++| Format adapters | Convert from SARIF, JSON, other formats to ATCR's input | 1 week |
++| HTTP/gRPC service | `atcr reconcile` as a microservice | 1-2 weeks |
++| SDK for other languages | Python, TypeScript wrappers around the HTTP service | 2-3 weeks |
++
++## Revenue Model
++
++**Dual licensing:**
++- OSS (Apache 2.0): free for open-source projects, non-commercial use
++- Commercial license: paid for proprietary use, white-label
++
++**White-label service:**
++- Cloud-hosted reconcile API: $X per 1000 reconciliations
++- Self-hosted: enterprise license + support contract
++
++**Consulting:**
++- Custom reconciler strategies (e.g., language-specific dedupe)
++- Integration assistance for competitors
++
++## Engineering Effort
++
++| Component | Effort | Notes |
++|-----------|--------|-------|
++| Extract module | 1 week | Move `internal/reconcile` → `github.com/atcr/reconcile`, update imports |
++| Clean API | 3 days | Document public API, write examples, add godoc |
++| Format adapters | 1 week | SARIF → ATCR, JSON → ATCR, etc. |
++| HTTP/gRPC service | 1-2 weeks | Wrap `Reconcile()` in an HTTP/gRPC handler |
++| SDKs (Python, TS) | 2-3 weeks | Thin wrappers around the HTTP service |
++| **Total** | **5-7 weeks** | Can be phased: module first, service later |
++
++## Moat / Differentiation
++
++- **Nobody else has this** — the reconciler is ATCR's core innovation. Extracting it doesn't weaken ATCR; it makes ATCR the reference implementation.
++- **Standards play** — if the reconciler becomes widely adopted, ATCR's findings format becomes the de facto standard (like SARIF for static analysis).
++- **Network effects** — more tools using the reconciler → more feedback → better reconciler → more adoption.
++- **White-label revenue** — competitors pay to use it, which funds ATCR's development.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Competitors don't adopt | High | Medium | Focus on OSS adoption first; white-label is a secondary channel |
++| Extracting the module breaks ATCR | Low | High | Keep ATCR's internal imports pointing to the extracted module; test thoroughly |
++| API surface is too narrow | Medium | Medium | Start with `Reconcile(sources, opts)` → `Result`; extend based on feedback |
++| White-label service becomes a maintenance burden | Medium | Medium | Keep it simple — just a thin wrapper around the library. No SLA for the cloud service initially |
++
++## Open Questions
++
++- **License?** Apache 2.0 (permissive) vs. GPL (copyleft)? Apache is more friendly to commercial adoption.
++- **Module path?** `github.com/atcr/reconcile` (standalone) or `github.com/atcr/atcr/pkg/reconcile` (sub-package)?
++- **Versioning?** Semver from day one? How to handle breaking changes?
++- **Service protocol?** HTTP/REST (simple, universal) vs. gRPC (fast, typed) vs. both?
++
++## References
++
++- SQLite: OSS, embedded in countless products, dual-licensed for commercial use
++- RocksDB: OSS, embedded in Facebook's infrastructure, widely adopted
++- Prometheus client libraries: OSS, embedded in thousands of apps, became the standard
+diff --git a/.planning/product/concepts/team-edition.md b/.planning/product/concepts/team-edition.md
+new file mode 100644
+index 0000000..5917dc1
+--- /dev/null
++++ b/.planning/product/concepts/team-edition.md
+@@ -0,0 +1,114 @@
++# Concept: Self-Hosted Team Edition
++
++**Status:** Conceptual  
++**Created:** 2026-06-11  
++**Priority:** High  
++
++## Problem
++
++ATCR is a powerful single-user tool, but teams need:
++- Shared configuration (provider keys, persona registry)
++- Finding history across runs ("what has this package been flagged for before?")
++- Audit trails for compliance (SOC 2, ISO 27001: "show me all reviews for PR #1234")
++- Trend visibility ("which modules have the highest finding density?")
++
++Without these, teams either:
++- Share a single `registry.yaml` via config repo (manual, no audit trail)
++- Skip compliance requirements (risk)
++- Use a SaaS tool that hosts their code (privacy concern)
++
++## Solution
++
++A **team edition** of ATCR that adds:
++
++### Shared Registry
++- One `registry.yaml` for the team, managed via:
++  - Config repo (git-based, version-controlled)
++  - API endpoint (for dynamic updates)
++- Provider keys stored securely (env vars, secrets manager integration)
++- Persona library shared across the team
++
++### Finding History
++- Every `atcr review` run appends to a `findings-history.jsonl` in a configurable location (repo-local or team-shared)
++- Query interface: "show me all HIGH findings for `internal/auth/` in the last 90 days"
++- Aggregation: finding counts by package, severity, reviewer
++
++### Trend Dashboard
++- Web UI (lightweight, self-hosted) showing:
++  - Finding counts over time (by severity, by package)
++  - Top offender modules (highest finding density)
++  - Reviewer panel performance (which personas find the most issues?)
++- Exportable reports (PDF, CSV) for management review
++
++### Audit Trail
++- Immutable log of every review run:
++  - Who triggered it (CI job, user)
++  - What was reviewed (base/head SHAs, PR number)
++  - What was found (findings summary)
++  - What was fixed (follow-up PRs linked to findings)
++- Compliance-ready: "prove that PR #1234 was reviewed and all CRITICAL findings were resolved"
++
++## Key Features
++
++| Feature | Description | Effort |
++|---------|-------------|--------|
++| Shared registry | Team-wide `registry.yaml` with secure key storage | Medium |
++| Finding history | JSONL append-only log, queryable by package/severity/date | Low |
++| Trend dashboard | Web UI for finding trends, top offenders, panel performance | Medium |
++| Audit trail | Immutable review log, compliance-ready reports | Medium |
++| API layer | REST/GraphQL API for programmatic access to history, trends | Medium |
++
++## Revenue Model
++
++**Enterprise license** for the team features:
++- OSS core: free, self-hosted, full-featured for single users
++- Team edition: paid license for shared registry, history, dashboard, audit
++- Pricing tiers:
++  - Starter (5 users): $X/month
++  - Team (20 users): $Y/month
++  - Enterprise (unlimited): custom pricing, support contract
++
++**Support contracts** for enterprise:
++- Priority bug fixes
++- Custom persona development
++- Onboarding assistance
++
++## Engineering Effort
++
++| Component | Effort | Notes |
++|-----------|--------|-------|
++| Shared registry | 1-2 weeks | Config repo integration, API for dynamic updates |
++| Finding history | 1 week | JSONL writer + query CLI, index for fast lookups |
++| Trend dashboard | 2-3 weeks | Web UI (React/Vue), backend API, data aggregation |
++| Audit trail | 1-2 weeks | Immutable log, compliance report generator |
++| API layer | 1-2 weeks | REST endpoints for history, trends, audit |
++| **Total** | **6-10 weeks** | Can be phased: history first, dashboard later |
++
++## Moat / Differentiation
++
++- **Audit trail is nearly free** — ATCR already produces deterministic artifacts. The audit log is just persisting and querying the review directories.
++- **Dashboard is a thin UI** — the data (`summary.json`, `findings.txt`) already exists. The dashboard is a view layer, not a data layer.
++- **Self-hosted = privacy** — teams that can't use SaaS (regulated industries) will prefer this.
++- **OSS core = trust** — the core tool is auditable, which builds trust in the team edition.
++
++## Risks
++
++| Risk | Likelihood | Impact | Mitigation |
++|------|------------|--------|------------|
++| Teams don't want to pay for team features | Medium | High | Start with a generous free tier (3 users, basic history); prove value before charging |
++| Dashboard becomes a maintenance burden | Medium | Medium | Keep it lightweight — no real-time updates, no complex visualization. Export > interactive |
++| API surface explodes | Low | Medium | Start with read-only API (history, trends); write API later if needed |
++| Enterprise sales cycle is long | High | Medium | Focus on self-serve first (Stripe billing, instant signup); enterprise sales as a secondary channel |
++
++## Open Questions
++
++- **Config repo vs. API?** Should the shared registry be git-based (like `.github/workflows`) or API-driven (like a secrets manager)?
++- **Where does history live?** Repo-local (each repo has its own `findings-history.jsonl`) or team-shared (one history DB for all repos)?
++- **Dashboard tech stack?** React + Express (full-featured) or static site generator (lightweight, export-focused)?
++- **Compliance frameworks?** Which frameworks to target first (SOC 2, ISO 27001, FedRAMP)?
++
++## References
++
++- Grafana: OSS core, paid enterprise features (dashboard, alerting, auth)
++- GitLab: OSS core, paid CI/CD features
++- SonarQube: OSS code quality, paid enterprise features (security, compliance)
+diff --git a/.planning/sprints/active/1.0_atcr_core/2026-06-11_sprint-complete.md b/.planning/sprints/completed/1.0_atcr_core/2026-06-11_sprint-complete.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/2026-06-11_sprint-complete.md
+rename to .planning/sprints/completed/1.0_atcr_core/2026-06-11_sprint-complete.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/README.md b/.planning/sprints/completed/1.0_atcr_core/README.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/README.md
+rename to .planning/sprints/completed/1.0_atcr_core/README.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/code-review/verification/ci-gate-end-to-end-2026-06-11.log b/.planning/sprints/completed/1.0_atcr_core/code-review/verification/ci-gate-end-to-end-2026-06-11.log
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/code-review/verification/ci-gate-end-to-end-2026-06-11.log
+rename to .planning/sprints/completed/1.0_atcr_core/code-review/verification/ci-gate-end-to-end-2026-06-11.log
+diff --git a/.planning/sprints/active/1.0_atcr_core/dod-completion-summary.md b/.planning/sprints/completed/1.0_atcr_core/dod-completion-summary.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/dod-completion-summary.md
+rename to .planning/sprints/completed/1.0_atcr_core/dod-completion-summary.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/metadata.md b/.planning/sprints/completed/1.0_atcr_core/metadata.md
+similarity index 99%
+rename from .planning/sprints/active/1.0_atcr_core/metadata.md
+rename to .planning/sprints/completed/1.0_atcr_core/metadata.md
+index 060bb3c..5c77792 100644
+--- a/.planning/sprints/active/1.0_atcr_core/metadata.md
++++ b/.planning/sprints/completed/1.0_atcr_core/metadata.md
+@@ -100,3 +100,5 @@ _Populated by `/execute-sprint` upon completion_
+ - docs finalized in place (grounded against source, not memory): findings-format.md (atcr-findings/v1 — 8-col/9-col layouts with examples, severity enum, `^(CRITICAL|HIGH|MEDIUM|LOW)\|` extraction regex, pipe→/ + CR/LF→space escaping, header gate, short-row padding/overflow rules, leaf-preference source discovery, additive-only evolution policy); registry.md (provider/agent/project schemas, 4-tier precedence, 6-level persona resolution chain, fallback dangling+cycle validation, reserved-key table); payload-modes.md (mode trade-offs, per-agent override examples, byte-budget truncation with 0=unlimited, files-mode markers `>>> CHANGED LINES`/`[deleted file:]`/`[binary file changed:]`, out-of-scope CATEGORY rule); ci-integration.md exit-code table corrected from TBD to 0/1/2
+ - examples/ci-gate.sh: thin one-shot wrapper (`atcr review --fail-on`), executable, `bash -n` clean, shellcheck 0 issues (shellcheck installed via Homebrew)
+ - DoD: all 7 commands + every documented flag cross-checked against `atcr --help`; all README doc links resolve; tests pass, coverage 82.4%, go vet clean, golangci-lint 0 issues
++
++**Merge Commit:** 19c92246ab8914681ca5e59d4c447d092c50b392
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/README.md b/.planning/sprints/completed/1.0_atcr_core/plan/README.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/README.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/README.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-01-end-to-end-review.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-01-end-to-end-review.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-01-end-to-end-review.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-01-end-to-end-review.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-02-git-range-resolution.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-02-git-range-resolution.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-02-git-range-resolution.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-02-git-range-resolution.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-03-review-directory-structure.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-03-review-directory-structure.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-03-review-directory-structure.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-03-review-directory-structure.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-04-fanout-agent-execution.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-04-fanout-agent-execution.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-04-fanout-agent-execution.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-04-fanout-agent-execution.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-05-reconciliation-pipeline.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-05-reconciliation-pipeline.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-05-reconciliation-pipeline.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-05-reconciliation-pipeline.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-06-report-rendering.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-06-report-rendering.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/01-06-report-rendering.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/01-06-report-rendering.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-01-init-command.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-01-init-command.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-01-init-command.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-01-init-command.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-02-provider-agent-registry.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-02-provider-agent-registry.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-02-provider-agent-registry.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-02-provider-agent-registry.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-03-precedence-and-validation.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-03-precedence-and-validation.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-03-precedence-and-validation.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-03-precedence-and-validation.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-04-persona-resolution-override.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-04-persona-resolution-override.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/02-04-persona-resolution-override.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/02-04-persona-resolution-override.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/03-01-fail-on-severity-threshold.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/03-01-fail-on-severity-threshold.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/03-01-fail-on-severity-threshold.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/03-01-fail-on-severity-threshold.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/03-02-ci-one-shot-and-example.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/03-02-ci-one-shot-and-example.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/03-02-ci-one-shot-and-example.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/03-02-ci-one-shot-and-example.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-01-mcp-stdio-server.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-01-mcp-stdio-server.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-01-mcp-stdio-server.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-01-mcp-stdio-server.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-02-tool-registration-schemas.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-02-tool-registration-schemas.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-02-tool-registration-schemas.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-02-tool-registration-schemas.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-03-review-reconcile-handlers.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-03-review-reconcile-handlers.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-03-review-reconcile-handlers.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-03-review-reconcile-handlers.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-04-report-range-status-handlers.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-04-report-range-status-handlers.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/04-04-report-range-status-handlers.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/04-04-report-range-status-handlers.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-01-skill-structure-and-installation.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-01-skill-structure-and-installation.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-01-skill-structure-and-installation.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-01-skill-structure-and-installation.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-02-host-review-findings-generation.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-02-host-review-findings-generation.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-02-host-review-findings-generation.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-02-host-review-findings-generation.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-03-orchestration-loop.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-03-orchestration-loop.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-03-orchestration-loop.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-03-orchestration-loop.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-04-adversarial-review-and-adjudication.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-04-adversarial-review-and-adjudication.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/05-04-adversarial-review-and-adjudication.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/05-04-adversarial-review-and-adjudication.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-01-payload-builders.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-01-payload-builders.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-01-payload-builders.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-01-payload-builders.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-02-payload-mode-configuration.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-02-payload-mode-configuration.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-02-payload-mode-configuration.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-02-payload-mode-configuration.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-03-byte-budget-truncation.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-03-byte-budget-truncation.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-03-byte-budget-truncation.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-03-byte-budget-truncation.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-04-payload-templates-documentation.md b/.planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-04-payload-templates-documentation.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/acceptance-criteria/06-04-payload-templates-documentation.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/acceptance-criteria/06-04-payload-templates-documentation.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/codebase-discovery.json b/.planning/sprints/completed/1.0_atcr_core/plan/codebase-discovery.json
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/codebase-discovery.json
+rename to .planning/sprints/completed/1.0_atcr_core/plan/codebase-discovery.json
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/README.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/README.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/README.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/README.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/cli-architecture.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/cli-architecture.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/cli-architecture.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/cli-architecture.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/configuration-management.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/configuration-management.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/configuration-management.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/configuration-management.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/findings-format.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/findings-format.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/findings-format.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/findings-format.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/llm-client-fanout.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/llm-client-fanout.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/llm-client-fanout.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/llm-client-fanout.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/mcp-server.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/mcp-server.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/mcp-server.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/mcp-server.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/payload-engine.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/payload-engine.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/payload-engine.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/payload-engine.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/range-resolution.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/range-resolution.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/range-resolution.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/range-resolution.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/reconciler.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/reconciler.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/reconciler.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/reconciler.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/source.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/source.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/source.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/source.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/documentation/testing-patterns.md b/.planning/sprints/completed/1.0_atcr_core/plan/documentation/testing-patterns.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/documentation/testing-patterns.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/documentation/testing-patterns.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/metadata.md b/.planning/sprints/completed/1.0_atcr_core/plan/metadata.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/metadata.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/metadata.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/original-requirements.md b/.planning/sprints/completed/1.0_atcr_core/plan/original-requirements.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/original-requirements.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/original-requirements.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/package-recommendations.md b/.planning/sprints/completed/1.0_atcr_core/plan/package-recommendations.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/package-recommendations.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/package-recommendations.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/plan.md b/.planning/sprints/completed/1.0_atcr_core/plan/plan.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/plan.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/plan.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/sprint-design.md b/.planning/sprints/completed/1.0_atcr_core/plan/sprint-design.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/sprint-design.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/sprint-design.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/test-planning-matrix.md b/.planning/sprints/completed/1.0_atcr_core/plan/test-planning-matrix.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/test-planning-matrix.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/test-planning-matrix.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/user-stories/01-cli-review-workflow.md b/.planning/sprints/completed/1.0_atcr_core/plan/user-stories/01-cli-review-workflow.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/user-stories/01-cli-review-workflow.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/user-stories/01-cli-review-workflow.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/user-stories/02-agent-configuration.md b/.planning/sprints/completed/1.0_atcr_core/plan/user-stories/02-agent-configuration.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/user-stories/02-agent-configuration.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/user-stories/02-agent-configuration.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/user-stories/03-ci-integration.md b/.planning/sprints/completed/1.0_atcr_core/plan/user-stories/03-ci-integration.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/user-stories/03-ci-integration.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/user-stories/03-ci-integration.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/user-stories/04-mcp-integration.md b/.planning/sprints/completed/1.0_atcr_core/plan/user-stories/04-mcp-integration.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/user-stories/04-mcp-integration.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/user-stories/04-mcp-integration.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/user-stories/05-host-review-via-skill.md b/.planning/sprints/completed/1.0_atcr_core/plan/user-stories/05-host-review-via-skill.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/user-stories/05-host-review-via-skill.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/user-stories/05-host-review-via-skill.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/plan/user-stories/06-payload-mode-selection.md b/.planning/sprints/completed/1.0_atcr_core/plan/user-stories/06-payload-mode-selection.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/plan/user-stories/06-payload-mode-selection.md
+rename to .planning/sprints/completed/1.0_atcr_core/plan/user-stories/06-payload-mode-selection.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/sprint-knowledge.yaml b/.planning/sprints/completed/1.0_atcr_core/sprint-knowledge.yaml
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/sprint-knowledge.yaml
+rename to .planning/sprints/completed/1.0_atcr_core/sprint-knowledge.yaml
+diff --git a/.planning/sprints/active/1.0_atcr_core/sprint-plan.md b/.planning/sprints/completed/1.0_atcr_core/sprint-plan.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/sprint-plan.md
+rename to .planning/sprints/completed/1.0_atcr_core/sprint-plan.md
+diff --git a/.planning/sprints/active/1.0_atcr_core/tech-debt-captured.md b/.planning/sprints/completed/1.0_atcr_core/tech-debt-captured.md
+similarity index 100%
+rename from .planning/sprints/active/1.0_atcr_core/tech-debt-captured.md
+rename to .planning/sprints/completed/1.0_atcr_core/tech-debt-captured.md
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index d943bb9..e6c4b8d 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -22,6 +22,15 @@ technical-debt/
+ 4. **After resolution**: Move items from active to completed
+ 
+ 
++### [2026-06-11] From Sprint: epic-1.1
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| U | [ ] | LOW | internal/fanout/status.go:122 | status.json reserved byte counter ToolBytes is *int64 while the sibling registry byte field tool_budget_bytes is *int — two byte-quantity fields modeled with different integer widths (note: existing payload_byte_budget is *int64), an inconsistency a future stage may trip over. | Make registry ToolBudgetBytes a *int64 to match status ToolBytes and the existing payload_byte_budget for a consistent byte-count type across artifacts. | EDGE_CASES | 15 | execute-epic-independent |
++| U | [ ] | LOW | internal/registry/config.go:64 | yaml omitempty on input-only reserved fields (tools/max_turns/tool_budget_bytes/role) is inert because Registry is only decoded, never marshaled — the tag has no effect. | Drop omitempty from the reserved yaml input tags, or leave as-is; cosmetic only. | OVER_ENGINEERING | 5 | execute-epic-independent |
++| U | [ ] | LOW | internal/reconcile/emit.go:30 | Verification.Verdict and Verification.Skeptic lack omitempty and have no enum validation, so a future stage emitting an empty verdict produces verdict:"" and bad verdict/role values are not caught at the contract boundary. | Document that Epic 3.0 must validate verdict against confirmed/refuted/unverifiable when it populates the block, since the loader does not. | UNDER_ENGINEERING | 15 | execute-epic-independent |
++| U | [ ] | LOW | internal/registry/config.go:67 | role:"" is accepted and stays empty in 1.x while the documented planned default is reviewer, so a future Stage 3/4 must apply the default itself; the loader provides no safety net (intentional per recorded option-a decision). | Ensure Epic 3.0/4.0 applies the reviewer default when activating role. | UNDER_ENGINEERING | 5 | execute-epic-independent |
++
+ ### [2026-06-11] From Sprint: 1.0_atcr_core
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+@@ -109,6 +118,6 @@ technical-debt/
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 0 | 2 |
+ | MEDIUM | 0 | 6 | 25 |
+-| LOW | 0 | 1 | 41 |
++| LOW | 4 | 1 | 41 |
+ 
+-**Last Modified:** 2026-06-11 | **Open Items:** 0 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 75
++**Last Modified:** 2026-06-11 | **Open Items:** 4 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 79
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 8b3a92f..3445785 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,19 @@
++## [1.1.0] - 2026-06-11
++
++### Added
++
++- Reserved (parsed-and-validated, inert in 1.x) agent fields in the registry schema for the future agentic stages: `tools`, `max_turns`, `tool_budget_bytes`, `role`
++- Reserved optional `verification` block (`{verdict, skeptic, notes}`) in `reconciled/findings.json` for the future adversarial-verification stage; absent in 1.x and tolerated on read
++- `stages` array in `manifest.json`, recording `["review"]` in 1.x
++- Reserved per-agent `turns`, `tool_calls`, `tool_bytes` counters in `status.json` (absent in 1.x)
++
++### Changed
++
++- Registry v1 parser now accepts the reserved agent fields (previously documented as rejected as unknown keys); they load and type-validate but remain inert, so a config can target a future stage without forcing a format-version break
++- Documented every reserved field with its owning future epic in `docs/registry.md` and `docs/findings-format.md`
++
++*Shipped via /execute-epic (epic 1.1)*
++
+ ## [1.0.0] - 2026-06-11
+ 
+ ### Added
+diff --git a/README.md b/README.md
+index cd2e3c8..6348e4d 100644
+--- a/README.md
++++ b/README.md
+@@ -2,6 +2,8 @@
+ 
+ > A review panel, not a reviewer.
+ 
++**Website:** [atcr.dev](https://atcr.dev)
++
+ **atcr** fans a code change out to a panel of heterogeneous LLM reviewer personas — different models, different providers, different lenses — then deterministically reconciles their findings into a single deduplicated, confidence-scored report. Cross-model agreement drives the confidence signal: a finding two independent models both caught is worth more than either model's opinion alone.
+ 
+ One Go binary, three faces: a **CLI**, an **MCP server** (`atcr serve`) over the same engine, and a companion **Agent Skill** that contributes a host-model review as the "+1" reviewer so even a single API key yields 2+ sources and a working confidence signal.
+diff --git a/docs/findings-format.md b/docs/findings-format.md
+index 1a77a49..f7a8470 100644
+--- a/docs/findings-format.md
++++ b/docs/findings-format.md
+@@ -89,7 +89,16 @@ Discovery is **leaf-preference**: a directory's `findings.txt` is an input only
+ 
+ ## JSON form
+ 
+-`reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. A reserved per-finding `verification` block (`{verdict, skeptic, notes}`) is defined for a future stage and absent in 1.x; renderers must tolerate both its absence and presence.
++`reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. A reserved per-finding `verification` block (`{verdict, skeptic, notes}`) is reserved for the adversarial-verification stage (**Epic 3.0**): parsed if present, but never produced by any v1 code path and **absent from 1.x output**. Renderers and readers must tolerate both its absence and its presence — `atcr report` renders identically either way.
++
++## Reserved fields in companion artifacts
++
++The other v1 review artifacts carry reserved fields for the agentic stages on the same "parsed, not yet acted on" basis. Consumers must tolerate their presence and absence:
++
++| Artifact | Field | 1.x value | Reserved for |
++|----------|-------|-----------|--------------|
++| `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran | **Epics 3.0–5.0** — later runs append `"verify"`, `"debate"` |
++| per-agent `status.json` | `turns`, `tool_calls`, `tool_bytes` | absent — no tool loop ran | **Epic 2.0** — tool-using reviewer loop |
+ 
+ ## Evolution policy
+ 
+diff --git a/docs/registry.md b/docs/registry.md
+index aeed97c..fbc67bc 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -121,13 +121,15 @@ Fallback references are validated when the registry loads:
+ 
+ Both fail the load immediately, so a misconfigured chain can never surface mid-run.
+ 
+-## Reserved field names (rejected by the v1 parser)
++## Reserved fields (parsed and validated, inert in 1.x)
+ 
+-The v1 schema is strict — unknown keys fail the load. The following names are reserved for later stages and will become valid keys when their stage lands; until then, including them is a load error.
++The v1 schema is strict — unknown keys fail the load — but the following agent fields are **reserved for later stages and already accepted**. A 1.x registry may set them; the loader parses and type-validates them, yet **no v1 code path acts on them** and **no load-time default is applied** — an omitted field stays at its zero/unset value until its stage lands. This lets a config target a future stage today without forcing a format-version break.
+ 
+-| Field | Planned default | Activated by |
+-|-------|-----------------|--------------|
+-| `tools` | false | Stage 2 — tool-using reviewers |
+-| `max_turns` | 10 | Stage 2 |
+-| `tool_budget_bytes` | — | Stage 2 |
+-| `role` | reviewer | Stage 3/4 — `skeptic`, `judge` |
++| Field | Type | Planned default | Validated at load | Activated by |
++|-------|------|-----------------|-------------------|--------------|
++| `tools` | bool | false | type only | Stage 2 — tool-using reviewers |
++| `max_turns` | int | 10 | must be `> 0` | Stage 2 |
++| `tool_budget_bytes` | int | — (unset) | must be `>= 0` | Stage 2 |
++| `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
++
++The **planned default** column documents the value each field's owning stage will assume when it activates; 1.x applies none of these. An out-of-range value (e.g. `max_turns: 0`, an unknown `role`) is a load error even though the field is otherwise inert, so a config targeting a future stage is still caught early.
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 7a1af15..2b7d444 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -191,7 +191,8 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 		PerAgentPayload: perAgentMode,
+ 		Roster:          rosterNames(cfg.Project),
+ 		StartedAt:       req.StartedAt,
+-		Partial:         false, // finalized by ExecuteReview once outcomes are known
++		Partial:         false,              // finalized by ExecuteReview once outcomes are known
++		Stages:          []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
+ 	}
+ 	if err := WriteManifest(dir, m); err != nil {
+ 		return nil, err
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index a97cc5b..ae12acb 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -145,6 +145,7 @@ func TestRunReview_EndToEnd(t *testing.T) {
+ 	assert.Equal(t, "explicit", m.DetectionMode)
+ 	assert.ElementsMatch(t, []string{"greta", "kai"}, m.Roster)
+ 	assert.Equal(t, "blocks", m.PerAgentPayload["greta"])
++	assert.Equal(t, []string{"review"}, m.Stages, "1.x manifest records the review stage (Epic 1.1 reserved field)")
+ 
+ 	latest, err := ReadLatest(repo)
+ 	require.NoError(t, err)
+diff --git a/internal/fanout/status.go b/internal/fanout/status.go
+index 1e90279..4b23144 100644
+--- a/internal/fanout/status.go
++++ b/internal/fanout/status.go
+@@ -142,6 +142,13 @@ type AgentStatus struct {
+ 	FallbackUsed  bool     `json:"fallback_used,omitempty"`
+ 	FallbackFrom  string   `json:"fallback_from,omitempty"`
+ 	Error         string   `json:"error,omitempty"`
++
++	// Reserved per-agent counters for the agentic stages (Epic 2.0 tool loop).
++	// Pointers + omitempty so they are absent from every 1.x status.json (no
++	// tool loop ran) yet a future stage can record an explicit zero.
++	Turns     *int   `json:"turns,omitempty"`
++	ToolCalls *int   `json:"tool_calls,omitempty"`
++	ToolBytes *int64 `json:"tool_bytes,omitempty"`
+ }
+ 
+ // WriteStatus serializes s to path as indented JSON, writing atomically (temp
+diff --git a/internal/fanout/status_test.go b/internal/fanout/status_test.go
+index 512a7ff..7c08869 100644
+--- a/internal/fanout/status_test.go
++++ b/internal/fanout/status_test.go
+@@ -62,3 +62,41 @@ func TestStatusJSON_NoTruncation(t *testing.T) {
+ 	assert.Empty(t, got.FilesDropped)
+ 	assert.Equal(t, 5, got.FindingsCount)
+ }
++
++// --- Epic 1.1: reserved per-agent status counters (absent in 1.x) ---
++
++// TestStatusJSON_ReservedCountersOmittedIn1x verifies a 1.x status.json omits
++// the reserved turns/tool_calls/tool_bytes counters (no agentic loop ran).
++func TestStatusJSON_ReservedCountersOmittedIn1x(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "status.json")
++	s := &AgentStatus{Agent: "bruce", Status: StatusOK, PayloadMode: "diff"}
++	require.NoError(t, WriteStatus(path, s))
++	data, err := os.ReadFile(path)
++	require.NoError(t, err)
++	for _, key := range []string{"turns", "tool_calls", "tool_bytes"} {
++		assert.NotContains(t, string(data), key, "reserved counter absent in 1.x")
++	}
++	assert.Nil(t, s.Turns)
++	assert.Nil(t, s.ToolCalls)
++	assert.Nil(t, s.ToolBytes)
++}
++
++// TestStatusJSON_ReservedCountersRoundTrip verifies the reserved counters
++// serialize and parse back when a future stage populates them.
++func TestStatusJSON_ReservedCountersRoundTrip(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "status.json")
++	turns, calls := 3, 7
++	var bytes64 int64 = 2048
++	s := &AgentStatus{Agent: "bruce", Status: StatusOK, PayloadMode: "diff", Turns: &turns, ToolCalls: &calls, ToolBytes: &bytes64}
++	require.NoError(t, WriteStatus(path, s))
++	data, err := os.ReadFile(path)
++	require.NoError(t, err)
++	var got AgentStatus
++	require.NoError(t, json.Unmarshal(data, &got))
++	require.NotNil(t, got.Turns)
++	assert.Equal(t, 3, *got.Turns)
++	require.NotNil(t, got.ToolCalls)
++	assert.Equal(t, 7, *got.ToolCalls)
++	require.NotNil(t, got.ToolBytes)
++	assert.Equal(t, int64(2048), *got.ToolBytes)
++}
+diff --git a/internal/payload/manifest.go b/internal/payload/manifest.go
+index 26ec701..c341f15 100644
+--- a/internal/payload/manifest.go
++++ b/internal/payload/manifest.go
+@@ -25,6 +25,11 @@ type Manifest struct {
+ 	StartedAt       time.Time         `json:"started_at"`
+ 	CompletedAt     time.Time         `json:"completed_at,omitempty"`
+ 	Partial         bool              `json:"partial"`
++
++	// Stages records which review stages ran. Reserved for the agentic stages
++	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
++	// "debate", etc. Optional so a manifest written without it parses cleanly.
++	Stages []string `json:"stages,omitempty"`
+ }
+ 
+ // WriteManifest serializes m to path as indented JSON, writing atomically
+diff --git a/internal/payload/manifest_test.go b/internal/payload/manifest_test.go
+index c8b5d6d..d4de81b 100644
+--- a/internal/payload/manifest_test.go
++++ b/internal/payload/manifest_test.go
+@@ -50,3 +50,28 @@ func TestWriteManifest_ArtifactFileMode(t *testing.T) {
+ 	// review artifact (AC 01-03); os.CreateTemp would otherwise leave 0600.
+ 	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+ }
++
++// --- Epic 1.1: reserved manifest stages array ---
++
++// TestManifest_StagesRoundTrip verifies the reserved stages array is written
++// and read back. In 1.x a review records exactly ["review"].
++func TestManifest_StagesRoundTrip(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "manifest.json")
++	m := &Manifest{Base: "a", Head: "b", StartedAt: time.Now().UTC(), Stages: []string{"review"}}
++	require.NoError(t, WriteManifest(path, m))
++
++	data, err := os.ReadFile(path)
++	require.NoError(t, err)
++	assert.Contains(t, string(data), `"stages"`)
++	var got Manifest
++	require.NoError(t, json.Unmarshal(data, &got))
++	assert.Equal(t, []string{"review"}, got.Stages)
++}
++
++// TestManifest_StagesTolerantWhenAbsent verifies a manifest written without the
++// reserved stages field parses cleanly (tolerant reader; field stays nil).
++func TestManifest_StagesTolerantWhenAbsent(t *testing.T) {
++	var got Manifest
++	require.NoError(t, json.Unmarshal([]byte(`{"base":"a","head":"b","roster":["greta"],"partial":false}`), &got))
++	assert.Nil(t, got.Stages)
++}
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index 57991d6..2af4eab 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -22,20 +22,34 @@ const (
+ 	AmbiguousJSON = "ambiguous.json"
+ )
+ 
++// Verification is the reserved per-finding adversarial-verification block for a
++// future stage (Epic 3.0). It is absent from every 1.x findings.json (the
++// omitempty pointer marshals to nothing when nil); readers and renderers must
++// tolerate both its absence and its presence.
++type Verification struct {
++	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
++	Skeptic string `json:"skeptic"` // agent that produced the verdict
++	Notes   string `json:"notes,omitempty"`
++}
++
+ // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,
+ // re-readable structured contract the report command renders views over.
++//
++// Verification is reserved for Epic 3.0 (adversarial verification) — parsed if
++// present, but never populated by any v1 code path and omitted from 1.x output.
+ type JSONFinding struct {
+-	Severity     string   `json:"severity"`
+-	File         string   `json:"file"`
+-	Line         int      `json:"line"`
+-	Problem      string   `json:"problem"`
+-	Fix          string   `json:"fix"`
+-	Category     string   `json:"category"`
+-	EstMinutes   int      `json:"est_minutes"`
+-	Evidence     string   `json:"evidence"`
+-	Reviewers    []string `json:"reviewers"`
+-	Confidence   string   `json:"confidence"`
+-	Disagreement string   `json:"disagreement,omitempty"`
++	Severity     string        `json:"severity"`
++	File         string        `json:"file"`
++	Line         int           `json:"line"`
++	Problem      string        `json:"problem"`
++	Fix          string        `json:"fix"`
++	Category     string        `json:"category"`
++	EstMinutes   int           `json:"est_minutes"`
++	Evidence     string        `json:"evidence"`
++	Reviewers    []string      `json:"reviewers"`
++	Confidence   string        `json:"confidence"`
++	Disagreement string        `json:"disagreement,omitempty"`
++	Verification *Verification `json:"verification,omitempty"` // reserved (Epic 3.0); absent in 1.x
+ }
+ 
+ // JSONFindings converts the merged findings to their JSON schema records.
+diff --git a/internal/reconcile/emit_test.go b/internal/reconcile/emit_test.go
+index 86d028f..be992ee 100644
+--- a/internal/reconcile/emit_test.go
++++ b/internal/reconcile/emit_test.go
+@@ -235,3 +235,54 @@ func TestReadReconciledFindings_SharedLoaderContract(t *testing.T) {
+ 	assert.Equal(t, "a.go", got[0].File)
+ 	assert.Equal(t, 7, got[0].Line)
+ }
++
++// --- Epic 1.1: reserved per-finding verification block (absent in 1.x) ---
++
++// TestJSONFinding_VerificationOmittedIn1x verifies a 1.x findings.json record
++// (no verification produced) marshals without a "verification" key, so the
++// reserved block is genuinely absent until a future stage populates it.
++func TestJSONFinding_VerificationOmittedIn1x(t *testing.T) {
++	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
++	data, err := json.Marshal(f)
++	require.NoError(t, err)
++	assert.NotContains(t, string(data), "verification", "reserved verification block absent in 1.x")
++	assert.Nil(t, f.Verification)
++}
++
++// TestJSONFinding_VerificationRoundTrips verifies a findings.json record that
++// carries a verification block parses into the struct and re-marshals intact —
++// renderers and readers must tolerate its presence (forward compatibility).
++func TestJSONFinding_VerificationRoundTrips(t *testing.T) {
++	raw := `{"severity":"HIGH","file":"a.go","line":1,"problem":"p","fix":"f","category":"security","est_minutes":10,"evidence":"e","reviewers":["greta"],"confidence":"HIGH","verification":{"verdict":"confirmed","skeptic":"otto","notes":"reproduced"}}`
++	var f JSONFinding
++	require.NoError(t, json.Unmarshal([]byte(raw), &f))
++	require.NotNil(t, f.Verification)
++	assert.Equal(t, "confirmed", f.Verification.Verdict)
++	assert.Equal(t, "otto", f.Verification.Skeptic)
++	assert.Equal(t, "reproduced", f.Verification.Notes)
++
++	out, err := json.Marshal(f)
++	require.NoError(t, err)
++	assert.Contains(t, string(out), `"verification"`)
++	assert.Contains(t, string(out), `"verdict":"confirmed"`)
++}
++
++// TestReadReconciledFindings_ToleratesVerificationPresenceAndAbsence verifies
++// the shared findings.json reader handles records both with and without the
++// reserved verification block.
++func TestReadReconciledFindings_ToleratesVerificationPresenceAndAbsence(t *testing.T) {
++	reviewDir := t.TempDir()
++	dir := filepath.Join(reviewDir, reconciledSubdir)
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	body := `[
++  {"severity":"HIGH","file":"a.go","line":1,"problem":"p1","reviewers":["greta"],"confidence":"MEDIUM"},
++  {"severity":"LOW","file":"b.go","line":2,"problem":"p2","reviewers":["otto"],"confidence":"LOW","verification":{"verdict":"refuted","skeptic":"dax","notes":"n"}}
++]`
++	require.NoError(t, os.WriteFile(filepath.Join(dir, FindingsJSON), []byte(body), 0o644))
++	got, err := ReadReconciledFindings(reviewDir)
++	require.NoError(t, err)
++	require.Len(t, got, 2)
++	assert.Nil(t, got[0].Verification, "absent verification tolerated")
++	require.NotNil(t, got[1].Verification, "present verification tolerated")
++	assert.Equal(t, "refuted", got[1].Verification.Verdict)
++}
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index 2ebe60d..21df3e6 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -31,8 +31,25 @@ type Provider struct {
+ 	BaseURL   string `yaml:"base_url,omitempty"`
+ }
+ 
++// Reserved agent roles for the agentic stages (Epics 3.0/4.0). Reserved and
++// validated at load in 1.x but acted on by no v1 code path.
++const (
++	RoleReviewer = "reviewer"
++	RoleSkeptic  = "skeptic"
++	RoleJudge    = "judge"
++)
++
+ // AgentConfig binds a provider+model to a reviewer persona. Temperature and
+ // TimeoutSecs are pointers so an explicit zero survives default application.
++//
++// Tools, MaxTurns, ToolBudgetBytes, and Role are reserved for the agentic
++// stages (Epics 2.0–4.0). They are parsed and validated at load so a config
++// targeting a future stage loads cleanly under the strict v1 parser, but no
++// v1 code path acts on them and no load-time default is applied — they stay at
++// their zero/unset value in 1.x. MaxTurns and ToolBudgetBytes are pointers so
++// the activating stage can tell an explicit value from an unset one (the same
++// reason TimeoutSecs is a pointer). Planned defaults (tools=false,
++// max_turns=10, role=reviewer) are documented in docs/registry.md.
+ type AgentConfig struct {
+ 	Provider    string   `yaml:"provider"`
+ 	Model       string   `yaml:"model"`
+@@ -42,6 +59,23 @@ type AgentConfig struct {
+ 	RateLimited bool     `yaml:"rate_limited,omitempty"`
+ 	Fallback    string   `yaml:"fallback,omitempty"`
+ 	Payload     string   `yaml:"payload,omitempty"`
++
++	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
++	Tools           bool   `yaml:"tools,omitempty"`             // Stage 2 — enables the tool loop
++	MaxTurns        *int   `yaml:"max_turns,omitempty"`         // Stage 2 — agent-loop turn cap
++	ToolBudgetBytes *int   `yaml:"tool_budget_bytes,omitempty"` // Stage 2 — cumulative tool-result budget
++	Role            string `yaml:"role,omitempty"`              // Stage 3/4 — reviewer | skeptic | judge
++}
++
++// roleValid reports whether r is an allowed reserved role. The empty string is
++// allowed (unset → planned default reviewer when Stage 3/4 lands).
++func roleValid(r string) bool {
++	switch r {
++	case "", RoleReviewer, RoleSkeptic, RoleJudge:
++		return true
++	default:
++		return false
++	}
+ }
+ 
+ // Registry is the user-level configuration from ~/.config/atcr/registry.yaml:
+@@ -150,6 +184,16 @@ func (r *Registry) validate() error {
+ 		if !payloadModeValid(a.Payload) {
+ 			return fmt.Errorf("agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+ 		}
++		// Reserved agentic-stage fields: validated at load (inert in 1.x).
++		if !roleValid(a.Role) {
++			return fmt.Errorf("agent '%s': role must be one of reviewer, skeptic, judge", name)
++		}
++		if a.MaxTurns != nil && *a.MaxTurns <= 0 {
++			return fmt.Errorf("agent '%s': max_turns must be > 0", name)
++		}
++		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
++			return fmt.Errorf("agent '%s': tool_budget_bytes must be >= 0", name)
++		}
+ 	}
+ 	return nil
+ }
+diff --git a/internal/registry/config_test.go b/internal/registry/config_test.go
+index a8edde7..13800b2 100644
+--- a/internal/registry/config_test.go
++++ b/internal/registry/config_test.go
+@@ -330,3 +330,104 @@ agents:
+ 	require.NoError(t, err)
+ 	assert.True(t, reg.Agents["a"].RateLimited)
+ }
++
++// --- Epic 1.1: reserved agentic-stage fields (parsed + validated, inert in 1.x) ---
++
++// TestRegistryLoad_ReservedFieldsParsed verifies the four reserved fields
++// (tools, max_turns, tool_budget_bytes, role) load cleanly under the strict
++// v1 parser instead of being rejected as unknown keys, and that their values
++// are preserved for the stage that will eventually act on them.
++func TestRegistryLoad_ReservedFieldsParsed(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  a:
++    provider: p
++    model: m
++    tools: true
++    max_turns: 5
++    tool_budget_bytes: 4096
++    role: skeptic
++`))
++	require.NoError(t, err)
++	a := reg.Agents["a"]
++	assert.True(t, a.Tools, "tools parsed")
++	require.NotNil(t, a.MaxTurns)
++	assert.Equal(t, 5, *a.MaxTurns, "max_turns parsed")
++	require.NotNil(t, a.ToolBudgetBytes)
++	assert.Equal(t, 4096, *a.ToolBudgetBytes, "tool_budget_bytes parsed")
++	assert.Equal(t, "skeptic", a.Role, "role parsed")
++}
++
++// TestRegistryLoad_ReservedFieldsInert verifies the reserved fields stay at
++// their inert zero/unset state when omitted — no load-time default is applied
++// (Epic 1.1 keeps the 1.x behavior footprint exactly zero).
++func TestRegistryLoad_ReservedFieldsInert(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, validRegistry))
++	require.NoError(t, err)
++	bruce := reg.Agents["bruce"]
++	assert.False(t, bruce.Tools, "tools defaults to false (zero value, no default applied)")
++	assert.Nil(t, bruce.MaxTurns, "max_turns stays unset (no default applied in 1.x)")
++	assert.Nil(t, bruce.ToolBudgetBytes, "tool_budget_bytes stays unset")
++	assert.Empty(t, bruce.Role, "role stays empty (no default applied in 1.x)")
++}
++
++// TestRegistryLoad_ReservedFieldValidation covers load-time validation of the
++// reserved fields: enum check for role, positivity for max_turns,
++// non-negativity for tool_budget_bytes.
++func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
++	tests := []struct {
++		name    string
++		yaml    string
++		wantErr string
++	}{
++		{
++			"invalid role",
++			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: overlord\n",
++			"role must be one of",
++		},
++		{
++			"zero max_turns",
++			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    max_turns: 0\n",
++			"max_turns must be",
++		},
++		{
++			"negative max_turns",
++			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    max_turns: -3\n",
++			"max_turns must be",
++		},
++		{
++			"negative tool_budget_bytes",
++			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tool_budget_bytes: -1\n",
++			"tool_budget_bytes must be",
++		},
++		{
++			"wrong type for tools",
++			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tools: maybe\n",
++			"",
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			_, err := LoadRegistry(writeRegistry(t, tt.yaml))
++			require.Error(t, err)
++			if tt.wantErr != "" {
++				assert.Contains(t, err.Error(), tt.wantErr)
++			}
++		})
++	}
++}
++
++// TestRegistryLoad_ReservedRolesAccepted verifies every valid role enum value
++// (and an explicit reviewer) loads cleanly.
++func TestRegistryLoad_ReservedRolesAccepted(t *testing.T) {
++	for _, role := range []string{"reviewer", "skeptic", "judge"} {
++		t.Run(role, func(t *testing.T) {
++			reg, err := LoadRegistry(writeRegistry(t, "providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: "+role+"\n"))
++			require.NoError(t, err)
++			assert.Equal(t, role, reg.Agents["a"].Role)
++		})
++	}
++}
+diff --git a/internal/report/render_test.go b/internal/report/render_test.go
+index 8a6dc0c..aaad293 100644
+--- a/internal/report/render_test.go
++++ b/internal/report/render_test.go
+@@ -192,3 +192,30 @@ func TestRender_UnknownFormatErrors(t *testing.T) {
+ 	require.Error(t, err)
+ 	assert.Contains(t, err.Error(), "unknown format")
+ }
++
++// --- Epic 1.1: report renders identically regardless of the reserved
++// verification block (success criterion: render is identical with or without it) ---
++
++// TestRender_IdenticalWithAndWithoutVerification verifies that adding the
++// reserved verification block to a finding does not change markdown or
++// checklist output, and only adds the (round-tripped) verification key to JSON.
++func TestRender_IdenticalWithAndWithoutVerification(t *testing.T) {
++	without := sample()
++	with := sample()
++	with[0].Verification = &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
++
++	for _, format := range []string{FormatMarkdown, FormatChecklist} {
++		t.Run(format, func(t *testing.T) {
++			var a, b strings.Builder
++			require.NoError(t, Render(&a, without, format))
++			require.NoError(t, Render(&b, with, format))
++			assert.Equal(t, a.String(), b.String(), "human formats ignore the reserved verification block")
++		})
++	}
++
++	t.Run("json-omitted-when-absent", func(t *testing.T) {
++		var a strings.Builder
++		require.NoError(t, Render(&a, without, FormatJSON))
++		assert.NotContains(t, a.String(), "verification")
++	})
++}

@@ -1,0 +1,637 @@
+diff --git a/.planning/epics/active/1.5_review-status-lifecycle.md b/.planning/epics/active/1.5_review-status-lifecycle.md
+index 6f10fa3..6918e69 100644
+--- a/.planning/epics/active/1.5_review-status-lifecycle.md
++++ b/.planning/epics/active/1.5_review-status-lifecycle.md
+@@ -67,3 +67,29 @@ Epic 1.0 shipped status as a derivation over two artifacts: manifest.json (roste
+ | Stale inference fires on a legitimately slow run | Medium | Medium | Grace margin atop the persisted effective timeout; status string honestly signals inference |
+ | Enum extension breaks a consumer hard-coding the three states | Low | Medium | Contract amendment recorded in AC 04-04; grep consumers (CLI, MCP, skill) in-task |
+ | Clock skew between writer and reader hosts | Low | Low | Same-host tool in practice; document the assumption |
++
++## Clarifications
++
++### Recorded 2026-06-12 (rubber duck — /execute-epic)
++
++**Key Decisions:**
++- The write-ordering dependency is already satisfied by the current code — no change to `ExecuteReview` is in scope. Task 4 documents and tests the ordering the code already produces (manifest always present from `PrepareReview` scaffold; `WritePool`/summary.json and the finalized `WriteManifest` run at completion). The concurrency test covers the "summary present, manifest not-yet-finalized" interleaving and asserts no torn-pair misreport; a manifest-absent read returns `os.ErrNotExist` (mapped to "review not found"), never a false `in_progress`.
++- Stale grace margin is a flat `staleGraceSecs = 60` constant added atop the persisted effective timeout (not a percentage). The post-deadline write path is local-filesystem, synchronous, no network I/O — 60s is conservative and absorbs minor clock skew.
++- Post-fan-out persistence failure (`WritePool` error in `ExecuteReview`) writes a best-effort minimal `summary.json` (`total=roster, succeeded=0, failed=roster, partial=false`) so the existing reader path reports `failed` (`succeeded==0 → RunFailed`). No new sentinel file. If even that best-effort write fails, summary.json stays absent and stale inference promotes the review to `stale` after the timeout.
++
++**Scope Boundaries:**
++- IN scope: backward-compat tests for the existing `timeout_secs` manifest field; stale inference + `RunStale` constant + injectable clock for tests; failure-marker path in `ExecuteReview`; read-side torn-pair invariant + concurrency test; CLI/MCP pass-through tests for the new value; AC 04-04 enum amendment + skill polling guidance.
++- OUT of scope: a consolidated `status.json` snapshot or any new sentinel file (rejected by adjudication); per-agent incremental progress mid-run; changing the `ReviewStatus` field set or the MCP tool schema shape; any reordering of `ExecuteReview`'s artifact writes.
++
++**Technical Approach:**
++- Old manifests without `timeout_secs` (zero value) disable stale inference and keep reporting `in_progress` — backward compatible.
++- `ReadReviewStatus` gains an injectable "now" (package-level clock var, default `time.Now`) so a stale manifest can be tested deterministically.
++- New status value `stale` flows through `StatusResult` (type alias of `ReviewStatus`), `atcr status` CLI, and `atcr_status` MCP handler unchanged — all are pure pass-throughs; no consumer switches on the three literals.
++
++**Original Questions and Answers:**
++1. Q: Does this epic include the `ExecuteReview` manifest/summary write reorder, or does the read path stay order-agnostic while the reorder remains a separate fix?
++   A: The reorder is already satisfied by the current code; no write-order change is in scope. Task 4 documents and tests the existing ordering. The interleaving to cover is "summary present, manifest not yet written"; a manifest-absent read returns `ErrNotExist`, never a false `in_progress`.
++2. Q: Is a flat `staleGraceSecs = 60` appropriate, or should a percentage-of-timeout be used?
++   A: Flat 60s is appropriate and sufficient; the post-deadline write path completes in milliseconds locally. A percentage adds complexity with no benefit and could collapse to near-zero for short timeouts. Keep the flat constant.
++3. Q: Is a best-effort minimal `summary.json` (succeeded=0, failed=roster) the intended failure marker?
++   A: Yes. `ReadReviewStatus` derives `RunFailed` when `succeeded==0`, so the minimal record maps directly to `failed` via the existing path. The fallback (absent summary → stale) is already handled. No new sentinel file.
+diff --git a/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/04-04-report-range-status-handlers.md b/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/04-04-report-range-status-handlers.md
+index 611b142..e7680e5 100644
+--- a/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/04-04-report-range-status-handlers.md
++++ b/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/04-04-report-range-status-handlers.md
+@@ -30,9 +30,19 @@ This AC is implemented against the following project documentation. Read before
+ 
+ - **atcr_report default format is `md`** when `format` arg is omitted. The format enum `md|json|checklist` is enforced by the JSON Schema (not in the handler) — clients sending an invalid value receive a schema-validation error before the handler runs.
+ - **atcr_range returns the `Resolution` struct** as JSON: `{base, head, commit_count, file_count}` (with `detection_mode`, `default_branch`, `shallow`, `resolved_at` available for clients that need them). The empty-diff case is **not** an error — it returns `commit_count: 0, file_count: 0` so pre-flight checks can detect "nothing to review" without exception handling.
+-- **atcr_status reads from `manifest.json`** to derive status; if the manifest is missing required fields, the handler returns an error rather than guessing. Status values: `in_progress`, `completed`, `failed` (mapped from per-agent `status.json` aggregation).
++- **atcr_status reads from `manifest.json`** to derive status; if the manifest is missing required fields, the handler returns an error rather than guessing. Status values: `in_progress`, `completed`, `failed`, `stale` (the first three mapped from per-agent `status.json` aggregation; `stale` is inferred — see the Epic 1.5 amendment below).
+ - **Path containment** on `id_or_path` (same invariant as AC 04-03): paths must resolve under `.atcr/reviews/`.
+ 
++### Contract Amendment — `stale` status (Epic 1.5, 2026-06-12)
++
++The `status` value set is extended with a fourth value, `stale`. This is additive: the `ReviewStatus` JSON shape `{review_id, status, agent_count, agents_done, agents_pending, partial}` is unchanged, and the MCP `StatusResult` type alias and `atcr status` CLI continue to pass the value through unchanged.
++
++- **`stale`** is an *inferred* terminal state, not an observed one. `ReadReviewStatus` reports it when `summary.json` (the completion sentinel) is absent **and** the manifest's `started_at + timeout_secs + 60s` grace margin has elapsed. A scaffolded review that died after fan-out (post-persistence failure, killed MCP server) thus reports `stale` instead of `in_progress` forever.
++- **Backward compatibility:** a manifest written before `timeout_secs` existed (zero value) has no inferable deadline, so stale inference is disabled and it keeps reporting `in_progress`.
++- **Post-fan-out persistence failure maps to `failed`,** not `stale`: a `WritePool` error writes a best-effort minimal `summary.json` (`succeeded=0`) that the existing reader path reports as `failed`; `stale` is only the fallback when even that marker cannot be written.
++- **No new sentinel artifact:** `summary.json` remains the sole completion signal; `stale` adds no competing state-bearing file.
++- **Poll-loop guidance:** consumers (the skill orchestration loop, CI gates) MUST treat `stale` as **terminal** alongside `completed`/`failed` — stop polling, do not wait for it to clear. See AC 05-03 orchestration loop.
++
+ ## Happy Path Scenarios
+ 
+ **Scenario 1: atcr_report renders markdown by default**
+@@ -75,7 +85,7 @@ This AC is implemented against the following project documentation. Read before
+ **Scenario 7: atcr_status returns review progress**
+ - **Given** a review is in progress at `.atcr/reviews/20260610-120000/`
+ - **When** the MCP client calls `atcr_status` with `{"id_or_path": "20260610-120000"}`
+-- **Then** the handler returns `{review_id, status: "in_progress"|"completed"|"failed", agent_count, agents_done, agents_pending}`
++- **Then** the handler returns `{review_id, status: "in_progress"|"completed"|"failed"|"stale", agent_count, agents_done, agents_pending}`
+ 
+ **Scenario 8: atcr_status defaults to latest review**
+ - **Given** the MCP client calls `atcr_status` with empty args `{}`
+diff --git a/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/05-03-orchestration-loop.md b/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/05-03-orchestration-loop.md
+index fa3a9b6..ced71d3 100644
+--- a/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/05-03-orchestration-loop.md
++++ b/.planning/plans/completed/1.0_atcr_core/acceptance-criteria/05-03-orchestration-loop.md
+@@ -31,6 +31,7 @@ This AC is implemented against the following project documentation. Read before
+ - **Orchestration is exactly**: `atcr range` → `atcr review` (background, polled) → host review → `atcr reconcile` → `atcr report` → present `report.md`. Per `plan.md` (The atcr Skill section) and `user-stories/05-host-review-via-skill.md` original criterion #6.
+ - **Polling interval** is 5 seconds with max 60 retries (5-minute default timeout); both are configurable via skill arguments.
+ - **Background review**: `atcr review` can run in the background (e.g., `&` or via `atcr review --wait` if implemented); the Skill polls `atcr status` rather than blocking.
++- **Terminal poll states (Epic 1.5):** the poll loop stops when `atcr status` reports any terminal state — `completed`, `failed`, **or `stale`**. `stale` is the inferred dead-review state (`summary.json` absent and `started_at + timeout_secs + 60s` grace elapsed); the loop MUST treat it as terminal and stop, not keep polling a fan-out that will never complete. Distinguishing `stale` from `in_progress` is what lets the Skill tell a running review from a dead one (it no longer waits the full retry budget on an orphan, and should not keep `.atcr/latest` trusted as a live run). See the AC 04-04 `stale` contract amendment.
+ - **Host review is the +1 reviewer**: the Skill writes `sources/host/findings.txt` so reconcile always has 2+ sources (host + pool agents), which produces HIGH confidence when they agree. Per `user-stories/05-host-review-via-skill.md` background.
+ - **No sprint knowledge** in the Skill: input is a git range, branch, or PR; output is the review directory path. Per `user-stories/05-host-review-via-skill.md` original criterion #11.
+ - **Timeout enforcement** at the Skill level prevents runaway orchestration: the Skill aborts if any step exceeds the configured per-step timeout and reports the failure to the user with a clear next-step suggestion.
+diff --git a/.planning/technical-debt/README.md b/.planning/technical-debt/README.md
+index bcfd3ed..b9b8858 100644
+--- a/.planning/technical-debt/README.md
++++ b/.planning/technical-debt/README.md
+@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
+ |----------|------|----------|----------|
+ | CRITICAL | 0 | 0 | 0 |
+ | HIGH | 0 | 0 | 0 |
+-| MEDIUM | 0 | 6 | 0 |
+-| LOW | 0 | 1 | 0 |
++| MEDIUM | 2 | 6 | 0 |
++| LOW | 4 | 1 | 0 |
+ 
+-**Last Modified:** 2026-06-12 | **Open Items:** 0 | **Deferred Items:** 7 | **Resolved Items:** 0 | **Total Items:** 7
++**Last Modified:** 2026-06-12 | **Open Items:** 6 | **Deferred Items:** 7 | **Resolved Items:** 0 | **Total Items:** 13
+ 
+ ## Directory Structure
+ 
+@@ -33,6 +33,17 @@ technical-debt/
+ 4. **After resolution**: Move items from active to completed
+ 
+ 
++### [2026-06-12] From Sprint: epic-1.5
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary marks all agents failed even when an earlier agent already persisted findings during a mid-loop I/O fault, so reconcile can emit a non-partial verdict from the surviving subset that contradicts the failed marker | Have reconcile cross-check the failure-marker summary (or add a distinguishing marker field) so a partial-but-failed review is rejected rather than reconciled | INTEGRATION | 60 | execute-epic-independent |
++| 1 | [ ] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary swallows MkdirAll/writeJSON errors with no log; when the marker write also fails there is no operator signal for the in_progress-to-stale gap (the primary WritePool error IS already logged by the ExecuteReview caller) | Thread a best-effort logger into the fanout failure path so the secondary marker-write failure is diagnosable, or accept the primary-error log as sufficient | ERROR_PATHS | 30 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/review.go:239 | On the WritePool failure branch ExecuteReview writes the marker but never stamps manifest CompletedAt/Partial, so a failed-marked review's manifest is indistinguishable on disk from an unfinished scaffold for duration/partial-deriving tools | Stamp CompletedAt (and an explicit failed indicator) in the failure branch, or document the intentional absence | OBSERVABILITY | 20 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/status.go:156 | staleByDeadline uses int arithmetic for (timeout_secs+grace)*1e9 ns; a pathological timeout_secs near math.MaxInt64/1e9 overflows Duration negative, yielding a false-positive stale (practically unreachable: needs a ~292-year timeout) | Bounds-check timeout_secs or compute the deadline with a saturating guard | EDGE_CASES | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/status.go:122 | report/reconcile route a stale review through EnsureReviewComplete and surface re-run guidance instead of poll guidance; intended per the epic (stale is terminal) but a slow-but-alive run past timeout+grace is told to re-run | Confirmed terminal-by-design; revisit only if grace-margin false positives are observed in practice | REGRESSION_RISK | 15 | execute-epic-independent |
++| 1 | [ ] | LOW | internal/fanout/status.go:52 | nowFunc is a mutable unsynchronized package var; a future parallel test swapping it while another goroutine calls ReadReviewStatus would data-race (current stale-clock tests are non-parallel so it does not trip) | Document that nowFunc must not be swapped concurrently, or inject the clock via a struct field/parameter | UNDER_ENGINEERING | 20 | execute-epic-independent |
++
+ ### [2026-06-11] From Sprint: 1.0_atcr_core
+ 
+ | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cc98da2..3ca2611 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,3 +1,20 @@
++## [1.5.0] - 2026-06-12
++
++### Added
++
++- `stale` review status: `atcr status` and the `atcr_status` MCP tool now report a distinct, inferred terminal state for a review whose fan-out died — `summary.json` never appeared and the manifest's `started_at + timeout_secs` (plus a 60s grace margin) has elapsed. The Skill poll loop treats `stale` as terminal, so a dead review no longer reads `in_progress` forever and the orchestration loop can tell a running review from an orphaned one
++
++### Changed
++
++- `ReadReviewStatus` infers `stale` from the effective timeout persisted in `manifest.json`; manifests written without `timeout_secs` (zero value) have no inferable deadline and keep reporting `in_progress`, so the change is backward compatible. The `ReviewStatus` JSON shape is unchanged apart from the new `status` value — the MCP `StatusResult` alias and `atcr status` output stay compatible
++- A review inferred `stale` is now rejected by the reconcile/report completeness guard, which would otherwise emit a verdict from a dead, partially-written agent set; the error guides the user to re-run rather than poll
++
++### Fixed
++
++- A post-fan-out persistence failure (a `WritePool` I/O error) now writes a best-effort failure marker so the review reports `failed` instead of being stuck `in_progress` forever; if even that marker cannot be written, stale inference promotes the review out of `in_progress` once its timeout elapses
++
++*Shipped via /execute-epic (epic 1.5)*
++
+ ## [1.4.0] - 2026-06-12
+ 
+ ### Added
+diff --git a/cmd/atcr/status_test.go b/cmd/atcr/status_test.go
+index 0f58995..6d30aaa 100644
+--- a/cmd/atcr/status_test.go
++++ b/cmd/atcr/status_test.go
+@@ -55,6 +55,27 @@ func TestStatusCmd_CompletedJSON(t *testing.T) {
+ 	assert.Equal(t, 2, st.AgentsDone)
+ }
+ 
++// TestStatusCmd_StaleJSON verifies the inferred `stale` state (summary.json
++// absent, effective timeout elapsed) reaches `atcr status` output unchanged —
++// the CLI is a pure pass-through of ReadReviewStatus (Epic 1.5).
++func TestStatusCmd_StaleJSON(t *testing.T) {
++	root := t.TempDir()
++	id := "2026-06-10_dead"
++	dir := filepath.Join(root, ".atcr", "reviews", id)
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
++		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
++
++	out, err := runStatusIn(t, root)
++	require.NoError(t, err)
++	var st struct {
++		Status string `json:"status"`
++	}
++	require.NoError(t, json.Unmarshal([]byte(out), &st))
++	assert.Equal(t, "stale", st.Status)
++}
++
+ func TestStatusCmd_NoReviews(t *testing.T) {
+ 	root := t.TempDir()
+ 	_, err := runStatusIn(t, root)
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index 496bc91..12577ef 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -98,6 +98,20 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
+ 	return sum, nil
+ }
+ 
++// writeFailureSummary writes a best-effort minimal summary.json marking every
++// roster agent failed, so a post-fan-out persistence failure (a WritePool error
++// in ExecuteReview) surfaces as `failed` through the existing summary-derived
++// reader path (succeeded==0 → RunFailed) instead of an eternal in_progress.
++// Errors are deliberately swallowed: this is a last-resort marker written while
++// the normal write path is already failing, and if it too cannot be written the
++// review simply has no summary.json — stale inference then promotes it out of
++// in_progress once its timeout elapses. No new sentinel artifact is introduced.
++func writeFailureSummary(poolDir string, roster int) {
++	_ = os.MkdirAll(poolDir, 0o755)
++	ps := PoolSummary{Total: roster, Failed: roster}
++	_ = writeJSON(filepath.Join(poolDir, summaryFile), ps)
++}
++
+ // findingsFor parses an agent's raw review content into findings and stamps the
+ // REVIEWER as the agent name itself — never trusting any model-supplied column
+ // (TD-016). A failed agent (no content) yields no findings.
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 1c20804..9a6128e 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -229,8 +229,14 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	}
+ 	results := NewEngine(completer, WithMaxParallel(p.MaxParallel)).Run(runCtx, p.Slots)
+ 
+-	sum, err := WritePool(filepath.Join(p.Dir, "sources", "pool"), results)
++	poolDir := filepath.Join(p.Dir, "sources", "pool")
++	sum, err := WritePool(poolDir, results)
+ 	if err != nil {
++		// Persistence failed after the fan-out ran. Write a best-effort failure
++		// marker so the status reader reports `failed` rather than leaving the
++		// review stuck in_progress forever (Epic 1.5); if even this cannot be
++		// written, stale inference covers it once the timeout elapses.
++		writeFailureSummary(poolDir, len(p.Slots))
+ 		return nil, err
+ 	}
+ 
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index ae12acb..87479ce 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -210,6 +210,34 @@ func TestRunReview_AllFailReturnsErrorButPreservesArtifacts(t *testing.T) {
+ 	assert.FileExists(t, filepath.Join(res.Dir, "sources", "pool", "summary.json"))
+ }
+ 
++// A post-fan-out persistence failure (WritePool error after the roster ran)
++// must leave the review reporting failed — not eternal in_progress. ExecuteReview
++// writes a best-effort minimal summary.json (succeeded=0, failed=roster) that the
++// existing reader path maps to failed (Epic 1.5). An invalid on-disk agent name
++// makes WritePool's agentDirName reject the result, deterministically forcing
++// the failure branch without any I/O fault injection.
++func TestExecuteReview_WritePoolFailureMarksFailed(t *testing.T) {
++	dir := t.TempDir()
++	// Scaffold a manifest as PrepareReview would; a recent StartedAt keeps the
++	// review inside its timeout window so the assertion isolates the failure
++	// marker from stale inference.
++	require.NoError(t, WriteManifest(dir, &payload.Manifest{
++		Base: "a", Head: "b", Roster: []string{"greta"},
++		StartedAt: time.Now().UTC(), TimeoutSecs: 600,
++	}))
++	prep := &PreparedReview{
++		ID:    "x",
++		Dir:   dir,
++		Slots: []Slot{{Primary: Agent{Name: ".."}}}, // invalid dir name → WritePool errors
++	}
++	_, err := ExecuteReview(context.Background(), newFake(), prep)
++	require.Error(t, err, "WritePool must fail on the invalid agent dir name")
++
++	st, rerr := ReadReviewStatus(dir, "x")
++	require.NoError(t, rerr)
++	assert.Equal(t, RunFailed, st.Status, "a WritePool failure must surface as failed, not in_progress")
++}
++
+ func TestRunReview_EmptyRosterShortCircuits(t *testing.T) {
+ 	repo, base, head := initRepo(t)
+ 	cfg := &ReviewConfig{
+diff --git a/internal/fanout/status.go b/internal/fanout/status.go
+index 4b23144..0cb2faf 100644
+--- a/internal/fanout/status.go
++++ b/internal/fanout/status.go
+@@ -6,6 +6,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"time"
+ 
+ 	"github.com/samestrin/atcr/internal/payload"
+ )
+@@ -26,15 +27,30 @@ const (
+ 	StatusTimeout = "timeout"
+ )
+ 
+-// Review run states reported by ReadReviewStatus (AC 04-04): in_progress until
+-// the fan-out writes summary.json, then completed (≥1 agent ok) or failed (all
+-// agents failed).
++// Review run states reported by ReadReviewStatus (AC 04-04). in_progress holds
++// until the fan-out writes summary.json, then completed (≥1 agent ok) or failed
++// (all agents failed). stale is an inferred terminal state (Epic 1.5): summary
++// is absent AND the effective timeout (plus a grace margin) has elapsed, so the
++// fan-out is presumed dead rather than still running. stale is honestly labeled
++// as inferred, not observed — a poll loop treats it as terminal.
+ const (
+ 	RunInProgress = "in_progress"
+ 	RunCompleted  = "completed"
+ 	RunFailed     = "failed"
++	RunStale      = "stale"
+ )
+ 
++// staleGraceSecs is added atop the manifest's effective timeout before a
++// summary-less review is inferred dead. It absorbs the synchronous post-deadline
++// write path (per-agent renames + summary.json) and minor writer/reader clock
++// skew, so stale never fires on a run that is merely finishing. The writer
++// enforces the timeout itself, so false positives are bounded regardless.
++const staleGraceSecs = 60
++
++// nowFunc is the clock ReadReviewStatus consults for stale inference; a package
++// var so tests can pin it for deterministic window assertions.
++var nowFunc = time.Now
++
+ // ReviewStatus is a review's aggregated progress, derived from manifest.json
+ // (the roster) and sources/pool/summary.json (the completion signal). It is the
+ // shared shape returned to the `atcr status` CLI command and the atcr_status MCP
+@@ -58,8 +74,25 @@ type ReviewStatus struct {
+ // manifest surfaces as os.ErrNotExist (the caller maps it to "review not
+ // found"); a present-but-corrupt manifest is a parse error (AC 04-04 Edge Case
+ // 6 — never a partial garbage result). summary.json is the completion signal:
+-// absent means the fan-out is still running (in_progress); present means
+-// completed (≥1 agent succeeded) or failed (every agent failed).
++// absent means the fan-out is still running (in_progress) — or, once its
++// effective deadline has elapsed, stale; present means completed (≥1 agent
++// succeeded) or failed (every agent failed).
++//
++// Read-pair invariant (TD-023). The manifest and summary are read in two steps,
++// manifest-first, while a background fan-out may be writing both. This is
++// torn-read-safe by construction, and Task 4's concurrency test pins it:
++//   - Each file is written atomically (temp file + rename), so a reader sees a
++//     whole file, never a half-written one — a corrupt parse is real corruption,
++//     not a mid-write artifact.
++//   - manifest.json exists from PrepareReview (scaffold time) through every
++//     finalization rewrite; a genuinely absent manifest is os.ErrNotExist, never
++//     a false in_progress.
++//   - status, partial, and the agent counts derive solely from summary.json. The
++//     only fields taken from the manifest (roster size, StartedAt, timeout_secs)
++//     are written once at scaffold and are byte-identical across the finalizing
++//     rewrite, so whichever manifest version a reader observes yields the same
++//     result. Therefore no manifest/summary interleaving can produce a torn-pair
++//     misreport: every concurrent read returns a valid state.
+ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
+ 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
+ 	if err != nil {
+@@ -79,7 +112,17 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
+ 
+ 	sdata, serr := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile))
+ 	if serr != nil {
+-		return st, nil // no pool summary yet → still in progress
++		// No completion signal. The pair is read manifest-first then summary
++		// (Task 4 read invariant); a genuinely absent summary means the fan-out
++		// is either still running or dead. Infer stale only when the manifest's
++		// effective deadline (StartedAt + timeout_secs + grace) has passed —
++		// otherwise it is honestly still in_progress. A non-not-exist read error
++		// (e.g. permission) keeps the in_progress report rather than guessing a
++		// terminal state from an I/O fault.
++		if errors.Is(serr, os.ErrNotExist) && staleByDeadline(m) {
++			st.Status = RunStale
++		}
++		return st, nil
+ 	}
+ 	var ps PoolSummary
+ 	if err := json.Unmarshal(sdata, &ps); err != nil {
+@@ -102,10 +145,30 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
+ 	return st, nil
+ }
+ 
++// staleByDeadline reports whether a summary-less review has exceeded its
++// inferred deadline. It returns false when the deadline is unknowable — a zero
++// StartedAt or an absent timeout_secs (old manifests, zero value) — so those
++// reviews keep reporting in_progress rather than being guessed dead.
++func staleByDeadline(m payload.Manifest) bool {
++	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
++		return false
++	}
++	deadline := m.StartedAt.Add(time.Duration(m.TimeoutSecs+staleGraceSecs) * time.Second)
++	return nowFunc().After(deadline)
++}
++
+ // ErrReviewInProgress reports a reconcile/report attempt against a review whose
+ // fan-out has not written its completion signal (summary.json) yet.
+ var ErrReviewInProgress = errors.New("still in_progress")
+ 
++// ErrReviewStale reports a reconcile/report attempt against a review inferred
++// dead (Epic 1.5): its fan-out exceeded the effective timeout without writing a
++// completion signal. Like in_progress it has no summary.json, so reconciling it
++// would emit a complete-looking verdict from an incomplete (or empty) agent set
++// — but unlike in_progress it will never complete, so the guidance is to re-run
++// rather than poll.
++var ErrReviewStale = errors.New("stale (fan-out exceeded its timeout without a completion signal)")
++
+ // EnsureReviewComplete rejects a fan-out-managed review that is still running,
+ // so a reconcile cannot read a partially-written agent set and emit
+ // complete-looking artifacts (and a pass verdict) from a subset of agents. A
+@@ -123,6 +186,9 @@ func EnsureReviewComplete(reviewDir, id string) error {
+ 	if st.Status == RunInProgress {
+ 		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
+ 	}
++	if st.Status == RunStale {
++		return fmt.Errorf("review %s is %w; re-run the review", id, ErrReviewStale)
++	}
+ 	return nil
+ }
+ 
+diff --git a/internal/fanout/status_test.go b/internal/fanout/status_test.go
+index 7c08869..d2646e5 100644
+--- a/internal/fanout/status_test.go
++++ b/internal/fanout/status_test.go
+@@ -4,8 +4,12 @@ import (
+ 	"encoding/json"
+ 	"os"
+ 	"path/filepath"
++	"sync"
++	"sync/atomic"
+ 	"testing"
++	"time"
+ 
++	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ )
+@@ -28,6 +32,169 @@ func TestEnsureReviewComplete(t *testing.T) {
+ 	require.NoError(t, EnsureReviewComplete(dir, "x"))
+ }
+ 
++// --- Epic 1.5: stale inference for dead reviews ---
++
++// withNow swaps the package clock for deterministic stale-window assertions.
++func withNow(t *testing.T, fixed time.Time) {
++	t.Helper()
++	old := nowFunc
++	nowFunc = func() time.Time { return fixed }
++	t.Cleanup(func() { nowFunc = old })
++}
++
++// writeManifestOnly writes a raw manifest.json into dir with no summary.json, so
++// ReadReviewStatus exercises the absent-completion-signal branch.
++func writeManifestOnly(t *testing.T, dir, body string) {
++	t.Helper()
++	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile), []byte(body), 0o644))
++}
++
++// A scaffolded review whose summary.json never appeared and whose
++// StartedAt + timeout_secs + grace has elapsed is reported stale — an inferred
++// terminal state, not eternal in_progress.
++func TestReadReviewStatus_StaleWhenTimeoutElapsed(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunStale, st.Status)
++	assert.Equal(t, 1, st.AgentCount)
++}
++
++// Within StartedAt + timeout_secs + grace the same scaffolded review is still
++// in_progress — stale must not fire early on a legitimately running fan-out.
++func TestReadReviewStatus_InProgressWithinWindow(t *testing.T) {
++	dir := t.TempDir()
++	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
++	withNow(t, start.Add(120*time.Second)) // 120s in; window is 600 + 60 grace = 660s
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-12T12:00:00Z","timeout_secs":600,"partial":false}`)
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunInProgress, st.Status)
++}
++
++// Exactly at the StartedAt + timeout + grace boundary the review is still
++// in_progress; stale requires strictly past the deadline (After, not !Before).
++func TestReadReviewStatus_StaleBoundaryIsExclusive(t *testing.T) {
++	dir := t.TempDir()
++	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
++	withNow(t, start.Add(time.Duration(600+staleGraceSecs)*time.Second)) // exactly at the deadline
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-12T12:00:00Z","timeout_secs":600,"partial":false}`)
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunInProgress, st.Status, "at the boundary the run is not yet stale")
++}
++
++// An old manifest with no timeout_secs (zero) cannot have its deadline inferred,
++// so it keeps reporting in_progress no matter how old — backward compatible
++// (Epic 1.5 success criterion: old manifests load and report without stale).
++func TestReadReviewStatus_NoTimeoutNeverStale(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","partial":false}`)
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunInProgress, st.Status)
++}
++
++// A manifest with a zero StartedAt cannot have a deadline either; stale stays
++// off even with a timeout present.
++func TestReadReviewStatus_ZeroStartedAtNeverStale(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"timeout_secs":600,"partial":false}`)
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunInProgress, st.Status)
++}
++
++// A completed review (summary.json present) is never reclassified stale even if
++// StartedAt + timeout elapsed long ago: stale is inferred only from an ABSENT
++// completion signal, never overriding an observed one.
++func TestReadReviewStatus_CompletedNeverStale(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
++		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunCompleted, st.Status)
++}
++
++// A stale (dead) review has no completion signal, so EnsureReviewComplete must
++// reject it like an in-progress one — reconciling a dead, possibly partial agent
++// set would emit a complete-looking verdict from incomplete data. Unlike
++// in_progress, the guidance is to re-run, not poll.
++func TestEnsureReviewComplete_RejectsStale(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
++	err := EnsureReviewComplete(dir, "x")
++	require.ErrorIs(t, err, ErrReviewStale)
++	assert.Contains(t, err.Error(), "stale")
++	assert.Contains(t, err.Error(), "re-run")
++}
++
++// TestReadReviewStatus_ConcurrentWritesNeverTornRead pins the Task 4 read-pair
++// invariant: readers running concurrently with the finalization writes (the
++// writer rewrites summary.json then the manifest, the way ExecuteReview does)
++// must never observe a torn pair, a corrupt parse, or an invalid state. Run
++// under -race, it also proves there is no data race between the atomic file
++// writes and the reads.
++func TestReadReviewStatus_ConcurrentWritesNeverTornRead(t *testing.T) {
++	dir := t.TempDir()
++	poolDir := filepath.Join(dir, "sources", "pool")
++	require.NoError(t, os.MkdirAll(poolDir, 0o755))
++
++	// In-progress manifest, no summary yet (recent start → within the window, so
++	// stale never fires and the only valid states are in_progress / completed).
++	m := &payload.Manifest{Base: "a", Head: "b", Roster: []string{"greta", "kai"}, StartedAt: time.Now().UTC(), TimeoutSecs: 600}
++	require.NoError(t, WriteManifest(dir, m))
++
++	var wg sync.WaitGroup
++	var bad int32 // count of invalid observations
++
++	// Writer: finalize repeatedly, racing the readers — summary.json (completion
++	// signal) then the finalized manifest, mirroring ExecuteReview's order.
++	wg.Add(1)
++	go func() {
++		defer wg.Done()
++		for i := 0; i < 200; i++ {
++			_ = writeJSON(filepath.Join(poolDir, summaryFile),
++				PoolSummary{Total: 2, Succeeded: 2, Failed: 0, Partial: false, TotalFindings: 1})
++			fm := *m
++			fm.CompletedAt = time.Now().UTC()
++			_ = WriteManifest(dir, &fm)
++		}
++	}()
++
++	for r := 0; r < 8; r++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			for i := 0; i < 300; i++ {
++				st, err := ReadReviewStatus(dir, "x")
++				if err != nil {
++					atomic.AddInt32(&bad, 1)
++					continue
++				}
++				switch st.Status {
++				case RunInProgress: // summary not yet visible: pending == roster
++					if st.AgentCount != 2 || st.AgentsPending != 2 || st.AgentsDone != 0 {
++						atomic.AddInt32(&bad, 1)
++					}
++				case RunCompleted: // summary visible: completed tally
++					if st.AgentCount != 2 || st.AgentsDone != 2 || st.AgentsPending != 0 {
++						atomic.AddInt32(&bad, 1)
++					}
++				default: // stale/failed are impossible within the window with succeeded>0
++					atomic.AddInt32(&bad, 1)
++				}
++			}
++		}()
++	}
++	wg.Wait()
++	assert.Zero(t, atomic.LoadInt32(&bad), "no read may observe a torn pair, corrupt parse, or invalid state")
++}
++
+ func TestStatusJSON_RecordsTruncation(t *testing.T) {
+ 	path := filepath.Join(t.TempDir(), "status.json")
+ 	s := &AgentStatus{
+diff --git a/internal/mcp/handlers_test.go b/internal/mcp/handlers_test.go
+index 0d35991..1572814 100644
+--- a/internal/mcp/handlers_test.go
++++ b/internal/mcp/handlers_test.go
+@@ -414,6 +414,22 @@ func TestStatusHandler_Completed(t *testing.T) {
+ 	assert.Equal(t, 1, out.AgentsDone)
+ }
+ 
++// TestStatusHandler_Stale verifies the inferred `stale` state passes through
++// atcr_status unchanged: StatusResult is a type alias of fanout.ReviewStatus, so
++// the new enum value reaches MCP clients with no schema or shape change (Epic 1.5).
++func TestStatusHandler_Stale(t *testing.T) {
++	root := t.TempDir()
++	id := "2026-06-10_dead"
++	dir := filepath.Join(root, ".atcr", "reviews", id)
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
++		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
++	cs := connectTest(t, root, fakeCompleter{})
++	out := callOK[StatusResult](t, cs, ToolStatus, map[string]any{"id_or_path": id})
++	assert.Equal(t, fanout.RunStale, out.Status)
++}
++
+ func TestStatusHandler_NoReviews(t *testing.T) {
+ 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
+ 	msg := callErr(t, cs, ToolStatus, map[string]any{})
+diff --git a/internal/payload/manifest_test.go b/internal/payload/manifest_test.go
+index b795f2f..08801f1 100644
+--- a/internal/payload/manifest_test.go
++++ b/internal/payload/manifest_test.go
+@@ -101,3 +101,27 @@ func TestManifest_RecordsMaxParallelAndTimeoutSecs(t *testing.T) {
+ 	assert.Contains(t, string(data), `"max_parallel"`, "max_parallel key must appear in JSON")
+ 	assert.Contains(t, string(data), `"timeout_secs"`, "timeout_secs key must appear in JSON")
+ }
++
++// --- Epic 1.5: timeout_secs backward compatibility (stale-inference input) ---
++
++// TestManifest_TimeoutSecsTolerantWhenAbsent verifies a manifest written before
++// the timeout_secs field existed parses cleanly with TimeoutSecs == 0. The
++// status reader relies on this to disable stale inference for old manifests
++// (zero value = unknown deadline) rather than failing to load them.
++func TestManifest_TimeoutSecsTolerantWhenAbsent(t *testing.T) {
++	var got Manifest
++	require.NoError(t, json.Unmarshal(
++		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","partial":false}`), &got))
++	assert.Zero(t, got.TimeoutSecs, "absent timeout_secs must parse to zero, not error")
++}
++
++// TestManifest_TimeoutSecsOmittedWhenZero verifies omitempty keeps a zero
++// timeout_secs out of the JSON, so an old-style manifest round-trips clean and
++// is indistinguishable from one never carrying the field.
++func TestManifest_TimeoutSecsOmittedWhenZero(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "manifest.json")
++	require.NoError(t, WriteManifest(path, &Manifest{Base: "a", Head: "b", StartedAt: time.Now().UTC()}))
++	data, err := os.ReadFile(path)
++	require.NoError(t, err)
++	assert.NotContains(t, string(data), "timeout_secs", "zero timeout_secs must be omitted via omitempty")
++}

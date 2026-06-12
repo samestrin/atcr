@@ -89,7 +89,7 @@ High-level inventory (45 files total):
 - `src/services/scheduling/RecurrenceCalculator.ts` - complex logic
 - `src/components/Calendar/CalendarGrid.tsx` - heavy date math
 
-## Success Criteria
+## Acceptance Criteria
 
 - [ ] Zero Moment.js imports in codebase
 - [ ] Bundle size reduced by 50KB+

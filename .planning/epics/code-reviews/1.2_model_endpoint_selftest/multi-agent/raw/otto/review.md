@@ -1,0 +1,7 @@
+```
+LOW|internal/doctor/render.go:35|Detail surfaced as Hint when Hint is empty|Keep Detail in its own column or prefix substituted detail (e.g. 'error: ...') so the table does not mislabel a raw snippet as a hint|maintainability|15|hint := a.Hint; if hint == "" && a.Detail != "" { hint = a.Detail }|otto
+LOW|internal/doctor/render.go:42|Discarded tabwriter Flush error|Have RenderTable return an error or surface the Flush error to the caller|correctness|15|_ = tw.Flush()|otto
+LOW|internal/doctor/run.go:243|Potential leak of base_url in network_error detail|Document that base_url may appear in network_error detail so users avoid embedding credentials in base_url|security|10|return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: bounded(err.Error())}|otto
+LOW|internal/doctor/run.go:165|Permissive base_url pre-flight validation|Warn on a base_url whose path extends beyond the version segment, or document the expected base_url shape in registry.md|correctness|20|if u, err := url.Parse(tgt.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == ""|otto
+LOW|cmd/atcr/doctor.go:112|Missing stderr summary for CI/log scanning|Emit a one-line stderr summary (n ok / n failed) so non-table and CI consumers get a status-independent signal|maintainability|20|The report is already on stdout; the summary line goes to stderr via main's centralized handler (but not implemented in doctor.go)|otto
+```

@@ -1,0 +1,2 @@
+LOW|internal/fanout/status.go:52|Mutable package-level clock var risks data races|Inject clock via parameter or document concurrency restriction|correctness|15|`var nowFunc = time.Now` swapped unsafely; future parallel tests could race|bruce
+LOW|internal/fanout/status.go:154|Timeout arithmetic can overflow causing false stale|Bounds-check TimeoutSecs before Duration conversion|correctness|10|`time.Duration(m.TimeoutSecs+staleGraceSecs)*time.Second` wraps on pathological timeout values|bruce

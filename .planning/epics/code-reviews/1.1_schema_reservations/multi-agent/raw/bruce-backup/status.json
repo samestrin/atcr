@@ -1,0 +1,7 @@
+{
+  "agent_name": "bruce-backup",
+  "model": "openai/qwen-3.6-plus",
+  "status": "failed",
+  "duration_ms": 379891,
+  "error": "max retries exceeded: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - concurrency allocated quota exceeded. please try again later.No fallback model group found for original model_group=openai/qwen-3.6-plus. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=openai/qwen-3.6-plus\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - concurrency allocated quota exceeded. please try again later.No fallback model group found for original model_group=openai/qwen-3.6-plus. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - concurrency allocated quota exceeded. please try again later.No fallback model group found for original model_group=openai/qwen-3.6-plus. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=openai/qwen-3.6-plus\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - concurrency allocated quota exceeded. please try again later.No fallback model group found for original model_group=openai/qwen-3.6-plus. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2"
+}

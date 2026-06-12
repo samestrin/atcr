@@ -1,0 +1,7 @@
+{
+  "agent_name": "kai",
+  "model": "kimi-k2.6-coding",
+  "status": "failed",
+  "duration_ms": 16907,
+  "error": "API error (400): litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=kimi-k2.6-coding\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]: API error (400): litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=kimi-k2.6-coding\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] (fallback kai-backup also failed: max retries exceeded: request failed: Post \"http://192.168.68.109:4000/v1/chat/completions\": context deadline exceeded (Client.Timeout exceeded while awaiting headers))"
+}

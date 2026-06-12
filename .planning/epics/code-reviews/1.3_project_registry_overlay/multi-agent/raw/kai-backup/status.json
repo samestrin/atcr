@@ -1,0 +1,9 @@
+{
+  "agent_name": "kai-backup",
+  "model": "kimi-k2.5",
+  "status": "ok",
+  "duration_ms": 24982,
+  "fallback_used": true,
+  "fallback_from": "kai",
+  "original_error": "API error (400): litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=kimi-k2.6-coding\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]: API error (400): litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=kimi-k2.6-coding\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.BadRequestError: OpenAIException - invalid temperature: only 1 is allowed for this modelNo fallback model group found for original model_group=kimi-k2.6-coding. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]"
+}

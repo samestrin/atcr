@@ -68,6 +68,20 @@ func TestManifest_StagesRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"review"}, got.Stages)
 }
 
+// TestManifest_NilStagesNormalizedToReview verifies that WriteManifest with nil
+// Stages produces "stages":["review"] so readers never see an absent field and
+// cannot confuse 1.x manifests with pre-field older ones.
+func TestManifest_NilStagesNormalizedToReview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{Base: "aaa", Head: "bbb", StartedAt: time.Now().UTC()}
+	// Stages intentionally nil — WriteManifest must default to ["review"]
+	require.NoError(t, WriteManifest(path, m))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"stages"`, "nil Stages must be normalized to [\"review\"] on write")
+	assert.Contains(t, string(data), `"review"`, "nil Stages must produce [\"review\"] not absent field")
+}
+
 // TestManifest_StagesTolerantWhenAbsent verifies a manifest written without the
 // reserved stages field parses cleanly (tolerant reader; field stays nil).
 func TestManifest_StagesTolerantWhenAbsent(t *testing.T) {

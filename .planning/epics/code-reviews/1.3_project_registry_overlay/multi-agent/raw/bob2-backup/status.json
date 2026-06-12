@@ -1,0 +1,9 @@
+{
+  "agent_name": "bob2-backup",
+  "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+  "status": "ok",
+  "duration_ms": 324202,
+  "fallback_used": true,
+  "fallback_from": "bob2",
+  "original_error": "max retries exceeded: request failed: Post \"http://192.168.68.109:4000/v1/chat/completions\": read tcp 192.168.68.115:56063-\u003e192.168.68.109:4000: read: no route to host"
+}
