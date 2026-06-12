@@ -101,3 +101,27 @@ func TestManifest_RecordsMaxParallelAndTimeoutSecs(t *testing.T) {
 	assert.Contains(t, string(data), `"max_parallel"`, "max_parallel key must appear in JSON")
 	assert.Contains(t, string(data), `"timeout_secs"`, "timeout_secs key must appear in JSON")
 }
+
+// --- Epic 1.5: timeout_secs backward compatibility (stale-inference input) ---
+
+// TestManifest_TimeoutSecsTolerantWhenAbsent verifies a manifest written before
+// the timeout_secs field existed parses cleanly with TimeoutSecs == 0. The
+// status reader relies on this to disable stale inference for old manifests
+// (zero value = unknown deadline) rather than failing to load them.
+func TestManifest_TimeoutSecsTolerantWhenAbsent(t *testing.T) {
+	var got Manifest
+	require.NoError(t, json.Unmarshal(
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","partial":false}`), &got))
+	assert.Zero(t, got.TimeoutSecs, "absent timeout_secs must parse to zero, not error")
+}
+
+// TestManifest_TimeoutSecsOmittedWhenZero verifies omitempty keeps a zero
+// timeout_secs out of the JSON, so an old-style manifest round-trips clean and
+// is indistinguishable from one never carrying the field.
+func TestManifest_TimeoutSecsOmittedWhenZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	require.NoError(t, WriteManifest(path, &Manifest{Base: "a", Head: "b", StartedAt: time.Now().UTC()}))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "timeout_secs", "zero timeout_secs must be omitted via omitempty")
+}

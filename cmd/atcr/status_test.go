@@ -55,6 +55,27 @@ func TestStatusCmd_CompletedJSON(t *testing.T) {
 	assert.Equal(t, 2, st.AgentsDone)
 }
 
+// TestStatusCmd_StaleJSON verifies the inferred `stale` state (summary.json
+// absent, effective timeout elapsed) reaches `atcr status` output unchanged —
+// the CLI is a pure pass-through of ReadReviewStatus (Epic 1.5).
+func TestStatusCmd_StaleJSON(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-06-10_dead"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+
+	out, err := runStatusIn(t, root)
+	require.NoError(t, err)
+	var st struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &st))
+	assert.Equal(t, "stale", st.Status)
+}
+
 func TestStatusCmd_NoReviews(t *testing.T) {
 	root := t.TempDir()
 	_, err := runStatusIn(t, root)

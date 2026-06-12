@@ -210,6 +210,34 @@ func TestRunReview_AllFailReturnsErrorButPreservesArtifacts(t *testing.T) {
 	assert.FileExists(t, filepath.Join(res.Dir, "sources", "pool", "summary.json"))
 }
 
+// A post-fan-out persistence failure (WritePool error after the roster ran)
+// must leave the review reporting failed — not eternal in_progress. ExecuteReview
+// writes a best-effort minimal summary.json (succeeded=0, failed=roster) that the
+// existing reader path maps to failed (Epic 1.5). An invalid on-disk agent name
+// makes WritePool's agentDirName reject the result, deterministically forcing
+// the failure branch without any I/O fault injection.
+func TestExecuteReview_WritePoolFailureMarksFailed(t *testing.T) {
+	dir := t.TempDir()
+	// Scaffold a manifest as PrepareReview would; a recent StartedAt keeps the
+	// review inside its timeout window so the assertion isolates the failure
+	// marker from stale inference.
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta"},
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600,
+	}))
+	prep := &PreparedReview{
+		ID:    "x",
+		Dir:   dir,
+		Slots: []Slot{{Primary: Agent{Name: ".."}}}, // invalid dir name → WritePool errors
+	}
+	_, err := ExecuteReview(context.Background(), newFake(), prep)
+	require.Error(t, err, "WritePool must fail on the invalid agent dir name")
+
+	st, rerr := ReadReviewStatus(dir, "x")
+	require.NoError(t, rerr)
+	assert.Equal(t, RunFailed, st.Status, "a WritePool failure must surface as failed, not in_progress")
+}
+
 func TestRunReview_EmptyRosterShortCircuits(t *testing.T) {
 	repo, base, head := initRepo(t)
 	cfg := &ReviewConfig{
