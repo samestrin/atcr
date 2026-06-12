@@ -25,6 +25,11 @@ type Manifest struct {
 	StartedAt       time.Time         `json:"started_at"`
 	CompletedAt     time.Time         `json:"completed_at,omitempty"`
 	Partial         bool              `json:"partial"`
+
+	// Stages records which review stages ran. Reserved for the agentic stages
+	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
+	// "debate", etc. Optional so a manifest written without it parses cleanly.
+	Stages []string `json:"stages,omitempty"`
 }
 
 // WriteManifest serializes m to path as indented JSON, writing atomically

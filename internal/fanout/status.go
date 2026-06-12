@@ -142,6 +142,13 @@ type AgentStatus struct {
 	FallbackUsed  bool     `json:"fallback_used,omitempty"`
 	FallbackFrom  string   `json:"fallback_from,omitempty"`
 	Error         string   `json:"error,omitempty"`
+
+	// Reserved per-agent counters for the agentic stages (Epic 2.0 tool loop).
+	// Pointers + omitempty so they are absent from every 1.x status.json (no
+	// tool loop ran) yet a future stage can record an explicit zero.
+	Turns     *int   `json:"turns,omitempty"`
+	ToolCalls *int   `json:"tool_calls,omitempty"`
+	ToolBytes *int64 `json:"tool_bytes,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

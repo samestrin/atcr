@@ -22,20 +22,34 @@ const (
 	AmbiguousJSON = "ambiguous.json"
 )
 
+// Verification is the reserved per-finding adversarial-verification block for a
+// future stage (Epic 3.0). It is absent from every 1.x findings.json (the
+// omitempty pointer marshals to nothing when nil); readers and renderers must
+// tolerate both its absence and its presence.
+type Verification struct {
+	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
+	Skeptic string `json:"skeptic"` // agent that produced the verdict
+	Notes   string `json:"notes,omitempty"`
+}
+
 // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,
 // re-readable structured contract the report command renders views over.
+//
+// Verification is reserved for Epic 3.0 (adversarial verification) — parsed if
+// present, but never populated by any v1 code path and omitted from 1.x output.
 type JSONFinding struct {
-	Severity     string   `json:"severity"`
-	File         string   `json:"file"`
-	Line         int      `json:"line"`
-	Problem      string   `json:"problem"`
-	Fix          string   `json:"fix"`
-	Category     string   `json:"category"`
-	EstMinutes   int      `json:"est_minutes"`
-	Evidence     string   `json:"evidence"`
-	Reviewers    []string `json:"reviewers"`
-	Confidence   string   `json:"confidence"`
-	Disagreement string   `json:"disagreement,omitempty"`
+	Severity     string        `json:"severity"`
+	File         string        `json:"file"`
+	Line         int           `json:"line"`
+	Problem      string        `json:"problem"`
+	Fix          string        `json:"fix"`
+	Category     string        `json:"category"`
+	EstMinutes   int           `json:"est_minutes"`
+	Evidence     string        `json:"evidence"`
+	Reviewers    []string      `json:"reviewers"`
+	Confidence   string        `json:"confidence"`
+	Disagreement string        `json:"disagreement,omitempty"`
+	Verification *Verification `json:"verification,omitempty"` // reserved (Epic 3.0); absent in 1.x
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.
