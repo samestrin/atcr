@@ -236,7 +236,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		// marker so the status reader reports `failed` rather than leaving the
 		// review stuck in_progress forever (Epic 1.5); if even this cannot be
 		// written, stale inference covers it once the timeout elapses.
-		writeFailureSummary(poolDir, len(p.Slots))
+		writeFailureSummary(poolDir, results)
 		// Stamp CompletedAt so the manifest is distinguishable from an unfinished
 		// scaffold on disk; the failure-marker summary.json is the authoritative
 		// outcome signal, but a zero CompletedAt left duration/partial-deriving
