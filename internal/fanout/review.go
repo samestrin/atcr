@@ -228,9 +228,12 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	// Finalize the manifest's partial flag now that the outcomes are known
-	// (PrepareReview wrote it as false). summary.json is the completion signal.
+	// Finalize the manifest's partial flag and stamp the completion time now
+	// that the outcomes are known (PrepareReview wrote Partial=false and left
+	// CompletedAt zero). CompletedAt lets downstream tools derive run duration
+	// from manifest.json; summary.json is the completion signal.
 	p.manifest.Partial = sum.Partial
+	p.manifest.CompletedAt = time.Now().UTC()
 	if err := WriteManifest(p.Dir, p.manifest); err != nil {
 		return nil, err
 	}
