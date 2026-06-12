@@ -75,3 +75,29 @@ func TestManifest_StagesTolerantWhenAbsent(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"base":"a","head":"b","roster":["greta"],"partial":false}`), &got))
 	assert.Nil(t, got.Stages)
 }
+
+// --- Epic 1.4: max_parallel and timeout_secs in manifest ---
+
+// TestManifest_RecordsMaxParallelAndTimeoutSecs verifies that the effective
+// fan-out settings are written to manifest.json so post-hoc diagnosis of
+// throttled or timed-out runs can inspect the active cap from disk.
+func TestManifest_RecordsMaxParallelAndTimeoutSecs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{
+		Base:        "aaa",
+		Head:        "bbb",
+		StartedAt:   time.Now().UTC(),
+		MaxParallel: 4,
+		TimeoutSecs: 300,
+	}
+	require.NoError(t, WriteManifest(path, m))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var got Manifest
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, 4, got.MaxParallel, "max_parallel must round-trip through manifest.json")
+	assert.Equal(t, 300, got.TimeoutSecs, "timeout_secs must round-trip through manifest.json")
+	assert.Contains(t, string(data), `"max_parallel"`, "max_parallel key must appear in JSON")
+	assert.Contains(t, string(data), `"timeout_secs"`, "timeout_secs key must appear in JSON")
+}
