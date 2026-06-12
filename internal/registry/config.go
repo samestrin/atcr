@@ -90,6 +90,13 @@ type Registry struct {
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+
+	// ProviderSource and AgentSource record the tier (and defining file) each
+	// effective entry came from after the project overlay merge — user or
+	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
+	// mergeProject (project). An entry absent from the map is treated as user.
+	ProviderSource map[string]EntrySource `yaml:"-"`
+	AgentSource    map[string]EntrySource `yaml:"-"`
 }
 
 // DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
@@ -104,23 +111,12 @@ func DefaultRegistryPath() (string, error) {
 // LoadRegistry reads, strictly parses, and validates the registry at path.
 // API key env vars are NOT resolved here; that happens at invoke time.
 func LoadRegistry(path string) (*Registry, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
-	}
+	reg, err := parseRegistryFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading registry: %w", err)
+		return nil, err
 	}
 
 	base := filepath.Base(path)
-	var reg Registry
-	if err := decodeStrictYAML(data, &reg); err != nil {
-		if errors.Is(err, errEmptyDocument) {
-			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
-		}
-		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
-	}
-
 	if err := reg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
@@ -128,7 +124,7 @@ func LoadRegistry(path string) (*Registry, error) {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 	reg.applyDefaults()
-	return &reg, nil
+	return reg, nil
 }
 
 // validate checks required fields and reference integrity.
