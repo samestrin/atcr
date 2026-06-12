@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -128,6 +131,68 @@ func TestEnsureReviewComplete_RejectsStale(t *testing.T) {
 	require.ErrorIs(t, err, ErrReviewStale)
 	assert.Contains(t, err.Error(), "stale")
 	assert.Contains(t, err.Error(), "re-run")
+}
+
+// TestReadReviewStatus_ConcurrentWritesNeverTornRead pins the Task 4 read-pair
+// invariant: readers running concurrently with the finalization writes (the
+// writer rewrites summary.json then the manifest, the way ExecuteReview does)
+// must never observe a torn pair, a corrupt parse, or an invalid state. Run
+// under -race, it also proves there is no data race between the atomic file
+// writes and the reads.
+func TestReadReviewStatus_ConcurrentWritesNeverTornRead(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+
+	// In-progress manifest, no summary yet (recent start → within the window, so
+	// stale never fires and the only valid states are in_progress / completed).
+	m := &payload.Manifest{Base: "a", Head: "b", Roster: []string{"greta", "kai"}, StartedAt: time.Now().UTC(), TimeoutSecs: 600}
+	require.NoError(t, WriteManifest(dir, m))
+
+	var wg sync.WaitGroup
+	var bad int32 // count of invalid observations
+
+	// Writer: finalize repeatedly, racing the readers — summary.json (completion
+	// signal) then the finalized manifest, mirroring ExecuteReview's order.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = writeJSON(filepath.Join(poolDir, summaryFile),
+				PoolSummary{Total: 2, Succeeded: 2, Failed: 0, Partial: false, TotalFindings: 1})
+			fm := *m
+			fm.CompletedAt = time.Now().UTC()
+			_ = WriteManifest(dir, &fm)
+		}
+	}()
+
+	for r := 0; r < 8; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 300; i++ {
+				st, err := ReadReviewStatus(dir, "x")
+				if err != nil {
+					atomic.AddInt32(&bad, 1)
+					continue
+				}
+				switch st.Status {
+				case RunInProgress: // summary not yet visible: pending == roster
+					if st.AgentCount != 2 || st.AgentsPending != 2 || st.AgentsDone != 0 {
+						atomic.AddInt32(&bad, 1)
+					}
+				case RunCompleted: // summary visible: completed tally
+					if st.AgentCount != 2 || st.AgentsDone != 2 || st.AgentsPending != 0 {
+						atomic.AddInt32(&bad, 1)
+					}
+				default: // stale/failed are impossible within the window with succeeded>0
+					atomic.AddInt32(&bad, 1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Zero(t, atomic.LoadInt32(&bad), "no read may observe a torn pair, corrupt parse, or invalid state")
 }
 
 func TestStatusJSON_RecordsTruncation(t *testing.T) {

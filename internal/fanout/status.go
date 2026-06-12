@@ -74,8 +74,25 @@ type ReviewStatus struct {
 // manifest surfaces as os.ErrNotExist (the caller maps it to "review not
 // found"); a present-but-corrupt manifest is a parse error (AC 04-04 Edge Case
 // 6 — never a partial garbage result). summary.json is the completion signal:
-// absent means the fan-out is still running (in_progress); present means
-// completed (≥1 agent succeeded) or failed (every agent failed).
+// absent means the fan-out is still running (in_progress) — or, once its
+// effective deadline has elapsed, stale; present means completed (≥1 agent
+// succeeded) or failed (every agent failed).
+//
+// Read-pair invariant (TD-023). The manifest and summary are read in two steps,
+// manifest-first, while a background fan-out may be writing both. This is
+// torn-read-safe by construction, and Task 4's concurrency test pins it:
+//   - Each file is written atomically (temp file + rename), so a reader sees a
+//     whole file, never a half-written one — a corrupt parse is real corruption,
+//     not a mid-write artifact.
+//   - manifest.json exists from PrepareReview (scaffold time) through every
+//     finalization rewrite; a genuinely absent manifest is os.ErrNotExist, never
+//     a false in_progress.
+//   - status, partial, and the agent counts derive solely from summary.json. The
+//     only fields taken from the manifest (roster size, StartedAt, timeout_secs)
+//     are written once at scaffold and are byte-identical across the finalizing
+//     rewrite, so whichever manifest version a reader observes yields the same
+//     result. Therefore no manifest/summary interleaving can produce a torn-pair
+//     misreport: every concurrent read returns a valid state.
 func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
 	if err != nil {
