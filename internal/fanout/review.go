@@ -191,6 +191,8 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		DefaultBranch:   req.Range.DefaultBranch,
 		CommitCount:     req.Range.CommitCount,
 		PayloadMode:     cfg.Settings.PayloadMode,
+		MaxParallel:     cfg.Settings.MaxParallel,
+		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
 		Roster:          rosterNames(cfg.Project),
 		StartedAt:       req.StartedAt,

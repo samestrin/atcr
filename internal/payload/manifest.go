@@ -30,6 +30,13 @@ type Manifest struct {
 	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
 	// "debate", etc. Optional so a manifest written without it parses cleanly.
 	Stages []string `json:"stages,omitempty"`
+
+	// MaxParallel and TimeoutSecs are the effective fan-out settings recorded
+	// for post-hoc diagnosis: a throttled run can be identified by max_parallel
+	// in the manifest without replaying the registry precedence chain.
+	// omitempty keeps older manifests (written before Epic 1.4) parse-clean.
+	MaxParallel int `json:"max_parallel,omitempty"`
+	TimeoutSecs int `json:"timeout_secs,omitempty"`
 }
 
 // WriteManifest serializes m to path as indented JSON, writing atomically
