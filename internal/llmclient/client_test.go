@@ -352,7 +352,6 @@ func TestComplete_ContextTimeout(t *testing.T) {
 	assert.Less(t, time.Since(start), 80*time.Millisecond, "must return before the 100ms server sleep")
 }
 
-
 // --- Epic 1.2 Task 2: structured HTTPStatusError + MaxTokens ---
 
 func TestComplete_HTTPStatusErrorSurfacedForClassification(t *testing.T) {

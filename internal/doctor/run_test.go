@@ -163,9 +163,9 @@ func TestRun_NoWorkingPathExits1(t *testing.T) {
 func TestClassify_StatusMapping(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	cases := []struct {
-		name   string
-		err    error
-		want   string
+		name string
+		err  error
+		want string
 	}{
 		{"auth401", &llmclient.HTTPStatusError{Status: 401}, StatusAuthFailed},
 		{"auth403", &llmclient.HTTPStatusError{Status: 403}, StatusAuthFailed},

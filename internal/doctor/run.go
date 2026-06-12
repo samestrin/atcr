@@ -216,12 +216,12 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 	var se *llmclient.HTTPStatusError
 	if errors.As(err, &se) {
 		status, hint := StatusProviderError, ""
-		switch {
-		case se.Status == 401 || se.Status == 403:
+		switch se.Status {
+		case 401, 403:
 			status, hint = StatusAuthFailed, "check the API key in "+tgt.APIKeyEnv
-		case se.Status == 404:
+		case 404:
 			status, hint = StatusNotFound, "check the model name and the provider base_url"
-		case se.Status == 429:
+		case 429:
 			status, hint = StatusRateLimited, "provider rate limit — retry later or test a smaller --agents subset"
 		}
 		return probeResult{status: status, latencyMS: latencyMS, hint: hint, detail: se.Snippet}
