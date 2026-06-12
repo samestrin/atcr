@@ -104,4 +104,4 @@ This AC is implemented against the following project documentation. Read before 
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] CI example script tested manually in a CI-like environment
+- [x] CI example script tested manually in a CI-like environment — verified 2026-06-11 by running `examples/ci-gate.sh` end-to-end against a local OpenAI-shape stub provider (no cloud keys) across all three documented exit codes: CRITICAL finding + `--fail-on high` → exit 1 (gate failure), LOW-only → exit 0 (pass), bogus base ref → exit 2 (usage/config error). Real review artifacts were written under `.atcr/reviews/`, exercising range resolution → fan-out → reconcile → gate. Transcript: `code-review/verification/ci-gate-end-to-end-2026-06-11.log`.
