@@ -35,6 +35,8 @@ func TestInit_FreshDirectory(t *testing.T) {
 	require.NotNil(t, cfg.TimeoutSecs)
 	assert.Equal(t, 600, *cfg.TimeoutSecs)
 	assert.Equal(t, "HIGH", cfg.FailOn)
+	require.NotNil(t, cfg.MaxParallel, "template must carry max_parallel so the knob is visible")
+	assert.Equal(t, registry.DefaultMaxParallel, *cfg.MaxParallel)
 
 	// Six persona files plus the base template.
 	for _, name := range append([]string{"_base"}, personaNames...) {

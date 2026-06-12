@@ -114,11 +114,12 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
 // while the CLI runs both phases inline. The fields the executor needs are
 // exported; manifest is finalized in place by ExecuteReview.
 type PreparedReview struct {
-	ID         string
-	Dir        string
-	Slots      []Slot
-	TimeoutSec int
-	manifest   *payload.Manifest
+	ID          string
+	Dir         string
+	Slots       []Slot
+	TimeoutSec  int
+	MaxParallel int
+	manifest    *payload.Manifest
 }
 
 // AgentCount is the number of reviewer slots the prepared review will run.
@@ -204,7 +205,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if err := WriteLatest(req.Root, id); err != nil {
 		return nil, err
 	}
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, manifest: m}, nil
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, manifest: m}, nil
 }
 
 // ExecuteReview runs phase two: fan out the prepared roster under the global
@@ -224,7 +225,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
 		defer cancel()
 	}
-	results := NewEngine(completer).Run(runCtx, p.Slots)
+	results := NewEngine(completer, WithMaxParallel(p.MaxParallel)).Run(runCtx, p.Slots)
 
 	sum, err := WritePool(filepath.Join(p.Dir, "sources", "pool"), results)
 	if err != nil {

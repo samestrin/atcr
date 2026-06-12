@@ -294,3 +294,76 @@ func TestRun_ResultsPreserveInputOrder(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("a%d", i), r.Agent, "result %d out of order", i)
 	}
 }
+
+func parallelSlots(n int) []Slot {
+	var slots []Slot
+	for i := 0; i < n; i++ {
+		slots = append(slots, agentSlot(fmt.Sprintf("a%d", i)))
+	}
+	return slots
+}
+
+func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
+	f := newFake()
+	f.delay = 30 * time.Millisecond
+	e := NewEngine(f, WithMaxParallel(2))
+
+	results := e.Run(context.Background(), parallelSlots(5))
+
+	require.Len(t, results, 5)
+	for _, r := range results {
+		assert.Equal(t, StatusOK, r.Status)
+	}
+	assert.Equal(t, int32(2), atomic.LoadInt32(&f.peak),
+		"max_parallel=2 must cap a 5-agent roster at 2 concurrent calls")
+}
+
+func TestRun_MaxParallelZeroIsUnbounded(t *testing.T) {
+	f := newFake()
+	f.delay = 30 * time.Millisecond
+	e := NewEngine(f, WithMaxParallel(0))
+
+	results := e.Run(context.Background(), parallelSlots(5))
+
+	require.Len(t, results, 5)
+	assert.Equal(t, int32(5), atomic.LoadInt32(&f.peak),
+		"max_parallel=0 is unbounded: all five agents run at once (current behavior)")
+}
+
+func TestRun_MaxParallelLargerThanRosterIsUnbounded(t *testing.T) {
+	f := newFake()
+	f.delay = 30 * time.Millisecond
+	e := NewEngine(f, WithMaxParallel(50))
+
+	results := e.Run(context.Background(), parallelSlots(3))
+
+	require.Len(t, results, 3)
+	assert.Equal(t, int32(3), atomic.LoadInt32(&f.peak),
+		"a cap above the roster size never blocks: all three run at once")
+}
+
+func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
+	// The semaphore must not defeat the WaitGroup drain guarantee: with a roster
+	// larger than the cap, queued goroutines whose ctx-aware acquire loses to
+	// cancellation still resolve to a timeout result and Done() — no leak.
+	f := newFake()
+	f.delay = time.Hour // every started agent blocks until the deadline fires
+	e := NewEngine(f, WithMaxParallel(2))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	done := make(chan []Result, 1)
+	go func() { done <- e.Run(ctx, parallelSlots(5)) }()
+
+	select {
+	case results := <-done:
+		require.Len(t, results, 5)
+		for _, r := range results {
+			assert.Equal(t, StatusTimeout, r.Status, "every slot must surface timeout under the cap")
+			assert.Error(t, r.Err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return under the cap — semaphore blocked the WaitGroup drain")
+	}
+}

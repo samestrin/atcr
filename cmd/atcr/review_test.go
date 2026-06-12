@@ -20,6 +20,21 @@ func slotWithKeys(envs ...string) fanout.Slot {
 	return s
 }
 
+func TestCLIOverrides_MaxParallelSet(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--max-parallel", "3"}))
+	o := cliOverrides(cmd)
+	require.NotNil(t, o.MaxParallel, "--max-parallel must populate the override")
+	require.Equal(t, 3, *o.MaxParallel)
+}
+
+func TestCLIOverrides_MaxParallelUnset(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags(nil))
+	o := cliOverrides(cmd)
+	require.Nil(t, o.MaxParallel, "an unset flag must not override lower tiers")
+}
+
 func TestPreflightAPIKeys_AllChainsKeylessIsUsageError(t *testing.T) {
 	// AC 03-02 Error Scenario 1: a missing API key is a configuration error
 	// (exit 2) naming the env var — never the gate's exit 1.

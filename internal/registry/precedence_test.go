@@ -195,6 +195,7 @@ func TestRegistryGlobals_AbsentStayUnset(t *testing.T) {
 	assert.Empty(t, reg.PayloadMode)
 	assert.Nil(t, reg.TimeoutSecs)
 	assert.Empty(t, reg.FailOn)
+	assert.Nil(t, reg.MaxParallel)
 }
 
 func TestProjectConfig_AbsentFieldsStayUnset(t *testing.T) {
@@ -203,6 +204,7 @@ func TestProjectConfig_AbsentFieldsStayUnset(t *testing.T) {
 	assert.Empty(t, cfg.PayloadMode)
 	assert.Nil(t, cfg.TimeoutSecs)
 	assert.Empty(t, cfg.FailOn)
+	assert.Nil(t, cfg.MaxParallel)
 }
 
 func TestEffectivePayloadMode(t *testing.T) {
@@ -221,4 +223,76 @@ func TestEffectiveTimeoutSecs(t *testing.T) {
 	without := AgentConfig{}
 	assert.Equal(t, 120, withOwn.EffectiveTimeoutSecs(s), "agent's own timeout wins")
 	assert.Equal(t, 900, without.EffectiveTimeoutSecs(s), "unset agent timeout inherits resolved settings")
+}
+
+func TestPrecedence_MaxParallelDefault(t *testing.T) {
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, nil)
+	assert.Equal(t, DefaultMaxParallel, s.MaxParallel, "embedded default used when nothing overrides")
+	assert.Equal(t, 10, s.MaxParallel, "v1 ships a max_parallel default of 10")
+}
+
+func TestPrecedence_MaxParallelChain(t *testing.T) {
+	reg := loadRegistryWith(t, "max_parallel: 4\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_parallel: 6\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, reg)
+	assert.Equal(t, 6, s.MaxParallel, "project config wins over registry")
+
+	s = resolve(t, CLIOverrides{MaxParallel: intPtr(8)}, proj, reg)
+	assert.Equal(t, 8, s.MaxParallel, "CLI flag wins over the full chain")
+}
+
+func TestPrecedence_MaxParallelRegistryOverridesEmbedded(t *testing.T) {
+	reg := loadRegistryWith(t, "max_parallel: 4\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, reg)
+	assert.Equal(t, 4, s.MaxParallel, "registry wins over embedded default")
+}
+
+func TestPrecedence_MaxParallelExplicitZeroIsUnbounded(t *testing.T) {
+	// 0 is the documented unbounded escape hatch and must survive default
+	// application: an explicit zero is a real override, not "unset".
+	reg := loadRegistryWith(t, "max_parallel: 4\n")
+	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_parallel: 0\n"))
+	require.NoError(t, err)
+
+	s := resolve(t, CLIOverrides{}, proj, reg)
+	assert.Equal(t, 0, s.MaxParallel, "explicit 0 overrides both registry and embedded default")
+}
+
+func TestPrecedence_MaxParallelCLIZeroAllowed(t *testing.T) {
+	s, err := ResolveSettings(CLIOverrides{MaxParallel: intPtr(0)}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, s.MaxParallel, "CLI 0 is the unbounded escape hatch, not an error")
+}
+
+func TestPrecedence_MaxParallelCLINegativeRejected(t *testing.T) {
+	_, err := ResolveSettings(CLIOverrides{MaxParallel: intPtr(-1)}, nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_parallel")
+}
+
+func TestRegistry_MaxParallelNegativeRejectedAtLoad(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  bruce: {provider: p, model: m}
+max_parallel: -5
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_parallel")
+}
+
+func TestProject_MaxParallelNegativeRejectedAtLoad(t *testing.T) {
+	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\nmax_parallel: -1\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_parallel")
 }

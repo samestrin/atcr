@@ -27,6 +27,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
+	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (overrides config)")
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	addRangeFlags(cmd)
 	return cmd
@@ -163,6 +164,10 @@ func cliOverrides(cmd *cobra.Command) registry.CLIOverrides {
 	if cmd.Flags().Changed("byte-budget") {
 		v, _ := cmd.Flags().GetInt64("byte-budget")
 		o.PayloadByteBudget = &v
+	}
+	if cmd.Flags().Changed("max-parallel") {
+		v, _ := cmd.Flags().GetInt("max-parallel")
+		o.MaxParallel = &v
 	}
 	return o
 }

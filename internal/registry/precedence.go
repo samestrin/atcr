@@ -9,6 +9,12 @@ import (
 // would overflow time.Duration arithmetic long before being useful.
 const MaxTimeoutSecs = 86400
 
+// DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
+// agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
+// AC 01-04's "10 concurrent agent calls" target) while capping a larger or
+// misconfigured roster. 0 is the documented unbounded escape hatch.
+const DefaultMaxParallel = 10
+
 // Settings are the effective shared review settings after precedence
 // resolution: CLI flag > project config > registry > embedded default.
 // Each field resolves independently; a tier participates only where it
@@ -25,6 +31,9 @@ type Settings struct {
 	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
 	// (AC 06-03).
 	PayloadByteBudget int64
+	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
+	// engine; 0 is the documented unbounded escape hatch.
+	MaxParallel int
 }
 
 // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
@@ -33,6 +42,7 @@ type CLIOverrides struct {
 	PayloadMode       *string
 	TimeoutSecs       *int
 	PayloadByteBudget *int64
+	MaxParallel       *int
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
@@ -43,13 +53,14 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		PayloadMode:       DefaultPayloadMode,
 		TimeoutSecs:       DefaultTimeoutSecs,
 		PayloadByteBudget: DefaultPayloadByteBudget,
+		MaxParallel:       DefaultMaxParallel,
 	}
 
 	if reg != nil {
-		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget)
+		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
 	}
 	if proj != nil {
-		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget)
+		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
 	}
 
 	if cli.PayloadByteBudget != nil {
@@ -66,6 +77,15 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		s.TimeoutSecs = *cli.TimeoutSecs
 	}
+	if cli.MaxParallel != nil {
+		// The CLI tier bypasses the file-load checks; validate here. 0 is the
+		// unbounded escape hatch (parallels payload_byte_budget), only negative
+		// is rejected.
+		if *cli.MaxParallel < 0 {
+			return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *cli.MaxParallel)
+		}
+		s.MaxParallel = *cli.MaxParallel
+	}
 	if v := deref(cli.PayloadMode); v != "" {
 		// The CLI tier bypasses the file-load enum checks, so validate here:
 		// an invalid --payload value must fail before any review work, not
@@ -79,9 +99,10 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 }
 
 // applyTier overlays one configuration tier's explicitly-set values onto s.
-// Whitespace-only strings count as unset. byteBudget is a pointer so an
-// explicit 0 (the unlimited escape hatch) survives default application.
-func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *int64) {
+// Whitespace-only strings count as unset. byteBudget and maxParallel are
+// pointers so an explicit 0 (the unlimited/unbounded escape hatch) survives
+// default application.
+func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *int64, maxParallel *int) {
 	if v := strings.TrimSpace(payloadMode); v != "" {
 		s.PayloadMode = v
 	}
@@ -90,6 +111,9 @@ func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *in
 	}
 	if byteBudget != nil {
 		s.PayloadByteBudget = *byteBudget
+	}
+	if maxParallel != nil {
+		s.MaxParallel = *maxParallel
 	}
 }
 
