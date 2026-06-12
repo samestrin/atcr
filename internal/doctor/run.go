@@ -251,9 +251,22 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "self-test canceled before the endpoint responded"}
 	}
 
-	// err.Error() may embed the transport address (base_url host/path) but never
-	// the API key, which only appears in Authorization headers — safe to surface.
-	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: bounded(err.Error())}
+	detail := bounded(err.Error())
+	// Enforce credential exclusion rather than relying on the comment invariant.
+	// Scrub the API key value and any URL userinfo so a misconfigured proxy URL
+	// with embedded credentials cannot surface in the report or JSON output.
+	if key := os.Getenv(tgt.APIKeyEnv); key != "" {
+		detail = strings.ReplaceAll(detail, key, "[redacted]")
+	}
+	if u, uerr := url.Parse(tgt.BaseURL); uerr == nil && u.User != nil {
+		if pass, ok := u.User.Password(); ok && pass != "" {
+			detail = strings.ReplaceAll(detail, pass, "[redacted]")
+		}
+		if usr := u.User.Username(); usr != "" {
+			detail = strings.ReplaceAll(detail, usr, "[redacted]")
+		}
+	}
+	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: detail}
 }
 
 // bounded clamps a detail string to maxDetailBytes.
