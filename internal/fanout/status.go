@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/samestrin/atcr/internal/payload"
 )
@@ -26,14 +27,29 @@ const (
 	StatusTimeout = "timeout"
 )
 
-// Review run states reported by ReadReviewStatus (AC 04-04): in_progress until
-// the fan-out writes summary.json, then completed (≥1 agent ok) or failed (all
-// agents failed).
+// Review run states reported by ReadReviewStatus (AC 04-04). in_progress holds
+// until the fan-out writes summary.json, then completed (≥1 agent ok) or failed
+// (all agents failed). stale is an inferred terminal state (Epic 1.5): summary
+// is absent AND the effective timeout (plus a grace margin) has elapsed, so the
+// fan-out is presumed dead rather than still running. stale is honestly labeled
+// as inferred, not observed — a poll loop treats it as terminal.
 const (
 	RunInProgress = "in_progress"
 	RunCompleted  = "completed"
 	RunFailed     = "failed"
+	RunStale      = "stale"
 )
+
+// staleGraceSecs is added atop the manifest's effective timeout before a
+// summary-less review is inferred dead. It absorbs the synchronous post-deadline
+// write path (per-agent renames + summary.json) and minor writer/reader clock
+// skew, so stale never fires on a run that is merely finishing. The writer
+// enforces the timeout itself, so false positives are bounded regardless.
+const staleGraceSecs = 60
+
+// nowFunc is the clock ReadReviewStatus consults for stale inference; a package
+// var so tests can pin it for deterministic window assertions.
+var nowFunc = time.Now
 
 // ReviewStatus is a review's aggregated progress, derived from manifest.json
 // (the roster) and sources/pool/summary.json (the completion signal). It is the
@@ -79,7 +95,17 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 
 	sdata, serr := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile))
 	if serr != nil {
-		return st, nil // no pool summary yet → still in progress
+		// No completion signal. The pair is read manifest-first then summary
+		// (Task 4 read invariant); a genuinely absent summary means the fan-out
+		// is either still running or dead. Infer stale only when the manifest's
+		// effective deadline (StartedAt + timeout_secs + grace) has passed —
+		// otherwise it is honestly still in_progress. A non-not-exist read error
+		// (e.g. permission) keeps the in_progress report rather than guessing a
+		// terminal state from an I/O fault.
+		if errors.Is(serr, os.ErrNotExist) && staleByDeadline(m) {
+			st.Status = RunStale
+		}
+		return st, nil
 	}
 	var ps PoolSummary
 	if err := json.Unmarshal(sdata, &ps); err != nil {
@@ -102,9 +128,29 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	return st, nil
 }
 
+// staleByDeadline reports whether a summary-less review has exceeded its
+// inferred deadline. It returns false when the deadline is unknowable — a zero
+// StartedAt or an absent timeout_secs (old manifests, zero value) — so those
+// reviews keep reporting in_progress rather than being guessed dead.
+func staleByDeadline(m payload.Manifest) bool {
+	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
+		return false
+	}
+	deadline := m.StartedAt.Add(time.Duration(m.TimeoutSecs+staleGraceSecs) * time.Second)
+	return nowFunc().After(deadline)
+}
+
 // ErrReviewInProgress reports a reconcile/report attempt against a review whose
 // fan-out has not written its completion signal (summary.json) yet.
 var ErrReviewInProgress = errors.New("still in_progress")
+
+// ErrReviewStale reports a reconcile/report attempt against a review inferred
+// dead (Epic 1.5): its fan-out exceeded the effective timeout without writing a
+// completion signal. Like in_progress it has no summary.json, so reconciling it
+// would emit a complete-looking verdict from an incomplete (or empty) agent set
+// — but unlike in_progress it will never complete, so the guidance is to re-run
+// rather than poll.
+var ErrReviewStale = errors.New("stale (fan-out exceeded its timeout without a completion signal)")
 
 // EnsureReviewComplete rejects a fan-out-managed review that is still running,
 // so a reconcile cannot read a partially-written agent set and emit
@@ -122,6 +168,9 @@ func EnsureReviewComplete(reviewDir, id string) error {
 	}
 	if st.Status == RunInProgress {
 		return fmt.Errorf("review %s is %w; poll atcr_status (or run `atcr status`) and reconcile after the fan-out completes", id, ErrReviewInProgress)
+	}
+	if st.Status == RunStale {
+		return fmt.Errorf("review %s is %w; re-run the review", id, ErrReviewStale)
 	}
 	return nil
 }

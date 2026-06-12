@@ -117,6 +117,19 @@ func TestReadReviewStatus_CompletedNeverStale(t *testing.T) {
 	assert.Equal(t, RunCompleted, st.Status)
 }
 
+// A stale (dead) review has no completion signal, so EnsureReviewComplete must
+// reject it like an in-progress one — reconciling a dead, possibly partial agent
+// set would emit a complete-looking verdict from incomplete data. Unlike
+// in_progress, the guidance is to re-run, not poll.
+func TestEnsureReviewComplete_RejectsStale(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
+	err := EnsureReviewComplete(dir, "x")
+	require.ErrorIs(t, err, ErrReviewStale)
+	assert.Contains(t, err.Error(), "stale")
+	assert.Contains(t, err.Error(), "re-run")
+}
+
 func TestStatusJSON_RecordsTruncation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "status.json")
 	s := &AgentStatus{
