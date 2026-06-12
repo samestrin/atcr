@@ -61,6 +61,8 @@ func DefaultProjectConfigYAML(roster []string) string {
 	fmt.Fprintf(&b, "payload_mode: %s\n", DefaultPayloadMode)
 	fmt.Fprintf(&b, "timeout_secs: %d\n", DefaultTimeoutSecs)
 	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
+	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls; 0 = unbounded.\n")
+	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	return b.String()
 }
