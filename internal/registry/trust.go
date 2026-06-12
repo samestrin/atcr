@@ -107,8 +107,13 @@ func (s *TrustStore) Trust(name string, p Provider) {
 
 // Save writes the trust store to disk with restrictive (0600) permissions,
 // creating the parent directory if needed. The write is atomic (temp file +
-// rename in the same dir) so a crash or a concurrent `atcr trust` can never
-// truncate the file into a corrupt, review-blocking state.
+// rename in the same dir) so a crash can never truncate the file into a
+// corrupt, review-blocking state. Concurrency note: the rename prevents
+// partial/corrupt files but does NOT serialize Load→Trust→Save sequences —
+// two concurrent `atcr trust` runs may each load the old store, add their
+// own entry, and the second rename clobbers the first's grant (lost update).
+// Given CLI one-shot usage, this is acceptable; a file lock would be needed
+// if concurrent trust grants become a real scenario.
 func (s *TrustStore) Save() error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
