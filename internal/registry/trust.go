@@ -224,9 +224,9 @@ func (r *Registry) ProjectProviderBanner() string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "⚠ Using project-defined provider(s) from %s:\n", projectRegistryLabel)
+	fmt.Fprintf(&b, "WARNING: Using project-defined provider(s) from %s:\n", projectRegistryLabel)
 	for _, ref := range refs {
-		fmt.Fprintf(&b, "  - %s → base_url=%s  api_key_env=%s\n", ref.Name, ref.BaseURL, ref.APIKeyEnv)
+		fmt.Fprintf(&b, "  - %s -> base_url=%s  api_key_env=%s\n", ref.Name, ref.BaseURL, ref.APIKeyEnv)
 	}
 	b.WriteString("  These endpoints will receive the named API keys (trusted via 'atcr trust').")
 	return b.String()
