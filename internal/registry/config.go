@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -152,7 +151,7 @@ func (r *Registry) validate() error {
 	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {
-			return errors.New("providers: provider name must not be empty")
+			return providerErrf(name, "providers.%s: provider name must not be empty", name)
 		}
 		if p.APIKeyEnv == "" {
 			return providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name)
@@ -172,7 +171,7 @@ func (r *Registry) validate() error {
 	}
 	for name, a := range r.Agents {
 		if strings.TrimSpace(name) == "" {
-			return errors.New("agents: agent name must not be empty")
+			return agentErrf(name, "agent '%s': agent name must not be empty", name)
 		}
 		if a.Provider == "" {
 			return agentErrf(name, "agent '%s': required field 'provider' is missing", name)
