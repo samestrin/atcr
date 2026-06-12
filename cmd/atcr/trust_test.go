@@ -94,6 +94,39 @@ func TestTrust_SummaryPhrasedAsNewEntries(t *testing.T) {
 	assert.Contains(t, out, "new trust", "summary must say 'new trust' so mixed-run counts are unambiguous")
 }
 
+// TestTrust_AllWithArgsIsError verifies that --all and positional args are
+// mutually exclusive: the user cannot combine them without a clear error.
+func TestTrust_AllWithArgsIsError(t *testing.T) {
+	setupTrustEnv(t)
+	_, err := execute(t, "trust", "--all", "team-llm")
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err))
+}
+
+// TestTrust_PartialFailureNoPrintBeforeValidation verifies that no "trusting X"
+// lines are printed when a later argument is unknown: validation must run before
+// any output or mutation so stdout never claims a write that was never persisted.
+func TestTrust_PartialFailureNoPrintBeforeValidation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work := t.TempDir()
+	t.Chdir(work)
+	atcrDir := filepath.Join(work, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	// Two providers so we can reference a valid one first, then an unknown one.
+	projReg := "providers:\n" +
+		"  alpha:\n    base_url: https://alpha.example\n    api_key_env: KEY_A\n" +
+		"  beta:\n    base_url: https://beta.example\n    api_key_env: KEY_B\n" +
+		"agents:\n  r:\n    provider: alpha\n    model: m\n"
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "registry.yaml"), []byte(projReg), 0o644))
+
+	out, err := execute(t, "trust", "alpha", "ghost")
+	require.Error(t, err, "unknown provider must return error")
+	assert.Equal(t, 2, exitCode(err))
+	// No "trusting alpha" must have been printed before the unknown-name error.
+	assert.NotContains(t, out, "trusting alpha", "output must not claim a write that was rolled back")
+}
+
 func TestTrust_GatesReviewUntilTrusted(t *testing.T) {
 	// A project provider blocks `atcr review` config load until trusted; this is
 	// the end-to-end security contract at the command boundary.
