@@ -84,6 +84,29 @@ func TestRun_MarkerAbsentIsWarning(t *testing.T) {
 	assert.Equal(t, 0, rep.ExitCode, "a warning still counts as a working path")
 }
 
+func TestRun_TokenBudgetAffectsOutcome(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	res := twoAgentSharedTarget(t)
+	// budgetAwareFake simulates a reasoning model that spends the token budget
+	// on thinking: it returns the marker only when MaxTokens >= 1024, and
+	// empty content when the budget is too small to survive reasoning overhead.
+	budgetAwareFake := newFake(func(inv llmclient.Invocation) (string, error) {
+		if inv.MaxTokens != nil && *inv.MaxTokens >= 1024 {
+			return Marker(testNonce), nil
+		}
+		return "", nil // budget exhausted on reasoning
+	})
+
+	// Default budget (2048) is large enough for the marker to appear.
+	repOK := Run(context.Background(), budgetAwareFake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+	assert.Equal(t, StatusOK, repOK.Agents[0].Status, "default budget must yield StatusOK")
+
+	// Tiny budget (8) is consumed by reasoning; marker absent → warning.
+	repWarn := Run(context.Background(), budgetAwareFake, res, Options{Nonce: testNonce, MaxTokens: 8})
+	assert.Equal(t, StatusOKWarning, repWarn.Agents[0].Status, "tiny budget must yield StatusOKWarning")
+	assert.Contains(t, repWarn.Agents[0].Hint, "max-tokens")
+}
+
 func TestRun_MissingKeySkipsNetwork(t *testing.T) {
 	// ATCR_DOCTOR_KEY deliberately unset.
 	res := twoAgentSharedTarget(t)
