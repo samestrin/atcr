@@ -241,8 +241,11 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		// scaffold on disk; the failure-marker summary.json is the authoritative
 		// outcome signal, but a zero CompletedAt left duration/partial-deriving
 		// tools unable to tell a failed review from one still in flight.
-		p.manifest.CompletedAt = time.Now().UTC()
-		_ = WriteManifest(p.Dir, p.manifest) // best-effort; if this also fails, stale inference covers it
+		// Nil guard: PreparedReview may be constructed directly in tests without a manifest.
+		if p.manifest != nil {
+			p.manifest.CompletedAt = time.Now().UTC()
+			_ = WriteManifest(p.Dir, p.manifest) // best-effort; if this also fails, stale inference covers it
+		}
 		return nil, err
 	}
 
