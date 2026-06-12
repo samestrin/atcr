@@ -166,4 +166,4 @@ This AC is implemented against the following project documentation. Read before 
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Host findings format verified against pool agent output in a real review run
+- [x] Host findings format verified against pool agent output — satisfied by static format-equivalence verification, not a live run. Host and pool findings flow through the single `stream.ParseSource` contract (one `Version` constant + `PerSourceColumns = 8`); there is no separate "host format" that can drift, and `TestSkill_HostFindingsFormat` locks the host row to the pool column string + v1 header. A live-provider review run is an optional maintainer smoke test, not a blocking gate (amended 2026-06-11 per /sprint-clarification; TD skill/SKILL.md:43).
