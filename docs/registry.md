@@ -133,3 +133,63 @@ The v1 schema is strict — unknown keys fail the load — but the following age
 | `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
 
 The **planned default** column documents the value each field's owning stage will assume when it activates; 1.x applies none of these. An out-of-range value (e.g. `max_turns: 0`, an unknown `role`) is a load error even though the field is otherwise inert, so a config targeting a future stage is still caught early.
+
+## Verifying the configuration (`atcr doctor`)
+
+`atcr doctor` is the recommended check to run right after `atcr init` and after any registry edit. It resolves the **effective roster** — every agent in `agents` and `serial_agents`, plus every agent reachable through `fallback` chains — deduplicates it to the distinct `(provider, model, base_url)` targets, and invokes each target **once** with a trivial nonce prompt. Success is verified by the marker appearing in the response content, not merely by HTTP 200.
+
+```bash
+atcr doctor                      # human-readable table
+atcr doctor --json               # machine-readable, stable schema
+atcr doctor --agents bruce,kai   # test only a subset (saves tokens on paid endpoints)
+atcr doctor --max-tokens 4096    # raise the completion budget for thinking models
+atcr doctor --timeout 30         # per-call timeout in seconds
+```
+
+Flags: `--max-tokens` (default `2048`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>`. The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted.
+
+### Status classes
+
+| Status | Meaning | Typical fix |
+|--------|---------|-------------|
+| `ok` | Marker returned in visible content | — |
+| `ok_warning` | HTTP 200 but the marker was absent/empty (often a thinking model that spent the whole budget reasoning) | Raise `--max-tokens` |
+| `auth_failed` | 401/403 | Check the API key in the provider's `api_key_env` |
+| `not_found` | 404 | Check the `model` name and the provider `base_url` |
+| `rate_limited` | 429 | Retry later, or test a smaller `--agents` subset |
+| `provider_error` | 5xx or other non-classified HTTP error | Inspect the bounded error-body snippet in the row |
+| `network_error` | Transport-level failure (DNS, connection, TLS) | Check connectivity and `base_url` host |
+| `timeout` | Per-call deadline exceeded | Raise `--timeout` |
+| `missing_key` | The provider's `api_key_env` variable is unset — reported **without any network call** | `export` the named variable |
+| `invalid_config` | `base_url` empty or malformed — reported **without any network call** | Set a valid `http(s)` `base_url` |
+
+A failure class always references the **environment variable name**, never its value: no secret is ever logged.
+
+### Exit codes
+
+- **0** — every directly-listed agent has at least one working invocation path (its primary target *or* any fallback in its chain). A `fallback` that works covers a failing primary.
+- **1** — at least one listed agent has no working path.
+- **2** — usage/configuration error (missing or invalid registry / project config, bad flag value, unknown `--agents` name).
+
+### JSON schema (`--json`)
+
+A stable top-level object with an `agents` array; one entry per effective-roster agent (fallback agents included):
+
+```json
+{
+  "agents": [
+    {
+      "agent": "bruce",
+      "serial": false,
+      "provider": "openrouter",
+      "model": "anthropic/claude-3.5-sonnet",
+      "status": "ok",
+      "latency_ms": 412,
+      "hint": "",
+      "detail": ""
+    }
+  ]
+}
+```
+
+`hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
