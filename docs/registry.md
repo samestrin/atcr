@@ -141,12 +141,12 @@ The **planned default** column documents the value each field's owning stage wil
 ```bash
 atcr doctor                      # human-readable table
 atcr doctor --json               # machine-readable, stable schema
-atcr doctor --agents bruce,kai   # test only a subset (saves tokens on paid endpoints)
+atcr doctor --agents bruce,kai   # test only these listed agents (their fallback chains are still probed)
 atcr doctor --max-tokens 4096    # raise the completion budget for thinking models
 atcr doctor --timeout 30         # per-call timeout in seconds
 ```
 
-Flags: `--max-tokens` (default `2048`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>`. The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted.
+Flags: `--max-tokens` (default `2048`), `--timeout` (default `60`s), `--json`, `--agents <a,b,...>` (restrict to a subset of the directly-listed agents — each selected agent's fallback chain is still probed so its health verdict stays accurate). The token budget defaults high on purpose: reasoning/thinking models spend completion tokens on internal reasoning, so a small budget can exhaust before the marker is emitted.
 
 ### Status classes
 

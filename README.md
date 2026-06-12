@@ -78,7 +78,7 @@ Key flags:
 - `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
 - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
 - `atcr report --format md|json|checklist` / `--output <file>`
-- `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+- `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
 
 ## Payload modes
 

@@ -227,8 +227,13 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		return probeResult{status: status, latencyMS: latencyMS, hint: hint, detail: se.Snippet}
 	}
 
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "raise --timeout"}
+	}
+	if errors.Is(err, context.Canceled) {
+		// Parent-context cancellation (e.g. Ctrl-C) is a teardown, not a slow
+		// endpoint: keep the timeout class but do not advise raising --timeout.
+		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "self-test canceled before the endpoint responded"}
 	}
 
 	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: bounded(err.Error())}

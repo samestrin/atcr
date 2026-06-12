@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
@@ -184,6 +183,14 @@ func TestClassify_StatusMapping(t *testing.T) {
 	}
 }
 
+func TestClassify_CanceledIsTimeoutWithoutRaiseHint(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	got := classify("", context.Canceled, testNonce, 5, tgt)
+	assert.Equal(t, StatusTimeout, got.status)
+	// A cancellation (Ctrl-C) must not advise changing --timeout.
+	assert.NotContains(t, got.hint, "raise --timeout")
+}
+
 func TestClassify_ErrorBodySnippetSurfaced(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	got := classify("", &llmclient.HTTPStatusError{Status: 404, Snippet: "the model `gpt-x` does not exist"}, testNonce, 5, tgt)
@@ -236,6 +243,3 @@ func TestRandomNonce_NonEmptyAndUnique(t *testing.T) {
 	assert.NotEmpty(t, n1)
 	assert.NotEqual(t, n1, n2)
 }
-
-// keep time import used if probe timing assertions are added later.
-var _ = time.Second
