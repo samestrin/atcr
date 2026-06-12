@@ -30,8 +30,18 @@ This AC is implemented against the following project documentation. Read before 
 
 - **atcr_report default format is `md`** when `format` arg is omitted. The format enum `md|json|checklist` is enforced by the JSON Schema (not in the handler) — clients sending an invalid value receive a schema-validation error before the handler runs.
 - **atcr_range returns the `Resolution` struct** as JSON: `{base, head, commit_count, file_count}` (with `detection_mode`, `default_branch`, `shallow`, `resolved_at` available for clients that need them). The empty-diff case is **not** an error — it returns `commit_count: 0, file_count: 0` so pre-flight checks can detect "nothing to review" without exception handling.
-- **atcr_status reads from `manifest.json`** to derive status; if the manifest is missing required fields, the handler returns an error rather than guessing. Status values: `in_progress`, `completed`, `failed` (mapped from per-agent `status.json` aggregation).
+- **atcr_status reads from `manifest.json`** to derive status; if the manifest is missing required fields, the handler returns an error rather than guessing. Status values: `in_progress`, `completed`, `failed`, `stale` (the first three mapped from per-agent `status.json` aggregation; `stale` is inferred — see the Epic 1.5 amendment below).
 - **Path containment** on `id_or_path` (same invariant as AC 04-03): paths must resolve under `.atcr/reviews/`.
+
+### Contract Amendment — `stale` status (Epic 1.5, 2026-06-12)
+
+The `status` value set is extended with a fourth value, `stale`. This is additive: the `ReviewStatus` JSON shape `{review_id, status, agent_count, agents_done, agents_pending, partial}` is unchanged, and the MCP `StatusResult` type alias and `atcr status` CLI continue to pass the value through unchanged.
+
+- **`stale`** is an *inferred* terminal state, not an observed one. `ReadReviewStatus` reports it when `summary.json` (the completion sentinel) is absent **and** the manifest's `started_at + timeout_secs + 60s` grace margin has elapsed. A scaffolded review that died after fan-out (post-persistence failure, killed MCP server) thus reports `stale` instead of `in_progress` forever.
+- **Backward compatibility:** a manifest written before `timeout_secs` existed (zero value) has no inferable deadline, so stale inference is disabled and it keeps reporting `in_progress`.
+- **Post-fan-out persistence failure maps to `failed`,** not `stale`: a `WritePool` error writes a best-effort minimal `summary.json` (`succeeded=0`) that the existing reader path reports as `failed`; `stale` is only the fallback when even that marker cannot be written.
+- **No new sentinel artifact:** `summary.json` remains the sole completion signal; `stale` adds no competing state-bearing file.
+- **Poll-loop guidance:** consumers (the skill orchestration loop, CI gates) MUST treat `stale` as **terminal** alongside `completed`/`failed` — stop polling, do not wait for it to clear. See AC 05-03 orchestration loop.
 
 ## Happy Path Scenarios
 
@@ -75,7 +85,7 @@ This AC is implemented against the following project documentation. Read before 
 **Scenario 7: atcr_status returns review progress**
 - **Given** a review is in progress at `.atcr/reviews/20260610-120000/`
 - **When** the MCP client calls `atcr_status` with `{"id_or_path": "20260610-120000"}`
-- **Then** the handler returns `{review_id, status: "in_progress"|"completed"|"failed", agent_count, agents_done, agents_pending}`
+- **Then** the handler returns `{review_id, status: "in_progress"|"completed"|"failed"|"stale", agent_count, agents_done, agents_pending}`
 
 **Scenario 8: atcr_status defaults to latest review**
 - **Given** the MCP client calls `atcr_status` with empty args `{}`
