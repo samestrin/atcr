@@ -71,7 +71,9 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
 	if err != nil {
 		return nil, err
 	}
-	reg, err := registry.LoadRegistry(regPath)
+	// Merge the optional project registry overlay (.atcr/registry.yaml) onto the
+	// user registry; the merged loader enforces the project-provider trust gate.
+	reg, err := registry.LoadMergedRegistry(regPath, root)
 	if err != nil {
 		return nil, err
 	}

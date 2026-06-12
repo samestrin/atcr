@@ -53,9 +53,14 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(err)
 	}
-	reg, err := registry.LoadRegistry(regPath)
+	// Merge the optional project registry overlay so doctor self-tests project
+	// definitions too; the merged loader enforces the project-provider trust gate.
+	reg, err := registry.LoadMergedRegistry(regPath, ".")
 	if err != nil {
 		return usageError(err)
+	}
+	if banner := reg.ProjectProviderBanner(); banner != "" {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
 	}
 	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
 	if err != nil {
