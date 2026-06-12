@@ -86,6 +86,13 @@ func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string
 		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
 	}
 	g := &gitRunner{ctx: ctx, dir: repo}
+	return g.buildEntries(mode, base, head)
+}
+
+// buildEntries is the runner-bound core of BuildEntries, split out so white-box
+// tests can observe g.execCount and assert the per-mode git-process count is
+// independent of the changed-file count.
+func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEntry, error) {
 	if err := validateRange(g, base, head); err != nil {
 		return nil, err
 	}

@@ -41,9 +41,29 @@ func (f changedFile) pathspec() []string {
 
 // gitRunner executes git argv against a fixed directory and context. The
 // payload package wraps os/exec directly (there is no internal/git package).
+//
+// The whole-range caches batch the per-file fan-out: each diff variant for a
+// base..head range is computed once (one git process), split per file on
+// column-0 `diff --git` boundaries, and served to every file from the cache.
+// This keeps the per-file helpers' signatures intact (so their direct unit
+// tests are unaffected) while collapsing O(N) git processes to O(1) per mode.
 type gitRunner struct {
 	ctx context.Context
 	dir string
+
+	// execCount counts git subprocess invocations (every output call). It backs
+	// the constant-process-count regression test; it is otherwise inert.
+	execCount int
+
+	// cacheKey is the "base..head" the caches below were computed for; a
+	// mismatched range resets them. A gitRunner's range is constant in practice
+	// (one per Build* call), so this only guards reuse in white-box tests.
+	cacheKey   string
+	binCache   map[string]bool        // head path -> binary (one --numstat -M)
+	fcCache    map[string]string      // head path -> --function-context chunk
+	plainCache map[string]string      // head path -> --unified=10 chunk
+	rawCache   map[string]string      // head path -> plain -M diff chunk
+	rangeCache map[string][]lineRange // head path -> head-side changed ranges
 }
 
 // run executes `git -C <dir> args...` and returns trimmed stdout. LC_ALL=C
@@ -59,6 +79,7 @@ func (g *gitRunner) run(args ...string) (string, error) {
 func (g *gitRunner) output(args ...string) ([]byte, error) {
 	// core.quotePath=false keeps non-ASCII paths unquoted so the path strings
 	// parsed out of --name-status round-trip back into `git show`/`git diff`.
+	g.execCount++
 	full := append([]string{"-C", g.dir, "-c", "core.quotePath=false"}, args...)
 	cmd := exec.CommandContext(g.ctx, "git", full...)
 	cmd.Env = append(cmd.Environ(), "LC_ALL=C", "LANG=C")
