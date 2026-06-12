@@ -230,6 +230,28 @@ func TestRenderTable_HumanReadable(t *testing.T) {
 	assert.Contains(t, out, "set ANTHROPIC_KEY")
 }
 
+// errWriter is a writer that always returns an error, used to trigger tabwriter
+// flush failures in tests.
+type errWriter struct{ err error }
+
+func (e *errWriter) Write(p []byte) (int, error) { return 0, e.err }
+
+func TestRenderTableError_SurfacesFlushError(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK},
+	}}
+	err := RenderTableError(&errWriter{err: fmt.Errorf("disk full")}, rep)
+	assert.Error(t, err, "RenderTableError should return the Flush error")
+}
+
+func TestRenderTableError_NilOnSuccess(t *testing.T) {
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK},
+	}}
+	var b strings.Builder
+	assert.NoError(t, RenderTableError(&b, rep), "RenderTableError should return nil on success")
+}
+
 func TestPromptAndMarker(t *testing.T) {
 	assert.Equal(t, "ATCR-OK-"+testNonce, Marker(testNonce))
 	assert.Contains(t, Prompt(testNonce), Marker(testNonce))
