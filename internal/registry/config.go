@@ -48,7 +48,9 @@ const (
 // v1 code path acts on them and no load-time default is applied — they stay at
 // their zero/unset value in 1.x. MaxTurns and ToolBudgetBytes are pointers so
 // the activating stage can tell an explicit value from an unset one (the same
-// reason TimeoutSecs is a pointer). Planned defaults (tools=false,
+// reason TimeoutSecs is a pointer). Tools is intentionally a value bool (not
+// *bool) because its planned default is false and no stage needs to distinguish
+// "explicitly false" from "unset". Planned defaults (tools=false,
 // max_turns=10, role=reviewer) are documented in docs/registry.md.
 type AgentConfig struct {
 	Provider    string   `yaml:"provider"`
