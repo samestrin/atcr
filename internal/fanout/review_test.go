@@ -145,6 +145,7 @@ func TestRunReview_EndToEnd(t *testing.T) {
 	assert.Equal(t, "explicit", m.DetectionMode)
 	assert.ElementsMatch(t, []string{"greta", "kai"}, m.Roster)
 	assert.Equal(t, "blocks", m.PerAgentPayload["greta"])
+	assert.Equal(t, []string{"review"}, m.Stages, "1.x manifest records the review stage (Epic 1.1 reserved field)")
 
 	latest, err := ReadLatest(repo)
 	require.NoError(t, err)
