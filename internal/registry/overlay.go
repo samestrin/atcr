@@ -147,6 +147,16 @@ func (r *Registry) stampSource(tier string) {
 	}
 }
 
+// AgentTier returns the source tier (user | project) recorded for an agent,
+// defaulting to user when no overlay merge stamped it (e.g. a registry built
+// directly without LoadMergedRegistry).
+func (r *Registry) AgentTier(name string) string {
+	if src, ok := r.AgentSource[name]; ok && src.Tier != "" {
+		return src.Tier
+	}
+	return SourceUser
+}
+
 // registryLabelFor maps a source tier to the file label used in messages.
 func registryLabelFor(tier string) string {
 	if tier == SourceProject {
