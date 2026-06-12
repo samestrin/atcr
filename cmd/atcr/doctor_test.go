@@ -118,6 +118,19 @@ func TestDoctor_AuthFailureExits1(t *testing.T) {
 	assert.Contains(t, out, "auth_failed")
 }
 
+// TestDoctor_EmitsStderrSummaryLine verifies that atcr doctor always emits
+// a one-line "N ok / M failed" summary to stderr so CI log scanners get a
+// status signal without parsing the full table output.
+func TestDoctor_EmitsStderrSummaryLine(t *testing.T) {
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	out, err := execute(t, "doctor")
+	require.NoError(t, err)
+	assert.Contains(t, out, "1 ok / 0 failed", "stderr must carry a machine-readable summary line")
+}
+
 func TestDoctor_NoConfigIsUsageError(t *testing.T) {
 	// HOME has a registry but the working dir has no .atcr/config.yaml.
 	srv := echoProvider(t, 0)
