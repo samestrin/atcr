@@ -189,16 +189,21 @@ func (e *untrustedProviderError) Error() string {
 func (e *untrustedProviderError) Unwrap() error { return ErrUntrustedProvider }
 
 // enforceProjectTrust blocks any project-defined provider not present in the
-// trust store under regDir. It is the security gate: a cloned repo cannot
+// trust store under userRegDir. It is the security gate: a cloned repo cannot
 // direct a key to an arbitrary endpoint until the user runs `atcr trust`. It is
 // a no-op when no project providers are present (project agents that reference
 // user providers need no trust).
-func (r *Registry) enforceProjectTrust(regDir string) error {
+//
+// userRegDir is the directory containing the user-level registry.yaml. The
+// trust store MUST live beside it (never under the project root) so that the
+// (registry path, trust store path) pairing cannot drift — see cmd/atcr/trust.go
+// which resolves the same pair independently.
+func (r *Registry) enforceProjectTrust(userRegDir string) error {
 	refs := r.projectProviders()
 	if len(refs) == 0 {
 		return nil
 	}
-	store, err := LoadTrustStore(DefaultTrustStorePath(regDir))
+	store, err := LoadTrustStore(DefaultTrustStorePath(userRegDir))
 	if err != nil {
 		return err
 	}
