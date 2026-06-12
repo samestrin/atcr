@@ -37,9 +37,9 @@ Set the run-wide default in `.atcr/config.yaml` (`payload_mode: blocks`), overri
 
 ## Byte budgets and truncation
 
-Every payload has a byte budget. When a payload exceeds its budget, atcr truncates **deterministically** rather than letting a provider silently clip the input:
+Every payload has a byte budget — `payload_byte_budget`, default **524288 bytes (512 KiB)**, configurable with the usual precedence (CLI `--byte-budget` > project config > registry > embedded default). When a payload exceeds its budget, atcr truncates **deterministically** rather than letting a provider silently clip the input:
 
-- Whole files are dropped, **smallest-kept-largest-first** by size rank (ties broken by path), keeping as many files as fit within the budget.
+- Whole files are dropped, **largest-first** by size rank (ties broken by path), keeping as many files as fit within the budget — huge generated files and lockfiles are shed before small source files.
 - A budget of **`0` means unlimited** (nothing dropped); a negative budget is rejected at validation.
 - Every drop is **recorded in the agent's `status.json`** — what was dropped and why is never silent.
 

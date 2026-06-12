@@ -37,6 +37,7 @@ agents:
 # Optional user-level defaults (the tier between project config and embedded defaults):
 payload_mode: blocks
 timeout_secs: 600
+payload_byte_budget: 524288
 fail_on: HIGH
 ```
 
@@ -71,22 +72,24 @@ agents:
 serial_agents: []
 payload_mode: blocks
 timeout_secs: 600
+payload_byte_budget: 524288
 fail_on: HIGH
 ```
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `agents` | (required) | At least one. The parallel-lane roster. Every entry must exist in the registry. |
+| `agents` | (required†) | The parallel-lane roster. Every entry must exist in the registry. †May be empty when `serial_agents` is non-empty — only a roster empty in both lanes is rejected. |
 | `serial_agents` | `[]` | The serial-lane roster (sequential execution, for rate-limited providers). |
 | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
 | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
+| `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. |
 | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
 
 ## Precedence
 
-The shared review settings (`payload_mode`, `timeout_secs`, `fail_on`) resolve **per field, independently**, in this order:
+The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `fail_on`) resolve **per field, independently**, in this order:
 
 ```
 CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
