@@ -236,6 +236,31 @@ type errWriter struct{ err error }
 
 func (e *errWriter) Write(p []byte) (int, error) { return 0, e.err }
 
+func TestProbe_MalformedBaseURLRejected(t *testing.T) {
+	// A fake completer that fails the test if reached — the path/query/fragment
+	// checks must short-circuit before any network call is made.
+	badCompleter := newFake(func(inv llmclient.Invocation) (string, error) {
+		return "", fmt.Errorf("network: dial tcp: unexpected call")
+	})
+	cases := []struct {
+		name    string
+		baseURL string
+	}{
+		{"chat_completions_suffix", "https://api.example.com/v1/chat/completions"},
+		{"query_param", "https://api.example.com/v1?stream=true"},
+		{"fragment", "https://api.example.com/v1#section"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ATCR_PROBE_PATH_KEY", "k")
+			tgt := Target{Provider: "p", Model: "m", BaseURL: tc.baseURL, APIKeyEnv: "ATCR_PROBE_PATH_KEY"}
+			got := probe(context.Background(), badCompleter, tgt, Options{Nonce: testNonce})
+			assert.Equal(t, StatusInvalidConfig, got.status, "base_url %q should be rejected as invalid_config", tc.baseURL)
+			assert.Contains(t, got.hint, "base_url")
+		})
+	}
+}
+
 func TestRenderTable_DetailPrefixedWhenHintEmpty(t *testing.T) {
 	rep := &Report{Agents: []AgentResult{
 		{Agent: "a", Provider: "p", Model: "m", Status: StatusNetworkError, Detail: "connection refused"},
