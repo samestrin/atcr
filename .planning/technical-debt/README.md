@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 0 |
-| MEDIUM | 0 | 6 | 0 |
-| LOW | 0 | 1 | 0 |
+| MEDIUM | 2 | 6 | 0 |
+| LOW | 4 | 1 | 0 |
 
-**Last Modified:** 2026-06-12 | **Open Items:** 0 | **Deferred Items:** 7 | **Resolved Items:** 0 | **Total Items:** 7
+**Last Modified:** 2026-06-12 | **Open Items:** 6 | **Deferred Items:** 7 | **Resolved Items:** 0 | **Total Items:** 13
 
 ## Directory Structure
 
@@ -32,6 +32,17 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-12] From Sprint: epic-1.5
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary marks all agents failed even when an earlier agent already persisted findings during a mid-loop I/O fault, so reconcile can emit a non-partial verdict from the surviving subset that contradicts the failed marker | Have reconcile cross-check the failure-marker summary (or add a distinguishing marker field) so a partial-but-failed review is rejected rather than reconciled | INTEGRATION | 60 | execute-epic-independent |
+| 1 | [ ] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary swallows MkdirAll/writeJSON errors with no log; when the marker write also fails there is no operator signal for the in_progress-to-stale gap (the primary WritePool error IS already logged by the ExecuteReview caller) | Thread a best-effort logger into the fanout failure path so the secondary marker-write failure is diagnosable, or accept the primary-error log as sufficient | ERROR_PATHS | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/review.go:239 | On the WritePool failure branch ExecuteReview writes the marker but never stamps manifest CompletedAt/Partial, so a failed-marked review's manifest is indistinguishable on disk from an unfinished scaffold for duration/partial-deriving tools | Stamp CompletedAt (and an explicit failed indicator) in the failure branch, or document the intentional absence | OBSERVABILITY | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/status.go:156 | staleByDeadline uses int arithmetic for (timeout_secs+grace)*1e9 ns; a pathological timeout_secs near math.MaxInt64/1e9 overflows Duration negative, yielding a false-positive stale (practically unreachable: needs a ~292-year timeout) | Bounds-check timeout_secs or compute the deadline with a saturating guard | EDGE_CASES | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/status.go:122 | report/reconcile route a stale review through EnsureReviewComplete and surface re-run guidance instead of poll guidance; intended per the epic (stale is terminal) but a slow-but-alive run past timeout+grace is told to re-run | Confirmed terminal-by-design; revisit only if grace-margin false positives are observed in practice | REGRESSION_RISK | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/status.go:52 | nowFunc is a mutable unsynchronized package var; a future parallel test swapping it while another goroutine calls ReadReviewStatus would data-race (current stale-clock tests are non-parallel so it does not trip) | Document that nowFunc must not be swapped concurrently, or inject the clock via a struct field/parameter | UNDER_ENGINEERING | 20 | execute-epic-independent |
 
 ### [2026-06-11] From Sprint: 1.0_atcr_core
 
