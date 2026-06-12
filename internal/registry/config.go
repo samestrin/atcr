@@ -63,7 +63,7 @@ type AgentConfig struct {
 	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
 	Tools           bool   `yaml:"tools"`             // Stage 2 — enables the tool loop
 	MaxTurns        *int   `yaml:"max_turns"`         // Stage 2 — agent-loop turn cap
-	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget
+	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
 	Role            string `yaml:"role"`              // Stage 3/4 — reviewer | skeptic | judge
 }
 
@@ -198,7 +198,7 @@ func (r *Registry) validate() error {
 			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
 		}
 		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
-			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0", name)
+			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0 (0 = unlimited)", name)
 		}
 	}
 	return nil
