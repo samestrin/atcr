@@ -26,7 +26,7 @@ func RenderJSON(w io.Writer, rep *Report) error {
 // effective-roster agent.
 func RenderTable(w io.Writer, rep *Report) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSTATUS\tLATENCY\tHINT")
+	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSOURCE\tSTATUS\tLATENCY\tHINT")
 	for _, a := range rep.Agents {
 		latency := "-"
 		if a.LatencyMS > 0 {
@@ -36,7 +36,11 @@ func RenderTable(w io.Writer, rep *Report) {
 		if hint == "" && a.Detail != "" {
 			hint = a.Detail
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Status, latency, hint)
+		source := a.Source
+		if source == "" {
+			source = "user"
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, source, a.Status, latency, hint)
 	}
 	_ = tw.Flush()
 }

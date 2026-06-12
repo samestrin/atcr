@@ -77,6 +77,7 @@ type AgentResult struct {
 	LatencyMS int64  `json:"latency_ms"`
 	Hint      string `json:"hint,omitempty"`
 	Detail    string `json:"detail,omitempty"` // bounded provider error snippet
+	Source    string `json:"source,omitempty"` // definition tier: user | project
 }
 
 // Report is the full doctor outcome. ExitCode is 0 when every directly-listed
@@ -131,6 +132,7 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 			LatencyMS: pr.latencyMS,
 			Hint:      pr.hint,
 			Detail:    pr.detail,
+			Source:    at.Source,
 		})
 	}
 	rep.ExitCode = exitVerdict(res, results)

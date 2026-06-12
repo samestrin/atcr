@@ -22,6 +22,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+### [2026-06-11] From Sprint: epic-1.3
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 2 | [ ] | LOW | internal/registry/graph.go:54 | A cross-tier fallback cycle is attributed to path[0] (alphabetically-first DFS entry), so the file-name prefix may name the user registry even when the project entry is the one to edit; the full cycle path is still listed. | Attribute the cycle to a project-tier node when the cycle spans tiers, or list every file/tier the cycle touches. | OBSERVABILITY | 30 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/registry/trust.go:178 | The first-use banner emits a raw U+26A0 warning emoji to stderr, which can mojibake on legacy/Windows consoles and garble the security confirmation. | Use an ASCII marker (e.g. "WARNING:") or gate the emoji behind a terminal-capability check. | OBSERVABILITY | 10 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/registry/gate.go:39 | ResolveGateThreshold reads fail_on only from the unmerged user registry, so a project registry cannot influence the reconcile gate — inconsistent with the uniform project-over-user precedence now advertised in docs. | Document that fail_on is user/project-config-tier only (not the registry overlay), or resolve it from the merged view. | CORRECTNESS | 20 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/trust.go:90 | The trust summary count reflects only newly-written entries, so a mixed run (some already-trusted, some new) can under-report what the user expects persisted. | Report both newly-trusted and already-trusted counts, or phrase the summary as "N new entries written". | CORRECTNESS | 10 | execute-epic-independent |
+
 ### [2026-06-11] From Sprint: epic-1.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
@@ -129,6 +138,6 @@ technical-debt/
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 2 |
 | MEDIUM | 1 | 6 | 25 |
-| LOW | 9 | 1 | 41 |
+| LOW | 13 | 1 | 41 |
 
-**Last Modified:** 2026-06-11 | **Open Items:** 10 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 85
+**Last Modified:** 2026-06-11 | **Open Items:** 14 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 89
