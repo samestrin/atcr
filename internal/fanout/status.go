@@ -89,10 +89,11 @@ type ReviewStatus struct {
 //     a false in_progress.
 //   - status, partial, and the agent counts derive solely from summary.json. The
 //     only fields taken from the manifest (roster size, StartedAt, timeout_secs)
-//     are written once at scaffold and are byte-identical across the finalizing
-//     rewrite, so whichever manifest version a reader observes yields the same
-//     result. Therefore no manifest/summary interleaving can produce a torn-pair
-//     misreport: every concurrent read returns a valid state.
+//     are written once at scaffold and are stable across the finalizing rewrite
+//     (which mutates Partial and stamps CompletedAt — neither is read here), so
+//     whichever manifest version a reader observes yields the same result. Therefore
+//     no manifest/summary interleaving can produce a torn-pair misreport: every
+//     concurrent read returns a valid state.
 func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
 	if err != nil {
