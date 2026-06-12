@@ -124,6 +124,16 @@ func TestProjectProviderBanner(t *testing.T) {
 	assert.Empty(t, userOnly.ProjectProviderBanner())
 }
 
+// TestProjectProviderBanner_SoftenedWording verifies the banner uses
+// "authorized to receive" rather than "will receive" so it does not overstate
+// what happens when preflight or PrepareReview can still abort the run.
+func TestProjectProviderBanner_SoftenedWording(t *testing.T) {
+	reg := projectRegWithProvider(t)
+	banner := reg.ProjectProviderBanner()
+	assert.NotContains(t, banner, "will receive", "banner must not overstate — use 'authorized to receive'")
+	assert.Contains(t, banner, "authorized to receive", "banner must say 'authorized to receive'")
+}
+
 func TestProjectProviderBanner_ASCIIOnly(t *testing.T) {
 	// The banner must not contain U+26A0 (⚠) or other non-ASCII characters
 	// that can mojibake on legacy/Windows consoles.
