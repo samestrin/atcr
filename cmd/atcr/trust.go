@@ -89,7 +89,7 @@ func runTrust(cmd *cobra.Command, args []string) error {
 		if err := store.Save(); err != nil {
 			return usageError(err)
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %d trust entr%s to %s\n", trusted, plural(trusted), storePath)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %d new trust entr%s to %s\n", trusted, plural(trusted), storePath)
 	}
 	return nil
 }
