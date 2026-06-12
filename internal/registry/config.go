@@ -68,7 +68,11 @@ type AgentConfig struct {
 }
 
 // roleValid reports whether r is an allowed reserved role. The empty string is
-// allowed (unset → planned default reviewer when Stage 3/4 lands).
+// allowed in 1.x (the loader provides no default). Epic 3.0/4.0 contract: when
+// activating role-based routing, the stage MUST apply the reviewer default for
+// agents whose Role is empty. The loader intentionally leaves Role empty rather
+// than defaulting it so that activating stages can distinguish "explicitly set"
+// from "inherited default" (option-a decision, recorded in epic-3 planning).
 func roleValid(r string) bool {
 	switch r {
 	case "", RoleReviewer, RoleSkeptic, RoleJudge:
