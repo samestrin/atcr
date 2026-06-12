@@ -414,6 +414,22 @@ func TestStatusHandler_Completed(t *testing.T) {
 	assert.Equal(t, 1, out.AgentsDone)
 }
 
+// TestStatusHandler_Stale verifies the inferred `stale` state passes through
+// atcr_status unchanged: StatusResult is a type alias of fanout.ReviewStatus, so
+// the new enum value reaches MCP clients with no schema or shape change (Epic 1.5).
+func TestStatusHandler_Stale(t *testing.T) {
+	root := t.TempDir()
+	id := "2026-06-10_dead"
+	dir := filepath.Join(root, ".atcr", "reviews", id)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".atcr", "latest"), []byte(id+"\n"), 0o644))
+	cs := connectTest(t, root, fakeCompleter{})
+	out := callOK[StatusResult](t, cs, ToolStatus, map[string]any{"id_or_path": id})
+	assert.Equal(t, fanout.RunStale, out.Status)
+}
+
 func TestStatusHandler_NoReviews(t *testing.T) {
 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
 	msg := callErr(t, cs, ToolStatus, map[string]any{})
