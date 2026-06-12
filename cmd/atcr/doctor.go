@@ -99,11 +99,18 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 	} else {
 		doctor.RenderTable(cmd.OutOrStdout(), rep)
+		// Emit a CI-readable one-line summary to stderr after the table so log
+		// scanners get a status signal without parsing the table output.
+		var okCount int
+		for _, a := range rep.Agents {
+			if a.Status == doctor.StatusOK || a.Status == doctor.StatusOKWarning {
+				okCount++
+			}
+		}
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "doctor: %d ok / %d failed\n", okCount, len(rep.Agents)-okCount)
 	}
 
 	if rep.ExitCode != 0 {
-		// Plain error → exit 1. The report is already on stdout; the summary
-		// line goes to stderr via main's centralized handler.
 		return fmt.Errorf("one or more agents have no working endpoint")
 	}
 	return nil
