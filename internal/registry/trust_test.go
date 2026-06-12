@@ -123,6 +123,20 @@ func TestProjectProviderBanner(t *testing.T) {
 	assert.Empty(t, userOnly.ProjectProviderBanner())
 }
 
+func TestProjectProviderBanner_ASCIIOnly(t *testing.T) {
+	// The banner must not contain U+26A0 (⚠) or other non-ASCII characters
+	// that can mojibake on legacy/Windows consoles.
+	reg := projectRegWithProvider(t)
+	banner := reg.ProjectProviderBanner()
+	for i, r := range banner {
+		if r > 127 {
+			t.Errorf("banner contains non-ASCII rune %U (%c) at position %d: %q", r, r, i, banner)
+		}
+	}
+	// Marker must still be present so users understand the nature of the warning.
+	assert.Contains(t, banner, "WARNING:")
+}
+
 func TestLoadMergedRegistry_ProjectProviderTrustGate(t *testing.T) {
 	regPath := writeUserRegistry(t, userRegistryWithBruce)
 	root := t.TempDir()
