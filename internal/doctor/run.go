@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 )
@@ -269,10 +270,16 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: detail}
 }
 
-// bounded clamps a detail string to maxDetailBytes.
+// bounded clamps a detail string to maxDetailBytes on a rune boundary so
+// multi-byte UTF-8 sequences are never split, producing invalid output.
 func bounded(s string) string {
-	if len(s) > maxDetailBytes {
-		return s[:maxDetailBytes]
+	if len(s) <= maxDetailBytes {
+		return s
+	}
+	s = s[:maxDetailBytes]
+	// Walk back to the last valid rune boundary (at most utf8.UTFMax-1 steps).
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
 	}
 	return s
 }
