@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -367,6 +368,9 @@ func TestRun_MaxParallelLargerThanRosterIsUnbounded(t *testing.T) {
 }
 
 func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
+	// Verify no goroutine leak: count goroutines before and after Run.
+	before := runtime.NumGoroutine()
+
 	// The semaphore must not defeat the WaitGroup drain guarantee: with a roster
 	// larger than the cap, queued goroutines whose ctx-aware acquire loses to
 	// cancellation still resolve to a timeout result and Done() — no leak.
@@ -390,4 +394,18 @@ func TestRun_MaxParallelDrainsUnderCancellation(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return under the cap — semaphore blocked the WaitGroup drain")
 	}
+
+	// Poll for goroutine cleanup (similar to goleak): give the runtime a short
+	// window to reclaim goroutines, then assert no persistent leak.
+	var after int
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		after = runtime.NumGoroutine()
+		if after <= before+2 {
+			break
+		}
+	}
+	assert.LessOrEqual(t, after, before+2,
+		"goroutine count must not permanently increase after Run — WaitGroup drain guarantee")
 }
