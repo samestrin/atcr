@@ -102,6 +102,24 @@ func TestManifest_RecordsMaxParallelAndTimeoutSecs(t *testing.T) {
 	assert.Contains(t, string(data), `"timeout_secs"`, "timeout_secs key must appear in JSON")
 }
 
+// TestManifest_MaxParallelZeroSerializes verifies that an explicitly-unbounded
+// run (MaxParallel=0) is serialized with the max_parallel key present in the
+// JSON, so it is distinguishable from an older manifest that never carried the
+// field at all.
+func TestManifest_MaxParallelZeroSerializes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{
+		Base:        "aaa",
+		Head:        "bbb",
+		StartedAt:   time.Now().UTC(),
+		MaxParallel: 0, // explicit unbounded
+	}
+	require.NoError(t, WriteManifest(path, m))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"max_parallel"`, "MaxParallel=0 must appear in JSON to distinguish explicit-unbounded from absent")
+}
+
 // --- Epic 1.5: timeout_secs backward compatibility (stale-inference input) ---
 
 // TestManifest_TimeoutSecsTolerantWhenAbsent verifies a manifest written before
