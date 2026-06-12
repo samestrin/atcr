@@ -18,6 +18,8 @@ coverage.txt
 
 # Runtime databases
 qdrant_fts.db
+qdrant_fts.db-shm
+qdrant_fts.db-wal
 
 # Environment and Local Settings
 .env
