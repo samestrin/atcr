@@ -1,0 +1,31 @@
+[
+  {
+    "severity": "CRITICAL",
+    "file": "auth.go",
+    "line": 42,
+    "problem": "token never expires",
+    "fix": "check expiry",
+    "category": "security",
+    "est_minutes": 15,
+    "evidence": "expiresAt unread",
+    "reviewers": [
+      "greta",
+      "host"
+    ],
+    "confidence": "HIGH"
+  },
+  {
+    "severity": "LOW",
+    "file": "util.go",
+    "line": 7,
+    "problem": "unused var",
+    "fix": "",
+    "category": "style",
+    "est_minutes": 0,
+    "evidence": "",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "MEDIUM"
+  }
+]

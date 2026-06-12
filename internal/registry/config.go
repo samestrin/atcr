@@ -1,0 +1,191 @@
+package registry
+
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// DefaultTemperature fills an agent's temperature when unset (applied at
+// load time — temperature is purely agent-level).
+//
+// DefaultTimeoutSecs is the embedded-tier floor of the shared-settings
+// precedence chain (see ResolveSettings). Agent-level timeout and payload
+// deliberately stay unset at load so agents inherit the resolved settings.
+const (
+	DefaultTemperature = 0.7
+	DefaultTimeoutSecs = 600
+)
+
+// envVarName matches valid POSIX environment variable names.
+var envVarName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// Provider is an OpenAI-compatible endpoint definition. API keys are never
+// stored; APIKeyEnv names the environment variable resolved at invoke time.
+type Provider struct {
+	APIKeyEnv string `yaml:"api_key_env"`
+	BaseURL   string `yaml:"base_url,omitempty"`
+}
+
+// AgentConfig binds a provider+model to a reviewer persona. Temperature and
+// TimeoutSecs are pointers so an explicit zero survives default application.
+type AgentConfig struct {
+	Provider    string   `yaml:"provider"`
+	Model       string   `yaml:"model"`
+	Persona     string   `yaml:"persona,omitempty"`
+	Temperature *float64 `yaml:"temperature,omitempty"`
+	TimeoutSecs *int     `yaml:"timeout_secs,omitempty"`
+	RateLimited bool     `yaml:"rate_limited,omitempty"`
+	Fallback    string   `yaml:"fallback,omitempty"`
+	Payload     string   `yaml:"payload,omitempty"`
+}
+
+// Registry is the user-level configuration from ~/.config/atcr/registry.yaml:
+// providers, agents, and optional user-level defaults for the shared review
+// settings (the tier between project config and embedded defaults in the
+// precedence chain). Personas live as .md files next to it, not in YAML.
+type Registry struct {
+	Providers map[string]Provider    `yaml:"providers"`
+	Agents    map[string]AgentConfig `yaml:"agents"`
+
+	PayloadMode       string `yaml:"payload_mode,omitempty"`
+	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
+	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+	FailOn            string `yaml:"fail_on,omitempty"`
+}
+
+// DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
+func DefaultRegistryPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolving home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "atcr", "registry.yaml"), nil
+}
+
+// LoadRegistry reads, strictly parses, and validates the registry at path.
+// API key env vars are NOT resolved here; that happens at invoke time.
+func LoadRegistry(path string) (*Registry, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading registry: %w", err)
+	}
+
+	base := filepath.Base(path)
+	var reg Registry
+	if err := decodeStrictYAML(data, &reg); err != nil {
+		if errors.Is(err, errEmptyDocument) {
+			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
+		}
+		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
+	}
+
+	if err := reg.validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
+	if err := reg.ValidateFallbacks(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
+	}
+	reg.applyDefaults()
+	return &reg, nil
+}
+
+// validate checks required fields and reference integrity.
+func (r *Registry) validate() error {
+	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
+		return fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs)
+	}
+	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
+		return fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget)
+	}
+	if !payloadModeValid(r.PayloadMode) {
+		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
+	}
+	for name, p := range r.Providers {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("providers: provider name must not be empty")
+		}
+		if p.APIKeyEnv == "" {
+			return fmt.Errorf("providers.%s: required field 'api_key_env' is missing", name)
+		}
+		if !envVarName.MatchString(p.APIKeyEnv) {
+			return fmt.Errorf("providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
+		}
+		if p.BaseURL != "" {
+			u, err := url.Parse(p.BaseURL)
+			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+				return fmt.Errorf("providers.%s: base_url must be a valid http or https URL", name)
+			}
+			if u.User != nil {
+				return fmt.Errorf("providers.%s: base_url must not embed credentials (userinfo)", name)
+			}
+		}
+	}
+	for name, a := range r.Agents {
+		if strings.TrimSpace(name) == "" {
+			return errors.New("agents: agent name must not be empty")
+		}
+		if a.Provider == "" {
+			return fmt.Errorf("agent '%s': required field 'provider' is missing", name)
+		}
+		if a.Model == "" {
+			return fmt.Errorf("agent '%s': required field 'model' is missing", name)
+		}
+		if _, ok := r.Providers[a.Provider]; !ok {
+			return fmt.Errorf("agent '%s' references unknown provider '%s'", name, a.Provider)
+		}
+		if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
+			return fmt.Errorf("agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
+		}
+		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
+			return fmt.Errorf("agent '%s': temperature must be within [0, 2]", name)
+		}
+		if !payloadModeValid(a.Payload) {
+			return fmt.Errorf("agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+		}
+	}
+	return nil
+}
+
+// applyDefaults fills optional agent fields: persona defaults to the agent
+// name and temperature to 0.7. TimeoutSecs and Payload intentionally stay
+// unset (nil/empty) so agents inherit the resolved shared settings — see
+// EffectiveTimeoutSecs and the precedence chain in ResolveSettings.
+func (r *Registry) applyDefaults() {
+	for name, a := range r.Agents {
+		if a.Persona == "" {
+			a.Persona = name
+		}
+		if a.Temperature == nil {
+			temp := DefaultTemperature
+			a.Temperature = &temp
+		}
+		r.Agents[name] = a
+	}
+}
+
+// EffectiveTimeoutSecs returns the agent's own timeout when set, otherwise
+// the resolved shared timeout.
+func (a AgentConfig) EffectiveTimeoutSecs(s Settings) int {
+	if a.TimeoutSecs != nil {
+		return *a.TimeoutSecs
+	}
+	return s.TimeoutSecs
+}
+
+// EffectivePayloadMode returns the agent's own payload override when set,
+// otherwise the resolved shared payload mode. (Enum validation of payload
+// values is the payload-configuration stage's concern.)
+func (a AgentConfig) EffectivePayloadMode(s Settings) string {
+	if v := strings.TrimSpace(a.Payload); v != "" {
+		return v
+	}
+	return s.PayloadMode
+}

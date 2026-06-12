@@ -1,0 +1,62 @@
+# Go Binaries and Build Artifacts
+bin/
+atcr
+atcr-mcp
+atcr-mcp-ssee
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and Coverage Artifacts
+*.out
+*.cover
+*.test
+coverage.html
+coverage.txt
+
+# Runtime databases
+qdrant_fts.db
+qdrant_fts.db-shm
+qdrant_fts.db-wal
+
+# Environment and Local Settings
+.env
+.env.local
+.env.*.local
+*.local.yaml
+*.local.yml
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# Planning Specific Files
+.planning/.temp/
+.planning/.memory/
+.planning/**/*.lock
+.planning/**/sprint-complete.md
+.planning/**/code-review.md
+.planning/.locks/
+.planning/.config/.active_sprint
+
+# Code review session outputs (verification/ tracked; logs are committed)
+.planning/**/code-review/claude/
+.planning/**/code-review/multi-agent/
+.planning/**/code-review/reconciled/

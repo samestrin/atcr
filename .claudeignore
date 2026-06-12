@@ -1,0 +1,93 @@
+# Secrets and environment — never read
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# Build artifacts
+bin/
+dist/
+build/
+target/
+atcr
+atcr-mcp
+atcr-mcp-ssee
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test and coverage output
+*.out
+*.cover
+*.test
+coverage.html
+coverage.txt
+*.prof
+
+# Binary blobs and databases
+*.db
+*.sqlite
+*.sqlite3
+qdrant_fts.db
+*.bin
+*.pbf
+*.wasm
+
+# Lock files — noise, no semantic value
+go.sum
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+Cargo.lock
+poetry.lock
+
+# Generated
+*.gen.*
+*_generated.go
+*_pb.go
+*_grpc.pb.go
+vendor/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git internals
+.git/
+
+# Planning — internal/working state, not for code reasoning
+.planning/.temp/
+.planning/.memory/
+.planning/**/*.lock
+.planning/**/sprint-complete.md
+.planning/**/code-review.md
+
+# Logs
+*.log
+logs/
+
+# node_modules (if any tooling shows up)
+node_modules/
+
+# Language-tool caches and config
+.cache/
+.mcp_config*
+playwright-report/
+coverage/
+.nyc_output/
+.gradle/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
