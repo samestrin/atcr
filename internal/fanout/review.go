@@ -13,11 +13,6 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
-// byteBudget is the per-payload byte budget. v1 ships unlimited (0): no config
-// knob exposes truncation yet, and the budget machinery (payload.ApplyByteBudget)
-// stays wired so a future setting needs no plumbing change.
-const byteBudget int64 = 0
-
 // ErrNoReviewableContent reports a resolved range whose commits changed no
 // reviewable files (e.g. only merge or empty commits), so every payload mode
 // built empty. gitrange.ErrEmptyRange catches zero-commit ranges earlier;
@@ -89,6 +84,12 @@ func LoadReviewConfig(root string, cli registry.CLIOverrides) (*ReviewConfig, er
 	}
 	settings, err := registry.ResolveSettings(cli, proj, reg)
 	if err != nil {
+		return nil, err
+	}
+	// Defense-in-depth: every tier validates >= 0 at load time; re-check the
+	// resolved value here so a future tier can never smuggle a negative budget
+	// into ApplyByteBudget (AC 06-03 Error Scenario 1).
+	if err := payload.ValidateBudget(settings.PayloadByteBudget); err != nil {
 		return nil, err
 	}
 	return &ReviewConfig{
@@ -274,7 +275,7 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 		if err != nil {
 			return nil, fmt.Errorf("building %s payload: %w", mode, err)
 		}
-		kept, trunc := payload.ApplyByteBudget(entries, byteBudget)
+		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
 		var b strings.Builder
 		for _, e := range kept {
 			b.WriteString(e.Body)

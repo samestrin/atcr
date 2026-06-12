@@ -21,13 +21,18 @@ const MaxTimeoutSecs = 86400
 type Settings struct {
 	PayloadMode string
 	TimeoutSecs int
+	// PayloadByteBudget is the per-payload byte budget fed to
+	// payload.ApplyByteBudget; 0 is the documented unlimited escape hatch
+	// (AC 06-03).
+	PayloadByteBudget int64
 }
 
 // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
 // A set-but-empty string is treated as unset rather than as an override.
 type CLIOverrides struct {
-	PayloadMode *string
-	TimeoutSecs *int
+	PayloadMode       *string
+	TimeoutSecs       *int
+	PayloadByteBudget *int64
 }
 
 // ResolveSettings applies the precedence chain. proj and reg may be nil;
@@ -35,17 +40,26 @@ type CLIOverrides struct {
 // here because they bypass the load-time checks the file tiers go through.
 func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Settings, error) {
 	s := Settings{
-		PayloadMode: DefaultPayloadMode,
-		TimeoutSecs: DefaultTimeoutSecs,
+		PayloadMode:       DefaultPayloadMode,
+		TimeoutSecs:       DefaultTimeoutSecs,
+		PayloadByteBudget: DefaultPayloadByteBudget,
 	}
 
 	if reg != nil {
-		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs)
+		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget)
 	}
 	if proj != nil {
-		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs)
+		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget)
 	}
 
+	if cli.PayloadByteBudget != nil {
+		// Same rule payload.ValidateBudget enforces (the package boundary
+		// forbids importing it here): zero is valid and means unlimited.
+		if *cli.PayloadByteBudget < 0 {
+			return Settings{}, fmt.Errorf("byte budget must be >= 0, got %d", *cli.PayloadByteBudget)
+		}
+		s.PayloadByteBudget = *cli.PayloadByteBudget
+	}
 	if cli.TimeoutSecs != nil {
 		if *cli.TimeoutSecs <= 0 || *cli.TimeoutSecs > MaxTimeoutSecs {
 			return Settings{}, fmt.Errorf("timeout must be within 1..%d seconds", MaxTimeoutSecs)
@@ -65,13 +79,17 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 }
 
 // applyTier overlays one configuration tier's explicitly-set values onto s.
-// Whitespace-only strings count as unset.
-func applyTier(s *Settings, payloadMode string, timeoutSecs *int) {
+// Whitespace-only strings count as unset. byteBudget is a pointer so an
+// explicit 0 (the unlimited escape hatch) survives default application.
+func applyTier(s *Settings, payloadMode string, timeoutSecs *int, byteBudget *int64) {
 	if v := strings.TrimSpace(payloadMode); v != "" {
 		s.PayloadMode = v
 	}
 	if timeoutSecs != nil {
 		s.TimeoutSecs = *timeoutSecs
+	}
+	if byteBudget != nil {
+		s.PayloadByteBudget = *byteBudget
 	}
 }
 

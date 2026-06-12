@@ -52,9 +52,10 @@ type Registry struct {
 	Providers map[string]Provider    `yaml:"providers"`
 	Agents    map[string]AgentConfig `yaml:"agents"`
 
-	PayloadMode string `yaml:"payload_mode,omitempty"`
-	TimeoutSecs *int   `yaml:"timeout_secs,omitempty"`
-	FailOn      string `yaml:"fail_on,omitempty"`
+	PayloadMode       string `yaml:"payload_mode,omitempty"`
+	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
+	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+	FailOn            string `yaml:"fail_on,omitempty"`
 }
 
 // DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
@@ -100,6 +101,9 @@ func LoadRegistry(path string) (*Registry, error) {
 func (r *Registry) validate() error {
 	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
 		return fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs)
+	}
+	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
+		return fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget)
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))

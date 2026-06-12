@@ -15,6 +15,11 @@ import (
 const (
 	DefaultPayloadMode = "blocks"
 	DefaultFailOn      = "HIGH"
+	// DefaultPayloadByteBudget is the embedded per-payload byte budget:
+	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
+	// 128k-context model tier with prompt headroom. 0 is the documented
+	// unlimited escape hatch (AC 06-03).
+	DefaultPayloadByteBudget int64 = 524288
 )
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
@@ -26,7 +31,10 @@ type ProjectConfig struct {
 	SerialAgents []string `yaml:"serial_agents,omitempty"`
 	PayloadMode  string   `yaml:"payload_mode,omitempty"`
 	TimeoutSecs  *int     `yaml:"timeout_secs,omitempty"`
-	FailOn       string   `yaml:"fail_on,omitempty"`
+	// PayloadByteBudget is a pointer so an explicit 0 (unlimited) survives
+	// default application.
+	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
+	FailOn            string `yaml:"fail_on,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -48,6 +56,7 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("serial_agents: []\n")
 	fmt.Fprintf(&b, "payload_mode: %s\n", DefaultPayloadMode)
 	fmt.Fprintf(&b, "timeout_secs: %d\n", DefaultTimeoutSecs)
+	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	return b.String()
 }
@@ -86,6 +95,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.TimeoutSecs != nil && (*cfg.TimeoutSecs <= 0 || *cfg.TimeoutSecs > MaxTimeoutSecs) {
 		return nil, fmt.Errorf("%s: timeout_secs must be positive (max %d)", base, MaxTimeoutSecs)
+	}
+	if cfg.PayloadByteBudget != nil && *cfg.PayloadByteBudget < 0 {
+		return nil, fmt.Errorf("%s: payload_byte_budget must be >= 0 (0 = unlimited)", base)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
