@@ -28,6 +28,7 @@ var allowedInternalImports = map[string][]string{
 	"registry":  {},
 	"payload":   {"gitrange"},
 	"llmclient": {"registry"},
+	"doctor":    {"llmclient", "registry"},
 	"fanout":    {"llmclient", "registry", "stream", "payload"},
 	"reconcile": {"stream"},
 	"report":    {"stream", "reconcile"},

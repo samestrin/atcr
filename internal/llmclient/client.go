@@ -98,7 +98,12 @@ type Invocation struct {
 	APIKeyEnv   string
 	Model       string
 	Temperature *float64
-	Prompt      string
+	// MaxTokens caps the completion budget (OpenAI max_tokens). Nil omits the
+	// field so the provider's own default applies. Reasoning/thinking models
+	// spend this budget on internal reasoning, so callers that need visible
+	// output (e.g. the doctor self-test) must set it generously.
+	MaxTokens *int
+	Prompt    string
 }
 
 type message struct {
@@ -110,6 +115,7 @@ type chatRequest struct {
 	Model       string    `json:"model"`
 	Messages    []message `json:"messages"`
 	Temperature *float64  `json:"temperature,omitempty"`
+	MaxTokens   *int      `json:"max_tokens,omitempty"`
 }
 
 type chatResponse struct {
@@ -132,6 +138,7 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 		Model:       inv.Model,
 		Messages:    []message{{Role: "user", Content: inv.Prompt}},
 		Temperature: inv.Temperature,
+		MaxTokens:   inv.MaxTokens,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encoding request: %w", err)
@@ -193,13 +200,29 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 	return "", fmt.Errorf("exhausted retries: %w", lastErr)
 }
 
-// httpStatusError formats a non-200 failure, appending the sanitized
-// error-body snippet when the provider sent one.
-func httpStatusError(status int, snippet string) error {
-	if snippet == "" {
-		return fmt.Errorf("provider returned HTTP %d", status)
+// HTTPStatusError is a non-2xx provider response surfaced to callers so they
+// can classify the failure by HTTP status (via errors.As) instead of parsing
+// the message string. Snippet is the bounded, whitespace-collapsed,
+// key-redacted prefix of the provider's error body (empty when none was sent).
+// It survives the exhausted-retries wrapper, so errors.As reaches it for both
+// retryable (429/5xx) and non-retryable (401/403/404) failures.
+type HTTPStatusError struct {
+	Status  int
+	Snippet string
+}
+
+// Error preserves the original message format so existing callers and tests
+// that match on the text continue to work unchanged.
+func (e *HTTPStatusError) Error() string {
+	if e.Snippet == "" {
+		return fmt.Sprintf("provider returned HTTP %d", e.Status)
 	}
-	return fmt.Errorf("provider returned HTTP %d: %s", status, snippet)
+	return fmt.Sprintf("provider returned HTTP %d: %s", e.Status, e.Snippet)
+}
+
+// httpStatusError builds an *HTTPStatusError for a non-200 failure.
+func httpStatusError(status int, snippet string) error {
+	return &HTTPStatusError{Status: status, Snippet: snippet}
 }
 
 // readErrorSnippet reads a bounded prefix of a non-200 response body and

@@ -22,6 +22,17 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+### [2026-06-11] From Sprint: epic-1.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/doctor/run.go:200 | StatusNetworkError detail surfaces bounded(err.Error()) which can embed the provider base_url host/path (never the API key, which lives only in the Authorization header) in the table and JSON output. | Document that base_url (never the key) may appear in network_error detail so users avoid embedding credentials in base_url. | SECURITY | 10 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/doctor/render.go:25 | RenderTable returns no error and discards the tabwriter Flush error, so a failed/truncated table write is silent while RenderJSON's error is checked. | Have RenderTable return an error like RenderJSON, or at least surface the Flush error to the caller. | CORRECTNESS | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/doctor/render.go:35 | RenderTable folds Detail into the HINT column when Hint is empty, so a raw provider error snippet appears under the HINT header with no visual distinction from an actionable hint. | Keep Detail in its own column or prefix substituted detail (e.g. 'error: ...') so the table does not mislabel a raw snippet as a hint. | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/doctor/run.go:165 | base_url pre-flight accepts any http(s) URL with a non-empty host but does not reject a path already ending in /chat/completions or containing query/fragment, which llmclient then concatenates into a malformed endpoint reported only as network_error. | Warn on a base_url whose path extends beyond the version segment, or document the expected base_url shape in registry.md. | EDGE_CASES | 20 | execute-epic-independent |
+| U | [ ] | MEDIUM | .gitignore:3 | Binary-ignore patterns 'atcr', 'atcr-mcp', 'atcr-mcp-ssee' are unanchored, so they also match the source dirs cmd/atcr/ and cmd/atcr-mcp/. New files under cmd/atcr/ are silently ignored (had to be force-added) and cmd/atcr-mcp/ source appears untracked entirely (git ls-files cmd/atcr-mcp is empty). | Anchor each binary pattern to repo root (/atcr, /atcr-mcp, /atcr-mcp-ssee) so only root-level build artifacts are ignored, then verify cmd/atcr-mcp/ source is tracked and add it if missing. | CONFIG_DRIFT | 15 | execute-epic-cumulative |
+| U | [ ] | LOW | cmd/atcr/doctor.go:90 | doctor folds all problems into per-agent statuses with no overall stderr summary line, so a CI log scan that does not parse the table gets no signal; the plan mentioned logs to stderr. | Emit a one-line stderr summary (n ok / n failed) so non-table and CI consumers get a status-independent signal. | OBSERVABILITY | 20 | execute-epic-independent |
+
 ### [2026-06-11] From Sprint: epic-1.1
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
@@ -117,7 +128,7 @@ technical-debt/
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 2 |
-| MEDIUM | 0 | 6 | 25 |
-| LOW | 4 | 1 | 41 |
+| MEDIUM | 1 | 6 | 25 |
+| LOW | 9 | 1 | 41 |
 
-**Last Modified:** 2026-06-11 | **Open Items:** 4 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 79
+**Last Modified:** 2026-06-11 | **Open Items:** 10 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 85
