@@ -299,6 +299,15 @@ func TestRenderTableError_NilOnSuccess(t *testing.T) {
 	assert.NoError(t, RenderTableError(&b, rep), "RenderTableError should return nil on success")
 }
 
+func TestClassify_PromptEchoIsNotOK(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	// An endpoint that echoes the request prompt verbatim contains the marker
+	// (because the prompt embeds it), but it did not follow the instruction —
+	// a common misconfiguration (wrong route returning the request body).
+	got := classify(Prompt(testNonce), nil, testNonce, 5, tgt)
+	assert.NotEqual(t, StatusOK, got.status, "a verbatim prompt echo must not classify as ok")
+}
+
 func TestPromptAndMarker(t *testing.T) {
 	assert.Equal(t, "ATCR-OK-"+testNonce, Marker(testNonce))
 	assert.Contains(t, Prompt(testNonce), Marker(testNonce))
