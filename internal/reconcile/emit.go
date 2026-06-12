@@ -26,6 +26,13 @@ const (
 // future stage (Epic 3.0). It is absent from every 1.x findings.json (the
 // omitempty pointer marshals to nothing when nil); readers and renderers must
 // tolerate both its absence and its presence.
+//
+// Epic 3.0 contract: when populating this block, the writing stage MUST
+// validate Verdict against the allowed enum values (confirmed, refuted,
+// unverifiable) before persisting. The loader (reconcile/load.go) does NOT
+// validate the enum so bad values are silently accepted on read — validation
+// is the writer's responsibility. An empty Verdict (verdict:"") is a contract
+// violation and will confuse downstream consumers.
 type Verification struct {
 	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
 	Skeptic string `json:"skeptic"` // agent that produced the verdict
