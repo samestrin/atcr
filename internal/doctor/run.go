@@ -141,7 +141,12 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 
 // exitVerdict returns 0 when every directly-listed agent has at least one
 // healthy target along its path (primary or any fallback), 1 otherwise.
+// An empty roster (no agents configured) returns 2 — a usage/config error,
+// not a healthy result.
 func exitVerdict(res *Resolution, results []probeResult) int {
+	if len(res.Agents) == 0 {
+		return 2 // no agents configured — nothing was tested
+	}
 	statusOf := map[string]string{}
 	for _, at := range res.Agents {
 		statusOf[at.Agent] = results[at.TargetIdx].status
