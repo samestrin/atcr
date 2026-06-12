@@ -76,7 +76,7 @@ type AgentResult struct {
 	Status    string `json:"status"`
 	LatencyMS int64  `json:"latency_ms"`
 	Hint      string `json:"hint,omitempty"`
-	Detail    string `json:"detail,omitempty"` // bounded provider error snippet
+	Detail    string `json:"detail,omitempty"` // bounded error snippet; for network_error may include base_url host/path — never the API key, which lives only in Authorization headers
 	Source    string `json:"source,omitempty"` // definition tier: user | project
 }
 
@@ -238,6 +238,8 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "self-test canceled before the endpoint responded"}
 	}
 
+	// err.Error() may embed the transport address (base_url host/path) but never
+	// the API key, which only appears in Authorization headers — safe to surface.
 	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: bounded(err.Error())}
 }
 
