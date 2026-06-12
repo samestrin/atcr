@@ -31,8 +31,25 @@ type Provider struct {
 	BaseURL   string `yaml:"base_url,omitempty"`
 }
 
+// Reserved agent roles for the agentic stages (Epics 3.0/4.0). Reserved and
+// validated at load in 1.x but acted on by no v1 code path.
+const (
+	RoleReviewer = "reviewer"
+	RoleSkeptic  = "skeptic"
+	RoleJudge    = "judge"
+)
+
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
 // TimeoutSecs are pointers so an explicit zero survives default application.
+//
+// Tools, MaxTurns, ToolBudgetBytes, and Role are reserved for the agentic
+// stages (Epics 2.0–4.0). They are parsed and validated at load so a config
+// targeting a future stage loads cleanly under the strict v1 parser, but no
+// v1 code path acts on them and no load-time default is applied — they stay at
+// their zero/unset value in 1.x. MaxTurns and ToolBudgetBytes are pointers so
+// the activating stage can tell an explicit value from an unset one (the same
+// reason TimeoutSecs is a pointer). Planned defaults (tools=false,
+// max_turns=10, role=reviewer) are documented in docs/registry.md.
 type AgentConfig struct {
 	Provider    string   `yaml:"provider"`
 	Model       string   `yaml:"model"`
@@ -42,6 +59,23 @@ type AgentConfig struct {
 	RateLimited bool     `yaml:"rate_limited,omitempty"`
 	Fallback    string   `yaml:"fallback,omitempty"`
 	Payload     string   `yaml:"payload,omitempty"`
+
+	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
+	Tools           bool   `yaml:"tools,omitempty"`             // Stage 2 — enables the tool loop
+	MaxTurns        *int   `yaml:"max_turns,omitempty"`         // Stage 2 — agent-loop turn cap
+	ToolBudgetBytes *int   `yaml:"tool_budget_bytes,omitempty"` // Stage 2 — cumulative tool-result budget
+	Role            string `yaml:"role,omitempty"`              // Stage 3/4 — reviewer | skeptic | judge
+}
+
+// roleValid reports whether r is an allowed reserved role. The empty string is
+// allowed (unset → planned default reviewer when Stage 3/4 lands).
+func roleValid(r string) bool {
+	switch r {
+	case "", RoleReviewer, RoleSkeptic, RoleJudge:
+		return true
+	default:
+		return false
+	}
 }
 
 // Registry is the user-level configuration from ~/.config/atcr/registry.yaml:
@@ -149,6 +183,16 @@ func (r *Registry) validate() error {
 		}
 		if !payloadModeValid(a.Payload) {
 			return fmt.Errorf("agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+		}
+		// Reserved agentic-stage fields: validated at load (inert in 1.x).
+		if !roleValid(a.Role) {
+			return fmt.Errorf("agent '%s': role must be one of reviewer, skeptic, judge", name)
+		}
+		if a.MaxTurns != nil && *a.MaxTurns <= 0 {
+			return fmt.Errorf("agent '%s': max_turns must be > 0", name)
+		}
+		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
+			return fmt.Errorf("agent '%s': tool_budget_bytes must be >= 0", name)
 		}
 	}
 	return nil

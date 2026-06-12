@@ -1,3 +1,19 @@
+## [1.1.0] - 2026-06-11
+
+### Added
+
+- Reserved (parsed-and-validated, inert in 1.x) agent fields in the registry schema for the future agentic stages: `tools`, `max_turns`, `tool_budget_bytes`, `role`
+- Reserved optional `verification` block (`{verdict, skeptic, notes}`) in `reconciled/findings.json` for the future adversarial-verification stage; absent in 1.x and tolerated on read
+- `stages` array in `manifest.json`, recording `["review"]` in 1.x
+- Reserved per-agent `turns`, `tool_calls`, `tool_bytes` counters in `status.json` (absent in 1.x)
+
+### Changed
+
+- Registry v1 parser now accepts the reserved agent fields (previously documented as rejected as unknown keys); they load and type-validate but remain inert, so a config can target a future stage without forcing a format-version break
+- Documented every reserved field with its owning future epic in `docs/registry.md` and `docs/findings-format.md`
+
+*Shipped via /execute-epic (epic 1.1)*
+
 ## [1.0.0] - 2026-06-11
 
 ### Added

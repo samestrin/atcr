@@ -121,13 +121,15 @@ Fallback references are validated when the registry loads:
 
 Both fail the load immediately, so a misconfigured chain can never surface mid-run.
 
-## Reserved field names (rejected by the v1 parser)
+## Reserved fields (parsed and validated, inert in 1.x)
 
-The v1 schema is strict — unknown keys fail the load. The following names are reserved for later stages and will become valid keys when their stage lands; until then, including them is a load error.
+The v1 schema is strict — unknown keys fail the load — but the following agent fields are **reserved for later stages and already accepted**. A 1.x registry may set them; the loader parses and type-validates them, yet **no v1 code path acts on them** and **no load-time default is applied** — an omitted field stays at its zero/unset value until its stage lands. This lets a config target a future stage today without forcing a format-version break.
 
-| Field | Planned default | Activated by |
-|-------|-----------------|--------------|
-| `tools` | false | Stage 2 — tool-using reviewers |
-| `max_turns` | 10 | Stage 2 |
-| `tool_budget_bytes` | — | Stage 2 |
-| `role` | reviewer | Stage 3/4 — `skeptic`, `judge` |
+| Field | Type | Planned default | Validated at load | Activated by |
+|-------|------|-----------------|-------------------|--------------|
+| `tools` | bool | false | type only | Stage 2 — tool-using reviewers |
+| `max_turns` | int | 10 | must be `> 0` | Stage 2 |
+| `tool_budget_bytes` | int | — (unset) | must be `>= 0` | Stage 2 |
+| `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
+
+The **planned default** column documents the value each field's owning stage will assume when it activates; 1.x applies none of these. An out-of-range value (e.g. `max_turns: 0`, an unknown `role`) is a load error even though the field is otherwise inert, so a config targeting a future stage is still caught early.

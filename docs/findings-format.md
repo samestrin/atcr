@@ -89,7 +89,16 @@ Discovery is **leaf-preference**: a directory's `findings.txt` is an input only 
 
 ## JSON form
 
-`reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. A reserved per-finding `verification` block (`{verdict, skeptic, notes}`) is defined for a future stage and absent in 1.x; renderers must tolerate both its absence and presence.
+`reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. A reserved per-finding `verification` block (`{verdict, skeptic, notes}`) is reserved for the adversarial-verification stage (**Epic 3.0**): parsed if present, but never produced by any v1 code path and **absent from 1.x output**. Renderers and readers must tolerate both its absence and its presence — `atcr report` renders identically either way.
+
+## Reserved fields in companion artifacts
+
+The other v1 review artifacts carry reserved fields for the agentic stages on the same "parsed, not yet acted on" basis. Consumers must tolerate their presence and absence:
+
+| Artifact | Field | 1.x value | Reserved for |
+|----------|-------|-----------|--------------|
+| `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran | **Epics 3.0–5.0** — later runs append `"verify"`, `"debate"` |
+| per-agent `status.json` | `turns`, `tool_calls`, `tool_bytes` | absent — no tool loop ran | **Epic 2.0** — tool-using reviewer loop |
 
 ## Evolution policy
 

@@ -192,3 +192,30 @@ func TestRender_UnknownFormatErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown format")
 }
+
+// --- Epic 1.1: report renders identically regardless of the reserved
+// verification block (success criterion: render is identical with or without it) ---
+
+// TestRender_IdenticalWithAndWithoutVerification verifies that adding the
+// reserved verification block to a finding does not change markdown or
+// checklist output, and only adds the (round-tripped) verification key to JSON.
+func TestRender_IdenticalWithAndWithoutVerification(t *testing.T) {
+	without := sample()
+	with := sample()
+	with[0].Verification = &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
+
+	for _, format := range []string{FormatMarkdown, FormatChecklist} {
+		t.Run(format, func(t *testing.T) {
+			var a, b strings.Builder
+			require.NoError(t, Render(&a, without, format))
+			require.NoError(t, Render(&b, with, format))
+			assert.Equal(t, a.String(), b.String(), "human formats ignore the reserved verification block")
+		})
+	}
+
+	t.Run("json-omitted-when-absent", func(t *testing.T) {
+		var a strings.Builder
+		require.NoError(t, Render(&a, without, FormatJSON))
+		assert.NotContains(t, a.String(), "verification")
+	})
+}

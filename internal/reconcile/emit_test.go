@@ -235,3 +235,54 @@ func TestReadReconciledFindings_SharedLoaderContract(t *testing.T) {
 	assert.Equal(t, "a.go", got[0].File)
 	assert.Equal(t, 7, got[0].Line)
 }
+
+// --- Epic 1.1: reserved per-finding verification block (absent in 1.x) ---
+
+// TestJSONFinding_VerificationOmittedIn1x verifies a 1.x findings.json record
+// (no verification produced) marshals without a "verification" key, so the
+// reserved block is genuinely absent until a future stage populates it.
+func TestJSONFinding_VerificationOmittedIn1x(t *testing.T) {
+	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
+	data, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "verification", "reserved verification block absent in 1.x")
+	assert.Nil(t, f.Verification)
+}
+
+// TestJSONFinding_VerificationRoundTrips verifies a findings.json record that
+// carries a verification block parses into the struct and re-marshals intact —
+// renderers and readers must tolerate its presence (forward compatibility).
+func TestJSONFinding_VerificationRoundTrips(t *testing.T) {
+	raw := `{"severity":"HIGH","file":"a.go","line":1,"problem":"p","fix":"f","category":"security","est_minutes":10,"evidence":"e","reviewers":["greta"],"confidence":"HIGH","verification":{"verdict":"confirmed","skeptic":"otto","notes":"reproduced"}}`
+	var f JSONFinding
+	require.NoError(t, json.Unmarshal([]byte(raw), &f))
+	require.NotNil(t, f.Verification)
+	assert.Equal(t, "confirmed", f.Verification.Verdict)
+	assert.Equal(t, "otto", f.Verification.Skeptic)
+	assert.Equal(t, "reproduced", f.Verification.Notes)
+
+	out, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"verification"`)
+	assert.Contains(t, string(out), `"verdict":"confirmed"`)
+}
+
+// TestReadReconciledFindings_ToleratesVerificationPresenceAndAbsence verifies
+// the shared findings.json reader handles records both with and without the
+// reserved verification block.
+func TestReadReconciledFindings_ToleratesVerificationPresenceAndAbsence(t *testing.T) {
+	reviewDir := t.TempDir()
+	dir := filepath.Join(reviewDir, reconciledSubdir)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	body := `[
+  {"severity":"HIGH","file":"a.go","line":1,"problem":"p1","reviewers":["greta"],"confidence":"MEDIUM"},
+  {"severity":"LOW","file":"b.go","line":2,"problem":"p2","reviewers":["otto"],"confidence":"LOW","verification":{"verdict":"refuted","skeptic":"dax","notes":"n"}}
+]`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, FindingsJSON), []byte(body), 0o644))
+	got, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	assert.Nil(t, got[0].Verification, "absent verification tolerated")
+	require.NotNil(t, got[1].Verification, "present verification tolerated")
+	assert.Equal(t, "refuted", got[1].Verification.Verdict)
+}

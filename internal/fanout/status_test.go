@@ -62,3 +62,41 @@ func TestStatusJSON_NoTruncation(t *testing.T) {
 	assert.Empty(t, got.FilesDropped)
 	assert.Equal(t, 5, got.FindingsCount)
 }
+
+// --- Epic 1.1: reserved per-agent status counters (absent in 1.x) ---
+
+// TestStatusJSON_ReservedCountersOmittedIn1x verifies a 1.x status.json omits
+// the reserved turns/tool_calls/tool_bytes counters (no agentic loop ran).
+func TestStatusJSON_ReservedCountersOmittedIn1x(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	s := &AgentStatus{Agent: "bruce", Status: StatusOK, PayloadMode: "diff"}
+	require.NoError(t, WriteStatus(path, s))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	for _, key := range []string{"turns", "tool_calls", "tool_bytes"} {
+		assert.NotContains(t, string(data), key, "reserved counter absent in 1.x")
+	}
+	assert.Nil(t, s.Turns)
+	assert.Nil(t, s.ToolCalls)
+	assert.Nil(t, s.ToolBytes)
+}
+
+// TestStatusJSON_ReservedCountersRoundTrip verifies the reserved counters
+// serialize and parse back when a future stage populates them.
+func TestStatusJSON_ReservedCountersRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	turns, calls := 3, 7
+	var bytes64 int64 = 2048
+	s := &AgentStatus{Agent: "bruce", Status: StatusOK, PayloadMode: "diff", Turns: &turns, ToolCalls: &calls, ToolBytes: &bytes64}
+	require.NoError(t, WriteStatus(path, s))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var got AgentStatus
+	require.NoError(t, json.Unmarshal(data, &got))
+	require.NotNil(t, got.Turns)
+	assert.Equal(t, 3, *got.Turns)
+	require.NotNil(t, got.ToolCalls)
+	assert.Equal(t, 7, *got.ToolCalls)
+	require.NotNil(t, got.ToolBytes)
+	assert.Equal(t, int64(2048), *got.ToolBytes)
+}

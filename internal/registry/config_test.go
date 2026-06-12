@@ -330,3 +330,104 @@ agents:
 	require.NoError(t, err)
 	assert.True(t, reg.Agents["a"].RateLimited)
 }
+
+// --- Epic 1.1: reserved agentic-stage fields (parsed + validated, inert in 1.x) ---
+
+// TestRegistryLoad_ReservedFieldsParsed verifies the four reserved fields
+// (tools, max_turns, tool_budget_bytes, role) load cleanly under the strict
+// v1 parser instead of being rejected as unknown keys, and that their values
+// are preserved for the stage that will eventually act on them.
+func TestRegistryLoad_ReservedFieldsParsed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  a:
+    provider: p
+    model: m
+    tools: true
+    max_turns: 5
+    tool_budget_bytes: 4096
+    role: skeptic
+`))
+	require.NoError(t, err)
+	a := reg.Agents["a"]
+	assert.True(t, a.Tools, "tools parsed")
+	require.NotNil(t, a.MaxTurns)
+	assert.Equal(t, 5, *a.MaxTurns, "max_turns parsed")
+	require.NotNil(t, a.ToolBudgetBytes)
+	assert.Equal(t, 4096, *a.ToolBudgetBytes, "tool_budget_bytes parsed")
+	assert.Equal(t, "skeptic", a.Role, "role parsed")
+}
+
+// TestRegistryLoad_ReservedFieldsInert verifies the reserved fields stay at
+// their inert zero/unset state when omitted — no load-time default is applied
+// (Epic 1.1 keeps the 1.x behavior footprint exactly zero).
+func TestRegistryLoad_ReservedFieldsInert(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, validRegistry))
+	require.NoError(t, err)
+	bruce := reg.Agents["bruce"]
+	assert.False(t, bruce.Tools, "tools defaults to false (zero value, no default applied)")
+	assert.Nil(t, bruce.MaxTurns, "max_turns stays unset (no default applied in 1.x)")
+	assert.Nil(t, bruce.ToolBudgetBytes, "tool_budget_bytes stays unset")
+	assert.Empty(t, bruce.Role, "role stays empty (no default applied in 1.x)")
+}
+
+// TestRegistryLoad_ReservedFieldValidation covers load-time validation of the
+// reserved fields: enum check for role, positivity for max_turns,
+// non-negativity for tool_budget_bytes.
+func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			"invalid role",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: overlord\n",
+			"role must be one of",
+		},
+		{
+			"zero max_turns",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    max_turns: 0\n",
+			"max_turns must be",
+		},
+		{
+			"negative max_turns",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    max_turns: -3\n",
+			"max_turns must be",
+		},
+		{
+			"negative tool_budget_bytes",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tool_budget_bytes: -1\n",
+			"tool_budget_bytes must be",
+		},
+		{
+			"wrong type for tools",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tools: maybe\n",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadRegistry(writeRegistry(t, tt.yaml))
+			require.Error(t, err)
+			if tt.wantErr != "" {
+				assert.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestRegistryLoad_ReservedRolesAccepted verifies every valid role enum value
+// (and an explicit reviewer) loads cleanly.
+func TestRegistryLoad_ReservedRolesAccepted(t *testing.T) {
+	for _, role := range []string{"reviewer", "skeptic", "judge"} {
+		t.Run(role, func(t *testing.T) {
+			reg, err := LoadRegistry(writeRegistry(t, "providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: "+role+"\n"))
+			require.NoError(t, err)
+			assert.Equal(t, role, reg.Agents["a"].Role)
+		})
+	}
+}
