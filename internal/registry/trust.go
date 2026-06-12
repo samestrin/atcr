@@ -255,6 +255,6 @@ func (r *Registry) ProjectProviderBanner() string {
 	for _, ref := range refs {
 		fmt.Fprintf(&b, "  - %s\n", ref.Line())
 	}
-	b.WriteString("  These endpoints will receive the named API keys (trusted via 'atcr trust').")
+	b.WriteString("  These endpoints are authorized to receive the named API keys (trusted via 'atcr trust').")
 	return b.String()
 }
