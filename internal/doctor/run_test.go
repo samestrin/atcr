@@ -323,6 +323,18 @@ func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
 	assert.NotContains(t, out, "connection refused", "Detail must not appear when Hint is set")
 }
 
+func TestRenderTableError_EmptySourcePassesThrough(t *testing.T) {
+	// The resolver guarantees a non-empty Source for any real pipeline agent;
+	// the renderer must not silently substitute 'user' for an empty value
+	// (tabwriter replaces tab separators with spaces in output).
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK, Source: ""},
+	}}
+	var b strings.Builder
+	require.NoError(t, RenderTableError(&b, rep))
+	assert.NotContains(t, b.String(), "user", "empty Source must not be defaulted to 'user'")
+}
+
 func TestRenderTableError_SurfacesFlushError(t *testing.T) {
 	rep := &Report{Agents: []AgentResult{
 		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK},
