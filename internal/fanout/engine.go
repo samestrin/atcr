@@ -63,16 +63,34 @@ type Result struct {
 // serial lane (rate-limited providers), both running concurrently.
 type Engine struct {
 	completer Completer
+	// maxParallel bounds concurrent parallel-lane agent calls; 0 (the default)
+	// means unbounded, preserving the original goroutine-per-slot behavior.
+	maxParallel int
+}
+
+// EngineOption configures an Engine at construction.
+type EngineOption func(*Engine)
+
+// WithMaxParallel bounds concurrent parallel-lane agent calls to n. n <= 0
+// leaves the lane unbounded (the documented escape hatch). The serial lane is
+// unaffected — it is already sequential.
+func WithMaxParallel(n int) EngineOption {
+	return func(e *Engine) { e.maxParallel = n }
 }
 
 // NewEngine builds an Engine over the given completer. A nil completer is a
 // programming error and panics at construction rather than nil-panicking deep
-// inside the first agent invocation.
-func NewEngine(c Completer) *Engine {
+// inside the first agent invocation. Options tune optional behavior (e.g.
+// WithMaxParallel); the zero-option call preserves the original unbounded lane.
+func NewEngine(c Completer, opts ...EngineOption) *Engine {
 	if c == nil {
 		panic("fanout: NewEngine called with nil Completer")
 	}
-	return &Engine{completer: c}
+	e := &Engine{completer: c}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // Run executes every slot and returns one Result per slot in input order.
@@ -86,6 +104,15 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	results := make([]Result, len(slots))
 	var wg sync.WaitGroup
 
+	// A buffered semaphore bounds how many parallel-lane agents call a provider
+	// at once. maxParallel <= 0 leaves sem nil (unbounded). Zero-size elements
+	// keep the buffer cheap regardless of cap. Each goroutine still spawns; only
+	// the provider call is gated, which is the resource the cap protects.
+	var sem chan struct{}
+	if e.maxParallel > 0 {
+		sem = make(chan struct{}, e.maxParallel)
+	}
+
 	// Serial slots share one goroutine so they never overlap; parallel slots
 	// each get their own. Both lanes start together and the WaitGroup joins them.
 	var serialIdx []int
@@ -97,6 +124,19 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		wg.Add(1)
 		go func(i int, s Slot) {
 			defer wg.Done()
+			// Acquire a slot before invoking. The acquire is ctx-aware so a
+			// cancelled run never blocks the WaitGroup drain waiting for a slot:
+			// on cancellation, invokeSlot short-circuits to a timeout result
+			// without a provider call. A won acquire is always released.
+			if sem != nil {
+				select {
+				case sem <- struct{}{}:
+					defer func() { <-sem }()
+				case <-ctx.Done():
+					results[i] = e.invokeSlot(ctx, s)
+					return
+				}
+			}
 			results[i] = e.invokeSlot(ctx, s)
 		}(i, slots[i])
 	}
