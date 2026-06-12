@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -263,6 +264,17 @@ func splitDiffByFile(diff string, heads map[string]bool) map[string]string {
 		chunk := diff[s:end]
 		if key := chunkKey(chunk, heads); key != "" {
 			out[key] = chunk
+		} else {
+			// A chunk that matches no known head path means the splitter could
+			// not attribute it — an unforeseen git output form. Record it rather
+			// than drop it silently, so a file rendering with an empty body is
+			// traceable instead of invisible (same contract as the blocks
+			// function-context fallback record).
+			header := chunk
+			if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
+				header = chunk[:nl]
+			}
+			slog.Warn("diff splitter: chunk not attributed to any changed file", "header", header)
 		}
 	}
 	return out
