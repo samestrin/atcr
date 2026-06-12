@@ -192,6 +192,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		Roster:          rosterNames(cfg.Project),
 		StartedAt:       req.StartedAt,
 		Partial:         false, // finalized by ExecuteReview once outcomes are known
+		Stages:          []string{"review"}, // 1.x runs only the review stage (Epic 1.1 reserved field)
 	}
 	if err := WriteManifest(dir, m); err != nil {
 		return nil, err
