@@ -35,6 +35,9 @@ type ProjectConfig struct {
 	// default application.
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
+	// application in ResolveSettings.
+	MaxParallel *int `yaml:"max_parallel,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -99,6 +102,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.PayloadByteBudget != nil && *cfg.PayloadByteBudget < 0 {
 		return nil, fmt.Errorf("%s: payload_byte_budget must be >= 0 (0 = unlimited)", base)
+	}
+	if cfg.MaxParallel != nil && *cfg.MaxParallel < 0 {
+		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
