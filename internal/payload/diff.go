@@ -334,20 +334,16 @@ func (g *gitRunner) rawChunks(base, head string) (map[string]string, error) {
 	return m, nil
 }
 
-// isBinary reports whether any of paths is binary in base..head, served from the
-// memoized whole-range numstat set. For renames the head path is the cache key,
-// and pathspec() includes it, so a binary rename is detected.
+// isBinary reports whether path is binary in base..head, served from the
+// memoized whole-range numstat set keyed by head path. pathspec() puts the head
+// path last for renames, so a binary rename is detected by its new path without
+// risking a collision with the (now absent) old path.
 func (g *gitRunner) isBinary(base, head string, paths ...string) (bool, error) {
 	set, err := g.binarySet(base, head)
 	if err != nil {
 		return false, err
 	}
-	for _, p := range paths {
-		if set[p] {
-			return true, nil
-		}
-	}
-	return false, nil
+	return set[headPathOf(paths)], nil
 }
 
 // functionContextFile returns the function-context diff for a single file,

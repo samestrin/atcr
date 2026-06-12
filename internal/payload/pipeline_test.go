@@ -3,6 +3,8 @@ package payload
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,6 +43,59 @@ func TestBuildEntries_ConstantGitProcessCount(t *testing.T) {
 			"mode %s: git-process count must not grow with changed-file count (2 files: %d, 8 files: %d)",
 			mode, small, large)
 	}
+}
+
+// A single range combining every change kind — modified, added, deleted,
+// renamed (with edit), and binary — must split cleanly: each file's body is
+// attributed to the right path with no cross-contamination, in every mode.
+// This pins the splitter against the high-impact mis-attribution risk.
+func TestBuildEntries_MixedChangeKindsSplitCleanly(t *testing.T) {
+	dir := initRepo(t)
+	write(t, dir, "mod.go", goFileV1)
+	write(t, dir, "gone.go", "package p\n\nfunc Gone() string { return \"gone\" }\n")
+	write(t, dir, "old.go", goFileV1)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pic.bin"), []byte{0x00, 0x01, 0x00}, 0o644))
+	base := commitAll(t, dir, "v1")
+	write(t, dir, "mod.go", goFileV2)                            // modified
+	require.NoError(t, os.Remove(filepath.Join(dir, "gone.go"))) // deleted
+	gitCmd(t, dir, "mv", "old.go", "new.go")                     // renamed...
+	write(t, dir, "new.go", goFileV2)                            // ...with edit
+	// Distinct content so -M does not pair it with the deleted file as a rename.
+	write(t, dir, "added.go", "package p\n\nfunc Added() string { return \"added\" }\n") // added
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pic.bin"), []byte{0xff, 0x00, 0xff}, 0o644)) // binary change
+	head := commitAll(t, dir, "v2")
+	ctx := context.Background()
+
+	// Diff mode: the renamed file keeps its pairing (no spurious full-file add),
+	// the binary file is a marker not raw bytes, and the deleted file is a real
+	// deletion diff — each in its own entry.
+	diffEntries, err := BuildEntries(ctx, ModeDiff, dir, base, head)
+	require.NoError(t, err)
+	byPath := map[string]string{}
+	for _, e := range diffEntries {
+		byPath[e.Path] = e.Body
+	}
+	assert.Contains(t, byPath["new.go"], "rename from old.go")
+	assert.NotContains(t, byPath["new.go"], "+func Bar() int {", "rename pairing lost")
+	assert.Equal(t, "[binary file changed: pic.bin]\n", byPath["pic.bin"])
+	assert.Contains(t, byPath["mod.go"], "+\treturn 2")
+	assert.Contains(t, byPath["gone.go"], "-package p")
+	// No body may leak another file's path into its diff header.
+	assert.NotContains(t, byPath["mod.go"], "new.go")
+	assert.NotContains(t, byPath["added.go"], "mod.go")
+
+	// Files mode: renamed header, deleted/binary markers, full content for the
+	// modified and added files — all correctly keyed.
+	fileEntries, err := BuildEntries(ctx, ModeFiles, dir, base, head)
+	require.NoError(t, err)
+	fByPath := map[string]string{}
+	for _, e := range fileEntries {
+		fByPath[e.Path] = e.Body
+	}
+	assert.Contains(t, fByPath["new.go"], "(renamed from old.go)")
+	assert.Equal(t, "[deleted file: gone.go]\n", fByPath["gone.go"])
+	assert.Equal(t, "[binary file changed: pic.bin]\n", fByPath["pic.bin"])
+	assert.Contains(t, fByPath["added.go"], "=== FILE: added.go ===")
 }
 
 // Files mode is constant EXCEPT for the per-file `git show` of head content,
