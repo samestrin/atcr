@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,6 +133,25 @@ agents:
 `))
 		assert.NoError(t, err)
 	})
+}
+
+func TestFallbackChain_CrossTierCycleAttributedToProject(t *testing.T) {
+	// "alpha" is user-tier (DFS enters here first, alphabetically); "zephyr"
+	// is project-tier. The cycle error must be attributed to the project node
+	// so attribute() prefixes the error with .atcr/registry.yaml, not registry.yaml.
+	reg := agentsWithFallbacks(map[string]string{"alpha": "zephyr", "zephyr": "alpha"})
+	reg.stampSource(SourceUser)
+	reg.AgentSource["zephyr"] = EntrySource{Tier: SourceProject, File: projectRegistryLabel}
+
+	cycleErr := reg.ValidateFallbacks()
+	require.Error(t, cycleErr)
+	assert.ErrorIs(t, cycleErr, ErrFallbackCycle)
+
+	// attribute() wraps the error with the file that defined the attributed node.
+	// With the fix, "zephyr" (project) is chosen; without it "alpha" (user) is.
+	attributed := reg.attribute(cycleErr)
+	assert.True(t, strings.HasPrefix(attributed.Error(), ".atcr/registry.yaml:"),
+		"cross-tier cycle must be attributed to project node, got: %s", attributed.Error())
 }
 
 func TestFallbackChain_LargeGraphTerminates(t *testing.T) {
