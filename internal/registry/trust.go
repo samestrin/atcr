@@ -106,9 +106,12 @@ func (s *TrustStore) Trust(name string, p Provider) {
 }
 
 // Save writes the trust store to disk with restrictive (0600) permissions,
-// creating the parent directory if needed.
+// creating the parent directory if needed. The write is atomic (temp file +
+// rename in the same dir) so a crash or a concurrent `atcr trust` can never
+// truncate the file into a corrupt, review-blocking state.
 func (s *TrustStore) Save() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating trust store dir: %w", err)
 	}
 	body, err := yaml.Marshal(trustFile{Trusted: s.entries})
@@ -118,8 +121,27 @@ func (s *TrustStore) Save() error {
 	header := "# atcr trusted project-defined providers — see docs/registry.md\n" +
 		"# Each entry pins a .atcr/registry.yaml provider by the sha256 of its\n" +
 		"# (base_url, api_key_env). Remove an entry to revoke trust.\n"
-	if err := os.WriteFile(s.path, append([]byte(header), body...), 0o600); err != nil {
-		return fmt.Errorf("writing trust store: %w", err)
+	content := append([]byte(header), body...)
+
+	tmp, err := os.CreateTemp(dir, ".trusted_providers-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating trust store temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("securing trust store temp: %w", err)
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing trust store temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing trust store temp: %w", err)
+	}
+	if err := os.Rename(tmpName, s.path); err != nil {
+		return fmt.Errorf("replacing trust store: %w", err)
 	}
 	return nil
 }

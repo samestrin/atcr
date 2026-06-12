@@ -96,3 +96,22 @@ agents:
 	assert.Contains(t, err.Error(), "bruce -> team -> bruce")
 	assert.Contains(t, err.Error(), userRegistryLabel)
 }
+
+func TestMergedValidation_UserSettingsErrorNamesFile(t *testing.T) {
+	// A top-level settings fault in the USER registry must keep the
+	// "registry.yaml:" prefix in the merged path (parity with LoadRegistry).
+	regPath := writeUserRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+payload_mode: nonsense
+`)
+	_, err := LoadMergedRegistry(regPath, t.TempDir())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), userRegistryLabel)
+	assert.Contains(t, err.Error(), "payload_mode")
+}

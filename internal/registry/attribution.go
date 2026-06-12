@@ -48,7 +48,10 @@ func agentSentinelErr(name string, sentinel error, msg string) error {
 func (r *Registry) attribute(err error) error {
 	var ee *entryError
 	if !errors.As(err, &ee) {
-		return err
+		// Non-entry failures are top-level settings faults (payload_mode,
+		// timeout_secs, ...) which only the user registry carries; preserve the
+		// "registry.yaml: " framing LoadRegistry attaches in the single-file path.
+		return fmt.Errorf("%s: %w", userRegistryLabel, err)
 	}
 	var src EntrySource
 	switch ee.kind {
