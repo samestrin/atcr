@@ -59,6 +59,7 @@ type gitRunner struct {
 	// mismatched range resets them. A gitRunner's range is constant in practice
 	// (one per Build* call), so this only guards reuse in white-box tests.
 	cacheKey   string
+	filesCache []changedFile          // changed files (one --name-status -M)
 	binCache   map[string]bool        // head path -> binary (one --numstat -M)
 	fcCache    map[string]string      // head path -> --function-context chunk
 	plainCache map[string]string      // head path -> --unified=10 chunk
@@ -141,6 +142,38 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
 	return files, nil
 }
 
+// changedFilesMemo memoizes changedFiles so the splitter (which keys chunks
+// against this list) and buildEntries share one --name-status -M process.
+func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
+	g.ensureRange(base, head)
+	if g.filesCache != nil {
+		return g.filesCache, nil
+	}
+	files, err := g.changedFiles(base, head)
+	if err != nil {
+		return nil, err
+	}
+	if files == nil {
+		files = []changedFile{} // non-nil so an empty range still memoizes
+	}
+	g.filesCache = files
+	return files, nil
+}
+
+// headPathSet returns the set of head-side paths in base..head, the authoritative
+// key list the diff splitter matches chunks against.
+func (g *gitRunner) headPathSet(base, head string) (map[string]bool, error) {
+	files, err := g.changedFilesMemo(base, head)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f.path] = true
+	}
+	return set, nil
+}
+
 // headPathOf returns the head-side path from a pathspec. pathspec() yields
 // [oldPath, path] for renames and [path] otherwise, so the head path is always
 // the last element. The whole-range caches are keyed by head path.
@@ -158,6 +191,7 @@ func headPathOf(paths []string) string {
 func (g *gitRunner) ensureRange(base, head string) {
 	if key := base + ".." + head; g.cacheKey != key {
 		g.cacheKey = key
+		g.filesCache = nil
 		g.binCache, g.fcCache, g.plainCache, g.rawCache, g.rangeCache = nil, nil, nil, nil, nil
 	}
 }
@@ -179,53 +213,34 @@ func numstatNewPath(field string) string {
 	return field
 }
 
-// chunkHeadPath extracts the head-side path of a single `diff --git` chunk,
-// keyed off the chunk's own metadata (not its position) so the splitter never
-// mis-attributes a chunk to the wrong file. Pure renames carry only
-// rename to/from; modified/added files carry `+++ b/<path>`; deletions carry
-// `--- a/<path>` with `+++ /dev/null`. Binary and mode-only chunks fall back to
-// the `diff --git a/X b/Y` header (binary files are excluded from bodies via the
-// numstat marker, so their key is never read).
-func chunkHeadPath(chunk string) string {
-	var plusB, minusA string
-	deleted := false
-	for _, line := range strings.Split(chunk, "\n") {
-		switch {
-		case strings.HasPrefix(line, "rename to "):
-			return line[len("rename to "):]
-		case strings.HasPrefix(line, "+++ b/"):
-			plusB = line[len("+++ b/"):]
-		case line == "+++ /dev/null":
-			deleted = true
-		case strings.HasPrefix(line, "--- a/"):
-			minusA = line[len("--- a/"):]
-		}
-	}
-	if plusB != "" {
-		return plusB
-	}
-	if deleted && minusA != "" {
-		return minusA
-	}
-	// Binary / mode-only change: parse the header line. Assumes the path has no
-	// " b/" substring, which holds for every realistic path.
+// chunkKey returns the head path a `diff --git` chunk belongs to by matching the
+// chunk's FIRST line — `diff --git a/<old> b/<new>` — against the authoritative
+// set of head paths from changedFiles. Only the header line is inspected, so
+// diff-body content that mimics a file header (an added line `++ b/x` renders as
+// `+++ b/x`) can never mis-key the chunk; the longest matching head path wins so
+// a nested path is not shadowed by a shorter suffix, and matching against the
+// known set sidesteps git's space-path quirks (trailing tabs on ---/+++,
+// ambiguous spaces). Binary/mode-only chunks key the same way.
+func chunkKey(chunk string, heads map[string]bool) string {
+	first := chunk
 	if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
-		first := chunk[:nl]
-		if rest, ok := strings.CutPrefix(first, "diff --git "); ok {
-			if sp := strings.LastIndex(rest, " b/"); sp >= 0 {
-				return rest[sp+len(" b/"):]
-			}
+		first = chunk[:nl]
+	}
+	best := ""
+	for h := range heads {
+		if len(h) > len(best) && strings.HasSuffix(first, " b/"+h) {
+			best = h
 		}
 	}
-	return ""
+	return best
 }
 
 // splitDiffByFile splits a whole-range git diff into per-file chunks on
-// column-0 `diff --git ` boundaries and keys each by head path. A per-file
-// chunk is byte-identical to the output of the same diff run for that path
-// alone, because git computes per-file patches and concatenates them — this is
-// what lets the verbatim-body contract survive the batching.
-func splitDiffByFile(diff string) map[string]string {
+// column-0 `diff --git ` boundaries and keys each against the known head-path
+// set. A per-file chunk is byte-identical to the output of the same diff run for
+// that path alone, because git computes per-file patches and concatenates them —
+// this is what lets the verbatim-body contract survive the batching.
+func splitDiffByFile(diff string, heads map[string]bool) map[string]string {
 	out := make(map[string]string)
 	if diff == "" {
 		return out
@@ -246,7 +261,7 @@ func splitDiffByFile(diff string) map[string]string {
 			end = starts[k+1]
 		}
 		chunk := diff[s:end]
-		if key := chunkHeadPath(chunk); key != "" {
+		if key := chunkKey(chunk, heads); key != "" {
 			out[key] = chunk
 		}
 	}
@@ -254,15 +269,20 @@ func splitDiffByFile(diff string) map[string]string {
 }
 
 // diffChunks runs one whole-range `git diff <opts> -M base..head` and splits it
-// per file, verbatim (raw bytes — diff payloads ship to reviewers as-is).
+// per file, verbatim (raw bytes — diff payloads ship to reviewers as-is), keyed
+// against the changed-file list.
 func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]string, error) {
+	heads, err := g.headPathSet(base, head)
+	if err != nil {
+		return nil, err
+	}
 	args := append([]string{"diff"}, opts...)
 	args = append(args, "-M", base+".."+head)
 	out, err := g.output(args...)
 	if err != nil {
 		return nil, err
 	}
-	return splitDiffByFile(string(out)), nil
+	return splitDiffByFile(string(out), heads), nil
 }
 
 // binarySet returns the set of head paths that are binary in base..head, from

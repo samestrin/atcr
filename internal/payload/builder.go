@@ -96,7 +96,7 @@ func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEnt
 	if err := validateRange(g, base, head); err != nil {
 		return nil, err
 	}
-	files, err := g.changedFiles(base, head)
+	files, err := g.changedFilesMemo(base, head)
 	if err != nil {
 		return nil, err
 	}
