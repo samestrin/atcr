@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 )
@@ -141,7 +142,12 @@ func Run(ctx context.Context, c Completer, res *Resolution, opts Options) *Repor
 
 // exitVerdict returns 0 when every directly-listed agent has at least one
 // healthy target along its path (primary or any fallback), 1 otherwise.
+// An empty roster (no agents configured) returns 2 — a usage/config error,
+// not a healthy result.
 func exitVerdict(res *Resolution, results []probeResult) int {
+	if len(res.Agents) == 0 {
+		return 2 // no agents configured — nothing was tested
+	}
 	statusOf := map[string]string{}
 	for _, at := range res.Agents {
 		statusOf[at.Agent] = results[at.TargetIdx].status
@@ -209,7 +215,11 @@ const maxDetailBytes = 512
 // classify turns a completion result into a probe outcome.
 func classify(content string, err error, nonce string, latencyMS int64, tgt Target) probeResult {
 	if err == nil {
-		if strings.Contains(content, Marker(nonce)) {
+		// Strip the prompt text before checking for the marker so an endpoint
+		// that echoes the request verbatim (a common misconfiguration) does not
+		// produce a false-positive StatusOK.
+		stripped := strings.ReplaceAll(content, Prompt(nonce), "")
+		if strings.Contains(stripped, Marker(nonce)) {
 			return probeResult{status: StatusOK, latencyMS: latencyMS}
 		}
 		return probeResult{
@@ -242,15 +252,34 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "self-test canceled before the endpoint responded"}
 	}
 
-	// err.Error() may embed the transport address (base_url host/path) but never
-	// the API key, which only appears in Authorization headers — safe to surface.
-	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: bounded(err.Error())}
+	detail := bounded(err.Error())
+	// Enforce credential exclusion rather than relying on the comment invariant.
+	// Scrub the API key value and any URL userinfo so a misconfigured proxy URL
+	// with embedded credentials cannot surface in the report or JSON output.
+	if key := os.Getenv(tgt.APIKeyEnv); key != "" {
+		detail = strings.ReplaceAll(detail, key, "[redacted]")
+	}
+	if u, uerr := url.Parse(tgt.BaseURL); uerr == nil && u.User != nil {
+		if pass, ok := u.User.Password(); ok && pass != "" {
+			detail = strings.ReplaceAll(detail, pass, "[redacted]")
+		}
+		if usr := u.User.Username(); usr != "" {
+			detail = strings.ReplaceAll(detail, usr, "[redacted]")
+		}
+	}
+	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: detail}
 }
 
-// bounded clamps a detail string to maxDetailBytes.
+// bounded clamps a detail string to maxDetailBytes on a rune boundary so
+// multi-byte UTF-8 sequences are never split, producing invalid output.
 func bounded(s string) string {
-	if len(s) > maxDetailBytes {
-		return s[:maxDetailBytes]
+	if len(s) <= maxDetailBytes {
+		return s
+	}
+	s = s[:maxDetailBytes]
+	// Walk back to the last valid rune boundary (at most utf8.UTFMax-1 steps).
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
 	}
 	return s
 }

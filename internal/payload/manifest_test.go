@@ -68,6 +68,20 @@ func TestManifest_StagesRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"review"}, got.Stages)
 }
 
+// TestManifest_NilStagesNormalizedToReview verifies that WriteManifest with nil
+// Stages produces "stages":["review"] so readers never see an absent field and
+// cannot confuse 1.x manifests with pre-field older ones.
+func TestManifest_NilStagesNormalizedToReview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{Base: "aaa", Head: "bbb", StartedAt: time.Now().UTC()}
+	// Stages intentionally nil — WriteManifest must default to ["review"]
+	require.NoError(t, WriteManifest(path, m))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"stages"`, "nil Stages must be normalized to [\"review\"] on write")
+	assert.Contains(t, string(data), `"review"`, "nil Stages must produce [\"review\"] not absent field")
+}
+
 // TestManifest_StagesTolerantWhenAbsent verifies a manifest written without the
 // reserved stages field parses cleanly (tolerant reader; field stays nil).
 func TestManifest_StagesTolerantWhenAbsent(t *testing.T) {
@@ -100,6 +114,24 @@ func TestManifest_RecordsMaxParallelAndTimeoutSecs(t *testing.T) {
 	assert.Equal(t, 300, got.TimeoutSecs, "timeout_secs must round-trip through manifest.json")
 	assert.Contains(t, string(data), `"max_parallel"`, "max_parallel key must appear in JSON")
 	assert.Contains(t, string(data), `"timeout_secs"`, "timeout_secs key must appear in JSON")
+}
+
+// TestManifest_MaxParallelZeroSerializes verifies that an explicitly-unbounded
+// run (MaxParallel=0) is serialized with the max_parallel key present in the
+// JSON, so it is distinguishable from an older manifest that never carried the
+// field at all.
+func TestManifest_MaxParallelZeroSerializes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{
+		Base:        "aaa",
+		Head:        "bbb",
+		StartedAt:   time.Now().UTC(),
+		MaxParallel: 0, // explicit unbounded
+	}
+	require.NoError(t, WriteManifest(path, m))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"max_parallel"`, "MaxParallel=0 must appear in JSON to distinguish explicit-unbounded from absent")
 }
 
 // --- Epic 1.5: timeout_secs backward compatibility (stale-inference input) ---

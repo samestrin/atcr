@@ -97,6 +97,39 @@ agents:
 	assert.Contains(t, err.Error(), userRegistryLabel)
 }
 
+func TestMergedValidation_ProjectProviderEmptyName(t *testing.T) {
+	// A project registry with an empty provider key must attribute the error
+	// to .atcr/registry.yaml (the project file), not to the user registry.
+	regPath := writeUserRegistry(t, userRegistryWithBruce)
+	root := t.TempDir()
+	writeProjectRegistry(t, root, `
+providers:
+  '':
+    api_key_env: FOO
+`)
+	_, err := LoadMergedRegistry(regPath, root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), projectRegistryLabel,
+		"empty-provider error must name the project file, not the user registry")
+	assert.Contains(t, err.Error(), "provider name must not be empty")
+}
+
+func TestMergedValidation_ProjectAgentEmptyName(t *testing.T) {
+	regPath := writeUserRegistry(t, userRegistryWithBruce)
+	root := t.TempDir()
+	writeProjectRegistry(t, root, `
+agents:
+  '':
+    provider: openai
+    model: m
+`)
+	_, err := LoadMergedRegistry(regPath, root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), projectRegistryLabel,
+		"empty-agent error must name the project file, not the user registry")
+	assert.Contains(t, err.Error(), "agent name must not be empty")
+}
+
 func TestMergedValidation_UserSettingsErrorNamesFile(t *testing.T) {
 	// A top-level settings fault in the USER registry must keep the
 	// "registry.yaml:" prefix in the merged path (parity with LoadRegistry).

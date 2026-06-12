@@ -98,7 +98,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	} else {
-		doctor.RenderTable(cmd.OutOrStdout(), rep)
+		if err := doctor.RenderTableError(cmd.OutOrStdout(), rep); err != nil {
+			return err
+		}
 		// Emit a CI-readable one-line summary to stderr after the table so log
 		// scanners get a status signal without parsing the table output.
 		var okCount int

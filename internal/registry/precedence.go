@@ -9,6 +9,11 @@ import (
 // would overflow time.Duration arithmetic long before being useful.
 const MaxTimeoutSecs = 86400
 
+// MaxAgentTurns caps the per-agent turn budget at every tier; a larger
+// value would let a misconfigured or malicious roster run away indefinitely
+// once Epic 2.0 activates the tool loop.
+const MaxAgentTurns = 1000
+
 // DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
 // agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
 // AC 01-04's "10 concurrent agent calls" target) while capping a larger or
@@ -94,6 +99,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 			return Settings{}, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", v)
 		}
 		s.PayloadMode = v
+	}
+	// Post-resolution sanity: a directly-constructed proj/reg (bypassing the
+	// file loader) can carry a negative MaxParallel. The engine treats n<=0 as
+	// unbounded, so a negative value silently inverts the user's intent.
+	if s.MaxParallel < 0 {
+		return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", s.MaxParallel)
 	}
 	return s, nil
 }

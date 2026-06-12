@@ -37,11 +37,7 @@ func RenderTableError(w io.Writer, rep *Report) error {
 		if hint == "" && a.Detail != "" {
 			hint = "error: " + a.Detail
 		}
-		source := a.Source
-		if source == "" {
-			source = "user"
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, source, a.Status, latency, hint)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, a.Source, a.Status, latency, hint)
 	}
 	return tw.Flush()
 }

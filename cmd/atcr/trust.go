@@ -65,17 +65,29 @@ func runTrust(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// --all and positional args are mutually exclusive: mixing them is ambiguous
+	// (did the user want all, or just the named ones?).
+	if all && len(args) > 0 {
+		return usageError(fmt.Errorf("--all takes no provider arguments; omit names or drop --all"))
+	}
+
 	// Resolve the selection.
 	want := args
 	if all {
 		want = sortedProviderNames(pr)
 	}
-	var trusted int
+
+	// Validate the full want set before printing or mutating anything so we
+	// never claim a write that was rolled back by a later unknown-name error.
 	for _, name := range want {
-		p, ok := pr.Providers[name]
-		if !ok {
+		if _, ok := pr.Providers[name]; !ok {
 			return usageError(fmt.Errorf("%q is not a project-defined provider in .atcr/registry.yaml", name))
 		}
+	}
+
+	var trusted int
+	for _, name := range want {
+		p := pr.Providers[name]
 		if store.IsTrusted(p) {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "already trusted: %s\n", name)
 			continue

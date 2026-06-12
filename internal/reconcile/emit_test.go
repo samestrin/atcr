@@ -286,3 +286,21 @@ func TestReadReconciledFindings_ToleratesVerificationPresenceAndAbsence(t *testi
 	require.NotNil(t, got[1].Verification, "present verification tolerated")
 	assert.Equal(t, "refuted", got[1].Verification.Verdict)
 }
+
+// TestJSONFinding_EmptyVerdictLoadsDefensively verifies that a findings.json
+// record carrying an empty verdict string loads without error. Per
+// docs/findings-format.md, an absent or unrecognized verdict (including "")
+// must be treated as "unverified" by consumers — the loader itself is not the
+// validation boundary.
+func TestJSONFinding_EmptyVerdictLoadsDefensively(t *testing.T) {
+	reviewDir := t.TempDir()
+	dir := filepath.Join(reviewDir, reconciledSubdir)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	body := `[{"severity":"HIGH","file":"a.go","line":1,"problem":"p","reviewers":["greta"],"confidence":"MEDIUM","verification":{"verdict":"","skeptic":"otto","notes":""}}]`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, FindingsJSON), []byte(body), 0o644))
+	got, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err, "empty verdict must load without error")
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Verification)
+	assert.Equal(t, "", got[0].Verification.Verdict, "empty verdict preserved as-is; consumers treat it as unverified per docs/findings-format.md")
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Source tiers for an effective registry entry after the project overlay
@@ -23,11 +24,35 @@ const (
 	projectRegistryLabel = ".atcr/registry.yaml"
 )
 
+// sharedSettingsKeys are YAML keys that belong in .atcr/config.yaml, not
+// .atcr/registry.yaml. When the strict decoder rejects one, the error is
+// amended with a targeted hint so the contributor knows where it belongs.
+var sharedSettingsKeys = []string{
+	"roster",
+	"payload_mode",
+	"timeout_secs",
+	"max_parallel",
+	"fail_on",
+}
+
+// amendWithSettingsHint checks whether a YAML strict-parse error mentions a
+// known shared-settings key and, if so, returns an error that appends a
+// targeted hint. If no match, the original error is returned unchanged.
+func amendWithSettingsHint(err error) error {
+	msg := err.Error()
+	for _, key := range sharedSettingsKeys {
+		if strings.Contains(msg, key) {
+			return fmt.Errorf("%w — '%s' is a shared setting; shared settings belong in .atcr/config.yaml, not .atcr/registry.yaml", err, key)
+		}
+	}
+	return err
+}
+
 // EntrySource records the tier (and defining file) an effective provider or
 // agent came from, so validation errors can name the file and `atcr doctor`
 // can show provenance.
 type EntrySource struct {
-	Tier string // SourceUser | SourceProject | SourceEmbedded
+	Tier string // SourceUser | SourceProject
 	File string // display label of the defining file
 }
 
@@ -87,7 +112,7 @@ func LoadProjectRegistry(path string) (*ProjectRegistry, error) {
 		if errors.Is(err, errEmptyDocument) {
 			return nil, nil // an empty overlay file is treated as no overlay
 		}
-		return nil, fmt.Errorf("failed to parse %s: %w", projectRegistryLabel, err)
+		return nil, fmt.Errorf("failed to parse %s: %w", projectRegistryLabel, amendWithSettingsHint(err))
 	}
 	return &pr, nil
 }

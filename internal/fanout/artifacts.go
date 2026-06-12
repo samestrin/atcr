@@ -98,18 +98,26 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 	return sum, nil
 }
 
-// writeFailureSummary writes a best-effort minimal summary.json marking every
-// roster agent failed, so a post-fan-out persistence failure (a WritePool error
-// in ExecuteReview) surfaces as `failed` through the existing summary-derived
-// reader path (succeeded==0 → RunFailed) instead of an eternal in_progress.
-// Errors are deliberately swallowed: this is a last-resort marker written while
-// the normal write path is already failing, and if it too cannot be written the
-// review simply has no summary.json — stale inference then promotes it out of
-// in_progress once its timeout elapses. No new sentinel artifact is introduced.
-func writeFailureSummary(poolDir string, roster int) {
-	_ = os.MkdirAll(poolDir, 0o755)
-	ps := PoolSummary{Total: roster, Failed: roster}
-	_ = writeJSON(filepath.Join(poolDir, summaryFile), ps)
+// writeFailureSummary writes a best-effort summary.json from the real fan-out
+// results so a post-fan-out persistence failure (a WritePool error in
+// ExecuteReview) surfaces accurate tallies through the existing summary-derived
+// reader path instead of an eternal in_progress. Passing the real results
+// (rather than a hard-coded all-failed roster count) preserves any partial
+// success: a run where some agents produced findings before the WritePool I/O
+// error is recorded as partial rather than fabricated as a total failure.
+// Write errors are logged to stderr: this is a last-resort marker while the
+// normal path is already failing, so if this write also fails, stale inference
+// promotes the review out of in_progress once the timeout elapses.
+func writeFailureSummary(poolDir string, results []Result) {
+	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "atcr: warning: writeFailureSummary: mkdir %s: %v\n", poolDir, err)
+		return
+	}
+	sum := summarize(results)
+	ps := PoolSummary{Total: sum.Total, Succeeded: sum.Succeeded, Failed: sum.Failed, Partial: sum.Partial}
+	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
+		fmt.Fprintf(os.Stderr, "atcr: warning: writeFailureSummary: write summary: %v\n", err)
+	}
 }
 
 // findingsFor parses an agent's raw review content into findings and stamps the

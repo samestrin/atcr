@@ -133,6 +133,38 @@ func TestEnsureReviewComplete_RejectsStale(t *testing.T) {
 	assert.Contains(t, err.Error(), "re-run")
 }
 
+// TestReadReviewStatus_NonErrNotExistPastDeadlineIsStale verifies that a
+// non-ErrNotExist read error on summary.json (e.g. permission denied, "is a
+// directory") combined with an elapsed deadline reports stale rather than
+// masking the condition as an eternal in_progress.
+func TestReadReviewStatus_NonErrNotExistPastDeadlineIsStale(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Place a directory where summary.json should be; os.ReadFile returns an
+	// "is a directory" error which is NOT os.ErrNotExist.
+	require.NoError(t, os.MkdirAll(filepath.Join(poolDir, summaryFile), 0o755))
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status, "non-ErrNotExist read error past deadline must report stale, not in_progress")
+}
+
+// TestReadReviewStatus_NonErrNotExistBeforeDeadlineIsInProgress verifies that a
+// non-ErrNotExist read error within the deadline window keeps reporting
+// in_progress (the fan-out may still be running even if the dir is transiently
+// unreadable).
+func TestReadReviewStatus_NonErrNotExistBeforeDeadlineIsInProgress(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(filepath.Join(poolDir, summaryFile), 0o755))
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	withNow(t, start.Add(120*time.Second)) // 120s in; window is 600 + 60 grace = 660s
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-12T12:00:00Z","timeout_secs":600,"partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status, "non-ErrNotExist read error within window must stay in_progress")
+}
+
 // TestReadReviewStatus_ConcurrentWritesNeverTornRead pins the Task 4 read-pair
 // invariant: readers running concurrently with the finalization writes (the
 // writer rewrites summary.json then the manifest, the way ExecuteReview does)

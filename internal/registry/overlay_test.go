@@ -43,6 +43,19 @@ func TestLoadProjectRegistry_StrictUnknownField(t *testing.T) {
 	assert.Contains(t, err.Error(), "registry.yaml")
 }
 
+func TestLoadProjectRegistry_SettingsKeyHint(t *testing.T) {
+	root := t.TempDir()
+	// timeout_secs is a shared-settings key — the error must include a targeted
+	// hint pointing the contributor to .atcr/config.yaml.
+	writeProjectRegistry(t, root, "providers: {}\nagents: {}\ntimeout_secs: 600\n")
+	_, err := LoadProjectRegistry(DefaultProjectRegistryPath(root))
+	require.Error(t, err, "strict decoder must reject unknown settings keys")
+	assert.Contains(t, err.Error(), "config.yaml",
+		"error must hint that shared settings belong in config.yaml, not registry.yaml")
+	assert.Contains(t, err.Error(), "timeout_secs",
+		"error must name the offending settings key")
+}
+
 func TestMergeProject_AddsNewEntries(t *testing.T) {
 	reg := &Registry{
 		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},

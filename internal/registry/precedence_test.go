@@ -296,3 +296,22 @@ func TestProject_MaxParallelNegativeRejectedAtLoad(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "max_parallel")
 }
+
+// TestPrecedence_FileTierNegativeMaxParallelRejectedAtResolve verifies that a
+// ProjectConfig or Registry constructed directly (bypassing the file loader)
+// cannot sneak a negative MaxParallel into the engine via ResolveSettings.
+// The engine treats n<=0 as unbounded; a negative value is the inverse of
+// the user's intent and must be caught at the resolution boundary.
+func TestPrecedence_FileTierNegativeMaxParallelRejectedAtResolve(t *testing.T) {
+	neg := -1
+	proj := &ProjectConfig{MaxParallel: &neg}
+	_, err := ResolveSettings(CLIOverrides{}, proj, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_parallel")
+
+	// Registry tier must also be guarded.
+	reg := &Registry{MaxParallel: &neg}
+	_, err = ResolveSettings(CLIOverrides{}, nil, reg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_parallel")
+}

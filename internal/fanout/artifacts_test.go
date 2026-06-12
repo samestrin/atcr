@@ -157,6 +157,48 @@ func TestWritePool_ArtifactFileModeIs0644(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm(), "AC 01-03 mandates 0644 artifact files")
 }
 
+// TestWriteFailureSummary_PreservesRealCounts verifies the failure marker
+// reflects what actually happened (some agents ok, some failed) rather than
+// hard-coding all-failed.
+func TestWriteFailureSummary_PreservesRealCounts(t *testing.T) {
+	pool := t.TempDir()
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, DurationMS: 100, PayloadMode: "blocks"},
+		{Agent: "kai", Status: StatusFailed},
+		{Agent: "mira", Status: StatusFailed},
+	}
+	writeFailureSummary(pool, results)
+
+	data, err := os.ReadFile(filepath.Join(pool, summaryFile))
+	require.NoError(t, err)
+	var ps PoolSummary
+	require.NoError(t, json.Unmarshal(data, &ps))
+	assert.Equal(t, 3, ps.Total)
+	assert.Equal(t, 1, ps.Succeeded, "partial success must be recorded, not fabricated as all-failed")
+	assert.Equal(t, 2, ps.Failed)
+	assert.True(t, ps.Partial)
+}
+
+// TestWriteFailureSummary_AllFailed verifies the all-failed case still records
+// correctly when every agent truly failed.
+func TestWriteFailureSummary_AllFailed(t *testing.T) {
+	pool := t.TempDir()
+	results := []Result{
+		{Agent: "greta", Status: StatusFailed},
+		{Agent: "kai", Status: StatusFailed},
+	}
+	writeFailureSummary(pool, results)
+
+	data, err := os.ReadFile(filepath.Join(pool, summaryFile))
+	require.NoError(t, err)
+	var ps PoolSummary
+	require.NoError(t, json.Unmarshal(data, &ps))
+	assert.Equal(t, 2, ps.Total)
+	assert.Equal(t, 0, ps.Succeeded)
+	assert.Equal(t, 2, ps.Failed)
+	assert.False(t, ps.Partial)
+}
+
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }

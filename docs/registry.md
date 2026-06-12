@@ -173,7 +173,7 @@ The v1 schema is strict — unknown keys fail the load — but the following age
 |-------|------|-----------------|-------------------|--------------|
 | `tools` | bool | false | type only | Stage 2 — tool-using reviewers |
 | `max_turns` | int | 10 | must be `> 0` | Stage 2 |
-| `tool_budget_bytes` | int | — (unset) | must be `>= 0` | Stage 2 |
+| `tool_budget_bytes` | int | — (unset) | must be `>= 0` (0 = unlimited) | Stage 2 |
 | `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
 
 The **planned default** column documents the value each field's owning stage will assume when it activates; 1.x applies none of these. An out-of-range value (e.g. `max_turns: 0`, an unknown `role`) is a load error even though the field is otherwise inert, so a config targeting a future stage is still caught early.

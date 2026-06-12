@@ -399,6 +399,11 @@ func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
 			"max_turns must be",
 		},
 		{
+			"absurd max_turns",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    max_turns: 2000000000\n",
+			"max_turns must be",
+		},
+		{
 			"negative tool_budget_bytes",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tool_budget_bytes: -1\n",
 			"tool_budget_bytes must be",

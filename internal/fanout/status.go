@@ -45,10 +45,21 @@ const (
 // write path (per-agent renames + summary.json) and minor writer/reader clock
 // skew, so stale never fires on a run that is merely finishing. The writer
 // enforces the timeout itself, so false positives are bounded regardless.
+//
+// Bound justification: each per-agent atomicWriteFile does one temp Sync + one
+// dir Sync; for the current max roster (~20 agents) and a pessimistic 500ms
+// fsync per file, the post-deadline write path completes well within 60s. If
+// the max roster grows or measured fsyncs exceed this budget, increase the
+// constant or scale it with roster size. (Adjudicated per Epic 1.5 Q2: flat
+// 60s is sufficient for current roster sizes.)
 const staleGraceSecs = 60
 
 // nowFunc is the clock ReadReviewStatus consults for stale inference; a package
-// var so tests can pin it for deterministic window assertions.
+// var so tests can pin it for deterministic window assertions. Swapping nowFunc
+// is NOT safe concurrent with readers: tests that reassign it must do so before
+// reader goroutines start and restore it after they join, or guard access via
+// atomic.Value. The current stale-clock tests are non-parallel by design to
+// avoid this data race.
 var nowFunc = time.Now
 
 // ReviewStatus is a review's aggregated progress, derived from manifest.json
@@ -89,10 +100,11 @@ type ReviewStatus struct {
 //     a false in_progress.
 //   - status, partial, and the agent counts derive solely from summary.json. The
 //     only fields taken from the manifest (roster size, StartedAt, timeout_secs)
-//     are written once at scaffold and are byte-identical across the finalizing
-//     rewrite, so whichever manifest version a reader observes yields the same
-//     result. Therefore no manifest/summary interleaving can produce a torn-pair
-//     misreport: every concurrent read returns a valid state.
+//     are written once at scaffold and are stable across the finalizing rewrite
+//     (which mutates Partial and stamps CompletedAt — neither is read here), so
+//     whichever manifest version a reader observes yields the same result. Therefore
+//     no manifest/summary interleaving can produce a torn-pair misreport: every
+//     concurrent read returns a valid state.
 func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
 	if err != nil {
@@ -114,12 +126,13 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	if serr != nil {
 		// No completion signal. The pair is read manifest-first then summary
 		// (Task 4 read invariant); a genuinely absent summary means the fan-out
-		// is either still running or dead. Infer stale only when the manifest's
+		// is either still running or dead. Infer stale when the manifest's
 		// effective deadline (StartedAt + timeout_secs + grace) has passed —
-		// otherwise it is honestly still in_progress. A non-not-exist read error
-		// (e.g. permission) keeps the in_progress report rather than guessing a
-		// terminal state from an I/O fault.
-		if errors.Is(serr, os.ErrNotExist) && staleByDeadline(m) {
+		// otherwise it is honestly still in_progress. Any read error (absent
+		// file, permission denied, I/O error) is treated the same way: past the
+		// deadline the review is presumed dead regardless of why the completion
+		// signal is unreadable; within the window it stays in_progress.
+		if staleByDeadline(m) {
 			st.Status = RunStale
 		}
 		return st, nil
@@ -153,7 +166,19 @@ func staleByDeadline(m payload.Manifest) bool {
 	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
 		return false
 	}
-	deadline := m.StartedAt.Add(time.Duration(m.TimeoutSecs+staleGraceSecs) * time.Second)
+	totalSecs := m.TimeoutSecs + staleGraceSecs
+	if totalSecs < 0 {
+		// int overflow: timeout is beyond representation; deadline is effectively
+		// infinite, so the review cannot be stale.
+		return false
+	}
+	d := time.Duration(totalSecs) * time.Second
+	if d < 0 {
+		// Duration (int64 ns) overflow: totalSecs * 1e9 exceeded ~292 years.
+		// Same conclusion — deadline is effectively infinite.
+		return false
+	}
+	deadline := m.StartedAt.Add(d)
 	return nowFunc().After(deadline)
 }
 
