@@ -83,6 +83,17 @@ func TestTrust_NoProjectProviders(t *testing.T) {
 	assert.Contains(t, out, "No project-defined providers")
 }
 
+// TestTrust_SummaryPhrasedAsNewEntries verifies that the trust summary message
+// explicitly says "new" so a mixed run (some already-trusted, some new) does
+// not mislead the user into thinking the count covers all trusted providers.
+func TestTrust_SummaryPhrasedAsNewEntries(t *testing.T) {
+	setupTrustEnv(t)
+	out, err := execute(t, "trust", "team-llm")
+	require.NoError(t, err)
+	// The written-entry summary must qualify the count as "new" entries.
+	assert.Contains(t, out, "new trust", "summary must say 'new trust' so mixed-run counts are unambiguous")
+}
+
 func TestTrust_GatesReviewUntilTrusted(t *testing.T) {
 	// A project provider blocks `atcr review` config load until trusted; this is
 	// the end-to-end security contract at the command boundary.
