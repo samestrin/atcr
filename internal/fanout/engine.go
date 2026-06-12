@@ -133,6 +133,10 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 				case sem <- struct{}{}:
 					defer func() { <-sem }()
 				case <-ctx.Done():
+					// Context cancelled before a semaphore slot was available.
+					// No token was acquired, so none is released; cap enforcement
+					// is correct because invokeSlot will short-circuit to a
+					// timeout result without making a provider call.
 					results[i] = e.invokeSlot(ctx, s)
 					return
 				}
