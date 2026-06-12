@@ -45,6 +45,13 @@ const (
 // write path (per-agent renames + summary.json) and minor writer/reader clock
 // skew, so stale never fires on a run that is merely finishing. The writer
 // enforces the timeout itself, so false positives are bounded regardless.
+//
+// Bound justification: each per-agent atomicWriteFile does one temp Sync + one
+// dir Sync; for the current max roster (~20 agents) and a pessimistic 500ms
+// fsync per file, the post-deadline write path completes well within 60s. If
+// the max roster grows or measured fsyncs exceed this budget, increase the
+// constant or scale it with roster size. (Adjudicated per Epic 1.5 Q2: flat
+// 60s is sufficient for current roster sizes.)
 const staleGraceSecs = 60
 
 // nowFunc is the clock ReadReviewStatus consults for stale inference; a package
