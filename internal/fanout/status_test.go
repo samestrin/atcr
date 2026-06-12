@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,94 @@ func TestEnsureReviewComplete(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", "summary.json"),
 		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
 	require.NoError(t, EnsureReviewComplete(dir, "x"))
+}
+
+// --- Epic 1.5: stale inference for dead reviews ---
+
+// withNow swaps the package clock for deterministic stale-window assertions.
+func withNow(t *testing.T, fixed time.Time) {
+	t.Helper()
+	old := nowFunc
+	nowFunc = func() time.Time { return fixed }
+	t.Cleanup(func() { nowFunc = old })
+}
+
+// writeManifestOnly writes a raw manifest.json into dir with no summary.json, so
+// ReadReviewStatus exercises the absent-completion-signal branch.
+func writeManifestOnly(t *testing.T, dir, body string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile), []byte(body), 0o644))
+}
+
+// A scaffolded review whose summary.json never appeared and whose
+// StartedAt + timeout_secs + grace has elapsed is reported stale — an inferred
+// terminal state, not eternal in_progress.
+func TestReadReviewStatus_StaleWhenTimeoutElapsed(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunStale, st.Status)
+	assert.Equal(t, 1, st.AgentCount)
+}
+
+// Within StartedAt + timeout_secs + grace the same scaffolded review is still
+// in_progress — stale must not fire early on a legitimately running fan-out.
+func TestReadReviewStatus_InProgressWithinWindow(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	withNow(t, start.Add(120*time.Second)) // 120s in; window is 600 + 60 grace = 660s
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-12T12:00:00Z","timeout_secs":600,"partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
+
+// Exactly at the StartedAt + timeout + grace boundary the review is still
+// in_progress; stale requires strictly past the deadline (After, not !Before).
+func TestReadReviewStatus_StaleBoundaryIsExclusive(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	withNow(t, start.Add(time.Duration(600+staleGraceSecs)*time.Second)) // exactly at the deadline
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-12T12:00:00Z","timeout_secs":600,"partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status, "at the boundary the run is not yet stale")
+}
+
+// An old manifest with no timeout_secs (zero) cannot have its deadline inferred,
+// so it keeps reporting in_progress no matter how old — backward compatible
+// (Epic 1.5 success criterion: old manifests load and report without stale).
+func TestReadReviewStatus_NoTimeoutNeverStale(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
+
+// A manifest with a zero StartedAt cannot have a deadline either; stale stays
+// off even with a timeout present.
+func TestReadReviewStatus_ZeroStartedAtNeverStale(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"timeout_secs":600,"partial":false}`)
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInProgress, st.Status)
+}
+
+// A completed review (summary.json present) is never reclassified stale even if
+// StartedAt + timeout elapsed long ago: stale is inferred only from an ABSENT
+// completion signal, never overriding an observed one.
+func TestReadReviewStatus_CompletedNeverStale(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2020-01-01T00:00:00Z","timeout_secs":600,"partial":false}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunCompleted, st.Status)
 }
 
 func TestStatusJSON_RecordsTruncation(t *testing.T) {
