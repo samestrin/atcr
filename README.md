@@ -46,12 +46,17 @@ atcr init
 #    (~/.config/atcr/registry.yaml — see docs/registry.md)
 export OPENROUTER_API_KEY=sk-...
 
-# 4. Run the panel on the current feature branch, then reconcile — zero arguments
+# 4. Verify every configured endpoint before spending a real review on it
+atcr doctor
+
+# 5. Run the panel on the current feature branch, then reconcile — zero arguments
 atcr review && atcr reconcile
 
-# 5. Read the report
+# 6. Read the report
 atcr report --format md
 ```
+
+`atcr doctor` is the recommended post-`atcr init` verification step: it invokes every configured model endpoint once with a trivial prompt and reports any misconfigured provider, model, key, or base URL — so a bad config is caught in seconds instead of mid-review. See [Commands](#commands) for its flags and exit codes.
 
 `atcr review` resolves the range against the default branch, fans the change out to the roster, and records the review id in `.atcr/latest`. Every later command takes an id or path as its single anchor argument and defaults to `latest`, so the two-command pipeline above just works on a feature branch.
 
@@ -66,12 +71,14 @@ atcr report --format md
 | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
 | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
 | `atcr serve` | Run the MCP stdio server over the same engine |
+| `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json` |
 
 Key flags:
 
 - `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
 - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
 - `atcr report --format md|json|checklist` / `--output <file>`
+- `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
 
 ## Payload modes
 

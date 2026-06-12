@@ -31,14 +31,13 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	out, err := execute(t, "--help")
 	require.NoError(t, err)
 
-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve"} {
+	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor"} {
 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
 	}
 }
 
-func TestRootCmd_HasExactlySevenSubcommands(t *testing.T) {
-	// The six commands from the original surface plus `status`, added by AC 05-03
-	// for the Skill's orchestration polling loop (atcr status <id>).
+func TestRootCmd_HasExactlyEightSubcommands(t *testing.T) {
+	// The seven prior commands plus `doctor` (epic 1.2), the endpoint self-test.
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -47,8 +46,8 @@ func TestRootCmd_HasExactlySevenSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 7)
-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve"} {
+	assert.Len(t, names, 8)
+	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
