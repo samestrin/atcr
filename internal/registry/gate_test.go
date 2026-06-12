@@ -9,6 +9,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResolveGateThreshold_ProjectRegistryOverlayHasNoEffect(t *testing.T) {
+	// The project registry overlay (.atcr/registry.yaml) carries only
+	// providers and agents — fail_on must not be sourced from it.
+	// This test documents the boundary so future changes don't accidentally
+	// read fail_on from the project overlay (which has no FailOn field).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+
+	// Write a project registry overlay (no fail_on field — providers/agents only).
+	atcrDir := filepath.Join(root, ".atcr")
+	require.NoError(t, os.MkdirAll(atcrDir, 0o755))
+	overlayYAML := "providers:\n  p:\n    api_key_env: K\n    base_url: https://example.invalid/v1\nagents:\n  a:\n    provider: p\n    model: m\n"
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "registry.yaml"), []byte(overlayYAML), 0o644))
+
+	// No user registry, no project config — the overlay alone must yield no gate.
+	v, err := ResolveGateThreshold(root, "")
+	require.NoError(t, err)
+	assert.Equal(t, "", v, "project registry overlay must not contribute fail_on")
+}
+
 func TestResolveGateThreshold_Precedence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
