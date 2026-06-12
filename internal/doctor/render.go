@@ -22,9 +22,10 @@ func RenderJSON(w io.Writer, rep *Report) error {
 	return enc.Encode(out)
 }
 
-// RenderTable writes an aligned human-readable table: one row per
-// effective-roster agent.
-func RenderTable(w io.Writer, rep *Report) {
+// RenderTableError writes an aligned human-readable table and returns any
+// flush error. Callers that need to detect truncated output should prefer this
+// over RenderTable.
+func RenderTableError(w io.Writer, rep *Report) error {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "AGENT\tPROVIDER\tMODEL\tSOURCE\tSTATUS\tLATENCY\tHINT")
 	for _, a := range rep.Agents {
@@ -42,5 +43,11 @@ func RenderTable(w io.Writer, rep *Report) {
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Agent, a.Provider, a.Model, source, a.Status, latency, hint)
 	}
-	_ = tw.Flush()
+	return tw.Flush()
+}
+
+// RenderTable writes an aligned human-readable table: one row per
+// effective-roster agent.
+func RenderTable(w io.Writer, rep *Report) {
+	_ = RenderTableError(w, rep)
 }
