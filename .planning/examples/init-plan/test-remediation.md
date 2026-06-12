@@ -1,5 +1,7 @@
 # Test Remediation: Improve API Endpoint Coverage
 
+**Estimated Durations**: TBD
+
 ## Current State
 
 API endpoint test coverage is at 34%, well below our 80% target. This has led to:

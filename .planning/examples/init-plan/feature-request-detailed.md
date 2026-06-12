@@ -1,5 +1,7 @@
 # Feature Request: Multi-Tenant Dashboard Analytics
 
+**Estimated Durations**: TBD
+
 ## Context
 
 Our SaaS platform serves 150+ enterprise customers. Account managers currently lack visibility into customer usage patterns, making it difficult to identify at-risk accounts or upsell opportunities.
