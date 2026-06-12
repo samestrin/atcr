@@ -34,8 +34,9 @@ type Manifest struct {
 	// MaxParallel and TimeoutSecs are the effective fan-out settings recorded
 	// for post-hoc diagnosis: a throttled run can be identified by max_parallel
 	// in the manifest without replaying the registry precedence chain.
-	// omitempty keeps older manifests (written before Epic 1.4) parse-clean.
-	MaxParallel int `json:"max_parallel,omitempty"`
+	// MaxParallel has no omitempty so 0 (explicitly unbounded) serializes and is
+	// distinguishable from an older manifest that never carried the field.
+	MaxParallel int `json:"max_parallel"`
 	TimeoutSecs int `json:"timeout_secs,omitempty"`
 }
 
@@ -47,6 +48,9 @@ type Manifest struct {
 func WriteManifest(path string, m *Manifest) error {
 	if m.PerAgentPayload == nil {
 		m.PerAgentPayload = map[string]string{}
+	}
+	if m.Stages == nil {
+		m.Stages = []string{"review"}
 	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

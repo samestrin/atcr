@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -48,7 +47,9 @@ const (
 // v1 code path acts on them and no load-time default is applied — they stay at
 // their zero/unset value in 1.x. MaxTurns and ToolBudgetBytes are pointers so
 // the activating stage can tell an explicit value from an unset one (the same
-// reason TimeoutSecs is a pointer). Planned defaults (tools=false,
+// reason TimeoutSecs is a pointer). Tools is intentionally a value bool (not
+// *bool) because its planned default is false and no stage needs to distinguish
+// "explicitly false" from "unset". Planned defaults (tools=false,
 // max_turns=10, role=reviewer) are documented in docs/registry.md.
 type AgentConfig struct {
 	Provider    string   `yaml:"provider"`
@@ -63,7 +64,7 @@ type AgentConfig struct {
 	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
 	Tools           bool   `yaml:"tools"`             // Stage 2 — enables the tool loop
 	MaxTurns        *int   `yaml:"max_turns"`         // Stage 2 — agent-loop turn cap
-	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget
+	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
 	Role            string `yaml:"role"`              // Stage 3/4 — reviewer | skeptic | judge
 }
 
@@ -150,7 +151,7 @@ func (r *Registry) validate() error {
 	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {
-			return errors.New("providers: provider name must not be empty")
+			return providerErrf(name, "providers.%s: provider name must not be empty", name)
 		}
 		if p.APIKeyEnv == "" {
 			return providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name)
@@ -160,7 +161,7 @@ func (r *Registry) validate() error {
 		}
 		if p.BaseURL != "" {
 			u, err := url.Parse(p.BaseURL)
-			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 				return providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name)
 			}
 			if u.User != nil {
@@ -170,7 +171,7 @@ func (r *Registry) validate() error {
 	}
 	for name, a := range r.Agents {
 		if strings.TrimSpace(name) == "" {
-			return errors.New("agents: agent name must not be empty")
+			return agentErrf(name, "agent '%s': agent name must not be empty", name)
 		}
 		if a.Provider == "" {
 			return agentErrf(name, "agent '%s': required field 'provider' is missing", name)
@@ -194,11 +195,11 @@ func (r *Registry) validate() error {
 		if !roleValid(a.Role) {
 			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
 		}
-		if a.MaxTurns != nil && *a.MaxTurns <= 0 {
-			return agentErrf(name, "agent '%s': max_turns must be > 0", name)
+		if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
+			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
 		}
 		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
-			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0", name)
+			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0 (0 = unlimited)", name)
 		}
 	}
 	return nil

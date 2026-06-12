@@ -83,14 +83,16 @@ func (r *Registry) walkFallbacks(start string, color map[string]nodeColor) ([]st
 		}
 		if color[next] == gray {
 			// Close the loop for the error message: trim the lead-in so the
-			// path starts at the repeated node. The gray node is always on
-			// the current path; fail closed if that invariant ever breaks.
+			// path starts at the repeated node. Because ValidateFallbacks only
+			// walks white roots and colors nodes gray on the current path, next
+			// is always in path — the loop below cannot complete without matching.
 			for i, n := range path {
 				if n == next {
 					return append(path[i:], next), true
 				}
 			}
-			return path, true
+			// Unreachable: next is gray, hence already on the current path.
+			panic(fmt.Sprintf("walkFallbacks: invariant violation — gray node %q not found on current path %v", next, path))
 		}
 		node = next
 	}

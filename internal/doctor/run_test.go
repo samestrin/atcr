@@ -84,6 +84,46 @@ func TestRun_MarkerAbsentIsWarning(t *testing.T) {
 	assert.Equal(t, 0, rep.ExitCode, "a warning still counts as a working path")
 }
 
+func TestRun_TokenBudgetAffectsOutcome(t *testing.T) {
+	t.Setenv("ATCR_DOCTOR_KEY", "k")
+	res := twoAgentSharedTarget(t)
+	// budgetAwareFake simulates a reasoning model that spends the token budget
+	// on thinking: it returns the marker only when MaxTokens >= 1024, and
+	// empty content when the budget is too small to survive reasoning overhead.
+	budgetAwareFake := newFake(func(inv llmclient.Invocation) (string, error) {
+		if inv.MaxTokens != nil && *inv.MaxTokens >= 1024 {
+			return Marker(testNonce), nil
+		}
+		return "", nil // budget exhausted on reasoning
+	})
+
+	// Default budget (2048) is large enough for the marker to appear.
+	repOK := Run(context.Background(), budgetAwareFake, res, Options{Nonce: testNonce, MaxTokens: 2048})
+	assert.Equal(t, StatusOK, repOK.Agents[0].Status, "default budget must yield StatusOK")
+
+	// Tiny budget (8) is consumed by reasoning; marker absent → warning.
+	repWarn := Run(context.Background(), budgetAwareFake, res, Options{Nonce: testNonce, MaxTokens: 8})
+	assert.Equal(t, StatusOKWarning, repWarn.Agents[0].Status, "tiny budget must yield StatusOKWarning")
+	assert.Contains(t, repWarn.Agents[0].Hint, "max-tokens")
+}
+
+func TestRun_EmptyRosterIsNotSuccess(t *testing.T) {
+	// An empty roster (no agents configured) must NOT produce exit 0 —
+	// "everything is healthy" is misleading when nothing was tested.
+	emptyRes := &Resolution{
+		Targets: nil,
+		Agents:  nil,
+		Paths:   map[string][]string{},
+	}
+	fake := newFake(func(inv llmclient.Invocation) (string, error) {
+		return Marker(testNonce), nil
+	})
+
+	rep := Run(context.Background(), fake, emptyRes, Options{Nonce: testNonce})
+	assert.NotEqual(t, 0, rep.ExitCode, "empty roster must not exit 0")
+	assert.Empty(t, rep.Agents, "empty roster produces no agent results")
+}
+
 func TestRun_MissingKeySkipsNetwork(t *testing.T) {
 	// ATCR_DOCTOR_KEY deliberately unset.
 	res := twoAgentSharedTarget(t)
@@ -283,6 +323,18 @@ func TestRenderTable_HintTakesPrecedenceOverDetail(t *testing.T) {
 	assert.NotContains(t, out, "connection refused", "Detail must not appear when Hint is set")
 }
 
+func TestRenderTableError_EmptySourcePassesThrough(t *testing.T) {
+	// The resolver guarantees a non-empty Source for any real pipeline agent;
+	// the renderer must not silently substitute 'user' for an empty value
+	// (tabwriter replaces tab separators with spaces in output).
+	rep := &Report{Agents: []AgentResult{
+		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK, Source: ""},
+	}}
+	var b strings.Builder
+	require.NoError(t, RenderTableError(&b, rep))
+	assert.NotContains(t, b.String(), "user", "empty Source must not be defaulted to 'user'")
+}
+
 func TestRenderTableError_SurfacesFlushError(t *testing.T) {
 	rep := &Report{Agents: []AgentResult{
 		{Agent: "a", Provider: "p", Model: "m", Status: StatusOK},
@@ -297,6 +349,39 @@ func TestRenderTableError_NilOnSuccess(t *testing.T) {
 	}}
 	var b strings.Builder
 	assert.NoError(t, RenderTableError(&b, rep), "RenderTableError should return nil on success")
+}
+
+func TestClassify_NetworkErrorRedactsAPIKey(t *testing.T) {
+	const secret = "super-secret-api-key-xyz"
+	t.Setenv("SECRET_REDACT_KEY", secret)
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "SECRET_REDACT_KEY"}
+	// A transport error that accidentally embeds the API key value (e.g. a
+	// misconfigured proxy that echoes auth headers in its error message).
+	err := fmt.Errorf("request failed: auth key=%s rejected by proxy", secret)
+	got := classify("", err, testNonce, 5, tgt)
+	assert.Equal(t, StatusNetworkError, got.status)
+	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from network-error detail")
+	assert.Contains(t, got.detail, "[redacted]")
+}
+
+func TestClassify_PromptEchoIsNotOK(t *testing.T) {
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
+	// An endpoint that echoes the request prompt verbatim contains the marker
+	// (because the prompt embeds it), but it did not follow the instruction —
+	// a common misconfiguration (wrong route returning the request body).
+	got := classify(Prompt(testNonce), nil, testNonce, 5, tgt)
+	assert.NotEqual(t, StatusOK, got.status, "a verbatim prompt echo must not classify as ok")
+}
+
+func TestBounded_ValidUTF8AtBoundary(t *testing.T) {
+	// A two-byte UTF-8 sequence (é = 0xc3 0xa9) straddling the maxDetailBytes
+	// boundary must not produce an invalid-UTF-8 output string.
+	long := strings.Repeat("a", maxDetailBytes-1) + "\xc3\xa9" // é — 2 bytes; 2nd byte at pos maxDetailBytes
+	result := bounded(long)
+	assert.LessOrEqual(t, len(result), maxDetailBytes)
+	// strings.ToValidUTF8(s, "") replaces invalid bytes with empty string;
+	// if result was valid UTF-8 it equals the output unchanged.
+	assert.Equal(t, strings.ToValidUTF8(result, ""), result, "bounded() must return valid UTF-8")
 }
 
 func TestPromptAndMarker(t *testing.T) {
