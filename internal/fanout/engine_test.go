@@ -107,6 +107,9 @@ func TestRun_ParallelAgentsRunConcurrently(t *testing.T) {
 }
 
 func TestRun_SerialLaneRunsSequentially(t *testing.T) {
+	// Note: this test verifies serial lane serialization, not the max_parallel
+	// semaphore cap. Serial slots always run in a single goroutine sequentially
+	// regardless of cap. For cap coverage, see TestRun_MaxParallelBoundsPeakConcurrency.
 	f := newFake()
 	f.delay = 20 * time.Millisecond
 	e := NewEngine(f)
