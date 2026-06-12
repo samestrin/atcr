@@ -9,6 +9,11 @@ import (
 // would overflow time.Duration arithmetic long before being useful.
 const MaxTimeoutSecs = 86400
 
+// MaxAgentTurns caps the per-agent turn budget at every tier; a larger
+// value would let a misconfigured or malicious roster run away indefinitely
+// once Epic 2.0 activates the tool loop.
+const MaxAgentTurns = 1000
+
 // DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
 // agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
 // AC 01-04's "10 concurrent agent calls" target) while capping a larger or

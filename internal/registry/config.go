@@ -194,8 +194,8 @@ func (r *Registry) validate() error {
 		if !roleValid(a.Role) {
 			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
 		}
-		if a.MaxTurns != nil && *a.MaxTurns <= 0 {
-			return agentErrf(name, "agent '%s': max_turns must be > 0", name)
+		if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
+			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
 		}
 		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
 			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0", name)
