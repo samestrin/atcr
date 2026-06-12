@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -164,6 +165,33 @@ agents:
 	reg, err := LoadMergedRegistry(regPath, root)
 	require.NoError(t, err)
 	assert.Equal(t, SourceProject, reg.ProviderSource["team"].Tier)
+}
+
+// TestTrustStore_TamperedEntryRejected verifies that a trust file entry whose
+// recorded hash does not match the hash recomputed from its base_url+api_key_env
+// is rejected on load: neither the stated provider nor the spoofed hash reaches
+// the in-memory trust set.
+func TestTrustStore_TamperedEntryRejected(t *testing.T) {
+	endpointA := Provider{BaseURL: "https://endpoint-a.example", APIKeyEnv: "KEY_A"}
+	endpointB := Provider{BaseURL: "https://endpoint-b.example", APIKeyEnv: "KEY_B"}
+	hashA := providerTrustHash(endpointA)
+
+	// Craft a trust file: B's columns but A's hash (simulates hand-edit / restore tampering).
+	tampered := fmt.Sprintf(`trusted:
+- provider: tampered
+  base_url: %s
+  api_key_env: %s
+  hash: %s
+`, endpointB.BaseURL, endpointB.APIKeyEnv, hashA)
+
+	path := filepath.Join(t.TempDir(), "trusted_providers.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(tampered), 0o600))
+
+	store, err := LoadTrustStore(path)
+	require.NoError(t, err, "a tampered entry must not cause a hard load error")
+	// The tampered entry must not grant trust to either endpoint.
+	assert.False(t, store.IsTrusted(endpointA), "spoofed hash (A) must not grant trust to endpoint A")
+	assert.False(t, store.IsTrusted(endpointB), "tampered entry must not grant trust to endpoint B")
 }
 
 func TestEnforceProjectTrust_ShadowingUserProviderNameIsGated(t *testing.T) {
