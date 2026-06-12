@@ -2,6 +2,9 @@ package report
 
 import (
 	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,6 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// update regenerates the testdata/ golden files from sample() instead of
+// comparing against them. Run `go test ./internal/report -update` after an
+// intentional renderer change, then review the diff.
+var update = flag.Bool("update", false, "regenerate golden files in testdata/")
 
 func sample() []reconcile.JSONFinding {
 	return []reconcile.JSONFinding{
@@ -25,6 +33,43 @@ func TestValidFormat(t *testing.T) {
 	assert.True(t, ValidFormat("json"))
 	assert.True(t, ValidFormat("checklist"))
 	assert.False(t, ValidFormat("xml"))
+}
+
+// goldenCases pins each renderer's full output to a checked-in golden file.
+var goldenCases = []struct {
+	name   string
+	format string
+	golden string
+}{
+	{"markdown", FormatMarkdown, "report.md"},
+	{"json", FormatJSON, "findings.json"},
+	{"checklist", FormatChecklist, "checklist.md"},
+}
+
+// TestRender_GoldenFiles compares each format's full render output byte-for-byte
+// against testdata/ (AC 01-06: "Golden file tests pass for each format"). The
+// inline TestRender_* tests below still cover behavioral edge cases (truncation,
+// injection, unicode, zero findings); this test locks the exact canonical output
+// so any formatting drift is caught. Regenerate with `-update`.
+func TestRender_GoldenFiles(t *testing.T) {
+	for _, tc := range goldenCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b strings.Builder
+			require.NoError(t, Render(&b, sample(), tc.format))
+			got := b.String()
+			path := filepath.Join("testdata", tc.golden)
+
+			if *update {
+				require.NoError(t, os.MkdirAll("testdata", 0o755))
+				require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+				return
+			}
+
+			want, err := os.ReadFile(path)
+			require.NoErrorf(t, err, "missing golden %s — run: go test ./internal/report -update", path)
+			assert.Equalf(t, string(want), got, "render output drifted from golden %s; if intended, run -update", tc.golden)
+		})
+	}
 }
 
 func TestRender_JSONRoundTrips(t *testing.T) {
