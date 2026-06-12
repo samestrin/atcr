@@ -151,6 +151,30 @@ func TestRunReview_EndToEnd(t *testing.T) {
 	assert.Equal(t, res.ID, latest)
 }
 
+// ExecuteReview must stamp CompletedAt when it finalizes the manifest so
+// downstream tools can derive run duration from manifest.json rather than
+// finding the field silently absent (TD review.go:18). Because of omitempty a
+// zero value never marshals, so the assertion checks both the parsed value and
+// the on-disk key.
+func TestRunReview_StampsCompletedAt(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	mdata, err := os.ReadFile(filepath.Join(res.Dir, "manifest.json"))
+	require.NoError(t, err)
+	var m payload.Manifest
+	require.NoError(t, json.Unmarshal(mdata, &m))
+
+	require.False(t, m.CompletedAt.IsZero(), "completed_at must be stamped at finalization")
+	assert.False(t, m.CompletedAt.Before(m.StartedAt), "completed_at must be >= started_at")
+	assert.Contains(t, string(mdata), "completed_at", "completed_at must survive the JSON round-trip")
+}
+
 func TestRunReview_PartialWhenOneAgentFails(t *testing.T) {
 	t.Setenv("ATCR_TEST_KEY", "secret")
 	repo, base, head := initRepo(t)
