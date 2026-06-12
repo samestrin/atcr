@@ -126,12 +126,13 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	if serr != nil {
 		// No completion signal. The pair is read manifest-first then summary
 		// (Task 4 read invariant); a genuinely absent summary means the fan-out
-		// is either still running or dead. Infer stale only when the manifest's
+		// is either still running or dead. Infer stale when the manifest's
 		// effective deadline (StartedAt + timeout_secs + grace) has passed —
-		// otherwise it is honestly still in_progress. A non-not-exist read error
-		// (e.g. permission) keeps the in_progress report rather than guessing a
-		// terminal state from an I/O fault.
-		if errors.Is(serr, os.ErrNotExist) && staleByDeadline(m) {
+		// otherwise it is honestly still in_progress. Any read error (absent
+		// file, permission denied, I/O error) is treated the same way: past the
+		// deadline the review is presumed dead regardless of why the completion
+		// signal is unreadable; within the window it stays in_progress.
+		if staleByDeadline(m) {
 			st.Status = RunStale
 		}
 		return st, nil
@@ -165,7 +166,19 @@ func staleByDeadline(m payload.Manifest) bool {
 	if m.TimeoutSecs <= 0 || m.StartedAt.IsZero() {
 		return false
 	}
-	deadline := m.StartedAt.Add(time.Duration(m.TimeoutSecs+staleGraceSecs) * time.Second)
+	totalSecs := m.TimeoutSecs + staleGraceSecs
+	if totalSecs < 0 {
+		// int overflow: timeout is beyond representation; deadline is effectively
+		// infinite, so the review cannot be stale.
+		return false
+	}
+	d := time.Duration(totalSecs) * time.Second
+	if d < 0 {
+		// Duration (int64 ns) overflow: totalSecs * 1e9 exceeded ~292 years.
+		// Same conclusion — deadline is effectively infinite.
+		return false
+	}
+	deadline := m.StartedAt.Add(d)
 	return nowFunc().After(deadline)
 }
 
