@@ -100,6 +100,12 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		}
 		s.PayloadMode = v
 	}
+	// Post-resolution sanity: a directly-constructed proj/reg (bypassing the
+	// file loader) can carry a negative MaxParallel. The engine treats n<=0 as
+	// unbounded, so a negative value silently inverts the user's intent.
+	if s.MaxParallel < 0 {
+		return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", s.MaxParallel)
+	}
 	return s, nil
 }
 
