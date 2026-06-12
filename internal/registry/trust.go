@@ -77,8 +77,16 @@ func LoadTrustStore(path string) (*TrustStore, error) {
 		}
 		return nil, fmt.Errorf("failed to parse %s: %w", TrustStoreFile, err)
 	}
-	store.entries = tf.Trusted
 	for _, e := range tf.Trusted {
+		// Recompute the expected hash from the audit columns. If they disagree
+		// the entry was hand-edited or restored from a different provider —
+		// reject it so the audit columns cannot be used to spoof trust.
+		expected := providerTrustHash(Provider{BaseURL: e.BaseURL, APIKeyEnv: e.APIKeyEnv})
+		if e.Hash != expected {
+			_, _ = fmt.Fprintf(os.Stderr, "atcr: trust store: skipping entry %q — hash mismatch (recorded %s, expected %s)\n", e.Provider, e.Hash, expected)
+			continue
+		}
+		store.entries = append(store.entries, e)
 		store.hashes[e.Hash] = true
 	}
 	return store, nil
