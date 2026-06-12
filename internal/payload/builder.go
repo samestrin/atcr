@@ -140,11 +140,11 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
-		out, err := g.output(append([]string{"diff", "-M", base + ".." + head, "--"}, f.pathspec()...)...)
+		chunks, err := g.rawChunks(base, head)
 		if err != nil {
 			return "", fmt.Errorf("git diff failed: %w", err)
 		}
-		return ensureTrailingNewline(string(out)), nil
+		return ensureTrailingNewline(chunks[headPathOf(f.pathspec())]), nil
 
 	case ModeBlocks:
 		bin, err := g.isBinary(base, head, f.pathspec()...)
