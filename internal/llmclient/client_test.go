@@ -3,6 +3,7 @@ package llmclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -349,4 +350,78 @@ func TestComplete_ContextTimeout(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Less(t, time.Since(start), 80*time.Millisecond, "must return before the 100ms server sleep")
+}
+
+
+// --- Epic 1.2 Task 2: structured HTTPStatusError + MaxTokens ---
+
+func TestComplete_HTTPStatusErrorSurfacedForClassification(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+
+	var se *HTTPStatusError
+	require.True(t, errors.As(err, &se), "callers must be able to classify by status via errors.As")
+	assert.Equal(t, http.StatusNotFound, se.Status)
+	assert.Contains(t, se.Snippet, "model not found")
+	// Error() text contract preserved for existing callers.
+	assert.Contains(t, err.Error(), "HTTP 404")
+	assert.Contains(t, err.Error(), "model not found")
+}
+
+func TestComplete_HTTPStatusErrorSurfacedThroughExhaustedRetries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream down"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+
+	var se *HTTPStatusError
+	require.True(t, errors.As(err, &se), "errors.As must unwrap through the exhausted-retries wrapper")
+	assert.Equal(t, http.StatusServiceUnavailable, se.Status)
+}
+
+func TestComplete_MaxTokensIncludedWhenSet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		assert.Contains(t, string(body), `"max_tokens":2048`)
+		okResponse(w, "x")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	mt := 2048
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m", MaxTokens: &mt,
+	})
+	require.NoError(t, err)
+}
+
+func TestComplete_MaxTokensOmittedWhenNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		assert.NotContains(t, string(body), "max_tokens")
+		okResponse(w, "x")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
 }
