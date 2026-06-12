@@ -431,3 +431,15 @@ func TestRegistryLoad_ReservedRolesAccepted(t *testing.T) {
 		})
 	}
 }
+
+// TestAgentConfig_ToolBudgetBytesIsInt64 is a compile-time assertion that
+// ToolBudgetBytes uses *int64 to match the *int64 ToolBytes in status.json and
+// the *int64 PayloadByteBudget — all byte-quantity fields must share the same
+// integer width so future agentic stages don't hit a silent truncation.
+func TestAgentConfig_ToolBudgetBytesIsInt64(t *testing.T) {
+	// This line fails to compile when ToolBudgetBytes is *int.
+	a := AgentConfig{ToolBudgetBytes: new(int64)}
+	if a.ToolBudgetBytes == nil {
+		t.Fatal("ToolBudgetBytes must not be nil")
+	}
+}
