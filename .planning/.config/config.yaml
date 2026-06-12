@@ -18,7 +18,7 @@ testing:
   cmd: go test ./...
   runner: go test
   coverage_cmd: go test -coverprofile=coverage.out ./...
-  coverage_baseline: 70
+  coverage_baseline: 80
   combined_coverage: true
   changed_cmd: go test -coverprofile=coverage.out ./...
 commands:
@@ -49,23 +49,25 @@ categories:
     - esbuild
     - parcel
 semantic:
+  batch_size: 100
   code_collection: atcr-code
   code_enabled: true
   code_storage: qdrant
   docs_collection: atcr-docs
   docs_enabled: true
   docs_storage: qdrant
+  embed_batch_size: 32
+  enabled: true
+  knowledge_auto_capture: "true"
+  knowledge_enabled: "true"
+  max_results: 10
   memory_collection: atcr-memory
   memory_enabled: true
   memory_storage: qdrant
   min_score: 0.7
-  stale_days: 7
-  enabled: true
-  max_results: 10
-  batch_size: 100
-  embed_batch_size: 32
   parallel: 2
   reranker: true
+  stale_days: 7
 
 
 # --- Code review configuration ---

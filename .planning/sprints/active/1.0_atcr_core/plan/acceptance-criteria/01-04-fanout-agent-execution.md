@@ -29,7 +29,7 @@ This AC is implemented against the following project documentation. Read before 
 
 - **Models emit 7 columns** (no `REVIEWER`); the engine appends the `REVIEWER` field when writing per-source `findings.txt`. Per `plan.md` clarifications (2026-06-10).
 - **Severity rubric** uses `CRITICAL|HIGH|MEDIUM|LOW` directly in persona prompts; not blocking/significant/minor with implicit translation.
-- Retry policy: up to 2 retries (3 attempts total), ~500ms initial delay, 1.5× backoff, applied only to 429/5xx (429/500/502/503/504). Other 4xx fail immediately. Retry budget must not exhaust the per-agent or global timeout.
+- Retry policy: up to 2 retries (3 attempts total), ~500ms initial delay, 1.5× backoff, applied to 429/5xx (429/500/502/503/504) and transport-level errors (connection reset, EOF, DNS failure); context cancellation/deadline returns immediately. Other 4xx fail immediately. Retry budget must not exhaust the per-agent or global timeout. *(Transport-error retry recorded in sprint-plan.md TD Resolution Clarifications, 2026-06-11.)*
 - API keys resolved from env vars at invoke time (not load time). Agent names sanitized via `filepath.Base` against path traversal.
 - Per-agent `status.json`: `{"agent", "status", "findings_count", "duration_ms", "payload_mode", "truncated", "files_dropped"}`. `partial: true` in `summary.json` when ≥1 agent fails but ≥1 succeeds.
 

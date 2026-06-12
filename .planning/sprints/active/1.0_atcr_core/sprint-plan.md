@@ -43,6 +43,14 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+### TD Resolution Clarifications (recorded 2026-06-11)
+
+**Key Decisions:**
+- **Retry policy extended to transport-level errors:** connection resets, EOF, and DNS failures now retry on the same backoff schedule as 429/5xx; context cancellation/deadline still returns immediately so timeout classification is unchanged. The contract's "429/500/502/503/504 only" enumeration governs HTTP responses — transport errors are not HTTP responses and fell outside it. Adopted during /resolve-td (code-review TD row at client.go:142) as a test-driven robustness fix; plan.md LLM Client Contract, documentation/llm-client-fanout.md, and AC 01-04's spec-alignment note updated to match.
+- **TD-015 (base_url userinfo leak) resolved rather than deferred:** the recorded "Deferred → TD-015" disposition in the 2.43 adversarial review was superseded — the TD pipeline routed the item back via /resolve-td and the defensive strip landed in client.go.
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -933,11 +941,11 @@ Documentation available in [documentation/](plan/documentation/):
    |----------|-----------|-------|-----|
    | HIGH | client.go retry loop | a retryable status on the LAST attempt fell through to a bare "HTTP 502"; "exhausted retries" message was dead code | Fixed in 2.44: last-attempt retryable returns the exhausted-retries error + assertion |
    | MEDIUM | client.go New | default client auto-followed redirects, forwarding the Bearer header on a same-host 3xx | Fixed in 2.44: CheckRedirect → ErrUseLastResponse (3xx is a hard failure) |
-   | MEDIUM | client.go | base_url with embedded userinfo could leak via wrapped errors | Deferred → TD-015 (registry already rejects userinfo at load) |
+   | MEDIUM | client.go | base_url with embedded userinfo could leak via wrapped errors | Deferred → TD-015 (registry already rejects userinfo at load); resolved 2026-06-11 via /resolve-td — userinfo now stripped defensively before request build, pinned by TestComplete_UserinfoStrippedFromErrors |
    | LOW | client.go decode | trailing JSON garbage accepted; empty content indistinguishable | Accepted: empty completion is valid; trailing-garbage risk negligible |
    | LOW | client_test.go | timeout test weak; no cancel-during-backoff / race coverage | Fixed in 2.44: timeout asserts DeadlineExceeded+promptness, added cancel-during-backoff test, verified `go test -race` clean |
 
-   **Action Required:** 1 HIGH (dead exhausted-retries path) + 1 MEDIUM (redirect Bearer forwarding) fixed in 2.44 with tests; base_url-cred leak deferred (TD-015, already mitigated by registry). Adversarial review passed.
+   **Action Required:** 1 HIGH (dead exhausted-retries path) + 1 MEDIUM (redirect Bearer forwarding) fixed in 2.44 with tests; base_url-cred leak deferred (TD-015, already mitigated by registry; TD-015 resolved 2026-06-11 via /resolve-td). Adversarial review passed.
 
 ### 2.44 [x] **[OpenAI-compatible LLM client + retry policy - REFACTOR](plan/user-stories/01-cli-review-workflow.md)**
    1. Fix CRITICAL/HIGH issues from 2.43 (if any)
@@ -1065,7 +1073,7 @@ Documentation available in [documentation/](plan/documentation/):
    **Subagent findings table:**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | HIGH | outcome.go formatFailures | all-failed error embeds raw r.Err — could leak secrets | Non-issue (documented): llmclient uses header-only Bearer auth (no key in URL/query/error), registry rejects base_url userinfo, key-not-set error names only the env var — no credential reaches the string. Comment added. |
+   | HIGH | outcome.go formatFailures | all-failed error embeds raw r.Err — could leak secrets | Non-issue (documented): llmclient uses header-only Bearer auth (no key in URL/query/error), registry rejects base_url userinfo, key-not-set error names only the env var — no credential reaches the string. Comment added. (Update 2026-06-11: non-200 errors now carry a bounded 4 KB, key-scrubbed provider error-body snippet — "no credential" holds by redaction rather than by absence; provider-controlled non-secret text can flow into the string.) |
    | MEDIUM | outcome.go Outcome | zero-value/unknown Status folded into Failed | Fixed in 3.8: explicit switch counts only StatusFailed/StatusTimeout as failed |
    | MEDIUM | outcome.go formatFailures | did not filter OK rows (contract unenforced) | Fixed in 3.8: skips StatusOK rows independent of caller |
    | MEDIUM | engine.go/outcome.go | duplicate primary names indistinguishable in failure list | Non-issue: ProjectConfig.ValidateAgainst enforces unique, single-lane agent names |
@@ -1662,20 +1670,20 @@ Documentation available in [documentation/](plan/documentation/):
 ## Final Phase: Validation
 
 ### Validation Checklist
-- [ ] All tests passing (T3)
-- [ ] Coverage ≥70%
-- [ ] `go vet ./...` clean
-- [ ] `golangci-lint run` clean
-- [ ] Build succeeds
-- [ ] Documentation complete
+- [x] All tests passing (T3)
+- [x] Coverage ≥70%
+- [x] `go vet ./...` clean
+- [x] `golangci-lint run` clean
+- [x] Build succeeds
+- [x] Documentation complete
 
 ### Drift Analysis
 
 Compare implementation against [original-requirements.md](plan/original-requirements.md):
-- [ ] All 6 user stories addressed
+- [x] All 6 user stories addressed
 - [ ] All 24 acceptance criteria passing
-- [ ] No scope creep beyond original request
-- [ ] MVP feature set complete
+- [x] No scope creep beyond original request
+- [x] MVP feature set complete
 
 ---
 
