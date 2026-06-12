@@ -373,6 +373,17 @@ func TestClassify_PromptEchoIsNotOK(t *testing.T) {
 	assert.NotEqual(t, StatusOK, got.status, "a verbatim prompt echo must not classify as ok")
 }
 
+func TestBounded_ValidUTF8AtBoundary(t *testing.T) {
+	// A two-byte UTF-8 sequence (é = 0xc3 0xa9) straddling the maxDetailBytes
+	// boundary must not produce an invalid-UTF-8 output string.
+	long := strings.Repeat("a", maxDetailBytes-1) + "\xc3\xa9" // é — 2 bytes; 2nd byte at pos maxDetailBytes
+	result := bounded(long)
+	assert.LessOrEqual(t, len(result), maxDetailBytes)
+	// strings.ToValidUTF8(s, "") replaces invalid bytes with empty string;
+	// if result was valid UTF-8 it equals the output unchanged.
+	assert.Equal(t, strings.ToValidUTF8(result, ""), result, "bounded() must return valid UTF-8")
+}
+
 func TestPromptAndMarker(t *testing.T) {
 	assert.Equal(t, "ATCR-OK-"+testNonce, Marker(testNonce))
 	assert.Contains(t, Prompt(testNonce), Marker(testNonce))
