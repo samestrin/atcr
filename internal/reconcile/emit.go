@@ -29,7 +29,7 @@ const (
 //
 // Epic 3.0 contract: when populating this block, the writing stage MUST
 // validate Verdict against the allowed enum values (confirmed, refuted,
-// unverifiable) before persisting. The loader (reconcile/load.go) does NOT
+// unverifiable) before persisting. ReadReconciledFindings (emit.go:145) does NOT
 // validate the enum so bad values are silently accepted on read — validation
 // is the writer's responsibility. An empty Verdict (verdict:"") is a contract
 // violation and will confuse downstream consumers.
