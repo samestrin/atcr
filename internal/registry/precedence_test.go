@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func strPtr(s string) *string  { return &s }
-func intPtr(i int) *int        { return &i }
-func int64Ptr(i int64) *int64  { return &i }
+func strPtr(s string) *string { return &s }
+func intPtr(i int) *int       { return &i }
+func int64Ptr(i int64) *int64 { return &i }
 
 // resolve is a test helper asserting resolution succeeds.
 func resolve(t *testing.T, cli CLIOverrides, proj *ProjectConfig, reg *Registry) Settings {
