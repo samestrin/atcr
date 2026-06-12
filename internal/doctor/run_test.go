@@ -339,6 +339,19 @@ func TestRenderTableError_NilOnSuccess(t *testing.T) {
 	assert.NoError(t, RenderTableError(&b, rep), "RenderTableError should return nil on success")
 }
 
+func TestClassify_NetworkErrorRedactsAPIKey(t *testing.T) {
+	const secret = "super-secret-api-key-xyz"
+	t.Setenv("SECRET_REDACT_KEY", secret)
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "SECRET_REDACT_KEY"}
+	// A transport error that accidentally embeds the API key value (e.g. a
+	// misconfigured proxy that echoes auth headers in its error message).
+	err := fmt.Errorf("request failed: auth key=%s rejected by proxy", secret)
+	got := classify("", err, testNonce, 5, tgt)
+	assert.Equal(t, StatusNetworkError, got.status)
+	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from network-error detail")
+	assert.Contains(t, got.detail, "[redacted]")
+}
+
 func TestClassify_PromptEchoIsNotOK(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	// An endpoint that echoes the request prompt verbatim contains the marker
