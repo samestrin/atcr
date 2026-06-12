@@ -107,6 +107,23 @@ func TestRun_TokenBudgetAffectsOutcome(t *testing.T) {
 	assert.Contains(t, repWarn.Agents[0].Hint, "max-tokens")
 }
 
+func TestRun_EmptyRosterIsNotSuccess(t *testing.T) {
+	// An empty roster (no agents configured) must NOT produce exit 0 —
+	// "everything is healthy" is misleading when nothing was tested.
+	emptyRes := &Resolution{
+		Targets: nil,
+		Agents:  nil,
+		Paths:   map[string][]string{},
+	}
+	fake := newFake(func(inv llmclient.Invocation) (string, error) {
+		return Marker(testNonce), nil
+	})
+
+	rep := Run(context.Background(), fake, emptyRes, Options{Nonce: testNonce})
+	assert.NotEqual(t, 0, rep.ExitCode, "empty roster must not exit 0")
+	assert.Empty(t, rep.Agents, "empty roster produces no agent results")
+}
+
 func TestRun_MissingKeySkipsNetwork(t *testing.T) {
 	// ATCR_DOCTOR_KEY deliberately unset.
 	res := twoAgentSharedTarget(t)
