@@ -22,6 +22,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+### [2026-06-11] From Sprint: epic-1.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/fanout/status.go:122 | status.json reserved byte counter ToolBytes is *int64 while the sibling registry byte field tool_budget_bytes is *int — two byte-quantity fields modeled with different integer widths (note: existing payload_byte_budget is *int64), an inconsistency a future stage may trip over. | Make registry ToolBudgetBytes a *int64 to match status ToolBytes and the existing payload_byte_budget for a consistent byte-count type across artifacts. | EDGE_CASES | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/registry/config.go:64 | yaml omitempty on input-only reserved fields (tools/max_turns/tool_budget_bytes/role) is inert because Registry is only decoded, never marshaled — the tag has no effect. | Drop omitempty from the reserved yaml input tags, or leave as-is; cosmetic only. | OVER_ENGINEERING | 5 | execute-epic-independent |
+| U | [ ] | LOW | internal/reconcile/emit.go:30 | Verification.Verdict and Verification.Skeptic lack omitempty and have no enum validation, so a future stage emitting an empty verdict produces verdict:"" and bad verdict/role values are not caught at the contract boundary. | Document that Epic 3.0 must validate verdict against confirmed/refuted/unverifiable when it populates the block, since the loader does not. | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/registry/config.go:67 | role:"" is accepted and stays empty in 1.x while the documented planned default is reviewer, so a future Stage 3/4 must apply the default itself; the loader provides no safety net (intentional per recorded option-a decision). | Ensure Epic 3.0/4.0 applies the reviewer default when activating role. | UNDER_ENGINEERING | 5 | execute-epic-independent |
+
 ### [2026-06-11] From Sprint: 1.0_atcr_core
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
@@ -109,6 +118,6 @@ technical-debt/
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 2 |
 | MEDIUM | 0 | 6 | 25 |
-| LOW | 0 | 1 | 41 |
+| LOW | 4 | 1 | 41 |
 
-**Last Modified:** 2026-06-11 | **Open Items:** 0 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 75
+**Last Modified:** 2026-06-11 | **Open Items:** 4 | **Deferred Items:** 7 | **Resolved Items:** 68 | **Total Items:** 79
