@@ -358,7 +358,7 @@ func (g *gitRunner) functionContextFile(base, head string, paths ...string) (out
 		return "", false, fmt.Errorf("git diff --function-context failed: %w", gerr)
 	}
 	chunk, present := chunks[headPathOf(paths)]
-	if !present || len(bytes.TrimSpace([]byte(chunk))) == 0 {
+	if !present || strings.TrimSpace(chunk) == "" {
 		return "", false, nil
 	}
 	return chunk, true, nil

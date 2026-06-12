@@ -61,7 +61,7 @@ func TestBuildEntries_MixedChangeKindsSplitCleanly(t *testing.T) {
 	gitCmd(t, dir, "mv", "old.go", "new.go")                     // renamed...
 	write(t, dir, "new.go", goFileV2)                            // ...with edit
 	// Distinct content so -M does not pair it with the deleted file as a rename.
-	write(t, dir, "added.go", "package p\n\nfunc Added() string { return \"added\" }\n") // added
+	write(t, dir, "added.go", "package p\n\nfunc Added() string { return \"added\" }\n")             // added
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pic.bin"), []byte{0xff, 0x00, 0xff}, 0o644)) // binary change
 	head := commitAll(t, dir, "v2")
 	ctx := context.Background()
