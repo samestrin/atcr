@@ -1,8 +1,10 @@
 # Go Binaries and Build Artifacts
+# Anchored to repo root so they match the built binaries, not the cmd/atcr
+# source directory (a bare `atcr` pattern also ignores cmd/atcr/*).
 bin/
-atcr
-atcr-mcp
-atcr-mcp-ssee
+/atcr
+/atcr-mcp
+/atcr-mcp-ssee
 *.exe
 *.exe~
 *.dll

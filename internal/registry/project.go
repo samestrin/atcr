@@ -48,7 +48,8 @@ func DefaultProjectConfigPath(root string) string {
 func DefaultProjectConfigYAML(roster []string) string {
 	var b strings.Builder
 	b.WriteString("# atcr project configuration — see docs/registry.md\n")
-	b.WriteString("# Roster entries must match agent names in ~/.config/atcr/registry.yaml.\n")
+	b.WriteString("# Roster entries must match agent names defined in ~/.config/atcr/registry.yaml,\n")
+	b.WriteString("# or, for a self-contained repo, in .atcr/registry.yaml (project overlay).\n")
 	b.WriteString("agents:\n")
 	for _, name := range roster {
 		fmt.Fprintf(&b, "  - %s\n", name)

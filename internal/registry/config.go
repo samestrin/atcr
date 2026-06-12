@@ -90,6 +90,13 @@ type Registry struct {
 	TimeoutSecs       *int   `yaml:"timeout_secs,omitempty"`
 	PayloadByteBudget *int64 `yaml:"payload_byte_budget,omitempty"`
 	FailOn            string `yaml:"fail_on,omitempty"`
+
+	// ProviderSource and AgentSource record the tier (and defining file) each
+	// effective entry came from after the project overlay merge — user or
+	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
+	// mergeProject (project). An entry absent from the map is treated as user.
+	ProviderSource map[string]EntrySource `yaml:"-"`
+	AgentSource    map[string]EntrySource `yaml:"-"`
 }
 
 // DefaultRegistryPath returns ~/.config/atcr/registry.yaml.
@@ -104,23 +111,12 @@ func DefaultRegistryPath() (string, error) {
 // LoadRegistry reads, strictly parses, and validates the registry at path.
 // API key env vars are NOT resolved here; that happens at invoke time.
 func LoadRegistry(path string) (*Registry, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("registry not found at %s: run 'atcr init' and create your provider/agent registry (see docs/registry.md)", path)
-	}
+	reg, err := parseRegistryFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading registry: %w", err)
+		return nil, err
 	}
 
 	base := filepath.Base(path)
-	var reg Registry
-	if err := decodeStrictYAML(data, &reg); err != nil {
-		if errors.Is(err, errEmptyDocument) {
-			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
-		}
-		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
-	}
-
 	if err := reg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
@@ -128,7 +124,7 @@ func LoadRegistry(path string) (*Registry, error) {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 	reg.applyDefaults()
-	return &reg, nil
+	return reg, nil
 }
 
 // validate checks required fields and reference integrity.
@@ -147,18 +143,18 @@ func (r *Registry) validate() error {
 			return errors.New("providers: provider name must not be empty")
 		}
 		if p.APIKeyEnv == "" {
-			return fmt.Errorf("providers.%s: required field 'api_key_env' is missing", name)
+			return providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name)
 		}
 		if !envVarName.MatchString(p.APIKeyEnv) {
-			return fmt.Errorf("providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
+			return providerErrf(name, "providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
 		}
 		if p.BaseURL != "" {
 			u, err := url.Parse(p.BaseURL)
 			if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-				return fmt.Errorf("providers.%s: base_url must be a valid http or https URL", name)
+				return providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name)
 			}
 			if u.User != nil {
-				return fmt.Errorf("providers.%s: base_url must not embed credentials (userinfo)", name)
+				return providerErrf(name, "providers.%s: base_url must not embed credentials (userinfo)", name)
 			}
 		}
 	}
@@ -167,32 +163,32 @@ func (r *Registry) validate() error {
 			return errors.New("agents: agent name must not be empty")
 		}
 		if a.Provider == "" {
-			return fmt.Errorf("agent '%s': required field 'provider' is missing", name)
+			return agentErrf(name, "agent '%s': required field 'provider' is missing", name)
 		}
 		if a.Model == "" {
-			return fmt.Errorf("agent '%s': required field 'model' is missing", name)
+			return agentErrf(name, "agent '%s': required field 'model' is missing", name)
 		}
 		if _, ok := r.Providers[a.Provider]; !ok {
-			return fmt.Errorf("agent '%s' references unknown provider '%s'", name, a.Provider)
+			return agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider)
 		}
 		if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
-			return fmt.Errorf("agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
+			return agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
 		}
 		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
-			return fmt.Errorf("agent '%s': temperature must be within [0, 2]", name)
+			return agentErrf(name, "agent '%s': temperature must be within [0, 2]", name)
 		}
 		if !payloadModeValid(a.Payload) {
-			return fmt.Errorf("agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
 		}
 		// Reserved agentic-stage fields: validated at load (inert in 1.x).
 		if !roleValid(a.Role) {
-			return fmt.Errorf("agent '%s': role must be one of reviewer, skeptic, judge", name)
+			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
 		}
 		if a.MaxTurns != nil && *a.MaxTurns <= 0 {
-			return fmt.Errorf("agent '%s': max_turns must be > 0", name)
+			return agentErrf(name, "agent '%s': max_turns must be > 0", name)
 		}
 		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
-			return fmt.Errorf("agent '%s': tool_budget_bytes must be >= 0", name)
+			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0", name)
 		}
 	}
 	return nil

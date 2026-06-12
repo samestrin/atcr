@@ -20,11 +20,13 @@ type Target struct {
 }
 
 // AgentTarget binds one effective-roster agent to the index of the Target it
-// invokes. Serial marks agents drawn from the serial_agents lane.
+// invokes. Serial marks agents drawn from the serial_agents lane. Source is the
+// agent's definition tier (user | project) for provenance display.
 type AgentTarget struct {
 	Agent     string
 	Serial    bool
 	TargetIdx int
+	Source    string
 }
 
 // Resolution is the deduplicated invocation plan for a roster: the distinct
@@ -82,7 +84,12 @@ func Resolve(reg *registry.Registry, proj *registry.ProjectConfig) (*Resolution,
 		}
 		if !agentSeen[name] {
 			agentSeen[name] = true
-			res.Agents = append(res.Agents, AgentTarget{Agent: name, Serial: serial, TargetIdx: idx})
+			res.Agents = append(res.Agents, AgentTarget{
+				Agent:     name,
+				Serial:    serial,
+				TargetIdx: idx,
+				Source:    reg.AgentTier(name),
+			})
 		}
 		return nil
 	}

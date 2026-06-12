@@ -60,6 +60,9 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(err) // missing/invalid config → exit 2
 	}
+	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+	}
 
 	now := time.Now()
 	req := fanout.ReviewRequest{

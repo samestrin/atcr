@@ -1,11 +1,13 @@
 # Configuration Reference
 
-atcr reads configuration from two files plus embedded defaults, resolved by a strict precedence chain. Both files are strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout.
+atcr reads configuration from a user file, optional project files, and embedded defaults, resolved by a strict precedence chain. Every file is strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout.
 
 | File | Scope | Holds |
 |------|-------|-------|
 | `~/.config/atcr/registry.yaml` | User | Providers, agents, and user-level defaults for the shared review settings. Personas live as `.md` files beside it. |
 | `.atcr/config.yaml` | Project | The agent roster (which agents run, in which lane) and project defaults. Written by `atcr init`. |
+| `.atcr/registry.yaml` | Project (optional) | Project-defined providers and agents, merged over the user registry (project entries win by name). Lets a repo ship a self-contained review setup. See [Project registry overlay](#project-registry-overlay). |
+| `~/.config/atcr/trusted_providers.yaml` | User | Allow list pinning which project-defined providers may receive a key. Managed by `atcr trust`. |
 
 ## Three concepts, deliberately decoupled
 
@@ -87,6 +89,37 @@ fail_on: HIGH
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
 
+## Project registry overlay
+
+A repository can ship its own providers and agents in **`.atcr/registry.yaml`**, so a clone is self-contained — no contributor has to mirror agent definitions into `~/.config/atcr/registry.yaml` by hand. The overlay reuses the exact `providers:` / `agents:` shapes documented above (including the reserved fields) and is strictly parsed like every other config file. It carries **definitions only** — shared settings such as `payload_mode` belong in `.atcr/config.yaml`, so a settings key here is an unknown-field load error.
+
+```yaml
+# .atcr/registry.yaml — project-defined providers and agents (optional).
+providers:
+  team-llm:
+    base_url: https://llm.team.example/v1
+    api_key_env: TEAM_LLM_KEY
+agents:
+  team-reviewer:
+    provider: team-llm        # a project provider…
+    model: team-model
+    fallback: bruce           # …may fall back to a user-defined agent, and vice versa
+```
+
+**Merge semantics — whole-entry shadowing, project wins.** The effective registry is the user registry with project entries merged in by name: a project provider or agent with the same name as a user one **replaces it entirely** (no field-level deep merge — drop the project entry to restore the user definition), and a new name is simply added. Validation — roster references, fallback dangling/cycle checks, persona refs, and range checks — all run over the **merged** view, so a chain may span tiers; any error names the file that defined the offending entry (`registry.yaml` vs `.atcr/registry.yaml`).
+
+### Trust model for project-defined providers
+
+A project provider names a `base_url` and an `api_key_env`, so a cloned repo could otherwise direct one of your keys to an arbitrary endpoint. atcr therefore **refuses to send a key to a project-defined provider until you explicitly trust it**:
+
+```bash
+atcr trust                 # list project providers and their trust status
+atcr trust team-llm        # authorize one (prints its base_url + key env first)
+atcr trust --all           # authorize every project provider
+```
+
+`atcr trust` pins the provider's `(base_url, api_key_env)` pair by sha256 in `~/.config/atcr/trusted_providers.yaml`. Change either field and trust must be re-granted — this is what stops a repo from silently re-pointing a trusted key at a new host. **Only `api_key_env` (the variable name) is ever stored; the key value never enters any file.** A project **agent** that references an existing **user-defined** provider needs no trust prompt — only project-defined *providers* are gated. Until a project provider is trusted, `atcr review` and `atcr doctor` fail fast (exit 2) naming the provider and the `atcr trust` remedy. On a run that does use trusted project providers, a one-time banner names each provider's `base_url` and key env on stderr (confirmation, not the gate).
+
 ## Precedence
 
 The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `fail_on`) resolve **per field, independently**, in this order:
@@ -96,6 +129,14 @@ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
 ```
 
 A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload` or out-of-range `--timeout` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+
+The same **project-over-user** rule now applies uniformly across all three kinds of configuration — settings, personas, and definitions:
+
+```
+CLI flag  >  .atcr/*  (project)  >  ~/.config/atcr/*  (user)  >  embedded default
+```
+
+Settings resolve per field (above); personas resolve per file (`.atcr/personas/` shadows `~/.config/atcr/personas/`, chain below); and provider/agent **definitions** merge whole-entry (`.atcr/registry.yaml` shadows `~/.config/atcr/registry.yaml`, [overlay](#project-registry-overlay) above). There is no embedded tier for definitions — providers and agents must be defined in at least one registry file.
 
 **Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
 
@@ -186,10 +227,11 @@ A stable top-level object with an `agents` array; one entry per effective-roster
       "status": "ok",
       "latency_ms": 412,
       "hint": "",
-      "detail": ""
+      "detail": "",
+      "source": "user"
     }
   ]
 }
 ```
 
-`hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.
+`hint` (actionable next step) and `detail` (a bounded, secret-redacted provider error snippet) are present only when relevant and omitted when empty. `source` is the agent's definition tier — `user` or `project` — surfaced so overlay shadowing is visible rather than silent; the human-readable table shows it as a `SOURCE` column. The doctor invokes each distinct target at most once, so several agents that share a `(provider, model, base_url)` report the same latency and status.

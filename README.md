@@ -71,7 +71,8 @@ atcr report --format md
 | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
 | `atcr init` | Write `.atcr/config.yaml` and the six default personas (editable) |
 | `atcr serve` | Run the MCP stdio server over the same engine |
-| `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json` |
+| `atcr doctor` | Self-test every configured endpoint (dedup'd by provider+model+base_url, fallbacks included); per-agent table or `--json`, with a `SOURCE` (user/project) provenance column |
+| `atcr trust` | Authorize project-defined providers from `.atcr/registry.yaml` before they can receive a key |
 
 Key flags:
 
@@ -83,6 +84,10 @@ Key flags:
 ## Payload modes
 
 `atcr` ships three payload modes that control what each reviewer agent sees. The default is `blocks`; set per-agent overrides in `~/.config/atcr/registry.yaml` when a model handles a different format better.
+
+## Project-defined providers and agents
+
+A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlaying the user registry so a clone is self-contained — project entries shadow same-named user entries whole; new names are added. Because a project-defined provider could direct a key to an arbitrary endpoint, atcr gates them: run `atcr trust` to authorize a project provider (it pins the `base_url` + `api_key_env` pair) before any review or `atcr doctor` will use it. See [docs/registry.md](docs/registry.md#project-registry-overlay).
 
 | Mode | What the reviewer sees | When to use |
 |------|------------------------|-------------|

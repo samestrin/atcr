@@ -148,3 +148,34 @@ func TestDoctor_AgentsFilterSubset(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "bruce")
 }
+
+func TestDoctor_ShowsProjectProvenance(t *testing.T) {
+	// A project-defined agent (on a user provider — no trust needed) self-tests
+	// and is labeled source=project in the doctor report.
+	srv := echoProvider(t, 0)
+	setupDoctorEnv(t, srv.URL)
+	t.Setenv("ATCR_DOCTOR_TEST_KEY", "sk-test")
+
+	// Define a project agent and add it to the roster.
+	atcrDir := filepath.Join(".atcr")
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "registry.yaml"),
+		[]byte("agents:\n  team:\n    provider: mock\n    model: test-model\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(atcrDir, "config.yaml"),
+		[]byte("agents:\n  - bruce\n  - team\n"), 0o644))
+
+	out, err := execute(t, "doctor", "--json")
+	require.NoError(t, err)
+	var parsed struct {
+		Agents []struct {
+			Agent  string `json:"agent"`
+			Source string `json:"source"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &parsed))
+	src := map[string]string{}
+	for _, a := range parsed.Agents {
+		src[a.Agent] = a.Source
+	}
+	assert.Equal(t, "project", src["team"], "project-defined agent is labeled project")
+	assert.Equal(t, "user", src["bruce"], "user-defined agent is labeled user")
+}

@@ -41,7 +41,8 @@ func (r *Registry) ValidateFallbacks() error {
 			continue
 		}
 		if _, ok := r.Agents[fb]; !ok {
-			return fmt.Errorf("%w: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb)
+			return agentSentinelErr(name, ErrDanglingFallback,
+				fmt.Sprintf("%s: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb))
 		}
 	}
 
@@ -51,7 +52,9 @@ func (r *Registry) ValidateFallbacks() error {
 			continue
 		}
 		if path, found := r.walkFallbacks(name, color); found {
-			return fmt.Errorf("%w detected: %s", ErrFallbackCycle, strings.Join(path, " -> "))
+			// Attribute to the repeated node (path[0]); the lead-in is trimmed.
+			return agentSentinelErr(path[0], ErrFallbackCycle,
+				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> ")))
 		}
 	}
 	return nil
