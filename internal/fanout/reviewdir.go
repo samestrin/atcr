@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -328,27 +329,39 @@ func WriteManifest(reviewDir string, m *payload.Manifest) error {
 // truth ReadReviewStatus uses) as authoritative and falling back to
 // manifest.json when no readable summary exists (fan-out still running, or a
 // hand-assembled review). Reading the summary first means a WriteManifest
-// failure after WritePool can never report partial:false for a partial run. A
-// failure-marker summary (a WritePool I/O fault, where only a subset of agents
-// may have reached disk) is forced to partial whenever any agent succeeded, so
-// a reconcile over the surviving artifacts never drops an unflushed agent.
+// failure after WritePool can never report partial:false for a partial run.
+// EffectivePartial() applies FailureMarker awareness so any WritePool-aborted
+// run with roster agents (Total>0) is always treated as partial, regardless of
+// Succeeded/Failed counts — a timed-out agent may have flushed findings before
+// the fault and still appears as Failed in the summary.
+//
+// Precondition: callers operating on a fan-out-managed review MUST first call
+// EnsureReviewComplete, which validates both files and rejects in-progress or
+// corrupt reviews. This function deliberately swallows every read and parse
+// error — unreadable files, oversized summaries, corrupt JSON, and
+// semantically empty records all collapse to a manifest fallback or false —
+// and relies on EnsureReviewComplete to have already ensured the files are
+// valid. Calling it on an unvalidated directory silently returns false for any
+// read failure, including a corrupt summary that would block ReadReviewStatus.
+//
 // It is the single best-effort reader shared by the CLI reconcile path and the
 // MCP reconcile handler so the two never drift; when neither artifact is
 // readable it defaults to false.
 func ReadManifestPartial(reviewDir string) bool {
-	if data, err := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile)); err == nil {
-		var ps PoolSummary
-		if json.Unmarshal(data, &ps) == nil {
-			// A failure-marker summary means WritePool aborted mid-flush, so the
-			// on-disk agent set may be a subset of what ran while ps.Partial can
-			// still be false (no agent FAILED). Force partial when at least one
-			// agent succeeded so a reconcile over the surviving artifacts cannot
-			// emit a non-partial verdict from an incomplete roster. Zero successes
-			// is a genuine total failure with no surviving subset to protect.
-			if ps.FailureMarker && ps.Succeeded > 0 {
-				return true
+	if sf, err := os.Open(filepath.Join(reviewDir, "sources", "pool", summaryFile)); err == nil {
+		raw, readErr := io.ReadAll(io.LimitReader(sf, maxSummaryBytes+1))
+		_ = sf.Close()
+		if readErr == nil && int64(len(raw)) <= maxSummaryBytes {
+			var ps PoolSummary
+			if json.Unmarshal(raw, &ps) == nil {
+				// Sanity-check the decoded record before trusting it. A zero-value
+				// PoolSummary (from {} or null) has Total=0; a corrupt-but-parseable
+				// record may violate Total==Succeeded+Failed. Either case falls through
+				// to the manifest rather than silently returning partial:false.
+				if ps.Total > 0 && ps.Total == ps.Succeeded+ps.Failed {
+					return ps.EffectivePartial()
+				}
 			}
-			return ps.Partial
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
