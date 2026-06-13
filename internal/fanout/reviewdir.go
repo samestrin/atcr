@@ -273,6 +273,15 @@ func ScaffoldOutputDir(dir string) (string, error) {
 	return dir, nil
 }
 
+// validateOutputDirRoot returns an error if dir is inside ReviewsRoot(root).
+// An --output-dir that resolves into the managed reviews location creates a
+// half-state: the review tree is written but WriteLatest is skipped, making
+// the review invisible to atcr status while colocated with tracked reviews.
+func validateOutputDirRoot(dir, root string) error {
+	// TODO: implement containment check
+	return nil
+}
+
 // WriteLatest writes the review id (one line) to .atcr/latest so later commands
 // default to it. The .atcr directory is created if absent.
 func WriteLatest(root, id string) error {
