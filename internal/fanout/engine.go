@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -204,6 +205,18 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		wg.Add(1)
 		go func(i int, s Slot) {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					results[i] = Result{
+						Agent:       s.Primary.Name,
+						Status:      StatusFailed,
+						Err:         fmt.Errorf("panic: %v", r),
+						DurationMS:  time.Since(start).Milliseconds(),
+						PayloadMode: s.Primary.PayloadMode,
+						Truncation:  s.Primary.Truncation,
+					}
+				}
+			}()
 			// Acquire a slot before invoking. The acquire is ctx-aware so a
 			// cancelled run never blocks the WaitGroup drain waiting for a slot:
 			// on cancellation, invokeSlot short-circuits to a timeout result
@@ -230,23 +243,38 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 		go func(slots []Slot, serialIdx []int) {
 			defer wg.Done()
 			for _, i := range serialIdx {
-				s := slots[i]
-				// Honor cancellation before starting each serial invocation so a
-				// cancelled run does not keep firing requests down the lane. The
-				// short-circuited slot records the wall-clock elapsed since Run
-				// started, not 0 — real time passed before the cancellation.
-				if err := ctx.Err(); err != nil {
-					results[i] = Result{
-						Agent:       s.Primary.Name,
-						Status:      classifyStatus(err),
-						Err:         err,
-						DurationMS:  time.Since(start).Milliseconds(),
-						PayloadMode: s.Primary.PayloadMode,
-						Truncation:  s.Primary.Truncation,
+				func(i int) {
+					defer func() {
+						if r := recover(); r != nil {
+							s := slots[i]
+							results[i] = Result{
+								Agent:       s.Primary.Name,
+								Status:      StatusFailed,
+								Err:         fmt.Errorf("panic: %v", r),
+								DurationMS:  time.Since(start).Milliseconds(),
+								PayloadMode: s.Primary.PayloadMode,
+								Truncation:  s.Primary.Truncation,
+							}
+						}
+					}()
+					s := slots[i]
+					// Honor cancellation before starting each serial invocation so a
+					// cancelled run does not keep firing requests down the lane. The
+					// short-circuited slot records the wall-clock elapsed since Run
+					// started, not 0 — real time passed before the cancellation.
+					if err := ctx.Err(); err != nil {
+						results[i] = Result{
+							Agent:       s.Primary.Name,
+							Status:      classifyStatus(err),
+							Err:         err,
+							DurationMS:  time.Since(start).Milliseconds(),
+							PayloadMode: s.Primary.PayloadMode,
+							Truncation:  s.Primary.Truncation,
+						}
+						return
 					}
-					continue
-				}
-				results[i] = e.invokeSlot(ctx, s)
+					results[i] = e.invokeSlot(ctx, s)
+				}(i)
 			}
 		}(slots, serialIdx)
 	}
