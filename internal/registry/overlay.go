@@ -112,7 +112,7 @@ func LoadProjectRegistry(path string) (*ProjectRegistry, error) {
 		if errors.Is(err, errEmptyDocument) {
 			return nil, nil // an empty overlay file is treated as no overlay
 		}
-		return nil, fmt.Errorf("failed to parse %s: %w", projectRegistryLabel, amendWithSettingsHint(err))
+		return nil, fmt.Errorf("failed to parse %s: %w", projectRegistryLabel, amendWithAgentFieldHints(amendWithSettingsHint(err), data))
 	}
 	return &pr, nil
 }
