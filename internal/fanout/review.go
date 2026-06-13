@@ -54,6 +54,12 @@ type ReviewRequest struct {
 	TimeSuffix string // HHMMSS collision suffix
 	StartedAt  time.Time
 	IDOverride string
+	// OutputDir, when non-empty, redirects the whole review tree to this
+	// (absolute) path instead of .atcr/reviews/<id>/, and suppresses the
+	// .atcr/latest update. The id is still derived (for provenance/output) but
+	// is not used for path construction. Mutually exclusive with IDOverride,
+	// enforced by the CLI before the request is built.
+	OutputDir string
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -165,13 +171,19 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		return nil, err
 	}
 	var dir string
-	if req.IDOverride != "" {
+	switch {
+	case req.OutputDir != "":
+		// --output-dir redirects the whole tree to an explicit path. The id is
+		// still derived above (for provenance/output) but never used for the
+		// path, and .atcr/latest is left untouched below.
+		dir, err = ScaffoldOutputDir(req.OutputDir)
+	case req.IDOverride != "":
 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
 		// a pre-existing directory (e.g. a client retrying atcr_review with the
 		// same id while the first run is in flight) is rejected rather than
 		// scaffolded into, so two fan-outs never share one review dir.
 		dir, err = ScaffoldReviewDir(req.Root, id)
-	} else {
+	default:
 		// Derived ids claim their directory atomically: creation is the
 		// collision check, so two reviews of the same branch in the same second
 		// get distinct dirs instead of interleaving writes in one.
@@ -203,9 +215,13 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		return nil, err
 	}
 	// Point .atcr/latest at the review before fan-out so `atcr status` can find an
-	// in-progress run started by the non-blocking MCP handler.
-	if err := WriteLatest(req.Root, id); err != nil {
-		return nil, err
+	// in-progress run started by the non-blocking MCP handler. Skipped for
+	// --output-dir: the pointer tracks interactive runs under .atcr/reviews/, and
+	// an external orchestrator owns (and already knows) its output path.
+	if req.OutputDir == "" {
+		if err := WriteLatest(req.Root, id); err != nil {
+			return nil, err
+		}
 	}
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, manifest: m}, nil
 }

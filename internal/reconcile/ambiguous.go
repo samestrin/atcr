@@ -162,7 +162,7 @@ func HashBytes(data []byte) string {
 func AmbiguousHash(clusters []AmbiguousCluster) string {
 	var buf bytes.Buffer
 	if err := renderIndentedJSON(&buf, clusters); err != nil {
-		return "" // unreachable: AmbiguousCluster marshals without error
+		panic(fmt.Sprintf("atcr: AmbiguousHash: unreachable JSON render error: %v", err))
 	}
 	return HashBytes(buf.Bytes())
 }

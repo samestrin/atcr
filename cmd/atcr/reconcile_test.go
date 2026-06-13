@@ -61,6 +61,22 @@ func TestReconcileCmd_InProgressReviewRejected(t *testing.T) {
 	require.Equal(t, 2, execCmd(t, "reconcile", "r"))
 }
 
+// TestReconcileCmd_InheritsExternalOutputDir proves the clarified contract for
+// epic 1.8: a review created with `atcr review --output-dir <path>` lives at an
+// arbitrary absolute path (not under .atcr/reviews/), and `atcr reconcile`
+// operates on it via its existing [id-or-path] argument with NO new flag.
+func TestReconcileCmd_InheritsExternalOutputDir(t *testing.T) {
+	isolate(t)
+	ext := filepath.Join(t.TempDir(), "ext-review")
+	require.NoError(t, os.MkdirAll(filepath.Join(ext, "sources", "host"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(ext, "reconciled"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(ext, "sources", "host", "findings.txt"),
+		[]byte("# atcr-findings/v1\nHIGH|a.go:1|boom|fix|security|10|ev|host\n"), 0o644))
+
+	require.Equal(t, 0, execCmd(t, "reconcile", ext))
+	require.FileExists(t, filepath.Join(ext, "reconciled", "findings.txt"))
+}
+
 func TestReconcileCmd_FailOnExitCodes(t *testing.T) {
 	isolate(t)
 	fixtureReview(t, "2026-06-10_feat", map[string]string{

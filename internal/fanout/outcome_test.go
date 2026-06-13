@@ -122,6 +122,22 @@ func TestOutcome_EmptyAgentNameRendersPlaceholder(t *testing.T) {
 	assert.Contains(t, err.Error(), "<unnamed> (boom)")
 }
 
+// TestSummarize_UnknownStatusCountsAsFailed confirms a result whose Status is
+// not one of the three known values is counted as Failed, so Total always equals
+// Succeeded+Failed and Partial is computed correctly.
+func TestSummarize_UnknownStatusCountsAsFailed(t *testing.T) {
+	results := []Result{
+		{Agent: "a", Status: StatusOK},
+		{Agent: "b", Status: "cancelled"}, // unknown status
+	}
+	s, err := Outcome(results)
+	require.NoError(t, err, "one success means no run-level error")
+	assert.Equal(t, 2, s.Total)
+	assert.Equal(t, 1, s.Succeeded)
+	assert.Equal(t, 1, s.Failed, "unknown status must be counted as Failed")
+	assert.True(t, s.Partial)
+}
+
 // A successful result carrying a stray Err must never appear in the all-failed
 // list — formatFailures filters to non-OK rows independent of its caller.
 func TestOutcome_FormatFailuresSkipsOKRows(t *testing.T) {
