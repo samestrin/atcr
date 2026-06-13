@@ -37,7 +37,16 @@
 - **Relevant:** Prevents runaway cost from tool-using agents, which is the primary economic risk identified in the plan's risk register ("Token cost explosion").
 - **Time-bound:** Delivered within the Epic 2.0 sprint sequence; required before any adversarial-verification stories (Epic 3.0) can reuse the loop.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-turn-budget-enforcement.md) | Turn Budget Enforcement | Unit/Integration |
+| [02-02](../acceptance-criteria/02-02-tool-byte-budget-enforcement.md) | Tool Byte Budget Enforcement | Unit/Integration |
+| [02-03](../acceptance-criteria/02-03-timeout-enforcement.md) | Timeout Enforcement | Unit/Integration |
+| [02-04](../acceptance-criteria/02-04-budget-status-reporting-partial-success.md) | Budget Status Reporting and Partial Success | Unit/Integration |
+
+## Original Criteria Overview
 
 1. `max_turns` enforced: agent loop halts after the configured number of turns and requests a final answer; counter in `status.json` matches actual turns executed.
 2. `tool_budget_bytes` enforced: cumulative bytes of tool results are tracked; when the cap trips mid-turn, the current turn completes, the engine requests a final answer, and the tripped marker is recorded.
@@ -45,8 +54,6 @@
 4. Default `max_turns=10` applied automatically when `tools: true` and `MaxTurns` is unset; explicit values are honored up to `MaxAgentTurns=1000`.
 5. Multiple budgets can trip in one run; `status.json` records all tripped budgets and the counters (`turns`, `tool_calls`, `tool_bytes`) reflect actual usage.
 6. Partial-success semantics hold: a budget-tripped agent still produces a review result; reconcile consumes it identically to a fully-completed agent.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`_
 
 ## Technical Considerations
 

@@ -1,0 +1,3 @@
+
+
+No issues found. The changes introduce a FailureMarker field to distinguish failure-path summaries from real runs, update related logic in ReadManifestPartial to force partial when appropriate, and add comprehensive tests covering all edge cases. The implementation is backward compatible (omitempty ensures older clients see false), handles error cases correctly, and maintains existing behavior for normal summaries. All new code is well-tested and documented.

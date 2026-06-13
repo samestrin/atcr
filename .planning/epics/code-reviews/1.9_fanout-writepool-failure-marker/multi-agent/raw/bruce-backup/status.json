@@ -1,0 +1,9 @@
+{
+  "agent_name": "bruce-backup",
+  "model": "openai/qwen-3.6-plus",
+  "status": "ok",
+  "duration_ms": 110419,
+  "fallback_used": true,
+  "fallback_from": "bruce",
+  "original_error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+}

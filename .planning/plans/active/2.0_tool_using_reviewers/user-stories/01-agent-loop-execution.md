@@ -38,7 +38,18 @@
 - **Relevant:** This is the core transformation of Epic 2.0 — without the agent loop, reviewers remain single-shot and cannot overcome the hallucination and evidence gaps that motivate the entire epic.
 - **Time-bound:** Completed as the first story in Epic 2.0, unblocking all downstream stories (budget enforcement, path jail integration, transcript/accounting, persona updates).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-chatcompleter-interface-wire-format.md) | ChatCompleter Interface and Wire Format | Unit |
+| [01-02](../acceptance-criteria/01-02-multi-turn-agent-loop.md) | Multi-Turn Agent Loop Execution | Unit |
+| [01-03](../acceptance-criteria/01-03-per-agent-budget-enforcement.md) | Per-Agent Budget Enforcement | Unit |
+| [01-04](../acceptance-criteria/01-04-loop-hygiene.md) | Loop Hygiene - Repeated Calls and Malformed JSON | Unit |
+| [01-05](../acceptance-criteria/01-05-degrade-path-fallback-inheritance.md) | Degrade Path and Fallback Inheritance | Unit |
+| [01-06](../acceptance-criteria/01-06-result-accounting-compat.md) | Result Accounting and Backward Compatibility | Unit + Integration |
+
+## Original Criteria Overview
 
 1. `ChatCompleter` interface defined alongside `Completer`; `llmclient.Client` implements `Chat(ctx, inv, messages, tools)` with `tools` array in request and `tool_calls`/`role:tool` in response.
 2. `invokeAgent` branches on `Agent.Tools` — when true, drives the multi-turn loop: send messages + tools, execute `tool_calls` via dispatcher, append `role:"tool"` results, repeat until final message or budget trip.
@@ -48,8 +59,6 @@
 6. `Result` struct gains `Turns int`, `ToolCalls int`, `ToolBytes int64` fields; populated during loop execution; propagated to `statusFor()` in artifacts.go:176.
 7. Fallback agents inherit the effective tools setting of the lane invocation; a fallback may be a non-tool agent (degrade is per-agent).
 8. All tests pass: unit tests for loop logic with scripted httptest mock providers; existing tests remain green (single-shot path unchanged when `Agent.Tools` is false).
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`_
 
 ## Technical Considerations
 
@@ -94,4 +103,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_usin
 ---
 
 **Created:** June 13, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Accepted - 6 Criteria Defined

@@ -1,0 +1,5 @@
+MEDIUM|internal/fanout/artifacts.go:123|FailureMarker field not validated in writeFailureSummary|Add validation to ensure FailureMarker is only set on error paths|maintainability|5|Field is correctly set but lacks context in function|reviewer
+MEDIUM|internal/fanout/reviewdir.go:340|ReadManifestPartial logic could be simplified|Extract failure-marker handling into helper function|maintainability|10|Complex conditional reduces readability|reviewer
+LOW|internal/fanout/reviewdir_test.go:320|Test name could be more descriptive|Rename test to clearly indicate failure-marker behavior|maintainability|2|Ambiguous test name obscures purpose|reviewer
+MEDIUM|internal/fanout/reviewdir_test.go:350|Missing test for zero successes with failure marker|Add test case for genuine total failure scenario|test|5|Incomplete coverage of edge case|reviewer
+MEDIUM|internal/fanout/reviewdir_test.go:400|Test could verify JSON marshaling behavior|Ensure FailureMarker serializes correctly in JSON|test|3|Potential serialization issue not verified|reviewer

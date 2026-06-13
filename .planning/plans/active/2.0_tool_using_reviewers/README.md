@@ -4,7 +4,7 @@ Plan 2.0 transforms single-shot pool reviewers into bounded agents that explore 
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/2.0_tool_using_reviewers/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/2.0_tool_using_reviewers/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/2.0_tool_using_reviewers/`
 

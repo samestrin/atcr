@@ -39,7 +39,16 @@
 - **Relevant:** Makes tool-using agents debuggable in production — the operator's primary complaint without this story is "I cannot tell what the agent saw." Directly addresses the plan's objective: "Enables debugging: what did the agent see? what did it do? why did it stop?"
 - **Time-bound:** Delivered within the Epic 2.0 sprint sequence; required before any adversarial-verification stories (Epic 3.0) can rely on operators diagnosing skeptic-vs-reviewer disagreements.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-transcript-event-emission.md) | Transcript Event Emission | Unit + Integration |
+| [05-02](../acceptance-criteria/05-02-transcript-durability-replay.md) | Transcript Durability and Replay | Unit + Integration |
+| [05-03](../acceptance-criteria/05-03-live-status-counters.md) | Live Status Counters | Unit + Integration |
+| [05-04](../acceptance-criteria/05-04-manifest-review-stage.md) | Manifest Review Stage Entry | Unit + Integration |
+
+## Original Criteria Overview
 
 1. `transcript.jsonl` is emitted per tool-using agent under `raw/<agent>/`, with one JSON object per line covering each turn's request `tool_calls`, each tool result (marked when truncated above the recorded cap), and the final assistant message.
 2. The transcript is append-only per turn: a run interrupted mid-loop leaves a valid, replayable partial transcript.
@@ -47,8 +56,6 @@
 4. `manifest.json` `stages` includes a `"review"` entry that lists every agent that executed with `tools: true`, including agents that later degraded to single-shot.
 5. Transcript I/O errors do not fail the review — errors are logged and the run continues; the transcript may be incomplete but the review result is unaffected.
 6. A replay tool or test harness can reconstruct the exact `Chat` call sequence from the transcript and reproduce the engine's view of the session (modulo provider-side non-determinism).
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`_
 
 ## Technical Considerations
 
@@ -86,4 +93,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_usin
 ---
 
 **Created:** June 13, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Draft - Acceptance Criteria Generated

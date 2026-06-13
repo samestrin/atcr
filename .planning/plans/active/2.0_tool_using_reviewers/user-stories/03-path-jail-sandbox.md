@@ -37,15 +37,22 @@
 - **Relevant:** Without this sandbox, a tool-using agent is a remote-code-execution-shaped hole. The operator's trust in the review output depends on knowing the agent could not have read or written outside bounds. This is the security foundation every other story in the epic builds on.
 - **Time-bound:** Delivered before Stories 1 and 2 reach their tool-dispatch integration tests; the sandbox is a prerequisite for any multi-turn agent test.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-path-jail-enforcement.md) | Path Jail Escape Vector Rejection | Unit |
+| [03-02](../acceptance-criteria/03-02-snapshot-lifecycle.md) | Snapshot Manager Lifecycle | Unit |
+| [03-03](../acceptance-criteria/03-03-worktree-cleanup.md) | Worktree Cleanup & Manifest Recording | Unit/Integration |
+| [03-04](../acceptance-criteria/03-04-read-only-guard.md) | Read-Only Enforcement & Write Tool Guard | Unit |
+
+## Original Criteria Overview
 
 1. Path jail rejects all escape vectors (absolute paths, `..`, out-of-root symlinks, `.git/` access) with a structured error message that names the offending path and the rejection reason.
 2. Snapshot manager returns a valid root directory for any resolved head SHA, using the live worktree on the fast path and a temporary `git worktree add` on the slow path.
 3. Temporary worktree is fully removed after the run (including on error paths via `defer`), and its creation/removal is recorded in `manifest.json`.
 4. File opens within the harness use `O_RDONLY`; no write tool definition exists in the tool registry; any attempt to register a write tool is rejected by a compile-time or init-time guard.
 5. All sandbox behavior is covered by unit tests that run without network access, without a real git repository (fixture-based where possible), and without any LLM.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`_
 
 ## Technical Considerations
 
@@ -76,4 +83,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_usin
 ---
 
 **Created:** June 13, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Generated - Ready for Implementation

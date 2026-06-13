@@ -36,7 +36,16 @@
 - **Relevant:** Operators tune rosters for cost/quality, not for function-calling compatibility. Transparent degradation keeps the operator in control and preserves review throughput across model swaps.
 - **Time-bound:** Implemented and covered by integration tests within the epic's sprint window; regression-tested in CI for every subsequent release.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-single-shot-degradation-path.md) | Single-Shot Degradation Path | Unit |
+| [04-02](../acceptance-criteria/04-02-tool-capable-agent-loop-path.md) | Tool-Capable Agent Loop Path | Unit |
+| [04-03](../acceptance-criteria/04-03-fallback-degradation-inheritance.md) | Fallback Degradation Inheritance | Unit |
+| [04-04](../acceptance-criteria/04-04-mixed-roster-reconciler-compatibility.md) | Mixed Roster Reconciler Compatibility | Integration |
+
+## Original Criteria Overview
 
 1. A non-tool-capable model invoked with `tools: true` executes the single-shot path and its `AgentStatus` in `status.json` carries `tools_degraded: true` with the original `tools_requested: true` preserved.
 2. A tool-capable model invoked with `tools: true` executes the multi-turn loop and its `AgentStatus` carries `tools_degraded: false` (field absent or false).
@@ -44,8 +53,6 @@
 4. Fallback agents inherit the effective `tools` setting of the lane invocation; when the fallback model is non-tool-capable, it too degrades independently and records its own `tools_degraded: true`.
 5. Degradation is per-agent, not per-slot: the same lane can produce a tool-loop result on the primary and a degraded single-shot result on the fallback, both valid.
 6. The degrade decision does not alter the findings contract, the reconcile input, or the report output — only `status.json` carries the signal.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`_
 
 ## Technical Considerations
 
@@ -78,4 +85,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/2.0_tool_usin
 ---
 
 **Created:** June 13, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Defined - Ready for Implementation
