@@ -113,10 +113,21 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		s.PayloadMode = v
 	}
 	// Post-resolution sanity: a directly-constructed proj/reg (bypassing the
-	// file loader) can carry a negative MaxParallel. The engine treats n<=0 as
-	// unbounded, so a negative value silently inverts the user's intent.
+	// file loader) can carry out-of-range values. Catch them here so the engine
+	// never receives them.
+	//
+	// MaxParallel: n<=0 is the unbounded escape hatch; only negative is invalid.
 	if s.MaxParallel < 0 {
 		return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", s.MaxParallel)
+	}
+	// TimeoutSecs: review.go's `p.TimeoutSec > 0` guard silently skips the
+	// timeout on <=0 values (no timeout applied — inverse of intent).
+	if s.TimeoutSecs <= 0 || s.TimeoutSecs > MaxTimeoutSecs {
+		return Settings{}, fmt.Errorf("timeout_secs must be within 1..%d, got %d", MaxTimeoutSecs, s.TimeoutSecs)
+	}
+	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
+	if s.PayloadByteBudget < 0 {
+		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
 	}
 	return s, nil
 }
