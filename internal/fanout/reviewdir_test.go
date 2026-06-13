@@ -24,6 +24,26 @@ func TestScaffoldOutputDir_CreatesTreeWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestScaffoldOutputDir_AllowsEmptyExisting(t *testing.T) {
+	// An existing but empty directory is a valid --output-dir target.
+	dir := t.TempDir()
+	got, err := ScaffoldOutputDir(dir)
+	require.NoError(t, err)
+	require.Equal(t, dir, got)
+	assert.DirExists(t, filepath.Join(dir, "sources"))
+}
+
+func TestScaffoldOutputDir_RejectsNonEmpty(t *testing.T) {
+	// A directory that already contains files is rejected (exit 2 at the CLI) so
+	// --output-dir can never clobber existing content. Any entry counts,
+	// including hidden files.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".hidden"), []byte("x"), 0o644))
+	_, err := ScaffoldOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not empty")
+}
+
 func TestSlugifyBranch(t *testing.T) {
 	cases := map[string]string{
 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",

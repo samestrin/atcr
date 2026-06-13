@@ -224,6 +224,17 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 // non-existent or an empty directory. It returns the path so callers mirror the
 // ScaffoldReviewDir signature.
 func ScaffoldOutputDir(dir string) (string, error) {
+	// Refuse a non-empty existing target so a review never clobbers unrelated
+	// content. os.ReadDir surfaces every entry (hidden files included); a
+	// non-existent path is the happy case, while any other read error (a file at
+	// the path, a permission problem) must surface rather than be masked by the
+	// MkdirAll below.
+	switch entries, err := os.ReadDir(dir); {
+	case err == nil && len(entries) > 0:
+		return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("failed to create review directory: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}
