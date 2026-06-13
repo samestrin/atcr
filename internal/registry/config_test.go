@@ -431,6 +431,11 @@ func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
 			"tool_budget_bytes must be",
 		},
 		{
+			"absurd tool_budget_bytes",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tool_budget_bytes: 9223372036854775807\n",
+			"tool_budget_bytes must be",
+		},
+		{
 			"wrong type for tools",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tools: maybe\n",
 			"",
