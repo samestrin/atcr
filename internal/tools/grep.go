@@ -106,7 +106,7 @@ func scanFileForMatches(path, rel string, re *regexp.Regexp, maxMatches, maxLine
 	if err != nil {
 		return // skip files we cannot open read-only (e.g. symlink with O_NOFOLLOW)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)

@@ -34,7 +34,7 @@ func readFileHandler(_ context.Context, d *Dispatcher, argsJSON json.RawMessage,
 		}
 		return ToolResult{}, toolErrf("read_file: cannot open %s: %v", a.Path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
