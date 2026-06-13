@@ -53,6 +53,7 @@ func readFileHandler(_ context.Context, d *Dispatcher, argsJSON json.RawMessage,
 	var b strings.Builder
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	maxBytes := d.limits.MaxReadFileBytes
 	lineNo := 0
 	for sc.Scan() {
 		lineNo++
@@ -63,15 +64,27 @@ func readFileHandler(_ context.Context, d *Dispatcher, argsJSON json.RawMessage,
 			break
 		}
 		fmt.Fprintf(&b, "%d: %s\n", lineNo, sc.Text())
+		if maxBytes > 0 && b.Len() > maxBytes {
+			break // stop accumulating; truncate() below enforces the cap
+		}
 	}
 	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			// Line exceeds the 10MB scanner buffer; return what was read so far as truncated.
+			rendered := b.String()
+			full := len(rendered)
+			if maxBytes > 0 && full > maxBytes {
+				return ToolResult{Content: truncate(rendered, maxBytes), Truncated: true, OriginalBytes: full}, nil
+			}
+			return ToolResult{Content: rendered, Truncated: true, OriginalBytes: full}, nil
+		}
 		return ToolResult{}, toolErrf("read_file: read error on %s: %v", a.Path, err)
 	}
 
 	rendered := b.String()
 	full := len(rendered)
-	if cap := d.limits.MaxReadFileBytes; cap > 0 && full > cap {
-		return ToolResult{Content: truncate(rendered, cap), Truncated: true, OriginalBytes: full}, nil
+	if maxBytes > 0 && full > maxBytes {
+		return ToolResult{Content: truncate(rendered, maxBytes), Truncated: true, OriginalBytes: full}, nil
 	}
 	return ToolResult{Content: rendered, OriginalBytes: full}, nil
 }
