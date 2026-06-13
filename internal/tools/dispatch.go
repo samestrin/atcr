@@ -63,6 +63,7 @@ type Dispatcher struct {
 // The snapshot root (default search/listing base) is taken from jail.Root() so
 // it always shares the jail's canonicalization.
 func NewDispatcher(jail Resolver, limits Limits) *Dispatcher {
+	limits.normalize()
 	d := &Dispatcher{
 		jail:     jail,
 		root:     jail.Root(),
