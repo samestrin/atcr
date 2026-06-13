@@ -336,6 +336,15 @@ func ReadManifestPartial(reviewDir string) bool {
 	if data, err := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile)); err == nil {
 		var ps PoolSummary
 		if json.Unmarshal(data, &ps) == nil {
+			// A failure-marker summary means WritePool aborted mid-flush, so the
+			// on-disk agent set may be a subset of what ran while ps.Partial can
+			// still be false (no agent FAILED). Force partial when at least one
+			// agent succeeded so a reconcile over the surviving artifacts cannot
+			// emit a non-partial verdict from an incomplete roster. Zero successes
+			// is a genuine total failure with no surviving subset to protect.
+			if ps.FailureMarker && ps.Succeeded > 0 {
+				return true
+			}
 			return ps.Partial
 		}
 	}
