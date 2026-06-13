@@ -165,3 +165,21 @@ func TestReadFile_NonPositiveEndLine(t *testing.T) {
 		assert.Contains(t, err.Error(), "end_line", "end_line=%d", el)
 	}
 }
+
+// TestReadFile_VeryLongLine_Truncated verifies that a line exceeding the
+// scanner's 10MB max-token is returned as truncated content rather than an error.
+func TestReadFile_VeryLongLine_Truncated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping large-file test in short mode")
+	}
+	root := t.TempDir()
+	// One line just over the 10MB scanner token limit.
+	writeFile(t, root, "huge.txt", strings.Repeat("x", 10*1024*1024+1))
+	d := newTestDispatcher(t, root)
+
+	res, err := readFile(t, d, `{"path":"huge.txt"}`)
+	// Before fix: err contains "token too long"
+	// After fix: err == nil, Truncated == true
+	require.NoError(t, err, "line > 10MB must return truncated content, not an error")
+	assert.True(t, res.Truncated, "line > 10MB must be marked Truncated")
+}
