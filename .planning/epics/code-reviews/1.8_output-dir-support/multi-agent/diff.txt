@@ -1,0 +1,519 @@
+diff --git a/README.md b/README.md
+index bf138ea..dad31ff 100644
+--- a/README.md
++++ b/README.md
+@@ -76,11 +76,26 @@ atcr report --format md
+ 
+ Key flags:
+ 
+-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
++- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+ - `atcr report --format md|json|checklist` / `--output <file>`
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+ 
++### Redirecting output for orchestrators (`--output-dir`)
++
++By default `atcr review` writes the review tree to `.atcr/reviews/<id>/` and points `.atcr/latest` at it — the right default for interactive use. An external orchestrator (a skill, CI step, or wrapper script) that needs the output at a specific location can pass `--output-dir <path>` instead:
++
++```bash
++atcr review --output-dir ./artifacts/review        # full tree (manifest.json, payload/, sources/) lands here
++atcr reconcile ./artifacts/review                   # reconcile + report take the same path as their anchor
++atcr report ./artifacts/review --format md
++```
++
++- The tree is written verbatim to `<path>` (relative paths resolve against the current directory). The path must be new or empty — a non-empty directory is rejected with exit **2** so existing content is never clobbered.
++- `.atcr/latest` is **not** updated, so `--output-dir` runs never disturb the interactive pointer.
++- `--output-dir` and `--id` are mutually exclusive (the id is meaningless when the path is explicit).
++- `atcr reconcile` and `atcr report` need no extra flag — they already accept a filesystem path as their `[id-or-path]` argument, so hand them the same `--output-dir` path.
++
+ ## Payload modes
+ 
+ `atcr` ships three payload modes that control what each reviewer agent sees. The default is `blocks`; set per-agent overrides in `~/.config/atcr/registry.yaml` when a model handles a different format better.
+diff --git a/cmd/atcr/reconcile_test.go b/cmd/atcr/reconcile_test.go
+index 0bc07c8..a01ba33 100644
+--- a/cmd/atcr/reconcile_test.go
++++ b/cmd/atcr/reconcile_test.go
+@@ -61,6 +61,22 @@ func TestReconcileCmd_InProgressReviewRejected(t *testing.T) {
+ 	require.Equal(t, 2, execCmd(t, "reconcile", "r"))
+ }
+ 
++// TestReconcileCmd_InheritsExternalOutputDir proves the clarified contract for
++// epic 1.8: a review created with `atcr review --output-dir <path>` lives at an
++// arbitrary absolute path (not under .atcr/reviews/), and `atcr reconcile`
++// operates on it via its existing [id-or-path] argument with NO new flag.
++func TestReconcileCmd_InheritsExternalOutputDir(t *testing.T) {
++	isolate(t)
++	ext := filepath.Join(t.TempDir(), "ext-review")
++	require.NoError(t, os.MkdirAll(filepath.Join(ext, "sources", "host"), 0o755))
++	require.NoError(t, os.MkdirAll(filepath.Join(ext, "reconciled"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(ext, "sources", "host", "findings.txt"),
++		[]byte("# atcr-findings/v1\nHIGH|a.go:1|boom|fix|security|10|ev|host\n"), 0o644))
++
++	require.Equal(t, 0, execCmd(t, "reconcile", ext))
++	require.FileExists(t, filepath.Join(ext, "reconciled", "findings.txt"))
++}
++
+ func TestReconcileCmd_FailOnExitCodes(t *testing.T) {
+ 	isolate(t)
+ 	fixtureReview(t, "2026-06-10_feat", map[string]string{
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 2bcad80..15ef16e 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -1,8 +1,10 @@
+ package main
+ 
+ import (
++	"errors"
+ 	"fmt"
+ 	"os"
++	"path/filepath"
+ 	"strings"
+ 	"time"
+ 
+@@ -24,6 +26,7 @@ func newReviewCmd() *cobra.Command {
+ 		RunE:  runReview,
+ 	}
+ 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
++	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
+ 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
+ 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
+ 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
+@@ -33,6 +36,30 @@ func newReviewCmd() *cobra.Command {
+ 	return cmd
+ }
+ 
++// outputDirFromFlags resolves the --output-dir override for `atcr review`. It
++// returns "" when the flag is unset (the default .atcr/reviews/<id>/ layout). An
++// explicit value is mutually exclusive with --id (the id is meaningless when the
++// path is explicit) and must be non-empty; a relative path is resolved against
++// CWD here, at flag-parse time, so PrepareReview receives an absolute path.
++// Every rejection is a usageError so it maps to exit 2.
++func outputDirFromFlags(cmd *cobra.Command) (string, error) {
++	if !cmd.Flags().Changed("output-dir") {
++		return "", nil
++	}
++	if cmd.Flags().Changed("id") {
++		return "", usageError(errors.New("--output-dir and --id are mutually exclusive"))
++	}
++	dir, _ := cmd.Flags().GetString("output-dir")
++	if strings.TrimSpace(dir) == "" {
++		return "", usageError(errors.New("--output-dir must not be empty"))
++	}
++	abs, err := filepath.Abs(dir)
++	if err != nil {
++		return "", usageError(fmt.Errorf("resolving --output-dir: %w", err))
++	}
++	return abs, nil
++}
++
+ // runReview resolves the range, loads config, and runs the full review flow.
+ // Range/config problems are usage errors (exit 2); an all-agents-failed review
+ // is a plain failure (exit 1) with the artifacts preserved on disk.
+@@ -43,6 +70,14 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
+ 	idOverride, _ := cmd.Flags().GetString("id")
+ 
++	// Resolve --output-dir (mutually exclusive with --id, relative→absolute)
++	// before any review work, so a bad flag combination is a usage error (exit 2)
++	// with no wasted API calls.
++	outputDir, err := outputDirFromFlags(cmd)
++	if err != nil {
++		return err
++	}
++
+ 	// Validate --fail-on before any review work (no wasted API calls on a bad
+ 	// threshold), per AC 03-02 Security.
+ 	threshold, err := failOnThreshold(cmd)
+@@ -81,6 +116,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 		TimeSuffix: now.Format("150405"),
+ 		StartedAt:  now,
+ 		IDOverride: idOverride,
++		OutputDir:  outputDir,
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index c93211b..c2cac25 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -110,3 +110,42 @@ func TestReviewCmd_MissingAPIKeyIsUsageError(t *testing.T) {
+ 	writeReviewFixtureConfig(t)
+ 	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
+ }
++
++func TestOutputDirFromFlags_Unset(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags(nil))
++	dir, err := outputDirFromFlags(cmd)
++	require.NoError(t, err)
++	require.Equal(t, "", dir, "unset --output-dir must yield empty (default review dir)")
++}
++
++func TestOutputDirFromFlags_MutuallyExclusiveWithID(t *testing.T) {
++	// AC: --output-dir and --id together are a usage error (exit 2).
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "/tmp/x", "--id", "y"}))
++	_, err := outputDirFromFlags(cmd)
++	require.Error(t, err)
++	require.Equal(t, 2, exitCode(err))
++}
++
++func TestOutputDirFromFlags_RelativeResolvedToAbs(t *testing.T) {
++	// A relative --output-dir resolves against CWD at flag-parse time.
++	isolate(t)
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "out/review"}))
++	dir, err := outputDirFromFlags(cmd)
++	require.NoError(t, err)
++	require.True(t, filepath.IsAbs(dir), "relative path must resolve to absolute, got %q", dir)
++	cwd, err := os.Getwd()
++	require.NoError(t, err)
++	require.Equal(t, filepath.Join(cwd, "out", "review"), dir)
++}
++
++func TestOutputDirFromFlags_EmptyValueIsUsageError(t *testing.T) {
++	// An explicit empty --output-dir is a usage error, not a scaffold into CWD.
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", ""}))
++	_, err := outputDirFromFlags(cmd)
++	require.Error(t, err)
++	require.Equal(t, 2, exitCode(err))
++}
+diff --git a/docs/registry.md b/docs/registry.md
+index 89f616f..d850bef 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -86,7 +86,7 @@ fail_on: HIGH
+ | `serial_agents` | `[]` | The serial-lane roster (sequential execution, for rate-limited providers). |
+ | `payload_mode` | `blocks` | One of `diff`, `blocks`, `files`. |
+ | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
+-| `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. |
++| `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. **Context sizing:** models with context limits below 128k will time out or fail on the default; set to `163840` (160 KiB ≈ 40k tokens) for rosters that include smaller-context models (e.g. 49k-limit). |
+ | `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once. When `serial_agents` is non-empty, the serial lane runs concurrently with the parallel lane in its own goroutine — peak provider concurrency is therefore `max_parallel + 1`, not `max_parallel`. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
+ | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
+ 
+diff --git a/internal/fanout/outcome.go b/internal/fanout/outcome.go
+index 8bc7b46..f74e525 100644
+--- a/internal/fanout/outcome.go
++++ b/internal/fanout/outcome.go
+@@ -54,6 +54,8 @@ func summarize(results []Result) Summary {
+ 			s.Succeeded++
+ 		case StatusFailed, StatusTimeout:
+ 			s.Failed++
++		default:
++			s.Failed++
+ 		}
+ 	}
+ 	s.Partial = s.Failed > 0 && s.Succeeded > 0
+diff --git a/internal/fanout/outcome_test.go b/internal/fanout/outcome_test.go
+index 4b291d4..bbe080d 100644
+--- a/internal/fanout/outcome_test.go
++++ b/internal/fanout/outcome_test.go
+@@ -122,6 +122,22 @@ func TestOutcome_EmptyAgentNameRendersPlaceholder(t *testing.T) {
+ 	assert.Contains(t, err.Error(), "<unnamed> (boom)")
+ }
+ 
++// TestSummarize_UnknownStatusCountsAsFailed confirms a result whose Status is
++// not one of the three known values is counted as Failed, so Total always equals
++// Succeeded+Failed and Partial is computed correctly.
++func TestSummarize_UnknownStatusCountsAsFailed(t *testing.T) {
++	results := []Result{
++		{Agent: "a", Status: StatusOK},
++		{Agent: "b", Status: "cancelled"}, // unknown status
++	}
++	s, err := Outcome(results)
++	require.NoError(t, err, "one success means no run-level error")
++	assert.Equal(t, 2, s.Total)
++	assert.Equal(t, 1, s.Succeeded)
++	assert.Equal(t, 1, s.Failed, "unknown status must be counted as Failed")
++	assert.True(t, s.Partial)
++}
++
+ // A successful result carrying a stray Err must never appear in the all-failed
+ // list — formatFailures filters to non-OK rows independent of its caller.
+ func TestOutcome_FormatFailuresSkipsOKRows(t *testing.T) {
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 69af888..1763a9c 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -54,6 +54,12 @@ type ReviewRequest struct {
+ 	TimeSuffix string // HHMMSS collision suffix
+ 	StartedAt  time.Time
+ 	IDOverride string
++	// OutputDir, when non-empty, redirects the whole review tree to this
++	// (absolute) path instead of .atcr/reviews/<id>/, and suppresses the
++	// .atcr/latest update. The id is still derived (for provenance/output) but
++	// is not used for path construction. Mutually exclusive with IDOverride,
++	// enforced by the CLI before the request is built.
++	OutputDir string
+ }
+ 
+ // ReviewResult is the outcome of a completed review run.
+@@ -165,13 +171,19 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 		return nil, err
+ 	}
+ 	var dir string
+-	if req.IDOverride != "" {
++	switch {
++	case req.OutputDir != "":
++		// --output-dir redirects the whole tree to an explicit path. The id is
++		// still derived above (for provenance/output) but never used for the
++		// path, and .atcr/latest is left untouched below.
++		dir, err = ScaffoldOutputDir(req.OutputDir)
++	case req.IDOverride != "":
+ 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
+ 		// a pre-existing directory (e.g. a client retrying atcr_review with the
+ 		// same id while the first run is in flight) is rejected rather than
+ 		// scaffolded into, so two fan-outs never share one review dir.
+ 		dir, err = ScaffoldReviewDir(req.Root, id)
+-	} else {
++	default:
+ 		// Derived ids claim their directory atomically: creation is the
+ 		// collision check, so two reviews of the same branch in the same second
+ 		// get distinct dirs instead of interleaving writes in one.
+@@ -203,9 +215,13 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 		return nil, err
+ 	}
+ 	// Point .atcr/latest at the review before fan-out so `atcr status` can find an
+-	// in-progress run started by the non-blocking MCP handler.
+-	if err := WriteLatest(req.Root, id); err != nil {
+-		return nil, err
++	// in-progress run started by the non-blocking MCP handler. Skipped for
++	// --output-dir: the pointer tracks interactive runs under .atcr/reviews/, and
++	// an external orchestrator owns (and already knows) its output path.
++	if req.OutputDir == "" {
++		if err := WriteLatest(req.Root, id); err != nil {
++			return nil, err
++		}
+ 	}
+ 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, manifest: m}, nil
+ }
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index 4e0be49..cbc48ec 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -152,6 +152,34 @@ func TestRunReview_EndToEnd(t *testing.T) {
+ 	assert.Equal(t, res.ID, latest)
+ }
+ 
++// TestRunReview_OutputDirSkipsLatest verifies --output-dir writes the full
++// review tree to the given path and does NOT repoint .atcr/latest (the pointer
++// tracks interactive runs only; external orchestrators own their output dir).
++func TestRunReview_OutputDirSkipsLatest(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	repo, base, head := initRepo(t)
++	srv := mockProvider(t)
++	cfg := twoAgentConfig(srv.URL)
++
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := reviewReq(repo, repo, base, head)
++	req.OutputDir = out
++
++	res, err := RunReview(context.Background(), llmclient.New(), cfg, req)
++	require.NoError(t, err)
++	require.NotNil(t, res)
++	assert.Equal(t, out, res.Dir, "review dir must be the explicit --output-dir path")
++
++	for _, sub := range []string{"payload", "sources", "reconciled"} {
++		assert.DirExists(t, filepath.Join(out, sub))
++	}
++	assert.FileExists(t, filepath.Join(out, "manifest.json"))
++
++	// .atcr/latest must NOT be written under the repo root.
++	_, lerr := ReadLatest(repo)
++	assert.Error(t, lerr, "--output-dir must not update .atcr/latest")
++}
++
+ // ExecuteReview must stamp CompletedAt when it finalizes the manifest so
+ // downstream tools can derive run duration from manifest.json rather than
+ // finding the field silently absent (TD review.go:18). Because of omitempty a
+diff --git a/internal/fanout/reviewdir.go b/internal/fanout/reviewdir.go
+index 397b7af..137d523 100644
+--- a/internal/fanout/reviewdir.go
++++ b/internal/fanout/reviewdir.go
+@@ -218,6 +218,34 @@ func ScaffoldReviewDir(root, id string) (string, error) {
+ 	return dir, nil
+ }
+ 
++// ScaffoldOutputDir creates the review tree at an explicit --output-dir path
++// (used verbatim — it is the orchestrator's own output target, not under
++// .atcr/reviews/). Parent directories are created as needed; the path may be
++// non-existent or an empty directory. It returns the path so callers mirror the
++// ScaffoldReviewDir signature.
++func ScaffoldOutputDir(dir string) (string, error) {
++	// Refuse a non-empty existing target so a review never clobbers unrelated
++	// content. os.ReadDir surfaces every entry (hidden files included); a
++	// non-existent path is the happy case, while any other read error (a file at
++	// the path, a permission problem) must surface rather than be masked by the
++	// MkdirAll below.
++	switch entries, err := os.ReadDir(dir); {
++	case err == nil && len(entries) > 0:
++		return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
++	case err != nil && !errors.Is(err, fs.ErrNotExist):
++		return "", fmt.Errorf("failed to create review directory: %w", err)
++	}
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		return "", fmt.Errorf("failed to create review directory: %w", err)
++	}
++	for _, sub := range reviewSubdirs {
++		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
++			return "", fmt.Errorf("failed to create review directory: %w", err)
++		}
++	}
++	return dir, nil
++}
++
+ // WriteLatest writes the review id (one line) to .atcr/latest so later commands
+ // default to it. The .atcr directory is created if absent.
+ func WriteLatest(root, id string) error {
+diff --git a/internal/fanout/reviewdir_test.go b/internal/fanout/reviewdir_test.go
+index 53c2ab9..46249b4 100644
+--- a/internal/fanout/reviewdir_test.go
++++ b/internal/fanout/reviewdir_test.go
+@@ -12,6 +12,48 @@ import (
+ 	"github.com/stretchr/testify/require"
+ )
+ 
++func TestScaffoldOutputDir_CreatesTreeWhenAbsent(t *testing.T) {
++	// A non-existent --output-dir path is created (including parents) with the
++	// standard review subdir trio.
++	dir := filepath.Join(t.TempDir(), "nested", "ext-review")
++	got, err := ScaffoldOutputDir(dir)
++	require.NoError(t, err)
++	require.Equal(t, dir, got)
++	for _, sub := range reviewSubdirs {
++		assert.DirExists(t, filepath.Join(dir, sub))
++	}
++}
++
++func TestScaffoldOutputDir_AllowsEmptyExisting(t *testing.T) {
++	// An existing but empty directory is a valid --output-dir target.
++	dir := t.TempDir()
++	got, err := ScaffoldOutputDir(dir)
++	require.NoError(t, err)
++	require.Equal(t, dir, got)
++	assert.DirExists(t, filepath.Join(dir, "sources"))
++}
++
++func TestScaffoldOutputDir_RejectsNonEmpty(t *testing.T) {
++	// A directory that already contains files is rejected (exit 2 at the CLI) so
++	// --output-dir can never clobber existing content. Any entry counts,
++	// including hidden files.
++	dir := t.TempDir()
++	require.NoError(t, os.WriteFile(filepath.Join(dir, ".hidden"), []byte("x"), 0o644))
++	_, err := ScaffoldOutputDir(dir)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "not empty")
++}
++
++func TestScaffoldOutputDir_RejectsFileAtPath(t *testing.T) {
++	// A regular file at the target path is not a usable review dir: surface a
++	// clear error rather than letting MkdirAll fail opaquely.
++	file := filepath.Join(t.TempDir(), "afile")
++	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
++	_, err := ScaffoldOutputDir(file)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "failed to create review directory")
++}
++
+ func TestSlugifyBranch(t *testing.T) {
+ 	cases := map[string]string{
+ 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",
+diff --git a/internal/payload/budget.go b/internal/payload/budget.go
+index 0ef5d90..c4d21a3 100644
+--- a/internal/payload/budget.go
++++ b/internal/payload/budget.go
+@@ -17,9 +17,13 @@ type FileEntry struct {
+ // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
+ // ApplyByteBudget (never silent): Truncated=false with an empty FilesDropped
+ // means nothing was dropped. FilesDropped is sorted by path for stable output.
++// AllDropped is true when the input was non-empty but every file was shed —
++// callers should surface this as a distinct error rather than forwarding an
++// empty payload that silently produces zero findings.
+ type Truncation struct {
+ 	Truncated    bool     `json:"truncated"`
+ 	FilesDropped []string `json:"files_dropped"`
++	AllDropped   bool     `json:"all_dropped,omitempty"`
+ }
+ 
+ // ValidateBudget rejects a negative byte budget. Zero is valid and means
+@@ -97,7 +101,7 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
+ 	}
+ 	sort.Strings(droppedPaths)
+ 
+-	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths}
++	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths, AllDropped: len(kept) == 0}
+ }
+ 
+ // clampSize treats negative sizes as zero for budget accounting so invalid
+diff --git a/internal/payload/budget_test.go b/internal/payload/budget_test.go
+index 9d0d3bf..689888f 100644
+--- a/internal/payload/budget_test.go
++++ b/internal/payload/budget_test.go
+@@ -151,6 +151,27 @@ func TestBudget_OverflowCannotBypassTruncation(t *testing.T) {
+ 	assert.NotEmpty(t, tr.FilesDropped)
+ }
+ 
++// TestBudget_AllDropped_Signal verifies that when every file is removed by the
++// budget pass, AllDropped is set on the returned Truncation so callers can
++// surface a distinct signal rather than receiving an empty-but-Truncated payload
++// with no indication that everything was shed.
++func TestBudget_AllDropped_Signal(t *testing.T) {
++	// All three files exceed the budget individually.
++	in := entries("a", 500, "b", 600, "c", 700)
++	kept, tr := ApplyByteBudget(in, 100)
++	assert.Empty(t, kept)
++	assert.True(t, tr.Truncated)
++	assert.True(t, tr.AllDropped, "AllDropped must be true when zero files remain after budget pass")
++}
++
++func TestBudget_AllDropped_FalseWhenSomeKept(t *testing.T) {
++	// Some files fit: AllDropped must NOT be set.
++	in := entries("big", 90000, "small", 5000)
++	_, tr := ApplyByteBudget(in, 50000)
++	assert.True(t, tr.Truncated)
++	assert.False(t, tr.AllDropped, "AllDropped must be false when at least one file is kept")
++}
++
+ func TestBudget_KeepsMostFiles_DropsLargestFirst(t *testing.T) {
+ 	// The TD-flagged case: sizes [1,2,3,4,90], budget 90. Keep-most-files
+ 	// policy drops the single 90-byte file (generated/lockfile shaped) and
+diff --git a/internal/reconcile/ambiguous.go b/internal/reconcile/ambiguous.go
+index 84d9717..011528f 100644
+--- a/internal/reconcile/ambiguous.go
++++ b/internal/reconcile/ambiguous.go
+@@ -162,7 +162,7 @@ func HashBytes(data []byte) string {
+ func AmbiguousHash(clusters []AmbiguousCluster) string {
+ 	var buf bytes.Buffer
+ 	if err := renderIndentedJSON(&buf, clusters); err != nil {
+-		return "" // unreachable: AmbiguousCluster marshals without error
++		panic(fmt.Sprintf("atcr: AmbiguousHash: unreachable JSON render error: %v", err))
+ 	}
+ 	return HashBytes(buf.Bytes())
+ }
+diff --git a/internal/registry/project.go b/internal/registry/project.go
+index 1d7ad9e..ffc7dfd 100644
+--- a/internal/registry/project.go
++++ b/internal/registry/project.go
+@@ -19,6 +19,9 @@ const (
+ 	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
+ 	// 128k-context model tier with prompt headroom. 0 is the documented
+ 	// unlimited escape hatch (AC 06-03).
++	// Context-sizing: models with context limits below 128k will fail on this
++	// default — reduce payload_byte_budget to ~163840 (160 KiB ≈ 40k tokens)
++	// in .atcr/config.yaml for rosters that include smaller-context models.
+ 	DefaultPayloadByteBudget int64 = 524288
+ )
+ 
+@@ -60,6 +63,9 @@ func DefaultProjectConfigYAML(roster []string) string {
+ 	b.WriteString("serial_agents: []\n")
+ 	fmt.Fprintf(&b, "payload_mode: %s\n", DefaultPayloadMode)
+ 	fmt.Fprintf(&b, "timeout_secs: %d\n", DefaultTimeoutSecs)
++	b.WriteString("# payload_byte_budget: per-payload byte budget. Default 512 KiB ≈ 128k tokens.\n")
++	b.WriteString("#   Models with context limits below 128k will fail on the default. For rosters\n")
++	b.WriteString("#   that include smaller-context models (e.g. 49k-limit), reduce to 163840 (160 KiB).\n")
+ 	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
+ 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
+ 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")

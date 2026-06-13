@@ -1,0 +1,1 @@
+HIGH|cmd/atcr/review.go:45|Missing input validation for --output-dir path|Add check for non-empty existing directory and proper error handling|security|5|user input passed directly to query|bruce

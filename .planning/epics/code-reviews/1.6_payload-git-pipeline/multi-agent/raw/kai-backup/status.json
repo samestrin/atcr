@@ -1,0 +1,9 @@
+{
+  "agent_name": "kai-backup",
+  "model": "kimi-k2.5",
+  "status": "ok",
+  "duration_ms": 271032,
+  "fallback_used": true,
+  "fallback_from": "kai",
+  "original_error": "max retries exceeded: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=kimi-k2.6. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=kimi-k2.6\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=kimi-k2.6. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=kimi-k2.6. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=kimi-k2.6\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=kimi-k2.6. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2"
+}

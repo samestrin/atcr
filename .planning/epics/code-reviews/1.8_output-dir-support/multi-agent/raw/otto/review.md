@@ -1,0 +1,3 @@
+```
+HIGH|internal/fanout/reviewdir.go:231|Potential race condition/TOCTOU in directory validation|The check `os.ReadDir(dir)` followed by `os.MkdirAll(dir, 0o755)` is not atomic. A directory could be created or files added between the check and the creation, leading to accidental overwrites or inconsistent state.|Use a temporary directory and rename it, or implement a lock file if the orchestrator supports it. At minimum, verify the directory is still empty after `MkdirAll` if it already existed.|correctness|60|The code checks if a directory is empty and then calls MkdirAll. In a concurrent environment or shared filesystem, another process could populate the directory in the millisecond between these calls.|otto
+```

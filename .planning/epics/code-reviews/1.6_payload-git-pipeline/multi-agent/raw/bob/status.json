@@ -1,0 +1,7 @@
+{
+  "agent_name": "bob",
+  "model": "bob-model",
+  "status": "timeout",
+  "duration_ms": 120001,
+  "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+}

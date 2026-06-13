@@ -1,0 +1,9 @@
+{
+  "agent_name": "bruce-backup",
+  "model": "openai/qwen-3.6-plus",
+  "status": "ok",
+  "duration_ms": 239730,
+  "fallback_used": true,
+  "fallback_from": "bruce",
+  "original_error": "stream read failed: context deadline exceeded"
+}

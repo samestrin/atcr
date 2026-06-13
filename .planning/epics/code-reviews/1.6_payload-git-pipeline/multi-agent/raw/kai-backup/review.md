@@ -1,0 +1,2 @@
+ MEDIUM|internal/payload/diff.go:245|Unmatched diff chunks dropped after logging|Return error if chunk attribution fails|correctness|10|splitDiffByFile logs unmatched chunks but omits them from output map, causing empty file bodies instead of failing fast|bruce
+LOW|internal/payload/diff.go:175|Fragile cache invalidation via ensureRange|Encapsulate cache access to ensure range check|maintainability|30|ensureRange must be called before every cache access; forgetting to call it or add new cache fields causes stale cross-range data|bruce

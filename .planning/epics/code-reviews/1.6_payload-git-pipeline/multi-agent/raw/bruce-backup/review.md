@@ -1,0 +1,2 @@
+MEDIUM|internal/payload/builder.go:148|Silent fallback to newline if file missing from batched diff|Check map existence and return error or empty body|correctness|10|chunks[headPathOf(...)] returns "" if key missing, ensureTrailingNewline("") yields "\n"|bruce
+LOW|internal/payload/diff.go:84|execCount only incremented in output(), not run()|Increment execCount in run() or ensure run() calls output()|maintainability|5|binarySet and changedFiles use run(); test relies on execCount for process counting|bruce

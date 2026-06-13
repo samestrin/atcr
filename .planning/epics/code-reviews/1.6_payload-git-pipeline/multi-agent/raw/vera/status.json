@@ -1,0 +1,7 @@
+{
+  "agent_name": "vera",
+  "model": "gpt-oss-20b",
+  "status": "timeout",
+  "duration_ms": 192014,
+  "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+}

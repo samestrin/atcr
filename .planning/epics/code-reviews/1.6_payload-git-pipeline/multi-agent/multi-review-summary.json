@@ -1,0 +1,99 @@
+{
+  "reviewers": [
+    {
+      "agent": "archer",
+      "model": "mellum2",
+      "status": "ok",
+      "durationMs": 13498,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 25587,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 26864,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "greta",
+      "model": "glm-5.1",
+      "status": "failed",
+      "durationMs": 78145,
+      "tdLineCount": 0,
+      "error": "max retries exceeded: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=glm-5.1. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=glm-5.1\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=glm-5.1. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=glm-5.1. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=glm-5.1\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=glm-5.1. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2"
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 97611,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 101275,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "timeout",
+      "durationMs": 120005,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+    },
+    {
+      "agent": "brad",
+      "model": "poolside-laguna",
+      "status": "timeout",
+      "durationMs": 120005,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+    },
+    {
+      "agent": "bob2",
+      "model": "bob2-model",
+      "status": "timeout",
+      "durationMs": 120005,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded (fallback bob2-backup also failed: max retries exceeded: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=NVIDIA-Nemotron-3-Super-120B-A12B. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=NVIDIA-Nemotron-3-Super-120B-A12B\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=NVIDIA-Nemotron-3-Super-120B-A12B. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=NVIDIA-Nemotron-3-Super-120B-A12B. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=NVIDIA-Nemotron-3-Super-120B-A12B\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'error': \"You've exceeded your subscription rate limits. Upgrade, or try again later. You can view your usage at https://synthetic.new/billing\"}No fallback model group found for original model_group=NVIDIA-Nemotron-3-Super-120B-A12B. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2)"
+    },
+    {
+      "agent": "kai-backup",
+      "model": "kimi-k2.5",
+      "status": "ok",
+      "durationMs": 131409,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 353621,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bruce-backup",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 239730,
+      "tdLineCount": 0
+    }
+  ],
+  "totalFindings": 0,
+  "partial": true,
+  "totalDurationMs": 839737,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-12T18:10:58-07:00"
+}

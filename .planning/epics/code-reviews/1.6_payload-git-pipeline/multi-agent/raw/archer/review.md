@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/engine_test.go:345|TestRun_MaxParallelBoundsPeakConcurrency is flaky under go test -count>1 and parallel package load (peak observed 1 instead of 2); reproduces on main, so it is pre-existing and outside this epic's scope (internal/payload) | DETERMINISM|30|execute-epic-cumulative|claude

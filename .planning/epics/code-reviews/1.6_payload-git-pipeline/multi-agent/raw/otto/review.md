@@ -1,0 +1,3 @@
+```
+MEDIUM|internal/payload/diff.go:158|Potential memory leak/growth in `splitDiffByFile`|Use a more efficient way to find boundaries than `strings.HasPrefix` in a loop over the entire diff string|performance|20|The loop `for i := 0; i+1 < len(diff); i++` performs a `strings.HasPrefix(diff[i+1:], marker)` on every single byte of the diff. For large diffs, this creates O(N^2) string slicing/scanning behavior|otto
+```
