@@ -241,6 +241,13 @@ func ScaffoldOutputDir(dir string) (string, error) {
 	// either succeeds (exclusive create — definitionally empty) or returns
 	// ErrExist, eliminating the check/use window in the old ReadDir+MkdirAll
 	// sequence where two concurrent callers could both pass the empty check.
+	//
+	// Concurrency contract: this differs from ScaffoldReviewDir, which treats
+	// ErrExist as a hard error. ScaffoldOutputDir intentionally accepts an
+	// empty pre-existing directory because --output-dir is for external
+	// orchestrators that may pre-create their output path. Callers are expected
+	// to use unique paths per run; two concurrent callers on the same
+	// pre-existing empty path are not protected against each other.
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}

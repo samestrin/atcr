@@ -96,6 +96,19 @@ func TestScaffoldOutputDir_RejectsDanglingSymlink(t *testing.T) {
 	assert.Contains(t, err.Error(), "symlink")
 }
 
+func TestScaffoldOutputDir_TwoCallsSamePathSecondFails(t *testing.T) {
+	// After the first ScaffoldOutputDir call populates a dir with review subdirs,
+	// a second call on the same path sees a non-empty directory and is rejected.
+	// This encodes the concurrency contract: callers must use unique paths; two
+	// calls on the same pre-existing empty path are not protected against each other.
+	dir := t.TempDir()
+	_, err := ScaffoldOutputDir(dir)
+	require.NoError(t, err)
+	_, err = ScaffoldOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not empty")
+}
+
 func TestSlugifyBranch(t *testing.T) {
 	cases := map[string]string{
 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",
