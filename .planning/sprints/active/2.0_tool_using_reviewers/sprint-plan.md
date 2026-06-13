@@ -140,6 +140,27 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 ---
 
+## Clarifications
+
+### Phase 1 Clarifications (recorded 2026-06-13)
+
+**Key Decisions:**
+- **Spike code is throwaway.** Phase 1 spikes (1.1–1.3) run as disposable validation code under `.planning/.temp/` (gitignored), NOT in `internal/`. Only task 1.4 commits — the findings doc `clarifications/spike-findings.md`. Phase 2 authors the real, TDD-tested implementations in `internal/tools/` and `internal/llmclient/` fresh.
+- **Wire-format validation via httptest mocks.** Phase 1 validates OpenAI/Anthropic/local dialect round-trip using httptest mock servers with representative response shapes — no live API calls, no network. Live-provider exercise (if needed) is deferred to Phase 3 integration tests.
+
+**Scope Boundaries (Phase 1 only — gated):**
+- IN: 3 spikes (wire format, path jail, git worktree lifecycle) + `spike-findings.md` + Phase 1 DoD + Phase 1 gate subagent review.
+- OUT (deferred to later phases): all production implementation — tool harness, agent loop, budgets, degradation, transcript, persona/docs.
+
+**Technical Approach — design discrepancies to document in spike-findings.md for Phase 2:**
+- `invokeAgent` already exists in `internal/fanout/engine.go:228` (single-shot). The multi-turn loop must reconcile this name (new method or branch on `Agent.Tools`) — Phase 3 concern.
+- `manifest.go` lives in `internal/payload/`, not `internal/fanout/` as some plan tasks state; `Manifest.Stages` already holds `["review"]`.
+- Registry fields `Tools`/`MaxTurns`/`ToolBudgetBytes` are already reserved + validated (`internal/registry/config.go:65-67`); `supports_function_calling` is NOT yet present (new in Phase 4).
+- status.json counters `Turns`/`ToolCalls`/`ToolBytes` already reserved (`internal/fanout/status.go:277-279`); `ToolsDegraded` is NOT yet present (new in Phase 4).
+- `ChatCompleter` wiring into `Engine` (which currently holds a single `Completer`) is a Phase 3 design decision.
+
+---
+
 ## Sprint Phases
 
 ---
@@ -152,21 +173,21 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Goal:** Validate OpenAI function-calling wire format with litellm, prototype path jail, validate `git worktree` lifecycle. Findings gate Phase 2 design.
 
-### 1.1 [ ] **Spike: OpenAI Wire Format Validation**
+### 1.1 [x] **Spike: OpenAI Wire Format Validation**
    1. Set up an httptest mock server returning a response with `tool_calls` in OpenAI format
    2. Send a request with `tools` array and verify the full round-trip: request serialization, `tool_calls` deserialization, `role:"tool"` message construction
    3. Test litellm-normalized responses from OpenAI, Anthropic, and a local model format
    4. Document which dialects require normalization and which degrade cleanly
    **Files:** `internal/llmclient/` (spike harness) | **Duration:** 2-3 hours
 
-### 1.2 [ ] **Spike: Path Jail Prototype**
+### 1.2 [x] **Spike: Path Jail Prototype**
    1. Prototype `Resolve(path)` using `filepath.Abs`, `filepath.Clean`, `filepath.EvalSymlinks`, prefix check against jail root
    2. Test all escape vectors: absolute paths, `..` traversal, symlink pointing outside root, path containing `.git/` component
    3. Evaluate `O_NOFOLLOW` availability on macOS/Linux for the open call
    4. Document rejection behaviors, any platform differences, and TOCTOU risk
    **Files:** `internal/tools/` (spike) | **Duration:** 2 hours
 
-### 1.3 [ ] **Spike: Git Worktree Lifecycle**
+### 1.3 [x] **Spike: Git Worktree Lifecycle**
    1. Run `git worktree add <tmp-path> <sha>` programmatically via `exec.Command`
    2. Verify worktree is at the correct SHA and files are readable
    3. Test fast path: clean worktree with `head == HEAD` (use live worktree)
@@ -174,7 +195,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    5. Run `git worktree remove --force <path>` and verify cleanup
    **Files:** `internal/tools/` (spike) | **Duration:** 2 hours
 
-### 1.4 [ ] **Document Spike Findings & Risks**
+### 1.4 [x] **Document Spike Findings & Risks**
    1. Write findings summary to `clarifications/spike-findings.md`
    2. Capture provider dialect risks and any required design changes
    3. Identify any blockers before Phase 2 foundation work
