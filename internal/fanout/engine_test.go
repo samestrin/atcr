@@ -309,20 +309,26 @@ func parallelSlots(n int) []Slot {
 
 func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
 	f := newFake()
-	// Gate the first cap agents so peak deterministically reaches the cap
-	// before any agent completes, removing timing dependence on delay.
-	models := []string{"a0", "a1"}
+	// Gate EVERY agent so the cap fills deterministically regardless of which
+	// agents win the two semaphore permits. With max_parallel=2 exactly two park
+	// inside Complete (peak reaches 2) while the rest block on the semaphore. The
+	// old version gated only a0/a1 and assumed those two were admitted first, so
+	// it flaked under load when a non-gated agent won a permit and finished before
+	// the two gated agents were ever live together.
+	models := []string{"a0", "a1", "a2", "a3", "a4"}
 	for _, m := range models {
 		f.block[m] = make(chan struct{})
 	}
-	started := make(chan string, 5) // buffer all agents so onStart never blocks
+	started := make(chan string, len(models)) // buffer all so onStart never blocks
 	f.onStart = func(m string) { started <- m }
 	e := NewEngine(f, WithMaxParallel(2))
 
 	done := make(chan []Result, 1)
-	go func() { done <- e.Run(context.Background(), parallelSlots(5)) }()
+	go func() { done <- e.Run(context.Background(), parallelSlots(len(models))) }()
 
-	// Wait for both capped agents to enter Complete — peak is deterministically 2.
+	// onStart fires after the peak update, so once two distinct agents have
+	// started they are both parked on their gates holding both permits — peak is
+	// exactly 2 (cap reached) and no third agent can be admitted until release.
 	seen := map[string]bool{}
 	for len(seen) < 2 {
 		select {
@@ -332,7 +338,10 @@ func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
 			t.Fatalf("only %d agents started; semaphore did not admit cap agents", len(seen))
 		}
 	}
-	// Release the gates so all agents can complete.
+	assert.Equal(t, int32(2), atomic.LoadInt32(&f.peak),
+		"max_parallel=2 must cap a 5-agent roster at 2 concurrent calls")
+
+	// Release every gate so all agents complete.
 	for _, m := range models {
 		close(f.block[m])
 	}
@@ -342,8 +351,6 @@ func TestRun_MaxParallelBoundsPeakConcurrency(t *testing.T) {
 	for _, r := range results {
 		assert.Equal(t, StatusOK, r.Status)
 	}
-	assert.Equal(t, int32(2), atomic.LoadInt32(&f.peak),
-		"max_parallel=2 must cap a 5-agent roster at 2 concurrent calls")
 }
 
 func TestRun_MaxParallelZeroIsUnbounded(t *testing.T) {
