@@ -185,6 +185,9 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// --output-dir redirects the whole tree to an explicit path. The id is
 		// still derived above (for provenance/output) but never used for the
 		// path, and .atcr/latest is left untouched below.
+		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
+			return nil, err
+		}
 		dir, err = ScaffoldOutputDir(req.OutputDir)
 	case req.IDOverride != "":
 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
