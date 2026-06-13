@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-push: the slower CI gates, run once per push (too slow for every commit).
+#   1. golangci-lint run
+#   2. go test -race ./...
+# Mirrors the GitHub "Go Lint & Test" workflow so failures surface locally first.
+
+fail=0
+
+echo "pre-push: golangci-lint run"
+if command -v golangci-lint >/dev/null 2>&1; then
+  if ! golangci-lint run; then
+    echo "pre-push FAILED: golangci-lint"
+    fail=1
+  fi
+else
+  echo "pre-push: golangci-lint not installed — skipping locally (CI still enforces it)"
+fi
+
+echo "pre-push: go test -race ./..."
+if ! go test -race ./...; then
+  echo "pre-push FAILED: go test -race"
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "pre-push: blocked. Fix the failures above, or bypass once with: git push --no-verify"
+  exit 1
+fi
+
+echo "pre-push: passed"

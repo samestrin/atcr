@@ -1,0 +1,41 @@
+#!/bin/sh
+# Pre-commit: fast CI-mirroring gates so formatting/compile slips never reach CI.
+#   1. gofmt  — auto-format staged Go files and re-stage them
+#   2. go vet — suspicious constructs / type issues
+#   3. go build — it compiles
+# The slower gates (golangci-lint, go test -race) run in .githooks/pre-push.
+# Enabled via: git config core.hooksPath .githooks   (see .githooks/README.md)
+
+# Only staged Go files matter (added / copied / modified).
+go_files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$')
+[ -z "$go_files" ] && exit 0
+
+# 1. gofmt: auto-format and re-stage anything unformatted. This is the gate that
+#    failed for epic 1.6 — auto-fixing it here means it can never block CI.
+fmt_needed=$(echo "$go_files" | while IFS= read -r f; do
+  [ -f "$f" ] && [ -n "$(gofmt -l "$f")" ] && echo "$f"
+done)
+if [ -n "$fmt_needed" ]; then
+  echo "pre-commit: auto-formatting with gofmt:"
+  echo "$fmt_needed" | while IFS= read -r f; do
+    echo "  $f"
+    gofmt -w "$f"
+    git add "$f"
+  done
+fi
+
+# 2. go vet
+echo "pre-commit: go vet ./..."
+if ! go vet ./...; then
+  echo "pre-commit FAILED: go vet (fix the issues above, then re-commit)"
+  exit 1
+fi
+
+# 3. go build
+echo "pre-commit: go build ./..."
+if ! go build ./...; then
+  echo "pre-commit FAILED: go build (fix the compile errors above, then re-commit)"
+  exit 1
+fi
+
+echo "pre-commit: passed"
