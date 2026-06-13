@@ -143,6 +143,14 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		return nil, fmt.Errorf("failed to parse response: no choices returned")
 	}
 	ch := parsed.Choices[0]
+	// Guard against truncated or filtered completions that leave an empty turn:
+	// a non-standard finish_reason with no content and no tool_calls must not be
+	// silently returned as a successful empty review.
+	if ch.FinishReason != "stop" && ch.FinishReason != "tool_calls" && ch.FinishReason != "" {
+		if (ch.Message.Content == nil || *ch.Message.Content == "") && len(ch.Message.ToolCalls) == 0 {
+			return nil, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
+		}
+	}
 	return &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason}, nil
 }
 
