@@ -128,6 +128,21 @@ func TestReplay_AbsentFile(t *testing.T) {
 	assert.Empty(t, res.Events)
 }
 
+// A malformed turn field (non-integer) must log a warning rather than silently
+// collapsing the event to turn 0, unlike every other field error.
+func TestReplay_MalformedTurnFieldLogsWarning(t *testing.T) {
+	msgs := captureReplayLog(t)
+	path := writeTranscriptLines(t,
+		`{"event":"tool_calls","turn":"not-an-int","ts":"t","tool_calls":[]}`,
+	)
+	res, err := ReplayTranscript(path)
+	require.NoError(t, err)
+	// Event is still included (resilient), but a warning must be logged.
+	require.Len(t, res.Events, 1, "event with malformed turn must not be skipped")
+	assert.Equal(t, 0, res.Events[0].Turn, "turn defaults to 0 when unparseable")
+	assert.NotEmpty(t, *msgs, "malformed turn field must produce a warning log")
+}
+
 // Blank lines between events are ignored without counting as skips.
 func TestReplay_BlankLinesIgnored(t *testing.T) {
 	path := writeTranscriptLines(t,
