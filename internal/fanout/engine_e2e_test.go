@@ -175,6 +175,73 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	assert.Contains(t, string(raw["review"]), "greta")
 }
 
+// budgetTripMockProvider returns read_file tool_calls on every budgeted turn (a
+// request carrying tools) and a final findings message on the unbudgeted
+// final-answer request (no tools) — so a small max_turns trips mid-exploration.
+func budgetTripMockProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Tools []json.RawMessage `json:"tools"`
+		}
+		_ = json.Unmarshal(body, &req)
+		w.Header().Set("Content-Type", "application/json")
+		if len(req.Tools) == 0 {
+			// Final-answer request (no tools): return partial findings.
+			content := "MEDIUM|auth.go:3|partial review after turn budget|Investigate b()|correctness|10|stopped by max_turns"
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+				"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content},
+			}}})
+			return
+		}
+		// Each budgeted turn asks for a distinct read so the loop never short-circuits
+		// on a repeated call before the turn budget trips.
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+			"finish_reason": "tool_calls",
+			"message": map[string]any{"role": "assistant", "content": nil, "tool_calls": []map[string]any{
+				{"id": "call_x", "type": "function", "function": map[string]any{"name": "read_file", "arguments": `{"path":"helper.go"}`}},
+			}},
+		}}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// AC 02-04 / Success Criteria #2: a tool agent that trips its turn budget mid-run
+// records tripped_budgets in the on-disk status.json AND still writes its partial
+// findings (partial-success semantics survive the artifact layer).
+func TestExecuteReview_BudgetTripRecordedInStatusAndPartialFindings(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initToolRepo(t)
+	srv := budgetTripMockProvider(t)
+	cfg := toolAgentConfig(srv.URL)
+	ac := cfg.Registry.Agents["greta"]
+	ac.MaxTurns = ptrInt(2) // trip after two Chat-with-tools turns
+	cfg.Registry.Agents["greta"] = ac
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Summary.Succeeded)
+
+	agentDir := filepath.Join(res.Dir, "sources", "pool", "raw", "agent", "greta")
+	sdata, err := os.ReadFile(filepath.Join(agentDir, "status.json"))
+	require.NoError(t, err)
+	var st AgentStatus
+	require.NoError(t, json.Unmarshal(sdata, &st))
+	assert.Contains(t, st.TrippedBudgets, "max_turns", "the turn budget trip is recorded on disk")
+	require.NotNil(t, st.Turns)
+	assert.Equal(t, 2, *st.Turns)
+
+	// Partial findings survived the trip and reached the artifact layer.
+	fdata, err := os.ReadFile(filepath.Join(agentDir, "findings.txt"))
+	require.NoError(t, err)
+	parsed, err := stream.ParseSource(fdata)
+	require.NoError(t, err)
+	require.Len(t, parsed.Findings, 1)
+	assert.Equal(t, "MEDIUM", parsed.Findings[0].Severity)
+}
+
 // A degraded tool agent (model not function-calling-capable) still completes via
 // single-shot, records tools_degraded, and writes no transcript events — the
 // mixed-roster/degrade path through the real review flow.

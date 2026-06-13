@@ -889,7 +889,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. Assert: findings reference file paths actually read; `transcript.jsonl` replays faithfully; `status.json` counters non-zero
    **Files:** `internal/fanout/engine_e2e_test.go` (or `//go:build integration`) | **Duration:** 4-5 hours
 
-### 6.2 [ ] **Budget Trip & Scenario Tests**
+### 6.2 [x] **Budget Trip & Scenario Tests**
+   **Completed (2026-06-13):** Each listed scenario is covered. (1) Three budgets trip independently with `tripped_budgets` recorded — `engine_budget_test.go` (14 tests: max_turns trip/one/default, byte trip/not/exactly-met/oversize-then-trip/unlimited/tool-error-no-bytes, timeout first-Chat/mid-loop/during-tool/precedence) + `status_tools_test.go` serialization. (2) Partial-success — budget tests return the final partial content; NEW artifact-layer test `TestExecuteReview_BudgetTripRecordedInStatusAndPartialFindings` proves the on-disk `status.json` records `max_turns` AND the partial finding reaches `findings.txt` through `RunReview`. (3) Path jail escape vectors (absolute, `..`, symlink-escape, `.git/`) — `internal/tools/jail_test.go` (table-driven, Phase 2 DoD verified all vectors rejected). (4) Degrade path with `tools_degraded:true` — `engine_degrade_test.go` + `TestExecuteReview_ToolAgentDegradesWhenIncapable` (on-disk status.json). (5) Transcript replay reconstructs the exact sequence — `replay_test.go` + `TestExecuteReview_ToolAgentEndToEnd` (replays `[tool_calls, tool_result, tool_result, final]`). Only the artifact-layer budget-trip gap needed a new test; the rest was already comprehensively covered.
    1. Test all three budgets trip cleanly and independently; `status.json` records `tripped_budget` correctly for each
    2. Test partial-success semantics: partial findings returned and usable when budget trips
    3. Test path jail escape vectors (comprehensive): absolute, `..`, symlink-escape, `.git/` — all rejected
@@ -897,7 +898,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    5. Test transcript replay harness reconstructs exact Chat call sequence from `transcript.jsonl`
    **Files:** existing test files + additional integration test cases | **Duration:** 3-4 hours
 
-### 6.3 [ ] **Documentation Completeness & Registry Activation**
+### 6.3 [x] **Documentation Completeness & Registry Activation**
+   **Completed (2026-06-13):** (1-3) docs completeness verified by the Story 6 `TestDocs_*` tests — `docs/registry.md` documents `tools`/`max_turns` (default 10 when tools:true, `1..1000`)/`tool_budget_bytes` (`0 = unlimited`)/`supports_function_calling` as active with defaults+validation+backward-compat note; `docs/payload-modes.md` has the payload-as-starting-point tool-agent section + scope rule; `README.md` has the `3-10×` cost guidance and links `docs/registry.md`. (4) Registry validation activation: the fields were already parsed + validated (Phase 1) and acted upon by the engine (Phase 3/4 — `applyDefaults(max_turns=10 when tools:true)`, `SupportsFC` capability gate); flipped the stale `reserved/inert in 1.x` doc comments in `internal/registry/config.go` to reflect that `tools`/`max_turns`/`tool_budget_bytes`/`supports_function_calling` are **active in 2.0** (Role remains reserved for Stage 3/4). No behavior change — the activation landed in earlier phases; this aligns the code comments with the validation and docs.
    1. Verify `docs/registry.md`: `tools`, `max_turns`, `tool_budget_bytes` documented as active with defaults, bounds, validation
    2. Verify `docs/payload-modes.md`: payload-as-starting-point semantics section complete
    3. Verify `README.md`: 3–10× cost guidance present, tool-using reviewer workflow documented
