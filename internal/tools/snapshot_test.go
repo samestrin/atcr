@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -109,4 +110,41 @@ func TestSnapshotFor_UnreachableSHA(t *testing.T) {
 	m := NewSnapshotManager(repo)
 	_, _, err := m.SnapshotFor("fffffffffffffffffffffffffffffffffffffffff"[:40])
 	require.Error(t, err)
+}
+
+// TestSnapshotFor_ConcurrentSlowPath exercises concurrent slow-path calls on
+// the same SnapshotManager. The per-manager mutex (addMu) must serialize the
+// worktree-add + prune block so concurrent goroutines cannot interleave a prune
+// from one goroutine with an add from another.
+// Run with -race to verify no Go-level data races.
+func TestSnapshotFor_ConcurrentSlowPath(t *testing.T) {
+	repo := setupGitRepo(t)
+	old := gitHead(t, repo)
+	gitCommitEmpty(t, repo, "second")
+	m := NewSnapshotManager(repo)
+
+	const workers = 4
+	var wg sync.WaitGroup
+	roots := make([]string, workers)
+	cleanups := make([]func(), workers)
+	errs := make([]error, workers)
+
+	for i := range workers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			roots[i], cleanups[i], errs[i] = m.SnapshotFor(old)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, c := range cleanups {
+		if c != nil {
+			c()
+		}
+		assert.NoError(t, errs[i], "goroutine %d SnapshotFor failed", i)
+		if roots[i] != "" {
+			assert.NotEqual(t, repo, roots[i], "goroutine %d must use a worktree, not live root", i)
+		}
+	}
 }
