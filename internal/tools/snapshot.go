@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -90,10 +91,15 @@ func (m *SnapshotManager) SnapshotFor(head string) (string, func(), error) {
 	addErr := m.worktreeAdd(gitPath, leaf, resolvedHead)
 	if addErr != nil {
 		// A stale registration from a crashed run can block the add; prune and retry once.
+		firstAddErr := addErr
 		if _, perr := m.git(gitPath, "worktree", "prune"); perr != nil {
 			fmt.Fprintf(os.Stderr, "snapshot: worktree prune failed: %v\n", perr)
 		}
-		addErr = m.worktreeAdd(gitPath, leaf, resolvedHead)
+		if err2 := m.worktreeAdd(gitPath, leaf, resolvedHead); err2 != nil {
+			addErr = errors.Join(firstAddErr, err2)
+		} else {
+			addErr = nil
+		}
 	}
 	m.addMu.Unlock()
 	if addErr != nil {
