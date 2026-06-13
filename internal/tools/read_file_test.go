@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,4 +138,30 @@ func TestReadFile_InvalidArgumentType(t *testing.T) {
 	_, err := readFile(t, d, `{"path":123}`)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid arguments")
+}
+
+func TestReadFile_NonPositiveStartLine(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "file.go", "l1\nl2\nl3\n")
+	d := newTestDispatcher(t, root)
+
+	for _, sl := range []int{0, -1, -10} {
+		args := fmt.Sprintf(`{"path":"file.go","start_line":%d}`, sl)
+		_, err := readFile(t, d, args)
+		require.Error(t, err, "start_line=%d must be rejected", sl)
+		assert.Contains(t, err.Error(), "start_line", "start_line=%d", sl)
+	}
+}
+
+func TestReadFile_NonPositiveEndLine(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "file.go", "l1\nl2\nl3\n")
+	d := newTestDispatcher(t, root)
+
+	for _, el := range []int{0, -1, -10} {
+		args := fmt.Sprintf(`{"path":"file.go","end_line":%d}`, el)
+		_, err := readFile(t, d, args)
+		require.Error(t, err, "end_line=%d must be rejected", el)
+		assert.Contains(t, err.Error(), "end_line", "end_line=%d", el)
+	}
 }
