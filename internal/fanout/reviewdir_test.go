@@ -44,6 +44,20 @@ func TestScaffoldOutputDir_RejectsNonEmpty(t *testing.T) {
 	assert.Contains(t, err.Error(), "not empty")
 }
 
+func TestScaffoldOutputDir_AllowsOutsideRepoPath(t *testing.T) {
+	// --output-dir is designed for external orchestrators that own their output
+	// location; arbitrary absolute paths (including locations outside the repo
+	// root) are accepted by design. This test encodes the intentional trust
+	// boundary: outside-repo writes are permitted, not a security gap.
+	dir := filepath.Join(t.TempDir(), "atcr-outside-repo")
+	got, err := ScaffoldOutputDir(dir)
+	require.NoError(t, err)
+	assert.Equal(t, dir, got)
+	for _, sub := range reviewSubdirs {
+		assert.DirExists(t, filepath.Join(dir, sub))
+	}
+}
+
 func TestScaffoldOutputDir_RejectsFileAtPath(t *testing.T) {
 	// A regular file at the target path is not a usable review dir: surface a
 	// clear error rather than letting MkdirAll fail opaquely.

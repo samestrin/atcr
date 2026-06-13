@@ -59,6 +59,12 @@ type ReviewRequest struct {
 	// .atcr/latest update. The id is still derived (for provenance/output) but
 	// is not used for path construction. Mutually exclusive with IDOverride,
 	// enforced by the CLI before the request is built.
+	//
+	// Security: arbitrary absolute paths (including outside the repo root) are
+	// accepted by design; --output-dir is intended for trusted orchestrators that
+	// own their output destination. PrepareReview rejects paths inside ReviewsRoot
+	// to prevent invisible half-state reviews. Untrusted callers must validate the
+	// path before populating this field.
 	OutputDir string
 }
 
