@@ -39,6 +39,26 @@ type FunctionCall struct {
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 }
 
+// MarshalJSON emits arguments as a JSON-encoded string so the echoed assistant
+// turn is wire-canonical for strict OpenAI-compatible validators regardless of
+// whether the inbound provider used string-encoded or raw-object form.
+func (f FunctionCall) MarshalJSON() ([]byte, error) {
+	args := f.Arguments
+	if len(args) > 0 && args[0] != '"' {
+		// Raw JSON object: encode as a JSON string to match the OpenAI wire form.
+		s, err := json.Marshal(string(args))
+		if err != nil {
+			return nil, fmt.Errorf("encoding function arguments: %w", err)
+		}
+		args = s
+	}
+	type alias struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+	}
+	return json.Marshal(alias{Name: f.Name, Arguments: args})
+}
+
 // ToolCall is one model-requested tool invocation.
 type ToolCall struct {
 	ID       string       `json:"id"`
