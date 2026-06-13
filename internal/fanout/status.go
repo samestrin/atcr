@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -53,6 +54,24 @@ const (
 // constant or scale it with roster size. (Adjudicated per Epic 1.5 Q2: flat
 // 60s is sufficient for current roster sizes.)
 const staleGraceSecs = 60
+
+// maxSummaryBytes caps the summary.json read in ReadReviewStatus and
+// ReadManifestPartial. A real summary is kilobytes even for large rosters
+// (~100 agents × ~1 KB per agent record ≈ 100 KB); 1 MiB is a generous
+// bound that prevents an unexpectedly large file from allocating an unbounded
+// heap slice before json.Unmarshal.
+const maxSummaryBytes = 1 << 20 // 1 MiB
+
+// EffectivePartial derives the authoritative partial flag from a PoolSummary,
+// applying FailureMarker awareness that the raw Partial field lacks. When
+// WritePool aborted mid-flush (FailureMarker=true) and at least one agent was
+// in the roster (Total>0), the on-disk artifact set is an untrustworthy subset
+// regardless of Succeeded/Failed counts — a timed-out agent may have flushed
+// findings before the fault — so the run is always partial. ReadReviewStatus
+// and ReadManifestPartial both delegate here so the two readers never drift.
+func (ps PoolSummary) EffectivePartial() bool {
+	return ps.Partial || (ps.FailureMarker && ps.Total > 0)
+}
 
 // nowFunc is the clock ReadReviewStatus consults for stale inference; a package
 // var so tests can pin it for deterministic window assertions. Swapping nowFunc
@@ -122,7 +141,25 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		AgentsPending: len(m.Roster),
 	}
 
-	sdata, serr := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile))
+	// Cap the summary read to prevent an unexpectedly large file from allocating
+	// an unbounded heap slice (item TD: reviewdir.go:340). Any read problem
+	// (absent file, permission error, oversized) falls through to the same
+	// stale-inference branch as a missing summary — past the deadline the review
+	// is presumed dead regardless of the cause.
+	var sdata []byte
+	var serr error
+	{
+		sf, sfErr := os.Open(filepath.Join(reviewDir, "sources", "pool", summaryFile))
+		if sfErr != nil {
+			serr = sfErr
+		} else {
+			sdata, serr = io.ReadAll(io.LimitReader(sf, maxSummaryBytes+1))
+			_ = sf.Close()
+			if serr == nil && int64(len(sdata)) > maxSummaryBytes {
+				serr = fmt.Errorf("summary.json exceeds read cap (%d B)", maxSummaryBytes)
+			}
+		}
+	}
 	if serr != nil {
 		// No completion signal. The pair is read manifest-first then summary
 		// (Task 4 read invariant); a genuinely absent summary means the fan-out
@@ -149,7 +186,7 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	if st.AgentsPending < 0 {
 		st.AgentsPending = 0
 	}
-	st.Partial = ps.Partial
+	st.Partial = ps.EffectivePartial()
 	if ps.Succeeded > 0 {
 		st.Status = RunCompleted
 	} else {
