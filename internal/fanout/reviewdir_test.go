@@ -302,6 +302,44 @@ func TestReadManifestPartial_SummaryIsSourceOfTruth(t *testing.T) {
 	assert.True(t, ReadManifestPartial(dir), "summary.json says partial:true; stale manifest must not override it")
 }
 
+// A write-phase failure (WritePool aborted mid-flush after agents ran) leaves a
+// failure-marker summary that can say Partial=false (no agent FAILED) even
+// though only a subset of per-agent artifacts reached disk. ReadManifestPartial
+// must force partial so a reconcile over the surviving artifacts never emits a
+// non-partial verdict from an incomplete roster.
+func TestReadManifestPartial_FailureMarkerForcesPartial(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_marker")
+	require.NoError(t, err)
+
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	// Every agent ran (Succeeded=2, Failed=0 -> Partial=false), but the write
+	// aborted mid-flush, so the marker is set and the on-disk set may be a subset.
+	sum, err := json.Marshal(PoolSummary{Total: 2, Succeeded: 2, Failed: 0, Partial: false, FailureMarker: true})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), sum, 0o644))
+
+	assert.True(t, ReadManifestPartial(dir), "a failure-marker summary with surviving successes must read as partial")
+}
+
+// A failure-marker summary where NO agent succeeded is a genuine total failure;
+// the marker alone must not fabricate partial=true (there is no surviving
+// subset to protect).
+func TestReadManifestPartial_FailureMarkerAllFailedStaysNonPartial(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_marker_allfailed")
+	require.NoError(t, err)
+
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	sum, err := json.Marshal(PoolSummary{Total: 2, Succeeded: 0, Failed: 2, Partial: false, FailureMarker: true})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), sum, 0o644))
+
+	assert.False(t, ReadManifestPartial(dir), "marker with zero successes is a total failure, not partial")
+}
+
 // Without a summary (fan-out still running, or a hand-assembled review) the
 // manifest remains the only available signal and is still honored.
 func TestReadManifestPartial_FallsBackToManifestWhenNoSummary(t *testing.T) {
