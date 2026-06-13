@@ -329,9 +329,10 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 ### 2.4 [x] **[Story 3: Path Jail & Snapshot Sandbox - RED](plan/user-stories/03-path-jail-sandbox.md)**
    Write comprehensive failing tests, verify fail correctly
-   - Test `Jail.Resolve()`: absolute path rejected, `..` traversal rejected, symlink-escape rejected, `.git/` component rejected, valid paths accepted
+   - Test `Jail.Resolve(rel)` via `NewJail(root)`: absolute path rejected, `..` traversal rejected, symlink-escape rejected, `.git/` component rejected, valid paths accepted; root is canonicalized at construction
    - Test paths with `.gitignore` and `.github/workflows/ci.yml` pass (false-positive check)
    - Test `foo.git/bar` passes (only `.git` directory component is blocked)
+   - Test canonical-root invariant: a legitimate in-root file under a symlinked temp root resolves and is accepted (macOS `/var` → `/private/var`)
    - Test `Snapshot.For(head)`: returns live-worktree path when `head == HEAD` and worktree is clean
    - Test `Snapshot.For(head)`: creates temporary worktree when head differs or worktree is dirty
    - Test cleanup: temporary worktree removed after `Close()`
@@ -341,8 +342,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 ### 2.5 [x] **[Story 3: Path Jail & Snapshot Sandbox - GREEN](plan/user-stories/03-path-jail-sandbox.md)**
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
-   - `internal/tools/jail.go`: `Jail` struct with `Root string`; `Resolve(path) (string, error)` using `filepath.Abs`, `filepath.Clean`, `filepath.EvalSymlinks`, prefix check; `.git` component matching
-   - `internal/tools/snapshot.go`: `Snapshot` struct; `For(head string) (Snapshot, error)` — fast path when clean + `head==HEAD`, slow path with `git worktree add`; `Close()` removes temporary worktree
+   - `internal/tools/jail.go`: `Jail` struct with canonical `root string`; `NewJail(root)` canonicalizes via `filepath.Abs` + `filepath.EvalSymlinks`; `Resolve(rel) (string, error)` joins to canonical root, checks escapes, symlinks, and `.git` component (case-insensitive)
+   - `internal/tools/snapshot.go`: `SnapshotManager` struct with canonical `repoRoot string`; `NewSnapshotManager(repoRoot)` canonicalizes via `filepath.Abs` + `filepath.EvalSymlinks`; `SnapshotFor(head string) (string, func(), error)` — fast path when clean + `head==HEAD`, slow path with `git worktree add`; cleanup removes temporary worktree
    COMMIT: `git commit -m "feat(tools): add path jail and snapshot manager (green)"`
    **Files:** `internal/tools/jail.go`, `internal/tools/snapshot.go` | **Duration:** 3-4 hours
 
