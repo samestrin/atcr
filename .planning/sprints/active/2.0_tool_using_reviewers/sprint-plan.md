@@ -907,7 +907,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "docs: complete registry, payload-modes, README documentation + activate registry fields"`
    **Duration:** 2-3 hours
 
-### 6.4 [ ] **Final Regression Check**
+### 6.4 [x] **Final Regression Check**
+   **Completed (2026-06-13):** (1) Full `go test ./...` green — no 1.x regressions (the engine wiring is gated behind `anyToolAgent`, so non-tool reviews take the unchanged path; `TestRunReview_*` all pass). (2) Mixed roster verified end-to-end: `TestExecuteReview_MixedRosterReconcilesBoth` runs one tool-loop agent + one 1.x single-shot agent in one review — the pool consumes both result shapes, the tool agent emits counters + a transcript, and the non-tool agent's status.json is byte-clean of tool fields. (3) No new third-party dependencies: `git diff main -- go.mod go.sum` is empty (only stdlib + internal packages added). Coverage total 87.5% (≥80%); lint 0 issues; vet/build clean.
    1. Confirm all 1.x single-shot paths still pass: `go test ./...` with no regressions against prior test suite
    2. Verify mixed roster: tool and non-tool agents in one review; reconciler consumes both result shapes identically
    3. Confirm no new third-party dependencies: inspect `go.mod` for any additions
@@ -917,22 +918,22 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 ---
 
 ### Validation Checklist
-- [ ] All tests passing (T3): `go test ./...`
-- [ ] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥80%
-- [ ] Lint/format clean: `golangci-lint run` + `go vet ./...`
-- [ ] Build succeeds: `go build ./...`
-- [ ] No new third-party dependencies: inspect `go.mod`
-- [ ] All sprint success criteria met (see Sprint Overview)
-- [ ] Drift check against [original-requirements.md](plan/original-requirements.md): confirm all deliverables present
+- [x] All tests passing (T3): `go test ./...`
+- [x] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥80% (total 87.5%)
+- [x] Lint/format clean: `golangci-lint run` (0 issues) + `go vet ./...`
+- [x] Build succeeds: `go build ./...`
+- [x] No new third-party dependencies: `git diff main -- go.mod go.sum` empty
+- [x] All sprint success criteria met (see Sprint Overview)
+- [x] Drift check against [original-requirements.md](plan/original-requirements.md): confirm all deliverables present
 
 ### Drift Analysis
 Compare delivered implementation against [original-requirements.md](plan/original-requirements.md):
-- [ ] Multi-turn agent loop with `tool_calls` handling ✓
-- [ ] `read_file`, `grep`, `list_files` tools with stated signatures and limits ✓
-- [ ] Path jail: absolute, `..`, symlink-escape, `.git/` all rejected ✓
-- [ ] Snapshot manager: live-worktree fast path, `git worktree` slow path, cleanup ✓
-- [ ] `max_turns` (default 10), `tool_budget_bytes`, `timeout_secs` budgets ✓
-- [ ] `tools_degraded: true` in status.json for non-tool-capable models ✓
-- [ ] `transcript.jsonl` per tool-using agent with complete event sequence ✓
-- [ ] No new third-party dependencies ✓
-- [ ] `docs/registry.md`, `docs/payload-modes.md`, `README.md` updated ✓
+- [x] Multi-turn agent loop with `tool_calls` handling ✓ (Phase 3 `internal/fanout/loop.go`; e2e in 6.1)
+- [x] `read_file`, `grep`, `list_files` tools with stated signatures and limits ✓ (Phase 2 `internal/tools/`)
+- [x] Path jail: absolute, `..`, symlink-escape, `.git/` all rejected ✓ (Phase 2 `jail_test.go`)
+- [x] Snapshot manager: live-worktree fast path, `git worktree` slow path, cleanup ✓ (Phase 2 `snapshot.go`; wired into `ExecuteReview` in 6.1)
+- [x] `max_turns` (default 10), `tool_budget_bytes`, `timeout_secs` budgets ✓ (Phase 3 `engine_budget_test.go`; artifact-layer trip in 6.2)
+- [x] `tools_degraded: true` in status.json for non-tool-capable models ✓ (Phase 4; e2e `TestExecuteReview_ToolAgentDegradesWhenIncapable`)
+- [x] `transcript.jsonl` per tool-using agent with complete event sequence ✓ (Phase 5 `internal/tools/transcript.go` + replay; e2e replays the full sequence)
+- [x] No new third-party dependencies ✓ (`go.mod`/`go.sum` unchanged from main)
+- [x] `docs/registry.md`, `docs/payload-modes.md`, `README.md` updated ✓ (Story 6; `TestDocs_*`)

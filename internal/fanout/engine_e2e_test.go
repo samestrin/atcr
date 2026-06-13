@@ -242,6 +242,97 @@ func TestExecuteReview_BudgetTripRecordedInStatusAndPartialFindings(t *testing.T
 	assert.Equal(t, "MEDIUM", parsed.Findings[0].Severity)
 }
 
+// mixedMockProvider serves both an agent's multi-turn Chat (request carries
+// tools) and another agent's single-shot Complete (no tools): a tools request
+// without a tool result yields one read_file call; everything else (the tool
+// agent's second turn, or a single-shot completion) yields a final finding.
+func mixedMockProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Tools    []json.RawMessage `json:"tools"`
+			Messages []struct {
+				Role string `json:"role"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &req)
+		hasToolResult := false
+		for _, m := range req.Messages {
+			if m.Role == "tool" {
+				hasToolResult = true
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if len(req.Tools) > 0 && !hasToolResult {
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+				"finish_reason": "tool_calls",
+				"message": map[string]any{"role": "assistant", "content": nil, "tool_calls": []map[string]any{
+					{"id": "call_1", "type": "function", "function": map[string]any{"name": "read_file", "arguments": `{"path":"helper.go"}`}},
+				}},
+			}}})
+			return
+		}
+		content := "HIGH|auth.go:3|b() unguarded|Guard it|correctness|10|reviewed the change"
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+			"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content},
+		}}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// AC 04-04 / Success Criteria: a mixed roster (one tool-loop agent + one 1.x
+// single-shot agent) runs in one review; the pool consumes both result shapes
+// identically, the tool agent emits tool counters + a transcript, and the
+// non-tool agent's status.json stays byte-clean of tool fields.
+func TestExecuteReview_MixedRosterReconcilesBoth(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initToolRepo(t)
+	srv := mixedMockProvider(t)
+	cfg := &ReviewConfig{
+		Registry: &registry.Registry{
+			Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: srv.URL}},
+			Agents: map[string]registry.AgentConfig{
+				"greta": {Provider: "p", Model: "m-greta", Persona: "greta", Temperature: ptrF(0.7), Tools: true, SupportsFC: true},
+				"kai":   {Provider: "p", Model: "m-kai", Persona: "kai", Temperature: ptrF(0.7)}, // 1.x single-shot
+			},
+		},
+		Project:  &registry.ProjectConfig{Agents: []string{"greta", "kai"}},
+		Settings: registry.Settings{PayloadMode: "blocks", TimeoutSecs: 600},
+	}
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	require.Equal(t, 2, res.Summary.Succeeded, "both agents complete")
+
+	// Both agents produced a finding the pool merged identically.
+	for _, agent := range []string{"greta", "kai"} {
+		fdata, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", agent, "findings.txt"))
+		require.NoErrorf(t, err, "missing %s findings", agent)
+		parsed, err := stream.ParseSource(fdata)
+		require.NoError(t, err)
+		require.Lenf(t, parsed.Findings, 1, "%s finding count", agent)
+		assert.Equal(t, agent, parsed.Findings[0].Reviewer)
+	}
+
+	// The tool agent recorded counters + a transcript.
+	var greta AgentStatus
+	gdata, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", "greta", "status.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(gdata, &greta))
+	require.NotNil(t, greta.Turns)
+	assert.GreaterOrEqual(t, *greta.Turns, 2)
+	assert.FileExists(t, filepath.Join(res.Dir, "sources", "pool", "raw", "agent", "greta", "transcript.jsonl"))
+
+	// The non-tool agent's status.json is byte-clean of tool fields (1.x identical).
+	kdata, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", "kai", "status.json"))
+	require.NoError(t, err)
+	for _, f := range []string{"turns", "tool_calls", "tool_bytes", "tools_degraded", "tools_requested"} {
+		assert.NotContainsf(t, string(kdata), `"`+f+`"`, "non-tool kai status.json must omit %q", f)
+	}
+}
+
 // A degraded tool agent (model not function-calling-capable) still completes via
 // single-shot, records tools_degraded, and writes no transcript events — the
 // mixed-roster/degrade path through the real review flow.
