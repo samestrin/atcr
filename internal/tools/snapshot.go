@@ -29,11 +29,21 @@ func NewSnapshotManager(repoRoot string) *SnapshotManager {
 }
 
 // snapshotCleanupGuard reports whether base is safe to remove: it must be a
-// direct child of the OS temp directory. The trailing separator avoids a
-// sibling-prefix match (e.g. /tmpfoo vs /tmp).
+// direct child of the OS temp directory. Both sides are canonicalized via
+// filepath.EvalSymlinks so a symlinked TMPDIR (macOS /tmp -> /private/tmp, or
+// a symlinked $TMPDIR under /var) does not cause the check to spuriously fail
+// and leak a worktree.
 func snapshotCleanupGuard(base string) bool {
 	sep := string(os.PathSeparator)
-	return strings.HasPrefix(base, filepath.Clean(os.TempDir())+sep)
+	canonBase := base
+	if r, err := filepath.EvalSymlinks(base); err == nil {
+		canonBase = r
+	}
+	tmpDir := filepath.Clean(os.TempDir())
+	if r, err := filepath.EvalSymlinks(os.TempDir()); err == nil {
+		tmpDir = r
+	}
+	return strings.HasPrefix(canonBase, tmpDir+sep)
 }
 
 // SnapshotFor returns the snapshot root for head, a cleanup function (safe to
