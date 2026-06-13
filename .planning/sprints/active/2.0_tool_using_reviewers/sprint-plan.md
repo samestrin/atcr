@@ -312,7 +312,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. COMMIT: `git commit -m "refactor(tools): address review + clean up dispatcher"`
    **Duration:** 1-2 hours
 
-### 2.4 [ ] **[Story 3: Path Jail & Snapshot Sandbox - RED](plan/user-stories/03-path-jail-sandbox.md)**
+### 2.4 [x] **[Story 3: Path Jail & Snapshot Sandbox - RED](plan/user-stories/03-path-jail-sandbox.md)**
    Write comprehensive failing tests, verify fail correctly
    - Test `Jail.Resolve()`: absolute path rejected, `..` traversal rejected, symlink-escape rejected, `.git/` component rejected, valid paths accepted
    - Test paths with `.gitignore` and `.github/workflows/ci.yml` pass (false-positive check)
@@ -324,14 +324,14 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Files:** `internal/tools/jail_test.go`, `internal/tools/snapshot_test.go` | **Duration:** 2-3 hours
    **AC:** [03-01](plan/acceptance-criteria/03-01-path-jail-enforcement.md), [03-02](plan/acceptance-criteria/03-02-snapshot-lifecycle.md), [03-03](plan/acceptance-criteria/03-03-worktree-cleanup.md), [03-04](plan/acceptance-criteria/03-04-read-only-guard.md)
 
-### 2.5 [ ] **[Story 3: Path Jail & Snapshot Sandbox - GREEN](plan/user-stories/03-path-jail-sandbox.md)**
+### 2.5 [x] **[Story 3: Path Jail & Snapshot Sandbox - GREEN](plan/user-stories/03-path-jail-sandbox.md)**
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
    - `internal/tools/jail.go`: `Jail` struct with `Root string`; `Resolve(path) (string, error)` using `filepath.Abs`, `filepath.Clean`, `filepath.EvalSymlinks`, prefix check; `.git` component matching
    - `internal/tools/snapshot.go`: `Snapshot` struct; `For(head string) (Snapshot, error)` — fast path when clean + `head==HEAD`, slow path with `git worktree add`; `Close()` removes temporary worktree
    COMMIT: `git commit -m "feat(tools): add path jail and snapshot manager (green)"`
    **Files:** `internal/tools/jail.go`, `internal/tools/snapshot.go` | **Duration:** 3-4 hours
 
-### 2.5.A [ ] **[Story 3: Path Jail & Snapshot Sandbox - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-path-jail-sandbox.md)**
+### 2.5.A [x] **[Story 3: Path Jail & Snapshot Sandbox - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-path-jail-sandbox.md)**
    **Changed Files:** `internal/tools/jail.go`, `internal/tools/snapshot.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -349,18 +349,20 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-06-13):** No CRITICAL/HIGH ranked. Confirmed sound: SHA arg-injection blocked (anchored regex + arg arrays), jail sibling-prefix (`/a/b` vs `/a/bc`) correctly avoided, `resolveExisting` catches escaping symlinks in existing intermediate components, absolute/`..` rejected pre-FS. Reviewer raised a case-insensitive-FS caveat on `.git` matching — escalated to a fix because macOS (atcr's primary platform) is case-insensitive by default.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH (macOS) | jail.go .git check | Case-sensitive `seg == ".git"` lets `.GIT/config` reach the real `.git` dir on case-insensitive filesystems (macOS/Windows default) → repo-internals exposure | FIXED 2.6: `strings.EqualFold(seg, ".git")` + RED tests for `.GIT`/`.Git` |
+   | MEDIUM | snapshot.go cleanup guard | `HasPrefix(base, Clean(TempDir()))` has a sibling-prefix flaw (`/tmpfoo` vs `/tmp`) — last line of defense before RemoveAll | FIXED 2.6: append `os.PathSeparator` to the prefix |
+   | MEDIUM | snapshot.go prune retry | Repo-wide `git worktree prune` on add-failure can prune a concurrent run's mid-registration worktree | DEFERRED → TD-005 (low likelihood: unique temp leaves) |
+   | LOW | snapshot.go prune err | `worktree prune` error silently discarded | FIXED 2.6: logged to stderr |
+   | LOW | snapshot.go leaf name | Leaf built from raw (possibly abbreviated) `head` not resolved full SHA | FIXED 2.6: use `resolvedHead` |
+   | INFO | jail TOCTOU residual | Final-component swap already closed by `O_NOFOLLOW` in `openReadOnly`; intermediate-dir post-snapshot mutation is the documented out-of-scope threat (spike risk register) | No action — by design |
+   | INFO | — | Manifest snapshot-field recording (AC 03-02 S5, 03-03 S4/S5) is engine-integration work | DEFERRED → TD-004 (Phase 3/5) |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No blocking CRITICAL/HIGH from the ranked table; the macOS `.git` case-insensitivity gap was escalated and fixed inline in 2.6 (real exposure on the primary dev platform). Cheap MEDIUM/LOW correctness items fixed inline; prune-concurrency (TD-005) and manifest-recording (TD-004) deferred. **Adversarial review passed.**
 
-### 2.6 [ ] **[Story 3: Path Jail & Snapshot Sandbox - REFACTOR](plan/user-stories/03-path-jail-sandbox.md)**
+### 2.6 [x] **[Story 3: Path Jail & Snapshot Sandbox - REFACTOR](plan/user-stories/03-path-jail-sandbox.md)**
    1. Fix CRITICAL/HIGH issues from 2.5.A (if any)
    2. Improve code quality: error wrapping, cleanup on all error paths, clear invariant comments (T1)
    3. Validate all tests still pass (T3)

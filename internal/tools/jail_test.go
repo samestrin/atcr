@@ -57,6 +57,8 @@ func TestJail_Resolve(t *testing.T) {
 		{"dotdot escape", "../../secrets", "path escapes snapshot root"},
 		{"git config", ".git/config", "access to .git directory not allowed"},
 		{"git objects", ".git/objects/ab/cdef1234", "access to .git directory not allowed"},
+		{"git uppercase (case-insensitive FS)", ".GIT/config", "access to .git directory not allowed"},
+		{"git mixedcase (case-insensitive FS)", ".Git/config", "access to .git directory not allowed"},
 		{"empty", "", "empty path not allowed"},
 		{"nul byte", "src/main\x00.go", "path contains NUL byte"},
 	}

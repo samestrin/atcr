@@ -65,8 +65,11 @@ func (j *Jail) Resolve(rel string) (string, error) {
 		return "", &JailError{Path: rel, Reason: "path escapes snapshot root"}
 	}
 
+	// Match ".git" case-insensitively: macOS/Windows default filesystems are
+	// case-insensitive, so ".GIT/config" would otherwise resolve to the real
+	// .git directory and bypass this block, exposing repository internals.
 	for _, seg := range strings.Split(clean, string(os.PathSeparator)) {
-		if seg == ".git" {
+		if strings.EqualFold(seg, ".git") {
 			return "", &JailError{Path: rel, Reason: "access to .git directory not allowed"}
 		}
 	}

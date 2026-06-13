@@ -63,12 +63,16 @@ func (m *SnapshotManager) SnapshotFor(head string) (string, func(), error) {
 	if err != nil {
 		return "", noop, fmt.Errorf("snapshot: cannot create temp dir: %w", err)
 	}
-	leaf := filepath.Join(base, head)
+	// Name the leaf after the resolved full SHA (not the possibly-abbreviated
+	// input) for deterministic, collision-resistant worktree registration.
+	leaf := filepath.Join(base, resolvedHead)
 
-	if err := m.worktreeAdd(gitPath, leaf, head); err != nil {
+	if err := m.worktreeAdd(gitPath, leaf, resolvedHead); err != nil {
 		// A stale registration from a crashed run can block the add; prune and retry once.
-		_, _ = m.git(gitPath, "worktree", "prune")
-		if err2 := m.worktreeAdd(gitPath, leaf, head); err2 != nil {
+		if _, perr := m.git(gitPath, "worktree", "prune"); perr != nil {
+			fmt.Fprintf(os.Stderr, "snapshot: worktree prune failed: %v\n", perr)
+		}
+		if err2 := m.worktreeAdd(gitPath, leaf, resolvedHead); err2 != nil {
 			_ = os.RemoveAll(base)
 			return "", noop, fmt.Errorf("snapshot: failed to create worktree for %s: %w", head, err2)
 		}
@@ -77,8 +81,10 @@ func (m *SnapshotManager) SnapshotFor(head string) (string, func(), error) {
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
-			// Refuse to remove anything outside the temp dir we created.
-			if !strings.HasPrefix(base, filepath.Clean(os.TempDir())) {
+			// Refuse to remove anything outside the temp dir we created. The
+			// trailing separator avoids a sibling-prefix match (e.g. /tmpfoo
+			// vs /tmp), mirroring the jail's own prefix check.
+			if !strings.HasPrefix(base, filepath.Clean(os.TempDir())+string(os.PathSeparator)) {
 				return
 			}
 			if _, err := m.git(gitPath, "worktree", "remove", "--force", leaf); err != nil {
