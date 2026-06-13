@@ -131,6 +131,7 @@ type fakeDispatcher struct {
 	errFor  map[string]error
 	calls   []string
 	gate    chan struct{}
+	entered chan struct{} // signaled (non-blocking) when Execute is entered
 	panicON map[string]bool
 }
 
@@ -144,9 +145,16 @@ func (d *fakeDispatcher) Execute(ctx context.Context, name string, _ json.RawMes
 	res, known := d.byName[name]
 	err := d.errFor[name]
 	gate := d.gate
+	entered := d.entered
 	doPanic := d.panicON[name]
 	d.mu.Unlock()
 
+	if entered != nil {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
 	if gate != nil {
 		select {
 		case <-gate:
