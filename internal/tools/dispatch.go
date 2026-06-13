@@ -85,7 +85,7 @@ func (d *Dispatcher) RegisteredTools() []string {
 
 // writeToolPatterns are name fragments that flag a mutating tool. The harness is
 // read-only by construction, so any such registration is rejected.
-var writeToolPatterns = []string{"write", "create", "delete", "remove", "modify", "update", "append", "patch"}
+var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif", "update", "append", "patch"}
 
 // RegisterTool adds a handler after checking its name against the write-tool
 // blocklist. It returns an error (never silently accepts) for write-shaped names.
