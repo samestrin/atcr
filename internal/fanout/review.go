@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/tools"
 )
 
 // ErrPayloadFullyDropped is returned by buildPayloads when a non-empty input
@@ -138,7 +140,13 @@ type PreparedReview struct {
 	Slots       []Slot
 	TimeoutSec  int
 	MaxParallel int
-	manifest    *payload.Manifest
+	// Repo and Head locate the read-only snapshot the tool harness reads (Epic
+	// 2.0). Set from the request; ExecuteReview builds the snapshot→jail→dispatcher
+	// only when a slot is tool-enabled. An empty Head leaves the harness unwired,
+	// so a tool agent degrades to single-shot.
+	Repo     string
+	Head     string
+	manifest *payload.Manifest
 }
 
 // AgentCount is the number of reviewer slots the prepared review will run.
@@ -245,7 +253,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 			return nil, err
 		}
 	}
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, manifest: m}, nil
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
 }
 
 // ExecuteReview runs phase two: fan out the prepared roster under the global
@@ -265,9 +273,37 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
 		defer cancel()
 	}
-	results := NewEngine(completer, WithMaxParallel(p.MaxParallel)).Run(runCtx, p.Slots)
 
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
+
+	// Wire the read-only tool harness only when a slot is tool-enabled: a snapshot
+	// of the repo at head → path jail → dispatcher, shared across the run, plus a
+	// per-agent transcript writer under the pool raw dir. Best-effort: a snapshot
+	// or jail failure logs and leaves tool agents to degrade to single-shot
+	// (tools_degraded) rather than failing the whole review.
+	opts := []EngineOption{WithMaxParallel(p.MaxParallel)}
+	if anyToolAgent(p.Slots) && p.Head != "" {
+		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
+		} else {
+			defer cleanup()
+			if jail, jerr := tools.NewJail(root); jerr != nil {
+				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
+			} else {
+				disp := tools.NewDispatcher(jail, tools.DefaultLimits())
+				rawBase := filepath.Join(poolDir, poolRawAgentDir)
+				opts = append(opts, WithDispatcher(disp), WithTranscript(func(agent string) *tools.Transcript {
+					dir := filepath.Join(rawBase, transcriptAgentDir(agent))
+					if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+						fmt.Fprintf(os.Stderr, "atcr: warning: transcript dir for %s: %v\n", agent, mkErr)
+					}
+					return tools.OpenTranscript(filepath.Join(dir, "transcript.jsonl"), agent)
+				}))
+			}
+		}
+	}
+
+	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 	sum, err := WritePool(poolDir, results)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
@@ -546,6 +582,34 @@ func writePayloadArtifacts(dir string, payloads map[string]modePayload) error {
 		}
 	}
 	return nil
+}
+
+// anyToolAgent reports whether any slot (primary or fallback) requested tools,
+// so ExecuteReview only pays the snapshot/jail cost when the harness is needed.
+func anyToolAgent(slots []Slot) bool {
+	for _, s := range slots {
+		if s.Primary.Tools {
+			return true
+		}
+		for _, fb := range s.Fallbacks {
+			if fb.Tools {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// transcriptAgentDir maps an agent name to the same single-segment directory the
+// pool artifacts use (raw/agent/<dir>), so transcript.jsonl lands beside the
+// agent's status.json/review.md. An unusable name falls back to a safe constant
+// rather than escaping the pool.
+func transcriptAgentDir(agent string) string {
+	dir, err := agentDirName(agent)
+	if err != nil {
+		return "transcript-unknown"
+	}
+	return dir
 }
 
 // reviewStageFor classifies fan-out results into the manifest's review-stage

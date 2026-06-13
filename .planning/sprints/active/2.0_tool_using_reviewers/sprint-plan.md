@@ -881,7 +881,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Goal:** End-to-end integration tests, documentation completeness, registry activation, and regression verification.
 
-### 6.1 [ ] **End-to-End Integration Test (Fixture Repo)**
+### 6.1 [x] **End-to-End Integration Test (Fixture Repo)**
+   **Completed (2026-06-13):** Wired the production tool harness into `ExecuteReview` — when any slot is tool-enabled it builds `SnapshotManager.SnapshotFor(head)` → `NewJail(root)` → `NewDispatcher(jail, DefaultLimits())` and a per-agent transcript factory under `raw/agent/<dir>/transcript.jsonl`, all best-effort (snapshot/jail failure logs and degrades). `PreparedReview` gained `Repo`/`Head`. E2E test (`engine_e2e_test.go`): a fixture repo where `head` changes `auth.go` (payload) while `helper.go` stays unchanged; an httptest mock scripts a 2-turn exchange (read_file `helper.go` + grep `func b` → final finding). Asserts: agent succeeds, finding produced, status.json counters (`turns>=2`, `tool_calls==2`, `tool_bytes>0`), transcript replays `[tool_calls, tool_result, tool_result, final]`, the read_file result carries `helper.go` content (file outside the payload), and manifest `review` lists the agent. Second test proves the degrade path through the real flow (incapable model → `tools_degraded`, 0 turns). Full suite green, lint 0 issues.
    1. Create a fixture repository with Go source files covering a realistic review scenario
    2. Write end-to-end test: tool-enabled agent reads a file outside the payload, greps for callers, produces findings citing that evidence
    3. Use httptest mock provider scripting multi-turn `tool_calls` exchanges with the fixture repo
