@@ -32,13 +32,14 @@
 - **And** `status.json` does NOT contain `"tripped_budgets"` (omitempty — absent when empty)
 - **And** `"status": "ok"`
 
-**Scenario 2: Multiple budgets tripped in one run**
-- **Given** an agent with `MaxTurns=3`, `ToolBudgetBytes=500`, and `TimeoutSecs=10`
-- **And** on turn 3, cumulative tool bytes = 600 AND timeout expires
+**Scenario 2: Multiple budgets tripped in one run (byte budget + timeout)**
+- **Given** an agent with `MaxTurns=10`, `ToolBudgetBytes=500`, and `TimeoutSecs=10`
+- **And** on turn 3, tool results push cumulative bytes to 600 (tools ran because `turns=3 < MaxTurns=10`)
+- **And** a timeout expires while `requestFinalAnswer` awaits the model's response after the byte-budget trip
 - **When** the agent loop halts
 - **Then** `status.json` contains: `"tripped_budgets": ["tool_budget_bytes", "timeout_secs"]`
-- **And** counters reflect actual usage at time of halt: `"turns": 3, "tool_calls": <actual>, "tool_bytes": 600`
-- **And** `"status": "timeout"` (or `"ok"` if a final answer was produced before timeout — per classification logic)
+- **And** counters reflect actual usage: `"turns": 3, "tool_calls": <actual>, "tool_bytes": 600`
+- **And** `"status": "timeout"` (timeout recorded by `requestFinalAnswer` at `loop.go:270` when the Chat call returns a deadline error)
 
 **Scenario 3: Single budget tripped — partial success**
 - **Given** an agent with `MaxTurns=5` and `Tools=true`

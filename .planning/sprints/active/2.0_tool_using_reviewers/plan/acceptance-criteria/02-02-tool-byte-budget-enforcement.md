@@ -69,12 +69,15 @@
 - **And** at end-of-turn, cumulative bytes = 500 exceeds budget of 100
 - **And** the trip is recorded; loop halts and requests final answer
 
-**Edge Case 3: Byte budget trips on the same turn as max_turns**
+**Edge Case 3: max_turns trips before tool execution — byte budget cannot co-trip on the same turn**
 - **Given** an agent with `MaxTurns=3` and `ToolBudgetBytes=500`
-- **And** on turn 3, tool results push cumulative bytes to 600
-- **When** the end-of-turn checks run
-- **Then** BOTH `max_turns` and `tool_budget_bytes` are recorded in `TrippedBudgets`
-- **And** the loop halts; final answer is requested
+- **And** cumulative bytes are 400 after turn 2 (under the 500 limit)
+- **When** turn 3 is reached (`turns >= MaxTurns`) at `loop.go:147`
+- **Then** the turn's `tool_calls` are NOT executed (`answerSkipped` marks them skipped — `loop.go:153`)
+- **And** no bytes are added to the cumulative count on turn 3
+- **And** only `"max_turns"` is recorded in `TrippedBudgets`
+- **And** `"tool_budget_bytes"` is NOT in `TrippedBudgets` — the byte-budget check at `loop.go:170` is unreachable on the max_turns turn
+- **And** the loop halts; `requestFinalAnswer` is called
 
 **Edge Case 4: Tool returns empty result**
 - **Given** an agent with `ToolBudgetBytes=1000`
