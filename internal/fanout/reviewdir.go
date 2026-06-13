@@ -230,19 +230,33 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 // are responsible for supplying trusted, user-controlled paths; paths inside
 // ReviewsRoot are rejected by PrepareReview to avoid confusing half-state.
 func ScaffoldOutputDir(dir string) (string, error) {
-	// Refuse a non-empty existing target so a review never clobbers unrelated
-	// content. os.ReadDir surfaces every entry (hidden files included); a
-	// non-existent path is the happy case, while any other read error (a file at
-	// the path, a permission problem) must surface rather than be masked by the
-	// MkdirAll below.
-	switch entries, err := os.ReadDir(dir); {
-	case err == nil && len(entries) > 0:
-		return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
-	case err != nil && !errors.Is(err, fs.ErrNotExist):
+	// Reject symlinks up front: os.Lstat does not follow the link, so a dangling
+	// symlink (whose target is absent) is caught here before ReadDir would see
+	// ErrNotExist and silently fall through to MkdirAll.
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("output directory %q is a symlink: refusing to scaffold into a symlink target", dir)
+	}
+	// Create all parent components, then claim the leaf atomically with os.Mkdir
+	// (not MkdirAll) to match the codebase's atomic-claim discipline: the syscall
+	// either succeeds (exclusive create — definitionally empty) or returns
+	// ErrExist, eliminating the check/use window in the old ReadDir+MkdirAll
+	// sequence where two concurrent callers could both pass the empty check.
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("failed to create review directory: %w", err)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		if !errors.Is(err, fs.ErrExist) {
+			return "", fmt.Errorf("failed to create review directory: %w", err)
+		}
+		// Leaf exists: verify it is empty before writing into it. os.ReadDir
+		// surfaces every entry (hidden files included).
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			return "", fmt.Errorf("failed to create review directory: %w", readErr)
+		}
+		if len(entries) > 0 {
+			return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
+		}
 	}
 	for _, sub := range reviewSubdirs {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
