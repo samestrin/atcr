@@ -149,3 +149,15 @@ func TestOutputDirFromFlags_EmptyValueIsUsageError(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 2, exitCode(err))
 }
+
+func TestOutputDirFromFlags_WhitespacePaddedResolvesTrimmed(t *testing.T) {
+	// The validated value (TrimSpace) must equal the resolved absolute path;
+	// a leading-space input must not produce a path with a literal space component.
+	isolate(t)
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "  out"}))
+	dir, err := outputDirFromFlags(cmd)
+	require.NoError(t, err)
+	cwd, _ := os.Getwd()
+	require.Equal(t, filepath.Join(cwd, "out"), dir, "leading spaces must be trimmed before filepath.Abs")
+}
