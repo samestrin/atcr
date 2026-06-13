@@ -407,9 +407,8 @@ func TestLoop_ABABOscillationNudgedThenHalts(t *testing.T) {
 	b := toolCall("c2", "grep", `{"pattern":"foo"}`)
 	cc := &scriptedChat{turns: []chatTurn{
 		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 1: executes A,B
-		{toolCalls: []llmclient.ToolCall{b, a}}, // turn 2: executes B (new position but same sig), A same — A now in history
-		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 3: A,B both in ring → nudge (not execute)
-		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 4: A,B in nudgedSigs → halt
+		{toolCalls: []llmclient.ToolCall{b, a}}, // turn 2: both in ring → nudge (not execute)
+		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 3: A,B in nudgedSigs → halt; requestFinalAnswer → FINAL
 	}}
 	d := newFakeDispatcher()
 	d.byName["read_file"] = tools.ToolResult{Content: "x"}

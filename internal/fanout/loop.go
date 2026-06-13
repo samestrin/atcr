@@ -18,6 +18,11 @@ import (
 // Agent is constructed directly (e.g. in a test) without the default applied.
 const defaultMaxTurns = 10
 
+// sigHistoryDepth is the number of past turns whose call signatures are kept for
+// repeat detection. K=3 catches ABAB and ABCABC oscillation while staying O(K)
+// memory.
+const sigHistoryDepth = 3
+
 // Loop-control messages. These are static (no per-call allocation) and are
 // appended to the conversation to steer a thrashing or budget-exhausted model.
 const (
@@ -41,11 +46,12 @@ func wireToolDefs() []llmclient.ToolDef {
 }
 
 // toolLoop carries the mutable state of one agent's multi-turn run so the
-// per-turn logic stays out of the driver loop. prevSigs holds the immediately
-// previous turn's tool-call signatures (for repeat detection — only the prior
-// turn counts, not the whole history); nudgedSigs holds signatures we nudged on
-// the previous turn (a reappearance halts); malformedPrev records whether the
-// previous turn produced a malformed call (a second consecutive one halts).
+// per-turn logic stays out of the driver loop. sigHistory holds the last
+// sigHistoryDepth turns' tool-call signatures as a bounded ring (repeat detection
+// across ABAB-style oscillation, not just back-to-back repeats); nudgedSigs holds
+// signatures we nudged on the previous turn (a reappearance halts); malformedPrev
+// records whether the previous turn produced a malformed call (a second
+// consecutive one halts).
 type toolLoop struct {
 	agent    Agent
 	cc       ChatCompleter
@@ -56,7 +62,7 @@ type toolLoop struct {
 	res      *Result
 	start    time.Time
 
-	prevSigs      map[string]bool
+	sigHistory    []map[string]bool
 	nudgedSigs    map[string]bool
 	malformedPrev bool
 
@@ -163,6 +169,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			return l.finalize(classifyStatus(cerr), cerr)
 		}
 		if halt {
+			l.res.addTripped(budgetLoopHygiene)
 			return l.requestFinalAnswer(ctx)
 		}
 		// End-of-turn byte-budget check: the current turn's results were delivered
@@ -206,7 +213,7 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, turn int, calls []llmclient
 		// First identical repeat (same call as the immediately previous turn): do
 		// not re-execute; answer with the nudge and flag the signature so a
 		// reappearance next turn halts.
-		if l.prevSigs[sig] {
+		if sigInHistory(l.sigHistory, sig) {
 			l.appendToolResult(tc.ID, nudgeMessage)
 			recs = append(recs, textResult(tc, nudgeMessage))
 			nextNudged[sig] = true
@@ -245,7 +252,7 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, turn int, calls []llmclient
 	if malformedThisTurn && l.malformedPrev {
 		halt = true
 	}
-	l.prevSigs = curSigs
+	l.sigHistory = appendSigRing(l.sigHistory, curSigs, sigHistoryDepth)
 	l.nudgedSigs = nextNudged
 	l.malformedPrev = malformedThisTurn
 	return halt
@@ -392,6 +399,25 @@ func toolSig(tc llmclient.ToolCall) string {
 		args = canon
 	}
 	return tc.Function.Name + "\x00" + string(args)
+}
+
+// sigInHistory reports whether sig appeared in any of the recorded turns.
+func sigInHistory(history []map[string]bool, sig string) bool {
+	for _, m := range history {
+		if m[sig] {
+			return true
+		}
+	}
+	return false
+}
+
+// appendSigRing appends sigs to history and trims to the most recent k entries.
+func appendSigRing(history []map[string]bool, sigs map[string]bool, k int) []map[string]bool {
+	history = append(history, sigs)
+	if len(history) > k {
+		history = history[len(history)-k:]
+	}
+	return history
 }
 
 func derefContent(c *string) string {
