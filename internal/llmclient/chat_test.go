@@ -183,6 +183,61 @@ func TestChat_MalformedResponseJSON(t *testing.T) {
 	assert.Contains(t, strings.ToLower(err.Error()), "parse")
 }
 
+// TestFunctionCall_MarshalJSON_NormalizesRawObjectToString verifies that
+// FunctionCall.MarshalJSON always emits arguments as a JSON-encoded string,
+// even when the in-memory form is a raw JSON object (as some local providers
+// return). This is the wire-canonical form strict OpenAI validators require.
+func TestFunctionCall_MarshalJSON_NormalizesRawObjectToString(t *testing.T) {
+	fc := FunctionCall{Name: "grep", Arguments: json.RawMessage(`{"pattern":"foo"}`)}
+	b, err := json.Marshal(fc)
+	require.NoError(t, err)
+	// arguments must be a JSON string (first non-whitespace byte is '"')
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &raw))
+	args := raw["arguments"]
+	require.NotEmpty(t, args)
+	assert.Equal(t, byte('"'), args[0], "arguments must be string-encoded in marshaled output")
+	// decoding the string gives back the original JSON object
+	var s string
+	require.NoError(t, json.Unmarshal(args, &s))
+	assert.JSONEq(t, `{"pattern":"foo"}`, s)
+}
+
+// TestChat_EchoedAssistantToolCallsHaveStringEncodedArguments verifies that
+// when an assistant message carrying raw-object arguments is echoed back in a
+// subsequent Chat request, the re-serialized arguments are string-encoded so
+// strict OpenAI-compatible validators on the upstream endpoint accept the turn.
+func TestChat_EchoedAssistantToolCallsHaveStringEncodedArguments(t *testing.T) {
+	var gotBodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBodies = append(gotBodies, string(b))
+		if len(gotBodies) == 1 {
+			// First turn: provider emits arguments as a raw JSON object.
+			_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"grep","arguments":{"pattern":"foo"}}}]}}]}`)
+		} else {
+			_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := fastRetry(srv.Client())
+	inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1"}
+
+	resp1, err := c.Chat(context.Background(), inv, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, resp1.Message.ToolCalls, 1)
+
+	// Echo the assistant message (with raw-object arguments) as history.
+	_, err = c.Chat(context.Background(), inv, []Message{resp1.Message}, nil)
+	require.NoError(t, err)
+	require.Len(t, gotBodies, 2)
+	// The echoed arguments in the second request must be string-encoded.
+	assert.Contains(t, gotBodies[1], `"arguments":"{`, "echoed tool-call arguments must be JSON-string-encoded")
+	assert.NotContains(t, gotBodies[1], `"arguments":{"`, "echoed tool-call arguments must not be raw JSON objects")
+}
+
 // Backward-compat sanity: Complete still works after the shared-send refactor.
 func TestChat_CompleteStillWorksAfterRefactor(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
