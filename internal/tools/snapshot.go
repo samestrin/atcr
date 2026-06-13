@@ -20,6 +20,7 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 // returns a cleanup function that removes it (slow path).
 type SnapshotManager struct {
 	repoRoot string
+	addMu    sync.Mutex // serializes worktreeAdd + prune so concurrent callers cannot interleave
 }
 
 // NewSnapshotManager returns a manager rooted at repoRoot (the main worktree).
@@ -67,15 +68,19 @@ func (m *SnapshotManager) SnapshotFor(head string) (string, func(), error) {
 	// input) for deterministic, collision-resistant worktree registration.
 	leaf := filepath.Join(base, resolvedHead)
 
-	if err := m.worktreeAdd(gitPath, leaf, resolvedHead); err != nil {
+	m.addMu.Lock()
+	addErr := m.worktreeAdd(gitPath, leaf, resolvedHead)
+	if addErr != nil {
 		// A stale registration from a crashed run can block the add; prune and retry once.
 		if _, perr := m.git(gitPath, "worktree", "prune"); perr != nil {
 			fmt.Fprintf(os.Stderr, "snapshot: worktree prune failed: %v\n", perr)
 		}
-		if err2 := m.worktreeAdd(gitPath, leaf, resolvedHead); err2 != nil {
-			_ = os.RemoveAll(base)
-			return "", noop, fmt.Errorf("snapshot: failed to create worktree for %s: %w", head, err2)
-		}
+		addErr = m.worktreeAdd(gitPath, leaf, resolvedHead)
+	}
+	m.addMu.Unlock()
+	if addErr != nil {
+		_ = os.RemoveAll(base)
+		return "", noop, fmt.Errorf("snapshot: failed to create worktree for %s: %w", head, addErr)
 	}
 
 	var once sync.Once
