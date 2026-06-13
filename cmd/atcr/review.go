@@ -70,6 +70,14 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
 	idOverride, _ := cmd.Flags().GetString("id")
 
+	// Resolve --output-dir (mutually exclusive with --id, relative→absolute)
+	// before any review work, so a bad flag combination is a usage error (exit 2)
+	// with no wasted API calls.
+	outputDir, err := outputDirFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+
 	// Validate --fail-on before any review work (no wasted API calls on a bad
 	// threshold), per AC 03-02 Security.
 	threshold, err := failOnThreshold(cmd)
@@ -108,6 +116,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		TimeSuffix: now.Format("150405"),
 		StartedAt:  now,
 		IDOverride: idOverride,
+		OutputDir:  outputDir,
 	}
 
 	// Run the two review phases separately so build-phase failures (persona

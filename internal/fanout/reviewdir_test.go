@@ -12,6 +12,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestScaffoldOutputDir_CreatesTreeWhenAbsent(t *testing.T) {
+	// A non-existent --output-dir path is created (including parents) with the
+	// standard review subdir trio.
+	dir := filepath.Join(t.TempDir(), "nested", "ext-review")
+	got, err := ScaffoldOutputDir(dir)
+	require.NoError(t, err)
+	require.Equal(t, dir, got)
+	for _, sub := range reviewSubdirs {
+		assert.DirExists(t, filepath.Join(dir, sub))
+	}
+}
+
 func TestSlugifyBranch(t *testing.T) {
 	cases := map[string]string{
 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",
