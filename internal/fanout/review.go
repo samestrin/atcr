@@ -13,6 +13,13 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
+// ErrPayloadFullyDropped is returned by buildPayloads when a non-empty input
+// has every file shed by the byte budget. A too-small --byte-budget silently
+// produced zero findings before this guard; it now fails loudly so callers
+// can surface a clear diagnostic rather than firing the reviewer pool at an
+// empty payload.
+var ErrPayloadFullyDropped = errors.New("payload fully dropped by byte budget: every changed file exceeds the configured --byte-budget")
+
 // ErrNoReviewableContent reports a resolved range whose commits changed no
 // reviewable files (e.g. only merge or empty commits), so every payload mode
 // built empty. gitrange.ErrEmptyRange catches zero-commit ranges earlier;
@@ -331,6 +338,9 @@ func buildPayloads(ctx context.Context, cfg *ReviewConfig, repo, base, head stri
 			return nil, fmt.Errorf("building %s payload: %w", mode, err)
 		}
 		kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+		if trunc.AllDropped {
+			return nil, fmt.Errorf("%w (mode %s, dropped %d file(s))", ErrPayloadFullyDropped, mode, len(trunc.FilesDropped))
+		}
 		var b strings.Builder
 		for _, e := range kept {
 			b.WriteString(e.Body)
