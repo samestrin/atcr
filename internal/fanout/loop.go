@@ -218,6 +218,12 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall)
 // whatever was gathered: a timeout records the timeout budget, any other error
 // fails the agent, but the accumulated counters survive on res.
 func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
+	// If the deadline already passed between the trip check and here, skip the
+	// doomed provider round-trip and finalize with the partial result.
+	if err := ctx.Err(); err != nil {
+		l.res.addTripped(budgetTimeout)
+		return l.finalize(classifyStatus(err), err)
+	}
 	l.appendUser(finalAnswerMessage)
 	resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, nil)
 	if err != nil {
