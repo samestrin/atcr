@@ -50,21 +50,19 @@
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
-
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Executed:** 2026-06-13
+**Status:** Ready for Review
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 6/6 (Research/Spike, Foundation, Core, Advanced, Integration, Testing & Validation)
+- **Work Items:** 7/7 user stories (tool defs & dispatcher, path jail & snapshot, agent loop, budgets, degradation, transcript & accounting, persona & docs)
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** all passing (`go test ./...`)
+- **Coverage:** 87.5% total (tools 85.3%, fanout 87.0%, payload 89.7%, registry 87.6%)
+- **Lint:** Clean (`golangci-lint run` — 0 issues); `go vet`/`go build` clean
+- **Dependencies:** no new third-party deps (`go.mod`/`go.sum` unchanged from main)
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 69 (61 code/docs + sprint planning)
+- **Commits:** 25 (ahead of main)
