@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,6 +26,7 @@ func newReviewCmd() *cobra.Command {
 		RunE:  runReview,
 	}
 	cmd.Flags().String("id", "", "review id (default: <YYYY-MM-DD>_<branch-slug>)")
+	cmd.Flags().String("output-dir", "", "write the review tree to this path instead of .atcr/reviews/<id>/ (mutually exclusive with --id; does not update .atcr/latest)")
 	cmd.Flags().String("payload", "", "payload mode override: diff, blocks, or files")
 	cmd.Flags().Int("timeout", 0, "global timeout in seconds (overrides config)")
 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
@@ -31,6 +34,30 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	addRangeFlags(cmd)
 	return cmd
+}
+
+// outputDirFromFlags resolves the --output-dir override for `atcr review`. It
+// returns "" when the flag is unset (the default .atcr/reviews/<id>/ layout). An
+// explicit value is mutually exclusive with --id (the id is meaningless when the
+// path is explicit) and must be non-empty; a relative path is resolved against
+// CWD here, at flag-parse time, so PrepareReview receives an absolute path.
+// Every rejection is a usageError so it maps to exit 2.
+func outputDirFromFlags(cmd *cobra.Command) (string, error) {
+	if !cmd.Flags().Changed("output-dir") {
+		return "", nil
+	}
+	if cmd.Flags().Changed("id") {
+		return "", usageError(errors.New("--output-dir and --id are mutually exclusive"))
+	}
+	dir, _ := cmd.Flags().GetString("output-dir")
+	if strings.TrimSpace(dir) == "" {
+		return "", usageError(errors.New("--output-dir must not be empty"))
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", usageError(fmt.Errorf("resolving --output-dir: %w", err))
+	}
+	return abs, nil
 }
 
 // runReview resolves the range, loads config, and runs the full review flow.
