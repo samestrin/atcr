@@ -1,0 +1,170 @@
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index 44a40cd..a0e1762 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -34,6 +34,15 @@ type PoolSummary struct {
+ 	Failed        int           `json:"failed"`
+ 	Partial       bool          `json:"partial"`
+ 	TotalFindings int           `json:"total_findings"`
++	// FailureMarker is true only when writeFailureSummary produced this record
++	// after a WritePool I/O fault, never when WritePool wrote a real run. It
++	// makes the summary unambiguously a best-effort marker: a write-phase
++	// failure can leave Partial=false (every agent ran) while only a subset of
++	// per-agent artifacts reached disk, so readers that walk the surviving
++	// artifacts (reconcile via ReadManifestPartial) must treat such a run as
++	// partial. omitempty keeps it absent from real summaries, so older readers
++	// correctly see the zero value (false).
++	FailureMarker bool `json:"failure_marker,omitempty"`
+ }
+ 
+ // WritePool persists every agent's artifacts under poolDir, the merged pool
+@@ -114,7 +123,7 @@ func writeFailureSummary(poolDir string, results []Result) {
+ 		return
+ 	}
+ 	sum := summarize(results)
+-	ps := PoolSummary{Total: sum.Total, Succeeded: sum.Succeeded, Failed: sum.Failed, Partial: sum.Partial}
++	ps := PoolSummary{Total: sum.Total, Succeeded: sum.Succeeded, Failed: sum.Failed, Partial: sum.Partial, FailureMarker: true}
+ 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
+ 		fmt.Fprintf(os.Stderr, "atcr: warning: writeFailureSummary: write summary: %v\n", err)
+ 	}
+diff --git a/internal/fanout/artifacts_test.go b/internal/fanout/artifacts_test.go
+index 7215574..44d2305 100644
+--- a/internal/fanout/artifacts_test.go
++++ b/internal/fanout/artifacts_test.go
+@@ -120,6 +120,7 @@ func TestWritePool_MergedFindingsAndSummary(t *testing.T) {
+ 	assert.True(t, ps.Partial)
+ 	assert.Equal(t, 2, ps.TotalFindings)
+ 	assert.Len(t, ps.Agents, 3)
++	assert.False(t, ps.FailureMarker, "a normal WritePool summary is a real run record, not a failure marker")
+ }
+ 
+ func TestWritePool_SanitizesAgentDirName(t *testing.T) {
+@@ -177,6 +178,7 @@ func TestWriteFailureSummary_PreservesRealCounts(t *testing.T) {
+ 	assert.Equal(t, 1, ps.Succeeded, "partial success must be recorded, not fabricated as all-failed")
+ 	assert.Equal(t, 2, ps.Failed)
+ 	assert.True(t, ps.Partial)
++	assert.True(t, ps.FailureMarker, "writeFailureSummary must stamp the best-effort marker so readers know this is not a real run record")
+ }
+ 
+ // TestWriteFailureSummary_AllFailed verifies the all-failed case still records
+@@ -197,6 +199,7 @@ func TestWriteFailureSummary_AllFailed(t *testing.T) {
+ 	assert.Equal(t, 0, ps.Succeeded)
+ 	assert.Equal(t, 2, ps.Failed)
+ 	assert.False(t, ps.Partial)
++	assert.True(t, ps.FailureMarker, "the marker flags the failure-path write regardless of partial; Succeeded==0 keeps it from forcing partial downstream")
+ }
+ 
+ type assertErr string
+diff --git a/internal/fanout/reviewdir.go b/internal/fanout/reviewdir.go
+index 1a85fc4..c95cbc1 100644
+--- a/internal/fanout/reviewdir.go
++++ b/internal/fanout/reviewdir.go
+@@ -328,7 +328,10 @@ func WriteManifest(reviewDir string, m *payload.Manifest) error {
+ // truth ReadReviewStatus uses) as authoritative and falling back to
+ // manifest.json when no readable summary exists (fan-out still running, or a
+ // hand-assembled review). Reading the summary first means a WriteManifest
+-// failure after WritePool can never report partial:false for a partial run.
++// failure after WritePool can never report partial:false for a partial run. A
++// failure-marker summary (a WritePool I/O fault, where only a subset of agents
++// may have reached disk) is forced to partial whenever any agent succeeded, so
++// a reconcile over the surviving artifacts never drops an unflushed agent.
+ // It is the single best-effort reader shared by the CLI reconcile path and the
+ // MCP reconcile handler so the two never drift; when neither artifact is
+ // readable it defaults to false.
+@@ -336,6 +339,15 @@ func ReadManifestPartial(reviewDir string) bool {
+ 	if data, err := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile)); err == nil {
+ 		var ps PoolSummary
+ 		if json.Unmarshal(data, &ps) == nil {
++			// A failure-marker summary means WritePool aborted mid-flush, so the
++			// on-disk agent set may be a subset of what ran while ps.Partial can
++			// still be false (no agent FAILED). Force partial when at least one
++			// agent succeeded so a reconcile over the surviving artifacts cannot
++			// emit a non-partial verdict from an incomplete roster. Zero successes
++			// is a genuine total failure with no surviving subset to protect.
++			if ps.FailureMarker && ps.Succeeded > 0 {
++				return true
++			}
+ 			return ps.Partial
+ 		}
+ 	}
+diff --git a/internal/fanout/reviewdir_test.go b/internal/fanout/reviewdir_test.go
+index 96697a4..591d3c4 100644
+--- a/internal/fanout/reviewdir_test.go
++++ b/internal/fanout/reviewdir_test.go
+@@ -302,6 +302,76 @@ func TestReadManifestPartial_SummaryIsSourceOfTruth(t *testing.T) {
+ 	assert.True(t, ReadManifestPartial(dir), "summary.json says partial:true; stale manifest must not override it")
+ }
+ 
++// A write-phase failure (WritePool aborted mid-flush after agents ran) leaves a
++// failure-marker summary that can say Partial=false (no agent FAILED) even
++// though only a subset of per-agent artifacts reached disk. ReadManifestPartial
++// must force partial so a reconcile over the surviving artifacts never emits a
++// non-partial verdict from an incomplete roster.
++func TestReadManifestPartial_FailureMarkerForcesPartial(t *testing.T) {
++	root := t.TempDir()
++	dir, err := ScaffoldReviewDir(root, "2026-06-10_marker")
++	require.NoError(t, err)
++
++	poolDir := filepath.Join(dir, "sources", "pool")
++	require.NoError(t, os.MkdirAll(poolDir, 0o755))
++	// Every agent ran (Succeeded=2, Failed=0 -> Partial=false), but the write
++	// aborted mid-flush, so the marker is set and the on-disk set may be a subset.
++	sum, err := json.Marshal(PoolSummary{Total: 2, Succeeded: 2, Failed: 0, Partial: false, FailureMarker: true})
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), sum, 0o644))
++
++	assert.True(t, ReadManifestPartial(dir), "a failure-marker summary with surviving successes must read as partial")
++}
++
++// A failure-marker summary where NO agent succeeded is a genuine total failure;
++// the marker alone must not fabricate partial=true (there is no surviving
++// subset to protect).
++func TestReadManifestPartial_FailureMarkerAllFailedStaysNonPartial(t *testing.T) {
++	root := t.TempDir()
++	dir, err := ScaffoldReviewDir(root, "2026-06-10_marker_allfailed")
++	require.NoError(t, err)
++
++	poolDir := filepath.Join(dir, "sources", "pool")
++	require.NoError(t, os.MkdirAll(poolDir, 0o755))
++	sum, err := json.Marshal(PoolSummary{Total: 2, Succeeded: 0, Failed: 2, Partial: false, FailureMarker: true})
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), sum, 0o644))
++
++	assert.False(t, ReadManifestPartial(dir), "marker with zero successes is a total failure, not partial")
++}
++
++// End-to-end AC: ExecuteReview's WritePool-failure branch calls
++// writeFailureSummary with the real results, then a later `atcr reconcile`
++// reads the partial flag via ReadManifestPartial. When every agent ran
++// (Succeeded=2, Failed=0 -> Partial=false) but the write aborted mid-flush, the
++// failure marker must carry through so the reconcile caller receives partial.
++func TestReadManifestPartial_WriteFailureAfterSuccessReadsPartial(t *testing.T) {
++	root := t.TempDir()
++	dir, err := ScaffoldReviewDir(root, "2026-06-10_writefail")
++	require.NoError(t, err)
++	poolDir := filepath.Join(dir, "sources", "pool")
++
++	// Exactly what ExecuteReview does on a WritePool error: the agents ran, the
++	// persistence faulted, so writeFailureSummary records the real (all-OK) tally.
++	results := []Result{
++		{Agent: "greta", Status: StatusOK, PayloadMode: "blocks"},
++		{Agent: "kai", Status: StatusOK, PayloadMode: "blocks"},
++	}
++	writeFailureSummary(poolDir, results)
++
++	// The on-disk summary is a best-effort failure marker, not a real run record.
++	data, err := os.ReadFile(filepath.Join(poolDir, summaryFile))
++	require.NoError(t, err)
++	var ps PoolSummary
++	require.NoError(t, json.Unmarshal(data, &ps))
++	assert.True(t, ps.FailureMarker, "failure summary must be marked")
++	assert.False(t, ps.Partial, "no agent FAILED, so the raw partial flag is false — the marker is what saves us")
++
++	// The reconcile caller threads Partial: ReadManifestPartial(dir); it must be true.
++	assert.True(t, ReadManifestPartial(dir),
++		"reconcile over a write-aborted review must run partial, not drop the unflushed agent silently")
++}
++
+ // Without a summary (fan-out still running, or a hand-assembled review) the
+ // manifest remains the only available signal and is still honored.
+ func TestReadManifestPartial_FallsBackToManifestWhenNoSummary(t *testing.T) {

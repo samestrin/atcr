@@ -1,0 +1,3 @@
+```
+MEDIUM|internal/fanout/reviewdir.go:346|Potential logic gap in partiality detection|Consider if `ps.Partial` should be checked before the `FailureMarker` override|correctness|15|The current logic `if ps.FailureMarker && ps.Succeeded > 0 { return true }` returns true immediately. If `ps.Partial` was already true (due to agent failures), it is correctly returned. However, if `ps.FailureMarker` is false but `ps.Partial` is true, it returns `ps.Partial`. The logic is sound for the stated goal, but the ordering implies that a `FailureMarker` with `Succeeded > 0` overrides the need to check `ps.Partial`. While not a bug, it creates a dependency where the "best-effort" marker takes precedence over the actual "agent failed" status.|otto
+```
