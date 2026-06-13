@@ -160,6 +160,29 @@ func TestBuildFiles_DeletedFileMarker(t *testing.T) {
 	assert.Contains(t, out, "=== FILE: stay.go ===")
 }
 
+func TestBuildEntries_DeletedBinaryMarkerPerMode(t *testing.T) {
+	dir := initRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "blob.bin"), []byte{0x00, 0x01, 0xff}, 0o644))
+	base := commitAll(t, dir, "add binary")
+	require.NoError(t, os.Remove(filepath.Join(dir, "blob.bin")))
+	head := commitAll(t, dir, "delete binary")
+
+	// ModeFiles special-cases kindDeleted before the binary check.
+	out, err := BuildEntries(context.Background(), ModeFiles, dir, base, head)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.Contains(t, out[0].Body, "[deleted file: blob.bin]")
+
+	// ModeDiff and ModeBlocks do not special-case kindDeleted; a deleted binary
+	// reaches the binary check and uses binaryMarkerFmt — accepted divergence.
+	for _, mode := range []PayloadMode{ModeDiff, ModeBlocks} {
+		out, err := BuildEntries(context.Background(), mode, dir, base, head)
+		require.NoErrorf(t, err, "mode %s", mode)
+		require.Lenf(t, out, 1, "mode %s", mode)
+		assert.Containsf(t, out[0].Body, "[binary file changed: blob.bin]", "mode %s", mode)
+	}
+}
+
 func TestBuildFiles_RenamedFile(t *testing.T) {
 	dir := initRepo(t)
 	write(t, dir, "old.go", goFileV1)
