@@ -90,12 +90,19 @@ func (d *Dispatcher) RegisteredTools() []string {
 	return names
 }
 
-// writeToolPatterns are name fragments that flag a mutating tool. The harness is
-// read-only by construction, so any such registration is rejected.
+// writeToolPatterns are common English fragments that appear in mutating tool
+// names. This check is a SECONDARY lint — it catches obvious write-named tools
+// but is bypassable (e.g. "edit", "exec", "run", "rename"). The PRIMARY
+// read-only guarantee is STRUCTURAL: only read_file, grep, and list_files are
+// registered by NewDispatcher (enforced by TestDispatcher_RegisteredToolsAreTheThreeBuiltins),
+// and every handler opens files O_RDONLY+O_NOFOLLOW. Do not treat this list as a
+// security boundary — it is a redundant lint to surface obvious mistakes early.
 var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif", "update", "append", "patch"}
 
-// RegisterTool adds a handler after checking its name against the write-tool
-// blocklist. It returns an error (never silently accepts) for write-shaped names.
+// RegisterTool adds a handler after running a best-effort name check against
+// common write-tool fragments. The check is a secondary lint, not a security
+// boundary — see writeToolPatterns. The real read-only guarantee is the
+// registration set enforced by NewDispatcher and the O_RDONLY open path.
 func (d *Dispatcher) RegisterTool(name string, h handlerFunc) error {
 	if err := guardToolName(name); err != nil {
 		return err
