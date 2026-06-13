@@ -251,3 +251,22 @@ func TestAdjudication_InvalidDecisionVerb(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid adjudication decision")
 }
+
+// TestAmbiguousHash_PanicOnRenderErrorIsIntentional documents the panic contract
+// in AmbiguousHash: a JSON render error panics rather than returning "" because
+// a silent empty hash would poison BaselineHash comparisons. The render path is
+// currently unreachable for valid []AmbiguousCluster inputs (json.Marshal always
+// succeeds on this type), so this test verifies the happy-path output format and
+// confirms the function is callable without panicking for representative inputs.
+func TestAmbiguousHash_PanicOnRenderErrorIsIntentional(t *testing.T) {
+	// Exercise AmbiguousHash directly: the render path panics on error rather
+	// than returning "" (which would poison BaselineHash). The path is
+	// unreachable for valid []AmbiguousCluster inputs since json.Marshal always
+	// succeeds on this concrete type. This test documents that contract and
+	// verifies the happy-path output format (sha256: prefix, determinism).
+	h := AmbiguousHash(nil)
+	require.True(t, len(h) > 0, "AmbiguousHash must return a non-empty digest for nil input")
+	assert.True(t, strings.HasPrefix(h, "sha256:"), "hash must be prefixed sha256:, got %q", h)
+	// Determinism: same input produces the same hash on repeated calls.
+	assert.Equal(t, h, AmbiguousHash(nil), "AmbiguousHash must be deterministic")
+}
