@@ -20,6 +20,12 @@ const MaxAgentTurns = 1000
 // it stays well under the MaxAgentTurns hard cap.
 const DefaultMaxTurns = 10
 
+// MaxToolBudgetBytes caps the cumulative tool-result budget at the largest
+// value that could ever be consumed: the per-payload byte budget times the
+// maximum turn count. Anything larger is almost certainly a typo and is
+// indistinguishable from the unlimited (0) sentinel in practice.
+const MaxToolBudgetBytes = DefaultPayloadByteBudget * MaxAgentTurns
+
 // DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
 // agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
 // AC 01-04's "10 concurrent agent calls" target) while capping a larger or

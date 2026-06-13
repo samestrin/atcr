@@ -210,8 +210,8 @@ func (r *Registry) validate() error {
 		if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
 		}
-		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
-			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0 (0 = unlimited)", name)
+		if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
+			return agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes)
 		}
 	}
 	return nil
