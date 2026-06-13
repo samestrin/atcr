@@ -40,6 +40,20 @@ func (f changedFile) pathspec() []string {
 	return []string{f.path}
 }
 
+// rangeState holds the whole-range cache fields for one base..head pair.
+// All cache reads must go through gitRunner.forRange, which reconciles the
+// key before returning a pointer — no accessor can read a cache field without
+// first passing through that gate.
+type rangeState struct {
+	key        string
+	files      []changedFile          // changed files (one --name-status -M)
+	binary     map[string]bool        // head path -> binary (one --numstat -M)
+	fc         map[string]string      // head path -> --function-context chunk
+	plain      map[string]string      // head path -> --unified=10 chunk
+	raw        map[string]string      // head path -> plain -M diff chunk
+	lineRanges map[string][]lineRange // head path -> head-side changed ranges
+}
+
 // gitRunner executes git argv against a fixed directory and context. The
 // payload package wraps os/exec directly (there is no internal/git package).
 //
@@ -57,16 +71,9 @@ type gitRunner struct {
 	// the constant-process-count regression test; it is otherwise inert.
 	execCount int
 
-	// cacheKey is the "base..head" the caches below were computed for; a
-	// mismatched range resets them. A gitRunner's range is constant in practice
-	// (one per Build* call), so this only guards reuse in white-box tests.
-	cacheKey   string
-	filesCache []changedFile          // changed files (one --name-status -M)
-	binCache   map[string]bool        // head path -> binary (one --numstat -M)
-	fcCache    map[string]string      // head path -> --function-context chunk
-	plainCache map[string]string      // head path -> --unified=10 chunk
-	rawCache   map[string]string      // head path -> plain -M diff chunk
-	rangeCache map[string][]lineRange // head path -> head-side changed ranges
+	// state holds the whole-range caches for the current base..head pair.
+	// Access only via forRange, which resets state when the range changes.
+	state rangeState
 }
 
 // run executes `git -C <dir> args...` and returns trimmed stdout. LC_ALL=C
@@ -147,9 +154,9 @@ func (g *gitRunner) changedFiles(base, head string) ([]changedFile, error) {
 // changedFilesMemo memoizes changedFiles so the splitter (which keys chunks
 // against this list) and buildEntries share one --name-status -M process.
 func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
-	g.ensureRange(base, head)
-	if g.filesCache != nil {
-		return g.filesCache, nil
+	s := g.forRange(base, head)
+	if s.files != nil {
+		return s.files, nil
 	}
 	files, err := g.changedFiles(base, head)
 	if err != nil {
@@ -158,7 +165,7 @@ func (g *gitRunner) changedFilesMemo(base, head string) ([]changedFile, error) {
 	if files == nil {
 		files = []changedFile{} // non-nil so an empty range still memoizes
 	}
-	g.filesCache = files
+	s.files = files
 	return files, nil
 }
 
@@ -195,16 +202,17 @@ func (g *gitRunner) log() *slog.Logger {
 	return slog.Default()
 }
 
-// ensureRange resets the whole-range caches if base..head changed since they
-// were computed. In production a gitRunner serves one range for its whole life,
-// so this is a no-op after the first call; it only matters for white-box tests
-// that reuse a runner across ranges.
-func (g *gitRunner) ensureRange(base, head string) {
-	if key := base + ".." + head; g.cacheKey != key {
-		g.cacheKey = key
-		g.filesCache = nil
-		g.binCache, g.fcCache, g.plainCache, g.rawCache, g.rangeCache = nil, nil, nil, nil, nil
+// forRange reconciles the cached state against base..head and returns a
+// pointer to it. If the range changed, state is replaced with a zero
+// rangeState keyed to the new range, clearing all cache fields atomically.
+// Every cache accessor must call forRange rather than reading state directly;
+// this makes reconciliation structurally unavoidable rather than a per-method
+// convention.
+func (g *gitRunner) forRange(base, head string) *rangeState {
+	if key := base + ".." + head; g.state.key != key {
+		g.state = rangeState{key: key}
 	}
+	return &g.state
 }
 
 // numstatNewPath reconstructs the head-side (new) path from a --numstat path
@@ -321,9 +329,9 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 // diff yields an empty (non-nil) set. The result is memoized so the N per-file
 // binary checks collapse to a single git process.
 func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
-	g.ensureRange(base, head)
-	if g.binCache != nil {
-		return g.binCache, nil
+	s := g.forRange(base, head)
+	if s.binary != nil {
+		return s.binary, nil
 	}
 	out, err := g.run("diff", "--numstat", "-M", base+".."+head)
 	if err != nil {
@@ -338,48 +346,48 @@ func (g *gitRunner) binarySet(base, head string) (map[string]bool, error) {
 			}
 		}
 	}
-	g.binCache = set
+	s.binary = set
 	return set, nil
 }
 
 // fcChunks / plainChunks / rawChunks memoize the whole-range function-context,
 // -U10, and plain -M diffs respectively, each split per head path.
 func (g *gitRunner) fcChunks(base, head string) (map[string]string, error) {
-	g.ensureRange(base, head)
-	if g.fcCache != nil {
-		return g.fcCache, nil
+	s := g.forRange(base, head)
+	if s.fc != nil {
+		return s.fc, nil
 	}
 	m, err := g.diffChunks(base, head, "--function-context")
 	if err != nil {
 		return nil, err
 	}
-	g.fcCache = m
+	s.fc = m
 	return m, nil
 }
 
 func (g *gitRunner) plainChunks(base, head string) (map[string]string, error) {
-	g.ensureRange(base, head)
-	if g.plainCache != nil {
-		return g.plainCache, nil
+	s := g.forRange(base, head)
+	if s.plain != nil {
+		return s.plain, nil
 	}
 	m, err := g.diffChunks(base, head, "--unified=10")
 	if err != nil {
 		return nil, err
 	}
-	g.plainCache = m
+	s.plain = m
 	return m, nil
 }
 
 func (g *gitRunner) rawChunks(base, head string) (map[string]string, error) {
-	g.ensureRange(base, head)
-	if g.rawCache != nil {
-		return g.rawCache, nil
+	s := g.forRange(base, head)
+	if s.raw != nil {
+		return s.raw, nil
 	}
 	m, err := g.diffChunks(base, head)
 	if err != nil {
 		return nil, err
 	}
-	g.rawCache = m
+	s.raw = m
 	return m, nil
 }
 
@@ -466,9 +474,9 @@ func parseHeadRanges(chunk string) []lineRange {
 // and parsed into changed line ranges, so the N per-file range queries collapse
 // to a single git process.
 func (g *gitRunner) rangeChunks(base, head string) (map[string][]lineRange, error) {
-	g.ensureRange(base, head)
-	if g.rangeCache != nil {
-		return g.rangeCache, nil
+	s := g.forRange(base, head)
+	if s.lineRanges != nil {
+		return s.lineRanges, nil
 	}
 	chunks, err := g.diffChunks(base, head, "--unified=0")
 	if err != nil {
@@ -478,7 +486,7 @@ func (g *gitRunner) rangeChunks(base, head string) (map[string][]lineRange, erro
 	for path, chunk := range chunks {
 		m[path] = parseHeadRanges(chunk)
 	}
-	g.rangeCache = m
+	s.lineRanges = m
 	return m, nil
 }
 

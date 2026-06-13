@@ -67,6 +67,26 @@ func BenchmarkChunkKey_FastPath(b *testing.B) {
 	}
 }
 
+// TestForRange_ResetAcrossRanges verifies that forRange enforces cache
+// reconciliation structurally — a new cache field added to rangeState is
+// automatically reset with the rest of the state when the range changes,
+// with no per-accessor call to ensureRange required.
+func TestForRange_ResetAcrossRanges(t *testing.T) {
+	g := &gitRunner{ctx: context.Background(), dir: t.TempDir()}
+
+	// Populate files under range "a..b".
+	s := g.forRange("a", "b")
+	s.files = []changedFile{{path: "x.go"}}
+
+	// Switching range must reset the state (including files).
+	s2 := g.forRange("c", "d")
+	assert.Nil(t, s2.files, "files cache must be nil after range change")
+
+	// Re-entering the original range returns fresh state (old data gone).
+	s3 := g.forRange("a", "b")
+	assert.Nil(t, s3.files, "files cache must be nil when re-entering a different range")
+}
+
 // A fatal git failure (here: not a repository) must propagate from isBinary
 // rather than being silently reported as "not binary" (TD-010).
 func TestIsBinary_FatalGitErrorPropagates(t *testing.T) {
