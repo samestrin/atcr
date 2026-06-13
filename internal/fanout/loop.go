@@ -184,8 +184,8 @@ func (l *toolLoop) run(ctx context.Context) Result {
 // dispatchTurn processes one turn's tool calls: it skips/nudges identical
 // repeats, rejects malformed arguments before they reach the dispatcher, and
 // executes the rest, appending every outcome as a role:"tool" result. It returns
-// true when loop hygiene requires halting (a second identical repeat, or a
-// second consecutive malformed turn). It updates prevSigs/nudgedSigs/malformedPrev
+// true when loop hygiene requires halting (a repeat seen in sigHistory, or a
+// second consecutive malformed turn). It updates sigHistory/nudgedSigs/malformedPrev
 // for the next turn.
 func (l *toolLoop) dispatchTurn(ctx context.Context, turn int, calls []llmclient.ToolCall) (halt bool) {
 	curSigs := make(map[string]bool, len(calls))
