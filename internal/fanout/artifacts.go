@@ -34,6 +34,15 @@ type PoolSummary struct {
 	Failed        int           `json:"failed"`
 	Partial       bool          `json:"partial"`
 	TotalFindings int           `json:"total_findings"`
+	// FailureMarker is true only when writeFailureSummary produced this record
+	// after a WritePool I/O fault, never when WritePool wrote a real run. It
+	// makes the summary unambiguously a best-effort marker: a write-phase
+	// failure can leave Partial=false (every agent ran) while only a subset of
+	// per-agent artifacts reached disk, so readers that walk the surviving
+	// artifacts (reconcile via ReadManifestPartial) must treat such a run as
+	// partial. omitempty keeps it absent from real summaries, so older readers
+	// correctly see the zero value (false).
+	FailureMarker bool `json:"failure_marker,omitempty"`
 }
 
 // WritePool persists every agent's artifacts under poolDir, the merged pool
@@ -114,7 +123,7 @@ func writeFailureSummary(poolDir string, results []Result) {
 		return
 	}
 	sum := summarize(results)
-	ps := PoolSummary{Total: sum.Total, Succeeded: sum.Succeeded, Failed: sum.Failed, Partial: sum.Partial}
+	ps := PoolSummary{Total: sum.Total, Succeeded: sum.Succeeded, Failed: sum.Failed, Partial: sum.Partial, FailureMarker: true}
 	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
 		fmt.Fprintf(os.Stderr, "atcr: warning: writeFailureSummary: write summary: %v\n", err)
 	}

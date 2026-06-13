@@ -120,6 +120,7 @@ func TestWritePool_MergedFindingsAndSummary(t *testing.T) {
 	assert.True(t, ps.Partial)
 	assert.Equal(t, 2, ps.TotalFindings)
 	assert.Len(t, ps.Agents, 3)
+	assert.False(t, ps.FailureMarker, "a normal WritePool summary is a real run record, not a failure marker")
 }
 
 func TestWritePool_SanitizesAgentDirName(t *testing.T) {
@@ -177,6 +178,7 @@ func TestWriteFailureSummary_PreservesRealCounts(t *testing.T) {
 	assert.Equal(t, 1, ps.Succeeded, "partial success must be recorded, not fabricated as all-failed")
 	assert.Equal(t, 2, ps.Failed)
 	assert.True(t, ps.Partial)
+	assert.True(t, ps.FailureMarker, "writeFailureSummary must stamp the best-effort marker so readers know this is not a real run record")
 }
 
 // TestWriteFailureSummary_AllFailed verifies the all-failed case still records
@@ -197,6 +199,7 @@ func TestWriteFailureSummary_AllFailed(t *testing.T) {
 	assert.Equal(t, 0, ps.Succeeded)
 	assert.Equal(t, 2, ps.Failed)
 	assert.False(t, ps.Partial)
+	assert.True(t, ps.FailureMarker, "the marker flags the failure-path write regardless of partial; Succeeded==0 keeps it from forcing partial downstream")
 }
 
 type assertErr string
