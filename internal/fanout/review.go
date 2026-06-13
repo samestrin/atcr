@@ -175,6 +175,9 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		return nil, err
 	}
 
+	// Derive the id unconditionally: for --output-dir the id is provenance-only
+	// (written to the manifest and PreparedReview.ID but not used for the path),
+	// while for --id and the default derived case the id IS the path component.
 	id, err := ReviewID(req.IDOverride, req.Branch, req.Date, req.TimeSuffix, nil)
 	if err != nil {
 		return nil, err
