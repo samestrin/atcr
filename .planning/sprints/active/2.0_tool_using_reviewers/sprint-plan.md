@@ -202,11 +202,11 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. Commit: `git commit -m "chore(spike): document wire format and path jail findings"`
    **Duration:** 1 hour
 
-### 1.5 [ ] **Phase 1 DoD**
-   - [ ] Wire format spike confirms `tool_calls` round-trip through mock provider
-   - [ ] Path jail prototype rejects all escape vectors: absolute, `..`, symlink-escape, `.git/`
-   - [ ] Git worktree lifecycle validated for both fast and slow paths
-   - [ ] Spike findings documented with risks and design decisions
+### 1.5 [x] **Phase 1 DoD**
+   - [x] Wire format spike confirms `tool_calls` round-trip through mock provider
+   - [x] Path jail prototype rejects all escape vectors: absolute, `..`, symlink-escape, `.git/`
+   - [x] Git worktree lifecycle validated for both fast and slow paths
+   - [x] Spike findings documented with risks and design decisions
 
    ```
    Phase-1 DoD Complete
@@ -214,7 +214,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    Manual Review: [ ] Findings reviewed and accepted
    ```
 
-### 1.6 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+### 1.6 [x] **Phase 1 - GATE: Integration & Exit Review (subagent)**
    **Scope:** Spike findings and design decisions from Phase 1
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's work — this is intentional.
@@ -233,16 +233,13 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (gate review, 2026-06-13):** All cross-cutting claims C1–C8 (line numbers, existing structures, `O_NOFOLLOW=0x100`, no new deps) independently VERIFIED correct against the live codebase. No CRITICAL/HIGH.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | sprint-plan.md:332 | Phase 2 task 2.5 still specs single-arg `Resolve(path)` with `filepath.Abs`; validated spike mandates two-arg `Resolve(rootCanon, rel)` with `filepath.Join` against a canonical root. RED tests could target wrong signature. | Phase 2 follows spike-findings.md, not stale 2.5 prose. Captured as TD-001. |
+   | LOW | sprint-plan.md:332-333 | Canonical-root EvalSymlinks invariant lives only in spike-findings.md prose, absent from Phase 2 task spec. | Assert in Phase 2 jail RED tests. Captured as TD-002. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action taken:** No CRITICAL/HIGH → no pre-boundary fix needed. MEDIUM/LOW appended to `tech-debt-captured.md` (TD-001, TD-002). **Phase gate passed.**
    **Duration:** 15-30 min
 
 ---
