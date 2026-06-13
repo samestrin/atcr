@@ -32,9 +32,10 @@ const (
 // (Epic 2.0). They name which per-agent budget halted the tool loop so the
 // status.json reader and report panel can attribute the early stop.
 const (
-	budgetMaxTurns  = "max_turns"
-	budgetToolBytes = "tool_budget_bytes"
-	budgetTimeout   = "timeout_secs"
+	budgetMaxTurns    = "max_turns"
+	budgetToolBytes   = "tool_budget_bytes"
+	budgetTimeout     = "timeout_secs"
+	budgetLoopHygiene = "loop_hygiene"
 )
 
 // Review run states reported by ReadReviewStatus (AC 04-04). in_progress holds

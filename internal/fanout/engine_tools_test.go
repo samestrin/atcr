@@ -401,6 +401,43 @@ func TestLoop_MalformedJSONRetryThenHalt(t *testing.T) {
 	assert.Equal(t, "FINAL", r.Content)
 }
 
+// AC 01-04 ABAB oscillation: A→B→A should be caught by the ring window.
+func TestLoop_ABABOscillationNudgedThenHalts(t *testing.T) {
+	a := toolCall("c1", "read_file", `{"path":"a.go"}`)
+	b := toolCall("c2", "grep", `{"pattern":"foo"}`)
+	cc := &scriptedChat{turns: []chatTurn{
+		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 1: executes A,B
+		{toolCalls: []llmclient.ToolCall{b, a}}, // turn 2: executes B (new position but same sig), A same — A now in history
+		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 3: A,B both in ring → nudge (not execute)
+		{toolCalls: []llmclient.ToolCall{a, b}}, // turn 4: A,B in nudgedSigs → halt
+	}}
+	d := newFakeDispatcher()
+	d.byName["read_file"] = tools.ToolResult{Content: "x"}
+	d.byName["grep"] = tools.ToolResult{Content: "y"}
+
+	r := toolEngine(cc, d).invokeAgent(context.Background(), toolAgent("ag", 10, 0))
+	require.Equal(t, StatusOK, r.Status)
+	// turns 1 and 2 each execute 2 calls = 4; turn 3 nudges without executing
+	assert.LessOrEqual(t, d.callCount(), 4, "ABAB oscillation must be caught within the ring window")
+	assert.Equal(t, "FINAL", r.Content)
+}
+
+// AC 01-04 hygiene halt must record loop_hygiene in TrippedBudgets.
+func TestLoop_HygieneHaltRecordsTrippedBudget(t *testing.T) {
+	same := toolCall("c1", "read_file", `{"path":"a.go"}`)
+	cc := &scriptedChat{turns: []chatTurn{
+		{toolCalls: []llmclient.ToolCall{same}}, // turn 1: executes
+		{toolCalls: []llmclient.ToolCall{same}}, // turn 2: nudge
+		{toolCalls: []llmclient.ToolCall{same}}, // turn 3: halt
+	}}
+	d := newFakeDispatcher()
+	d.byName["read_file"] = tools.ToolResult{Content: "x"}
+
+	r := toolEngine(cc, d).invokeAgent(context.Background(), toolAgent("a", 10, 0))
+	require.Equal(t, StatusOK, r.Status)
+	assert.Contains(t, r.TrippedBudgets, budgetLoopHygiene, "loop-hygiene halt must record loop_hygiene in TrippedBudgets")
+}
+
 // --- AC 01-05: degrade path -------------------------------------------------
 
 func TestDegrade_CompleterWithoutChatCompleter(t *testing.T) {
