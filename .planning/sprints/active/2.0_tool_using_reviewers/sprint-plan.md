@@ -159,6 +159,21 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 - status.json counters `Turns`/`ToolCalls`/`ToolBytes` already reserved (`internal/fanout/status.go:277-279`); `ToolsDegraded` is NOT yet present (new in Phase 4).
 - `ChatCompleter` wiring into `Engine` (which currently holds a single `Completer`) is a Phase 3 design decision.
 
+### Phase 3 Clarifications (recorded 2026-06-13)
+
+**Key Decisions:**
+- **max_turns semantics = Model A (confirmed).** A "turn" is one `Chat` call sent WITH tools. The turn counter increments at loop start; the budget is checked after the model responds. The model's returned `tool_calls` are executed only if `turns < MaxTurns` (room for another round-trip to feed results back). So `MaxTurns=N` ⇒ N Chat-with-tools calls, but the Nth turn's `tool_calls` are NOT executed; `max_turns` trips → one final `Chat` WITHOUT tools requests the answer (unbudgeted, not counted as a turn). Consequence: `MaxTurns=5` with tools-every-turn ⇒ `Result.Turns=5`, `Result.ToolCalls=4`; `MaxTurns=1` ⇒ `Result.Turns=1`, `Result.ToolCalls=0`. Reconciles AC 01-03 EC3 with AC 02-01 S1/EC1.
+- **AgentStatus.ToolsDegraded added now (Phase 3).** AC 01-05 (Story 1) requires it; ACs are the binding contract over spike note C6's tentative Phase-4 tag. Phase 3 implements degrade path #1 (completer does not implement `ChatCompleter`, or no dispatcher injected → single-shot, `tools_degraded:true`). Phase 4 reuses the same field for degrade path #2 (`supports_function_calling` registry capability check) — no new field.
+
+**Scope Boundaries (Phase 3 only — gated):**
+- IN: llmclient wire format (`ToolDef`/`ToolCall`/`Message`/`ChatResponse`, `message`+`tool_calls`/`tool_call_id`) + `Chat`; fanout `ChatCompleter` + multi-turn loop + 3 budgets + loop hygiene + degrade path; `Result`/`AgentStatus` counter+tripped-budget+degraded plumbing; `review.go` `buildAgent`/`buildFallbackAgent` tool-field propagation + `PayloadContext.ToolsEnabled`; registry `applyDefaults(max_turns=10 when tools=true)` + `DefaultMaxTurns=10`; `internal/boundaries_test.go` allowlist fix; Phase 3 DoD + gate subagent.
+- OUT (later phases): real snapshot→jail→dispatcher wiring into `ExecuteReview` (Phase 6 e2e — until then tool agents degrade safely); `supports_function_calling` capability degrade (Phase 4); `transcript.jsonl` + manifest review-stage recording (Phase 5).
+
+**Technical Approach:**
+- **Production wiring deferred to Phase 6 (confirmed).** Phase 3 builds the loop with the dispatcher INJECTED via a new `Engine` `WithDispatcher` option; all 10 ACs are unit-tested with httptest mock providers + fake/real dispatcher. The live snapshot→jail→dispatcher wiring into `ExecuteReview` lands in Phase 6's fixture-repo e2e. A tool-enabled review with no injected dispatcher degrades to single-shot (`tools_degraded:true`).
+- **Wire types live in `internal/llmclient`** (spike 1.1 #5); `llmclient` stays decoupled from `internal/tools`. The engine converts `tools.ToolDef` → `llmclient.ToolDef` once before the loop. `*llmclient.Client` implements both `Complete` and `Chat`; the engine selects the loop via type assertion `e.completer.(ChatCompleter)` when `Agent.Tools` is true.
+- **Pre-existing red fixed here:** `internal/tools/` (added Phase 2) has no `internal/boundaries_test.go` allowlist entry, so `go test ./...` is currently red (Phase 2 only ran `go test ./internal/tools/...`). Phase 3 adds `"tools": {}` and `"tools"` to `fanout`'s allowed imports (the loop imports `tools`).
+
 ---
 
 ## Sprint Phases
@@ -423,7 +438,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Goal:** Implement `ChatCompleter` interface, llmclient wire format, multi-turn agent loop, and budget enforcement with httptest-scripted integration tests.
 
-### 3.1 [ ] **[Story 1: Agent Loop Execution - RED](plan/user-stories/01-agent-loop-execution.md)**
+### 3.1 [x] **[Story 1: Agent Loop Execution - RED](plan/user-stories/01-agent-loop-execution.md)**
    Write comprehensive failing tests, verify fail correctly
    - Test `ChatCompleter` interface: `Chat(ctx, inv, messages, tools)` signature accepted by fanout engine
    - Test llmclient wire format: `tools` array serialized in request body; `tool_calls` deserialized from response; `role:"tool"` messages accepted
@@ -436,7 +451,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Files:** `internal/fanout/engine_test.go`, `internal/llmclient/client_test.go` | **Duration:** 3-4 hours
    **AC:** [01-01](plan/acceptance-criteria/01-01-chatcompleter-interface-wire-format.md), [01-02](plan/acceptance-criteria/01-02-multi-turn-agent-loop.md), [01-03](plan/acceptance-criteria/01-03-per-agent-budget-enforcement.md), [01-04](plan/acceptance-criteria/01-04-loop-hygiene.md), [01-05](plan/acceptance-criteria/01-05-degrade-path-fallback-inheritance.md), [01-06](plan/acceptance-criteria/01-06-result-accounting-compat.md)
 
-### 3.2 [ ] **[Story 1: Agent Loop Execution - GREEN](plan/user-stories/01-agent-loop-execution.md)**
+### 3.2 [x] **[Story 1: Agent Loop Execution - GREEN](plan/user-stories/01-agent-loop-execution.md)**
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
    - `internal/llmclient/client.go`: Add `ChatCompleter` interface; extend request struct to include `tools []ToolDef` when non-nil; parse `tool_calls` from response; build `role:"tool"` messages
    - `internal/fanout/engine.go`: Add `invokeAgent(ctx, agent, messages, tools, snapshot)` — branches on `Agent.Tools`; drives multi-turn loop: `Chat` → check `tool_calls` → dispatch via `Dispatcher` → append results → check budgets → repeat until final message; loop hygiene (nudge, retry, error-as-result)
@@ -444,7 +459,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "feat(fanout): add multi-turn agent loop with tool dispatch (green)"`
    **Files:** `internal/llmclient/client.go`, `internal/fanout/engine.go` | **Duration:** 5-6 hours
 
-### 3.2.A [ ] **[Story 1: Agent Loop Execution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-agent-loop-execution.md)**
+### 3.2.A [x] **[Story 1: Agent Loop Execution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-agent-loop-execution.md)**
    **Changed Files:** `internal/llmclient/client.go`, `internal/fanout/engine.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -462,25 +477,25 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-06-13):** Files reviewed: `client.go`, `chat.go`, `engine.go`, `loop.go`. Reviewer confirmed sound: API key never leaks (errors echo only the redacted snippet/endpoint), `len(out.Content)` byte accounting reflects delivered bytes, FD-safe HTTP path, bounded response read. One real wire-protocol defect found (three ranked rows, same root cause) and FIXED inline in 3.3:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | loop.go first-repeat | First-repeat nudge appended a `role:user` message and skipped the call WITHOUT a `role:tool` answer for its `tool_call_id`; the assistant `tool_calls` message was already appended → next request has a dangling tool_call_id (and an illegally interleaved user message) → OpenAI-compatible providers HTTP 400, breaking the loop. | FIXED 3.3: answer every skipped/repeated call with a `role:tool` nudge result (no interleaved user message); the per-call result both satisfies the wire contract and nudges. |
+   | HIGH | loop.go nudged-reappear halt | Second-repeat halt `continue`d without answering the reappeared `tool_call_id`, so `requestFinalAnswer`'s Chat was malformed → 400 → partial findings discarded. | FIXED 3.3: append a `role:tool` answer for the reappeared call before halting. |
+   | MEDIUM | loop.go max_turns trip | Model-A max_turns trip intentionally leaves the turn's tool_calls unexecuted; `requestFinalAnswer` then sent an assistant turn with unanswered tool_calls → malformed final request. | FIXED 3.3: `answerSkipped` appends a `role:tool` "skipped: turn budget reached" result for each unexecuted call before the final request. |
+   | LOW | engine.go:202 | Fan-out lane goroutines have no `recover()`; a panic in an agent invocation crashes the process and the WaitGroup never drains (pre-existing 1.x; tool loop widens the surface). | DEFERRED → TD-006 (broader engine-concurrency change, no known panic path; dispatcher already recovers tool panics). |
+   | LOW | chat.go ToolCallArguments / toolSig | Two malformed args with different raw encodings that decode to the same invalid inner string collide in `toolSig`. | No action — dedup on decoded args is intentional and correct (string-encoded and raw-object forms of the SAME call SHOULD dedup); both are rejected as malformed regardless. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** The HIGH/MEDIUM rows are one defect (dangling `tool_call_id` makes the conversation malformed for real providers; my fake `Chat` did not validate pairing, so unit tests missed it). FIXED inline in 3.3: every `tool_call` is now answered with a `role:tool` result on all skip paths, and the test fake (`scriptedChat`) now rejects a dangling `tool_call_id` exactly as a provider's HTTP 400 would — so the invariant is enforced across the whole loop suite. One LOW deferred to TD-006; one LOW is by-design. **Adversarial review passed (no CRITICAL; HIGH fixed before proceeding).**
 
-### 3.3 [ ] **[Story 1: Agent Loop Execution - REFACTOR](plan/user-stories/01-agent-loop-execution.md)**
+### 3.3 [x] **[Story 1: Agent Loop Execution - REFACTOR](plan/user-stories/01-agent-loop-execution.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
    2. Improve code quality: extract loop sub-steps into clear helpers, naming, context propagation (T1)
    3. Validate all tests still pass (T3)
    4. COMMIT: `git commit -m "refactor(fanout): address review + clean up agent loop"`
    **Duration:** 1-2 hours
 
-### 3.4 [ ] **[Story 2: Budget Enforcement - RED](plan/user-stories/02-budget-enforcement.md)**
+### 3.4 [x] **[Story 2: Budget Enforcement - RED](plan/user-stories/02-budget-enforcement.md)**
    Write comprehensive failing tests, verify fail correctly
    - Test turn budget: loop stops when `turns >= max_turns`; `AgentStatus.TrippedBudgets` records `"max_turns"`
    - Test tool byte budget: cumulative byte sum tracked per agent; trip deferred to end-of-turn (current tool result delivered in full); `"tool_budget_bytes"` recorded
@@ -490,7 +505,8 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Files:** `internal/fanout/engine_test.go` (budget sections), `internal/fanout/status_test.go` | **Duration:** 2-3 hours
    **AC:** [02-01](plan/acceptance-criteria/02-01-turn-budget-enforcement.md), [02-02](plan/acceptance-criteria/02-02-tool-byte-budget-enforcement.md), [02-03](plan/acceptance-criteria/02-03-timeout-enforcement.md), [02-04](plan/acceptance-criteria/02-04-budget-status-reporting-partial-success.md)
 
-### 3.5 [ ] **[Story 2: Budget Enforcement - GREEN](plan/user-stories/02-budget-enforcement.md)**
+### 3.5 [x] **[Story 2: Budget Enforcement - GREEN](plan/user-stories/02-budget-enforcement.md)**
+   **Note (2026-06-13):** Budget enforcement is inseparable from the loop — a loop with no `max_turns` cannot be bounded — so the GREEN budget code (`loop.go` max_turns/tool_budget_bytes/timeout checks, `status.go` `TrippedBudgets`, `registry` `applyDefaults`+`DefaultMaxTurns`, `artifacts.go` counter propagation) was authored together with the Story 1 loop in commit `8ff1a73`. Task 3.4 then added the dedicated budget RED tests (`engine_budget_test.go`, `status_tools_test.go`) which verify all of Story 2's ACs against that code. **Model-A corollary (documented):** under the confirmed max_turns semantics the literal "both `max_turns` and `tool_budget_bytes` trip on the same turn" case (AC 02-02 EC3 / AC 02-04 S2) is unreachable — the max_turns turn does not execute tools, so its bytes cannot also push over budget on that turn; budgets still trip independently across turns and `TrippedBudgets` de-dupes multiple entries. Captured as TD-007.
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
    - `internal/fanout/engine.go`: Budget check at top of each loop iteration: `turns >= agent.MaxTurns` trips `max_turns`; accumulate `toolBytes`; check `toolBytes > agent.ToolBudgetBytes` at end of each turn for `tool_budget_bytes`
    - `internal/fanout/engine.go`: Wrap loop with `context.WithTimeout(ctx, time.Duration(agent.TimeoutSecs)*time.Second)` for `timeout`
@@ -499,7 +515,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "feat(fanout): add budget enforcement (max_turns, tool_bytes, timeout) (green)"`
    **Files:** `internal/fanout/engine.go`, `internal/fanout/status.go` | **Duration:** 3-4 hours
 
-### 3.5.A [ ] **[Story 2: Budget Enforcement - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-budget-enforcement.md)**
+### 3.5.A [x] **[Story 2: Budget Enforcement - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-budget-enforcement.md)**
    **Changed Files:** `internal/fanout/engine.go` (budget sections), `internal/fanout/status.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.5 — this is intentional.
@@ -517,32 +533,29 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-06-13):** Files reviewed: `loop.go`, `engine.go`, `status.go`, `artifacts.go`, `registry/config.go`, `registry/precedence.go`. No CRITICAL/HIGH/MEDIUM. Reviewer independently verified: counters reach status.json on every halt path (normal/max_turns/byte/timeout/error/degrade); non-tool agents emit no tool fields (omitempty); strictly-greater byte trip with exactly-equal not tripping; deferred byte trip (full delivery then trip); timeout precedence over byte; DeadlineExceeded+Canceled→timeout; Model-A boundary; default applied once; no int64 overflow; counters not model-manipulable (REVIEWER stamped server-side); no context leak (`defer cancel()`).
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | loop.go requestFinalAnswer | On a byte/max_turns trip where the deadline lapsed microseconds before, `requestFinalAnswer` fired one doomed provider Chat (harmless — it returns a deadline error, timeout is recorded, counters survive) instead of short-circuiting. | FIXED 3.6: added an early `ctx.Err()` guard at the top of `requestFinalAnswer` that records timeout and finalizes without the wasted round-trip. |
+   | LOW | loop.go dispatchTurn/run | When a loop-hygiene halt and a byte overage coincide on the same turn, the hygiene halt short-circuits before the byte-budget check, so `tool_budget_bytes` is not added to `TrippedBudgets` (ToolBytes is still reported accurately). | No action — by design: the hygiene halt is the proximate cause, mirroring the documented timeout-precedence ordering; the byte count is preserved on the result. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH/MEDIUM. One cheap LOW (doomed-final-Chat guard) fixed inline in 3.6; one LOW is intended precedence (documented). **Adversarial review passed.**
 
-### 3.6 [ ] **[Story 2: Budget Enforcement - REFACTOR](plan/user-stories/02-budget-enforcement.md)**
+### 3.6 [x] **[Story 2: Budget Enforcement - REFACTOR](plan/user-stories/02-budget-enforcement.md)**
    1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
    2. Improve budget check clarity: extract to `checkBudgets` helper, clear error messages (T1)
    3. Validate all tests still pass (T3)
    4. COMMIT: `git commit -m "refactor(fanout): address review + clean up budget enforcement"`
    **Duration:** 1 hour
 
-### 3.7 [ ] **Phase 3 DoD**
-   - [ ] `go test ./internal/fanout/... ./internal/llmclient/...` — all passing
-   - [ ] `go test -coverprofile=coverage.out ./internal/fanout/... ./internal/llmclient/...` — ≥80%
-   - [ ] `golangci-lint run ./internal/fanout/... ./internal/llmclient/...` — no errors
-   - [ ] `go vet ./...` — clean
-   - [ ] `go build ./...` — succeeds
-   - [ ] Story 1 ACs verified: ChatCompleter, multi-turn loop, loop hygiene, result accounting, backward compat
-   - [ ] Story 2 ACs verified: all three budgets enforce independently, partial-success semantics, status.json markers
+### 3.7 [x] **Phase 3 DoD**
+   - [x] `go test ./internal/fanout/... ./internal/llmclient/...` — all passing (full suite `go test ./...` green)
+   - [x] `go test -coverprofile=coverage.out ./internal/fanout/... ./internal/llmclient/...` — ≥80% (fanout 86.7%, llmclient 91.0%, registry 87.6%)
+   - [x] `golangci-lint run ./internal/fanout/... ./internal/llmclient/...` — no errors (0 issues, incl. registry/payload/internal)
+   - [x] `go vet ./...` — clean
+   - [x] `go build ./...` — succeeds
+   - [x] Story 1 ACs verified: ChatCompleter + wire format, multi-turn loop, loop hygiene (nudge/halt/malformed), result accounting, degrade path, backward compat (single-shot unchanged)
+   - [x] Story 2 ACs verified: all three budgets enforce independently, partial-success semantics, status.json `tripped_budgets`/counter markers
 
    ```
    Phase-3 DoD Complete
@@ -550,7 +563,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    Manual Review: [ ] Code reviewed
    ```
 
-### 3.8 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+### 3.8 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3 (`internal/fanout/engine.go`, `internal/fanout/status.go`, `internal/llmclient/client.go`)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review.
@@ -569,16 +582,15 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (2026-06-13):** All Phase 3 production files reviewed by a fresh hostile-integrator subagent. **No CRITICAL/HIGH/MEDIUM/LOW.** Independently verified: build/vet clean, full suites green, boundaries allowlist complete + acyclic + `fanout→tools` valid, no `go.mod`/`go.sum` delta (stdlib only). Exit contract confirmed consumable by Phase 4:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | INFO | engine.go / status.go / loop.go | CONTRACT EXIT, CONFIG SURFACE (`max_turns`=10 / `tool_budget_bytes`=0-unlimited / `timeout_secs`, documented in docs/registry.md), INTEGRATION (toolDispatcher seam sound), REGRESSION (1.x single-shot untouched; `statusFor` gates tool fields behind `r.Tools` → byte-identical 1.x status.json; `send`/`attempt` refactor preserves `Complete` error semantics, 20+ tests incl. explicit regression guard) — all verified. Gate PASSES. |
+   | INFO | engine.go invokeAgent branch | Phase 4 seam: add `supports_function_calling` as an additive `Agent` field and extend the `if a.Tools` branch; reuses `invokeDegraded` (`ToolsDegraded=true`) — no change to `invokeAgent`/`Result`/`AgentStatus` signatures or the loop. |
+   | INFO | loop.go | Phase 5 note: accounting counters are exposed on `Result`→`AgentStatus` (no signature change), but the per-turn `TranscriptWriter` must be injected into `toolLoop` (the live `l.messages` stream is loop-internal) — additive observer plumbing into loop bodies. |
+   | INFO | review.go ExecuteReview | By design (scope boundary): `ExecuteReview` builds the engine without `WithDispatcher`, so production tool agents degrade safely until Phase 6 wires `SnapshotFor(head)`→`NewJail(root)`→`NewDispatcher(jail, DefaultLimits())`→`WithDispatcher`. No Phase 3 rework. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action taken:** No CRITICAL/HIGH (nothing to fix before the boundary). Phase 4/5/6 wiring guidance captured above. **Phase gate passed.**
    **Duration:** 15-30 min
 
 ---
