@@ -233,13 +233,11 @@ func TestBuildEntries_PerFileBridge(t *testing.T) {
 		// Joining entry bodies reproduces the flat builder output.
 		flat, err := Build(context.Background(), mode, dir, base, head)
 		require.NoError(t, err)
-		if mode != ModeDiff { // BuildDiff is the verbatim whole-range diff
-			var joined string
-			for _, e := range entries {
-				joined += e.Body
-			}
-			assert.Equalf(t, flat, joined, "mode %s entries should join to the flat payload", mode)
+		var joined string
+		for _, e := range entries {
+			joined += e.Body
 		}
+		assert.Equalf(t, flat, joined, "mode %s entries should join to the flat payload", mode)
 	}
 }
 
