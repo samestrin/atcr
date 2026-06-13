@@ -1,0 +1,6 @@
+#!/bin/sh
+# Semantic index auto-update (originally installed by /init-semantic).
+# Migrated into the tracked .githooks/ dir so core.hooksPath does not disable it.
+if command -v llm-semantic >/dev/null 2>&1; then
+  llm-semantic index-update . --storage qdrant --collection atcr-code --profile code --json >/dev/null 2>&1 &
+fi
