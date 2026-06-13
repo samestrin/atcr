@@ -20,6 +20,8 @@ func (r prefixResolver) Resolve(rel string) (string, error) {
 	return filepath.Join(r.root, rel), nil
 }
 
+func (r prefixResolver) Root() string { return r.root }
+
 // rejectResolver always rejects, simulating a jail violation.
 type rejectResolver struct{}
 
@@ -27,9 +29,11 @@ func (rejectResolver) Resolve(rel string) (string, error) {
 	return "", fmt.Errorf("path jail: path escapes snapshot root: %s", rel)
 }
 
+func (rejectResolver) Root() string { return "" }
+
 func newTestDispatcher(t *testing.T, root string) *Dispatcher {
 	t.Helper()
-	return NewDispatcher(prefixResolver{root}, root, DefaultLimits())
+	return NewDispatcher(prefixResolver{root}, DefaultLimits())
 }
 
 func TestDispatcher_RoutesReadFile(t *testing.T) {
@@ -119,8 +123,7 @@ func TestDispatcher_ResultExactlyAtCapNotTruncated(t *testing.T) {
 }
 
 func TestDispatcher_JailRejectionReturnedAsError(t *testing.T) {
-	root := t.TempDir()
-	d := NewDispatcher(rejectResolver{}, root, DefaultLimits())
+	d := NewDispatcher(rejectResolver{}, DefaultLimits())
 	_, err := d.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"../escape"}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "path jail")

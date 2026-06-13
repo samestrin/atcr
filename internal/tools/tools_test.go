@@ -9,7 +9,7 @@ import (
 )
 
 func TestRegisterTool_RejectsWriteNames(t *testing.T) {
-	d := NewDispatcher(prefixResolver{t.TempDir()}, t.TempDir(), DefaultLimits())
+	d := NewDispatcher(prefixResolver{t.TempDir()}, DefaultLimits())
 	noop := func(_ context.Context, _ *Dispatcher, _ json.RawMessage, _ string) (ToolResult, error) {
 		return ToolResult{}, nil
 	}
@@ -46,6 +46,6 @@ func TestTools_ContainNoWriteTools(t *testing.T) {
 }
 
 func TestRegisteredTools_Completeness(t *testing.T) {
-	d := NewDispatcher(prefixResolver{t.TempDir()}, t.TempDir(), DefaultLimits())
+	d := NewDispatcher(prefixResolver{t.TempDir()}, DefaultLimits())
 	assert.ElementsMatch(t, []string{"read_file", "grep", "list_files"}, d.RegisteredTools())
 }

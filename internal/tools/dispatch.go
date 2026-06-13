@@ -19,6 +19,12 @@ const truncMarker = "\n[...truncated...]"
 // handlers never see raw, unvalidated input.
 type Resolver interface {
 	Resolve(relPath string) (string, error)
+	// Root returns the canonical sandbox root. The dispatcher uses it as the
+	// default base for grep/list_files and for rendering relative paths, so it
+	// must use the SAME canonicalization as the paths Resolve returns. Sourcing
+	// the root from the resolver (rather than a separate constructor argument)
+	// makes a root/jail mismatch structurally impossible.
+	Root() string
 }
 
 // ToolError is a non-fatal tool failure. The agent loop converts it into the
@@ -54,11 +60,12 @@ type Dispatcher struct {
 }
 
 // NewDispatcher builds a dispatcher over the three built-in read-only tools.
-// root is the snapshot root used as the default search/listing base.
-func NewDispatcher(jail Resolver, root string, limits Limits) *Dispatcher {
+// The snapshot root (default search/listing base) is taken from jail.Root() so
+// it always shares the jail's canonicalization.
+func NewDispatcher(jail Resolver, limits Limits) *Dispatcher {
 	d := &Dispatcher{
 		jail:     jail,
-		root:     root,
+		root:     jail.Root(),
 		limits:   limits,
 		handlers: map[string]handlerFunc{},
 		pathArgs: map[string]pathSpec{},

@@ -369,14 +369,14 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. COMMIT: `git commit -m "refactor(tools): address review + clean up jail and snapshot"`
    **Duration:** 1-2 hours
 
-### 2.7 [ ] **Phase 2 DoD**
-   - [ ] `go test ./internal/tools/...` — all passing
-   - [ ] `go test -coverprofile=coverage.out ./internal/tools/...` — ≥80% coverage
-   - [ ] `golangci-lint run ./internal/tools/...` — no errors
-   - [ ] `go vet ./internal/tools/...` — clean
-   - [ ] `go build ./...` — succeeds
-   - [ ] Story 7 ACs verified: `read_file`, `grep`, `list_files` handlers + dispatcher byte caps
-   - [ ] Story 3 ACs verified: all escape vectors rejected, snapshot lifecycle clean, no write tools
+### 2.7 [x] **Phase 2 DoD**
+   - [x] `go test ./internal/tools/...` — all passing
+   - [x] `go test -coverprofile=coverage.out ./internal/tools/...` — ≥80% coverage (84.6%)
+   - [x] `golangci-lint run ./internal/tools/...` — no errors (0 issues)
+   - [x] `go vet ./internal/tools/...` — clean
+   - [x] `go build ./...` — succeeds
+   - [x] Story 7 ACs verified: `read_file`, `grep`, `list_files` handlers + dispatcher byte caps
+   - [x] Story 3 ACs verified: all escape vectors rejected, snapshot lifecycle clean, no write tools
 
    ```
    Phase-2 DoD Complete
@@ -384,7 +384,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    Manual Review: [ ] Code reviewed
    ```
 
-### 2.8 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.8 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2 (`internal/tools/`)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional.
@@ -403,16 +403,12 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (2026-06-13):** Confirmed sound exit contracts (`Dispatcher.Execute`, `NewJail`/`Jail.Resolve`, `SnapshotManager.SnapshotFor`, `ToolDef.MarshalJSON`/`Tools()`, `Resolver` satisfied by `*Jail`); `DefaultLimits` + cap constants exported/documented; nothing outside `internal/tools/` touched. One HIGH integration trap found and FIXED before the boundary:
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | dispatch.go NewDispatcher / jail.go NewJail | Dispatcher took a separate `root` arg stored verbatim while `NewJail` canonicalized its root via EvalSymlinks → a Phase 3 caller passing the raw snapshot root to both would get garbage grep/list relative paths on macOS slow path | FIXED before boundary: `Resolver` interface gains `Root()`; `NewDispatcher(jail, limits)` derives root from `jail.Root()` — mismatch structurally impossible. Re-gate: NONE. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action taken:** HIGH fixed inline before the phase boundary (no stop); gate re-run returned NONE (single-source canonicalization invariant confirmed end-to-end). **Phase gate passed.** Phase 3 wiring contract: `SnapshotFor(head)` → `NewJail(root)` → `NewDispatcher(jail, DefaultLimits())` → `Execute`.
    **Duration:** 15-30 min
 
 ---
