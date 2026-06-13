@@ -218,6 +218,13 @@ func (r *Registry) applyDefaults() {
 			temp := DefaultTemperature
 			a.Temperature = &temp
 		}
+		// Tool-loop default (Epic 2.0): a tool-enabled agent with no explicit
+		// max_turns gets DefaultMaxTurns so the engine loop is always bounded.
+		// Non-tool agents keep MaxTurns unset (nil) — the field is inert for them.
+		if a.Tools && a.MaxTurns == nil {
+			mt := DefaultMaxTurns
+			a.MaxTurns = &mt
+		}
 		r.Agents[name] = a
 	}
 }

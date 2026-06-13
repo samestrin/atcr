@@ -14,6 +14,12 @@ const MaxTimeoutSecs = 86400
 // once Epic 2.0 activates the tool loop.
 const MaxAgentTurns = 1000
 
+// DefaultMaxTurns is the turn budget applied at load when an agent enables
+// tools (tools=true) without an explicit max_turns. 10 covers a typical
+// evidence-gathering loop (3-10 tool calls) while bounding a thrashing model;
+// it stays well under the MaxAgentTurns hard cap.
+const DefaultMaxTurns = 10
+
 // DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
 // agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
 // AC 01-04's "10 concurrent agent calls" target) while capping a larger or

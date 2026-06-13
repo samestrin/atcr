@@ -1,0 +1,146 @@
+package llmclient
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// ToolDef is a function-calling tool definition. It marshals to the OpenAI tool
+// envelope ({"type":"function","function":{name,description,parameters}}), the
+// lowest-common-denominator wire format across OpenAI-compatible providers. The
+// engine converts its harness tool definitions into this wire type so the
+// generic client stays decoupled from the tool harness (spike 1.1 #5).
+type ToolDef struct {
+	Name        string
+	Description string
+	Parameters  map[string]any // JSON Schema object
+}
+
+// MarshalJSON emits the OpenAI tool envelope.
+func (d ToolDef) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        d.Name,
+			"description": d.Description,
+			"parameters":  d.Parameters,
+		},
+	})
+}
+
+// FunctionCall is the function portion of a tool_call. Arguments is kept as raw
+// JSON because providers disagree on its encoding: OpenAI/litellm send a
+// JSON-encoded string ("{\"path\":\"x\"}") while some local providers send a raw
+// JSON object ({"path":"x"}). ToolCallArguments normalizes both (spike 1.1 #2).
+type FunctionCall struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// ToolCall is one model-requested tool invocation.
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
+}
+
+// Message is one chat-completions message. Content is a pointer so the assistant
+// tool-call turn can carry content:null (which OpenAI requires) distinctly from
+// an empty string; user/tool messages set it to a real string. ToolCalls is
+// present on an assistant turn requesting tools; ToolCallID ties a role:"tool"
+// result back to the call that produced it.
+type Message struct {
+	Role       string     `json:"role"`
+	Content    *string    `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// ChatResponse is the engine-facing result of one Chat turn: the assistant
+// message (which may carry tool_calls) and the provider's finish_reason.
+type ChatResponse struct {
+	Message      Message
+	FinishReason string
+}
+
+// chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
+// omitted entirely when no tools are supplied, so a degraded/final-answer call
+// is wire-identical to a plain completion.
+type chatToolRequest struct {
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Tools       []ToolDef `json:"tools,omitempty"`
+	ToolChoice  string    `json:"tool_choice,omitempty"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	MaxTokens   *int      `json:"max_tokens,omitempty"`
+}
+
+// chatToolResponse decodes the wire response for a tool-capable turn.
+type chatToolResponse struct {
+	Choices []struct {
+		FinishReason string  `json:"finish_reason"`
+		Message      Message `json:"message"`
+	} `json:"choices"`
+}
+
+// Chat performs one multi-turn chat-completions exchange: it serializes the
+// conversation (plus tool definitions when non-empty), sends it through the
+// shared retry path, and returns the assistant message and finish reason. The
+// caller (the fanout agent loop) owns turn/budget orchestration; Chat is a
+// single round-trip. *Client satisfies the fanout ChatCompleter interface via
+// this method, so a tool-enabled agent runs the loop while a client lacking it
+// (a test fake, say) degrades to single-shot.
+func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, toolDefs []ToolDef) (*ChatResponse, error) {
+	key, err := resolveKey(inv)
+	if err != nil {
+		return nil, err
+	}
+	req := chatToolRequest{
+		Model:       inv.Model,
+		Messages:    messages,
+		Temperature: inv.Temperature,
+		MaxTokens:   inv.MaxTokens,
+	}
+	if len(toolDefs) > 0 {
+		req.Tools = toolDefs
+		req.ToolChoice = "auto"
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("encoding request: %w", err)
+	}
+	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
+	if err != nil {
+		return nil, err
+	}
+	var parsed chatToolResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	if len(parsed.Choices) == 0 {
+		return nil, fmt.Errorf("failed to parse response: no choices returned")
+	}
+	ch := parsed.Choices[0]
+	return &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason}, nil
+}
+
+// ToolCallArguments normalizes a tool call's arguments to a raw JSON value,
+// tolerating both the OpenAI string-encoded form and the raw-object form some
+// local providers emit. A malformed encoding is returned as-is so the caller's
+// validity check (json.Valid) surfaces it as a malformed-arguments tool error
+// rather than silently dispatching garbage.
+func ToolCallArguments(tc ToolCall) json.RawMessage {
+	raw := bytes.TrimSpace(tc.Function.Arguments)
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			return json.RawMessage(s)
+		}
+	}
+	return raw
+}

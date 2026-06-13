@@ -28,6 +28,15 @@ const (
 	StatusTimeout = "timeout"
 )
 
+// Tripped-budget markers recorded in AgentStatus.TrippedBudgets and Result
+// (Epic 2.0). They name which per-agent budget halted the tool loop so the
+// status.json reader and report panel can attribute the early stop.
+const (
+	budgetMaxTurns  = "max_turns"
+	budgetToolBytes = "tool_budget_bytes"
+	budgetTimeout   = "timeout_secs"
+)
+
 // Review run states reported by ReadReviewStatus (AC 04-04). in_progress holds
 // until the fan-out writes summary.json, then completed (≥1 agent ok) or failed
 // (all agents failed). stale is an inferred terminal state (Epic 1.5): summary
@@ -271,12 +280,17 @@ type AgentStatus struct {
 	FallbackFrom  string   `json:"fallback_from,omitempty"`
 	Error         string   `json:"error,omitempty"`
 
-	// Reserved per-agent counters for the agentic stages (Epic 2.0 tool loop).
-	// Pointers + omitempty so they are absent from every 1.x status.json (no
-	// tool loop ran) yet a future stage can record an explicit zero.
-	Turns     *int   `json:"turns,omitempty"`
-	ToolCalls *int   `json:"tool_calls,omitempty"`
-	ToolBytes *int64 `json:"tool_bytes,omitempty"`
+	// Per-agent counters for the agentic stages (Epic 2.0 tool loop). Pointers +
+	// omitempty so they are absent from every 1.x status.json (no tool loop ran),
+	// yet a tool-enabled agent records an explicit zero even when it degraded or
+	// tripped before any tool ran (statusFor sets them iff the agent was
+	// tool-enabled). ToolsDegraded marks a tool agent that fell back to
+	// single-shot; TrippedBudgets names every budget that halted the loop.
+	Turns          *int     `json:"turns,omitempty"`
+	ToolCalls      *int     `json:"tool_calls,omitempty"`
+	ToolBytes      *int64   `json:"tool_bytes,omitempty"`
+	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
+	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

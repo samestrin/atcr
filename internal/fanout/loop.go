@@ -1,0 +1,253 @@
+package fanout
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/tools"
+)
+
+// defaultMaxTurns bounds a tool agent that reaches the loop with MaxTurns unset.
+// Registry load applies the same default (DefaultMaxTurns) when tools=true; this
+// is the engine-side safety net so the loop can never run unbounded even if an
+// Agent is constructed directly (e.g. in a test) without the default applied.
+const defaultMaxTurns = 10
+
+// Loop-control messages. These are static (no per-call allocation) and are
+// appended to the conversation to steer a thrashing or budget-exhausted model.
+const (
+	nudgeMessage = "You already called that tool with those exact arguments and have the result. " +
+		"Do not repeat it — use the evidence you already have."
+	finalAnswerMessage = "You have reached your exploration budget. Stop calling tools and write your " +
+		"final review now, based only on the evidence you have already gathered."
+	malformedArgsResult = "error: invalid JSON in tool arguments"
+)
+
+// wireToolDefs converts the harness tool definitions into the llmclient wire
+// type once per loop. The harness owns the canonical definitions (internal/tools);
+// the generic client never imports them, so the engine bridges the two.
+func wireToolDefs() []llmclient.ToolDef {
+	defs := tools.Tools()
+	out := make([]llmclient.ToolDef, len(defs))
+	for i, d := range defs {
+		out[i] = llmclient.ToolDef{Name: d.Name, Description: d.Description, Parameters: d.Parameters}
+	}
+	return out
+}
+
+// toolLoop carries the mutable state of one agent's multi-turn run so the
+// per-turn logic stays out of the driver loop. prevSigs holds the immediately
+// previous turn's tool-call signatures (for repeat detection — only the prior
+// turn counts, not the whole history); nudgedSigs holds signatures we nudged on
+// the previous turn (a reappearance halts); malformedPrev records whether the
+// previous turn produced a malformed call (a second consecutive one halts).
+type toolLoop struct {
+	agent    Agent
+	cc       ChatCompleter
+	disp     toolDispatcher
+	maxTurns int
+	toolDefs []llmclient.ToolDef
+	messages []llmclient.Message
+	res      *Result
+	start    time.Time
+
+	prevSigs      map[string]bool
+	nudgedSigs    map[string]bool
+	malformedPrev bool
+}
+
+// invokeToolLoop drives a tool-enabled agent through the multi-turn exchange:
+// send messages + tool definitions, execute any returned tool_calls via the
+// dispatcher, append role:"tool" results, and repeat until the model returns a
+// final message, a budget trips, loop hygiene halts, or the context is done. A
+// trip/halt asks the model for a final answer (one unbudgeted no-tools Chat) so
+// partial findings are never discarded (partial-success semantics).
+func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, disp toolDispatcher) Result {
+	maxTurns := a.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = defaultMaxTurns
+	}
+	prompt := a.Invocation.Prompt
+	l := &toolLoop{
+		agent:      a,
+		cc:         cc,
+		disp:       disp,
+		maxTurns:   maxTurns,
+		toolDefs:   wireToolDefs(),
+		messages:   []llmclient.Message{{Role: "user", Content: &prompt}},
+		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, Tools: true},
+		start:      time.Now(),
+		nudgedSigs: map[string]bool{},
+	}
+	return l.run(ctx)
+}
+
+func (l *toolLoop) run(ctx context.Context) Result {
+	for {
+		// Honor cancellation/deadline before each turn so a tripped clock halts
+		// the loop with the partial results gathered so far rather than firing
+		// another provider request.
+		if err := ctx.Err(); err != nil {
+			l.res.addTripped(budgetTimeout)
+			return l.finalize(classifyStatus(err), err)
+		}
+
+		resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, l.toolDefs)
+		if err != nil {
+			// A Chat error ends the loop. A deadline/cancel records the timeout
+			// budget; any other provider error is a plain failure. Partial
+			// counters already accumulated in res are preserved either way.
+			status := classifyStatus(err)
+			if status == StatusTimeout {
+				l.res.addTripped(budgetTimeout)
+			}
+			return l.finalize(status, err)
+		}
+		l.res.Turns++
+		l.messages = append(l.messages, resp.Message)
+
+		// Final message (no tool_calls): the model finished within budget.
+		if len(resp.Message.ToolCalls) == 0 {
+			l.res.Content = derefContent(resp.Message.Content)
+			return l.finalize(StatusOK, nil)
+		}
+
+		// Model wants tools but there is no budget for another round-trip to feed
+		// the results back (Model A, sprint clarification 2026-06-13): do NOT
+		// execute this turn's calls; trip max_turns and request a final answer.
+		if l.res.Turns >= l.maxTurns {
+			l.res.addTripped(budgetMaxTurns)
+			return l.requestFinalAnswer(ctx)
+		}
+
+		halt := l.dispatchTurn(ctx, resp.Message.ToolCalls)
+
+		// Cancellation during tool execution halts with partial results and takes
+		// precedence over the byte-budget check below (AC 02-02 Error 2).
+		if cerr := ctx.Err(); cerr != nil {
+			l.res.addTripped(budgetTimeout)
+			return l.finalize(classifyStatus(cerr), cerr)
+		}
+		if halt {
+			return l.requestFinalAnswer(ctx)
+		}
+		// End-of-turn byte-budget check: the current turn's results were delivered
+		// in full; trip only after they are in hand (deferred trip, AC 02-02).
+		if l.agent.ToolBudgetBytes > 0 && l.res.ToolBytes > l.agent.ToolBudgetBytes {
+			l.res.addTripped(budgetToolBytes)
+			return l.requestFinalAnswer(ctx)
+		}
+	}
+}
+
+// dispatchTurn processes one turn's tool calls: it skips/nudges identical
+// repeats, rejects malformed arguments before they reach the dispatcher, and
+// executes the rest, appending every outcome as a role:"tool" result. It returns
+// true when loop hygiene requires halting (a second identical repeat, or a
+// second consecutive malformed turn). It updates prevSigs/nudgedSigs/malformedPrev
+// for the next turn.
+func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall) (halt bool) {
+	curSigs := make(map[string]bool, len(calls))
+	nextNudged := map[string]bool{}
+	nudgedThisTurn := false
+	malformedThisTurn := false
+
+	for _, tc := range calls {
+		sig := toolSig(tc)
+		curSigs[sig] = true
+
+		// A signature we nudged last turn reappearing is a second repeat → halt.
+		if l.nudgedSigs[sig] {
+			halt = true
+			continue
+		}
+		// First identical repeat (same call as the immediately previous turn):
+		// nudge once and do not re-execute this specific call.
+		if l.prevSigs[sig] {
+			if !nudgedThisTurn {
+				l.appendUser(nudgeMessage)
+				nudgedThisTurn = true
+			}
+			nextNudged[sig] = true
+			continue
+		}
+
+		// Malformed arguments never reach the dispatcher; the model gets an error
+		// result and one chance to retry (a second consecutive malformed halts).
+		args := llmclient.ToolCallArguments(tc)
+		if len(args) > 0 && !json.Valid(args) {
+			malformedThisTurn = true
+			l.appendToolResult(tc.ID, malformedArgsResult)
+			continue
+		}
+
+		l.res.ToolCalls++
+		out, terr := l.disp.Execute(ctx, tc.Function.Name, args)
+		if terr != nil {
+			// Tool failures (unknown tool, jail violation, file error, recovered
+			// panic) are never fatal: relay them to the model as the result.
+			l.appendToolResult(tc.ID, "error: "+terr.Error())
+			continue
+		}
+		l.res.ToolBytes += int64(len(out.Content))
+		l.appendToolResult(tc.ID, out.Content)
+	}
+
+	if malformedThisTurn && l.malformedPrev {
+		halt = true
+	}
+	l.prevSigs = curSigs
+	l.nudgedSigs = nextNudged
+	l.malformedPrev = malformedThisTurn
+	return halt
+}
+
+// requestFinalAnswer asks the model for its review after a trip/halt with a
+// no-tools Chat (unbudgeted — it is not counted as a turn). A failure here keeps
+// whatever was gathered: a timeout records the timeout budget, any other error
+// fails the agent, but the accumulated counters survive on res.
+func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
+	l.appendUser(finalAnswerMessage)
+	resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, nil)
+	if err != nil {
+		status := classifyStatus(err)
+		if status == StatusTimeout {
+			l.res.addTripped(budgetTimeout)
+		}
+		return l.finalize(status, err)
+	}
+	l.res.Content = derefContent(resp.Message.Content)
+	return l.finalize(StatusOK, nil)
+}
+
+func (l *toolLoop) finalize(status string, err error) Result {
+	l.res.Status = status
+	l.res.Err = err
+	l.res.DurationMS = time.Since(l.start).Milliseconds()
+	return *l.res
+}
+
+func (l *toolLoop) appendUser(content string) {
+	c := content
+	l.messages = append(l.messages, llmclient.Message{Role: "user", Content: &c})
+}
+
+func (l *toolLoop) appendToolResult(callID, content string) {
+	c := content
+	l.messages = append(l.messages, llmclient.Message{Role: "tool", ToolCallID: callID, Content: &c})
+}
+
+// toolSig is the dedup key for a tool call: name plus normalized arguments. A
+// NUL separator avoids collisions between the name and the argument JSON.
+func toolSig(tc llmclient.ToolCall) string {
+	return tc.Function.Name + "\x00" + string(llmclient.ToolCallArguments(tc))
+}
+
+func derefContent(c *string) string {
+	if c == nil {
+		return ""
+	}
+	return *c
+}

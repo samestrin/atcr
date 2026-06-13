@@ -2,12 +2,14 @@ package fanout
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/tools"
 )
 
 // Completer abstracts the LLM chat call so the engine can be driven by a fake in
@@ -16,6 +18,27 @@ import (
 // concrete type.
 type Completer interface {
 	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
+}
+
+// ChatCompleter is the multi-turn extension of Completer: it carries a message
+// history plus tool definitions and returns the assistant turn (which may
+// request tool_calls). The engine selects it via a type assertion only when an
+// agent has Tools enabled; a completer that does not implement it (or a missing
+// dispatcher) degrades the agent to the single-shot Complete path. *llmclient.Client
+// implements both Complete and Chat, so production agents loop while the doctor
+// package's separate Completer is unaffected.
+type ChatCompleter interface {
+	Completer
+	Chat(ctx context.Context, inv llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error)
+}
+
+// toolDispatcher executes a single tool call against the snapshot sandbox,
+// returning bounded content (never panicking — a tool failure is a *tools.ToolError
+// the loop relays to the model as a role:"tool" result). *tools.Dispatcher
+// satisfies it; tests inject a fake. The interface is the only coupling between
+// the agent loop and the tool harness.
+type toolDispatcher interface {
+	Execute(ctx context.Context, name string, args json.RawMessage) (tools.ToolResult, error)
 }
 
 // Agent is a fully-resolved reviewer ready to invoke: the LLM call parameters,
@@ -30,6 +53,15 @@ type Agent struct {
 	// TimeoutSecs bounds this single agent's call within the global deadline; 0
 	// means "use the global context deadline only".
 	TimeoutSecs int
+
+	// Tool-loop configuration (Epic 2.0). Tools enables the multi-turn agent
+	// loop; when false the agent runs single-shot exactly as in 1.x. MaxTurns
+	// caps Chat-with-tools turns (default 10 applied at registry load when
+	// Tools is true); ToolBudgetBytes caps cumulative tool-result bytes (0 =
+	// unlimited). These are threaded from the resolved AgentConfig by buildAgent.
+	Tools           bool
+	MaxTurns        int
+	ToolBudgetBytes int64
 }
 
 // Slot is one reviewer position in the roster: a primary agent plus its
@@ -57,6 +89,19 @@ type Result struct {
 	FallbackFrom string
 	PayloadMode  string
 	Truncation   payload.Truncation
+
+	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
+	// agent (so status.json emits explicit zero counters even on the degrade
+	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
+	// ToolBytes are the actual loop usage; ToolsDegraded marks a tool agent that
+	// fell back to single-shot; TrippedBudgets names every budget that halted the
+	// loop ("max_turns", "tool_budget_bytes", "timeout_secs").
+	Tools          bool
+	Turns          int
+	ToolCalls      int
+	ToolBytes      int64
+	ToolsDegraded  bool
+	TrippedBudgets []string
 }
 
 // Engine fans a review out to a roster across a parallel lane (default) and a
@@ -66,6 +111,10 @@ type Engine struct {
 	// maxParallel bounds concurrent parallel-lane agent calls; 0 (the default)
 	// means unbounded, preserving the original goroutine-per-slot behavior.
 	maxParallel int
+	// dispatcher executes tool calls for tool-enabled agents. nil (the default)
+	// means no tool harness is wired, so a tool-enabled agent degrades to
+	// single-shot. It is shared across all agents in a review (one snapshot).
+	dispatcher toolDispatcher
 }
 
 // EngineOption configures an Engine at construction.
@@ -76,6 +125,15 @@ type EngineOption func(*Engine)
 // unaffected — it is already sequential.
 func WithMaxParallel(n int) EngineOption {
 	return func(e *Engine) { e.maxParallel = n }
+}
+
+// WithDispatcher wires the tool harness into the engine so tool-enabled agents
+// run the multi-turn loop. Without it (or with a completer that does not
+// implement ChatCompleter), a tool-enabled agent degrades to single-shot and
+// records tools_degraded. The dispatcher is bound to one snapshot and is shared,
+// read-only, across the run's agents.
+func WithDispatcher(d toolDispatcher) EngineOption {
+	return func(e *Engine) { e.dispatcher = d }
 }
 
 // NewEngine builds an Engine over the given completer. A nil completer is a
@@ -227,18 +285,35 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 // assistant content is returned on success for the artifact layer to persist.
 func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// A per-agent timeout further bounds this call within the global deadline;
-	// when it fires only this agent times out — siblings keep running.
+	// when it fires only this agent times out — siblings keep running. The tool
+	// loop runs under this same deadline, so timeout_secs covers the whole loop.
 	if a.TimeoutSecs > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
 		defer cancel()
 	}
+	// Tool-enabled agents run the multi-turn loop when both a ChatCompleter and a
+	// dispatcher are available; otherwise they degrade to single-shot. Non-tool
+	// agents take the unchanged 1.x path.
+	if a.Tools {
+		cc, ok := e.completer.(ChatCompleter)
+		if ok && e.dispatcher != nil {
+			return e.invokeToolLoop(ctx, a, cc, e.dispatcher)
+		}
+		return e.invokeDegraded(ctx, a)
+	}
+	return e.invokeSingleShot(ctx, a)
+}
+
+// invokeSingleShot performs one chat completion and classifies the outcome on
+// the actual error returned (a context deadline/cancel → StatusTimeout, any
+// other error → StatusFailed). This is the unchanged 1.x path.
+func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	start := time.Now()
 	content, err := e.completer.Complete(ctx, a.Invocation)
-	dur := time.Since(start).Milliseconds()
 	r := Result{
 		Agent:       a.Name,
-		DurationMS:  dur,
+		DurationMS:  time.Since(start).Milliseconds(),
 		PayloadMode: a.PayloadMode,
 		Truncation:  a.Truncation,
 	}
@@ -250,6 +325,28 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	r.Content = content
 	r.Status = StatusOK
 	return r
+}
+
+// invokeDegraded runs a tool-enabled agent through the single-shot path because
+// the harness is unavailable (the completer is not a ChatCompleter, or no
+// dispatcher was wired). The result is marked Tools+ToolsDegraded so status.json
+// records the degrade with explicit zero counters (AC 01-05, AC 02-04 EC3).
+func (e *Engine) invokeDegraded(ctx context.Context, a Agent) Result {
+	r := e.invokeSingleShot(ctx, a)
+	r.Tools = true
+	r.ToolsDegraded = true
+	return r
+}
+
+// addTripped records a tripped budget name on the result, de-duplicating so a
+// budget is never listed twice when more than one halt path records it.
+func (r *Result) addTripped(name string) {
+	for _, b := range r.TrippedBudgets {
+		if b == name {
+			return
+		}
+	}
+	r.TrippedBudgets = append(r.TrippedBudgets, name)
 }
 
 // classifyStatus maps an error to a status code. A context deadline or

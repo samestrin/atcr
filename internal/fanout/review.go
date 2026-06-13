@@ -436,13 +436,14 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", err
 	}
 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
-		AgentName:   name,
-		BaseRef:     rng.Base,
-		HeadRef:     rng.Head,
-		PayloadMode: mode,
-		FileCount:   mp.FileCount,
-		Payload:     mp.Text,
-		ScopeRule:   payload.ScopeRule(payload.PayloadMode(mode)),
+		AgentName:    name,
+		BaseRef:      rng.Base,
+		HeadRef:      rng.Head,
+		PayloadMode:  mode,
+		FileCount:    mp.FileCount,
+		Payload:      mp.Text,
+		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
+		ToolsEnabled: ac.Tools,
 	})
 	if err != nil {
 		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
@@ -452,11 +453,14 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
 	return Agent{
-		Name:        name,
-		Prompt:      prompt,
-		PayloadMode: mode,
-		Truncation:  mp.Truncation,
-		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
+		Name:            name,
+		Prompt:          prompt,
+		PayloadMode:     mode,
+		Truncation:      mp.Truncation,
+		TimeoutSecs:     ac.EffectiveTimeoutSecs(cfg.Settings),
+		Tools:           ac.Tools,
+		MaxTurns:        derefMaxTurns(ac.MaxTurns),
+		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -465,6 +469,26 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 			Prompt:      prompt,
 		},
 	}, mode, nil
+}
+
+// derefMaxTurns resolves the agent's MaxTurns pointer to a value. Registry load
+// applies the default (10) when tools=true and it was unset, so a tool agent
+// arrives here with a non-nil pointer; a nil pointer (non-tool agent, or direct
+// construction) yields 0, which the engine treats as "use the default".
+func derefMaxTurns(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// derefInt64 resolves an optional int64 (e.g. ToolBudgetBytes) to its value, with
+// nil meaning 0 (unlimited, matching the registry's documented escape hatch).
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
@@ -485,6 +509,14 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		PayloadMode: primary.PayloadMode,
 		Truncation:  primary.Truncation,
 		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
+		// Fallbacks inherit the lane's effective tool settings from the primary,
+		// not the fallback's own config (AC 01-05 S4, AC 04-03: "fallbacks inherit
+		// the lane's effective tools setting"). Degrade stays per-agent — a
+		// fallback whose model cannot do function calling degrades independently
+		// (Phase 4), but the requested Tools/MaxTurns/ToolBudgetBytes are the lane's.
+		Tools:           primary.Tools,
+		MaxTurns:        primary.MaxTurns,
+		ToolBudgetBytes: primary.ToolBudgetBytes,
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
