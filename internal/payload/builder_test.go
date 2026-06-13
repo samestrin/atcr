@@ -369,14 +369,12 @@ func TestFileBody_BlocksFallbackLeavesRecord(t *testing.T) {
 	head := commitAll(t, dir, "v2")
 
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
 
 	// a.txt has no diff in base..head, so function-context yields zero hunks
 	// and fileBody degrades to the plain context fallback. That degradation
 	// must leave an operator-visible record, never happen silently.
-	g := &gitRunner{ctx: context.Background(), dir: dir}
+	g := &gitRunner{ctx: context.Background(), dir: dir, logger: logger}
 	_, err := g.fileBody(ModeBlocks, base, head, changedFile{path: "a.txt"})
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "function context unavailable")

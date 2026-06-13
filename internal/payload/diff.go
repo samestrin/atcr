@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -48,8 +49,9 @@ func (f changedFile) pathspec() []string {
 // This keeps the per-file helpers' signatures intact (so their direct unit
 // tests are unaffected) while collapsing O(N) git processes to O(1) per mode.
 type gitRunner struct {
-	ctx context.Context
-	dir string
+	ctx    context.Context
+	dir    string
+	logger *slog.Logger // nil → slog.Default(); set in tests to capture output without swapping global
 
 	// execCount counts git subprocess invocations (every output call). It backs
 	// the constant-process-count regression test; it is otherwise inert.
@@ -182,6 +184,15 @@ func headPathOf(paths []string) string {
 		return ""
 	}
 	return paths[len(paths)-1]
+}
+
+// log returns the runner's logger, falling back to slog.Default() when none
+// is injected. Callers use g.log().Warn(...) instead of slog.Warn(...).
+func (g *gitRunner) log() *slog.Logger {
+	if g.logger != nil {
+		return g.logger
+	}
+	return slog.Default()
 }
 
 // ensureRange resets the whole-range caches if base..head changed since they
