@@ -174,5 +174,5 @@ This AC is implemented against the following project documentation. Read before 
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Adversarial tone of host review verified in a real review run
-- [ ] Ambiguity adjudication produces sensible merge/distinct decisions
+- [x] Adversarial tone of host review verified in a real review run — verified 2026-06-12 (Epic 1.7; independent tone inspection PASS — see `.planning/epics/code-reviews/1.7_real-review-run-verification/run-evidence.md`)
+- [x] Ambiguity adjudication produces sensible merge/distinct decisions — verified 2026-06-12 (Epic 1.7; seeded-corpus fallback through real `atcr reconcile`, merge+distinct, idempotent — see `.planning/epics/code-reviews/1.7_real-review-run-verification/run-evidence.md`)

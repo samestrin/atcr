@@ -193,4 +193,4 @@ This AC is implemented against the following project documentation. Read before 
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Orchestration loop verified end-to-end with a real review run
+- [x] Orchestration loop verified end-to-end with a real review run — verified 2026-06-12 (Epic 1.7; review dir `.atcr/reviews/2026-06-12_epic-1.7-realrun-local/`, evidence `.planning/epics/code-reviews/1.7_real-review-run-verification/run-evidence.md`)
