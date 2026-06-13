@@ -93,7 +93,7 @@ func grepHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, a
 	content := strings.Join(matches, "\n")
 	if truncated {
 		content += fmt.Sprintf("\n[...%d more matches truncated...]", total-len(matches))
-		return ToolResult{Content: content, Truncated: true, OriginalBytes: total}, nil
+		return ToolResult{Content: content, Truncated: true, OriginalBytes: len(content)}, nil
 	}
 	return ToolResult{Content: content, OriginalBytes: len(content)}, nil
 }
