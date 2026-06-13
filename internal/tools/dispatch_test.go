@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,17 @@ func TestDispatcher_HandlerPanicRecovered(t *testing.T) {
 func TestDispatcher_RegisteredToolsAreTheThreeBuiltins(t *testing.T) {
 	d := newTestDispatcher(t, t.TempDir())
 	assert.ElementsMatch(t, []string{"read_file", "grep", "list_files"}, d.RegisteredTools())
+}
+
+// TestDispatcher_JailRejectionIsToolError verifies that Execute wraps *JailError
+// in *ToolError so callers using errors.As can uniformly handle all non-fatal
+// failures via one documented type.
+func TestDispatcher_JailRejectionIsToolError(t *testing.T) {
+	d := NewDispatcher(rejectResolver{}, DefaultLimits())
+	_, err := d.Execute(context.Background(), "read_file", json.RawMessage(`{"path":"../escape"}`))
+	require.Error(t, err)
+	var te *ToolError
+	assert.True(t, errors.As(err, &te), "jail rejection must be a *ToolError, got %T", err)
 }
 
 // TestTruncate_LimitSmallerThanMarker verifies that truncate never returns a
