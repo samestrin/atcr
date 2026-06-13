@@ -375,6 +375,20 @@ func TestPrepareReview_OnlyEmptyCommitsRejectedBeforeScaffold(t *testing.T) {
 // A client retry of atcr_review with the same explicit id (plausible while the
 // first run still shows running) must not launch a second fan-out into the SAME
 // review directory — the second PrepareReview must refuse, not scaffold.
+// TestPrepareReview_RejectsOutputDirAndIDOverride verifies that PrepareReview
+// returns an error when both OutputDir and IDOverride are set — the CLI enforces
+// this at flag-parse time but PrepareReview must also guard for direct/MCP callers.
+func TestPrepareReview_RejectsOutputDirAndIDOverride(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	req := reviewReq(repo, repo, base, head)
+	req.OutputDir = filepath.Join(t.TempDir(), "out")
+	req.IDOverride = "custom-id"
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
 func TestPrepareReview_RejectsExistingOverrideID(t *testing.T) {
 	repo, base, head := initRepo(t)
 	cfg := twoAgentConfig("http://unused")

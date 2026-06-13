@@ -44,6 +44,21 @@ func TestScaffoldOutputDir_RejectsNonEmpty(t *testing.T) {
 	assert.Contains(t, err.Error(), "not empty")
 }
 
+func TestScaffoldOutputDir_RejectsSymlinkTarget(t *testing.T) {
+	// A symlink pointing at an empty directory must be rejected via os.Lstat.
+	// Without the Lstat guard, os.ReadDir follows the link (finds it empty),
+	// then MkdirAll writes through the symlink into the unintended target.
+	base := t.TempDir()
+	realDir := filepath.Join(base, "real")
+	require.NoError(t, os.Mkdir(realDir, 0o755))
+	symlinkPath := filepath.Join(base, "link")
+	require.NoError(t, os.Symlink(realDir, symlinkPath))
+
+	_, err := ScaffoldOutputDir(symlinkPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink")
+}
+
 func TestScaffoldOutputDir_AllowsOutsideRepoPath(t *testing.T) {
 	// --output-dir is designed for external orchestrators that own their output
 	// location; arbitrary absolute paths (including locations outside the repo
@@ -66,6 +81,19 @@ func TestScaffoldOutputDir_RejectsFileAtPath(t *testing.T) {
 	_, err := ScaffoldOutputDir(file)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create review directory")
+}
+
+// TestScaffoldOutputDir_RejectsDanglingSymlink verifies that a dangling symlink
+// at the target path is rejected with a clear error referencing "symlink" rather
+// than an opaque mkdir failure.
+func TestScaffoldOutputDir_RejectsDanglingSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "nonexistent")
+	link := filepath.Join(tmp, "dangling-link")
+	require.NoError(t, os.Symlink(target, link))
+	_, err := ScaffoldOutputDir(link)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink")
 }
 
 func TestSlugifyBranch(t *testing.T) {
