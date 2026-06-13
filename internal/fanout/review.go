@@ -150,6 +150,9 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if len(rosterNames(cfg.Project)) == 0 {
 		return nil, ErrEmptyRoster
 	}
+	if req.OutputDir != "" && req.IDOverride != "" {
+		return nil, fmt.Errorf("--output-dir and --id are mutually exclusive")
+	}
 	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
 	if err != nil {
 		return nil, err
