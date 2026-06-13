@@ -144,3 +144,13 @@ func TestDispatcher_RegisteredToolsAreTheThreeBuiltins(t *testing.T) {
 	d := newTestDispatcher(t, t.TempDir())
 	assert.ElementsMatch(t, []string{"read_file", "grep", "list_files"}, d.RegisteredTools())
 }
+
+// TestTruncate_LimitSmallerThanMarker verifies that truncate never returns a
+// string longer than limit, even when limit < len(truncMarker).
+func TestTruncate_LimitSmallerThanMarker(t *testing.T) {
+	for _, limit := range []int{1, 5, len(truncMarker) - 1} {
+		result := truncate(strings.Repeat("x", 100), limit)
+		assert.LessOrEqual(t, len(result), limit,
+			"truncate(100 chars, %d) returned %d bytes — must be ≤ limit", limit, len(result))
+	}
+}
