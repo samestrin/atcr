@@ -3,6 +3,8 @@ package fanout
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -110,6 +112,14 @@ func (l *toolLoop) run(ctx context.Context) Result {
 
 		// Final message (no tool_calls): the model finished within budget.
 		if len(resp.Message.ToolCalls) == 0 {
+			// A model that reached this loop was declared function-calling-capable
+			// (supports_function_calling=true gated entry in invokeAgent). If it never
+			// calls a tool on its FIRST turn, that declaration is likely wrong — warn
+			// once as a hint (NOT a failure; the loop still returns the answer) so a
+			// roster misconfiguration is visible (AC 04-01 Error Scenario 1).
+			if l.res.Turns == 1 {
+				fmt.Fprintf(os.Stderr, "atcr: warning: agent %s: model %s declared supports_function_calling=true but first response has no tool_calls — possible misconfiguration\n", l.agent.Name, l.agent.Invocation.Model)
+			}
 			l.res.Content = derefContent(resp.Message.Content)
 			return l.finalize(StatusOK, nil)
 		}

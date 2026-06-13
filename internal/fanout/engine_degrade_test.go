@@ -3,12 +3,32 @@ package fanout
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"os"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what was
+// written. Not parallel-safe (mutates the global os.Stderr) — callers must not
+// call t.Parallel.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
 
 // incapableToolAgent builds a tool-enabled agent whose model does NOT support
 // function calling (supports_function_calling=false), so the Phase 4 capability
@@ -97,6 +117,37 @@ func TestInvokeAgent_SingleShotStatusOmitsToolFields(t *testing.T) {
 	s := string(data)
 	assert.NotContains(t, s, "tools_requested")
 	assert.NotContains(t, s, "tools_degraded")
+}
+
+// AC 04-01 Error Scenario 1: a capable-declared model that returns no tool_calls
+// on its FIRST turn logs a misconfiguration warning but still succeeds (the
+// warning is a hint, not a failure).
+func TestLoop_WarnsOnNoToolCallsFirstTurn(t *testing.T) {
+	var r Result
+	out := captureStderr(t, func() {
+		cc := &scriptedChat{turns: []chatTurn{{content: "answer without ever calling a tool"}}}
+		r = toolEngine(cc, newFakeDispatcher()).invokeAgent(context.Background(), toolAgent("greta", 10, 0))
+	})
+	require.Equal(t, StatusOK, r.Status, "warning is non-fatal; loop returns the answer")
+	assert.False(t, r.ToolsDegraded, "capable model running the loop is not degraded")
+	assert.Contains(t, out, "no tool_calls")
+	assert.Contains(t, out, "greta", "warning names the agent")
+}
+
+// A normal multi-turn run that ends with a final message on a LATER turn must NOT
+// warn — the model did use tools first.
+func TestLoop_NoWarnWhenToolsUsedFirst(t *testing.T) {
+	out := captureStderr(t, func() {
+		cc := &scriptedChat{turns: []chatTurn{
+			{toolCalls: []llmclient.ToolCall{toolCall("c1", "read_file", `{"path":"a.go"}`)}},
+			{content: "final after reading"},
+		}}
+		d := newFakeDispatcher()
+		d.byName["read_file"] = tools.ToolResult{Content: "x"}
+		r := toolEngine(cc, d).invokeAgent(context.Background(), toolAgent("greta", 10, 0))
+		require.Equal(t, StatusOK, r.Status)
+	})
+	assert.NotContains(t, out, "no tool_calls", "tools were used on turn 1; no misconfiguration warning")
 }
 
 // --- AC 04-04: mixed roster reconciler compatibility ------------------------
