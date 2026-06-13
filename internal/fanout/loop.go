@@ -77,7 +77,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		maxTurns:   maxTurns,
 		toolDefs:   wireToolDefs(),
 		messages:   []llmclient.Message{{Role: "user", Content: &prompt}},
-		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, Tools: true},
+		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, Tools: true, ToolsRequested: true},
 		start:      time.Now(),
 		nudgedSigs: map[string]bool{},
 	}

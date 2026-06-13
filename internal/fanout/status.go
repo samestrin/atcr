@@ -290,6 +290,7 @@ type AgentStatus struct {
 	ToolCalls      *int     `json:"tool_calls,omitempty"`
 	ToolBytes      *int64   `json:"tool_bytes,omitempty"`
 	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
+	ToolsRequested bool     `json:"tools_requested,omitempty"`
 	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
 }
 

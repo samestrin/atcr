@@ -185,13 +185,16 @@ func toolCall(id, name, args string) llmclient.ToolCall {
 	return llmclient.ToolCall{ID: id, Type: "function", Function: llmclient.FunctionCall{Name: name, Arguments: json.RawMessage(args)}}
 }
 
-// toolAgent builds a tool-enabled Agent.
+// toolAgent builds a tool-enabled, function-calling-capable Agent. SupportsFC is
+// true so the capability gate (Phase 4) lets it reach the tool loop; tests that
+// exercise the capability-degrade path build an incapable agent explicitly.
 func toolAgent(name string, maxTurns int, byteBudget int64) Agent {
 	return Agent{
 		Name:            name,
 		Invocation:      llmclient.Invocation{Model: name},
 		PayloadMode:     "blocks",
 		Tools:           true,
+		SupportsFC:      true,
 		MaxTurns:        maxTurns,
 		ToolBudgetBytes: byteBudget,
 	}

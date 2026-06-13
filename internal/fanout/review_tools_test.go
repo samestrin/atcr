@@ -11,17 +11,21 @@ import (
 func ptrInt(i int) *int     { return &i }
 func ptrI64(i int64) *int64 { return &i }
 
-// toolCfg builds a single-tool-agent ReviewConfig with a tool-capable fallback
-// whose own config is non-tool, to prove lane (not own-config) inheritance.
+// toolCfg builds a single-tool-agent ReviewConfig with a fallback whose own
+// config is non-tool, to prove lane (not own-config) inheritance. greta is
+// tool-capable; kai is non-tool-capable (supports_function_calling=false) so the
+// per-agent degrade decision can be exercised on the fallback independently.
 func toolCfg() *ReviewConfig {
 	return &ReviewConfig{
 		Registry: &registry.Registry{
 			Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: "http://x"}},
 			Agents: map[string]registry.AgentConfig{
 				"greta": {Provider: "p", Model: "m", Persona: "greta", Temperature: ptrF(0.7),
-					Tools: true, MaxTurns: ptrInt(5), ToolBudgetBytes: ptrI64(8192), Fallback: "kai"},
+					Tools: true, SupportsFC: true, MaxTurns: ptrInt(5), ToolBudgetBytes: ptrI64(8192), Fallback: "kai"},
 				"kai": {Provider: "p", Model: "m2", Persona: "kai", Temperature: ptrF(0.7),
-					Tools: false}, // own config is non-tool; must NOT govern the fallback
+					Tools: false, SupportsFC: false}, // own config is non-tool + incapable; must NOT govern lane Tools
+				"zoe": {Provider: "p", Model: "m3", Persona: "zoe", Temperature: ptrF(0.7),
+					Tools: false, SupportsFC: true}, // tool-capable fallback model
 			},
 		},
 		Project:  &registry.ProjectConfig{Agents: []string{"greta"}},
@@ -64,4 +68,40 @@ func TestBuildFallbackAgent_NonToolPrimaryStaysNonTool(t *testing.T) {
 	assert.False(t, fb.Tools)
 	assert.Equal(t, 0, fb.MaxTurns)
 	assert.EqualValues(t, 0, fb.ToolBudgetBytes)
+}
+
+// AC 04-03 Spec / EC3: the fallback inherits the lane's Tools setting but its OWN
+// model's function-calling capability (SupportsFC), never the primary's. A
+// tool-capable primary with a non-tool-capable fallback yields fb.Tools=true,
+// fb.SupportsFC=false → the fallback will degrade per-agent at invoke time.
+func TestBuildFallbackAgent_OwnCapabilityNotInheritedFromLane(t *testing.T) {
+	cfg := toolCfg()
+	primary := Agent{Tools: true, SupportsFC: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
+
+	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	require.NoError(t, err)
+	assert.True(t, fb.Tools, "lane tools inherited")
+	assert.False(t, fb.SupportsFC, "fallback uses its own incapable model, not the primary's capability")
+}
+
+// AC 04-03 S3: a tool-capable fallback (own SupportsFC=true) inherits lane Tools
+// and stays capable → it would run the loop, not degrade.
+func TestBuildFallbackAgent_CapableFallbackKeepsCapability(t *testing.T) {
+	cfg := toolCfg()
+	primary := Agent{Tools: true, SupportsFC: true, MaxTurns: 5, ToolBudgetBytes: 8192, Prompt: "p", PayloadMode: "blocks"}
+
+	fb, err := buildFallbackAgent(cfg, primary, "zoe")
+	require.NoError(t, err)
+	assert.True(t, fb.Tools)
+	assert.True(t, fb.SupportsFC, "capable fallback model keeps its capability")
+}
+
+// AC 04-02 S4: primary build threads SupportsFC from the agent's own config.
+func TestBuildAgent_PropagatesSupportsFC(t *testing.T) {
+	cfg := toolCfg()
+	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+
+	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"})
+	require.NoError(t, err)
+	assert.True(t, a.SupportsFC, "greta declares supports_function_calling=true")
 }

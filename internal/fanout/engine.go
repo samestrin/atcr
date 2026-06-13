@@ -62,6 +62,10 @@ type Agent struct {
 	Tools           bool
 	MaxTurns        int
 	ToolBudgetBytes int64
+	// SupportsFC is this agent's model's function-calling capability, threaded
+	// from the registry (per-agent, not per-lane). A tools:true agent whose model
+	// lacks it degrades to single-shot regardless of the harness being wired.
+	SupportsFC bool
 }
 
 // Slot is one reviewer position in the roster: a primary agent plus its
@@ -95,12 +99,15 @@ type Result struct {
 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
 	// ToolBytes are the actual loop usage; ToolsDegraded marks a tool agent that
 	// fell back to single-shot; TrippedBudgets names every budget that halted the
-	// loop ("max_turns", "tool_budget_bytes", "timeout_secs").
+	// loop ("max_turns", "tool_budget_bytes", "timeout_secs"). ToolsRequested
+	// preserves the original tools:true intent even when the agent degraded, so
+	// status.json can show what was asked for versus what ran.
 	Tools          bool
 	Turns          int
 	ToolCalls      int
 	ToolBytes      int64
 	ToolsDegraded  bool
+	ToolsRequested bool
 	TrippedBudgets []string
 }
 
@@ -292,13 +299,18 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
 		defer cancel()
 	}
-	// Tool-enabled agents run the multi-turn loop when both a ChatCompleter and a
-	// dispatcher are available; otherwise they degrade to single-shot. Non-tool
+	// Tool-enabled agents run the multi-turn loop only when the model is declared
+	// function-calling-capable AND both a ChatCompleter and a dispatcher are
+	// wired; otherwise they degrade to single-shot. The capability check is the
+	// registry (per-agent), consulted before the loop starts (AC 04-01/04-02) —
+	// an incapable model degrades even when the harness is fully wired. Non-tool
 	// agents take the unchanged 1.x path.
 	if a.Tools {
-		cc, ok := e.completer.(ChatCompleter)
-		if ok && e.dispatcher != nil {
-			return e.invokeToolLoop(ctx, a, cc, e.dispatcher)
+		if a.SupportsFC {
+			cc, ok := e.completer.(ChatCompleter)
+			if ok && e.dispatcher != nil {
+				return e.invokeToolLoop(ctx, a, cc, e.dispatcher)
+			}
 		}
 		return e.invokeDegraded(ctx, a)
 	}
@@ -316,6 +328,9 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		DurationMS:  time.Since(start).Milliseconds(),
 		PayloadMode: a.PayloadMode,
 		Truncation:  a.Truncation,
+		// Preserve the original tool request even on the single-shot path so a
+		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
+		ToolsRequested: a.Tools,
 	}
 	if err != nil {
 		r.Err = err

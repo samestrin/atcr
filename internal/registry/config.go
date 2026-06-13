@@ -66,6 +66,14 @@ type AgentConfig struct {
 	MaxTurns        *int   `yaml:"max_turns"`         // Stage 2 — agent-loop turn cap
 	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
 	Role            string `yaml:"role"`              // Stage 3/4 — reviewer | skeptic | judge
+
+	// SupportsFC declares whether this agent's model supports OpenAI-style
+	// function calling. Active in Epic 2.0 (Phase 4): the engine consults it
+	// before starting a tool loop. Default false (a value bool — no stage needs
+	// to distinguish "explicitly false" from "unset"), so a model is assumed
+	// non-tool-capable unless explicitly declared, and a tools:true agent on an
+	// undeclared model degrades safely to single-shot.
+	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
 }
 
 // roleValid reports whether r is an allowed reserved role. The empty string is

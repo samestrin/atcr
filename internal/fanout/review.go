@@ -459,6 +459,7 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		Truncation:      mp.Truncation,
 		TimeoutSecs:     ac.EffectiveTimeoutSecs(cfg.Settings),
 		Tools:           ac.Tools,
+		SupportsFC:      ac.SupportsFC,
 		MaxTurns:        derefMaxTurns(ac.MaxTurns),
 		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
 		Invocation: llmclient.Invocation{
@@ -517,6 +518,10 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		Tools:           primary.Tools,
 		MaxTurns:        primary.MaxTurns,
 		ToolBudgetBytes: primary.ToolBudgetBytes,
+		// SupportsFC is per-agent: the fallback uses its OWN model's capability,
+		// NOT the primary's, so the degrade decision is re-evaluated per agent
+		// (AC 04-03 EC3 — lane governs Tools, the model governs capability).
+		SupportsFC: ac.SupportsFC,
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
