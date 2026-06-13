@@ -114,3 +114,27 @@ func TestGrep_GlobNoMatches(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, res.Content, "no matches")
 }
+
+// TestGrep_TruncatedOriginalBytesIsBytes verifies that OriginalBytes in a
+// match-truncated grep result is a byte count, not a match count.
+// Before the fix: OriginalBytes = total_matches (e.g. 2000), which is
+// incoherent with the byte-count semantics capResult and read_file use.
+func TestGrep_TruncatedOriginalBytesIsBytes(t *testing.T) {
+	root := t.TempDir()
+	var sb strings.Builder
+	for i := 0; i < 2000; i++ {
+		sb.WriteString("match\n")
+	}
+	writeFile(t, root, "a.go", sb.String())
+	d := newTestDispatcher(t, root)
+	d.SetLimits(Limits{MaxGrepMatches: 5, MaxResultBytes: 1 << 20, MaxGrepLineBytes: 512})
+
+	res, err := grep(t, d, `{"pattern":"match"}`)
+	require.NoError(t, err)
+	require.True(t, res.Truncated)
+	// OriginalBytes must equal the content byte length (consistent with read_file / list_files).
+	// Before fix it equals the match count (2000), which is far larger and incoherent.
+	assert.Equal(t, len(res.Content), res.OriginalBytes,
+		"OriginalBytes must be a byte count equal to content length, not match count; got %d, content len %d",
+		res.OriginalBytes, len(res.Content))
+}
