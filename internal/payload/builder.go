@@ -86,10 +86,17 @@ func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string
 		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
 	}
 	g := &gitRunner{ctx: ctx, dir: repo}
+	return g.buildEntries(mode, base, head)
+}
+
+// buildEntries is the runner-bound core of BuildEntries, split out so white-box
+// tests can observe g.execCount and assert the per-mode git-process count is
+// independent of the changed-file count.
+func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEntry, error) {
 	if err := validateRange(g, base, head); err != nil {
 		return nil, err
 	}
-	files, err := g.changedFiles(base, head)
+	files, err := g.changedFilesMemo(base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -133,11 +140,11 @@ func (g *gitRunner) fileBody(mode PayloadMode, base, head string, f changedFile)
 		if bin {
 			return fmt.Sprintf(binaryMarkerFmt+"\n", f.path), nil
 		}
-		out, err := g.output(append([]string{"diff", "-M", base + ".." + head, "--"}, f.pathspec()...)...)
+		chunks, err := g.rawChunks(base, head)
 		if err != nil {
 			return "", fmt.Errorf("git diff failed: %w", err)
 		}
-		return ensureTrailingNewline(string(out)), nil
+		return ensureTrailingNewline(chunks[headPathOf(f.pathspec())]), nil
 
 	case ModeBlocks:
 		bin, err := g.isBinary(base, head, f.pathspec()...)
