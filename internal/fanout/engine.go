@@ -174,6 +174,20 @@ func NewEngine(c Completer, opts ...EngineOption) *Engine {
 	return e
 }
 
+// resultFromPanic builds a failed result for a slot whose goroutine recovered
+// from a panic. It preserves the slot's identity/provenance and stamps the
+// wall-clock elapsed since Run started.
+func resultFromPanic(s Slot, start time.Time, r any) Result {
+	return Result{
+		Agent:       s.Primary.Name,
+		Status:      StatusFailed,
+		Err:         fmt.Errorf("panic: %v", r),
+		DurationMS:  time.Since(start).Milliseconds(),
+		PayloadMode: s.Primary.PayloadMode,
+		Truncation:  s.Primary.Truncation,
+	}
+}
+
 // Run executes every slot and returns one Result per slot in input order.
 // Parallel-lane slots run concurrently via a WaitGroup; serial-lane slots run
 // sequentially in a single goroutine (ctx checked before each invocation),
@@ -207,14 +221,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					results[i] = Result{
-						Agent:       s.Primary.Name,
-						Status:      StatusFailed,
-						Err:         fmt.Errorf("panic: %v", r),
-						DurationMS:  time.Since(start).Milliseconds(),
-						PayloadMode: s.Primary.PayloadMode,
-						Truncation:  s.Primary.Truncation,
-					}
+					results[i] = resultFromPanic(s, start, r)
 				}
 			}()
 			// Acquire a slot before invoking. The acquire is ctx-aware so a
@@ -246,15 +253,7 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 				func(i int) {
 					defer func() {
 						if r := recover(); r != nil {
-							s := slots[i]
-							results[i] = Result{
-								Agent:       s.Primary.Name,
-								Status:      StatusFailed,
-								Err:         fmt.Errorf("panic: %v", r),
-								DurationMS:  time.Since(start).Milliseconds(),
-								PayloadMode: s.Primary.PayloadMode,
-								Truncation:  s.Primary.Truncation,
-							}
+							results[i] = resultFromPanic(slots[i], start, r)
 						}
 					}()
 					s := slots[i]
