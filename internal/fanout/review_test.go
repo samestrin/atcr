@@ -346,6 +346,21 @@ func TestRunReview_ConfiguredBudgetRecordsTruncation(t *testing.T) {
 	}
 }
 
+// TestPrepareReview_BudgetDropsAllFilesErrors verifies that a byte budget below
+// every changed file's size causes PrepareReview to return ErrPayloadFullyDropped
+// rather than forwarding an empty payload to the reviewer pool (budget.go:20-23).
+func TestPrepareReview_BudgetDropsAllFilesErrors(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+	cfg.Settings.PayloadByteBudget = 1 // below any real file size → all dropped
+
+	_, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPayloadFullyDropped)
+}
+
 // A range whose only commit is an empty commit has CommitCount > 0 but zero
 // changed files, so every payload mode builds empty. PrepareReview must refuse
 // before scaffolding — never fire the provider pool at an empty payload — and
