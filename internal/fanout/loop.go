@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -337,10 +338,60 @@ func textResult(tc llmclient.ToolCall, content string) tools.ToolResultRecord {
 	return tools.ToolResultRecord{ToolCallID: tc.ID, Name: tc.Function.Name, Content: content, OriginalBytes: len(content)}
 }
 
-// toolSig is the dedup key for a tool call: name plus normalized arguments. A
-// NUL separator avoids collisions between the name and the argument JSON.
+// canonicalizeArgs returns a deterministic JSON representation of args, or nil
+// if args are not valid JSON. It recursively sorts object keys so semantically
+// identical structures produce identical bytes regardless of key order or
+// insignificant whitespace.
+func canonicalizeArgs(args json.RawMessage) json.RawMessage {
+	if len(args) == 0 {
+		return args
+	}
+	var v any
+	if err := json.Unmarshal(args, &v); err != nil {
+		return nil
+	}
+	canon := canonicalizeValue(v)
+	out, err := json.Marshal(canon)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+func canonicalizeValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		m := make(map[string]any, len(x))
+		for _, k := range keys {
+			m[k] = canonicalizeValue(x[k])
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = canonicalizeValue(e)
+		}
+		return out
+	default:
+		return x
+	}
+}
+
+// toolSig is the dedup key for a tool call: name plus normalized, canonicalized
+// arguments. A NUL separator avoids collisions between the name and the
+// argument JSON. Invalid JSON arguments fall back to the raw bytes so the
+// malformed-args path still sees them.
 func toolSig(tc llmclient.ToolCall) string {
-	return tc.Function.Name + "\x00" + string(llmclient.ToolCallArguments(tc))
+	args := llmclient.ToolCallArguments(tc)
+	if canon := canonicalizeArgs(args); canon != nil {
+		args = canon
+	}
+	return tc.Function.Name + "\x00" + string(args)
 }
 
 func derefContent(c *string) string {
