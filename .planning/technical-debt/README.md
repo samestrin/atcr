@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 0 |
-| MEDIUM | 1 | 4 | 14 |
-| LOW | 3 | 0 | 40 |
+| MEDIUM | 0 | 4 | 15 |
+| LOW | 0 | 0 | 43 |
 
-**Last Modified:** 2026-06-12 | **Open Items:** 4 | **Deferred Items:** 4 | **Resolved Items:** 54 | **Total Items:** 62
+**Last Modified:** 2026-06-12 | **Open Items:** 0 | **Deferred Items:** 4 | **Resolved Items:** 58 | **Total Items:** 62
 
 ## Directory Structure
 
@@ -37,10 +37,10 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/reconcile/ambiguous.go:166 | AmbiguousHash silently returns "" on a JSON render error; the swallow would write an empty ambiguous_hash to summary.json with no diagnostic | Return the render error or log to stderr instead of emitting an empty hash | error-handling | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/outcome.go:52 | summarize switch has no default arm; an unexpected Status is counted as neither Succeeded nor Failed so Total can exceed Succeeded+Failed and Partial can misreport | Add a default arm classifying unknown Status as Failed (or panic on the impossible value) | maintainability | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/payload/budget.go:81 | ApplyByteBudget can drop every file when one entry exceeds the budget, yielding an empty-but-Truncated payload reviewers receive as nothing while the run still succeeds | Surface a distinct signal or error when truncation leaves zero kept files | edge-case | 20 | execute-epic-independent |
-| U | [ ] | MEDIUM | internal/payload/budget.go:0 | Default 512KiB byte budget yields ~155k-token payloads that exceed common model context/plan limits (deepseek-4 capped at 49k; qwen-3.7-plus 360s timeout); atcr doctor probes with a trivial nonce so it does not catch this and a real review then fails the whole pool | Document a budget/model-context sizing guideline (or warn when payload size likely exceeds roster context) so large ranges do not silently fail every agent | robustness | 30 | execute-epic-cumulative |
+| U | [x] | LOW | internal/reconcile/ambiguous.go:166 | AmbiguousHash silently returns "" on a JSON render error; the swallow would write an empty ambiguous_hash to summary.json with no diagnostic | Return the render error or log to stderr instead of emitting an empty hash | error-handling | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/fanout/outcome.go:52 | summarize switch has no default arm; an unexpected Status is counted as neither Succeeded nor Failed so Total can exceed Succeeded+Failed and Partial can misreport | Add a default arm classifying unknown Status as Failed (or panic on the impossible value) | maintainability | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/payload/budget.go:81 | ApplyByteBudget can drop every file when one entry exceeds the budget, yielding an empty-but-Truncated payload reviewers receive as nothing while the run still succeeds | Surface a distinct signal or error when truncation leaves zero kept files | edge-case | 20 | execute-epic-independent |
+| U | [x] | MEDIUM | internal/payload/budget.go:0 | Default 512KiB byte budget yields ~155k-token payloads that exceed common model context/plan limits (deepseek-4 capped at 49k; qwen-3.7-plus 360s timeout); atcr doctor probes with a trivial nonce so it does not catch this and a real review then fails the whole pool | Document a budget/model-context sizing guideline (or warn when payload size likely exceeds roster context) so large ranges do not silently fail every agent | robustness | 30 | execute-epic-cumulative |
 
 ### [2026-06-12] From Sprint: 1.6_payload-git-pipeline
 
