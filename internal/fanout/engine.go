@@ -199,10 +199,12 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 	results := make([]Result, len(slots))
 	var wg sync.WaitGroup
 
-	// A buffered semaphore bounds how many parallel-lane agents call a provider
-	// at once. maxParallel <= 0 leaves sem nil (unbounded). Zero-size elements
-	// keep the buffer cheap regardless of cap. Each goroutine still spawns; only
-	// the provider call is gated, which is the resource the cap protects.
+	// A buffered semaphore bounds how many parallel-lane agent slots run
+	// concurrently. maxParallel <= 0 leaves sem nil (unbounded). Zero-size
+	// elements keep the buffer cheap regardless of cap. Each goroutine still
+	// spawns; the token is acquired before the slot starts and held for the full
+	// slot, including any multi-turn tool loop, so the cap bounds concurrent
+	// tool-agent loops rather than individual provider calls.
 	var sem chan struct{}
 	if e.maxParallel > 0 {
 		sem = make(chan struct{}, e.maxParallel)
