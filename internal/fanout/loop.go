@@ -58,6 +58,11 @@ type toolLoop struct {
 	prevSigs      map[string]bool
 	nudgedSigs    map[string]bool
 	malformedPrev bool
+
+	// tr records the per-turn transcript (tool_calls, tool_results, final). nil
+	// when transcript recording is disabled; every method on *tools.Transcript is
+	// nil-safe, so the loop never guards the calls.
+	tr *tools.Transcript
 }
 
 // invokeToolLoop drives a tool-enabled agent through the multi-turn exchange:
@@ -72,6 +77,10 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		maxTurns = defaultMaxTurns
 	}
 	prompt := a.Invocation.Prompt
+	var tr *tools.Transcript
+	if e.transcript != nil {
+		tr = e.transcript(a.Name)
+	}
 	l := &toolLoop{
 		agent:      a,
 		cc:         cc,
@@ -82,6 +91,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, Tools: true, ToolsRequested: true},
 		start:      time.Now(),
 		nudgedSigs: map[string]bool{},
+		tr:         tr,
 	}
 	return l.run(ctx)
 }
@@ -121,8 +131,14 @@ func (l *toolLoop) run(ctx context.Context) Result {
 				fmt.Fprintf(os.Stderr, "atcr: warning: agent %s: model %s declared supports_function_calling=true but first response has no tool_calls — possible misconfiguration\n", l.agent.Name, l.agent.Invocation.Model)
 			}
 			l.res.Content = derefContent(resp.Message.Content)
+			l.tr.RecordFinal(l.res.Turns, l.res.Content)
 			return l.finalize(StatusOK, nil)
 		}
+
+		// Record the requested tool_calls before deciding whether to execute them,
+		// so the transcript is a faithful record even when the turn is skipped by a
+		// budget trip below.
+		l.tr.RecordToolCalls(l.res.Turns, toolCallRecords(resp.Message.ToolCalls))
 
 		// Model wants tools but there is no budget for another round-trip to feed
 		// the results back (Model A, sprint clarification 2026-06-13): do NOT
@@ -133,11 +149,11 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			// every one so the conversation stays well-formed (OpenAI-compatible
 			// providers reject a final request with a dangling tool_call_id,
 			// which would discard the partial findings).
-			l.answerSkipped(resp.Message.ToolCalls, "skipped: turn budget reached; provide your final answer now")
+			l.answerSkipped(l.res.Turns, resp.Message.ToolCalls, "skipped: turn budget reached; provide your final answer now")
 			return l.requestFinalAnswer(ctx)
 		}
 
-		halt := l.dispatchTurn(ctx, resp.Message.ToolCalls)
+		halt := l.dispatchTurn(ctx, l.res.Turns, resp.Message.ToolCalls)
 
 		// Cancellation during tool execution halts with partial results and takes
 		// precedence over the byte-budget check below (AC 02-02 Error 2).
@@ -163,10 +179,11 @@ func (l *toolLoop) run(ctx context.Context) Result {
 // true when loop hygiene requires halting (a second identical repeat, or a
 // second consecutive malformed turn). It updates prevSigs/nudgedSigs/malformedPrev
 // for the next turn.
-func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall) (halt bool) {
+func (l *toolLoop) dispatchTurn(ctx context.Context, turn int, calls []llmclient.ToolCall) (halt bool) {
 	curSigs := make(map[string]bool, len(calls))
 	nextNudged := map[string]bool{}
 	malformedThisTurn := false
+	recs := make([]tools.ToolResultRecord, 0, len(calls))
 
 	// Every tool_call in the assistant turn must be answered with a role:"tool"
 	// result before the next request — providers reject a dangling tool_call_id.
@@ -181,6 +198,7 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall)
 		// it (keep the wire well-formed) and halt — the model is thrashing.
 		if l.nudgedSigs[sig] {
 			l.appendToolResult(tc.ID, nudgeMessage)
+			recs = append(recs, textResult(tc, nudgeMessage))
 			halt = true
 			continue
 		}
@@ -189,6 +207,7 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall)
 		// reappearance next turn halts.
 		if l.prevSigs[sig] {
 			l.appendToolResult(tc.ID, nudgeMessage)
+			recs = append(recs, textResult(tc, nudgeMessage))
 			nextNudged[sig] = true
 			continue
 		}
@@ -199,6 +218,7 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall)
 		if len(args) > 0 && !json.Valid(args) {
 			malformedThisTurn = true
 			l.appendToolResult(tc.ID, malformedArgsResult)
+			recs = append(recs, textResult(tc, malformedArgsResult))
 			continue
 		}
 
@@ -207,13 +227,20 @@ func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall)
 		if terr != nil {
 			// Tool failures (unknown tool, jail violation, file error, recovered
 			// panic) are never fatal: relay them to the model as the result.
-			l.appendToolResult(tc.ID, "error: "+terr.Error())
+			msg := "error: " + terr.Error()
+			l.appendToolResult(tc.ID, msg)
+			recs = append(recs, textResult(tc, msg))
 			continue
 		}
 		l.res.ToolBytes += int64(len(out.Content))
 		l.appendToolResult(tc.ID, out.Content)
+		recs = append(recs, tools.ToolResultRecord{
+			ToolCallID: tc.ID, Name: tc.Function.Name, Content: out.Content,
+			Truncated: out.Truncated, OriginalBytes: out.OriginalBytes,
+		})
 	}
 
+	l.tr.RecordToolResults(turn, recs)
 	if malformedThisTurn && l.malformedPrev {
 		halt = true
 	}
@@ -244,10 +271,14 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 		return l.finalize(status, err)
 	}
 	l.res.Content = derefContent(resp.Message.Content)
+	l.tr.RecordFinal(l.res.Turns, l.res.Content)
 	return l.finalize(StatusOK, nil)
 }
 
 func (l *toolLoop) finalize(status string, err error) Result {
+	// Close the transcript on every exit path so its buffer is flushed and the
+	// file handle released (nil-safe when recording is disabled).
+	_ = l.tr.Close()
 	l.res.Status = status
 	l.res.Err = err
 	l.res.DurationMS = time.Since(l.start).Milliseconds()
@@ -267,11 +298,31 @@ func (l *toolLoop) appendToolResult(callID, content string) {
 // answerSkipped appends a role:"tool" result for every call in an assistant turn
 // whose tool_calls are intentionally not executed (the max_turns trip). It keeps
 // the conversation well-formed so the unbudgeted final-answer request is not
-// rejected for a dangling tool_call_id.
-func (l *toolLoop) answerSkipped(calls []llmclient.ToolCall, note string) {
+// rejected for a dangling tool_call_id, and records the same answers in the
+// transcript so the operator's view matches the model's.
+func (l *toolLoop) answerSkipped(turn int, calls []llmclient.ToolCall, note string) {
+	recs := make([]tools.ToolResultRecord, 0, len(calls))
 	for _, tc := range calls {
 		l.appendToolResult(tc.ID, note)
+		recs = append(recs, textResult(tc, note))
 	}
+	l.tr.RecordToolResults(turn, recs)
+}
+
+// toolCallRecords converts the wire tool calls into transcript records, copying
+// the raw arguments verbatim so the transcript shows exactly what the model asked.
+func toolCallRecords(calls []llmclient.ToolCall) []tools.ToolCallRecord {
+	out := make([]tools.ToolCallRecord, len(calls))
+	for i, tc := range calls {
+		out[i] = tools.ToolCallRecord{ID: tc.ID, Name: tc.Function.Name, Arguments: llmclient.ToolCallArguments(tc)}
+	}
+	return out
+}
+
+// textResult builds a non-truncated transcript result record for a synthetic
+// (nudge, error, malformed, skipped) tool answer whose content is plain text.
+func textResult(tc llmclient.ToolCall, content string) tools.ToolResultRecord {
+	return tools.ToolResultRecord{ToolCallID: tc.ID, Name: tc.Function.Name, Content: content, OriginalBytes: len(content)}
 }
 
 // toolSig is the dedup key for a tool call: name plus normalized arguments. A

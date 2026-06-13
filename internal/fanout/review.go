@@ -293,6 +293,10 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// from manifest.json; summary.json is the completion signal.
 	p.manifest.Partial = sum.Partial
 	p.manifest.CompletedAt = time.Now().UTC()
+	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
+	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
+	// unchanged.
+	p.manifest.Review = reviewStageFor(results)
 	if err := WriteManifest(p.Dir, p.manifest); err != nil {
 		return nil, err
 	}
@@ -542,6 +546,30 @@ func writePayloadArtifacts(dir string, payloads map[string]modePayload) error {
 		}
 	}
 	return nil
+}
+
+// reviewStageFor classifies fan-out results into the manifest's review-stage
+// entry (AC 05-04). An agent is tools-enabled when it requested tools at
+// invocation time (ToolsRequested) — preserved across the degrade, budget-trip,
+// and provider-error paths, so membership reflects the configured intent, not
+// the completion outcome. The degraded subset is the agents that fell back to
+// single-shot. Returns nil when no agent ran with tools, so the manifest omits
+// the review entry for a pure 1.x roster (Scenario 5).
+func reviewStageFor(results []Result) *payload.ReviewStage {
+	var enabled, degraded []string
+	for _, r := range results {
+		if !r.ToolsRequested {
+			continue
+		}
+		enabled = append(enabled, r.Agent)
+		if r.ToolsDegraded {
+			degraded = append(degraded, r.Agent)
+		}
+	}
+	if len(enabled) == 0 {
+		return nil
+	}
+	return &payload.ReviewStage{Agents: enabled, ToolsEnabled: enabled, ToolsDegraded: degraded}
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).

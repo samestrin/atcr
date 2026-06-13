@@ -717,7 +717,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Goal:** Transcript writer, live status counters, manifest review stage, persona updates, and `PayloadContext.ToolsEnabled`.
 
-### 5.1 [ ] **[Story 5: Transcript & Accounting - RED](plan/user-stories/05-transcript-accounting.md)**
+### 5.1 [x] **[Story 5: Transcript & Accounting - RED](plan/user-stories/05-transcript-accounting.md)**
    Write comprehensive failing tests, verify fail correctly
    - Test `TranscriptWriter.RecordToolCalls(turn, toolCalls)`: appends JSON line to `raw/<agent>/transcript.jsonl`
    - Test `TranscriptWriter.RecordToolResults(turn, results)`: appends results, truncated if over cap with marker
@@ -729,7 +729,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Files:** `internal/tools/transcript_test.go`, `internal/fanout/status_test.go`, `internal/fanout/manifest_test.go` | **Duration:** 2-3 hours
    **AC:** [05-01](plan/acceptance-criteria/05-01-transcript-event-emission.md), [05-02](plan/acceptance-criteria/05-02-transcript-durability-replay.md), [05-03](plan/acceptance-criteria/05-03-live-status-counters.md), [05-04](plan/acceptance-criteria/05-04-manifest-review-stage.md)
 
-### 5.2 [ ] **[Story 5: Transcript & Accounting - GREEN](plan/user-stories/05-transcript-accounting.md)**
+### 5.2 [x] **[Story 5: Transcript & Accounting - GREEN](plan/user-stories/05-transcript-accounting.md)**
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
    - `internal/tools/transcript.go`: `TranscriptWriter` with `RecordToolCalls`, `RecordToolResults`, `RecordFinal`; buffered JSONL writer; flush per turn; best-effort I/O (errors logged, never fatal)
    - `internal/fanout/status.go`: `turns`, `tool_calls`, `tool_bytes` counters incremented in loop; written to `status.json` at end of each turn

@@ -122,6 +122,11 @@ type Engine struct {
 	// means no tool harness is wired, so a tool-enabled agent degrades to
 	// single-shot. It is shared across all agents in a review (one snapshot).
 	dispatcher toolDispatcher
+	// transcript builds a per-agent transcript writer for the tool loop. nil (the
+	// default) disables transcript recording — the loop runs exactly as before.
+	// Each agent gets its own writer (concurrent loops, separate files); the loop
+	// closes it when the agent finishes (Epic 2.0, AC 05-01/05-02).
+	transcript func(agentName string) *tools.Transcript
 }
 
 // EngineOption configures an Engine at construction.
@@ -141,6 +146,16 @@ func WithMaxParallel(n int) EngineOption {
 // read-only, across the run's agents.
 func WithDispatcher(d toolDispatcher) EngineOption {
 	return func(e *Engine) { e.dispatcher = d }
+}
+
+// WithTranscript wires a per-agent transcript factory: for each tool-enabled
+// agent the loop calls f(agentName) to obtain a writer, records every turn's
+// tool_calls/tool_results and the final message, and closes it when the agent
+// finishes. Without it (the default), no transcript is recorded. Recording is
+// best-effort: a writer that fails to open or write logs and continues, never
+// failing the review.
+func WithTranscript(f func(agentName string) *tools.Transcript) EngineOption {
+	return func(e *Engine) { e.transcript = f }
 }
 
 // NewEngine builds an Engine over the given completer. A nil completer is a
