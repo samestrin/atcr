@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 0 |
 | MEDIUM | 0 | 4 | 15 |
-| LOW | 0 | 0 | 43 |
+| LOW | 4 | 0 | 43 |
 
-**Last Modified:** 2026-06-12 | **Open Items:** 0 | **Deferred Items:** 4 | **Resolved Items:** 58 | **Total Items:** 62
+**Last Modified:** 2026-06-12 | **Open Items:** 4 | **Deferred Items:** 4 | **Resolved Items:** 58 | **Total Items:** 66
 
 ## Directory Structure
 
@@ -32,6 +32,15 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-12] From Sprint: epic-1.8
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/fanout/reviewdir.go:232 | ScaffoldOutputDir does a ReadDir empty-check then a separate MkdirAll (a check/use window) unlike claimReviewDir/ScaffoldReviewDir which claim atomically via os.Mkdir | Use os.Mkdir-first for the leaf and only MkdirAll the parents to match the codebase's atomic-claim discipline | CORRECTNESS | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/review.go:174 | OutputDir vs IDOverride mutual exclusion is enforced only at the CLI; PrepareReview's switch silently lets OutputDir win when both are set instead of rejecting | Add a guard at the top of PrepareReview returning an error when both req.OutputDir and req.IDOverride are non-empty | EDGE_CASES | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/reviewdir.go:235 | A dangling symlink at the --output-dir path makes os.ReadDir return fs.ErrNotExist so MkdirAll then runs on the symlink path with platform-dependent behavior | Lstat the path first or document/test that --output-dir must not be a dangling symlink | EDGE_CASES | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/review.go:133 | outputDirFromFlags trims whitespace only for the empty-check but passes the untrimmed value to filepath.Abs so a leading-space value resolves a path with literal spaces | Pass strings.TrimSpace(dir) into filepath.Abs so the resolved path matches the non-empty check | EDGE_CASES | 5 | execute-epic-independent |
 
 ### [2026-06-12] From Sprint: epic-1.7
 
