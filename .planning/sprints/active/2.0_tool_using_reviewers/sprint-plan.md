@@ -826,22 +826,22 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. COMMIT: `git commit -m "refactor(payload): address review + clean up persona guidance"`
    **Duration:** 1 hour
 
-### 5.7 [ ] **Phase 5 DoD**
-   - [ ] `go test ./...` — all passing
-   - [ ] `go test -coverprofile=coverage.out ./...` — ≥80%
-   - [ ] `golangci-lint run` — no errors
-   - [ ] `go vet ./...` — clean
-   - [ ] `go build ./...` — succeeds
-   - [ ] Story 5 ACs verified: transcript events, durability, replay, live status counters, manifest stage
-   - [ ] Story 6 ACs verified: persona guidance, evidence-citation rule, registry docs, payload-modes docs, README cost guidance
+### 5.7 [x] **Phase 5 DoD**
+   - [x] `go test ./...` — all passing
+   - [x] `go test -coverprofile=coverage.out ./...` — ≥80% (total 87.5%; tools 85.3%, fanout 87.4%, payload 89.7%; pre-existing `internal/mcp` 78.8% is untouched by Phase 5)
+   - [x] `golangci-lint run` — no errors (0 issues)
+   - [x] `go vet ./...` — clean
+   - [x] `go build ./...` — succeeds
+   - [x] Story 5 ACs verified: transcript events (05-01), durability + replay (05-02), live status counters (05-03 — write-once-at-completion per the binding AC), manifest review stage (05-04)
+   - [x] Story 6 ACs verified: persona guidance (06-01), evidence-citation + scope guard (06-02), registry docs active (06-03), payload-modes + README cost guidance (06-04)
 
    ```
    Phase-5 DoD Complete
    Auto: 5/5 | Story-Specific: 8/8 (Stories 5 + 6)
-   Manual Review: [ ] Code reviewed
+   Manual Review: [x] Code reviewed (5.2.A + 5.5.A adversarial subagents — no CRITICAL/HIGH)
    ```
 
-### 5.8 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.8 [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5 (`internal/tools/transcript.go`, `internal/fanout/status.go`, `internal/fanout/manifest.go`, `internal/payload/template.go`, persona templates, docs)
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review.
@@ -860,16 +860,13 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings (2026-06-13):** Fresh hostile-integrator subagent reviewed all Phase 5 production files + docs and ran `go build`/`go vet`/full `go test ./...` (all clean/green, uncached). **No CRITICAL/HIGH/MEDIUM/LOW.**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | tools/transcript.go, replay.go; fanout/loop.go, engine.go, review.go; payload/manifest.go; personas | All five exit-contract checks PASS. **CONTRACT EXIT:** `OpenTranscript`/`Record*`/`Close` nil-safe + best-effort (disabled no-op on open failure, latched `failed`, `Close` always releases FD); `ReplayTranscript` resilient (absent=empty, malformed/missing/unknown skipped+counted); status.json counters pointer+omitempty (1.x byte-identical, explicit zeros only for tool agents); `Manifest.Review` omitempty sibling of `Stages`, slices normalized to `[]`. **INTEGRATION:** counters wired (`Turns++`/`ToolCalls++`/`ToolBytes+=`), transcript opened once per `invokeToolLoop` and `Close`d on EVERY exit via `finalize` (no FD leak/double-close); `reviewStageFor` keys on `ToolsRequested` (preserved across degrade/trip/error), `Agents` non-aliasing copy. **REGRESSION:** `{{if .ToolsEnabled}}` false-render byte-identical to 1.0 (git diff confirms), all prior tests pass. |
+   | INFO | engine.go invokeSlot attribution | Phase-6 wiring note (NOT a defect): the transcript factory receives `a.Name`, which for a *fallback* agent is the fallback's own name while status.json attribution rewrites to the primary (engine.go invokeSlot). Phase 6 owns the production factory + transcript-dir naming and must reconcile this keying (e.g. key the per-agent transcript dir on the slot/primary name) when wiring `WithTranscript` into `ExecuteReview`. Captured for Phase 6 task 6.1. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action taken:** No CRITICAL/HIGH/MEDIUM/LOW → nothing to fix before the boundary. The fallback-attribution keying note is captured for Phase 6 (6.1) production wiring. **Phase gate passed.** Phase 6 wiring contract: add `WithTranscript(func(agent) tools.OpenTranscript(<poolDir>/raw/agent/<dir>/transcript.jsonl, agent))` + `WithDispatcher(NewDispatcher(NewJail(SnapshotFor(head).Root()), DefaultLimits()))` into `ExecuteReview`'s `NewEngine`, keying the transcript path on the slot/primary agent dir.
    **Duration:** 15-30 min
 
 ---
