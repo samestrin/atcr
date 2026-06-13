@@ -340,6 +340,38 @@ func TestReadManifestPartial_FailureMarkerAllFailedStaysNonPartial(t *testing.T)
 	assert.False(t, ReadManifestPartial(dir), "marker with zero successes is a total failure, not partial")
 }
 
+// End-to-end AC: ExecuteReview's WritePool-failure branch calls
+// writeFailureSummary with the real results, then a later `atcr reconcile`
+// reads the partial flag via ReadManifestPartial. When every agent ran
+// (Succeeded=2, Failed=0 -> Partial=false) but the write aborted mid-flush, the
+// failure marker must carry through so the reconcile caller receives partial.
+func TestReadManifestPartial_WriteFailureAfterSuccessReadsPartial(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_writefail")
+	require.NoError(t, err)
+	poolDir := filepath.Join(dir, "sources", "pool")
+
+	// Exactly what ExecuteReview does on a WritePool error: the agents ran, the
+	// persistence faulted, so writeFailureSummary records the real (all-OK) tally.
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, PayloadMode: "blocks"},
+		{Agent: "kai", Status: StatusOK, PayloadMode: "blocks"},
+	}
+	writeFailureSummary(poolDir, results)
+
+	// The on-disk summary is a best-effort failure marker, not a real run record.
+	data, err := os.ReadFile(filepath.Join(poolDir, summaryFile))
+	require.NoError(t, err)
+	var ps PoolSummary
+	require.NoError(t, json.Unmarshal(data, &ps))
+	assert.True(t, ps.FailureMarker, "failure summary must be marked")
+	assert.False(t, ps.Partial, "no agent FAILED, so the raw partial flag is false — the marker is what saves us")
+
+	// The reconcile caller threads Partial: ReadManifestPartial(dir); it must be true.
+	assert.True(t, ReadManifestPartial(dir),
+		"reconcile over a write-aborted review must run partial, not drop the unflushed agent silently")
+}
+
 // Without a summary (fan-out still running, or a hand-assembled review) the
 // manifest remains the only available signal and is still honored.
 func TestReadManifestPartial_FallsBackToManifestWhenNoSummary(t *testing.T) {
