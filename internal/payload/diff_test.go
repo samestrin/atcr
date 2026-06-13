@@ -8,6 +8,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// numstatNewPath must locate the {old => new} segment by finding the arrow
+// first, then expanding to the surrounding braces — not by taking the first
+// '{' in the field. A parent-directory name containing '{' must not shadow
+// the actual rename delimiters.
+func TestNumstatNewPath_BraceInParentDir(t *testing.T) {
+	cases := []struct{ field, want string }{
+		// Parent dir contains '{' — the bug case.
+		{"a{x/{old.bin => new.bin}", "a{x/new.bin"},
+		// Standard abbreviated rename.
+		{"dir/{old.go => new.go}", "dir/new.go"},
+		// Simple rename, no braces.
+		{"old.go => new.go", "new.go"},
+		// Unchanged path — no arrow.
+		{"unchanged.go", "unchanged.go"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field, func(t *testing.T) {
+			assert.Equal(t, tc.want, numstatNewPath(tc.field))
+		})
+	}
+}
+
 // A fatal git failure (here: not a repository) must propagate from isBinary
 // rather than being silently reported as "not binary" (TD-010).
 func TestIsBinary_FatalGitErrorPropagates(t *testing.T) {

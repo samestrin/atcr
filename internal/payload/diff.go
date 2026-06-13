@@ -200,18 +200,20 @@ func (g *gitRunner) ensureRange(base, head string) {
 // numstatNewPath reconstructs the head-side (new) path from a --numstat path
 // field, which renders renames as "old => new" or "pre{old => new}post".
 func numstatNewPath(field string) string {
-	if i := strings.IndexByte(field, '{'); i >= 0 {
-		if j := strings.IndexByte(field, '}'); j > i {
-			inner := field[i+1 : j]
-			if k := strings.Index(inner, " => "); k >= 0 {
-				return field[:i] + inner[k+len(" => "):] + field[j+1:]
-			}
+	k := strings.Index(field, " => ")
+	if k < 0 {
+		return field
+	}
+	// Search for the enclosing braces by anchoring on the arrow, not the
+	// start of the field. A parent-directory name may contain '{', which
+	// would cause a naive first-brace scan to mis-key the rename segment.
+	if i := strings.LastIndexByte(field[:k], '{'); i >= 0 {
+		if j := strings.IndexByte(field[k:], '}'); j >= 0 {
+			j += k
+			return field[:i] + field[k+len(" => "):j] + field[j+1:]
 		}
 	}
-	if k := strings.Index(field, " => "); k >= 0 {
-		return field[k+len(" => "):]
-	}
-	return field
+	return field[k+len(" => "):]
 }
 
 // chunkKey returns the head path a `diff --git` chunk belongs to by matching the
