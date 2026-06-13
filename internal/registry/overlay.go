@@ -89,7 +89,7 @@ func parseRegistryFile(path string) (*Registry, error) {
 		if errors.Is(err, errEmptyDocument) {
 			return nil, fmt.Errorf("%s is empty: define providers and agents", base)
 		}
-		return nil, fmt.Errorf("failed to parse %s: %w", base, err)
+		return nil, fmt.Errorf("failed to parse %s: %w", base, amendWithAgentFieldHints(err, data))
 	}
 	reg.stampSource(SourceUser)
 	return &reg, nil
