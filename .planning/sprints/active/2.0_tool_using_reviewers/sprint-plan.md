@@ -755,18 +755,17 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-06-13):** Files reviewed: `transcript.go`, `replay.go`, `manifest.go`, `loop.go`, `engine.go`, `review.go`. **No CRITICAL/HIGH.** Independently verified: model-controlled tool names/IDs are JSON-escaped (no JSONL line injection), agent names validated-unique + path-sanitized upstream (no `agent+".jsonl"` traversal), the FD is closed on every `run()` exit via `finalize()` (no leak), tool-result content is byte-capped before the loop (no unbounded disk write), `atomicWriteFile` cleans up its temp on every error path. Unredacted tool-result content on disk is by-design operator-owned observability (no worse than existing payload artifacts) — not flagged.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | loop.go toolCallRecords + transcript.go writeEvent | A `tool_calls` turn where ANY call has malformed/invalid-JSON arguments fails `json.Marshal` (invalid `RawMessage`), so the ENTIRE `tool_calls` event is dropped — including well-formed sibling calls — leaving orphan `tool_result` lines with no matching request. | FIXED 5.3: `toolCallRecords` pre-validates each `Arguments` with `json.Valid` and wraps malformed bytes as a JSON string, so the per-call record always marshals and the turn is fully recorded. |
+   | LOW | review.go reviewStageFor | `Agents` and `ToolsEnabled` share the same backing slice (aliasing); a future mutation of one silently mutates the other. | FIXED 5.3: `Agents` gets its own copy via `append([]string(nil), enabled...)`. |
+   | LOW | transcript.go writeEvent/flush | `bufio.Writer` latches its first error → a long run after the disk fills logs one warning per remaining event (log flooding). Behavior correct (swallowed, never fatal), just noisy. | FIXED 5.3: a `failed` flag logs once then silences subsequent writes; `Close()` still releases the FD regardless of `failed`. |
+   | LOW | review.go ExecuteReview | Production `ExecuteReview` wires neither `WithDispatcher` nor `WithTranscript` → the transcript/dispatcher are dead in the real flow until Phase 6 e2e wires them. | DEFERRED — by design (scope boundary): Phase 6 (6.1) wires `SnapshotFor→NewJail→NewDispatcher→WithDispatcher` + the per-agent transcript factory. Tracked via TD-004 / Phase 6. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 5.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → no blocking pre-5.3 fix. The MEDIUM (transcript faithfulness) and two cheap LOW (slice aliasing, log flooding) fixed inline in 5.3 REFACTOR; the production-wiring LOW is the documented Phase 6 scope boundary, deferred. **Adversarial review passed.**
 
-### 5.3 [ ] **[Story 5: Transcript & Accounting - REFACTOR](plan/user-stories/05-transcript-accounting.md)**
+### 5.3 [x] **[Story 5: Transcript & Accounting - REFACTOR](plan/user-stories/05-transcript-accounting.md)**
    1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
    2. Improve I/O safety: ensure file handles closed on all paths, proper error logging (T1)
    3. Validate all tests still pass (T3)

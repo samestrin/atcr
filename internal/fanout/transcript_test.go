@@ -110,6 +110,32 @@ func TestTranscript_LoopRecordsTruncation(t *testing.T) {
 	assert.JSONEq(t, `50000`, string(tr.Raw["original_bytes"]))
 }
 
+// 5.2.A MEDIUM regression: a turn mixing a malformed-args call with a valid one
+// still records the tool_calls event (the malformed call wrapped as a string)
+// and both tool_result lines — no dropped event, no orphan results.
+func TestTranscript_MalformedArgsStillRecorded(t *testing.T) {
+	dir := t.TempDir()
+	cc := &scriptedChat{turns: []chatTurn{
+		{toolCalls: []llmclient.ToolCall{toolCall("c1", "read_file", `{bad`), toolCall("c2", "grep", `{"pattern":"x"}`)}},
+		{content: "done"},
+	}}
+	d := newFakeDispatcher()
+	d.byName["grep"] = tools.ToolResult{Content: "y", OriginalBytes: 1}
+
+	r := transcriptEngine(cc, d, dir).invokeAgent(context.Background(), toolAgent("a", 10, 0))
+	require.Equal(t, StatusOK, r.Status)
+
+	res, err := tools.ReplayTranscript(filepath.Join(dir, "a.jsonl"))
+	require.NoError(t, err)
+	var kinds []string
+	for _, e := range res.Events {
+		kinds = append(kinds, e.Event)
+	}
+	assert.Equal(t, []string{"tool_calls", "tool_result", "tool_result", "final"}, kinds)
+	// The malformed call survives in the tool_calls event (wrapped as a JSON string).
+	require.Contains(t, string(res.Events[0].Raw["tool_calls"]), "c1")
+}
+
 // A nil transcript factory (recording disabled — the default) does not affect
 // the loop result.
 func TestTranscript_DisabledByDefault(t *testing.T) {

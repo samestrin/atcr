@@ -80,6 +80,11 @@ type Transcript struct {
 	closer   io.Closer
 	agent    string
 	disabled bool
+	// failed latches after the first write/flush error. bufio.Writer makes its
+	// error sticky, so without this every subsequent event would re-log the same
+	// failure (log flooding on, e.g., a full disk). Once set, Record* short-circuit
+	// via off(); Close still releases the file descriptor regardless.
+	failed bool
 }
 
 // OpenTranscript opens (or creates) the transcript at path in append mode. On
@@ -102,9 +107,9 @@ func newTranscript(w io.Writer, closer io.Closer, agent string) *Transcript {
 	return &Transcript{bw: bufio.NewWriter(w), closer: closer, agent: agent}
 }
 
-// off reports whether this transcript discards writes (nil receiver or a
-// disabled writer from a failed open).
-func (t *Transcript) off() bool { return t == nil || t.disabled }
+// off reports whether this transcript discards writes (nil receiver, a disabled
+// writer from a failed open, or a writer that has latched a write/flush error).
+func (t *Transcript) off() bool { return t == nil || t.disabled || t.failed }
 
 // RecordToolCalls appends one tool_calls event for the turn. It does not flush —
 // the turn boundary is the following RecordToolResults (or RecordFinal).
@@ -140,14 +145,18 @@ func (t *Transcript) RecordFinal(turn int, message string) {
 	t.flush(turn)
 }
 
-// Close flushes any buffered events and closes the underlying file. A nil/
-// disabled transcript closes cleanly.
+// Close flushes any buffered events and closes the underlying file. A nil or
+// disabled (failed-open) transcript closes cleanly. A transcript that latched a
+// write error still closes its file (releasing the descriptor); it skips the
+// doomed final flush.
 func (t *Transcript) Close() error {
-	if t.off() {
+	if t == nil || t.disabled {
 		return nil
 	}
-	if err := t.bw.Flush(); err != nil {
-		transcriptLog("agent %s: flush transcript on close: %v", t.agent, err)
+	if !t.failed {
+		if err := t.bw.Flush(); err != nil {
+			transcriptLog("agent %s: flush transcript on close: %v", t.agent, err)
+		}
 	}
 	if t.closer != nil {
 		return t.closer.Close()
@@ -160,21 +169,33 @@ func (t *Transcript) Close() error {
 // skipped; subsequent events still record (AC 05-01 Error Scenario 3). A write
 // failure is logged and swallowed (AC 05-01 Error Scenario 1).
 func (t *Transcript) writeEvent(v any, kind string, turn int) {
+	if t.failed {
+		return
+	}
 	data, err := json.Marshal(v)
 	if err != nil {
+		// A marshal failure is per-event (e.g. invalid arguments): log and skip
+		// this event without latching — subsequent events still record.
 		transcriptLog("agent %s: marshal %s event (turn %d): %v", t.agent, kind, turn, err)
 		return
 	}
 	if _, err := t.bw.Write(append(data, '\n')); err != nil {
+		// A write failure is sticky on bufio.Writer: log once and latch so the rest
+		// of the session is silent (no per-event log flooding on a full disk).
 		transcriptLog("agent %s: write %s event (turn %d): %v", t.agent, kind, turn, err)
+		t.failed = true
 	}
 }
 
 // flush writes the buffer to disk at a turn boundary; a flush error is logged
-// and swallowed.
+// once and latched (swallowed thereafter).
 func (t *Transcript) flush(turn int) {
+	if t.failed {
+		return
+	}
 	if err := t.bw.Flush(); err != nil {
 		transcriptLog("agent %s: flush transcript (turn %d): %v", t.agent, turn, err)
+		t.failed = true
 	}
 }
 

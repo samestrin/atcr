@@ -569,7 +569,9 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 	if len(enabled) == 0 {
 		return nil
 	}
-	return &payload.ReviewStage{Agents: enabled, ToolsEnabled: enabled, ToolsDegraded: degraded}
+	// Agents is a distinct copy of ToolsEnabled so the two slices never alias (a
+	// later mutation of one must not silently mutate the other).
+	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: degraded}
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).

@@ -310,11 +310,23 @@ func (l *toolLoop) answerSkipped(turn int, calls []llmclient.ToolCall, note stri
 }
 
 // toolCallRecords converts the wire tool calls into transcript records, copying
-// the raw arguments verbatim so the transcript shows exactly what the model asked.
+// the raw arguments so the transcript shows exactly what the model asked. A
+// call's malformed (invalid-JSON) arguments are preserved as a JSON string
+// rather than left as invalid RawMessage: an invalid RawMessage would fail the
+// whole event's json.Marshal and drop EVERY call in the turn (orphaning the
+// tool_result lines), so it is wrapped so the per-call record always serializes.
 func toolCallRecords(calls []llmclient.ToolCall) []tools.ToolCallRecord {
 	out := make([]tools.ToolCallRecord, len(calls))
 	for i, tc := range calls {
-		out[i] = tools.ToolCallRecord{ID: tc.ID, Name: tc.Function.Name, Arguments: llmclient.ToolCallArguments(tc)}
+		args := llmclient.ToolCallArguments(tc)
+		if len(args) > 0 && !json.Valid(args) {
+			if enc, err := json.Marshal(string(args)); err == nil {
+				args = enc
+			} else {
+				args = nil // unreachable for a Go string, but never emit invalid JSON
+			}
+		}
+		out[i] = tools.ToolCallRecord{ID: tc.ID, Name: tc.Function.Name, Arguments: args}
 	}
 	return out
 }
