@@ -198,7 +198,7 @@ func truncate(s string, limit int) string {
 	}
 	keep := limit - len(truncMarker)
 	if keep < 0 {
-		keep = 0
+		return truncMarker[:limit]
 	}
 	return safeRuneCut(s, keep) + truncMarker
 }
