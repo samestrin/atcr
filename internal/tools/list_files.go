@@ -72,7 +72,7 @@ func (w *listWalker) walk(dir string, depth int) bool {
 		if w.ctx.Err() != nil {
 			return false
 		}
-		if e.IsDir() && e.Name() == ".git" {
+		if e.IsDir() && strings.EqualFold(e.Name(), ".git") {
 			continue
 		}
 		if w.maxFiles > 0 && len(w.lines) >= w.maxFiles {

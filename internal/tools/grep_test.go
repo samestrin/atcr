@@ -131,9 +131,9 @@ func TestGrep_SkipsDotGITCaseInsensitive(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("url = https://user:secret@host\n"), 0o644))
 	d := newTestDispatcher(t, root)
 
-	res, err := grep(t, d, `{"pattern":"secret"}`)
+	res, err := grep(t, d, `{"pattern":"url"}`)
 	require.NoError(t, err)
-	assert.NotContains(t, res.Content, "secret", ".GIT directory must be skipped even when directory name is uppercase")
+	assert.NotContains(t, res.Content, ".GIT", ".GIT directory must be skipped even when directory name is uppercase")
 }
 
 // incoherent with the byte-count semantics capResult and read_file use.

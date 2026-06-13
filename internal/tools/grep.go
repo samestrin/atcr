@@ -60,7 +60,7 @@ func grepHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, a
 			return ctx.Err()
 		}
 		if de.IsDir() {
-			if de.Name() == ".git" {
+			if strings.EqualFold(de.Name(), ".git") {
 				return filepath.SkipDir
 			}
 			return nil
