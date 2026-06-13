@@ -254,7 +254,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
 
 **Goal:** Build tool harness (definitions, dispatcher, handlers), path jail, and snapshot manager with full unit test coverage. No LLM or network required.
 
-### 2.1 [ ] **[Story 7: Tool Definitions & Dispatcher - RED](plan/user-stories/07-tool-definitions-dispatcher.md)**
+### 2.1 [x] **[Story 7: Tool Definitions & Dispatcher - RED](plan/user-stories/07-tool-definitions-dispatcher.md)**
    Write comprehensive failing tests, verify fail correctly
    - Test `ToolDef` JSON Schema serialization for `read_file`, `grep`, `list_files` (matches OpenAI function calling format)
    - Test dispatcher routing: each tool name routes to the correct handler
@@ -266,7 +266,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Files:** `internal/tools/defs_test.go`, `internal/tools/dispatch_test.go`, `internal/tools/read_file_test.go`, `internal/tools/grep_test.go`, `internal/tools/list_files_test.go` | **Duration:** 3-4 hours
    **AC:** [07-01](plan/acceptance-criteria/07-01-read-file-tool.md), [07-02](plan/acceptance-criteria/07-02-grep-tool.md), [07-03](plan/acceptance-criteria/07-03-list-files-tool.md), [07-04](plan/acceptance-criteria/07-04-tool-dispatcher-byte-caps.md)
 
-### 2.2 [ ] **[Story 7: Tool Definitions & Dispatcher - GREEN](plan/user-stories/07-tool-definitions-dispatcher.md)**
+### 2.2 [x] **[Story 7: Tool Definitions & Dispatcher - GREEN](plan/user-stories/07-tool-definitions-dispatcher.md)**
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
    - `internal/tools/defs.go`: `ToolDef` structs with OpenAI JSON Schema, `AllDefs()` function
    - `internal/tools/dispatch.go`: `Dispatcher` struct with `Execute(toolName, args, jail)`, per-call byte cap, truncation marker
@@ -276,7 +276,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "feat(tools): add tool definitions, dispatcher, and handlers (green)"`
    **Files:** `internal/tools/defs.go`, `internal/tools/dispatch.go`, `internal/tools/read_file.go`, `internal/tools/grep.go`, `internal/tools/list_files.go` | **Duration:** 4-5 hours
 
-### 2.2.A [ ] **[Story 7: Tool Definitions & Dispatcher - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-tool-definitions-dispatcher.md)**
+### 2.2.A [x] **[Story 7: Tool Definitions & Dispatcher - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-tool-definitions-dispatcher.md)**
    **Changed Files:** `internal/tools/defs.go`, `internal/tools/dispatch.go`, `internal/tools/read_file.go`, `internal/tools/grep.go`, `internal/tools/list_files.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
@@ -294,18 +294,18 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-06-13):** No CRITICAL/HIGH. Confirmed: no sandbox escape (WalkDir/ReadDir do not traverse symlinked subdirs; glob matches basename only), RE2 has no catastrophic backtracking, write-tool guard sound, no FD leaks.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | grep.go scanFileForMatches | Scanner errors (`bufio.ErrTooLong` on >10MB line, mid-file IO error) swallowed → silent partial results | FIXED 2.3: check `sc.Err()`, append `[skipped: ...]` note |
+   | MEDIUM | dispatch.go SetLimits/Execute | `SetLimits` mutates `d.limits` unsynchronized vs concurrent `Execute` reads (data race) | FIXED 2.3: documented as construction/tuning-only, not concurrent-safe (test-only mutator; production constructs once) |
+   | LOW | dispatch.go truncate | Byte-slice cut can split a multi-byte UTF-8 rune → invalid UTF-8 in tool message | FIXED 2.3: `safeRuneCut` backs up to a rune boundary |
+   | LOW | grep.go per-line cap | Same UTF-8 split on per-match-line truncation | FIXED 2.3: `safeRuneCut` |
+   | LOW | open_other.go:9 | Non-unix build lacks `O_NOFOLLOW`, reopening read_file TOCTOU window (unix targets unaffected) | DEFERRED → TD-003 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → no blocking pre-2.3 fix. Three MEDIUM/LOW correctness/robustness items fixed inline during 2.3 REFACTOR (cheap, no scope creep); one LOW platform residual deferred to `tech-debt-captured.md` (TD-003). **Adversarial review passed.**
 
-### 2.3 [ ] **[Story 7: Tool Definitions & Dispatcher - REFACTOR](plan/user-stories/07-tool-definitions-dispatcher.md)**
+### 2.3 [x] **[Story 7: Tool Definitions & Dispatcher - REFACTOR](plan/user-stories/07-tool-definitions-dispatcher.md)**
    1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
    2. Improve code quality: error messages, naming, interface clarity (T1)
    3. Validate all tests still pass (T3)

@@ -123,8 +123,14 @@ func scanFileForMatches(path, rel string, re *regexp.Regexp, maxMatches, maxLine
 			continue
 		}
 		if maxLineBytes > 0 && len(line) > maxLineBytes {
-			line = line[:maxLineBytes] + "…"
+			line = safeRuneCut(line, maxLineBytes) + "…"
 		}
 		*matches = append(*matches, fmt.Sprintf("%s:%d: %s", rel, ln, line))
+	}
+	// Surface a scanner error (e.g. bufio.ErrTooLong on an over-long line, or a
+	// mid-file read error) so the model is not misled into thinking an
+	// incompletely scanned file produced no further matches.
+	if err := sc.Err(); err != nil {
+		*matches = append(*matches, fmt.Sprintf("%s: [skipped: %v]", rel, err))
 	}
 }

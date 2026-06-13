@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // truncMarker is appended to any result content shortened by a byte cap.
@@ -68,7 +69,9 @@ func NewDispatcher(jail Resolver, root string, limits Limits) *Dispatcher {
 	return d
 }
 
-// SetLimits replaces the result caps. Intended for tuning and tests.
+// SetLimits replaces the result caps. It is not safe for concurrent use: call
+// it during construction/tuning before any goroutine invokes Execute. Execute
+// itself is safe to call concurrently.
 func (d *Dispatcher) SetLimits(l Limits) { d.limits = l }
 
 // RegisteredTools returns the names of all registered tools.
@@ -190,7 +193,22 @@ func truncate(s string, limit int) string {
 	if keep < 0 {
 		keep = 0
 	}
-	return s[:keep] + truncMarker
+	return safeRuneCut(s, keep) + truncMarker
+}
+
+// safeRuneCut returns s truncated to at most n bytes without splitting a
+// multi-byte UTF-8 rune (so the result is always valid UTF-8).
+func safeRuneCut(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	if n < 0 {
+		n = 0
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // stringArg extracts a string argument. It distinguishes absent (present=false)
