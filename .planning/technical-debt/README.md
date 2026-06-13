@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 0 |
-| MEDIUM | 1 | 7 | 10 |
+| MEDIUM | 0 | 7 | 11 |
 | LOW | 1 | 0 | 33 |
 
-**Last Modified:** 2026-06-12 | **Open Items:** 2 | **Deferred Items:** 7 | **Resolved Items:** 43 | **Total Items:** 52
+**Last Modified:** 2026-06-12 | **Open Items:** 1 | **Deferred Items:** 7 | **Resolved Items:** 44 | **Total Items:** 52
 
 ## Directory Structure
 
@@ -37,7 +37,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | MEDIUM | internal/fanout/engine_test.go:345 | TestRun_MaxParallelBoundsPeakConcurrency is flaky under go test -count>1 and parallel package load (peak observed 1 instead of 2); reproduces on main, so it is pre-existing and outside this epic's scope (internal/payload) | Make peak deterministic by asserting after both cap agents are confirmed in-flight via the concurrency counter rather than onStart, and reset fake peak/state per iteration | DETERMINISM | 30 | execute-epic-cumulative |
+| U | [x] | MEDIUM | internal/fanout/engine_test.go:345 | TestRun_MaxParallelBoundsPeakConcurrency is flaky under go test -count>1 and parallel package load (peak observed 1 instead of 2); reproduces on main, so it is pre-existing and outside this epic's scope (internal/payload) (Resolved 2026-06-12 — gate all five agents so the cap fills regardless of admission order; verified -race -count=20) | Make peak deterministic by asserting after both cap agents are confirmed in-flight via the concurrency counter rather than onStart, and reset fake peak/state per iteration | DETERMINISM | 30 | execute-epic-cumulative |
 | U | [ ] | LOW | internal/payload/diff.go:101 | ensureRange guards five whole-range caches by one shared cacheKey; a future cache accessor that forgets to call ensureRange first would serve stale cross-range data — a fragile invariant relying on every helper remembering the call | Centralize range reconciliation behind a single lazy keyed-access path so no cache can be read without first reconciling cacheKey | INTEGRATION | 30 | execute-epic-independent |
 
 ### [2026-06-12] From Sprint: 1.5_review-status-lifecycle
