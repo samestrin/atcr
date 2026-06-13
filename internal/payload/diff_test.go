@@ -30,6 +30,17 @@ func TestNumstatNewPath_BraceInParentDir(t *testing.T) {
 	}
 }
 
+// splitDiffByFile must return an error when a chunk cannot be attributed to
+// any known head path. Silent data loss (log + drop) is not acceptable for a
+// CLI where log lines are invisible and the build still returns success.
+func TestSplitDiffByFile_UnattributableChunkErrors(t *testing.T) {
+	diff := "diff --git a/gone.go b/gone.go\n--- a/gone.go\n+++ b/gone.go\n@@ -1 +1 @@ whatever\n"
+	// heads does not contain gone.go, so the chunk is unattributable.
+	_, err := splitDiffByFile(diff, map[string]bool{"other.go": true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gone.go")
+}
+
 // A fatal git failure (here: not a repository) must propagate from isBinary
 // rather than being silently reported as "not binary" (TD-010).
 func TestIsBinary_FatalGitErrorPropagates(t *testing.T) {

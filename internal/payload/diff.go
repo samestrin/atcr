@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -243,10 +242,10 @@ func chunkKey(chunk string, heads map[string]bool) string {
 // set. A per-file chunk is byte-identical to the output of the same diff run for
 // that path alone, because git computes per-file patches and concatenates them —
 // this is what lets the verbatim-body contract survive the batching.
-func splitDiffByFile(diff string, heads map[string]bool) map[string]string {
+func splitDiffByFile(diff string, heads map[string]bool) (map[string]string, error) {
 	out := make(map[string]string)
 	if diff == "" {
-		return out
+		return out, nil
 	}
 	const marker = "diff --git "
 	var starts []int
@@ -267,19 +266,14 @@ func splitDiffByFile(diff string, heads map[string]bool) map[string]string {
 		if key := chunkKey(chunk, heads); key != "" {
 			out[key] = chunk
 		} else {
-			// A chunk that matches no known head path means the splitter could
-			// not attribute it — an unforeseen git output form. Record it rather
-			// than drop it silently, so a file rendering with an empty body is
-			// traceable instead of invisible (same contract as the blocks
-			// function-context fallback record).
 			header := chunk
 			if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
 				header = chunk[:nl]
 			}
-			slog.Warn("diff splitter: chunk not attributed to any changed file", "header", header)
+			return nil, fmt.Errorf("diff splitter: chunk not attributed to any changed file: %s", header)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // diffChunks runs one whole-range `git diff <opts> -M base..head` and splits it
@@ -296,7 +290,7 @@ func (g *gitRunner) diffChunks(base, head string, opts ...string) (map[string]st
 	if err != nil {
 		return nil, err
 	}
-	return splitDiffByFile(string(out), heads), nil
+	return splitDiffByFile(string(out), heads)
 }
 
 // binarySet returns the set of head paths that are binary in base..head, from
