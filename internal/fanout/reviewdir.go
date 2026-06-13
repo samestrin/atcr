@@ -223,6 +223,12 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 // .atcr/reviews/). Parent directories are created as needed; the path may be
 // non-existent or an empty directory. It returns the path so callers mirror the
 // ScaffoldReviewDir signature.
+//
+// Trust boundary: arbitrary absolute paths — including paths outside the repo
+// root — are accepted by design. atcr is a developer tool and --output-dir is
+// intended for external orchestrators that own their output location. Callers
+// are responsible for supplying trusted, user-controlled paths; paths inside
+// ReviewsRoot are rejected by PrepareReview to avoid confusing half-state.
 func ScaffoldOutputDir(dir string) (string, error) {
 	// Refuse a non-empty existing target so a review never clobbers unrelated
 	// content. os.ReadDir surfaces every entry (hidden files included); a
