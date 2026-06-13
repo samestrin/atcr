@@ -328,7 +328,10 @@ func WriteManifest(reviewDir string, m *payload.Manifest) error {
 // truth ReadReviewStatus uses) as authoritative and falling back to
 // manifest.json when no readable summary exists (fan-out still running, or a
 // hand-assembled review). Reading the summary first means a WriteManifest
-// failure after WritePool can never report partial:false for a partial run.
+// failure after WritePool can never report partial:false for a partial run. A
+// failure-marker summary (a WritePool I/O fault, where only a subset of agents
+// may have reached disk) is forced to partial whenever any agent succeeded, so
+// a reconcile over the surviving artifacts never drops an unflushed agent.
 // It is the single best-effort reader shared by the CLI reconcile path and the
 // MCP reconcile handler so the two never drift; when neither artifact is
 // readable it defaults to false.
