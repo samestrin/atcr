@@ -157,6 +157,15 @@ func TestDispatcher_JailRejectionIsToolError(t *testing.T) {
 	assert.True(t, errors.As(err, &te), "jail rejection must be a *ToolError, got %T", err)
 }
 
+// TestNewDispatcher_ZeroLimitsNormalizedToDefaults verifies that a zero Limits
+// passed to NewDispatcher is normalized to DefaultLimits, preventing accidental
+// unlimited-cap production dispatchers from Limits{} foot-gun.
+func TestNewDispatcher_ZeroLimitsNormalizedToDefaults(t *testing.T) {
+	d := NewDispatcher(prefixResolver{t.TempDir()}, Limits{})
+	assert.Equal(t, DefaultLimits(), d.limits,
+		"NewDispatcher must normalize zero Limits fields to DefaultLimits()")
+}
+
 // TestTruncate_LimitSmallerThanMarker verifies that truncate never returns a
 // string longer than limit, even when limit < len(truncMarker).
 func TestTruncate_LimitSmallerThanMarker(t *testing.T) {
