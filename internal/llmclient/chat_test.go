@@ -238,6 +238,67 @@ func TestChat_EchoedAssistantToolCallsHaveStringEncodedArguments(t *testing.T) {
 	assert.NotContains(t, gotBodies[1], `"arguments":{"`, "echoed tool-call arguments must not be raw JSON objects")
 }
 
+// TestChat_TruncatedFinishReasonWithEmptyContentReturnsError verifies that Chat
+// surfaces finish_reason "length" or "content_filter" with empty content as an
+// error rather than silently returning a successful empty review (StatusOK).
+func TestChat_TruncatedFinishReasonWithEmptyContentReturnsError(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		finishReason string
+	}{
+		{"length", "length"},
+		{"content_filter", "content_filter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"`+tc.finishReason+`","message":{"role":"assistant","content":null}}]}`)
+			}))
+			defer srv.Close()
+			t.Setenv("TEST_KEY", testKey)
+
+			_, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+				BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+			}, nil, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.finishReason)
+		})
+	}
+}
+
+// TestChat_StopFinishReasonWithContentSucceeds verifies that a normal "stop"
+// response is unaffected by the truncation guard.
+func TestChat_StopFinishReasonWithContentSucceeds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"review here"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Message.Content)
+	assert.Equal(t, "review here", *resp.Message.Content)
+}
+
+// TestChat_LengthFinishReasonWithToolCallsSucceeds verifies that a "length"-
+// truncated response that still carries tool_calls is not treated as an error
+// (the loop can still process the partial calls).
+func TestChat_LengthFinishReasonWithToolCallsSucceeds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"grep","arguments":"{\"pattern\":\"x\"}"}}]}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.NoError(t, err)
+	assert.Len(t, resp.Message.ToolCalls, 1)
+}
+
 // Backward-compat sanity: Complete still works after the shared-send refactor.
 func TestChat_CompleteStillWorksAfterRefactor(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
