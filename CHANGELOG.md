@@ -1,3 +1,15 @@
+## [1.7.0] - 2026-06-12
+
+### Verified
+
+- Closed the three Story-05 manual verification gates with one authorized live-provider review run: the orchestration loop (range → review → poll → host review → reconcile → report) verified end-to-end (AC 05-03), the host review's adversarial praise-free tone confirmed by independent inspection (AC 05-04), and ambiguity adjudication's merge/distinct sensibility and idempotency exercised through real `atcr reconcile` (AC 05-04). No code behavior changed.
+
+### Notes
+
+- The live run surfaced that the default 512 KiB payload byte budget yields ~155k-token payloads that exceed common model context/plan limits, and `atcr doctor`'s trivial-nonce probe does not catch it — captured as technical debt for a sizing-guideline/warning follow-up.
+
+*Shipped via /execute-epic (epic 1.7)*
+
 ## [1.6.0] - 2026-06-12
 
 ### Changed
