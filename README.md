@@ -76,10 +76,25 @@ atcr report --format md
 
 Key flags:
 
-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
+- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
 - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
 - `atcr report --format md|json|checklist` / `--output <file>`
 - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+
+### Redirecting output for orchestrators (`--output-dir`)
+
+By default `atcr review` writes the review tree to `.atcr/reviews/<id>/` and points `.atcr/latest` at it — the right default for interactive use. An external orchestrator (a skill, CI step, or wrapper script) that needs the output at a specific location can pass `--output-dir <path>` instead:
+
+```bash
+atcr review --output-dir ./artifacts/review        # full tree (manifest.json, payload/, sources/) lands here
+atcr reconcile ./artifacts/review                   # reconcile + report take the same path as their anchor
+atcr report ./artifacts/review --format md
+```
+
+- The tree is written verbatim to `<path>` (relative paths resolve against the current directory). The path must be new or empty — a non-empty directory is rejected with exit **2** so existing content is never clobbered.
+- `.atcr/latest` is **not** updated, so `--output-dir` runs never disturb the interactive pointer.
+- `--output-dir` and `--id` are mutually exclusive (the id is meaningless when the path is explicit).
+- `atcr reconcile` and `atcr report` need no extra flag — they already accept a filesystem path as their `[id-or-path]` argument, so hand them the same `--output-dir` path.
 
 ## Payload modes
 
