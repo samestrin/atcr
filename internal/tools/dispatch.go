@@ -165,7 +165,7 @@ func (d *Dispatcher) Execute(ctx context.Context, name string, argsJSON json.Raw
 		default:
 			resolved, jerr := d.jail.Resolve(rel)
 			if jerr != nil {
-				return ToolResult{}, jerr
+				return ToolResult{}, toolErrf("%v", jerr)
 			}
 			absPath = resolved
 		}
