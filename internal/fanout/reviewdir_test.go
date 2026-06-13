@@ -96,6 +96,24 @@ func TestScaffoldOutputDir_RejectsDanglingSymlink(t *testing.T) {
 	assert.Contains(t, err.Error(), "symlink")
 }
 
+func TestValidateOutputDirRoot_RejectsInsideReviewsRoot(t *testing.T) {
+	// --output-dir inside .atcr/reviews/ writes a review tree that is invisible
+	// to atcr status (WriteLatest is skipped for --output-dir), creating a
+	// confusing half-state. validateOutputDirRoot must reject such paths.
+	root := t.TempDir()
+	insidePath := filepath.Join(ReviewsRoot(root), "my-output")
+	err := validateOutputDirRoot(insidePath, root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ".atcr/reviews")
+}
+
+func TestValidateOutputDirRoot_AllowsOutsidePath(t *testing.T) {
+	root := t.TempDir()
+	outsidePath := filepath.Join(t.TempDir(), "my-output")
+	err := validateOutputDirRoot(outsidePath, root)
+	require.NoError(t, err)
+}
+
 func TestScaffoldOutputDir_TwoCallsSamePathSecondFails(t *testing.T) {
 	// After the first ScaffoldOutputDir call populates a dir with review subdirs,
 	// a second call on the same path sees a non-empty directory and is rejected.
