@@ -117,6 +117,70 @@ func TestSnapshotFor_UnreachableSHA(t *testing.T) {
 // worktree-add + prune block so concurrent goroutines cannot interleave a prune
 // from one goroutine with an add from another.
 // Run with -race to verify no Go-level data races.
+// snapshotCleanupGuard must return true when base is the canonical (EvalSymlinks-
+// resolved) form of a path under a symlinked TMPDIR. The Clean-based guard
+// spuriously returns false in this case because filepath.Clean does not resolve
+// symlinks, so "/private/tmp/atcr-xxx" does not have "/tmp/" as a prefix.
+func TestSnapshotCleanupGuard_SymlinkedTMPDIR(t *testing.T) {
+	// Create real dir + symlink, set TMPDIR to the symlink.
+	realBase, err := os.MkdirTemp("", "real-tmpdir-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(realBase) })
+	linkBase := realBase + "-link"
+	require.NoError(t, os.Symlink(realBase, linkBase))
+	t.Cleanup(func() { os.Remove(linkBase) })
+	t.Setenv("TMPDIR", linkBase+"/")
+
+	// MkdirTemp gives us a path under the symlink; simulate what happens when
+	// that path is later canonicalized (e.g. by git or the OS).
+	base, err := os.MkdirTemp("", "atcr-snapshot-guard-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(base) })
+	canonBase, err := filepath.EvalSymlinks(base)
+	require.NoError(t, err)
+
+	// The guard must accept the canonical path (otherwise cleanup is silently
+	// skipped and the worktree leaks).
+	assert.True(t, snapshotCleanupGuard(canonBase),
+		"guard must pass for EvalSymlinks-resolved base under a symlinked TMPDIR")
+}
+
+// Cleanup must run even when TMPDIR is a symlink (macOS /tmp -> /private/tmp
+// or a custom symlink). Guards that use filepath.Clean instead of EvalSymlinks
+// spuriously fail when base is canonicalized but TempDir still returns the
+// symlink path.
+func TestSnapshotFor_CleanupRunsWithSymlinkedTMPDIR(t *testing.T) {
+	repo := setupGitRepo(t)
+	old := gitHead(t, repo)
+	gitCommitEmpty(t, repo, "second")
+
+	// Build a real dir and a symlink to it, then run with TMPDIR pointing at
+	// the symlink so os.MkdirTemp creates worktrees under the symlinked path.
+	realBase, err := os.MkdirTemp("", "real-tmpdir-")
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(realBase) })
+	linkBase := realBase + "-link"
+	require.NoError(t, os.Symlink(realBase, linkBase))
+	t.Cleanup(func() { os.Remove(linkBase) })
+
+	prevTMPDIR := os.Getenv("TMPDIR")
+	t.Setenv("TMPDIR", linkBase+"/")
+	defer os.Setenv("TMPDIR", prevTMPDIR)
+
+	m := NewSnapshotManager(repo)
+	root, cleanup, err := m.SnapshotFor(old)
+	require.NoError(t, err)
+	require.NotEqual(t, repo, root, "different commit must produce a worktree")
+
+	_, statBefore := os.Stat(root)
+	require.NoError(t, statBefore, "worktree must exist before cleanup")
+
+	cleanup()
+
+	_, statAfter := os.Stat(root)
+	assert.True(t, os.IsNotExist(statAfter), "worktree must be removed even with symlinked TMPDIR")
+}
+
 func TestSnapshotFor_ConcurrentSlowPath(t *testing.T) {
 	repo := setupGitRepo(t)
 	old := gitHead(t, repo)

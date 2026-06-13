@@ -28,6 +28,14 @@ func NewSnapshotManager(repoRoot string) *SnapshotManager {
 	return &SnapshotManager{repoRoot: repoRoot}
 }
 
+// snapshotCleanupGuard reports whether base is safe to remove: it must be a
+// direct child of the OS temp directory. The trailing separator avoids a
+// sibling-prefix match (e.g. /tmpfoo vs /tmp).
+func snapshotCleanupGuard(base string) bool {
+	sep := string(os.PathSeparator)
+	return strings.HasPrefix(base, filepath.Clean(os.TempDir())+sep)
+}
+
 // SnapshotFor returns the snapshot root for head, a cleanup function (safe to
 // call multiple times; a no-op on the fast path), and an error. Callers must
 // defer cleanup immediately.
@@ -86,10 +94,8 @@ func (m *SnapshotManager) SnapshotFor(head string) (string, func(), error) {
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
-			// Refuse to remove anything outside the temp dir we created. The
-			// trailing separator avoids a sibling-prefix match (e.g. /tmpfoo
-			// vs /tmp), mirroring the jail's own prefix check.
-			if !strings.HasPrefix(base, filepath.Clean(os.TempDir())+string(os.PathSeparator)) {
+			// Refuse to remove anything outside the temp dir we created.
+			if !snapshotCleanupGuard(base) {
 				return
 			}
 			if _, err := m.git(gitPath, "worktree", "remove", "--force", leaf); err != nil {
