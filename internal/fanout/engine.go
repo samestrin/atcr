@@ -152,9 +152,12 @@ func WithDispatcher(d toolDispatcher) EngineOption {
 // WithTranscript wires a per-agent transcript factory: for each tool-enabled
 // agent the loop calls f(agentName) to obtain a writer, records every turn's
 // tool_calls/tool_results and the final message, and closes it when the agent
-// finishes. Without it (the default), no transcript is recorded. Recording is
-// best-effort: a writer that fails to open or write logs and continues, never
-// failing the review.
+// finishes. The factory is called concurrently — once per agent, possibly
+// simultaneously — and must be goroutine-safe: it must not mutate unsynchronized
+// shared state (maps, counters, pools) without its own synchronization. Without
+// it (the default), no transcript is recorded. Recording is best-effort: a
+// writer that fails to open or write logs and continues, never failing the
+// review.
 func WithTranscript(f func(agentName string) *tools.Transcript) EngineOption {
 	return func(e *Engine) { e.transcript = f }
 }
