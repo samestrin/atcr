@@ -772,7 +772,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    4. COMMIT: `git commit -m "refactor(tools): address review + clean up transcript writer"`
    **Duration:** 1 hour
 
-### 5.4 [ ] **[Story 6: Persona Guidance & Documentation - RED](plan/user-stories/06-persona-guidance-documentation.md)**
+### 5.4 [x] **[Story 6: Persona Guidance & Documentation - RED](plan/user-stories/06-persona-guidance-documentation.md)**
    Write comprehensive failing tests, verify fail correctly
    - Test `PayloadContext.ToolsEnabled bool`: field set from `AgentConfig.Tools` at render time
    - Test persona template rendering: `{{if .ToolsEnabled}}` sections present when `ToolsEnabled=true`, absent when `false`
@@ -783,7 +783,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    **Files:** `internal/payload/personas_render_test.go` | **Duration:** 1-2 hours
    **AC:** [06-01](plan/acceptance-criteria/06-01-tool-enabled-persona-guidance.md), [06-02](plan/acceptance-criteria/06-02-evidence-citation-rule.md), [06-03](plan/acceptance-criteria/06-03-registry-documentation-activation.md), [06-04](plan/acceptance-criteria/06-04-payload-modes-readme-cost-guidance.md)
 
-### 5.5 [ ] **[Story 6: Persona Guidance & Documentation - GREEN](plan/user-stories/06-persona-guidance-documentation.md)**
+### 5.5 [x] **[Story 6: Persona Guidance & Documentation - GREEN](plan/user-stories/06-persona-guidance-documentation.md)**
    Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
    - `internal/payload/template.go`: Add `ToolsEnabled bool` to `PayloadContext`; populate from `AgentConfig.Tools`
    - Persona templates: add `{{if .ToolsEnabled}}` conditional sections with tool exploration guidance, evidence-citation rule ("findings must cite evidence actually read"), scope guard ("tools widen evidence gathering, not scope")
