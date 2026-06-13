@@ -228,9 +228,19 @@ func chunkKey(chunk string, heads map[string]bool) string {
 	if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
 		first = chunk[:nl]
 	}
+	const sep = " b/"
+	// Fast path: extract everything after the last ' b/' token and do a
+	// single map lookup. Correct for the common case where paths do not
+	// contain ' b/' as a substring; a miss falls through to the O(N)
+	// longest-suffix scan which handles embedded ' b/' and space-heavy names.
+	if i := strings.LastIndex(first, sep); i >= 0 {
+		if candidate := first[i+len(sep):]; heads[candidate] {
+			return candidate
+		}
+	}
 	best := ""
 	for h := range heads {
-		if len(h) > len(best) && strings.HasSuffix(first, " b/"+h) {
+		if len(h) > len(best) && strings.HasSuffix(first, sep+h) {
 			best = h
 		}
 	}

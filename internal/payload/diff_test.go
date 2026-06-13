@@ -2,6 +2,7 @@ package payload
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,6 +40,31 @@ func TestSplitDiffByFile_UnattributableChunkErrors(t *testing.T) {
 	_, err := splitDiffByFile(diff, map[string]bool{"other.go": true})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gone.go")
+}
+
+// chunkKey must return the correct head path for a large head set, validating
+// that the O(1) fast path does not break longest-suffix correctness.
+func TestChunkKey_LargeHeadSetCorrectness(t *testing.T) {
+	heads := make(map[string]bool, 2000)
+	for i := 0; i < 2000; i++ {
+		heads[fmt.Sprintf("dir/%04d/f.go", i)] = true
+	}
+	chunk := "diff --git a/dir/0042/f.go b/dir/0042/f.go\n@@ -1 +1 @@ x"
+	assert.Equal(t, "dir/0042/f.go", chunkKey(chunk, heads))
+}
+
+// BenchmarkChunkKey_FastPath measures chunkKey with the O(1) fast path active
+// (common case: paths are unique and do not contain " b/").
+func BenchmarkChunkKey_FastPath(b *testing.B) {
+	heads := make(map[string]bool, 2000)
+	for i := 0; i < 2000; i++ {
+		heads[fmt.Sprintf("dir/%04d/f.go", i)] = true
+	}
+	chunk := "diff --git a/dir/0042/f.go b/dir/0042/f.go\n@@ -1 +1 @@ x"
+	b.ResetTimer()
+	for range b.N {
+		_ = chunkKey(chunk, heads)
+	}
 }
 
 // A fatal git failure (here: not a repository) must propagate from isBinary
