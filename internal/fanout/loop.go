@@ -119,6 +119,11 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		// execute this turn's calls; trip max_turns and request a final answer.
 		if l.res.Turns >= l.maxTurns {
 			l.res.addTripped(budgetMaxTurns)
+			// The assistant turn carries tool_calls we will not execute; answer
+			// every one so the conversation stays well-formed (OpenAI-compatible
+			// providers reject a final request with a dangling tool_call_id,
+			// which would discard the partial findings).
+			l.answerSkipped(resp.Message.ToolCalls, "skipped: turn budget reached; provide your final answer now")
 			return l.requestFinalAnswer(ctx)
 		}
 
@@ -151,25 +156,29 @@ func (l *toolLoop) run(ctx context.Context) Result {
 func (l *toolLoop) dispatchTurn(ctx context.Context, calls []llmclient.ToolCall) (halt bool) {
 	curSigs := make(map[string]bool, len(calls))
 	nextNudged := map[string]bool{}
-	nudgedThisTurn := false
 	malformedThisTurn := false
 
+	// Every tool_call in the assistant turn must be answered with a role:"tool"
+	// result before the next request — providers reject a dangling tool_call_id.
+	// Skipped calls (repeats) therefore still get an answer (the nudge), just not
+	// a real execution; a separate user-role nudge is NOT used because it would
+	// illegally interleave between the assistant tool_calls and its tool results.
 	for _, tc := range calls {
 		sig := toolSig(tc)
 		curSigs[sig] = true
 
-		// A signature we nudged last turn reappearing is a second repeat → halt.
+		// A signature we nudged last turn reappearing is a second repeat: answer
+		// it (keep the wire well-formed) and halt — the model is thrashing.
 		if l.nudgedSigs[sig] {
+			l.appendToolResult(tc.ID, nudgeMessage)
 			halt = true
 			continue
 		}
-		// First identical repeat (same call as the immediately previous turn):
-		// nudge once and do not re-execute this specific call.
+		// First identical repeat (same call as the immediately previous turn): do
+		// not re-execute; answer with the nudge and flag the signature so a
+		// reappearance next turn halts.
 		if l.prevSigs[sig] {
-			if !nudgedThisTurn {
-				l.appendUser(nudgeMessage)
-				nudgedThisTurn = true
-			}
+			l.appendToolResult(tc.ID, nudgeMessage)
 			nextNudged[sig] = true
 			continue
 		}
@@ -237,6 +246,16 @@ func (l *toolLoop) appendUser(content string) {
 func (l *toolLoop) appendToolResult(callID, content string) {
 	c := content
 	l.messages = append(l.messages, llmclient.Message{Role: "tool", ToolCallID: callID, Content: &c})
+}
+
+// answerSkipped appends a role:"tool" result for every call in an assistant turn
+// whose tool_calls are intentionally not executed (the max_turns trip). It keeps
+// the conversation well-formed so the unbudgeted final-answer request is not
+// rejected for a dangling tool_call_id.
+func (l *toolLoop) answerSkipped(calls []llmclient.ToolCall, note string) {
+	for _, tc := range calls {
+		l.appendToolResult(tc.ID, note)
+	}
 }
 
 // toolSig is the dedup key for a tool call: name plus normalized arguments. A

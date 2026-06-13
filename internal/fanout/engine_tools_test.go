@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +52,13 @@ func (s *scriptedChat) Complete(_ context.Context, _ llmclient.Invocation) (stri
 }
 
 func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	// Faithfully reject a malformed conversation the way an OpenAI-compatible
+	// provider does: every assistant tool_call id must be answered by a later
+	// role:"tool" message before the next request. This guards the loop's
+	// well-formedness invariant (a dangling tool_call_id is an HTTP 400).
+	if err := assertToolCallsAnswered(messages); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	call := s.idx
 	s.idx++
@@ -92,6 +100,26 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 		msg.Content = &c
 	}
 	return &llmclient.ChatResponse{Message: msg, FinishReason: fr}, nil
+}
+
+// assertToolCallsAnswered returns an error when any assistant tool_call lacks a
+// matching role:"tool" answer in the conversation — the malformed shape real
+// providers reject with HTTP 400.
+func assertToolCallsAnswered(messages []llmclient.Message) error {
+	answered := map[string]bool{}
+	for _, m := range messages {
+		if m.Role == "tool" {
+			answered[m.ToolCallID] = true
+		}
+	}
+	for _, m := range messages {
+		for _, tc := range m.ToolCalls {
+			if !answered[tc.ID] {
+				return fmt.Errorf("provider 400: assistant tool_call id %q has no role:tool answer", tc.ID)
+			}
+		}
+	}
+	return nil
 }
 
 // fakeDispatcher mimics tools.Dispatcher's contract: unknown tool names yield a
