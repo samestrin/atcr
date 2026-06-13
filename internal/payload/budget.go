@@ -17,9 +17,13 @@ type FileEntry struct {
 // Truncation records what a byte-budget pass dropped. It is ALWAYS returned by
 // ApplyByteBudget (never silent): Truncated=false with an empty FilesDropped
 // means nothing was dropped. FilesDropped is sorted by path for stable output.
+// AllDropped is true when the input was non-empty but every file was shed —
+// callers should surface this as a distinct error rather than forwarding an
+// empty payload that silently produces zero findings.
 type Truncation struct {
 	Truncated    bool     `json:"truncated"`
 	FilesDropped []string `json:"files_dropped"`
+	AllDropped   bool     `json:"all_dropped,omitempty"`
 }
 
 // ValidateBudget rejects a negative byte budget. Zero is valid and means
@@ -97,7 +101,7 @@ func ApplyByteBudget(entries []FileEntry, budget int64) (kept []FileEntry, t Tru
 	}
 	sort.Strings(droppedPaths)
 
-	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths}
+	return kept, Truncation{Truncated: true, FilesDropped: droppedPaths, AllDropped: len(kept) == 0}
 }
 
 // clampSize treats negative sizes as zero for budget accounting so invalid

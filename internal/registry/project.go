@@ -19,6 +19,9 @@ const (
 	// 512 KiB ≈ 128k tokens at ~4 bytes/token, fitting the dominant
 	// 128k-context model tier with prompt headroom. 0 is the documented
 	// unlimited escape hatch (AC 06-03).
+	// Context-sizing: models with context limits below 128k will fail on this
+	// default — reduce payload_byte_budget to ~163840 (160 KiB ≈ 40k tokens)
+	// in .atcr/config.yaml for rosters that include smaller-context models.
 	DefaultPayloadByteBudget int64 = 524288
 )
 
@@ -60,6 +63,9 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("serial_agents: []\n")
 	fmt.Fprintf(&b, "payload_mode: %s\n", DefaultPayloadMode)
 	fmt.Fprintf(&b, "timeout_secs: %d\n", DefaultTimeoutSecs)
+	b.WriteString("# payload_byte_budget: per-payload byte budget. Default 512 KiB ≈ 128k tokens.\n")
+	b.WriteString("#   Models with context limits below 128k will fail on the default. For rosters\n")
+	b.WriteString("#   that include smaller-context models (e.g. 49k-limit), reduce to 163840 (160 KiB).\n")
 	fmt.Fprintf(&b, "payload_byte_budget: %d\n", DefaultPayloadByteBudget)
 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")

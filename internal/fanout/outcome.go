@@ -54,6 +54,8 @@ func summarize(results []Result) Summary {
 			s.Succeeded++
 		case StatusFailed, StatusTimeout:
 			s.Failed++
+		default:
+			s.Failed++
 		}
 	}
 	s.Partial = s.Failed > 0 && s.Succeeded > 0

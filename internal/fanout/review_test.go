@@ -152,6 +152,34 @@ func TestRunReview_EndToEnd(t *testing.T) {
 	assert.Equal(t, res.ID, latest)
 }
 
+// TestRunReview_OutputDirSkipsLatest verifies --output-dir writes the full
+// review tree to the given path and does NOT repoint .atcr/latest (the pointer
+// tracks interactive runs only; external orchestrators own their output dir).
+func TestRunReview_OutputDirSkipsLatest(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := reviewReq(repo, repo, base, head)
+	req.OutputDir = out
+
+	res, err := RunReview(context.Background(), llmclient.New(), cfg, req)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, out, res.Dir, "review dir must be the explicit --output-dir path")
+
+	for _, sub := range []string{"payload", "sources", "reconciled"} {
+		assert.DirExists(t, filepath.Join(out, sub))
+	}
+	assert.FileExists(t, filepath.Join(out, "manifest.json"))
+
+	// .atcr/latest must NOT be written under the repo root.
+	_, lerr := ReadLatest(repo)
+	assert.Error(t, lerr, "--output-dir must not update .atcr/latest")
+}
+
 // ExecuteReview must stamp CompletedAt when it finalizes the manifest so
 // downstream tools can derive run duration from manifest.json rather than
 // finding the field silently absent (TD review.go:18). Because of omitempty a

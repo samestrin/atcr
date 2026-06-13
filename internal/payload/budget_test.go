@@ -151,6 +151,27 @@ func TestBudget_OverflowCannotBypassTruncation(t *testing.T) {
 	assert.NotEmpty(t, tr.FilesDropped)
 }
 
+// TestBudget_AllDropped_Signal verifies that when every file is removed by the
+// budget pass, AllDropped is set on the returned Truncation so callers can
+// surface a distinct signal rather than receiving an empty-but-Truncated payload
+// with no indication that everything was shed.
+func TestBudget_AllDropped_Signal(t *testing.T) {
+	// All three files exceed the budget individually.
+	in := entries("a", 500, "b", 600, "c", 700)
+	kept, tr := ApplyByteBudget(in, 100)
+	assert.Empty(t, kept)
+	assert.True(t, tr.Truncated)
+	assert.True(t, tr.AllDropped, "AllDropped must be true when zero files remain after budget pass")
+}
+
+func TestBudget_AllDropped_FalseWhenSomeKept(t *testing.T) {
+	// Some files fit: AllDropped must NOT be set.
+	in := entries("big", 90000, "small", 5000)
+	_, tr := ApplyByteBudget(in, 50000)
+	assert.True(t, tr.Truncated)
+	assert.False(t, tr.AllDropped, "AllDropped must be false when at least one file is kept")
+}
+
 func TestBudget_KeepsMostFiles_DropsLargestFirst(t *testing.T) {
 	// The TD-flagged case: sizes [1,2,3,4,90], budget 90. Keep-most-files
 	// policy drops the single 90-byte file (generated/lockfile shaped) and

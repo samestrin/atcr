@@ -218,6 +218,34 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 	return dir, nil
 }
 
+// ScaffoldOutputDir creates the review tree at an explicit --output-dir path
+// (used verbatim — it is the orchestrator's own output target, not under
+// .atcr/reviews/). Parent directories are created as needed; the path may be
+// non-existent or an empty directory. It returns the path so callers mirror the
+// ScaffoldReviewDir signature.
+func ScaffoldOutputDir(dir string) (string, error) {
+	// Refuse a non-empty existing target so a review never clobbers unrelated
+	// content. os.ReadDir surfaces every entry (hidden files included); a
+	// non-existent path is the happy case, while any other read error (a file at
+	// the path, a permission problem) must surface rather than be masked by the
+	// MkdirAll below.
+	switch entries, err := os.ReadDir(dir); {
+	case err == nil && len(entries) > 0:
+		return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("failed to create review directory: %w", err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create review directory: %w", err)
+	}
+	for _, sub := range reviewSubdirs {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			return "", fmt.Errorf("failed to create review directory: %w", err)
+		}
+	}
+	return dir, nil
+}
+
 // WriteLatest writes the review id (one line) to .atcr/latest so later commands
 // default to it. The .atcr directory is created if absent.
 func WriteLatest(root, id string) error {

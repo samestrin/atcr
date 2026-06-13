@@ -110,3 +110,42 @@ func TestReviewCmd_MissingAPIKeyIsUsageError(t *testing.T) {
 	writeReviewFixtureConfig(t)
 	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
 }
+
+func TestOutputDirFromFlags_Unset(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags(nil))
+	dir, err := outputDirFromFlags(cmd)
+	require.NoError(t, err)
+	require.Equal(t, "", dir, "unset --output-dir must yield empty (default review dir)")
+}
+
+func TestOutputDirFromFlags_MutuallyExclusiveWithID(t *testing.T) {
+	// AC: --output-dir and --id together are a usage error (exit 2).
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "/tmp/x", "--id", "y"}))
+	_, err := outputDirFromFlags(cmd)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+}
+
+func TestOutputDirFromFlags_RelativeResolvedToAbs(t *testing.T) {
+	// A relative --output-dir resolves against CWD at flag-parse time.
+	isolate(t)
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "out/review"}))
+	dir, err := outputDirFromFlags(cmd)
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(dir), "relative path must resolve to absolute, got %q", dir)
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(cwd, "out", "review"), dir)
+}
+
+func TestOutputDirFromFlags_EmptyValueIsUsageError(t *testing.T) {
+	// An explicit empty --output-dir is a usage error, not a scaffold into CWD.
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", ""}))
+	_, err := outputDirFromFlags(cmd)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+}

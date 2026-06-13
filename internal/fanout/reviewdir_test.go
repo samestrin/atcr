@@ -12,6 +12,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestScaffoldOutputDir_CreatesTreeWhenAbsent(t *testing.T) {
+	// A non-existent --output-dir path is created (including parents) with the
+	// standard review subdir trio.
+	dir := filepath.Join(t.TempDir(), "nested", "ext-review")
+	got, err := ScaffoldOutputDir(dir)
+	require.NoError(t, err)
+	require.Equal(t, dir, got)
+	for _, sub := range reviewSubdirs {
+		assert.DirExists(t, filepath.Join(dir, sub))
+	}
+}
+
+func TestScaffoldOutputDir_AllowsEmptyExisting(t *testing.T) {
+	// An existing but empty directory is a valid --output-dir target.
+	dir := t.TempDir()
+	got, err := ScaffoldOutputDir(dir)
+	require.NoError(t, err)
+	require.Equal(t, dir, got)
+	assert.DirExists(t, filepath.Join(dir, "sources"))
+}
+
+func TestScaffoldOutputDir_RejectsNonEmpty(t *testing.T) {
+	// A directory that already contains files is rejected (exit 2 at the CLI) so
+	// --output-dir can never clobber existing content. Any entry counts,
+	// including hidden files.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".hidden"), []byte("x"), 0o644))
+	_, err := ScaffoldOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not empty")
+}
+
+func TestScaffoldOutputDir_RejectsFileAtPath(t *testing.T) {
+	// A regular file at the target path is not a usable review dir: surface a
+	// clear error rather than letting MkdirAll fail opaquely.
+	file := filepath.Join(t.TempDir(), "afile")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+	_, err := ScaffoldOutputDir(file)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create review directory")
+}
+
 func TestSlugifyBranch(t *testing.T) {
 	cases := map[string]string{
 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",
