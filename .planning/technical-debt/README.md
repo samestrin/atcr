@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 1 |
-| MEDIUM | 0 | 4 | 18 |
-| LOW | 0 | 0 | 53 |
+| MEDIUM | 1 | 3 | 19 |
+| LOW | 1 | 0 | 53 |
 
-**Last Modified:** 2026-06-13 | **Open Items:** 0 | **Deferred Items:** 4 | **Resolved Items:** 72 | **Total Items:** 76
+**Last Modified:** 2026-06-13 | **Open Items:** 2 | **Deferred Items:** 3 | **Resolved Items:** 73 | **Total Items:** 78
 
 ## Directory Structure
 
@@ -32,6 +32,13 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-13] From Sprint: epic-1.9
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | MEDIUM | internal/fanout/status.go:152 | ReadReviewStatus reports Partial=ps.Partial and Status=completed for a FailureMarker summary with Succeeded>0 and Failed=0, contradicting the reconcile path which now treats the same on-disk summary as partial | Apply the same FailureMarker && Succeeded>0 -> partial correction in ReadReviewStatus (or factor partial-derivation into one shared helper used by both readers); epic 1.9 explicitly scoped the status path out, so deferred | INTEGRATION | 30 | execute-epic-cumulative |
+| U | [ ] | LOW | cmd/atcr/review.go:149 | The one-shot in-process reconcile threads result.Summary.Partial directly (not ReadManifestPartial), bypassing the marker correction; this is safe only because ExecuteReview returns (nil, err) on WritePool failure so the line is unreachable post-fault, but the invariant is implicit and undocumented | Add a comment noting a WritePool failure short-circuits before this reconcile, so the in-process path never needs the marker correction (the out-of-process reconcile via ReadManifestPartial is the only reachable reconcile of a write-aborted review) | REGRESSION_RISK | 10 | execute-epic-independent |
 
 ### [2026-06-13] From Sprint: 1.8_output-dir-support
 
@@ -150,7 +157,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [/] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary marks all agents failed even when an earlier agent already persisted findings (Deferred: Epic Plan 1.9) during a mid-loop I/O fault, so reconcile can emit a non-partial verdict from the surviving subset that contradicts the failed marker | Have reconcile cross-check the failure-marker summary (or add a distinguishing marker field) so a partial-but-failed review is rejected rather than reconciled | INTEGRATION | 60 | execute-epic-independent |
+| 1 | [x] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary marks all agents failed even when an earlier agent already persisted findings (Deferred: Epic Plan 1.9) (Resolved: Epic Plan 1.9 — 2026-06-13; added PoolSummary.FailureMarker set only by writeFailureSummary, and ReadManifestPartial now forces partial when FailureMarker && Succeeded>0 so reconcile cannot emit a non-partial verdict from a write-aborted subset) during a mid-loop I/O fault, so reconcile can emit a non-partial verdict from the surviving subset that contradicts the failed marker | Have reconcile cross-check the failure-marker summary (or add a distinguishing marker field) so a partial-but-failed review is rejected rather than reconciled | INTEGRATION | 60 | execute-epic-independent |
 | 1 | [x] | MEDIUM | internal/fanout/artifacts.go:109 | writeFailureSummary swallows MkdirAll/writeJSON errors with no log; when the marker write also fails there is no operator signal for the in_progress-to-stale gap (the primary WritePool error IS already logged by the ExecuteReview caller) | Thread a best-effort logger into the fanout failure path so the secondary marker-write failure is diagnosable, or accept the primary-error log as sufficient | ERROR_PATHS | 30 | execute-epic-independent |
 | 1 | [x] | LOW | internal/fanout/review.go:239 | On the WritePool failure branch ExecuteReview writes the marker but never stamps manifest CompletedAt/Partial, so a failed-marked review's manifest is indistinguishable on disk from an unfinished scaffold for duration/partial-deriving tools | Stamp CompletedAt (and an explicit failed indicator) in the failure branch, or document the intentional absence | OBSERVABILITY | 20 | execute-epic-independent |
 | 1 | [x] | LOW | internal/fanout/status.go:156 | staleByDeadline uses int arithmetic for (timeout_secs+grace)*1e9 ns; a pathological timeout_secs near math.MaxInt64/1e9 overflows Duration negative, yielding a false-positive stale (practically unreachable: needs a ~292-year timeout) | Bounds-check timeout_secs or compute the deadline with a saturating guard | EDGE_CASES | 15 | execute-epic-independent |
