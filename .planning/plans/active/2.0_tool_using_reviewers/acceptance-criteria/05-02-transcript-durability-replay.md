@@ -12,12 +12,13 @@
 | Replay test harness | Go test helper in `_test.go` | Reads `transcript.jsonl`, replays event sequence, asserts equivalence with engine trace |
 | Test framework | `go test` + crash simulation | Kill process mid-write or inject write failure after N events |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
 - `internal/tools/transcript.go` — modify: ensure `Open` uses `O_CREATE|O_WRONLY|O_APPEND`; flush semantics at turn boundaries
 - `internal/tools/transcript_test.go` — modify: tests for append-only behavior, partial transcript validity, and replay equivalence
 - `internal/tools/replay_test.go` — create: replay test helper that reads `transcript.jsonl` and asserts it matches the recorded engine Chat trace
 - `internal/fanout/engine_test.go` — modify: integration tests that crash mid-run and verify partial transcript is replayable
+- `internal/fanout/status.go:275` — reference: `atomicWriteFile` pattern for atomic writes (used elsewhere; transcript uses append-only)
 
 ## Happy Path Scenarios
 

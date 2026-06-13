@@ -12,13 +12,13 @@
 | Manifest Recording | `internal/fanout/manifest.go` JSON marshaling | Records `snapshot_mode`, `snapshot_worktree_path`, `head_sha` |
 | Test Framework | `go test` with injected panics | Tests cleanup on error and panic paths |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
-- `internal/tools/snapshot.go` - modify: cleanup function uses `git worktree remove --force` + `os.RemoveAll` fallback
-- `internal/fanout/engine.go` - modify: agent loop calls `SnapshotFor`, defers `cleanup`, records manifest
-- `internal/fanout/manifest.go` - modify: review stage struct gains snapshot fields, JSON serialization
+- `internal/tools/snapshot.go` - create/modify: cleanup function uses `git worktree remove --force` + `os.RemoveAll` fallback
+- `internal/fanout/engine.go:228` - modify: agent loop calls `SnapshotFor`, defers `cleanup`, records manifest
+- `internal/payload/manifest.go:18` - modify: review stage struct gains snapshot fields, JSON serialization
 - `internal/fanout/engine_test.go` - create: tests for cleanup on success, error, and panic paths
-- `internal/fanout/manifest_test.go` - modify: tests for snapshot metadata in manifest output
+- `internal/payload/manifest_test.go` - modify: tests for snapshot metadata in manifest output
 
 ## Happy Path Scenarios
 

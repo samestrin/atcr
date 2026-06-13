@@ -11,12 +11,12 @@
 | JSON serialization | `encoding/json` marshal of stages map | Backward-compatible with 1.x manifest readers |
 | Test framework | `go test` + manifest parsing | Parse `manifest.json` and assert stage entries |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
-- `internal/fanout/manifest.go` — modify: add `"review"` stage entry to manifest builder with agent lists
-- `internal/payload/manifest.go` — modify: add `Review` field to manifest stages struct (if typed)
-- `internal/fanout/manifest_test.go` — create/modify: tests for review stage entry with various agent configurations
-- `internal/fanout/engine.go` — modify: pass per-agent effective `Tools` flag and degradation state to manifest builder
+- `internal/payload/manifest.go:18` — modify: add `"review"` stage entry to manifest builder with agent lists
+- `internal/payload/manifest.go:18` — modify: add `Review` field to manifest stages struct (if typed)
+- `internal/payload/manifest_test.go` — create/modify: tests for review stage entry with various agent configurations
+- `internal/fanout/engine.go:228` — modify: pass per-agent effective `Tools` flag and degradation state to manifest builder
 
 ## Happy Path Scenarios
 
@@ -77,7 +77,7 @@
 - **When** the run completes
 - **Then** all agents still appear in the review stage's tools-enabled list
 - **And** all agents also appear in the tools-degraded list
-- **And** the review stage accurately reflects that tools were attempted for all
+- **And** the review stage lists every agent that had `tools: true` at invocation time
 
 ## Error Conditions
 

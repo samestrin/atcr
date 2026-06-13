@@ -12,12 +12,12 @@
 | Tripped marker | String in `TrippedBudgets []string` on `AgentStatus` | e.g., `"tool_budget_bytes"` |
 | Test framework | `go test` + fake `Completer` with tool results of known byte sizes |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
-- `internal/fanout/engine.go` — modify: add byte counter accumulation after each tool result; check against budget at end-of-turn
-- `internal/fanout/engine.go` — modify: when budget trips, halt loop and request final answer
-- `internal/fanout/status.go` — modify: `AgentStatus` struct gains `TrippedBudgets []string` and `ToolBytes *int64` fields (Turns already reserved)
-- `internal/registry/config.go` — reference: `ToolBudgetBytes *int64` field already parsed and validated
+- `internal/fanout/engine.go:228` — modify: add byte counter accumulation after each tool result; check against budget at end-of-turn
+- `internal/fanout/engine.go:228` — modify: when budget trips, halt loop and request final answer
+- `internal/fanout/status.go:225` — modify: `AgentStatus` struct gains `TrippedBudgets []string` and `ToolBytes *int64` fields (Turns already reserved)
+- `internal/registry/config.go:54` — reference: `ToolBudgetBytes *int64` field already parsed and validated
 - `internal/fanout/engine_test.go` — create: tests for byte budget enforcement
 
 ## Happy Path Scenarios
@@ -134,7 +134,7 @@
 4. Exactly-on-budget (cumulative == limit) does NOT trip
 5. Single oversized tool result completes fully before trip
 6. Byte budget + turn budget both trip on same turn
-7. `AgentStatus.ToolBytes` accurately reflects cumulative bytes
+7. `AgentStatus.ToolBytes` equals the cumulative bytes returned by tool executions
 8. `AgentStatus.TrippedBudgets` contains `"tool_budget_bytes"` only when tripped
 
 ## Definition of Done
@@ -145,7 +145,7 @@
 - [ ] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Cumulative tool-result bytes tracked accurately as int64 running sum
+- [ ] Cumulative tool-result bytes tracked as int64 running sum equal to `len(toolResult.Content)` summed after each tool execution
 - [ ] Budget trip detected at end-of-turn; current turn completes fully before halting
 - [ ] `AgentStatus.ToolBytes` records actual cumulative bytes in `status.json`
 - [ ] `AgentStatus.TrippedBudgets` contains `"tool_budget_bytes"` when and only when budget is exceeded

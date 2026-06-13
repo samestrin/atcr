@@ -10,9 +10,11 @@
 | Test Framework | `go test` + `net/http/httptest` | Scripted mock providers |
 | Key Dependencies | `encoding/json`, `context` (stdlib only) | No third-party deps |
 
-## Related Files
-- `internal/fanout/engine.go` - create: `ChatCompleter` interface definition alongside existing `Completer`
-- `internal/llmclient/client.go` - modify: add `Chat` method, extend `chatRequest`/`chatResponse` with tool fields
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:17` - create: `ChatCompleter` interface definition alongside existing `Completer`
+- `internal/llmclient/client.go:155` - modify: extend `chatRequest` with `Tools` field
+- `internal/llmclient/client.go:162` - modify: extend `chatResponse` with `ToolCalls` field
+- `internal/llmclient/client.go:165` - modify: add `Chat` method alongside `Complete`
 - `internal/fanout/engine_test.go` - create: interface conformance tests, type assertion tests
 - `internal/llmclient/client_test.go` - modify: add tests for `Chat` method with tool wire format
 
@@ -87,7 +89,7 @@
 - [ ] `ChatCompleter` interface exists in `internal/fanout/engine.go` with correct signature
 - [ ] `llmclient.Client` implements `ChatCompleter`
 - [ ] Wire format includes `tools` in request and parses `tool_calls` from response
-- [ ] `role:"tool"` messages serialize correctly in conversation history
+- [ ] `role:"tool"` messages serialize to the expected JSON shape in conversation history
 
 **Manual Review:**
 - [ ] Code reviewed and approved

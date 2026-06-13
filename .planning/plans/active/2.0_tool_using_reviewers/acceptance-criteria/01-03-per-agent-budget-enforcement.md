@@ -11,10 +11,10 @@
 | Test Framework | `go test` + `net/http/httptest` | Scripted providers that trip budgets |
 | Key Dependencies | `context`, `time` (stdlib) | |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: budget checks inside the tool loop (turns, bytes, timeout)
-- `internal/registry/config.go` - modify: `applyDefaults` sets `MaxTurns=10` when `Tools==true` and `MaxTurns` unset
-- `internal/registry/precedence.go` - modify: add `DefaultMaxTurns = 10` constant
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:228` - modify: budget checks inside the tool loop (turns, bytes, timeout)
+- `internal/registry/config.go:209` - modify: `applyDefaults` sets `MaxTurns=10` when `Tools==true` and `MaxTurns` unset
+- `internal/registry/precedence.go:15` - modify: add `DefaultMaxTurns = 10` constant alongside `MaxAgentTurns=1000`
 - `internal/fanout/engine_test.go` - create: tests for each budget trip (turns exceeded, bytes exceeded, timeout)
 
 ## Happy Path Scenarios
@@ -88,7 +88,7 @@
 - [ ] `max_turns` budget trips halt the loop and inject a budget message
 - [ ] `tool_budget_bytes` budget trips halt the loop when cumulative bytes exceed limit
 - [ ] Context timeout halts the loop mid-execution
-- [ ] `DefaultMaxTurns=10` constant exists in `precedence.go` and is applied correctly
+- [ ] `DefaultMaxTurns=10` constant exists in `precedence.go` and is applied when Tools==true and MaxTurns is unset
 - [ ] `Result.Turns`, `Result.ToolBytes` reflect actual budget consumption
 
 **Manual Review:**

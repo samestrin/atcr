@@ -9,28 +9,19 @@
 | Status Schema | `AgentStatus` in `status.go` | `tools_degraded` is metadata only; does not affect reconcile input |
 | WritePool | `internal/fanout/artifacts.go` | Writes per-agent results identically regardless of execution mode |
 | Integration Test | `go test` + `httptest` | End-to-end mixed-roster review with reconcile |
-| `degraded_count` | `PoolSummary` field | New counter in `summary.json` for aggregate visibility |
 
-## Related Files
-- `internal/fanout/artifacts.go` - modify: add `DegradedCount` to `PoolSummary` written in `WritePool`
-- `internal/fanout/status.go` - modify: `AgentStatus` schema with `tools_degraded` field; backward-compatible omitempty
+
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/status.go:225` - modify: `AgentStatus` schema with `tools_degraded` field; backward-compatible omitempty
 - `internal/reconcile/reconcile.go` - verify: no changes needed; consumes results uniformly (regression test added)
 - `internal/fanout/review_test.go` - create: integration test with mixed roster (tool-loop + degraded agents)
-- `internal/fanout/artifacts_test.go` - modify: verify `degraded_count` in summary.json
+- `internal/fanout/artifacts.go:160` - reference: `writeAgentArtifacts` writes per-agent results identically regardless of execution mode
 
-## Documentation References
-
-This AC is implemented against the following project documentation. Read before implementation:
-
-- [Reconcile Design](../documentation/reconcile.md) — The reconciler reads `raw/<agent>/*.json` and `status.json` per agent. It does not branch on whether a result came from a tool loop or single-shot. This AC verifies that contract holds.
-- [Status Schema](../documentation/status-schema.md) — `status.json` per-agent entry carries `tools_degraded: bool`. The reconciler does not read this field; it is for operator visibility only.
-
-### Spec alignment notes
+## Spec Alignment Notes
 
 - **Reconciler requires NO changes** — the existing reconcile path already reads `raw/<agent>/*.json` uniformly. A degraded agent's output file has the same shape as a single-shot agent's output. A tool-loop agent's output also has the same shape (the final response is serialized identically).
 - **`status.json` carries the signal, not the reconcile input** — `tools_degraded` is operator-facing metadata in the per-agent status. The reconciler's input (findings JSON) is identical regardless of execution mode.
 - **Mixed roster is the normative case** — Epic 2.0 expects operators to run heterogeneous rosters. The reconciler must produce identical output whether all agents ran as tool-loops, all degraded, or any mix.
-- **`degraded_count` in `summary.json`** — a new top-level counter so operators see at a glance how many agents degraded without drilling into per-agent entries.
 
 ## Happy Path Scenarios
 
@@ -48,11 +39,12 @@ This AC is implemented against the following project documentation. Read before 
 - **And** degraded agents have `tools_degraded: true`
 - **And** the `tools_requested` field preserves the original request for each agent
 
-**Scenario 3: `summary.json` includes `degraded_count`**
+**Scenario 3: Per-agent status records degradation for operator visibility**
 - **Given** a mixed roster review with 2 degraded agents out of 5 total
-- **When** `WritePool` writes the pool summary
-- **Then** `summary.json` contains `degraded_count: 2`
-- **And** the operator can see degradation at a glance without reading per-agent status
+- **When** `status.json` is written for each agent
+- **Then** the 2 degraded agents have `tools_degraded: true`
+- **And** the remaining 3 agents have `tools_degraded: false` (or the field is absent)
+- **And** the operator can see degradation by inspecting per-agent status
 
 **Scenario 4: Reconcile output identical for tool-loop vs single-shot with same input**
 - **Given** two reviews: one where agent X ran as a tool-loop, one where agent X ran degraded single-shot
@@ -86,11 +78,11 @@ This AC is implemented against the following project documentation. Read before 
 - **And** `degraded_count` in summary.json is 0
 - **And** the reconciler processes the review without errors (backward compat)
 
-**Edge Case 4: `degraded_count` is 0 when no degradation occurred**
+**Edge Case 4: No agents degrade**
 - **Given** a review where every agent ran as configured (no degrade events)
-- **When** `WritePool` writes the summary
-- **Then** `degraded_count` is explicitly `0` (not absent)
-- **And** the field is always present in `summary.json` (no omitempty for this counter)
+- **When** `status.json` is written for each agent
+- **Then** no agent has `tools_degraded: true`
+- **And** 1.x agents do not emit the `tools_degraded` field (omitempty)
 
 ## Error Conditions
 
@@ -99,19 +91,16 @@ This AC is implemented against the following project documentation. Read before 
 - **Mitigation:** The reconciler's input contract is `raw/<agent>/*.json` which is shape-identical regardless of execution mode. No branching on `tools_degraded`.
 - **Regression:** A CI-pinned integration test exercises mixed rosters on every commit.
 
-**Error Scenario 2: `degraded_count` mismatches actual degraded agents**
-- **Detection:** Unit test on `WritePool` asserts `degraded_count` matches the number of agents with `tools_degraded: true`
-- **Behavior:** `WritePool` counts degraded agents during result iteration; the counter is derived, not configured.
+
 
 ## Performance Requirements
 - **Reconcile Latency:** No measurable change; the reconciler does not read `tools_degraded` and processes the same input shape
-- **Summary Write:** `degraded_count` is a single integer counter incremented during result iteration; < 1ms overhead
 - **Status Read:** Reading `tools_degraded` from status.json adds < 100 bytes per agent; negligible for operator-facing tooling
 
 ## Security Considerations
 - **No Reconciler Changes:** The reconciler does not branch on `tools_degraded`; there is no new attack surface in the reconcile path
-- **`degraded_count` is Derived:** The counter is computed from per-agent status, not from operator input; it cannot be spoofed independently of the per-agent status files
-- **Backward Compatible:** Old status.json files (without `tools_degraded`) are read correctly by new code; the field's absence means "not evaluated" (1.x compat)
+
+- **Backward Compatible:** Old status.json files (without `tools_degraded`) parse without error in new code; the field's absence means "not evaluated" (1.x compat)
 
 ## Test Implementation Guidance
 **Test Type:** INTEGRATION
@@ -129,9 +118,9 @@ This AC is implemented against the following project documentation. Read before 
 **Test Cases:**
 1. `TestMixedRoster_ReconcileSucceeds` — end-to-end mixed roster review + reconcile
 2. `TestMixedRoster_StatusSignals` — per-agent `tools_degraded` correct for each agent
-3. `TestMixedRoster_DegradedCount` — summary.json `degraded_count` matches actual count
+3. `TestMixedRoster_DegradedSignals` — per-agent `tools_degraded` correct for each agent
 4. `TestMixedRoster_ReconcileIdempotent` — reconcile output same for tool-loop and degraded agents with same input
-5. `TestBackwardCompat_NoDegradedField` — 1.x status.json without `tools_degraded` reads correctly
+5. `TestBackwardCompat_NoDegradedField` — 1.x status.json without `tools_degraded` parses without error
 6. `TestAllDegraded_ReconcileSucceeds` — every agent degrades; reconcile still works
 7. `TestNoDegradation_DegradedCountZero` — no degrade events; `degraded_count: 0`
 
@@ -144,7 +133,6 @@ This AC is implemented against the following project documentation. Read before 
 
 **Story-Specific:**
 - [ ] Mixed roster review completes end-to-end with no reconcile errors
-- [ ] `degraded_count` in `summary.json` matches actual count of `tools_degraded: true` agents
 - [ ] Reconciler produces correct output for mixed rosters without code changes
 - [ ] 1.x status.json (no `tools_degraded` field) remains backward-compatible
 - [ ] Regression test for mixed roster is pinned in CI
@@ -152,4 +140,4 @@ This AC is implemented against the following project documentation. Read before 
 **Manual Review:**
 - [ ] Code reviewed and approved
 - [ ] Reconciler confirmed to have no tool-vs-single-shot branching
-- [ ] `degraded_count` documented in status schema docs
+

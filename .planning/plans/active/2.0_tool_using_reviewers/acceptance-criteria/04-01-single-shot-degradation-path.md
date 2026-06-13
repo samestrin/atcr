@@ -12,21 +12,14 @@
 | Completer | Existing `Completer.Complete()` single-shot path | Reused unchanged from 1.x |
 | Test Framework | `go test` + table-driven | Fake completer asserts single-shot invocation |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: add degrade branch in `invokeAgent` before tool loop starts
-- `internal/fanout/status.go` - modify: add `ToolsDegraded` and `ToolsRequested` fields to `AgentStatus`
-- `internal/registry/config.go` - modify: add `SupportsFunctionCalling` field to model/provider descriptor or `AgentConfig`
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:228` - modify: add degrade branch in `invokeAgent` before tool loop starts
+- `internal/fanout/status.go:225` - modify: add `ToolsDegraded` and `ToolsRequested` fields to `AgentStatus`
+- `internal/registry/config.go:54` - modify: add `SupportsFunctionCalling` field to model/provider descriptor or `AgentConfig`
 - `internal/fanout/engine_test.go` - create: table-driven tests for degrade branch (tool-capable vs non-tool-capable)
 - `internal/registry/config_test.go` - modify: verify `supports_function_calling` parsed from YAML
 
-## Documentation References
-
-This AC is implemented against the following project documentation. Read before implementation:
-
-- [Registry Configuration](../documentation/registry.md) — `supports_function_calling` is a per-model opt-in field; default is `false`. Documented in the model entry or provider-level with per-model overrides.
-- [Payload Modes](../documentation/payload-modes.md) — Degradation does not alter payload shape; the single-shot path receives the same prompt as a tool-loop agent would have.
-
-### Spec alignment notes
+## Spec Alignment Notes
 
 - **Registry is the sole source of truth** — no dynamic capability probing at runtime. The engine consults the registry before starting any tool loop.
 - **Default is `false`** — a model is assumed non-tool-capable unless explicitly declared otherwise. This prevents silent failures from incorrect declarations.
@@ -117,7 +110,7 @@ This AC is implemented against the following project documentation. Read before 
 1. `TestInvokeAgent_DegradeToSingleShot` — non-tool-capable model with tools:true degrades
 2. `TestInvokeAgent_ToolCapableRunsLoop` — tool-capable model with tools:true runs loop
 3. `TestInvokeAgent_ToolsFalseNoDegradation` — tools:false never triggers degrade
-4. `TestAgentStatus_ToolsDegradedField` — serialization includes/excludes fields correctly
+4. `TestAgentStatus_ToolsDegradedField` — serialization omits `tools_degraded` when false and emits it when true
 5. `TestRegistry_SupportsFunctionCallingDefault` — absent field defaults to false
 
 ## Definition of Done

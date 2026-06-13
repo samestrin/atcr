@@ -5,7 +5,7 @@ Plan 2.0 transforms single-shot pool reviewers into bounded agents that explore 
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/2.0_tool_using_reviewers/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/2.0_tool_using_reviewers/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/2.0_tool_using_reviewers/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/2.0_tool_using_reviewers/`
 
 ## Timeline & Milestones
@@ -47,5 +47,6 @@ Plan 2.0 transforms single-shot pool reviewers into bounded agents that explore 
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
+- [Sprint Design](sprint-design.md)

@@ -12,13 +12,13 @@
 | Final answer on timeout | Best-effort with available state | Whatever turns/results gathered before timeout are preserved |
 | Test framework | `go test` + `context.WithTimeout` or fake timer | Scripted provider with configurable delay |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
-- `internal/fanout/engine.go` — modify: apply per-agent `context.WithTimeout` to the agent loop root context (currently only applied to single `Complete` call in `invokeAgent`)
-- `internal/fanout/engine.go` — modify: on context timeout within agent loop, halt loop, record tripped budget, produce partial result
+- `internal/fanout/engine.go:237` — modify: apply per-agent `context.WithTimeout` to the agent loop root context
+- `internal/fanout/engine.go:228` — modify: on context timeout within agent loop, halt loop, record tripped budget, produce partial result
 - `internal/fanout/status.go` — reference: `classifyStatus` already maps `context.DeadlineExceeded` to `StatusTimeout`
-- `internal/fanout/status.go` — modify: `AgentStatus` gains `TrippedBudgets []string` to record `"timeout_secs"`
-- `internal/registry/config.go` — reference: `AgentConfig.TimeoutSecs *int` already parsed and validated
+- `internal/fanout/status.go:225` — modify: `AgentStatus` gains `TrippedBudgets []string` to record `"timeout_secs"`
+- `internal/registry/config.go:54` — reference: `AgentConfig.TimeoutSecs *int` already parsed and validated
 - `internal/registry/precedence.go` — reference: `MaxTimeoutSecs = 86400` constant
 - `internal/fanout/engine_test.go` — create: tests for timeout enforcement in agent loop
 

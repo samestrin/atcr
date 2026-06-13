@@ -12,16 +12,17 @@
 | Test Framework | `go test` with `testing` package | Table-driven tests for all vectors |
 | Fixture Support | `os.MkdirTemp`, `os.Symlink` | Creates test filesystems for symlink testing |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
 - `internal/tools/jail.go` - create: `Jail` struct with `NewJail(root string)` constructor and `Resolve(relPath string) (string, error)` method
 - `internal/tools/jail_test.go` - create: comprehensive table-driven tests covering all escape vectors
 - `internal/tools/dispatch.go` - create: tool dispatcher that calls `jail.Resolve()` before any filesystem I/O
 - `internal/tools/dispatch_test.go` - create: integration tests verifying dispatcher rejects paths before tool execution
+- `internal/registry/persona.go:130` - reference: existing `readNonEmpty` symlink-refusal pattern used as security precedent
 
 ## Happy Path Scenarios
 
-**Scenario 1: Valid relative path resolves correctly**
+**Scenario 1: Valid relative path resolves to an absolute path under the snapshot root**
 - **Given** a Jail initialized with root `/tmp/snapshot-abc123` containing file `src/main.go`
 - **When** `Resolve("src/main.go")` is called
 - **Then** it returns the absolute path `/tmp/snapshot-abc123/src/main.go` with no error

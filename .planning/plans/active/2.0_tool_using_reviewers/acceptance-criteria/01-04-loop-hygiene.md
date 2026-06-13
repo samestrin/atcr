@@ -11,8 +11,8 @@
 | Test Framework | `go test` + `net/http/httptest` | Scripted providers emitting repeats and malformed JSON |
 | Key Dependencies | `encoding/json`, `fmt` (stdlib) | |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: repeated tool call detection, nudge injection, malformed JSON retry logic
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:228` - modify: repeated tool call detection, nudge injection, malformed JSON retry logic
 - `internal/fanout/engine_test.go` - create: tests for nudge-on-repeat, halt-on-second-repeat, malformed JSON retry, second-malformed halt
 - `internal/tools/dispatch.go` - consume: tool errors returned by dispatcher as non-fatal results
 

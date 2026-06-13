@@ -13,13 +13,13 @@
 | Tool Definition | Go struct `ToolDef` with `Name`, `Description`, `Parameters` | OpenAI-compatible function schema |
 | Test Framework | `go test` with registry manipulation tests | Tests for write tool rejection |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
 - `internal/tools/dispatch.go` - create: tool registry with `RegisterTool`, `GetTool`, and `ExecuteTool` functions; all file opens use `O_RDONLY`
 - `internal/tools/dispatch_test.go` - create: tests for read-only enforcement and write tool rejection
-- `internal/tools/jail.go` - modify: `Resolve` method used by dispatch before opening files
-- `internal/tools/registry.go` - create: tool definitions for `read_file`, `grep`, `list_files` with OpenAI-compatible schemas
-- `internal/tools/registry_test.go` - create: tests verifying no write tools exist and registration guard works
+- `internal/tools/jail.go` - create: `Resolve` method used by dispatch before opening files
+- `internal/tools/defs.go` - create: tool definitions for `read_file`, `grep`, `list_files` with OpenAI-compatible schemas
+- `internal/tools/tools_test.go` - create: tests verifying no write tools exist and registration guard works
 
 ## Happy Path Scenarios
 

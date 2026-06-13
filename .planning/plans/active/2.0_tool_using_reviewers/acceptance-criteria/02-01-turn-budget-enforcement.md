@@ -12,13 +12,13 @@
 | Final answer injection | System message appended to conversation | Replaces tool definitions when at limit |
 | Test framework | `go test` + fake `Completer` | Scripted provider returns tool calls for N turns |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
-- `internal/fanout/engine.go` — modify: add turn counter and enforcement inside the agent loop (currently single-shot `invokeAgent`)
-- `internal/fanout/engine.go` — modify: inject system message requesting final answer when turn limit reached
-- `internal/registry/config.go` — modify: add default resolution for `MaxTurns` when `Tools=true` and `MaxTurns==nil`
-- `internal/registry/precedence.go` — reference: `MaxAgentTurns = 1000` constant (already exists)
-- `internal/fanout/status.go` — reference: `AgentStatus.Turns *int` field (already reserved)
+- `internal/fanout/engine.go:228` — modify: add turn counter and enforcement inside the agent loop
+- `internal/fanout/engine.go:228` — modify: inject system message requesting final answer when turn limit reached
+- `internal/registry/config.go:209` — modify: add default resolution for `MaxTurns` when `Tools=true` and `MaxTurns==nil`
+- `internal/registry/precedence.go:15` — reference: `MaxAgentTurns = 1000` constant (already exists)
+- `internal/fanout/status.go:240` — reference: `AgentStatus.Turns *int` field (already reserved)
 - `internal/fanout/engine_test.go` — create: tests for turn budget enforcement
 
 ## Happy Path Scenarios
@@ -129,7 +129,7 @@
 3. Default `MaxTurns=10` applied when `Tools=true` and `MaxTurns=nil`
 4. Validation rejects `MaxTurns > 1000`, `MaxTurns <= 0`
 5. `MaxTurns=1` results in exactly 1 turn with tools, then final answer request
-6. Turn counter correctly recorded in `AgentStatus.Turns` for all scenarios
+6. Turn counter recorded in `AgentStatus.Turns` matches the actual turns executed for all scenarios
 7. When at turn limit, tool definitions are omitted from the final `Complete` call
 
 ## Definition of Done
@@ -144,7 +144,7 @@
 - [ ] Agent loop halts at configured `MaxTurns` and requests a final answer via system message
 - [ ] Default `MaxTurns=10` is applied when `Tools=true` and `MaxTurns` is unset
 - [ ] `MaxAgentTurns=1000` hard cap is enforced at validation time
-- [ ] `AgentStatus.Turns` accurately reflects the number of turns executed in `status.json`
+- [ ] `AgentStatus.Turns` equals the number of turns executed in `status.json`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

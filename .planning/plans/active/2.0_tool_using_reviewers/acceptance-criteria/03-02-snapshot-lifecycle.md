@@ -12,12 +12,12 @@
 | Manifest Recording | `internal/fanout/manifest.go` | Records `snapshot_mode`, `head_sha`, `snapshot_worktree_path` |
 | Test Framework | `go test` with fixture git repos | Tests use `git init` in temp dirs |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
 - `internal/tools/snapshot.go` - create: `SnapshotManager` struct with `SnapshotFor(head string) (root string, cleanup func(), err error)` method
 - `internal/tools/snapshot_test.go` - create: tests for fast-path, slow-path, and error conditions
-- `internal/fanout/manifest.go` - modify: add `SnapshotMode`, `SnapshotWorktreePath`, `HeadSHA` fields to review stage
-- `internal/fanout/engine.go` - modify: call `SnapshotFor` before agent loop, defer `cleanup`
+- `internal/payload/manifest.go:18` - modify: add `SnapshotMode`, `SnapshotWorktreePath`, `HeadSHA` fields to review stage
+- `internal/fanout/engine.go:228` - modify: call `SnapshotFor` before agent loop, defer `cleanup`
 
 ## Happy Path Scenarios
 
@@ -96,7 +96,7 @@
 ## Security Considerations
 
 - **Read-only enforcement:** The snapshot manager creates the worktree but does not grant write access. All file access goes through the path jail (AC-01).
-- **Temporary worktree in OS temp directory:** Uses `os.MkdirTemp` with a predictable prefix (`atcr-snapshot-`) for easy identification and cleanup.
+- **Temporary worktree in OS temp directory:** Uses `os.MkdirTemp` with a predictable prefix (`atcr-snapshot-`) so operators can identify and remove stale snapshots.
 - **No arbitrary command execution:** Git commands are constructed with explicit argument arrays, never shell-interpolated.
 - **SHA validation:** The `head` parameter must match `[0-9a-f]{7,40}` before being passed to git commands, preventing argument injection.
 

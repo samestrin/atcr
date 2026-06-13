@@ -13,12 +13,12 @@
 | Atomic file write | `atomicWriteFile` in `status.go` | status.json written atomically regardless of outcome |
 | Test framework | `go test` + JSON parsing of written status files |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
-- `internal/fanout/status.go` — modify: add `TrippedBudgets []string` field to `AgentStatus`; ensure `Turns`, `ToolCalls`, `ToolBytes` are populated
-- `internal/fanout/status.go` — modify: `WriteStatus` serializes new fields; `omitempty` on `TrippedBudgets` so 1.x status.json is unchanged when no budgets tripped
-- `internal/fanout/engine.go` — modify: agent loop populates counter fields and tripped-budgets slice into `Result` before returning
-- `internal/fanout/engine.go` — modify: on any halt path (budget trip, timeout, error), counters are written unconditionally
+- `internal/fanout/status.go:225` — modify: add `TrippedBudgets []string` field to `AgentStatus`; ensure `Turns`, `ToolCalls`, `ToolBytes` are populated
+- `internal/fanout/status.go:249` — modify: `WriteStatus` serializes new fields; `omitempty` on `TrippedBudgets` so 1.x status.json is unchanged when no budgets tripped
+- `internal/fanout/engine.go:228` — modify: agent loop populates counter fields and tripped-budgets slice into `Result` before returning
+- `internal/fanout/engine.go:228` — modify: on any halt path (budget trip, timeout, error), counters are written unconditionally
 - `internal/fanout/engine_test.go` — create/modify: tests verifying counter accuracy across all halt paths
 - `internal/fanout/status_test.go` — create/modify: tests verifying JSON serialization of new fields
 
@@ -152,7 +152,7 @@
 
 **Story-Specific:**
 - [ ] `AgentStatus.TrippedBudgets []string` records all tripped budget names (e.g., `"max_turns"`, `"tool_budget_bytes"`, `"timeout_secs"`)
-- [ ] `AgentStatus.Turns`, `ToolCalls`, `ToolBytes` accurately reflect actual usage in every halt path (normal, budget trip, timeout, error, degrade)
+- [ ] `AgentStatus.Turns`, `ToolCalls`, `ToolBytes` equal the actual usage in every halt path (normal, budget trip, timeout, error, degrade)
 - [ ] Counters written unconditionally — including on the degrade path and error path
 - [ ] New fields use `omitempty` so 1.x status.json format is unchanged for non-tool agents
 - [ ] Partial-success semantics hold: budget-tripped agent produces a result consumed identically by reconcile

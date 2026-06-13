@@ -11,12 +11,12 @@
 | Test Framework | `go test` + `net/http/httptest` | Mock non-tool-capable completer; fallback scenarios |
 | Key Dependencies | `encoding/json` (stdlib) | |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: degrade detection when `ChatCompleter` assertion fails; fall back to single-shot
-- `internal/fanout/status.go` - modify: add `ToolsDegraded bool` field with `json:"tools_degraded,omitempty"` to `AgentStatus`
-- `internal/fanout/review.go` - modify: `buildFallbackAgent` (line ~460) propagates `Tools`/`MaxTurns`/`ToolBudgetBytes` from effective config
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:228` - modify: degrade detection when `ChatCompleter` assertion fails; fall back to single-shot
+- `internal/fanout/status.go:225` - modify: add `ToolsDegraded bool` field with `json:"tools_degraded,omitempty"` to `AgentStatus`
+- `internal/fanout/review.go:460` - modify: `buildFallbackAgent` propagates `Tools`/`MaxTurns`/`ToolBudgetBytes` from effective config
 - `internal/fanout/engine_test.go` - create/modify: degrade path test, fallback-with-tools test, fallback-without-tools test
-- `internal/fanout/artifacts.go` - modify: `statusFor()` propagates `ToolsDegraded` to output
+- `internal/fanout/artifacts.go:176` - modify: `statusFor()` propagates `ToolsDegraded` to output
 
 ## Happy Path Scenarios
 **Scenario 1: Non-tool-capable model degrades to single-shot**
@@ -64,7 +64,7 @@
 **Error Scenario 2: Fallback agent construction fails to read tool config fields**
 - **Given** the primary agent's `AgentConfig` has valid tool fields
 - **When** `buildFallbackAgent` reads them
-- **Then** the fallback agent correctly receives all three fields (`Tools`, `MaxTurns`, `ToolBudgetBytes`)
+- **Then** the fallback agent receives exactly the three fields (`Tools`, `MaxTurns`, `ToolBudgetBytes`)
 
 ## Performance Requirements
 - **Response Time:** Type assertion is O(1); degrade path adds no latency beyond the single-shot call

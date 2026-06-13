@@ -63,6 +63,7 @@
   - Timeout enforced via `context.WithTimeout` on the agent's root context, derived from `timeout_secs`. The `Chat` call and tool execution share this context.
   - `MaxAgentTurns=1000` is a package-level constant; registry validation clamps any configured value above it to the constant.
   - Registry defaults applied in `AgentConfig.Resolve()` (or equivalent): when `Tools=true` and `MaxTurns==0`, set `MaxTurns=10`.
+  - Registry activation and documentation updates (`docs/registry.md` active-field table, cost guidance) are owned by [User Story 6: Persona Guidance & Documentation](06-persona-guidance-documentation.md).
   - Tripped budgets recorded in `AgentStatus` as a slice of strings (e.g., `["max_turns", "tool_budget_bytes"]`) plus counters `Turns int`, `ToolCalls int`, `ToolBytes int64`.
 - **Integration Points:**
   - `internal/fanout/engine.go` — `invokeAgent` loop reads budgets from `AgentConfig`, enforces them per-iteration.
@@ -86,4 +87,4 @@
 ---
 
 **Created:** June 13, 2026
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Generated - Ready for Implementation

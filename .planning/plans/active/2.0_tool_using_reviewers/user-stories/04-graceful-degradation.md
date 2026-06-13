@@ -57,7 +57,7 @@
 ## Technical Considerations
 
 - **Implementation Notes:**
-  - Add a `SupportsFunctionCalling bool` field (or equivalent) to the registry's model/provider descriptor, populated from `registry.yaml`. Default is `false`; opt-in per model entry.
+  - Add a `SupportsFunctionCalling bool` field (or equivalent) to the registry's model/provider descriptor, populated from `registry.yaml`. Default is `false`; opt-in per model entry. The documentation update for `supports_function_calling` and the active-fields table in `docs/registry.md` is owned by [User Story 6: Persona Guidance & Documentation](06-persona-guidance-documentation.md).
   - In `fanout/engine.go` `invokeAgent`, before the tool loop starts, consult the registry. If `Agent.Tools == true` and the resolved model lacks `SupportsFunctionCalling`, skip the loop, invoke the existing single-shot `Completer`, and set `AgentStatus.ToolsDegraded = true`.
   - `AgentStatus` gains `ToolsDegraded bool` and preserves the requested state (either via `ToolsRequested bool` or by leaving the `tools` field on the agent config visible in status).
   - Fallback invocation path already exists; thread the lane's resolved `tools` flag through to fallback dispatch. Each fallback agent re-evaluates degradation against its own model's capability — degrade is per-agent.

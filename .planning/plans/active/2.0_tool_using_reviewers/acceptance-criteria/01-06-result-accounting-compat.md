@@ -11,12 +11,12 @@
 | Test Framework | `go test` | Existing + new tests |
 | Key Dependencies | `encoding/json` (stdlib) | |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: `Result` struct gains `Turns int`, `ToolCalls int`, `ToolBytes int64` fields
-- `internal/fanout/artifacts.go` - modify: `statusFor()` (line ~176) propagates `Result.Turns`/`ToolCalls`/`ToolBytes` to `AgentStatus`
-- `internal/payload/template.go` - modify: `PayloadContext` (line ~15) gains `ToolsEnabled bool` field
-- `internal/payload/personas_render_test.go` - modify: sample context includes `ToolsEnabled: false` so existing tests pass
-- `internal/fanout/review.go` - modify: `buildAgent` sets `PayloadContext.ToolsEnabled` from `AgentConfig.Tools`
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:56` - modify: `Result` struct gains `Turns int`, `ToolCalls int`, `ToolBytes int64` fields
+- `internal/fanout/artifacts.go:176` - modify: `statusFor()` propagates `Result.Turns`/`ToolCalls`/`ToolBytes` to `AgentStatus`
+- `internal/payload/template.go:15` - modify: `PayloadContext` gains `ToolsEnabled bool` field
+- `internal/payload/personas_render_test.go:11` - modify: sample context includes `ToolsEnabled: false` so existing tests pass
+- `internal/fanout/review.go:411` - modify: `buildAgent` sets `PayloadContext.ToolsEnabled` from `AgentConfig.Tools`
 
 ## Happy Path Scenarios
 **Scenario 1: Result fields populated during multi-turn loop**

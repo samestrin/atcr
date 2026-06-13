@@ -3,7 +3,7 @@
 **Plan Type:** feature
 **Last Modified:** 2026-06-13
 **Created:** 2026-06-13
-**Status:** Draft - Awaiting User Stories
+**Status:** Draft - User Stories Refined
 **Plan Number:** 2.0
 **Epic/Initiative:** Epic 2.0
 **Priority:** High
@@ -25,7 +25,7 @@
 
 - **Location:** [`user-stories/`](user-stories/)
 - **Status:** Generated
-- **Estimated Count:** 5 stories
+- **Estimated Count:** 6 stories
 
 ### Acceptance Criteria
 
@@ -98,6 +98,7 @@ No new third-party dependencies. The epic constraint explicitly requires stdlib-
 3. **Path Jail & Snapshot Sandbox**: As a security constraint, all tool file access must be confined to the repository snapshot at the resolved head SHA, with no escape via absolute paths, `..`, symlinks, or `.git/` access.
 4. **Graceful Degradation**: As an operator with a mixed roster, tool-enabled and non-tool agents must coexist in one review; a non-tool-capable model with `tools: true` must degrade to single-shot with `tools_degraded: true` in status.json.
 5. **Transcript & Accounting**: As an operator debugging a review, I can replay the full tool-call session from `transcript.jsonl` and see turns/tool_calls/tool_bytes counters in status.json.
+6. **Persona Guidance & Documentation**: As a reviewer operator, I can rely on tool-aware persona guidance, an evidence-citation rule, and updated documentation so agents use tools effectively and operators know how to configure and budget them.
 
 ## Planning Success Criteria
 

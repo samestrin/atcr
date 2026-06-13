@@ -7,28 +7,22 @@
 |-----------|------------|-------|
 | Fallback Dispatch | Existing `invokeSlot` chain in `engine.go` | Fallbacks already iterate after primary failure |
 | Degrade Check | Per-agent in `invokeAgent` | Each fallback re-evaluates against its own model's capability |
-| Status Fields | `ToolsDegraded`, `ToolsRequested`, `FallbackUsed`, `FallbackFrom` | Combined on the per-agent `AgentStatus` |
+| Status Fields | `ToolsDegraded`, `ToolsRequested` | Per-agent `AgentStatus` records the degrade signal |
 | Lane Tools Flag | Threaded through `Slot` construction | Lane's resolved `tools` setting passed to each agent in chain |
 | Test Framework | `go test` + table-driven | Multi-agent chain with mixed capabilities |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: thread `tools` flag through fallback dispatch in `invokeSlot`; each fallback agent re-evaluates degrade in `invokeAgent`
-- `internal/fanout/review.go` - modify: `buildFallbackAgent` threads the lane's `tools` setting into the fallback's `Agent` struct
-- `internal/fanout/status.go` - modify: `AgentStatus` carries degrade + fallback fields together
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:169` - modify: thread `tools` flag through fallback dispatch in `invokeSlot`; each fallback agent re-evaluates degrade in `invokeAgent`
+- `internal/fanout/engine.go:228` - modify: per-agent degrade check inside `invokeAgent`
+- `internal/fanout/review.go:460` - modify: `buildFallbackAgent` threads the lane's `tools` setting into the fallback's `Agent` struct
+- `internal/fanout/status.go:225` - modify: `AgentStatus` carries `ToolsDegraded` and `ToolsRequested`
 - `internal/fanout/engine_test.go` - modify: tests for per-agent degrade in fallback chains
 
-## Documentation References
-
-This AC is implemented against the following project documentation. Read before implementation:
-
-- [Registry Configuration](../documentation/registry.md) — Fallback agents are declared via `fallback: <agent_name>` in the agent config. Each fallback is a full agent with its own provider/model/persona.
-- [Fallback Design](../documentation/fallback-chain.md) — Fallbacks inherit the primary's persona and payload but have their own model/provider. The `tools` setting follows the lane, not the individual agent.
-
-### Spec alignment notes
+## Spec Alignment Notes
 
 - **Degradation is per-agent, not per-slot** — each agent in the fallback chain independently checks its own model's `supports_function_calling` against the lane's `tools` setting. A primary may run the tool loop while its fallback degrades to single-shot.
 - **Fallbacks inherit the lane's effective `tools` setting** — not the primary agent's resolved mode. If the lane was invoked with `tools: true`, every fallback in the chain attempts `tools: true` and degrades independently if its model is incapable.
-- **Each fallback records its own `tools_degraded` signal** — the `AgentStatus` for the fallback agent carries its own degrade status, distinct from the primary's. The `fallback_used: true` and `fallback_from: <primary>` fields coexist with `tools_degraded`.
+- **Each fallback records its own `tools_degraded` signal** — the `AgentStatus` for the fallback agent carries its own degrade status, distinct from the primary's.
 - **No cascading failure from degrade** — a degraded fallback that produces a valid single-shot response is `status: ok` with `tools_degraded: true`. It is not a failure; it is a successful degradation.
 
 ## Happy Path Scenarios
@@ -39,7 +33,6 @@ This AC is implemented against the following project documentation. Read before 
 - **When** the primary agent fails and the fallback is invoked
 - **Then** the fallback agent degrades to single-shot (its model lacks `supports_function_calling`)
 - **And** the fallback's `AgentStatus` has `tools_degraded: true`
-- **And** the fallback's `AgentStatus` has `fallback_used: true` and `fallback_from: <primary_name>`
 
 **Scenario 2: Both primary and fallback are non-tool-capable; both degrade**
 - **Given** a slot where both primary and fallback models lack `supports_function_calling`
@@ -90,7 +83,7 @@ This AC is implemented against the following project documentation. Read before 
 
 **Error Scenario 1: Fallback degradation is silent (operator never notices)**
 - **Detection:** `tools_degraded: true` is always emitted on degrade, including fallbacks
-- **Mitigation:** A top-level `degraded_count` counter in `status.json` (pool summary) aggregates degrade events across all agents so mixed results are visible at a glance
+- **Mitigation:** Per-agent `status.json` entries carry the degrade signal; operators inspect individual agent status for diagnosis
 
 **Error Scenario 2: Fallback chain references an agent not in the registry**
 - **Error message:** "fallback agent %q not found in registry"
@@ -112,7 +105,7 @@ This AC is implemented against the following project documentation. Read before 
 - Multi-agent fallback chains with mixed `supports_function_calling` values
 - Lane configurations with `tools: true` and `tools: false`
 - Fake completers that can simulate tool-loop and single-shot responses per agent
-- `AgentStatus` assertions combining `fallback_used`, `fallback_from`, and `tools_degraded`
+- `AgentStatus` assertions for `tools_degraded` and `tools_requested`
 
 **Mock/Stub Requirements:**
 - Fake `Completer` per agent to control tool-loop vs single-shot behavior
@@ -136,10 +129,9 @@ This AC is implemented against the following project documentation. Read before 
 **Story-Specific:**
 - [ ] Each fallback agent independently evaluates degradation against its own model's capability
 - [ ] `tools_degraded` is recorded per-agent in the fallback chain, not per-slot
-- [ ] `fallback_used` and `tools_degraded` coexist on the same `AgentStatus`
 - [ ] Lane's effective `tools` setting is threaded through to every fallback agent
 
 **Manual Review:**
 - [ ] Code reviewed and approved
 - [ ] Per-agent degrade semantics are clearly documented in code comments
-- [ ] `degraded_count` counter in pool summary is visible in status.json
+

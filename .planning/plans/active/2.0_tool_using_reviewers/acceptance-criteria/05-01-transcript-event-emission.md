@@ -12,12 +12,13 @@
 | Best-effort error handling | Engine structured logger (`slog` or equivalent) | Write errors logged and swallowed; never propagated to agent loop |
 | Test framework | `go test` + `t.TempDir()` | Write transcript to temp dir, read back and assert event sequence |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
 - `internal/tools/transcript.go` — create: JSONL writer with `Open`, `RecordToolCalls`, `RecordToolResults`, `RecordFinal`, `Close` methods
 - `internal/tools/transcript_test.go` — create: unit tests for event emission, truncation markers, schema correctness
-- `internal/fanout/engine.go` — modify: invoke transcript writer at each loop boundary (after Chat returns tool_calls, after each tool execution, after final message)
+- `internal/fanout/engine.go:228` — modify: invoke transcript writer at each loop boundary (after Chat returns tool_calls, after each tool execution, after final message)
 - `internal/fanout/engine_test.go` — modify: integration tests verifying transcript events match the engine's Chat call sequence
+- `internal/fanout/artifacts.go:160` — reference: `writeAgentArtifacts` writes `transcript.jsonl` under `raw/<agent>/`
 
 ## Happy Path Scenarios
 

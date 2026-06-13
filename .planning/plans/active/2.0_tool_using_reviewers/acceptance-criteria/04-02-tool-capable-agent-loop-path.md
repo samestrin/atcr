@@ -8,27 +8,22 @@
 | Tool Loop | Go tool loop in `invokeAgent` | Multi-turn OpenAI function-calling loop |
 | Registry Field | `SupportsFunctionCalling bool` | Consulted before loop starts |
 | Status Fields | `ToolsDegraded bool`, `Turns *int`, `ToolCalls *int` | Existing Epic 2.0 fields on `AgentStatus` |
-| Completer | `AgentCompleter` interface (new) | Extends `Completer` with `CompleteWithTools()` for tool-loop calls |
+| Completer | `ChatCompleter` interface | Extends the tool-loop path with `Chat(ctx, inv, messages, tools)`; opt-in via type assertion |
 | Test Framework | `go test` + table-driven | Fake agent completer asserts loop invocation |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: add capability check before tool loop, branch to loop when capable
-- `internal/fanout/status.go` - modify: ensure `tools_degraded` is `false` when loop runs successfully
-- `internal/registry/config.go` - modify: `SupportsFunctionCalling` field parsed and validated
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:228` - modify: add capability check before tool loop, branch to loop when capable
+- `internal/fanout/engine.go:17` - reference: `ChatCompleter` interface defined alongside `Completer`
+- `internal/fanout/status.go:225` - modify: ensure `tools_degraded` is `false` when loop runs successfully
+- `internal/registry/config.go:54` - modify: `SupportsFunctionCalling` field parsed and validated
 - `internal/fanout/engine_test.go` - modify: test that tool-capable model with `tools: true` runs the loop
 
-## Documentation References
-
-This AC is implemented against the following project documentation. Read before implementation:
-
-- [Registry Configuration](../documentation/registry.md) — `supports_function_calling: true` is opt-in per model. Only models verified to support OpenAI-style function calling should be declared.
-- [Agent Loop Design](../documentation/agent-loop.md) — The tool loop runs multi-turn until `end_turn`, budget exhaustion, or `max_turns`. The degrade decision happens before the loop starts, not mid-loop.
-
-### Spec alignment notes
+## Spec Alignment Notes
 
 - **Capability check is pre-loop only** — once the loop starts, the engine does not re-check capability. If the model silently ignores tools mid-loop, a warning is logged but the loop continues to its normal termination conditions.
 - **`tools_degraded: false` is the explicit signal** — when the tool loop runs, the status clearly shows no degradation occurred. The field may also be absent (omitempty) for 1.x backward compat.
 - **No double-counting of turns** — the loop's turn counter (`AgentStatus.Turns`) is only populated when the loop actually runs; degraded single-shot agents leave it nil.
+- **`ChatCompleter` is opt-in** — the engine type-asserts the injected `Completer` to `ChatCompleter`; the loop runs only when the assertion succeeds and the registry declares the model tool-capable.
 
 ## Happy Path Scenarios
 
@@ -106,13 +101,13 @@ This AC is implemented against the following project documentation. Read before 
 - Loop termination scenarios: end_turn, max_turns, budget exhaustion
 
 **Mock/Stub Requirements:**
-- Fake `AgentCompleter` implementing `CompleteWithTools(ctx, inv) (AgentResponse, error)` to simulate tool-loop responses
+- Fake `ChatCompleter` implementing `Chat(ctx, inv, messages, tools) (*ChatResponse, error)` to simulate tool-loop responses
 - Registry with `supports_function_calling: true` for the test model
 
 **Test Cases:**
 1. `TestInvokeAgent_ToolCapableRunsLoop` — verifies loop is entered and `tools_degraded` is false
 2. `TestInvokeAgent_LoopRecordsTurnCount` — verifies `Turns` and `ToolCalls` are populated
-3. `TestInvokeAgent_LoopEndTurnNoDegradation` — model returns end_turn without tools; no degrade
+3. `TestInvokeAgent_LoopNoToolCallsNoDegradation` — model returns final message without tools; no degrade
 4. `TestInvokeAgent_LoopMaxTurnsTermination` — loop stops at max_turns; status correct
 5. `TestInvokeAgent_LoopTransportError` — loop fails mid-way; `tools_degraded` still false
 

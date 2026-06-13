@@ -10,10 +10,12 @@
 | Test Framework | `go test` + `net/http/httptest` | Multi-turn scripted mock provider |
 | Key Dependencies | `context`, `encoding/json` (stdlib only) | |
 
-## Related Files
-- `internal/fanout/engine.go` - modify: `invokeAgent` branches on `Agent.Tools` to drive multi-turn loop
+### Related Files (from codebase-discovery.json)
+- `internal/fanout/engine.go:228` - modify: `invokeAgent` branches on `Agent.Tools` to drive multi-turn loop
+- `internal/fanout/engine.go:24` - modify: extend `Agent` struct with `Tools`, `MaxTurns`, `ToolBudgetBytes`
+- `internal/fanout/engine.go:56` - modify: extend `Result` struct with `Turns`, `ToolCalls`, `ToolBytes`
 - `internal/fanout/engine_test.go` - create: multi-turn loop tests with scripted providers
-- `internal/fanout/review.go` - modify: `buildAgent` propagates `Tools`/`MaxTurns`/`ToolBudgetBytes` to `Agent` struct
+- `internal/fanout/review.go:411` - modify: `buildAgent` propagates `Tools`/`MaxTurns`/`ToolBudgetBytes` to `Agent` struct
 - `internal/tools/dispatch.go` - consume: tool dispatcher invoked by the loop (built in parallel)
 
 ## Happy Path Scenarios
@@ -27,7 +29,7 @@
 - **When** `invokeAgent` executes
 - **Then** the loop runs 3 turns; `Result.ToolCalls == 3`; tool results from each turn are appended as `role:"tool"` messages before the next turn
 
-**Scenario 3: invokeAgent branches correctly on Agent.Tools**
+**Scenario 3: invokeAgent branches on Agent.Tools**
 - **Given** an agent with `Tools: false`
 - **When** `invokeAgent` is called
 - **Then** the single-shot `Complete` path is used (unchanged from pre-story behavior); no tool loop entered
@@ -87,7 +89,7 @@
 - [ ] `invokeAgent` enters tool loop when `Agent.Tools == true`
 - [ ] `invokeAgent` uses single-shot path when `Agent.Tools == false`
 - [ ] Tool call results are appended as `role:"tool"` messages between turns
-- [ ] `Result.Turns` and `Result.ToolCalls` are accurately counted
+- [ ] `Result.Turns` and `Result.ToolCalls` are match the actual number of turns and tool calls executed
 
 **Manual Review:**
 - [ ] Code reviewed and approved

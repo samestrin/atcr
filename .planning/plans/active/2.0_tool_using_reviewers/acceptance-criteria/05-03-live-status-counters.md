@@ -7,25 +7,25 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Counter fields | Go `int` and `int64` on `AgentStatus` struct | `Turns int`, `ToolCalls int`, `ToolBytes int64` |
-| Live serialization | `encoding/json` marshal of `AgentStatus` after each update | Status file rewritten after each counter increment |
+| Serialization | `encoding/json` marshal of `AgentStatus` | Status file written once per agent at completion (budget trip, degrade, error, or normal finish) |
 | Counter source | Same values driving budget enforcement (Story 2) | Single source of truth; no duplicate counting |
-| Status writer | Existing `status.json` writer in `internal/fanout/status.go` | Extended to serialize new fields |
+| Status writer | Existing `status.json` writer in `internal/fanout/status.go:249` | Extended to serialize new fields |
 | Test framework | `go test` + `t.TempDir()` | Read `status.json` mid-run and after completion |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 
 - `internal/fanout/status.go` — modify: ensure `AgentStatus` includes `Turns`, `ToolCalls`, `ToolBytes` fields with correct JSON tags
 - `internal/fanout/status.go` — modify: serialize new fields in `status.json` writer
-- `internal/fanout/engine.go` — modify: update counters on `AgentStatus` after each turn and tool execution; write status after each update
+- `internal/fanout/engine.go` — modify: update counters after each turn and tool execution; write `status.json` once per agent at completion
 - `internal/fanout/engine_test.go` — modify: verify counters in `status.json` match actual run counts
 - `internal/fanout/status_test.go` — modify: verify JSON serialization includes new fields
 
 ## Happy Path Scenarios
 
-**Scenario 1: Counters update live during multi-turn run**
+**Scenario 1: Counters reflect actual usage at any halt point**
 - **Given** a tool-using agent executing a 4-turn session
-- **When** an external reader checks `status.json` after turn 2
-- **Then** `status.json` shows `turns: 2`, `tool_calls: <count of calls in turns 1-2>`, `tool_bytes: <sum of result bytes in turns 1-2>`
+- **When** an external reader checks `status.json` after the run completes
+- **Then** `status.json` shows `turns: 4`, `tool_calls: <count of calls in turns 1-4>`, `tool_bytes: <sum of result bytes in turns 1-4>`
 - **And** the values match the actual counts from the engine's execution
 
 **Scenario 2: Counters finalized on normal completion**
@@ -72,7 +72,7 @@
 **Edge Case 3: Large tool_bytes exceeding int32 range**
 - **Given** a long-running agent that accumulates 3 billion bytes of tool results
 - **When** the run completes
-- **Then** `tool_bytes` is correctly recorded as an `int64` value (3,000,000,000)
+- **Then** `tool_bytes` is recorded as the exact int64 value (3,000,000,000)
 - **And** the JSON serialization does not truncate or overflow
 
 **Edge Case 4: Context cancellation mid-tool-execution**
@@ -95,11 +95,11 @@
 - **Given** a 1.x status reader that does not know about `turns`, `tool_calls`, `tool_bytes`
 - **When** it reads a `status.json` produced by 2.0
 - **Then** the reader ignores the unknown fields (standard JSON unmarshaling behavior)
-- **And** all existing 1.x fields are still present and correct
+- **And** all existing 1.x fields are still present and unchanged
 
 ## Performance Requirements
 
-- **Status write frequency:** Status file is rewritten after each turn boundary (not after each tool call); for a 5-turn agent, that is 5 writes
+- **Status write frequency:** Status file is written once per agent at completion; no per-turn writes
 - **Write size:** `status.json` is small (< 1KB per agent); marshal and write completes in under 1ms
 - **Counter overhead:** Counter increments are integer additions; negligible CPU overhead
 
@@ -125,7 +125,7 @@
 - Helper to read and parse `status.json` at specific points during execution
 
 **Test Cases to Implement:**
-1. Counters update live: read `status.json` mid-run, verify intermediate values
+1. Counters finalized: read `status.json` after completion and verify values match the run
 2. Counters finalized on normal completion: verify exact match with known run stats
 3. Counters finalized on budget trip: verify `tool_bytes` exceeds budget threshold
 4. Counters finalized on degradation: verify counters reflect pre-degradation state
@@ -146,8 +146,8 @@
 **Story-Specific:**
 - [ ] `AgentStatus` struct includes `Turns int`, `ToolCalls int`, `ToolBytes int64` with JSON tags `turns`, `tool_calls`, `tool_bytes`
 - [ ] Counters are updated from the same values driving budget enforcement (single source of truth)
-- [ ] `status.json` is rewritten after each turn boundary with current counter values
-- [ ] Counters are finalized correctly for all completion paths: normal, budget-tripped, degraded, error
+- [ ] `status.json` is written once per agent at completion with final counter values
+- [ ] Counters are finalized for all completion paths: normal, budget-tripped, degraded, error
 - [ ] Backward compatibility: 1.x fields in `status.json` are unchanged
 
 **Manual Review:**
