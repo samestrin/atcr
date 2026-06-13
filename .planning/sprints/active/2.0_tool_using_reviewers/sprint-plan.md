@@ -737,7 +737,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "feat(tools): add transcript writer and status/manifest accounting (green)"`
    **Files:** `internal/tools/transcript.go`, `internal/fanout/status.go`, `internal/fanout/manifest.go` | **Duration:** 3-4 hours
 
-### 5.2.A [ ] **[Story 5: Transcript & Accounting - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-transcript-accounting.md)**
+### 5.2.A [x] **[Story 5: Transcript & Accounting - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-transcript-accounting.md)**
    **Changed Files:** `internal/tools/transcript.go`, `internal/fanout/status.go`, `internal/fanout/manifest.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.2.
@@ -793,7 +793,7 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
    COMMIT: `git commit -m "feat(payload): add tool-enabled persona guidance and documentation (green)"`
    **Files:** `internal/payload/template.go`, persona templates, `docs/registry.md`, `docs/payload-modes.md`, `README.md` | **Duration:** 2-3 hours
 
-### 5.5.A [ ] **[Story 6: Persona Guidance & Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-persona-guidance-documentation.md)**
+### 5.5.A [x] **[Story 6: Persona Guidance & Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-persona-guidance-documentation.md)**
    **Changed Files:** `internal/payload/template.go`, persona templates, `docs/registry.md`, `docs/payload-modes.md`, `README.md`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.5.
