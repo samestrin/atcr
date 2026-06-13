@@ -23,6 +23,12 @@ func readFileHandler(_ context.Context, d *Dispatcher, argsJSON json.RawMessage,
 	if err := json.Unmarshal(argsJSON, &a); err != nil {
 		return ToolResult{}, toolErrf("read_file: invalid arguments: %v", err)
 	}
+	if a.StartLine != nil && *a.StartLine < 1 {
+		return ToolResult{}, toolErrf("read_file: start_line must be at least 1")
+	}
+	if a.EndLine != nil && *a.EndLine < 1 {
+		return ToolResult{}, toolErrf("read_file: end_line must be at least 1")
+	}
 	if a.StartLine != nil && a.EndLine != nil && *a.StartLine > *a.EndLine {
 		return ToolResult{}, toolErrf("read_file: start_line cannot be greater than end_line")
 	}
