@@ -811,18 +811,15 @@ Stage only files changed by this phase — do NOT use `git add .` or `git add -A
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (2026-06-13):** Fresh hostile reviewer checked all 7 personas + 3 docs against the implementation. **No CRITICAL/HIGH.** Independently verified: `ToolsEnabled=false` renders NO tool guidance (tests confirm); no persona instructs write/exfiltrate/jail-escape (read-only `read_file`/`grep`/`list_files`, "verify, not browse"); docs match `internal/registry/config.go` validation (`tools` default false, `max_turns` default 10 only when `tools:true`, `tool_budget_bytes >=0`/0=unlimited, `supports_function_calling` bool default false); payload-modes/README tool set accurate (read-only, path-jailed, no shell/network); README "typically 3-10×" present + hedged; all 7 files carry the identical block; `RenderPrompt` surfaces errors via `*RenderError` (no swallowing).
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | personas/*.md (tool block) | The `{{if}}`/`{{end}}` on their own lines leave dangling blank lines in both render states (cosmetic; tests pass). | FIXED 5.6: moved the block markers inline (`{{if .ToolsEnabled}}## Tool-Assisted Review` … `{{end}}## Severity Rubric`) so the `ToolsEnabled=false` render is byte-identical to 1.0 (strengthens AC 06-01 S3) and the true render has clean spacing. |
+   | LOW | docs/registry.md max_turns row | Documented validation as only "must be `> 0`"; actual rule is `1..1000` (`MaxAgentTurns` hard cap at `precedence.go:15`). | FIXED 5.6: row now reads "must be within `1..1000`" with the runaway-loop backstop noted. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → List issues for 5.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Action taken:** No CRITICAL/HIGH → no blocking pre-5.6 fix. Both cheap LOW fixed inline in 5.6 REFACTOR (the whitespace fix directly serves AC 06-01 S3; the doc bound aligns docs with validation). **Adversarial review passed.**
 
-### 5.6 [ ] **[Story 6: Persona Guidance & Documentation - REFACTOR](plan/user-stories/06-persona-guidance-documentation.md)**
+### 5.6 [x] **[Story 6: Persona Guidance & Documentation - REFACTOR](plan/user-stories/06-persona-guidance-documentation.md)**
    1. Fix CRITICAL/HIGH issues from 5.5.A (if any)
    2. Improve documentation clarity: cost guidance phrasing, registry field descriptions (T1)
    3. Validate all tests still pass (T3)

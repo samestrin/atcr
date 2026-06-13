@@ -172,7 +172,7 @@ Epic 2.0 turns the pool reviewers into bounded, tool-using agents. The fields be
 | Field | Type | Default | Validated at load | Behavior |
 |-------|------|---------|-------------------|----------|
 | `tools` | bool (per agent) | `false` | type only | `true` enables the multi-turn tool loop (`read_file`, `grep`, `list_files`) for that agent. Default `false` runs the 1.0 single-shot path. |
-| `max_turns` | int (per agent) | `10` when `tools: true` | must be `> 0` | Caps the number of Chat-with-tools turns per agent. The default `10` is applied at load **only when `tools: true`**; a non-tool agent leaves it unset. |
+| `max_turns` | int (per agent) | `10` when `tools: true` | must be within `1..1000` | Caps the number of Chat-with-tools turns per agent. The default `10` is applied at load **only when `tools: true`**; a non-tool agent leaves it unset. The hard upper bound (`1000`) backstops a runaway loop. |
 | `tool_budget_bytes` | int (per agent) | `0` (unlimited) | must be `>= 0` | Caps cumulative tool-result bytes delivered to the model across the run. `0 = unlimited`; a negative value is rejected at load. |
 | `supports_function_calling` | bool (per model/agent) | `false` | type only | Declares that the agent's model speaks the OpenAI function-calling wire format. **Required for a `tools: true` agent to run the loop** — a `tools: true` agent whose model is not declared capable degrades to single-shot and records `tools_degraded: true`. There is no runtime probing; capability is registry-declared. |
 
