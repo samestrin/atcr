@@ -278,7 +278,14 @@ func ScaffoldOutputDir(dir string) (string, error) {
 // half-state: the review tree is written but WriteLatest is skipped, making
 // the review invisible to atcr status while colocated with tracked reviews.
 func validateOutputDirRoot(dir, root string) error {
-	// TODO: implement containment check
+	reviewsRoot := ReviewsRoot(root)
+	rel, err := filepath.Rel(reviewsRoot, dir)
+	if err != nil {
+		return nil // cannot determine relationship on this OS/path — allow
+	}
+	if !strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("--output-dir %q is inside the managed reviews directory %q: use a path outside .atcr/reviews/, or omit --output-dir to use a managed review", dir, reviewsRoot)
+	}
 	return nil
 }
 
