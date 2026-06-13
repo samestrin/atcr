@@ -25,12 +25,12 @@
 
 - **Location:** [`user-stories/`](user-stories/)
 - **Status:** Generated
-- **Estimated Count:** 6 stories
+- **Estimated Count:** 7 stories
 
 ### Acceptance Criteria
 
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
-- **Status:** Pending - generate with `/create-acceptance-criteria @.planning/plans/active/2.0_tool_using_reviewers/`
+- **Status:** Generated
 
 ## Feature Analysis Summary
 
@@ -99,6 +99,7 @@ No new third-party dependencies. The epic constraint explicitly requires stdlib-
 4. **Graceful Degradation**: As an operator with a mixed roster, tool-enabled and non-tool agents must coexist in one review; a non-tool-capable model with `tools: true` must degrade to single-shot with `tools_degraded: true` in status.json.
 5. **Transcript & Accounting**: As an operator debugging a review, I can replay the full tool-call session from `transcript.jsonl` and see turns/tool_calls/tool_bytes counters in status.json.
 6. **Persona Guidance & Documentation**: As a reviewer operator, I can rely on tool-aware persona guidance, an evidence-citation rule, and updated documentation so agents use tools effectively and operators know how to configure and budget them.
+7. **Tool Definitions & Dispatcher**: As a tool-using reviewer agent, I can call `read_file`, `grep`, and `list_files` through a dispatcher that enforces per-call byte caps, so the toolset is minimal, predictable, and safe.
 
 ## Planning Success Criteria
 

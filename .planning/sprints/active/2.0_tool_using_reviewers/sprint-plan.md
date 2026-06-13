@@ -1,0 +1,914 @@
+# Sprint 2.0: Tool-Using Reviewers
+
+---
+executor: /execute-sprint
+execution_mode: gated
+context_recovery: On context compaction, read .planning/.temp/execute-sprint/context.env for phase state. Resume at first unchecked phase below.
+---
+
+**Directions:** Work through Sprint 2.0 step-by-step. Complete each step, check off work immediately. After completing a phase, proceed to the next without waiting.
+
+Before each phase, review `/CLAUDE.md` (or AGENTS.md).
+
+---
+
+## Sprint Overview
+
+**Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
+
+**Original Request:** [Full details in plan/original-requirements.md](plan/original-requirements.md)
+
+### What We're Building
+
+Extending the atcr reviewer pool from single-shot prompted calls into bounded multi-turn agents. Each reviewer can explore the repository through read-only, path-jailed tools (`read_file`, `grep`, `list_files`) exposed via OpenAI-compatible function calling, with the Go engine owning the entire tool harness. The payload becomes the starting point of a review, not the entire universe of context.
+
+### Why This Matters
+
+Single-shot reviewers can only reason about what is in the payload — they hallucinate context they cannot see, miss entire bug classes (the caller that passes nil, the invariant broken two packages away), and degrade badly on smaller models. This epic closes that gap by letting reviewers look things up during the review, producing findings backed by evidence actually read from the codebase.
+
+### Key Deliverables
+
+- Multi-turn agent loop in `internal/fanout/engine.go` driving `tool_calls` exchanges via `ChatCompleter`
+- Read-only, path-jailed tool harness (`read_file`, `grep`, `list_files`) in `internal/tools/`
+- Snapshot manager with live-worktree fast path and `git worktree` slow path
+- Per-agent budget enforcement: `max_turns` (default 10), `tool_budget_bytes`, `timeout_secs`
+- Graceful degradation for non-tool-capable models (`tools_degraded: true` in status.json)
+- Transcript writer (`raw/<agent>/transcript.jsonl`) and live status.json counters
+- Persona guidance for tool-enabled agents with evidence-citation rule
+- Registry, payload-modes, and README documentation with cost guidance (3–10×)
+
+### Success Criteria
+
+- A tool-enabled agent completes a multi-turn review against a fixture repo, reads a file outside the payload, greps for callers, and produces findings citing that evidence
+- All three budgets trip cleanly with partial-success semantics and status.json markers showing which budget tripped
+- Path jail rejects absolute paths, `..`, symlink-escape, and `.git/` in all unit tests
+- Non-tool-capable model with `tools: true` degrades to single-shot with `tools_degraded: true` recorded
+- Mixed roster (tool-loop and single-shot agents) reconciles without special-casing
+- No new third-party dependencies introduced
+
+**CRITICAL REMINDER:** Every task in this sprint must contribute to fulfilling the original request. If a task seems unrelated to what the user actually asked for, STOP and validate before proceeding. Do not add scope beyond the original request.
+
+---
+
+## TDD Strategy
+
+**Mode:** Strict 🔒 (Complexity 10/12 — Very Complex)
+
+All user story implementation follows the STRICT + Adversarial TDD cycle:
+
+1. **RED:** Write comprehensive failing tests covering all ACs and edge cases. Verify tests fail for the right reasons before writing any implementation.
+2. **GREEN:** Implement minimal code to pass tests, one test at a time (T1 after each change). Verify all pass (T2). Commit.
+3. **ADVERSARIAL:** Spawn a fresh subagent (no memory of implementation) to adversarially review changed files. Required fix threshold: CRITICAL/HIGH. MEDIUM/LOW deferred to tech debt.
+4. **REFACTOR:** Apply CRITICAL/HIGH fixes from adversarial, improve code quality, maintain green (T1), validate full suite (T3), commit.
+
+**Adversarial inline-fix bar:** CRITICAL/HIGH | **Deferred to tech debt:** MEDIUM/LOW
+
+---
+
+## About This Document
+
+| Document | Purpose |
+|----------|---------|
+| [sprint-design.md](plan/sprint-design.md) | Architecture, decomposition, test strategy |
+| [original-requirements.md](plan/original-requirements.md) | User's actual request (source of truth) |
+| [user-stories/](plan/user-stories/) | Feature requirements |
+| [acceptance-criteria/](plan/acceptance-criteria/) | Validation requirements with DoD |
+
+---
+
+## Sprint Conventions
+
+### Testing Tiers
+
+| Tier | When | Command |
+|------|------|---------|
+| T1: Focused | After each small change | `go test ./internal/<pkg>/... -run TestXxx` |
+| T2: Module | After completing element | `go test ./internal/<pkg>/...` |
+| T3: Full | DoD validation, pre-commit | `go test ./...` |
+
+### DoD Verification Checklist
+1. Tests (T3): All passing — `go test ./...`
+2. Coverage: ≥80% — `go test -coverprofile=coverage.out ./...`
+3. Lint: No errors — `golangci-lint run`
+4. Vet: No issues — `go vet ./...`
+5. Build: Succeeds — `go build ./...`
+
+### DoD Report Template
+```
+Phase-{N} DoD Complete
+Auto: {X}/5 | Story-Specific: {Y}/{Z}
+Manual Review: [ ] Code reviewed
+```
+
+### Commit Process
+Stage only files changed by this phase — do NOT use `git add .` or `git add -A` (other sessions may have uncommitted work).
+`git add [specific files] && git commit -m "<type>(<scope>): <message>"`
+
+---
+
+## Development Standards
+
+### Implementation Standards
+
+**Core Philosophy:** Maintainability and replaceability over cleverness.
+
+- **Black Box Interfaces:** Every module must expose a clean, documented API; implementation details hidden.
+- **Replaceable Components:** Any module rewritable from scratch using only its interface. All modules communicate through clean interfaces (`Dispatcher`, `Jail`, `Snapshot`, `ChatCompleter`).
+- **Single Responsibility:** One module, one clear purpose (`internal/tools` owns tool concerns; `internal/fanout` owns loop/budget concerns).
+- **Primitive-First Design:** Design around core data types: `ToolDef`, `ToolCall`, `ChatResponse`, `Message`, `Jail`, `Snapshot`, `AgentConfig`, `Result`, `AgentStatus`.
+
+**Go Specifics:**
+- **Panic Safety:** Goroutines and worker tasks must recover from panics.
+- **Defer Cleanup:** Use `defer` to close file descriptors and HTTP response bodies immediately after creation.
+- **Interface Segregation:** Return concrete types from constructors; accept interfaces as parameters.
+- **Robust Error Handling:** Return `error` as the last parameter; never ignore errors; wrap with `fmt.Errorf("doing X: %w", err)`.
+- **Context Propagation:** Accept `context.Context` as first parameter in all I/O-performing functions; respect cancellation.
+
+### Coding Standards
+
+- **Packages:** Lowercase, single-word (`tools`, `fanout`, `llmclient`, `registry`, `payload`).
+- **Naming:** Exported = `PascalCase`; unexported = `camelCase`; interfaces end in `-er` for single-action behaviors (`ChatCompleter`, `Completer`).
+- **Imports:** Group as stdlib → third-party → internal (`github.com/samestrin/atcr/`); use `goimports`.
+- **Testing:** Table-driven tests for multiple scenarios; use `testify/assert` and `testify/require`; integration tests with `//go:build integration` tag.
+- **Formatting:** `go fmt` before every commit; `golangci-lint run` must pass; `go vet ./...` must be clean.
+
+### Git Strategy
+
+- **Branch:** `feature/2.0_tool_using_reviewers` from `main`.
+- **Commits:** Atomic, conventional format: `feat(tools): add read_file handler`, `test(fanout): add agent loop tests`.
+- **Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+
+---
+
+## Sprint Phases
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 1: Research & Spike (Day 1)
+
+**Goal:** Validate OpenAI function-calling wire format with litellm, prototype path jail, validate `git worktree` lifecycle. Findings gate Phase 2 design.
+
+### 1.1 [ ] **Spike: OpenAI Wire Format Validation**
+   1. Set up an httptest mock server returning a response with `tool_calls` in OpenAI format
+   2. Send a request with `tools` array and verify the full round-trip: request serialization, `tool_calls` deserialization, `role:"tool"` message construction
+   3. Test litellm-normalized responses from OpenAI, Anthropic, and a local model format
+   4. Document which dialects require normalization and which degrade cleanly
+   **Files:** `internal/llmclient/` (spike harness) | **Duration:** 2-3 hours
+
+### 1.2 [ ] **Spike: Path Jail Prototype**
+   1. Prototype `Resolve(path)` using `filepath.Abs`, `filepath.Clean`, `filepath.EvalSymlinks`, prefix check against jail root
+   2. Test all escape vectors: absolute paths, `..` traversal, symlink pointing outside root, path containing `.git/` component
+   3. Evaluate `O_NOFOLLOW` availability on macOS/Linux for the open call
+   4. Document rejection behaviors, any platform differences, and TOCTOU risk
+   **Files:** `internal/tools/` (spike) | **Duration:** 2 hours
+
+### 1.3 [ ] **Spike: Git Worktree Lifecycle**
+   1. Run `git worktree add <tmp-path> <sha>` programmatically via `exec.Command`
+   2. Verify worktree is at the correct SHA and files are readable
+   3. Test fast path: clean worktree with `head == HEAD` (use live worktree)
+   4. Test slow path: dirty worktree or `head != HEAD` (use temporary worktree)
+   5. Run `git worktree remove --force <path>` and verify cleanup
+   **Files:** `internal/tools/` (spike) | **Duration:** 2 hours
+
+### 1.4 [ ] **Document Spike Findings & Risks**
+   1. Write findings summary to `clarifications/spike-findings.md`
+   2. Capture provider dialect risks and any required design changes
+   3. Identify any blockers before Phase 2 foundation work
+   4. Commit: `git commit -m "chore(spike): document wire format and path jail findings"`
+   **Duration:** 1 hour
+
+### 1.5 [ ] **Phase 1 DoD**
+   - [ ] Wire format spike confirms `tool_calls` round-trip through mock provider
+   - [ ] Path jail prototype rejects all escape vectors: absolute, `..`, symlink-escape, `.git/`
+   - [ ] Git worktree lifecycle validated for both fast and slow paths
+   - [ ] Spike findings documented with risks and design decisions
+
+   ```
+   Phase-1 DoD Complete
+   Auto: N/A | Story-Specific: 4/4
+   Manual Review: [ ] Findings reviewed and accepted
+   ```
+
+### 1.6 [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** Spike findings and design decisions from Phase 1
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's work — this is intentional.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 1 gate review`
+   - prompt: Self-contained brief including:
+     - Spike findings file: absolute path to `clarifications/spike-findings.md`
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: All phase-exit contracts honored (wire format confirmed, jail prototype documented)?
+       - CONFIG SURFACE: New config keys documented, defaulted, back-compat?
+       - INTEGRATION: Cross-module calls correct, no hidden coupling introduced?
+       - PHASE-EXIT CONTRACT: Phase 2 (Foundation) can proceed without rework from findings?
+       - REGRESSION: Earlier-phase behavior still intact?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 2: Foundation (Days 2-3)
+
+**Goal:** Build tool harness (definitions, dispatcher, handlers), path jail, and snapshot manager with full unit test coverage. No LLM or network required.
+
+### 2.1 [ ] **[Story 7: Tool Definitions & Dispatcher - RED](plan/user-stories/07-tool-definitions-dispatcher.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test `ToolDef` JSON Schema serialization for `read_file`, `grep`, `list_files` (matches OpenAI function calling format)
+   - Test dispatcher routing: each tool name routes to the correct handler
+   - Test per-call byte caps: result truncated at cap with truncation marker appended
+   - Test `read_file`: line-numbered output, optional `start_line`/`end_line` slicing, byte-cap truncation
+   - Test `grep`: regex pattern matching, optional glob filter, match-cap truncation with marker
+   - Test `list_files`: directory listing, depth cap enforcement
+   - Test unknown tool name returns error result (never fatal)
+   **Files:** `internal/tools/defs_test.go`, `internal/tools/dispatch_test.go`, `internal/tools/read_file_test.go`, `internal/tools/grep_test.go`, `internal/tools/list_files_test.go` | **Duration:** 3-4 hours
+   **AC:** [07-01](plan/acceptance-criteria/07-01-read-file-tool.md), [07-02](plan/acceptance-criteria/07-02-grep-tool.md), [07-03](plan/acceptance-criteria/07-03-list-files-tool.md), [07-04](plan/acceptance-criteria/07-04-tool-dispatcher-byte-caps.md)
+
+### 2.2 [ ] **[Story 7: Tool Definitions & Dispatcher - GREEN](plan/user-stories/07-tool-definitions-dispatcher.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/tools/defs.go`: `ToolDef` structs with OpenAI JSON Schema, `AllDefs()` function
+   - `internal/tools/dispatch.go`: `Dispatcher` struct with `Execute(toolName, args, jail)`, per-call byte cap, truncation marker
+   - `internal/tools/read_file.go`: line-numbered reader, slicing, byte-cap truncation
+   - `internal/tools/grep.go`: Go stdlib `regexp` search, optional glob filter, match-cap truncation
+   - `internal/tools/list_files.go`: `os.ReadDir` with depth cap
+   COMMIT: `git commit -m "feat(tools): add tool definitions, dispatcher, and handlers (green)"`
+   **Files:** `internal/tools/defs.go`, `internal/tools/dispatch.go`, `internal/tools/read_file.go`, `internal/tools/grep.go`, `internal/tools/list_files.go` | **Duration:** 4-5 hours
+
+### 2.2.A [ ] **[Story 7: Tool Definitions & Dispatcher - ADVERSARIAL REVIEW (subagent)](plan/user-stories/07-tool-definitions-dispatcher.md)**
+   **Changed Files:** `internal/tools/defs.go`, `internal/tools/dispatch.go`, `internal/tools/read_file.go`, `internal/tools/grep.go`, `internal/tools/list_files.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 2.2 Tool Definitions & Dispatcher`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 2.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (path traversal in grep glob? regex DoS via catastrophic backtracking?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (empty file, zero byte cap, concurrent Dispatch calls?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (file open errors, regex compile errors?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (unclosed file descriptors?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 2.3 [ ] **[Story 7: Tool Definitions & Dispatcher - REFACTOR](plan/user-stories/07-tool-definitions-dispatcher.md)**
+   1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
+   2. Improve code quality: error messages, naming, interface clarity (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(tools): address review + clean up dispatcher"`
+   **Duration:** 1-2 hours
+
+### 2.4 [ ] **[Story 3: Path Jail & Snapshot Sandbox - RED](plan/user-stories/03-path-jail-sandbox.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test `Jail.Resolve()`: absolute path rejected, `..` traversal rejected, symlink-escape rejected, `.git/` component rejected, valid paths accepted
+   - Test paths with `.gitignore` and `.github/workflows/ci.yml` pass (false-positive check)
+   - Test `foo.git/bar` passes (only `.git` directory component is blocked)
+   - Test `Snapshot.For(head)`: returns live-worktree path when `head == HEAD` and worktree is clean
+   - Test `Snapshot.For(head)`: creates temporary worktree when head differs or worktree is dirty
+   - Test cleanup: temporary worktree removed after `Close()`
+   - Test write-tool guard: `AllDefs()` contains no write tools (init-time invariant)
+   **Files:** `internal/tools/jail_test.go`, `internal/tools/snapshot_test.go` | **Duration:** 2-3 hours
+   **AC:** [03-01](plan/acceptance-criteria/03-01-path-jail-enforcement.md), [03-02](plan/acceptance-criteria/03-02-snapshot-lifecycle.md), [03-03](plan/acceptance-criteria/03-03-worktree-cleanup.md), [03-04](plan/acceptance-criteria/03-04-read-only-guard.md)
+
+### 2.5 [ ] **[Story 3: Path Jail & Snapshot Sandbox - GREEN](plan/user-stories/03-path-jail-sandbox.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/tools/jail.go`: `Jail` struct with `Root string`; `Resolve(path) (string, error)` using `filepath.Abs`, `filepath.Clean`, `filepath.EvalSymlinks`, prefix check; `.git` component matching
+   - `internal/tools/snapshot.go`: `Snapshot` struct; `For(head string) (Snapshot, error)` — fast path when clean + `head==HEAD`, slow path with `git worktree add`; `Close()` removes temporary worktree
+   COMMIT: `git commit -m "feat(tools): add path jail and snapshot manager (green)"`
+   **Files:** `internal/tools/jail.go`, `internal/tools/snapshot.go` | **Duration:** 3-4 hours
+
+### 2.5.A [ ] **[Story 3: Path Jail & Snapshot Sandbox - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-path-jail-sandbox.md)**
+   **Changed Files:** `internal/tools/jail.go`, `internal/tools/snapshot.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.5 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 2.5 Path Jail & Snapshot`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 2.5]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (TOCTOU between EvalSymlinks and Open? absolute path bypass? symlink race? git worktree path injection?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (empty head SHA, submodules, worktree collision if path already exists?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (git command failures, cleanup failures on error paths?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (uncleaned worktrees on error paths?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 2.6, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 2.6 [ ] **[Story 3: Path Jail & Snapshot Sandbox - REFACTOR](plan/user-stories/03-path-jail-sandbox.md)**
+   1. Fix CRITICAL/HIGH issues from 2.5.A (if any)
+   2. Improve code quality: error wrapping, cleanup on all error paths, clear invariant comments (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(tools): address review + clean up jail and snapshot"`
+   **Duration:** 1-2 hours
+
+### 2.7 [ ] **Phase 2 DoD**
+   - [ ] `go test ./internal/tools/...` — all passing
+   - [ ] `go test -coverprofile=coverage.out ./internal/tools/...` — ≥80% coverage
+   - [ ] `golangci-lint run ./internal/tools/...` — no errors
+   - [ ] `go vet ./internal/tools/...` — clean
+   - [ ] `go build ./...` — succeeds
+   - [ ] Story 7 ACs verified: `read_file`, `grep`, `list_files` handlers + dispatcher byte caps
+   - [ ] Story 3 ACs verified: all escape vectors rejected, snapshot lifecycle clean, no write tools
+
+   ```
+   Phase-2 DoD Complete
+   Auto: 5/5 | Story-Specific: 8/8 (Stories 7 + 3)
+   Manual Review: [ ] Code reviewed
+   ```
+
+### 2.8 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 2 (`internal/tools/`)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 2 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 2 (absolute paths): all files in `internal/tools/`
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `Dispatcher.Execute` signature, `Jail.Resolve` signature, `Snapshot.For` signature — all consumable by Phase 3 agent loop?
+       - CONFIG SURFACE: Per-call byte cap defaults documented?
+       - INTEGRATION: No hidden coupling between dispatcher, jail, and snapshot?
+       - PHASE-EXIT CONTRACT: Phase 3 (agent loop) can wire in Dispatcher and Jail without rework?
+       - REGRESSION: Any existing `internal/tools/` code untouched?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 3: Core Items (Days 4-6)
+
+**Goal:** Implement `ChatCompleter` interface, llmclient wire format, multi-turn agent loop, and budget enforcement with httptest-scripted integration tests.
+
+### 3.1 [ ] **[Story 1: Agent Loop Execution - RED](plan/user-stories/01-agent-loop-execution.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test `ChatCompleter` interface: `Chat(ctx, inv, messages, tools)` signature accepted by fanout engine
+   - Test llmclient wire format: `tools` array serialized in request body; `tool_calls` deserialized from response; `role:"tool"` messages accepted
+   - Test `invokeAgent` multi-turn loop: sends messages → receives `tool_calls` → dispatches → appends `role:tool` results → repeats → stops on final message
+   - Test loop hygiene: identical repeated tool call → nudge message injected once, then loop halts and requests final answer
+   - Test malformed tool-call JSON → error returned as tool result (one retry), then proceeds to final answer
+   - Test tool execution error → returned as tool result, not fatal
+   - Test `Result` struct: `Turns`, `ToolCalls`, `ToolBytes` populated correctly after loop
+   - Test backward compatibility: existing `Completer` (1.0 single-shot) path still works, returns default `Result` values
+   **Files:** `internal/fanout/engine_test.go`, `internal/llmclient/client_test.go` | **Duration:** 3-4 hours
+   **AC:** [01-01](plan/acceptance-criteria/01-01-chatcompleter-interface-wire-format.md), [01-02](plan/acceptance-criteria/01-02-multi-turn-agent-loop.md), [01-03](plan/acceptance-criteria/01-03-per-agent-budget-enforcement.md), [01-04](plan/acceptance-criteria/01-04-loop-hygiene.md), [01-05](plan/acceptance-criteria/01-05-degrade-path-fallback-inheritance.md), [01-06](plan/acceptance-criteria/01-06-result-accounting-compat.md)
+
+### 3.2 [ ] **[Story 1: Agent Loop Execution - GREEN](plan/user-stories/01-agent-loop-execution.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/llmclient/client.go`: Add `ChatCompleter` interface; extend request struct to include `tools []ToolDef` when non-nil; parse `tool_calls` from response; build `role:"tool"` messages
+   - `internal/fanout/engine.go`: Add `invokeAgent(ctx, agent, messages, tools, snapshot)` — branches on `Agent.Tools`; drives multi-turn loop: `Chat` → check `tool_calls` → dispatch via `Dispatcher` → append results → check budgets → repeat until final message; loop hygiene (nudge, retry, error-as-result)
+   - `internal/fanout/engine.go`: `Result` struct with `Turns int`, `ToolCalls int`, `ToolBytes int64`; populated from loop counters
+   COMMIT: `git commit -m "feat(fanout): add multi-turn agent loop with tool dispatch (green)"`
+   **Files:** `internal/llmclient/client.go`, `internal/fanout/engine.go` | **Duration:** 5-6 hours
+
+### 3.2.A [ ] **[Story 1: Agent Loop Execution - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-agent-loop-execution.md)**
+   **Changed Files:** `internal/llmclient/client.go`, `internal/fanout/engine.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 3.2 Agent Loop Execution`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 3.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (tool dispatch with user-controlled tool names? context injection via tool results into subsequent Chat messages?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (nil tools array, empty tool_calls slice, zero-turn budget, concurrent invoke calls?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (Chat error mid-loop, dispatcher panic recovery, context cancellation mid-tool-call?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (unbounded message accumulation across turns, goroutine leaks on context cancel?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 3.3 [ ] **[Story 1: Agent Loop Execution - REFACTOR](plan/user-stories/01-agent-loop-execution.md)**
+   1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
+   2. Improve code quality: extract loop sub-steps into clear helpers, naming, context propagation (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(fanout): address review + clean up agent loop"`
+   **Duration:** 1-2 hours
+
+### 3.4 [ ] **[Story 2: Budget Enforcement - RED](plan/user-stories/02-budget-enforcement.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test turn budget: loop stops when `turns >= max_turns`; `AgentStatus.TrippedBudgets` records `"max_turns"`
+   - Test tool byte budget: cumulative byte sum tracked per agent; trip deferred to end-of-turn (current tool result delivered in full); `"tool_budget_bytes"` recorded
+   - Test timeout enforcement: `context.WithTimeout` cancels Chat call; partial result returned; `"timeout"` recorded
+   - Test budgets enforce independently and in combination (earliest budget to trip records the reason)
+   - Test partial-success semantics: partial findings are usable, not discarded when budget trips
+   **Files:** `internal/fanout/engine_test.go` (budget sections), `internal/fanout/status_test.go` | **Duration:** 2-3 hours
+   **AC:** [02-01](plan/acceptance-criteria/02-01-turn-budget-enforcement.md), [02-02](plan/acceptance-criteria/02-02-tool-byte-budget-enforcement.md), [02-03](plan/acceptance-criteria/02-03-timeout-enforcement.md), [02-04](plan/acceptance-criteria/02-04-budget-status-reporting-partial-success.md)
+
+### 3.5 [ ] **[Story 2: Budget Enforcement - GREEN](plan/user-stories/02-budget-enforcement.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/fanout/engine.go`: Budget check at top of each loop iteration: `turns >= agent.MaxTurns` trips `max_turns`; accumulate `toolBytes`; check `toolBytes > agent.ToolBudgetBytes` at end of each turn for `tool_budget_bytes`
+   - `internal/fanout/engine.go`: Wrap loop with `context.WithTimeout(ctx, time.Duration(agent.TimeoutSecs)*time.Second)` for `timeout`
+   - On budget trip: inject nudge → request final answer → collect partial findings
+   - `internal/fanout/status.go`: `AgentStatus` struct with `TrippedBudgets []string` field; populated on trip
+   COMMIT: `git commit -m "feat(fanout): add budget enforcement (max_turns, tool_bytes, timeout) (green)"`
+   **Files:** `internal/fanout/engine.go`, `internal/fanout/status.go` | **Duration:** 3-4 hours
+
+### 3.5.A [ ] **[Story 2: Budget Enforcement - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-budget-enforcement.md)**
+   **Changed Files:** `internal/fanout/engine.go` (budget sections), `internal/fanout/status.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 3.5 — this is intentional.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 3.5 Budget Enforcement`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 3.5]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (budget counters manipulable via tool results? int64 overflow on `tool_bytes`?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (`max_turns=0`, `tool_budget_bytes=0`, `timeout_secs=0` — do they trip immediately?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (`context.DeadlineExceeded` propagation? budget trip on first turn?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (context not cancelled after loop exit?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 3.6, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 3.6 [ ] **[Story 2: Budget Enforcement - REFACTOR](plan/user-stories/02-budget-enforcement.md)**
+   1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
+   2. Improve budget check clarity: extract to `checkBudgets` helper, clear error messages (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(fanout): address review + clean up budget enforcement"`
+   **Duration:** 1 hour
+
+### 3.7 [ ] **Phase 3 DoD**
+   - [ ] `go test ./internal/fanout/... ./internal/llmclient/...` — all passing
+   - [ ] `go test -coverprofile=coverage.out ./internal/fanout/... ./internal/llmclient/...` — ≥80%
+   - [ ] `golangci-lint run ./internal/fanout/... ./internal/llmclient/...` — no errors
+   - [ ] `go vet ./...` — clean
+   - [ ] `go build ./...` — succeeds
+   - [ ] Story 1 ACs verified: ChatCompleter, multi-turn loop, loop hygiene, result accounting, backward compat
+   - [ ] Story 2 ACs verified: all three budgets enforce independently, partial-success semantics, status.json markers
+
+   ```
+   Phase-3 DoD Complete
+   Auto: 5/5 | Story-Specific: 10/10 (Stories 1 + 2)
+   Manual Review: [ ] Code reviewed
+   ```
+
+### 3.8 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 3 (`internal/fanout/engine.go`, `internal/fanout/status.go`, `internal/llmclient/client.go`)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 3 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 3 (absolute paths): `internal/fanout/engine.go`, `internal/fanout/status.go`, `internal/llmclient/client.go`
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `invokeAgent` signature, `Result` struct, `AgentStatus.TrippedBudgets` — all consumable by Phase 4?
+       - CONFIG SURFACE: `max_turns` (default 10), `tool_budget_bytes`, `timeout_secs` defaults documented?
+       - INTEGRATION: Phase 2 `Dispatcher` and `Jail` integrated correctly into loop?
+       - PHASE-EXIT CONTRACT: Phase 4 (degradation) can branch on `Agent.Tools` at `invokeAgent` entry without rework?
+       - REGRESSION: 1.x single-shot `Completer` path untouched and all prior tests still pass?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 4: Advanced (Days 7-8)
+
+**Goal:** Graceful degradation for non-tool-capable models, fallback tool-setting inheritance, and mixed roster compatibility.
+
+### 4.1 [ ] **[Story 4: Graceful Degradation - RED](plan/user-stories/04-graceful-degradation.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test degrade path: model with `supports_function_calling: false` and `tools: true` → executes single-shot, `AgentStatus.ToolsDegraded = true`
+   - Test tool-capable path: model with `supports_function_calling: true` and `tools: true` → executes `invokeAgent` multi-turn loop
+   - Test fallback inheritance: fallback agent inherits effective `Tools` setting from the lane invocation; fallback can also be a non-tool agent (degrade is per-agent)
+   - Test mixed roster: tool-loop and single-shot agents in the same review run; reconciler receives both result shapes; no special-casing required
+   - Test `supports_function_calling` field in registry.yaml parsed correctly per model/provider
+   **Files:** `internal/fanout/engine_test.go` (degrade sections), `internal/fanout/review_test.go` | **Duration:** 2-3 hours
+   **AC:** [04-01](plan/acceptance-criteria/04-01-single-shot-degradation-path.md), [04-02](plan/acceptance-criteria/04-02-tool-capable-agent-loop-path.md), [04-03](plan/acceptance-criteria/04-03-fallback-degradation-inheritance.md), [04-04](plan/acceptance-criteria/04-04-mixed-roster-reconciler-compatibility.md)
+
+### 4.2 [ ] **[Story 4: Graceful Degradation - GREEN](plan/user-stories/04-graceful-degradation.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/registry/`: Add `SupportsFC bool` per agent/provider entry; parse from `supports_function_calling` YAML field with default `false`
+   - `internal/fanout/engine.go`: Branch at `invokeAgent` entry: if `Agent.Tools && !registry.SupportsFC(agent.Model)` → call single-shot `Complete`, set `result.ToolsDegraded = true`
+   - `internal/fanout/status.go`: `AgentStatus.ToolsDegraded bool` field added
+   - `internal/fanout/review.go`: Fallback agent inherits `Tools` setting from lane invocation; `ToolsDegraded` determined independently per fallback agent
+   COMMIT: `git commit -m "feat(fanout): add graceful degradation and fallback inheritance (green)"`
+   **Files:** `internal/fanout/engine.go`, `internal/fanout/review.go`, `internal/fanout/status.go`, `internal/registry/` | **Duration:** 3-4 hours
+
+### 4.2.A [ ] **[Story 4: Graceful Degradation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-graceful-degradation.md)**
+   **Changed Files:** `internal/fanout/engine.go` (degrade sections), `internal/fanout/review.go`, `internal/fanout/status.go`, `internal/registry/`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.2.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 4.2 Graceful Degradation`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 4.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (registry field spoofing allowing tool use on incapable model? `ToolsDegraded` flag bypassed?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (model not in registry, fallback chain depth, `tools: true` but tool list empty?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (registry parse errors causing silent full-access grant?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (registry lookup performed on every loop turn?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 4.3 [ ] **[Story 4: Graceful Degradation - REFACTOR](plan/user-stories/04-graceful-degradation.md)**
+   1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
+   2. Improve naming: `ToolsDegraded` flag surfacing, registry lookup clarity (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(fanout): address review + clean up degradation path"`
+   **Duration:** 1 hour
+
+### 4.4 [ ] **Phase 4 DoD**
+   - [ ] `go test ./internal/fanout/... ./internal/registry/...` — all passing
+   - [ ] `go test -coverprofile=coverage.out ./...` — ≥80%
+   - [ ] `golangci-lint run` — no errors
+   - [ ] `go vet ./...` — clean
+   - [ ] `go build ./...` — succeeds
+   - [ ] Story 4 ACs verified: degrade path, tool-capable path, fallback inheritance, mixed roster reconciler
+
+   ```
+   Phase-4 DoD Complete
+   Auto: 5/5 | Story-Specific: 4/4 (Story 4)
+   Manual Review: [ ] Code reviewed
+   ```
+
+### 4.5 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 4 (`internal/fanout/engine.go` degrade sections, `internal/fanout/review.go`, `internal/fanout/status.go`, `internal/registry/`)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 4 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 4 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `AgentStatus.ToolsDegraded` field consumable by Phase 5 transcript writer?
+       - CONFIG SURFACE: `supports_function_calling` registry field documented with default (`false`)?
+       - INTEGRATION: Fallback inheritance doesn't break existing `review.go` logic?
+       - PHASE-EXIT CONTRACT: Phase 5 can read `ToolsDegraded` from `AgentStatus` without changes?
+       - REGRESSION: Phase 2-3 multi-turn path and 1.x single-shot path both untouched?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 5: Integration (Days 9-10)
+
+**Goal:** Transcript writer, live status counters, manifest review stage, persona updates, and `PayloadContext.ToolsEnabled`.
+
+### 5.1 [ ] **[Story 5: Transcript & Accounting - RED](plan/user-stories/05-transcript-accounting.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test `TranscriptWriter.RecordToolCalls(turn, toolCalls)`: appends JSON line to `raw/<agent>/transcript.jsonl`
+   - Test `TranscriptWriter.RecordToolResults(turn, results)`: appends results, truncated if over cap with marker
+   - Test `TranscriptWriter.RecordFinal(message)`: appends final message
+   - Test transcript durability: I/O errors are logged and non-fatal (best-effort append-only)
+   - Test transcript replay: reading back `transcript.jsonl` reconstructs the full Chat call sequence
+   - Test `status.json` counters: `turns`, `tool_calls`, `tool_bytes` updated live and match actual run values
+   - Test `manifest.json` review stage: `"review"` entry lists agents with `tools: true`
+   **Files:** `internal/tools/transcript_test.go`, `internal/fanout/status_test.go`, `internal/fanout/manifest_test.go` | **Duration:** 2-3 hours
+   **AC:** [05-01](plan/acceptance-criteria/05-01-transcript-event-emission.md), [05-02](plan/acceptance-criteria/05-02-transcript-durability-replay.md), [05-03](plan/acceptance-criteria/05-03-live-status-counters.md), [05-04](plan/acceptance-criteria/05-04-manifest-review-stage.md)
+
+### 5.2 [ ] **[Story 5: Transcript & Accounting - GREEN](plan/user-stories/05-transcript-accounting.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/tools/transcript.go`: `TranscriptWriter` with `RecordToolCalls`, `RecordToolResults`, `RecordFinal`; buffered JSONL writer; flush per turn; best-effort I/O (errors logged, never fatal)
+   - `internal/fanout/status.go`: `turns`, `tool_calls`, `tool_bytes` counters incremented in loop; written to `status.json` at end of each turn
+   - `internal/fanout/manifest.go`: Add `"review"` stage entry listing agents with `tools: true` at invocation time
+   COMMIT: `git commit -m "feat(tools): add transcript writer and status/manifest accounting (green)"`
+   **Files:** `internal/tools/transcript.go`, `internal/fanout/status.go`, `internal/fanout/manifest.go` | **Duration:** 3-4 hours
+
+### 5.2.A [ ] **[Story 5: Transcript & Accounting - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-transcript-accounting.md)**
+   **Changed Files:** `internal/tools/transcript.go`, `internal/fanout/status.go`, `internal/fanout/manifest.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.2.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 5.2 Transcript & Accounting`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 5.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (transcript path traversal injection? tool results containing sensitive data written to disk unredacted?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (concurrent writes to transcript from multiple goroutines, empty `tool_calls`, zero `tool_bytes` counter?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (file create fails, disk full, write fails mid-session — is transcript still closed cleanly?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (unbuffered write per event, file descriptor leak on error path?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 5.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 5.3 [ ] **[Story 5: Transcript & Accounting - REFACTOR](plan/user-stories/05-transcript-accounting.md)**
+   1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
+   2. Improve I/O safety: ensure file handles closed on all paths, proper error logging (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(tools): address review + clean up transcript writer"`
+   **Duration:** 1 hour
+
+### 5.4 [ ] **[Story 6: Persona Guidance & Documentation - RED](plan/user-stories/06-persona-guidance-documentation.md)**
+   Write comprehensive failing tests, verify fail correctly
+   - Test `PayloadContext.ToolsEnabled bool`: field set from `AgentConfig.Tools` at render time
+   - Test persona template rendering: `{{if .ToolsEnabled}}` sections present when `ToolsEnabled=true`, absent when `false`
+   - Test evidence-citation rule present in tool-enabled persona output
+   - Test scope guard present: tools widen evidence gathering, not scope
+   - Test `docs/registry.md` documents `tools`, `max_turns`, `tool_budget_bytes` as active fields
+   - Test `docs/payload-modes.md` has payload-as-starting-point semantics section
+   **Files:** `internal/payload/personas_render_test.go` | **Duration:** 1-2 hours
+   **AC:** [06-01](plan/acceptance-criteria/06-01-tool-enabled-persona-guidance.md), [06-02](plan/acceptance-criteria/06-02-evidence-citation-rule.md), [06-03](plan/acceptance-criteria/06-03-registry-documentation-activation.md), [06-04](plan/acceptance-criteria/06-04-payload-modes-readme-cost-guidance.md)
+
+### 5.5 [ ] **[Story 6: Persona Guidance & Documentation - GREEN](plan/user-stories/06-persona-guidance-documentation.md)**
+   Minimal code to pass tests, one test at a time (T1), verify all pass (T2), COMMIT
+   - `internal/payload/template.go`: Add `ToolsEnabled bool` to `PayloadContext`; populate from `AgentConfig.Tools`
+   - Persona templates: add `{{if .ToolsEnabled}}` conditional sections with tool exploration guidance, evidence-citation rule ("findings must cite evidence actually read"), scope guard ("tools widen evidence gathering, not scope")
+   - `docs/registry.md`: Document `tools`, `max_turns` (default 10, bounds), `tool_budget_bytes` as active fields with validation
+   - `docs/payload-modes.md`: Add payload-as-starting-point semantics section for tool agents
+   - `README.md`: Add 3–10× cost guidance for tool-enabled agents
+   COMMIT: `git commit -m "feat(payload): add tool-enabled persona guidance and documentation (green)"`
+   **Files:** `internal/payload/template.go`, persona templates, `docs/registry.md`, `docs/payload-modes.md`, `README.md` | **Duration:** 2-3 hours
+
+### 5.5.A [ ] **[Story 6: Persona Guidance & Documentation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-persona-guidance-documentation.md)**
+   **Changed Files:** `internal/payload/template.go`, persona templates, `docs/registry.md`, `docs/payload-modes.md`, `README.md`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 5.5.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 5.5 Persona Guidance & Documentation`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FILES FROM 5.5]
+     - Checklist (pass verbatim):
+       - SECURITY: Auth bypass, injection, data exposure? (`ToolsEnabled=false` still renders tool guidance sections? missing cost guidance could cause runaway spend?)
+       - EDGE CASES: Null, empty, boundaries, concurrent access? (template parse errors on missing `ToolsEnabled` field, zero-length persona output?)
+       - ERROR HANDLING: Missing catches, swallowed errors? (template render error swallowed silently?)
+       - PERFORMANCE: N+1, leaks, blocking ops? (template re-parsed per render instead of cached?)
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 5.6, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 5.6 [ ] **[Story 6: Persona Guidance & Documentation - REFACTOR](plan/user-stories/06-persona-guidance-documentation.md)**
+   1. Fix CRITICAL/HIGH issues from 5.5.A (if any)
+   2. Improve documentation clarity: cost guidance phrasing, registry field descriptions (T1)
+   3. Validate all tests still pass (T3)
+   4. COMMIT: `git commit -m "refactor(payload): address review + clean up persona guidance"`
+   **Duration:** 1 hour
+
+### 5.7 [ ] **Phase 5 DoD**
+   - [ ] `go test ./...` — all passing
+   - [ ] `go test -coverprofile=coverage.out ./...` — ≥80%
+   - [ ] `golangci-lint run` — no errors
+   - [ ] `go vet ./...` — clean
+   - [ ] `go build ./...` — succeeds
+   - [ ] Story 5 ACs verified: transcript events, durability, replay, live status counters, manifest stage
+   - [ ] Story 6 ACs verified: persona guidance, evidence-citation rule, registry docs, payload-modes docs, README cost guidance
+
+   ```
+   Phase-5 DoD Complete
+   Auto: 5/5 | Story-Specific: 8/8 (Stories 5 + 6)
+   Manual Review: [ ] Code reviewed
+   ```
+
+### 5.8 [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 5 (`internal/tools/transcript.go`, `internal/fanout/status.go`, `internal/fanout/manifest.go`, `internal/payload/template.go`, persona templates, docs)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 5 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 5 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: Transcript writer interface, status.json schema, manifest stage entry all consumable by Phase 6 end-to-end tests?
+       - CONFIG SURFACE: `ToolsEnabled` field documented? Persona template conditional sections discoverable?
+       - INTEGRATION: Status counters wired into loop? Transcript writer initialized and closed per agent invocation?
+       - PHASE-EXIT CONTRACT: Phase 6 can exercise transcript replay and end-to-end test without additional wiring?
+       - REGRESSION: Existing persona rendering for non-tool agents (`ToolsEnabled=false`) unaffected?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Final Phase: Testing & Validation (Days 11-13)
+
+**Goal:** End-to-end integration tests, documentation completeness, registry activation, and regression verification.
+
+### 6.1 [ ] **End-to-End Integration Test (Fixture Repo)**
+   1. Create a fixture repository with Go source files covering a realistic review scenario
+   2. Write end-to-end test: tool-enabled agent reads a file outside the payload, greps for callers, produces findings citing that evidence
+   3. Use httptest mock provider scripting multi-turn `tool_calls` exchanges with the fixture repo
+   4. Assert: findings reference file paths actually read; `transcript.jsonl` replays faithfully; `status.json` counters non-zero
+   **Files:** `internal/fanout/engine_e2e_test.go` (or `//go:build integration`) | **Duration:** 4-5 hours
+
+### 6.2 [ ] **Budget Trip & Scenario Tests**
+   1. Test all three budgets trip cleanly and independently; `status.json` records `tripped_budget` correctly for each
+   2. Test partial-success semantics: partial findings returned and usable when budget trips
+   3. Test path jail escape vectors (comprehensive): absolute, `..`, symlink-escape, `.git/` — all rejected
+   4. Test non-tool-capable model degrade path with `tools_degraded: true` in status.json
+   5. Test transcript replay harness reconstructs exact Chat call sequence from `transcript.jsonl`
+   **Files:** existing test files + additional integration test cases | **Duration:** 3-4 hours
+
+### 6.3 [ ] **Documentation Completeness & Registry Activation**
+   1. Verify `docs/registry.md`: `tools`, `max_turns`, `tool_budget_bytes` documented as active with defaults, bounds, validation
+   2. Verify `docs/payload-modes.md`: payload-as-starting-point semantics section complete
+   3. Verify `README.md`: 3–10× cost guidance present, tool-using reviewer workflow documented
+   4. Flip registry validation: activate `tools`, `max_turns`, `tool_budget_bytes` fields from reserved to active in registry validation code
+   COMMIT: `git commit -m "docs: complete registry, payload-modes, README documentation + activate registry fields"`
+   **Duration:** 2-3 hours
+
+### 6.4 [ ] **Final Regression Check**
+   1. Confirm all 1.x single-shot paths still pass: `go test ./...` with no regressions against prior test suite
+   2. Verify mixed roster: tool and non-tool agents in one review; reconciler consumes both result shapes identically
+   3. Confirm no new third-party dependencies: inspect `go.mod` for any additions
+   4. Final commit: `git commit -m "test(fanout): final regression + mixed roster verification"`
+   **Duration:** 1-2 hours
+
+---
+
+### Validation Checklist
+- [ ] All tests passing (T3): `go test ./...`
+- [ ] Coverage meets threshold: `go test -coverprofile=coverage.out ./...` ≥80%
+- [ ] Lint/format clean: `golangci-lint run` + `go vet ./...`
+- [ ] Build succeeds: `go build ./...`
+- [ ] No new third-party dependencies: inspect `go.mod`
+- [ ] All sprint success criteria met (see Sprint Overview)
+- [ ] Drift check against [original-requirements.md](plan/original-requirements.md): confirm all deliverables present
+
+### Drift Analysis
+Compare delivered implementation against [original-requirements.md](plan/original-requirements.md):
+- [ ] Multi-turn agent loop with `tool_calls` handling ✓
+- [ ] `read_file`, `grep`, `list_files` tools with stated signatures and limits ✓
+- [ ] Path jail: absolute, `..`, symlink-escape, `.git/` all rejected ✓
+- [ ] Snapshot manager: live-worktree fast path, `git worktree` slow path, cleanup ✓
+- [ ] `max_turns` (default 10), `tool_budget_bytes`, `timeout_secs` budgets ✓
+- [ ] `tools_degraded: true` in status.json for non-tool-capable models ✓
+- [ ] `transcript.jsonl` per tool-using agent with complete event sequence ✓
+- [ ] No new third-party dependencies ✓
+- [ ] `docs/registry.md`, `docs/payload-modes.md`, `README.md` updated ✓

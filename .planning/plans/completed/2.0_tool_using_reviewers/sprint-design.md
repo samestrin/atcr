@@ -51,7 +51,7 @@ budget enforcement max_turns tool_budget_bytes
 
 - **Architecture:** 3/3 - New multi-turn agent loop transforms core invocation model from single-shot to bounded agent; new tool harness package with dispatcher, path jail, snapshot manager; integrates with existing fanout engine via ChatCompleter interface
 - **Integration:** 2/3 - 3+ integrations: llmclient (wire format), fanout engine (loop), registry (config activation), artifacts (transcript/status/manifest), payload (persona context); all internal to Go binary but touches multiple subsystems
-- **Story/Task & Test:** 3/3 - 6 user stories, 26 acceptance criteria; extensive testing: unit tests (no LLM), httptest mock providers, integration tests with fixture repos; 6 high-complexity ACs
+- **Story/Task & Test:** 3/3 - 7 user stories, 30 acceptance criteria; extensive testing: unit tests (no LLM), httptest mock providers, integration tests with fixture repos; 7 high-complexity ACs
 - **Risk/Unknowns:** 2/3 - Provider function-calling dialect variance, small model thrashing behavior, worktree edge cases; mitigations exist (degrade path, loop hygiene, conservative defaults) but not fully proven in production
 
 **Time Formula:** Base 5 days + (Complexity - 4) * 2 days + (Phases - 3) * 1 day
@@ -96,6 +96,7 @@ budget enforcement max_turns tool_budget_bytes
 - **Tool definitions** (internal/tools/defs.go): `read_file`, `grep`, `list_files` as OpenAI JSON Schema
 - **Path jail** (internal/tools/jail.go): Resolve method with full escape-vector rejection (absolute, `..`, symlinks, `.git/`)
 - **Tool dispatcher** (internal/tools/dispatch.go): Routes tool calls to handlers, enforces per-call byte caps, returns truncated results
+- **Tool handlers** (internal/tools/read_file.go, grep.go, list_files.go): Implement line-numbered reads, regex search, depth-capped listings
 - **Snapshot manager** (internal/tools/snapshot.go): `SnapshotFor(head)` with live-worktree fast path and temporary `git worktree add` slow path
 - **Unit tests** for all of the above (no LLM, no network, fixture-based)
 
@@ -252,6 +253,15 @@ budget enforcement max_turns tool_budget_bytes
 
 **AC Links:** 06-01 through 06-04
 
+### Story 7: Tool Definitions & Dispatcher (4 ACs)
+**Testable Elements:**
+1. `read_file` line-numbered output, slicing, and byte-cap truncation
+2. `grep` regex search, glob filter, and match-cap truncation
+3. `list_files` depth-capped directory listing
+4. Dispatcher routing and per-call byte caps
+
+**AC Links:** 07-01 through 07-04
+
 ---
 
 ## Test Strategy
@@ -268,8 +278,9 @@ budget enforcement max_turns tool_budget_bytes
 - internal/payload/personas_render_test.go (ToolsEnabled rendering)
 
 **Unit/Integration/E2E:**
-- **Unit tests** (8 ACs): tool harness, path jail, snapshot manager, degrade path, transcript emission, status counters, manifest stage — all without LLM or network
+- **Unit tests** (12 ACs): tool harness, tool handlers, path jail, snapshot manager, degrade path, transcript emission, status counters, manifest stage — all without LLM or network
 - **Integration tests** (14 ACs): agent loop with httptest mock providers, budget enforcement, mixed roster, transcript replay, end-to-end with fixture repo
+- **Documentation tests** (4 ACs): registry docs, payload-modes docs, README cost guidance, persona guidance
 - **E2E tests** (0 ACs): not required for this epic
 
 **Test Environment Status:**
