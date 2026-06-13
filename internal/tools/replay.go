@@ -42,11 +42,13 @@ type ReplayResult struct {
 	Skipped    int
 }
 
-// ReplayTranscript reads transcript.jsonl and returns its events in order. It is
-// resilient by construction: an absent file is an empty session (no error), and
-// malformed lines, lines missing the event field, and unknown event kinds are
-// logged and skipped so a partial (crash-truncated) or forward-version
-// transcript never errors the harness (AC 05-02 Error Scenarios 1–3).
+// ReplayTranscript reads transcript.jsonl and returns events in source order as
+// a flat []ReplayEvent with each event's raw JSON map. It is a resilient event
+// reader, NOT a Chat-sequence reconstructor: it does not pair tool_calls with
+// tool_results, rebuild message lists, or reconstruct the original Chat arguments.
+// Malformed lines, missing event fields, and unknown event kinds are logged and
+// skipped so a partial (crash-truncated) or forward-version transcript never
+// errors the harness (AC 05-02 Error Scenarios 1–3).
 func ReplayTranscript(path string) (ReplayResult, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -89,7 +91,9 @@ func ReplayTranscript(path string) (ReplayResult, error) {
 		}
 		turn := 0
 		if tr, ok := obj["turn"]; ok {
-			_ = json.Unmarshal(tr, &turn)
+			if err := json.Unmarshal(tr, &turn); err != nil {
+				replayLog("transcript %s line %d: malformed turn field, defaulting to 0: %v", path, line, err)
+			}
 		}
 		res.Events = append(res.Events, ReplayEvent{Event: evt, Turn: turn, Raw: obj})
 	}
