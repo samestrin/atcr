@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -118,6 +120,22 @@ func TestGrep_GlobNoMatches(t *testing.T) {
 // TestGrep_TruncatedOriginalBytesIsBytes verifies that OriginalBytes in a
 // match-truncated grep result is a byte count, not a match count.
 // Before the fix: OriginalBytes = total_matches (e.g. 2000), which is
+// Grep must skip a .GIT directory (case-insensitive match, catching macOS/Windows
+// case-preserving filesystems where the entry name is ".GIT" not ".git").
+func TestGrep_SkipsDotGITCaseInsensitive(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "src/main.go", "package main\n")
+	// Create .GIT (uppercase) with sensitive content; the walker must skip it.
+	gitDir := filepath.Join(root, ".GIT")
+	require.NoError(t, os.MkdirAll(gitDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("url = https://user:secret@host\n"), 0o644))
+	d := newTestDispatcher(t, root)
+
+	res, err := grep(t, d, `{"pattern":"secret"}`)
+	require.NoError(t, err)
+	assert.NotContains(t, res.Content, "secret", ".GIT directory must be skipped even when directory name is uppercase")
+}
+
 // incoherent with the byte-count semantics capResult and read_file use.
 func TestGrep_TruncatedOriginalBytesIsBytes(t *testing.T) {
 	root := t.TempDir()

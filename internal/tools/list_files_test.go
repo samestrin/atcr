@@ -118,3 +118,18 @@ func TestListFiles_DirectoryNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "directory not found")
 }
+
+// list_files must skip a .GIT directory (case-insensitive, catching macOS/Windows
+// case-preserving filesystems where the entry name is ".GIT" not ".git").
+func TestListFiles_SkipsDotGITCaseInsensitive(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "src/main.go", "package main\n")
+	gitDir := filepath.Join(root, ".GIT")
+	require.NoError(t, os.MkdirAll(gitDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0o644))
+	d := newTestDispatcher(t, root)
+
+	res, err := listFiles(t, d, `{}`)
+	require.NoError(t, err)
+	assert.NotContains(t, res.Content, ".GIT", "listing must not expose .GIT directory")
+}
