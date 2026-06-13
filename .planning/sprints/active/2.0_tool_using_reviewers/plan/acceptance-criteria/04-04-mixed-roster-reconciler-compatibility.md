@@ -126,18 +126,18 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/fanout/... ./internal/reconcile/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Mixed-roster integration test passes in CI
+- [x] All tests passing (`go test ./internal/fanout/... ./internal/reconcile/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
+- [x] Mixed-roster integration test passes in CI (TestMixedRoster_BothShapesReconcileIdentically)
 
 **Story-Specific:**
-- [ ] Mixed roster review completes end-to-end with no reconcile errors
-- [ ] Reconciler produces correct output for mixed rosters without code changes
-- [ ] 1.x status.json (no `tools_degraded` field) remains backward-compatible
-- [ ] Regression test for mixed roster is pinned in CI
+- [x] Mixed roster review completes end-to-end with no reconcile errors
+- [x] Reconciler produces correct output for mixed rosters without code changes (no reconcile code touched)
+- [x] 1.x status.json (no `tools_degraded` field) remains backward-compatible (TestInvokeAgent_SingleShotStatusOmitsToolFields)
+- [x] Regression test for mixed roster is pinned in CI
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Reconciler confirmed to have no tool-vs-single-shot branching
+- [x] Code reviewed and approved (4.2.A adversarial subagent)
+- [x] Reconciler confirmed to have no tool-vs-single-shot branching (statusFor gates tool fields behind r.Tools; reconcile unchanged)
 

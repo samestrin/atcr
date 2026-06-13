@@ -122,16 +122,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/fanout/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/fanout/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Each fallback agent independently evaluates degradation against its own model's capability
-- [ ] `tools_degraded` is recorded per-agent in the fallback chain, not per-slot
-- [ ] Lane's effective `tools` setting is threaded through to every fallback agent
+- [x] Each fallback agent independently evaluates degradation against its own model's capability (TestBuildFallbackAgent_OwnCapabilityNotInheritedFromLane)
+- [x] `tools_degraded` is recorded per-agent in the fallback chain, not per-slot (per-agent invokeAgent gate; TestInvokeAgent_DegradeToSingleShot)
+- [x] Lane's effective `tools` setting is threaded through to every fallback agent (TestBuildFallbackAgent_InheritsLaneToolSettings)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Per-agent degrade semantics are clearly documented in code comments
+- [x] Code reviewed and approved (4.2.A adversarial subagent)
+- [x] Per-agent degrade semantics are clearly documented in code comments (review.go buildFallbackAgent SupportsFC comment)
 

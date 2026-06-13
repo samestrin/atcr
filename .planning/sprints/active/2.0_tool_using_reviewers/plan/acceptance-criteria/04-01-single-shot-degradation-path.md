@@ -115,17 +115,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/fanout/... ./internal/registry/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/fanout/... ./internal/registry/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Non-tool-capable model with `tools: true` invokes single-shot `Completer.Complete()`
-- [ ] `AgentStatus.tools_degraded` is `true` after degrade event
-- [ ] `AgentStatus.tools_requested` preserves the original `tools` config value
-- [ ] `tools_degraded` field is absent from 1.x status.json (omitempty backward compat)
+- [x] Non-tool-capable model with `tools: true` invokes single-shot `Completer.Complete()` (TestInvokeAgent_DegradeToSingleShot)
+- [x] `AgentStatus.tools_degraded` is `true` after degrade event
+- [x] `AgentStatus.tools_requested` preserves the original `tools` config value (TestInvokeAgent_DegradeStatusPreservesRequested)
+- [x] `tools_degraded` field is absent from 1.x status.json (omitempty backward compat) (TestInvokeAgent_SingleShotStatusOmitsToolFields)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Degrade branch in `invokeAgent` is a single `if` check, minimal code change
-- [ ] Warning log for misconfigured `supports_function_calling: true` is documented
+- [x] Code reviewed and approved (4.2.A adversarial subagent)
+- [x] Degrade branch in `invokeAgent` is a single `if` check, minimal code change
+- [x] Warning log for misconfigured `supports_function_calling: true` is documented (loop.go first-turn warning)

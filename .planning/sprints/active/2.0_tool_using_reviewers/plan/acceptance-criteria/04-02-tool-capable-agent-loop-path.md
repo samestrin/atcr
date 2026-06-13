@@ -113,17 +113,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/fanout/... ./internal/registry/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/fanout/... ./internal/registry/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Tool-capable model with `tools: true` enters the multi-turn tool loop
-- [ ] `AgentStatus.tools_degraded` is `false` (or absent) when loop runs
-- [ ] `AgentStatus.Turns` and `AgentStatus.ToolCalls` are populated after loop completion
-- [ ] Loop termination (end_turn, max_turns, budget) produces correct status without degradation
+- [x] Tool-capable model with `tools: true` enters the multi-turn tool loop (TestInvokeAgent_ToolCapableRunsLoop)
+- [x] `AgentStatus.tools_degraded` is `false` (or absent) when loop runs
+- [x] `AgentStatus.Turns` and `AgentStatus.ToolCalls` are populated after loop completion
+- [x] Loop termination (end_turn, max_turns, budget) produces correct status without degradation
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Warning log for no-tool_calls-in-first-response is present and documented
+- [x] Code reviewed and approved (4.2.A adversarial subagent)
+- [x] Warning log for no-tool_calls-in-first-response is present and documented (loop.go; TestLoop_WarnsOnNoToolCallsFirstTurn)
 - [ ] Error messages name the agent and turn number for debugging
