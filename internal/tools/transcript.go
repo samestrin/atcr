@@ -73,8 +73,12 @@ type finalEvent struct {
 // OpenTranscript: a file that cannot be created yields a disabled writer whose
 // Record* methods are silent no-ops, so the agent loop never branches on
 // transcript availability. The buffered writer flushes at turn boundaries
-// (RecordToolResults/RecordFinal), not per event, so a crashed run still leaves
-// well-formed JSONL up to the last flushed turn.
+// (RecordToolResults/RecordFinal), not per event, so a crashed run leaves
+// well-formed JSONL up to the last completed turn. Note: a tool_calls event
+// buffered by RecordToolCalls is NOT flushed until the following
+// RecordToolResults — a crash/SIGKILL between the two loses that event, so the
+// partial transcript is accurate only up to the last turn whose results were
+// recorded.
 type Transcript struct {
 	bw       *bufio.Writer
 	closer   io.Closer
@@ -112,7 +116,9 @@ func newTranscript(w io.Writer, closer io.Closer, agent string) *Transcript {
 func (t *Transcript) off() bool { return t == nil || t.disabled || t.failed }
 
 // RecordToolCalls appends one tool_calls event for the turn. It does not flush —
-// the turn boundary is the following RecordToolResults (or RecordFinal).
+// the turn boundary is the following RecordToolResults (or RecordFinal). A crash
+// between this call and RecordToolResults loses the buffered event; the transcript
+// is then accurate only through the previous completed turn.
 func (t *Transcript) RecordToolCalls(turn int, calls []ToolCallRecord) {
 	if t.off() {
 		return
