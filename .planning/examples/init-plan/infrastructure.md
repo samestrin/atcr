@@ -1,6 +1,6 @@
 # Infrastructure: Add Preview Environments for Pull Requests
 
-**Estimated Durations**: TBD
+- **Estimated time**: 1 week
 
 ## Context
 
@@ -97,6 +97,15 @@ Use Vercel for frontend previews + AWS Lambda for API previews. Best balance of 
 - Long-running preview environments (max 7 days)
 
 ## Acceptance Criteria
+
+- [ ] AC1: GitHub Actions workflow triggers automatically on PR open and push events
+- [ ] AC2: Preview URL (e.g., `pr-123.preview.example.com`) is posted as a status check within 5 minutes
+- [ ] AC3: Preview environment includes a database seeded with test data
+- [ ] AC4: Preview environment is fully torn down within 1 hour of PR close or merge
+- [ ] AC5: All preview URLs serve over HTTPS with valid certificates
+- [ ] AC6: Monthly infrastructure cost stays under $75 (verified by billing dashboard)
+
+## Success Criteria
 
 - [ ] PR opens trigger automatic deployment
 - [ ] Preview URL available within 5 minutes
