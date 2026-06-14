@@ -119,7 +119,7 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
+	defer func() { _ = os.Remove(tmpName) }() // no-op after rename; SIGKILL-orphaned .tmp-* files in the same dir are accepted (readers use exact filenames)
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err
