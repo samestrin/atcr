@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
@@ -135,8 +136,9 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(repo, "dirty-snapshot.txt"), []byte("force worktree snapshot\n"), 0o644))
 	srv := toolMockProvider(t)
 	cfg := toolAgentConfig(srv.URL)
-
-	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := RunReview(ctx, llmclient.New(), cfg, reviewReq(repo, repo, base, head))
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, 1, res.Summary.Succeeded)
