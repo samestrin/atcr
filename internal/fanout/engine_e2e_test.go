@@ -20,6 +20,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// snapshot constants keep the worktree-branch assertions self-documenting.
+const (
+	snapshotModeWorktree = "worktree"
+	snapshotPrefix       = "atcr-snapshot-"
+)
+
 // initToolRepo creates a temp git repo whose head commit changes auth.go (the
 // payload) while helper.go stays unchanged (outside the payload), so a tool
 // agent can demonstrate reading a file the payload never showed it.
@@ -186,9 +192,9 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 		SnapshotWorktreePath string `json:"snapshot_worktree_path"`
 	}
 	require.NoError(t, json.Unmarshal(raw["review"], &review))
-	assert.Equal(t, "worktree", review.SnapshotMode)
+	assert.Equal(t, snapshotModeWorktree, review.SnapshotMode)
 	assert.Equal(t, head, review.HeadSHA)
-	assert.Contains(t, review.SnapshotWorktreePath, "atcr-snapshot-")
+	assert.Contains(t, review.SnapshotWorktreePath, snapshotPrefix)
 	assert.True(t, strings.HasSuffix(review.SnapshotWorktreePath, head),
 		"worktree leaf is the resolved head SHA")
 }
