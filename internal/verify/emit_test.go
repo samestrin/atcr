@@ -265,6 +265,21 @@ func TestUpdateSummaryVerdicts_Counts(t *testing.T) {
 	assert.Equal(t, float64(1), vc["unverifiable"])
 }
 
+func TestUpdateSummaryVerdicts_PreservesLargeIntegers(t *testing.T) {
+	dir := t.TempDir()
+	reconDir := filepath.Join(dir, "reconciled")
+	require.NoError(t, os.MkdirAll(reconDir, 0o755))
+	raw := `{"total_findings": 9223372036854775807, "epoch_ms": 1700000000000}` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(reconDir, "summary.json"), []byte(raw), 0o644))
+
+	require.NoError(t, UpdateSummaryVerdicts(dir, VerdictCounts{Confirmed: 1}))
+
+	updated, err := os.ReadFile(filepath.Join(reconDir, "summary.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(updated), "9223372036854775807", "large int must survive round-trip unchanged")
+	assert.Contains(t, string(updated), "1700000000000", "large epoch_ms must survive round-trip unchanged")
+}
+
 func TestUpdateSummaryVerdicts_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))

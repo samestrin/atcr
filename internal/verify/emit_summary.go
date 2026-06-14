@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,7 +23,9 @@ func UpdateSummaryVerdicts(reviewDir string, counts VerdictCounts) error {
 		return err // includes os.ErrNotExist
 	}
 	var summary map[string]any
-	if err := json.Unmarshal(data, &summary); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&summary); err != nil {
 		return fmt.Errorf("parsing summary.json: %w", err)
 	}
 	if summary == nil {
