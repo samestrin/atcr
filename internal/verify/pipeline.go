@@ -36,8 +36,9 @@ type Options struct {
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
 // the tally written to verification.json/summary.json; FindingsProcessed is the
-// number of findings sent through verification this run (skipped/below-floor
-// findings are excluded); DurationMs is the wall-clock cost.
+// number of findings sent through a live skeptic this run — jobs with at least one
+// eligible skeptic AND a live dispatcher (skipped/below-floor/no-eligible-skeptic/
+// harness-failed findings are excluded); DurationMs is the wall-clock cost.
 type Result struct {
 	VerdictCounts     VerdictCounts
 	FindingsProcessed int
@@ -224,9 +225,15 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
+	processed := 0
+	for _, j := range jobs {
+		if len(j.skeptics) > 0 && disp != nil {
+			processed++
+		}
+	}
 	return Result{
 		VerdictCounts:     counts,
-		FindingsProcessed: len(jobs),
+		FindingsProcessed: processed,
 		DurationMs:        int(time.Since(start).Milliseconds()),
 	}, nil
 }

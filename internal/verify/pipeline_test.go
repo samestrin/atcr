@@ -186,6 +186,7 @@ func TestRunVerify_ToolHarnessUnavailable(t *testing.T) {
 		return nil, nil, nil, errors.New("snapshot failed")
 	})
 	require.NoError(t, err)
+	assert.Equal(t, 0, res.FindingsProcessed, "harness unavailable: no finding was sent through a live skeptic")
 	assert.Equal(t, VerdictCounts{Unverifiable: 1}, res.VerdictCounts)
 	assert.Equal(t, "tool_harness_unavailable", readFindings(t, dir)[0].Verification.Notes)
 }
