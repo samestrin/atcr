@@ -16,6 +16,16 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
+// Skeptic pairs a registry agent name with its config. Selection returns these
+// rather than bare registry.AgentConfig because the agent name — the registry
+// map key, not a field on AgentConfig — is required downstream to populate
+// reconcile.Verification.Skeptic, and the config is required to invoke the
+// skeptic. Carrying both avoids a lossy reverse-lookup in the caller.
+type Skeptic struct {
+	Name   string
+	Config registry.AgentConfig
+}
+
 // SelectEligibleSkeptics returns up to n skeptic agents eligible to verify
 // finding, deterministically ordered by agent name.
 //
@@ -31,8 +41,8 @@ import (
 // (non-nil) result is the caller's signal to record
 // Verification{Verdict: "unverifiable", Notes: "no_eligible_skeptic"} on the
 // finding — the selection layer itself never fabricates a verdict.
-func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int) []registry.AgentConfig {
-	out := []registry.AgentConfig{}
+func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int) []Skeptic {
+	out := []Skeptic{}
 	if reg == nil || n <= 0 {
 		return out
 	}
@@ -65,7 +75,7 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 		if len(out) >= n {
 			break
 		}
-		out = append(out, skeptics[name])
+		out = append(out, Skeptic{Name: name, Config: skeptics[name]})
 	}
 	return out
 }

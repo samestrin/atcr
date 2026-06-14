@@ -1,10 +1,10 @@
 package verify
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -22,18 +22,13 @@ func buildRegistry(skeptics, reviewers map[string]registry.AgentConfig) *registr
 	return &registry.Registry{Agents: agents}
 }
 
-// namesOf reverse-maps selected configs back to their agent names using the
-// combined agent map, preserving selection order. Fixtures keep each config
-// distinct (Role+Model) so the DeepEqual match is unambiguous.
-func namesOf(reg *registry.Registry, got []registry.AgentConfig) []string {
+// skepticNames extracts the agent names from a selection result, preserving
+// order. Selection carries the name directly (Skeptic.Name), so no reverse
+// lookup is needed.
+func skepticNames(got []Skeptic) []string {
 	names := make([]string, 0, len(got))
-	for _, g := range got {
-		for name, cfg := range reg.Agents {
-			if reflect.DeepEqual(cfg, g) {
-				names = append(names, name)
-				break
-			}
-		}
+	for _, s := range got {
+		names = append(names, s.Name)
 	}
 	return names
 }
@@ -205,7 +200,7 @@ func TestSelectEligibleSkeptics(t *testing.T) {
 			reg := buildRegistry(tt.skeptics, tt.reviewers)
 			got := SelectEligibleSkeptics(reg, tt.finding, tt.n)
 			assert.NotNil(t, got, "result must be non-nil even when empty")
-			assert.Equal(t, tt.wantNames, namesOf(reg, got))
+			assert.Equal(t, tt.wantNames, skepticNames(got))
 		})
 	}
 }
@@ -237,9 +232,9 @@ func TestSelectEligibleSkeptics_MultipleFindings(t *testing.T) {
 	f2 := reconcile.JSONFinding{Reviewers: []string{"bob"}}          // excludes s2
 	f3 := reconcile.JSONFinding{Reviewers: []string{"alice", "bob"}} // excludes s1+s2
 
-	assert.Equal(t, []string{"s2", "s3"}, namesOf(reg, SelectEligibleSkeptics(reg, f1, 10)))
-	assert.Equal(t, []string{"s1", "s3"}, namesOf(reg, SelectEligibleSkeptics(reg, f2, 10)))
-	assert.Equal(t, []string{"s3"}, namesOf(reg, SelectEligibleSkeptics(reg, f3, 10)))
+	assert.Equal(t, []string{"s2", "s3"}, skepticNames(SelectEligibleSkeptics(reg, f1, 10)))
+	assert.Equal(t, []string{"s1", "s3"}, skepticNames(SelectEligibleSkeptics(reg, f2, 10)))
+	assert.Equal(t, []string{"s3"}, skepticNames(SelectEligibleSkeptics(reg, f3, 10)))
 }
 
 // TestSelectEligibleSkeptics_NoMutation verifies selection is read-only: the
@@ -257,4 +252,19 @@ func TestSelectEligibleSkeptics_NoMutation(t *testing.T) {
 	assert.Equal(t, registry.RoleSkeptic, reg.Agents["s1"].Role)
 	assert.Equal(t, []string{"alice", "alice"}, before, "finding reviewers must not be mutated")
 	assert.Len(t, reg.Agents, 2)
+}
+
+// TestSelectEligibleSkeptics_CarriesConfig confirms the selection carries the
+// usable AgentConfig alongside the name, so Phase 2 can invoke the skeptic
+// without re-resolving it (AC 01-02: result values are usable, not zeroed).
+func TestSelectEligibleSkeptics_CarriesConfig(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{"s1": {Provider: "openai", Model: "gpt-4o", Role: registry.RoleSkeptic}},
+		map[string]registry.AgentConfig{"alice": reviewer("claude-sonnet-4-20250514")},
+	)
+	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{Reviewers: []string{"alice"}}, 1)
+	require.Len(t, got, 1)
+	assert.Equal(t, "s1", got[0].Name)
+	assert.Equal(t, "openai", got[0].Config.Provider)
+	assert.Equal(t, "gpt-4o", got[0].Config.Model)
 }
