@@ -109,15 +109,15 @@ func TestConfidenceV2(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `confidenceV2` function exists and is exported or unexported per convention
-- [ ] `ConfidenceVerified = "VERIFIED"` constant defined
-- [ ] Table-driven test covers all 13 verdict x v1-confidence combinations
-- [ ] No import cycle between `internal/verify` and `internal/reconcile`
+- [x] `confidenceV2` function exists and is exported or unexported per convention
+- [x] `ConfidenceVerified = "VERIFIED"` constant defined
+- [x] Table-driven test covers all 13 verdict x v1-confidence combinations
+- [x] No import cycle between `internal/verify` and `internal/reconcile`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

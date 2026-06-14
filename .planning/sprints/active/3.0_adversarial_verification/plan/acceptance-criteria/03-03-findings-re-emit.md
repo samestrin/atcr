@@ -107,17 +107,17 @@ func TestReEmitFindings_RefutedDemoted(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] No import cycle (`go build ./internal/verify/... ./internal/reconcile/...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
+- [x] No import cycle (`go build ./internal/verify/... ./internal/reconcile/...`)
 
 **Story-Specific:**
-- [ ] `ReEmitFindings` loads findings, applies verdicts, recomputes confidence, writes atomically
-- [ ] `FindingKey` struct defined with File/Line/Problem fields
-- [ ] Refuted findings demoted to LOW but retained in file
-- [ ] Findings without verdicts remain unchanged (Verification=nil, confidence unchanged)
-- [ ] Empty verdict map produces no changes
+- [x] `ReEmitFindings` loads findings, applies verdicts, recomputes confidence, writes atomically
+- [x] `FindingKey` struct defined with File/Line/Problem fields
+- [x] Refuted findings demoted to LOW but retained in file
+- [x] Findings without verdicts remain unchanged (Verification=nil, confidence unchanged)
+- [x] Empty verdict map produces no changes
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

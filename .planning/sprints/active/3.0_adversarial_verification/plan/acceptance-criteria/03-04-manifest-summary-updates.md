@@ -123,16 +123,16 @@ func TestUpdateSummaryVerdicts(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `UpdateManifestStage` appends "verify" to stages (idempotent — no duplicates)
-- [ ] `UpdateManifestStage` uses `payload.WriteManifest` for atomic write
-- [ ] `UpdateSummaryVerdicts` adds/updates `verdictCounts` field with `omitempty`
-- [ ] Both functions handle missing files with appropriate errors
-- [ ] Schema backward compatibility: 1.x manifests/summaries remain parseable
+- [x] `UpdateManifestStage` appends "verify" to stages (idempotent — no duplicates)
+- [x] `UpdateManifestStage` uses `payload.WriteManifest` for atomic write
+- [x] `UpdateSummaryVerdicts` adds/updates `verdictCounts` field with `omitempty`
+- [x] Both functions handle missing files with appropriate errors
+- [x] Schema backward compatibility: 1.x manifests/summaries remain parseable
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

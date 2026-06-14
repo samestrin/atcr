@@ -86,32 +86,32 @@ func TestCountAtOrAbove_ExcludesRefuted(t *testing.T) {
          // refuted: should NOT count
         },
     }
-    // Set verification on last finding
-    // Note: Merged embeds stream.Finding which has no Verification field;
-    // the gate operates on reconcile.Merged which may need a Verification
-    // field added, OR the gate checks confidence="LOW" + a separate verdict source.
-    // Implementation must ensure refuted findings are identifiable at gate time.
+    // Set verification on the last finding via the Verification field.
+    // Decision: add `Verification *Verification` to reconcile.Merged (matching
+    // the field already on JSONFinding), populated during re-emit before the gate
+    // runs. The gate reads finding.Verification.Verdict directly — no separate
+    // verdict source.
 
-    got := CountAtOrAbove(findings, "HIGH")
+    got := CountAtOrAbove(findings, "HIGH", false) // (findings, threshold, requireVerified)
     assert.Equal(t, 3, got) // 3 non-refuted HIGH findings
 }
 ```
 
-**Important implementation note:** The `Merged` struct (which embeds `stream.Finding`) may need a `Verification` field added, or the gate must access verification data from a separate source. The simplest approach is to add `Verification *Verification` to `Merged` (matching the field already on `JSONFinding`), populated during re-emit before the gate runs.
+**Important implementation note (resolved):** Add `Verification *Verification` to the `Merged` struct (matching the field already on `JSONFinding`), populated during re-emit before the gate runs. The gate reads `finding.Verification.Verdict` directly; there is no separate verdict source. `CountAtOrAbove` takes a third `requireVerified bool` parameter (see Story 3 / sprint-plan Phase 3): `CountAtOrAbove(findings, threshold, requireVerified)`.
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/reconcile/...`)
-- [ ] No linting errors (`go vet ./internal/reconcile/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/reconcile/...`)
+- [x] No linting errors (`go vet ./internal/reconcile/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `CountAtOrAbove` excludes findings with `Verification.Verdict == "refuted"`
-- [ ] Existing out-of-scope exclusion preserved
-- [ ] Findings with nil/empty verdict are NOT excluded
-- [ ] Unverifiable findings are NOT excluded
-- [ ] Table-driven tests cover: refuted excluded, unverifiable included, nil verification included, empty verdict included, out-of-scope still excluded, all-refuted returns 0
+- [x] `CountAtOrAbove` excludes findings with `Verification.Verdict == "refuted"`
+- [x] Existing out-of-scope exclusion preserved
+- [x] Findings with nil/empty verdict are NOT excluded
+- [x] Unverifiable findings are NOT excluded
+- [x] Table-driven tests cover: refuted excluded, unverifiable included, nil verification included, empty verdict included, out-of-scope still excluded, all-refuted returns 0
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Gate logic reviewed for CI-blocking correctness (incorrect exclusion = real findings pass CI)
+- [x] Code reviewed and approved
+- [x] Gate logic reviewed for CI-blocking correctness (incorrect exclusion = real findings pass CI)

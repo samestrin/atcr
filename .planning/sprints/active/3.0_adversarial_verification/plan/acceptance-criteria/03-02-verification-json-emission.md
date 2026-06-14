@@ -89,17 +89,17 @@ func TestWriteVerification_RoundTrip(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `WriteVerification` writes `reconciled/verification.json` atomically
-- [ ] `VerificationResult` struct contains all required fields (File, Line, Problem, Verdict, Skeptic, Model, Reasoning, DurationMs, TrippedBudgets)
-- [ ] `VerdictCounts` struct with Confirmed/Refuted/Unverifiable int fields
-- [ ] Round-trip test passes: write then read back, schema matches
-- [ ] `verdictCounts` equals the observed counts of confirmed/refuted/unverifiable entries in the results slice
-- [ ] `trippedBudgets` serializes as `[]` not `null` when empty
+- [x] `WriteVerification` writes `reconciled/verification.json` atomically
+- [x] `VerificationResult` struct contains all required fields (File, Line, Problem, Verdict, Skeptic, Model, Reasoning, DurationMs, TrippedBudgets)
+- [x] `VerdictCounts` struct with Confirmed/Refuted/Unverifiable int fields
+- [x] Round-trip test passes: write then read back, schema matches
+- [x] `verdictCounts` equals the observed counts of confirmed/refuted/unverifiable entries in the results slice
+- [x] `trippedBudgets` serializes as `[]` not `null` when empty
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

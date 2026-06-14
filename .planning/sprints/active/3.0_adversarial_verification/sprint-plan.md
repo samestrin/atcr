@@ -199,6 +199,57 @@ recorded here for the Phase 2 gate review.
 sets `Tools=true, SupportsFC=true` and forwards `MaxTurns`/`ToolBudgetBytes`/`TimeoutSecs`
 from the skeptic `AgentConfig`; `Result.TrippedBudgets` → `Verification.Notes`.
 
+### Phase 3 Clarifications (recorded 2026-06-14)
+
+The Phase 3 sprint-plan tasks (3.1/3.2) and the Phase 3 acceptance criteria specify
+different function signatures. Resolved below against the acceptance criteria (the DoD
+source of truth — same precedent set in the Phase 2 Clarifications) and the actual code
+contracts. No user input was required; recorded here for the Phase 3 gate review.
+
+**Key Decisions:**
+1. **`confidenceV2` follows AC 03-01:** `confidenceV2(v1Confidence, verdict string) string`
+   — a pure two-string mapping (confirmed→VERIFIED, refuted→LOW, unverifiable/empty/unknown
+   →v1 unchanged), NOT the `JSONFinding` form in sprint-plan 3.1. `ConfidenceVerified =
+   "VERIFIED"` constant added in `internal/verify/confidence_v2.go`.
+2. **`ReEmitFindings` follows AC 03-03:** `ReEmitFindings(reviewDir string, verdicts
+   map[FindingKey]*reconcile.Verification) error` with `FindingKey{File,Line,Problem}`.
+   Loads via `reconcile.ReadReconciledFindings`, matches verdicts by key, recomputes
+   confidence, atomic-writes 2-space-indented JSON matching `renderIndentedJSON`.
+3. **`WriteVerification` follows AC 03-02:** `WriteVerification(reviewDir string, results
+   []VerificationResult) error`. `VerificationResult{File,Line,Problem,Verdict,Skeptic,
+   Model,Reasoning,DurationMs,TrippedBudgets}`, `VerdictCounts{Confirmed,Refuted,
+   Unverifiable}`, `VerificationFile{VerifiedAt,MinSeverity,Fresh,Thorough,Findings,
+   VerdictCounts}`. `trippedBudgets` serializes `[]` not `null`. This is a verify-local
+   struct distinct from `reconcile.Verification{Verdict,Skeptic,Notes}` (the per-finding
+   block).
+4. **`CountAtOrAbove` gains `requireVerified bool` (AC 03-05 / 05-01):** signature becomes
+   `CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) int`. Reads
+   `f.Verification.Verdict` directly: refuted always excluded; `requireVerified=true` counts
+   only `Verdict=="confirmed"`; nil/empty verdict not refuted; out-of-scope exclusion
+   preserved and takes precedence. `Verification *Verification` field added to `Merged`. Both
+   external callers (`cmd/atcr/reconcile.go`, `internal/mcp/handlers.go`) updated to pass
+   `requireVerified=false` (the `--require-verified` flag wiring is Phase 4 scope).
+
+**Scope Boundaries (Phase 3):**
+- IN: `confidence_v2.go`, `emit_verification.go`, `emit_findings.go`, `emit_manifest.go`,
+  `emit_summary.go`, `gate.go` (`CountAtOrAbove` + `Merged.Verification`), and the two
+  caller updates to keep the build green.
+- DEFERRED to Phase 4 (orchestration): `atcr verify` CLI, `--require-verified` flag,
+  `--verify` chaining, `atcr_verify` MCP tool, pipeline wiring.
+
+**Technical Approach (Phase 3):** `verify` cannot use `reconcile`'s unexported
+`writeFileAtomic`, so a verify-local atomic writer mirrors the temp-file+rename pattern.
+No `payload.ReadManifest` exists, so `UpdateManifestStage` reads+unmarshals `manifest.json`
+then delegates to `payload.WriteManifest` (idempotent "verify" append).
+
+**Deviation note (artifact paths):** AC 03-04's illustrative tests place `manifest.json`
+and `summary.json` at the temp-dir root for brevity. The real review layout puts
+`manifest.json` at `<reviewDir>/manifest.json` (root, per `fanout/reviewdir.go`) but
+`findings.json`/`summary.json`/`verification.json` under `<reviewDir>/reconciled/`. The
+emitters are implemented to the integration-correct paths (manifest at root; summary,
+findings, verification under `reconciled/`) so Phase 4 wiring needs no rework; tests assert
+against those real paths.
+
 ---
 
 ## Sprint Phases
@@ -465,7 +516,7 @@ Use the Agent tool:
 
 ---
 
-### 2.2.A [ ] **[Skeptic Invocation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
+### 2.2.A [x] **[Skeptic Invocation — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
 
 **Changed Files:** `internal/verify/skeptic.go`, `internal/verify/verdict.go`, `internal/verify/invoke.go`, `internal/verify/votes.go`
 
@@ -598,7 +649,7 @@ Non-blocking observations (intentional, documented): (1) a `supports_function_ca
 
 ---
 
-### 3.1 [ ] **[Confidence v2 & Re-emit — RED](plan/user-stories/03-confidence-v2-re-emit.md)**
+### 3.1 [x] **[Confidence v2 & Re-emit — RED](plan/user-stories/03-confidence-v2-re-emit.md)**
 
 **Mode:** Moderate | **ACs:** [03-01](plan/acceptance-criteria/03-01-confidence-v2-recomputation.md) [03-02](plan/acceptance-criteria/03-02-verification-json-emission.md) [03-03](plan/acceptance-criteria/03-03-findings-re-emit.md) [03-04](plan/acceptance-criteria/03-04-manifest-summary-updates.md) [03-05](plan/acceptance-criteria/03-05-gate-excludes-refuted.md)
 
@@ -624,7 +675,7 @@ Non-blocking observations (intentional, documented): (1) a `supports_function_ca
 
 ---
 
-### 3.2 [ ] **[Confidence v2 & Re-emit — GREEN](plan/user-stories/03-confidence-v2-re-emit.md)**
+### 3.2 [x] **[Confidence v2 & Re-emit — GREEN](plan/user-stories/03-confidence-v2-re-emit.md)**
 
 **Mode:** Moderate | **ACs:** 03-01 through 03-05
 
@@ -651,7 +702,7 @@ Non-blocking observations (intentional, documented): (1) a `supports_function_ca
 
 ---
 
-### 3.2.A [ ] **[Confidence v2 & Re-emit — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-confidence-v2-re-emit.md)**
+### 3.2.A [x] **[Confidence v2 & Re-emit — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-confidence-v2-re-emit.md)**
 
 **Changed Files:** `internal/verify/confidence_v2.go`, `internal/verify/emit_verification.go`, `internal/verify/emit_findings.go`, `internal/verify/emit_manifest.go`, `internal/verify/emit_summary.go`, `internal/reconcile/gate.go`
 
@@ -676,19 +727,20 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (no CRITICAL/HIGH; 3 MEDIUM, 2 LOW):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| MEDIUM | gate.go:80 | `CountAtOrAbove(requireVerified=true)` excludes nil-Verification findings, so if the verify stage never ran the strictest gate passes everything (false-negative). Pure helper correct per contract; caller-side guard missing. | DEFERRED → TD-004: Phase 4 CLI guard (refuse `--require-verified` unless verify ran). No caller passes `true` in Phase 3. |
+| MEDIUM | emit_verification.go:65 | `WriteVerification` verdict-count `switch` is case/whitespace-sensitive, unlike the deliberately case-insensitive `confidenceV2`; a non-canonical verdict under-reports `verdictCounts`. | FIXED in 3.3: normalize `strings.ToLower(strings.TrimSpace(...))` before counting (consistency with `confidenceV2`). |
+| MEDIUM | emit_verification.go:101 (+ reconcile/payload copies) | Atomic writers omit `tmp.Sync()` + parent-dir fsync — no crash durability (power-loss can truncate/stale artifacts). Repo-wide across 3 copies. | DEFERRED → TD-005: cross-cutting shared-helper durability follow-up (not a Phase-3-introduced defect). |
+| LOW | emit_verification.go:108 (+ copies) | `defer os.Remove(tmp)` skipped on SIGKILL → `.tmp-*` orphans accumulate (never consumed). | DEFERRED → TD-006: folds into the TD-005 shared-helper cleanup. |
+| LOW | emit_findings.go:34 | `ReEmitFindings` silently drops a verdict whose `FindingKey` matches no finding (no diagnostic). Correct when keys come from the same findings.json. | DEFERRED → TD-007: Phase 4 orchestration surfaces unmatched verdicts. |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH. One MEDIUM fixed inline in 3.3 (verdict-count normalization — consistency with `confidenceV2`). Two MEDIUMs and two LOWs deferred to `tech-debt-captured.md` (TD-004 require-verified guard → Phase 4; TD-005 fsync durability → repo-wide; TD-006 tmp orphan; TD-007 unmatched-verdict diagnostic → Phase 4). Edge cases the reviewer confirmed handled correctly: non-canonical casing into `confidenceV2`, missing-manifest `os.ErrNotExist`, stages-less manifest seeding, WriteVerification/ReEmitFindings write distinct files (no race), ReEmitFindings O(n).
 
 ---
 
-### 3.3 [ ] **[Confidence v2 & Re-emit — REFACTOR](plan/user-stories/03-confidence-v2-re-emit.md)**
+### 3.3 [x] **[Confidence v2 & Re-emit — REFACTOR](plan/user-stories/03-confidence-v2-re-emit.md)**
 
 1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
 2. Improve code: normalize verdict case in `confidenceV2` for robustness; ensure `UpdateManifestStage` handles missing manifest gracefully; document atomic-write POSIX-only assumption
@@ -700,24 +752,24 @@ Use the Agent tool:
 
 ---
 
-### 3.4 [ ] **Phase 3 DoD Verification**
+### 3.4 [x] **Phase 3 DoD Verification**
 
-- [ ] `go test ./internal/verify/... ./internal/reconcile/...` — all passing
-- [ ] `confidenceV2` maps: confirmed→VERIFIED, refuted→LOW, unverifiable→v1 unchanged, nil→v1 unchanged
-- [ ] All 4 emitters produce valid artifact schemas (verify against [verification-pipeline.md](plan/documentation/verification-pipeline.md))
-- [ ] `UpdateManifestStage` idempotent on re-run: "verify" not duplicated
-- [ ] `CountAtOrAbove` excludes refuted; `requireVerified` counts only VERIFIED
-- [ ] Coverage ≥ 95% on new code; `go vet ./...` clean; `go build ./...` succeeds
+- [x] `go test ./internal/verify/... ./internal/reconcile/...` — all passing
+- [x] `confidenceV2` maps: confirmed→VERIFIED, refuted→LOW, unverifiable→v1 unchanged, nil→v1 unchanged (13-case matrix + case-insensitive)
+- [x] All 4 emitters produce valid artifact schemas (verification.json, findings.json re-emit, manifest stages, summary verdictCounts)
+- [x] `UpdateManifestStage` idempotent on re-run: "verify" not duplicated
+- [x] `CountAtOrAbove` excludes refuted; `requireVerified` counts only VERIFIED (confirmed)
+- [x] Coverage ≥ 95% on new code (95.6% pkg; all 5 public funcs 100%); `go vet ./...` clean; `go build ./...` succeeds (no `verify`→`reconcile` cycle)
 
 ```
 Phase 3 DoD Complete
-Auto: [_]/5 | Story-Specific: [_]/6 (5 confidence cases + 4 emitters + 3 gate cases + idempotency)
-Manual Review: [ ] Code reviewed
+Auto: [5]/5 | Story-Specific: [6]/6 (5 confidence cases + 4 emitters + 3 gate cases + idempotency)
+Manual Review: [x] Code reviewed (3.2.A adversarial subagent — no CRITICAL/HIGH; 1 MEDIUM fixed inline, 4 deferred to TD-004..007)
 ```
 
 ---
 
-### 3.5 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+### 3.5 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 3
 
@@ -743,15 +795,20 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Gate review (PASSED — no CRITICAL/HIGH/MEDIUM):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| LOW | internal/report/render.go:144 | `writeSummaryGrid` buckets `Confidence=="VERIFIED"` (written by `ReEmitFindings`) into the LOW column. | NO ACTION — already-planned Phase 5 work (AC 06-01 / US-06 task 5.2 adds the VERIFIED tier renderer). Not a Phase 3 regression. |
+| LOW | internal/verify/emit_verification.go:58 | `WriteVerification` computes `VerdictCounts` internally but does not expose them; Phase 4 must recompute to feed `UpdateSummaryVerdicts` (minor drift risk). | DEFERRED → TD-008: Phase 4 adds an exported `CountVerdicts` as the single source of truth. |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary. Re-run gate.
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Phase gate passed" and proceed to phase stop
+Independently verified by the gate subagent (build, vet, `go test ./...` all exit 0 — 16/16 packages ok including Phase 1/2 tests; 95.6% verify coverage):
+- CONTRACT EXIT: `confidenceV2(v1,verdict)`, `WriteVerification(reviewDir,[]VerificationResult)`, `ReEmitFindings(reviewDir,map[FindingKey]*reconcile.Verification)`, `UpdateManifestStage(reviewDir)`, `UpdateSummaryVerdicts(reviewDir,VerdictCounts)`, and `CountAtOrAbove(findings,threshold,requireVerified)` all resolve and match what Phase 4 will call.
+- CONFIG SURFACE: `requireVerified` + `verdict=="refuted"` exclusion documented (gate.go); VERIFIED represented consistently (`verify.ConfidenceVerified` for the confidence axis; gate compares `reconcile.VerdictConfirmed/Refuted` tokens). Casing handled case-insensitively in both `confidenceV2` and the verdict tally.
+- INTEGRATION: zero remaining 2-arg `CountAtOrAbove` callers (cmd + mcp + tests updated); `verify` imports `reconcile`/`payload`, neither imports `verify` — no cycle.
+- PHASE-EXIT: the full chain invokeSkeptic → confidenceV2 → WriteVerification → ReEmitFindings → UpdateManifestStage → UpdateSummaryVerdicts is wireable without rework; paths self-consistent (manifest at root, findings/summary/verification under reconciled/).
+- REGRESSION: Phase 1/2 + registry tests all pass.
+
+**Action Taken:** No CRITICAL/HIGH/MEDIUM (no blocking findings). Two LOWs triaged: one no-action (planned Phase 5), one deferred to TD-008. **Phase gate passed.** Proceeding to gated-mode phase stop.
 
 **Duration:** 15-30 min
 
