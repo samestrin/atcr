@@ -218,6 +218,22 @@ func TestRender_MarkdownSortsSeverties(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(out, "### LOW"), "one LOW header")
 }
 
+// TestRender_UnknownSeverityReconcilesGrid — findings with non-canonical
+// severities are still counted in the summary grid so the grid's per-row sum
+// matches "Total findings".
+func TestRender_UnknownSeverityReconcilesGrid(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "MEDIUM"},
+		{Severity: "weird", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Total findings: 2")
+	assert.Contains(t, out, "| OTHER |", "unknown severity gets a grid row so the grid sums to the total")
+	assert.Contains(t, out, "### weird", "unknown severity still renders its own body header")
+}
+
 // --- Epic 3.0 Phase 5: the verification block is now rendered (it was inert/
 // reserved in Epic 1.1). A NIL block still renders byte-identically to v1 (the
 // backward-compat guarantee, AC 06-02); a NON-NIL block now adds skeptic info. ---
