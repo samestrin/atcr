@@ -130,6 +130,9 @@ func toolAgentConfig(srvURL string) *ReviewConfig {
 func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	t.Setenv("ATCR_TEST_KEY", "secret")
 	repo, base, head := initToolRepo(t)
+	// Force the slow path deterministically with an uncommitted edit so the
+	// worktree-mode assertion does not depend on incidental .atcr/ scaffolding.
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "dirty-snapshot.txt"), []byte("force worktree snapshot\n"), 0o644))
 	srv := toolMockProvider(t)
 	cfg := toolAgentConfig(srv.URL)
 
