@@ -250,6 +250,62 @@ emitters are implemented to the integration-correct paths (manifest at root; sum
 findings, verification under `reconciled/`) so Phase 4 wiring needs no rework; tests assert
 against those real paths.
 
+### Phase 4 Clarifications (recorded 2026-06-14)
+
+The Phase 4 sprint-plan tasks (4.2) describe orchestrating the verify pipeline "in
+`cmd/atcr/verify.go`", but the Phase 4 acceptance criteria (the DoD source of truth — same
+precedent as the Phase 2 and Phase 3 Clarifications) require a single shared orchestrator
+callable from all three entry points. Resolved below against the ACs and the actual code.
+No user input was required; recorded here for the Phase 4 gate review.
+
+**Key Decisions:**
+1. **Shared orchestrator in `internal/verify/pipeline.go` (AC 04-03 / 04-04 / 04-05):**
+   `cmd/atcr` is `package main` and cannot be imported by `internal/mcp`, so the
+   sprint-plan's "inline in cmd/atcr/verify.go" prose cannot satisfy AC 04-03 ("Handler
+   calls same `verify.Verify` function as CLI entry points") or AC 04-04 ("CLI verify and
+   MCP verify produce identical artifacts"). A new exported orchestrator
+   `Verify(ctx, reviewDir, reg, Options) (Result, error)` lives in
+   `internal/verify/pipeline.go` with `Options{Fresh, Thorough, MinSeverity}` and
+   `Result{VerdictCounts, FindingsProcessed, DurationMs}`. Both `cmd/atcr/verify.go` and
+   `internal/mcp.handleVerify` call it. AC 04-05 names the file `pipeline.go`; AC 04-01
+   names it `verify.go` — `pipeline.go` is taken (the more specific reference).
+2. **Skeptics read code via the tool loop, not prompt-embedded file bodies:** the
+   orchestrator passes `nil` `entries` to `buildSkepticPrompt`; the skeptic uses the
+   Epic 2.0 tool loop (dispatcher) to read the actual code. Matches the epic intent
+   ("read the actual code via the 2.0 tool loop") and `buildSkepticPrompt`'s
+   entries-optional contract.
+3. **Dispatcher reconstructed exactly as `fanout.ExecuteReview`:** read the review
+   manifest's `Head`, then `tools.NewSnapshotManager(".").SnapshotFor(head)` →
+   `tools.NewJail` → `tools.NewDispatcher(jail, tools.DefaultLimits())`;
+   `ChatCompleter = llmclient.New()`; `invokeSkeptic(ctx, skeptic, prompt, cc, disp)`
+   per skeptic (Phase 2 contract preserved).
+4. **Votes / floor / skip-already-verified:** votes = `reg.Verify.Votes` (default 1),
+   forced to 3 under `--thorough` (majority via existing `aggregateVerdicts`); floor =
+   `--min-severity` flag else `reg.Verify.MinSeverity` (default MEDIUM) via existing
+   `meetsSeverityFloor`; skip findings whose `Verification.Verdict` ∈
+   {confirmed, refuted, unverifiable} unless `--fresh` (unknown/empty verdict → re-verify).
+5. **`CountAtOrAbove` unchanged (Phase 3):** Phase 4 only WIRES the `--require-verified`
+   flag to its existing `requireVerified` param and brings MCP `failingFindings`
+   (handlers.go:339) to parity (refuted exclusion + requireVerified). The ACs' alternate
+   name `CountFailing` is satisfied by the existing `CountAtOrAbove(findings, threshold,
+   requireVerified)`.
+
+**Scope Boundaries (Phase 4):**
+- IN: `internal/verify/pipeline.go`; `cmd/atcr/verify.go` + `main.go` registration;
+  `review.go` `--verify` chaining; `reconcile.go` `--require-verified`; `mcp/server.go`
+  registration + `mcp/handlers.go` `handleVerify` & `failingFindings` parity;
+  `reconcile/gate_matrix_test.go` (12+ scenarios). Resolves deferred TD-004 (refuse
+  `--require-verified` unless the manifest `Stages` contains `"verify"`), TD-007 (surface
+  unmatched-verdict count from `ReEmitFindings`), TD-008 (exported `CountVerdicts` as the
+  single tally source for `WriteVerification` and `UpdateSummaryVerdicts`).
+- DEFERRED to Phase 5: report v2 rendering (skeptic/refuted/VERIFIED sections), docs
+  (`verification.md`, `registry.md`, `findings-format.md`), e2e planted-finding fixture.
+
+**Technical Approach (Phase 4):** `--require-verified` without `--fail-on` is a usage
+error (exit 2) `error: --require-verified requires --fail-on` (AC 05-01 EC3). `--verify`
+implies `--reconcile` and reconcile runs exactly once (AC 04-02). Missing reconciled
+findings yields the identical error string across CLI / chained / MCP paths.
+
 ---
 
 ## Sprint Phases
@@ -835,7 +891,7 @@ Independently verified by the gate subagent (build, vet, `go test ./...` all exi
 
 ---
 
-### 4.1 [ ] **[CLI & Gate — RED](plan/user-stories/04-cli-command-mcp-tool.md)**
+### 4.1 [x] **[CLI & Gate — RED](plan/user-stories/04-cli-command-mcp-tool.md)**
 
 **Mode:** Moderate | **ACs:** [04-01](plan/acceptance-criteria/04-01-verify-subcommand.md) [04-02](plan/acceptance-criteria/04-02-review-verify-chaining.md) [04-03](plan/acceptance-criteria/04-03-mcp-verify-tool.md) [04-04](plan/acceptance-criteria/04-04-artifact-consistency-error-handling.md) [04-05](plan/acceptance-criteria/04-05-skip-already-verified.md) [05-01](plan/acceptance-criteria/05-01-gate-filtering-require-verified.md) [05-02](plan/acceptance-criteria/05-02-mcp-parity-matrix-tests.md)
 
@@ -858,7 +914,7 @@ Independently verified by the gate subagent (build, vet, `go test ./...` all exi
 
 ---
 
-### 4.2 [ ] **[CLI & Gate — GREEN](plan/user-stories/04-cli-command-mcp-tool.md)**
+### 4.2 [x] **[CLI & Gate — GREEN](plan/user-stories/04-cli-command-mcp-tool.md)**
 
 **Mode:** Moderate | **ACs:** 04-01 through 05-02
 
@@ -907,19 +963,22 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (1 HIGH, 4 MEDIUM, 2 LOW):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| HIGH | review.go:200 | One-shot `atcr review --verify --fail-on X` hardcoded `requireVerified=false`; no `--require-verified` flag on review, so the strictest gate was unreachable from the common CI entry point. | FIXED in 4.3: added `--require-verified` to `newReviewCmd` (requires `--fail-on` AND `--verify`), threaded into the post-verify `CountFailingJSON` gate. |
+| MEDIUM | handlers.go:426 | MCP `registryPath` passed unsanitized to `registry.LoadRegistry` — path traversal / arbitrary-file-read surface (every other MCP anchor is containment-checked). | FIXED in 4.3 (security, hard-walls override of the defer rule): `loadVerifyRegistry` rejects absolute paths and `..`, resolving the override under the server root. |
+| MEDIUM | pipeline.go:159 | `--thorough` runs 50×3 skeptic calls serially with no concurrency knob, unlike the parallel review fan-out; undocumented cost. | Doc'd serial behavior inline (4.3); parallelization DEFERRED → TD-009. |
+| MEDIUM | pipeline.go:167-219 | The four re-emit artifacts are written in separate non-atomic steps; a mid-write failure after `ReEmitFindings` leaves findings.json updated but verification/summary stale. | DEFERRED → TD-010 (cross-cutting; mirrors reconcile.Emit's existing multi-file non-atomicity + TD-005 durability). |
+| MEDIUM | pipeline.go:238-243 | `Model` attribution is empty on the `no_eligible_skeptic` / `tool_harness_unavailable` degraded records. | DEFERRED → TD-011 (audit-trail polish; empty model is accurate when no skeptic ran). |
+| LOW | verify.go:72 vs review.go:187 | Verify-failure error mapping differs between `atcr verify` and `atcr review --verify` (bare usageError vs "review failed: %w"). | DEFERRED → TD-012. |
+| LOW | pipeline.go:147 | Tool-harness-unavailable stderr line echoes `repoRoot`/snapshot path verbatim (CI-log hygiene). | DEFERRED → TD-013. |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** HIGH fixed inline in 4.3 (`--require-verified` on review). One MEDIUM fixed inline as a security issue (registryPath containment — hard-walls overrides the MEDIUM-defer rule). Serial behavior documented inline. Remaining MEDIUM/LOW deferred to `tech-debt-captured.md` (TD-009..013). Gate-parity confirmed by the reviewer: CLI/MCP/verify all route through the single `reconcile.IsFailing` predicate.
 
 ---
 
-### 4.3 [ ] **[CLI & Gate — REFACTOR](plan/user-stories/04-cli-command-mcp-tool.md)**
+### 4.3 [x] **[CLI & Gate — REFACTOR](plan/user-stories/04-cli-command-mcp-tool.md)**
 
 1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
 2. Improve code: validate `--min-severity` enum at flag parse time (not at invocation); ensure MCP handler propagates errors as JSON-RPC error codes
@@ -931,7 +990,7 @@ Use the Agent tool:
 
 ---
 
-### 4.4 [ ] **[Gate Semantics — RED](plan/user-stories/05-gate-semantics.md)**
+### 4.4 [x] **[Gate Semantics — RED](plan/user-stories/05-gate-semantics.md)**
 
 **Mode:** Moderate | **ACs:** [05-01](plan/acceptance-criteria/05-01-gate-filtering-require-verified.md) [05-02](plan/acceptance-criteria/05-02-mcp-parity-matrix-tests.md)
 
@@ -949,7 +1008,7 @@ Use the Agent tool:
 
 ---
 
-### 4.5 [ ] **[Gate Semantics — GREEN](plan/user-stories/05-gate-semantics.md)**
+### 4.5 [x] **[Gate Semantics — GREEN](plan/user-stories/05-gate-semantics.md)**
 
 1. Ensure `CountAtOrAbove` handles all gate matrix edge cases (naturally-LOW, unverifiable, v1-only)
 2. Verify MCP `failingFindings` updated to match CLI gate logic exactly (same call to `CountAtOrAbove`)
@@ -983,19 +1042,17 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (1 HIGH, 1 LOW):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| HIGH | gate.go:86 | Category-casing asymmetry: 4.5 normalized the verdict comparison but left `category == CategoryOutOfScope` exact-match. A non-canonical category (`Out-Of-Scope`, ` out-of-scope`) bypasses the out-of-scope exclusion, so a pre-existing/untouched finding wrongly blocks CI — the "noise blocks merge" failure mode, and it diverges from the spec's out-of-scope-precedence rule. | FIXED in 4.6: `IsFailing` now normalizes category (lower+trim) before the exclusion, restoring symmetry with the verdict handling; matrix case added. Broader parse/merge canonicalization (summary/report display) deferred → TD-014. |
+| LOW | gate.go:42 | Severity is an exact-case `severityRank` lookup; the JSON-gate path (`ReadReconciledFindings` → `CountFailingJSON`) does no severity validation, so a hand-edited `severity:"high"` would silently un-gate. Not reachable via the normal parser (case-sensitive), but the JSON path trusts the invariant. | FIXED in 4.6: `IsFailing` normalizes severity (upper+trim) before `AtOrAbove` for defense-in-depth parity; matrix case added. |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 4.6, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** Both findings fixed inline in 4.6 (gate correctness — hard-walls). `IsFailing` now normalizes category and severity in addition to the verdict, so casing/whitespace in any axis cannot flip a gate decision. The broader parse/merge category canonicalization (affecting the summary out_of_scope count and report's out-of-scope section, a pre-existing exact-match shared by `modalCategory`/`reconcile.go:80`/`emit.go:182`) is deferred to TD-014. Parity, edge cases, and performance all confirmed clean by the reviewer.
 
 ---
 
-### 4.6 [ ] **[Gate Semantics — REFACTOR](plan/user-stories/05-gate-semantics.md)**
+### 4.6 [x] **[Gate Semantics — REFACTOR](plan/user-stories/05-gate-semantics.md)**
 
 1. Fix CRITICAL/HIGH issues from 4.5.A (if any)
 2. Normalize confidence string comparison (trim, lowercase) to defend against malformed input
@@ -1007,26 +1064,27 @@ Use the Agent tool:
 
 ---
 
-### 4.7 [ ] **Phase 4 DoD Verification**
+### 4.7 [x] **Phase 4 DoD Verification**
 
-- [ ] `go test ./cmd/atcr/... ./internal/mcp/... ./internal/reconcile/...` — all passing
-- [ ] Gate matrix: 12+ scenarios all passing
-- [ ] `atcr verify` CLI: `--fresh`, `--thorough`, `--min-severity` flags functional
-- [ ] `atcr review --verify` chains correctly
-- [ ] `atcr_verify` MCP tool registered and mirrors CLI
-- [ ] `--fail-on <sev> --require-verified` passes/fails correctly
-- [ ] Skip-already-verified logic: findings with existing verdict skipped without `--fresh`
-- [ ] `go vet ./...` clean; `go build ./...` succeeds
+- [x] `go test ./cmd/atcr/... ./internal/mcp/... ./internal/reconcile/...` — all passing
+- [x] Gate matrix: 12+ scenarios all passing (36 PASS subtests across TestGateMatrix + story/casing/edge cases)
+- [x] `atcr verify` CLI: `--fresh`, `--thorough`, `--min-severity` flags functional (help verified; flag behavior covered)
+- [x] `atcr review --verify` chains correctly (flags registered + validation + post-verify gate)
+- [x] `atcr_verify` MCP tool registered and mirrors CLI (TestHandleVerify_*; shared `verify.Verify`)
+- [x] `--fail-on <sev> --require-verified` passes/fails correctly (CLI reconcile + review + MCP parity tests)
+- [x] Skip-already-verified logic: findings with existing verdict skipped without `--fresh` (TestRunVerify_SkipsAlreadyVerified, TestVerifyCmd_SkipAlreadyVerified)
+- [x] `go vet ./...` clean; `go build ./...` succeeds; full `go test ./...` green
+- [x] Coverage ≥ 95% on new `internal/verify/` code (95.0% package)
 
 ```
 Phase 4 DoD Complete
-Auto: [_]/7 | Story-Specific: [_]/7 (3 entry points + gate matrix + skip-verified + require-verified + MCP parity)
-Manual Review: [ ] Code reviewed
+Auto: [8]/7 | Story-Specific: [7]/7 (3 entry points + gate matrix + skip-verified + require-verified + MCP parity)
+Manual Review: [x] Code reviewed (4.2.A + 4.5.A adversarial subagents — 2 HIGH fixed inline, MEDIUM/LOW triaged to TD-009..014)
 ```
 
 ---
 
-### 4.8 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+### 4.8 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 4
 
@@ -1053,15 +1111,19 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Gate review (PASSED — no findings):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| None | None | None | None |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary. Re-run gate.
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Phase gate passed" and proceed to phase stop
+Independently verified by the gate subagent (uncached `go build`/`go vet`/`go test -count=1 ./...` all green; Phases 1-3 still pass):
+- CONTRACT EXIT: both `cmd/atcr/verify.go` and `internal/mcp/handlers.go` call the single `internal/verify.Verify` orchestrator — no duplicated business logic, identical artifacts (manifest at root; findings/summary/verification under `reconciled/`). The CLI `atcr verify` intentionally has no gate flag (gating delegated to `reconcile`/`review --verify`); MCP adds only a read-only `GateStatus` via the shared `reconcile.CountFailingJSON` — not a parity break.
+- INTEGRATION: `CountAtOrAbove` is 3-arg at every call site (cmd + mcp + ~25 tests); zero 2-arg callers remain. `internal/boundaries_test.go` permits `mcp -> verify`; acyclic + completeness checks pass.
+- CONFIG SURFACE: all new flags have defaults, help, and validation; `--require-verified` correctly gated (requires `--fail-on`; on review also `--verify`; MCP enforces the same).
+- FAILURE ISOLATION: confirmed end-to-end — provider error / timeout / tripped budget / malformed output / harness-build failure all collapse to `unverifiable`; no path drops or errors a finding.
+- PHASE-5 READINESS: `verification.json` and `findings.json` verification blocks round-trip via the canonical `JSONFinding` shape; Phase 5 report rendering can consume both without rework.
+
+**Action Taken:** No CRITICAL/HIGH (no findings at all). **Phase gate passed.** Proceeding to gated-mode phase stop.
 
 **Duration:** 15-30 min
 
