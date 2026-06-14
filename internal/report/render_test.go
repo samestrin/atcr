@@ -234,6 +234,24 @@ func TestRender_UnknownSeverityReconcilesGrid(t *testing.T) {
 	assert.Contains(t, out, "### weird", "unknown severity still renders its own body header")
 }
 
+// TestRender_MixedCaseConfidenceNormalized — mixed-case and unknown confidence
+// values are normalized before tallying: "Verified" counts as VERIFIED, "High"
+// as HIGH, and unrecognized values land in an explicit OTHER confidence bucket
+// instead of being silently folded into LOW.
+func TestRender_MixedCaseConfidenceNormalized(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "Verified"},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "p2", Confidence: "High"},
+		{Severity: "HIGH", File: "c.go", Line: 3, Problem: "p3", Confidence: "unknown"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "VERIFIED conf", "VERIFIED column shown for mixed-case Verified")
+	assert.Contains(t, out, "| HIGH | 1 | 1 | 0 | 0 | 0 |", "Verified→VERIFIED, High→HIGH, unknown→OTHER")
+	assert.Contains(t, out, "OTHER conf", "unknown confidence gets an OTHER column")
+}
+
 // --- Epic 3.0 Phase 5: the verification block is now rendered (it was inert/
 // reserved in Epic 1.1). A NIL block still renders byte-identically to v1 (the
 // backward-compat guarantee, AC 06-02); a NON-NIL block now adds skeptic info. ---
