@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -293,7 +294,17 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 			defer cleanup()
 			// A successful SnapshotFor call fixes the mode/head/path the tool harness
 			// reviewed at (AC 03-02 Scenario 5), recorded even if the jail below fails.
-			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, p.Head)
+			// Resolve the head to a full SHA for the manifest even if the caller passed
+			// a symbolic ref or short SHA (e.g., tests constructing PreparedReview directly).
+			// A resolution failure is logged but does not abort the review; the original
+			// value is preserved as a best-effort fallback.
+			headSHA := p.Head
+			if resolved, err := resolveHeadSHA(p.Repo, p.Head); err == nil {
+				headSHA = resolved
+			} else {
+				fmt.Fprintf(os.Stderr, "atcr: warning: could not resolve head SHA for manifest: %v\n", err)
+			}
+			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, headSHA)
 			if jail, jerr := tools.NewJail(root); jerr != nil {
 				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
 			} else {
@@ -666,10 +677,20 @@ func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePat
 	return "worktree", head, root
 }
 
-// resolveHeadSHA resolves a git ref to its full 40-byte SHA. Stub: returns the
-// input unchanged so the RED test fails at runtime rather than compile time.
+// resolveHeadSHA resolves a git ref to its full 40-byte SHA. It is a defensive
+// guard for callers (including tests) that construct PreparedReview with an
+// unresolved head; the production CLI/MCP path already resolves the head through
+// gitrange.Resolve before fan-out.
 func resolveHeadSHA(repo, ref string) (string, error) {
-	return ref, nil
+	if ref == "" {
+		return "", fmt.Errorf("empty ref")
+	}
+	cmd := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving %q: %w", ref, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).
