@@ -108,7 +108,7 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
 	// or produced by an external source (TD item: main-list severity ordering).
 	sorted := make([]reconcile.JSONFinding, len(main))
 	copy(sorted, main)
-	sort.Slice(sorted, func(i, j int) bool {
+	sort.SliceStable(sorted, func(i, j int) bool {
 		return severityRankOf(sorted[i].Severity) > severityRankOf(sorted[j].Severity)
 	})
 	main = sorted
