@@ -169,6 +169,7 @@ func TestRunVerify_NoEligibleSkeptic(t *testing.T) {
 		return nil, nil, nil, nil
 	})
 	require.NoError(t, err)
+	assert.Equal(t, 0, res.FindingsProcessed, "no eligible skeptic: finding must not count as processed")
 	assert.Equal(t, VerdictCounts{Unverifiable: 1}, res.VerdictCounts)
 	got := readFindings(t, dir)
 	assert.Equal(t, "unverifiable", got[0].Verification.Verdict)
