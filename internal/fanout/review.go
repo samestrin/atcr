@@ -290,6 +290,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
 			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
+			snapMode = "failed" // snapshot attempted but failed; distinguishable from no-snapshot-attempted
 		} else {
 			defer cleanup()
 			// A successful SnapshotFor call fixes the mode/head/path the tool harness
