@@ -16,14 +16,21 @@ import (
 	"github.com/samestrin/atcr/internal/registry"
 )
 
-// Skeptic pairs a registry agent name with its config. Selection returns these
-// rather than bare registry.AgentConfig because the agent name — the registry
-// map key, not a field on AgentConfig — is required downstream to populate
-// reconcile.Verification.Skeptic, and the config is required to invoke the
-// skeptic. Carrying both avoids a lossy reverse-lookup in the caller.
+// Skeptic pairs a registry agent name with its config and resolved provider.
+// Selection returns these rather than bare registry.AgentConfig because:
+//   - the agent name — the registry map key, not a field on AgentConfig — is
+//     required downstream to populate reconcile.Verification.Skeptic;
+//   - the config is required to invoke the skeptic; and
+//   - the provider (resolved here, where the registry is in hand) carries the
+//     BaseURL/APIKeyEnv that llmclient.Chat needs on the Invocation — without it
+//     a production skeptic call would route to an empty endpoint with no key.
+//
+// Carrying all three makes a Skeptic invocation-ready without a second registry
+// lookup in the caller.
 type Skeptic struct {
-	Name   string
-	Config registry.AgentConfig
+	Name     string
+	Config   registry.AgentConfig
+	Provider registry.Provider
 }
 
 // SelectEligibleSkeptics returns up to n skeptic agents eligible to verify
@@ -75,7 +82,12 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 		if len(out) >= n {
 			break
 		}
-		out = append(out, Skeptic{Name: name, Config: skeptics[name]})
+		cfg := skeptics[name]
+		// Resolve the provider here, where the registry is in hand, so the skeptic
+		// is invocation-ready. A registry that passed validation always has the
+		// agent's provider defined; reg.Providers[cfg.Provider] is a zero Provider
+		// only for an unvalidated/hand-built registry, which the caller tolerates.
+		out = append(out, Skeptic{Name: name, Config: cfg, Provider: reg.Providers[cfg.Provider]})
 	}
 	return out
 }

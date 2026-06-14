@@ -3,6 +3,7 @@ package verify
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,6 +100,20 @@ func TestParseVerdict_UnbalancedBrace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "malformed_output")
+}
+
+// TestParseVerdict_TruncatesRunawayMalformed ensures an oversized non-JSON
+// response is capped in Notes (the LOW hardening from 2.2.A) while still flagged
+// malformed.
+func TestParseVerdict_TruncatesRunawayMalformed(t *testing.T) {
+	t.Parallel()
+	big := strings.Repeat("x", notesRawCap+500) // no JSON object -> malformed path
+	v, err := parseVerdict(big)
+	require.NoError(t, err)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Contains(t, v.Notes, "malformed_output: ")
+	assert.Contains(t, v.Notes, "…[truncated]")
+	assert.Less(t, len(v.Notes), len(big), "oversized raw text must be truncated in Notes")
 }
 
 // TestParseVerdict_MalformedFixture exercises the testdata malformed corpus.

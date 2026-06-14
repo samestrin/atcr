@@ -16,7 +16,46 @@ func intPtr(i int) *int       { return &i }
 func int64Ptr(i int64) *int64 { return &i }
 
 func testSkeptic() Skeptic {
-	return Skeptic{Name: "skeptic-1", Config: registry.AgentConfig{Provider: "p", Model: "skeptic-model", Role: registry.RoleSkeptic}}
+	return Skeptic{
+		Name:     "skeptic-1",
+		Config:   registry.AgentConfig{Provider: "p", Model: "skeptic-model", Role: registry.RoleSkeptic, SupportsFC: true},
+		Provider: registry.Provider{APIKeyEnv: "TEST_KEY", BaseURL: "http://localhost/v1"},
+	}
+}
+
+// TestInvokeSkeptic_DegradesWhenNotFC verifies SupportsFC is forwarded: a skeptic
+// whose model lacks function calling degrades to single-shot rather than being
+// forced into the tool loop. The fake's single-shot Complete returns empty, so the
+// verdict is unverifiable (empty_response) — but no error and a populated Skeptic.
+func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.SupportsFC = false
+	v, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Equal(t, "skeptic-1", v.Skeptic)
+}
+
+// TestBuildSkepticAgent_ForwardsProviderAndBudgets locks the provider routing and
+// budget forwarding onto the constructed Agent/Invocation (the HIGH fix from 2.2.A).
+func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.MaxTurns = intPtr(7)
+	sk.Config.ToolBudgetBytes = int64Ptr(4096)
+	sk.Config.TimeoutSecs = intPtr(30)
+	a := buildSkepticAgent(sk, "the prompt")
+	assert.True(t, a.Tools)
+	assert.True(t, a.SupportsFC)
+	assert.Equal(t, 7, a.MaxTurns)
+	assert.Equal(t, int64(4096), a.ToolBudgetBytes)
+	assert.Equal(t, 30, a.TimeoutSecs)
+	assert.Equal(t, "http://localhost/v1", a.Invocation.BaseURL)
+	assert.Equal(t, "TEST_KEY", a.Invocation.APIKeyEnv)
+	assert.Equal(t, "skeptic-model", a.Invocation.Model)
+	assert.Equal(t, "the prompt", a.Invocation.Prompt)
 }
 
 func TestInvokeSkeptic_Confirms(t *testing.T) {

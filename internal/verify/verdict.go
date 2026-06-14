@@ -3,6 +3,7 @@ package verify
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 )
@@ -38,7 +39,7 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 	}
 	obj := extractJSONObject(response)
 	if obj == "" || json.Unmarshal([]byte(obj), &parsed) != nil {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + response}, nil
+		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
 	}
 
 	switch parsed.Verdict {
@@ -47,9 +48,29 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 	default:
 		return &reconcile.Verification{
 			Verdict: verdictUnverifiable,
-			Notes:   "invalid_verdict: " + parsed.Verdict + " (raw: " + response + ")",
+			Notes:   "invalid_verdict: " + truncateForNotes(parsed.Verdict) + " (raw: " + truncateForNotes(response) + ")",
 		}, nil
 	}
+}
+
+// notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
+// diagnostic. The raw output flows into findings.json and the rendered report, so
+// a runaway response must not bloat the artifacts. The cap is generous enough to
+// preserve a normal malformed response in full.
+const notesRawCap = 2000
+
+// truncateForNotes returns s capped at notesRawCap bytes (on a rune boundary),
+// appending an explicit elision marker so a truncated diagnostic is never mistaken
+// for the model's complete output.
+func truncateForNotes(s string) string {
+	if len(s) <= notesRawCap {
+		return s
+	}
+	cut := notesRawCap
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…[truncated]"
 }
 
 // extractJSONObject returns the first balanced {...} object in s, or "" when none

@@ -50,7 +50,14 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 
 	agent := buildSkepticAgent(skeptic, prompt)
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp))
-	res := engine.Run(ctx, []fanout.Slot{{Primary: agent}})[0]
+	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
+	// Engine.Run returns one Result per slot in input order, so one slot yields
+	// exactly one result. Guard the index anyway: a zero-length return must not
+	// panic (a panic would violate the never-propagate-runtime-error contract).
+	if len(results) == 0 {
+		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil
+	}
+	res := results[0]
 
 	// A non-OK status (provider error, timeout) or ANY tripped budget means the
 	// skeptic could not complete a trustworthy investigation — even though the tool
@@ -70,11 +77,16 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	return v, nil
 }
 
-// buildSkepticAgent assembles the tool-enabled fanout.Agent for a skeptic: Tools
-// and SupportsFC are forced true (a skeptic must use the tool loop), and the
-// per-finding budgets are forwarded from the AgentConfig. A nil budget pointer
-// becomes 0, which the engine reads as "use the default" (MaxTurns→10) or
-// "unlimited" (ToolBudgetBytes→0) / "parent deadline only" (TimeoutSecs→0).
+// buildSkepticAgent assembles the tool-enabled fanout.Agent for a skeptic. Tools
+// is forced true (a skeptic is meant to investigate via the tool loop), but
+// SupportsFC is forwarded from the AgentConfig so a model that genuinely lacks
+// function calling degrades to single-shot in the engine rather than failing every
+// call — mirroring fanout.buildAgent. Per-finding budgets are forwarded from the
+// AgentConfig; a nil budget pointer becomes 0, which the engine reads as "use the
+// default" (MaxTurns→10), "unlimited" (ToolBudgetBytes→0), or "parent deadline
+// only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
+// Invocation so llmclient.Chat can route the call (without them a production
+// skeptic would hit an empty endpoint with no key).
 func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
 	c := skeptic.Config
 	return fanout.Agent{
@@ -82,10 +94,12 @@ func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
 		Prompt:          prompt,
 		TimeoutSecs:     derefInt(c.TimeoutSecs),
 		Tools:           true,
-		SupportsFC:      true,
+		SupportsFC:      c.SupportsFC,
 		MaxTurns:        derefInt(c.MaxTurns),
 		ToolBudgetBytes: derefInt64(c.ToolBudgetBytes),
 		Invocation: llmclient.Invocation{
+			BaseURL:     skeptic.Provider.BaseURL,
+			APIKeyEnv:   skeptic.Provider.APIKeyEnv,
 			Model:       c.Model,
 			Temperature: c.Temperature,
 			Prompt:      prompt,
