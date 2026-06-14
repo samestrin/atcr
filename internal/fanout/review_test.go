@@ -429,6 +429,53 @@ func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "blocks")
 }
 
+// resolveHeadSHA must normalize symbolic refs and short SHAs to the full 40-byte
+// SHA before the value is stamped as head_sha in the manifest review stage.
+func TestResolveHeadSHA(t *testing.T) {
+	repo, base, head := initRepo(t)
+
+	full, err := resolveHeadSHA(repo, head)
+	require.NoError(t, err)
+	assert.Equal(t, head, full, "full SHA must pass through unchanged")
+
+	short := head[:12]
+	resolved, err := resolveHeadSHA(repo, short)
+	require.NoError(t, err)
+	assert.Equal(t, head, resolved, "short SHA must resolve to full SHA")
+
+	// HEAD is the second commit in initRepo.
+	resolvedHEAD, err := resolveHeadSHA(repo, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, head, resolvedHEAD, "symbolic HEAD must resolve to full SHA")
+
+	// Base is also a valid commit but not the current HEAD.
+	resolvedBase, err := resolveHeadSHA(repo, base)
+	require.NoError(t, err)
+	assert.Equal(t, base, resolvedBase)
+}
+
+// snapshotManifestFields must recognize the live worktree even when the paths
+// are represented differently (trailing slash, relative vs. absolute, symlinks).
+func TestSnapshotManifestFields_PathNormalization(t *testing.T) {
+	dir := t.TempDir()
+
+	mode, _, _ := snapshotManifestFields(dir, dir, "")
+	assert.Equal(t, "live", mode, "identical paths should be live")
+
+	mode, _, _ = snapshotManifestFields(dir+"/", dir, "")
+	assert.Equal(t, "live", mode, "trailing slash should not force worktree mode")
+
+	absDir, err := filepath.Abs(dir)
+	require.NoError(t, err)
+	mode, _, _ = snapshotManifestFields(dir, absDir, "")
+	assert.Equal(t, "live", mode, "relative vs absolute same dir should be live")
+
+	// A genuinely different directory must still be worktree mode.
+	other := t.TempDir()
+	mode, _, _ = snapshotManifestFields(other, dir, "")
+	assert.Equal(t, "worktree", mode, "different directories should be worktree")
+}
+
 func TestLoadReviewConfig_DiscoversConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -457,4 +504,78 @@ agents:
 	assert.Contains(t, cfg.Registry.Agents, "greta")
 	assert.Equal(t, []string{"greta"}, cfg.Project.Agents)
 	assert.Equal(t, "diff", cfg.Settings.PayloadMode, "project tier overrides the blocks default")
+}
+
+// TestExecuteReview_ManifestNotMutatedOnWriteFailure verifies that a failed
+// WriteManifest at finalization does not leave p.manifest in a mutated state.
+// If p.manifest is mutated before WriteManifest succeeds and the caller retries
+// with the same PreparedReview, it would observe stale snapshot/completion data
+// from the failed attempt (review.go:343).
+//
+// Mechanism: Dir is chmod'd to 0555 after PrepareReview so atomicWriteFile
+// cannot create its temp file directly in Dir (write bit absent), while
+// Dir/sources/pool/ retains its own 0755 permissions so WritePool still
+// completes. The failing final WriteManifest is therefore the only error path
+// exercised.
+func TestExecuteReview_ManifestNotMutatedOnWriteFailure(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+
+	p, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	// Precondition: CompletedAt is zero from PrepareReview.
+	require.True(t, p.manifest.CompletedAt.IsZero(), "precondition: CompletedAt must be zero before ExecuteReview")
+
+	// Make Dir itself unwriteable so atomicWriteFile cannot create a temp file
+	// when writing manifest.json. Dir/sources/pool/ keeps its own 0755 so
+	// WritePool still succeeds; only the final WriteManifest fails.
+	require.NoError(t, os.Chmod(p.Dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(p.Dir, 0o755) }) // restore for t.TempDir cleanup
+
+	_, execErr := ExecuteReview(context.Background(), llmclient.New(), p)
+	require.Error(t, execErr, "ExecuteReview must fail when the final WriteManifest cannot write")
+
+	// p.manifest must NOT be mutated — CompletedAt should still be zero.
+	assert.True(t, p.manifest.CompletedAt.IsZero(),
+		"p.manifest must not be mutated when WriteManifest fails: use a local copy and assign back only on success")
+}
+
+// TestExecuteReview_SnapshotFailureRecordsFailedMode verifies that when a
+// snapshot is attempted (tool agent + non-empty Head) but SnapshotFor fails,
+// the finalized manifest records snapshot_mode="failed" so a reader can
+// distinguish a failed-snapshot run from one where no snapshot was attempted
+// (internal/payload/manifest.go:74).
+func TestExecuteReview_SnapshotFailureRecordsFailedMode(t *testing.T) {
+	repo, _, _ := initRepo(t)
+	dir := t.TempDir()
+
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta"},
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600,
+	}
+	require.NoError(t, WriteManifest(dir, m))
+
+	// A nonexistent SHA forces SnapshotFor to fail while anyToolAgent returns
+	// true, so the snapshot path is entered and the failure branch is exercised.
+	prep := &PreparedReview{
+		ID:       "x",
+		Dir:      dir,
+		Repo:     repo,
+		Head:     "0000000000000000000000000000000000000000",
+		Slots:    []Slot{{Primary: Agent{Name: "greta", Tools: true}}},
+		manifest: m,
+	}
+	_, _ = ExecuteReview(context.Background(), newFake(), prep)
+
+	mdata, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	require.NoError(t, err)
+	var got payload.Manifest
+	require.NoError(t, json.Unmarshal(mdata, &got))
+
+	require.NotNil(t, got.Review, "tool agent must produce a non-nil review stage")
+	assert.Equal(t, "failed", got.Review.SnapshotMode,
+		"a failed snapshot must record snapshot_mode=failed so the state is observable in the manifest")
 }
