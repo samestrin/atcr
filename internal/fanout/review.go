@@ -665,16 +665,27 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 }
 
 // snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /
-// 03-03) from the root SnapshotFor returned. root == repo is the live fast path
-// (head matched HEAD on a clean worktree), so mode is "live" and the worktree path
-// is the explicit empty string; any other root is a detached worktree at head, so
-// mode is "worktree" and the path is that root. head is already the resolved head
-// SHA (gitrange resolves it before fan-out), recorded verbatim as head_sha.
+// 03-03) from the root SnapshotFor returned. root and repo pointing at the same
+// directory is the live fast path (head matched HEAD on a clean worktree), so mode
+// is "live" and the worktree path is the explicit empty string; any other root is
+// a detached worktree at head, so mode is "worktree" and the path is that root.
 func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePath string) {
-	if root == repo {
+	if samePath(root, repo) {
 		return "live", head, ""
 	}
 	return "worktree", head, root
+}
+
+// samePath reports whether a and b refer to the same existing directory, using
+// os.SameFile so differences in trailing slashes, relative vs absolute form, or
+// symlinks do not spuriously force worktree mode.
+func samePath(a, b string) bool {
+	fi1, err1 := os.Stat(a)
+	fi2, err2 := os.Stat(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return os.SameFile(fi1, fi2)
 }
 
 // resolveHeadSHA resolves a git ref to its full 40-byte SHA. It is a defensive
