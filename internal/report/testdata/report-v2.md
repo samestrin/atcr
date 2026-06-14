@@ -1,6 +1,6 @@
 # atcr Review Report
 
-Total findings: 4
+Total findings: 4 (1 refuted, shown below)
 
 | Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf |
 |----------|---------------|-----------|-------------|----------|

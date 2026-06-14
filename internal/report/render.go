@@ -166,7 +166,11 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 	for _, s := range order {
 		counts[s] = &cell{}
 	}
+	refutedCount := 0
 	for _, f := range findings {
+		if verified && isRefuted(f) {
+			refutedCount++
+		}
 		c, ok := counts[f.Severity]
 		if !ok {
 			continue
@@ -192,7 +196,11 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 	for _, s := range order {
 		totalVerified += counts[s].verified
 	}
-	fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
+	if refutedCount > 0 {
+		fmt.Fprintf(b, "Total findings: %d (%d refuted, shown below)\n\n", len(findings), refutedCount)
+	} else {
+		fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
+	}
 	if verified || totalVerified > 0 {
 		b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf |\n")
 		b.WriteString("|----------|---------------|-----------|-------------|----------|\n")
