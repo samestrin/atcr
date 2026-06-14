@@ -201,6 +201,23 @@ func TestRenderReport_VerifiedConfidenceWithoutBlock(t *testing.T) {
 	assert.Contains(t, out, "| CRITICAL | 1 | 0 | 0 | 0 |", "the VERIFIED finding is counted, not lost")
 }
 
+// TestRenderReport_TotalAnnotatesRefutedCount — when some findings are refuted
+// the "Total findings" headline includes the refuted count so the headline
+// reconciles with the visible main list (the refuted items live only in the
+// collapsed Refuted Findings section).
+func TestRenderReport_TotalAnnotatesRefutedCount(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "VERIFIED",
+			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "ok"}},
+		{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW",
+			Verification: &reconcile.Verification{Verdict: "refuted", Skeptic: "greta", Notes: "n"}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Total findings: 2 (1 refuted, shown below)", "total annotates refuted count so headline reconciles with visible list")
+}
+
 // TestRenderReport_RefutedEmptySkeptic — a refuted finding with no skeptic name
 // renders "(unknown)" in the Refuted section rather than an empty attribution.
 func TestRenderReport_RefutedEmptySkeptic(t *testing.T) {

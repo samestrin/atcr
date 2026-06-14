@@ -304,3 +304,38 @@ func TestJSONFinding_EmptyVerdictLoadsDefensively(t *testing.T) {
 	require.NotNil(t, got[0].Verification)
 	assert.Equal(t, "", got[0].Verification.Verdict, "empty verdict preserved as-is; consumers treat it as unverified per docs/findings-format.md")
 }
+
+// TestJSONFindings_PreservesVerification verifies that a Merged finding with a
+// non-nil Verification block is carried through JSONFindings into findings.json
+// (Epic 3.0 forward-compatibility).
+func TestJSONFindings_PreservesVerification(t *testing.T) {
+	res := Result{Findings: []Merged{{
+		Finding:      mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "greta"),
+		Disagreement: "",
+		Verification: &Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"},
+	}}}
+
+	got := res.JSONFindings()
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Verification, "Verification must be preserved by JSONFindings")
+	assert.Equal(t, "confirmed", got[0].Verification.Verdict)
+	assert.Equal(t, "otto", got[0].Verification.Skeptic)
+	assert.Equal(t, "reproduced", got[0].Verification.Notes)
+
+	// Full RenderJSON/ReadReconciledFindings round-trip.
+	dir := t.TempDir()
+	require.NoError(t, Emit(dir, res))
+	readBack, err := ReadReconciledFindings(dir)
+	require.NoError(t, err)
+	require.Len(t, readBack, 1)
+	require.NotNil(t, readBack[0].Verification, "Verification must survive round-trip")
+	assert.Equal(t, "confirmed", readBack[0].Verification.Verdict)
+	assert.Equal(t, "otto", readBack[0].Verification.Skeptic)
+	assert.Equal(t, "reproduced", readBack[0].Verification.Notes)
+
+	// A nil Verification must still marshal without a "verification" key.
+	res2 := Result{Findings: []Merged{{Finding: mf("LOW", "b.go", 2, "p2", "f2", "style", 1, "e", "bruce")}}}
+	data, err := json.Marshal(res2.JSONFindings())
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "verification", "nil Verification must stay omitted")
+}
