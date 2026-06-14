@@ -159,6 +159,17 @@ func TestReconcileCmd_TraversalIdRejected(t *testing.T) {
 	require.Equal(t, 2, execCmd(t, "reconcile", ".."))
 }
 
+func TestVerifyStageRan_RejectsDirectory(t *testing.T) {
+	isolate(t)
+	base := t.TempDir()
+	reconciled := filepath.Join(base, "reconciled")
+	require.NoError(t, os.MkdirAll(reconciled, 0o755))
+	// A directory named verification.json must not be treated as a verification
+	// artifact; only a regular file should count.
+	require.NoError(t, os.MkdirAll(filepath.Join(reconciled, "verification.json"), 0o755))
+	require.False(t, verifyStageRan(base))
+}
+
 func TestReconcileCmd_SourcesAllowlist(t *testing.T) {
 	isolate(t)
 	fixtureReview(t, "r", map[string]string{
