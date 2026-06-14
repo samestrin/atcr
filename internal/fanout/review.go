@@ -610,17 +610,14 @@ func writePayloadArtifacts(dir string, payloads map[string]modePayload) error {
 	return nil
 }
 
-// anyToolAgent reports whether any slot (primary or fallback) requested tools,
-// so ExecuteReview only pays the snapshot/jail cost when the harness is needed.
+// anyToolAgent reports whether any primary slot requested tools, so ExecuteReview
+// only pays the snapshot/jail cost when the harness is needed. Fallbacks always
+// inherit the lane's effective Tools setting from the primary (AC 01-05 S4), so
+// checking fallbacks cannot change the result; the loop is intentionally omitted.
 func anyToolAgent(slots []Slot) bool {
 	for _, s := range slots {
 		if s.Primary.Tools {
 			return true
-		}
-		for _, fb := range s.Fallbacks {
-			if fb.Tools {
-				return true
-			}
 		}
 	}
 	return false
