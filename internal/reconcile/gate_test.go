@@ -32,10 +32,10 @@ func TestCountAtOrAbove_ThresholdInclusive(t *testing.T) {
 		{Finding: stream.Finding{Severity: "MEDIUM"}},
 		{Finding: stream.Finding{Severity: "LOW"}},
 	}
-	assert.Equal(t, 1, CountAtOrAbove(findings, SevCritical))
-	assert.Equal(t, 2, CountAtOrAbove(findings, SevHigh), "HIGH counts HIGH+CRITICAL")
-	assert.Equal(t, 3, CountAtOrAbove(findings, SevMedium))
-	assert.Equal(t, 4, CountAtOrAbove(findings, SevLow), "LOW counts everything")
+	assert.Equal(t, 1, CountAtOrAbove(findings, SevCritical, false))
+	assert.Equal(t, 2, CountAtOrAbove(findings, SevHigh, false), "HIGH counts HIGH+CRITICAL")
+	assert.Equal(t, 3, CountAtOrAbove(findings, SevMedium, false))
+	assert.Equal(t, 4, CountAtOrAbove(findings, SevLow, false), "LOW counts everything")
 }
 
 func TestCountAtOrAbove_ExcludesOutOfScope(t *testing.T) {
@@ -45,8 +45,8 @@ func TestCountAtOrAbove_ExcludesOutOfScope(t *testing.T) {
 		{Finding: stream.Finding{Severity: "CRITICAL", Category: CategoryOutOfScope}},
 		{Finding: stream.Finding{Severity: "HIGH", Category: "security"}},
 	}
-	assert.Equal(t, 1, CountAtOrAbove(findings, SevHigh), "only the in-scope HIGH counts")
-	assert.Equal(t, 0, CountAtOrAbove(findings[:1], SevHigh), "a lone out-of-scope CRITICAL never gates")
+	assert.Equal(t, 1, CountAtOrAbove(findings, SevHigh, false), "only the in-scope HIGH counts")
+	assert.Equal(t, 0, CountAtOrAbove(findings[:1], SevHigh, false), "a lone out-of-scope CRITICAL never gates")
 }
 
 func TestRunReconcile_EndToEnd(t *testing.T) {
@@ -67,8 +67,8 @@ func TestRunReconcile_EndToEnd(t *testing.T) {
 	assert.FileExists(t, filepath.Join(reviewDir, "reconciled", FindingsJSON))
 
 	// Gate: 1 finding at/above HIGH; 0 at/above CRITICAL.
-	assert.Equal(t, 1, CountAtOrAbove(res.Findings, SevHigh))
-	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevCritical))
+	assert.Equal(t, 1, CountAtOrAbove(res.Findings, SevHigh, false))
+	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevCritical, false))
 }
 
 func TestRunReconcile_PreCancelledContext(t *testing.T) {
@@ -94,6 +94,6 @@ func TestRunReconcile_EmptySourcesProducesEmptyArtifacts(t *testing.T) {
 	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
 	require.NoError(t, err)
 	assert.Equal(t, 0, res.Summary.TotalFindings)
-	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevLow), "no findings → gate passes")
+	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevLow, false), "no findings → gate passes")
 	assert.FileExists(t, filepath.Join(reviewDir, "reconciled", AmbiguousJSON))
 }

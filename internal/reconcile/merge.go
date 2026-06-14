@@ -36,6 +36,12 @@ const CategoryOutOfScope = "out-of-scope"
 type Merged struct {
 	stream.Finding
 	Disagreement string // "<lo> vs <hi>" when the group spans multiple severities, else ""
+
+	// Verification is the skeptic verdict block populated during the verify
+	// re-emit (Epic 3.0); nil for a v1 finding or one below the min-severity
+	// floor. The gate reads Verdict directly: a refuted finding is excluded, and
+	// under requireVerified only a confirmed finding counts.
+	Verification *Verification
 }
 
 // Merge collapses a group of duplicate findings into one reconciled finding per

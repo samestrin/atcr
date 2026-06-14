@@ -209,7 +209,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		Partial:       res.Summary.Partial,
 		FailOn:        threshold,
 	}
-	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold) > 0 {
+	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, false) > 0 {
 		out.Pass = false
 		out.Findings = failingFindings(res, threshold)
 	}

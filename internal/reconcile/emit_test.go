@@ -159,7 +159,7 @@ func TestReconcile_OutOfScopeAnnotatedNotGated(t *testing.T) {
 	res := Reconcile(sources, recAt())
 	assert.Equal(t, 1, res.Summary.OutOfScope, "summary carries the out-of-scope count")
 	assert.Equal(t, 2, res.Summary.TotalFindings, "annotated, not dropped")
-	assert.Equal(t, 1, CountAtOrAbove(res.Findings, SevHigh), "the out-of-scope CRITICAL must not trip --fail-on HIGH")
+	assert.Equal(t, 1, CountAtOrAbove(res.Findings, SevHigh, false), "the out-of-scope CRITICAL must not trip --fail-on HIGH")
 
 	var b strings.Builder
 	require.NoError(t, RenderMarkdown(&b, res))

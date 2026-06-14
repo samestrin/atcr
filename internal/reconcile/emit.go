@@ -39,6 +39,16 @@ type Verification struct {
 	Notes   string `json:"notes,omitempty"`
 }
 
+// Verdict enum values for Verification.Verdict (Epic 3.0). The verify stage
+// validates skeptic output against this set before persisting; the gate reads
+// these constants to exclude refuted findings and, under requireVerified, to
+// count only confirmed ones.
+const (
+	VerdictConfirmed    = "confirmed"
+	VerdictRefuted      = "refuted"
+	VerdictUnverifiable = "unverifiable"
+)
+
 // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,
 // re-readable structured contract the report command renders views over.
 //

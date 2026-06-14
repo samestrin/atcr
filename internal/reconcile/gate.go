@@ -51,18 +51,37 @@ func AtOrAbove(severity, threshold string) bool {
 // threshold must be a canonical severity (validated via ParseSeverity). The
 // ordering is CRITICAL > HIGH > MEDIUM > LOW, so --fail-on HIGH counts HIGH and
 // CRITICAL. This is the pure helper the centralized exit-code logic uses.
-// Findings annotated out-of-scope never count (AC 06-04): a pre-existing
-// CRITICAL the change never touched must not fail CI; the annotation and the
+//
+// Verification verdicts (Epic 3.0) refine the count via Verification.Verdict,
+// read directly off each finding:
+//   - A refuted finding is never counted, at any severity — a skeptic disproved
+//     it, so it must not block CI (it is retained in the artifacts, just demoted).
+//   - When requireVerified is true, only a confirmed finding counts — the
+//     strictest gate (--fail-on <sev> --require-verified). A v1 finding (nil
+//     Verification), an unverifiable one, and an empty-verdict one are all NOT
+//     VERIFIED and therefore excluded under requireVerified, but DO count under
+//     the default (requireVerified=false) since they are not refuted.
+//
+// Findings annotated out-of-scope never count (AC 06-04) and that exclusion takes
+// precedence over any verdict: a pre-existing CRITICAL the change never touched
+// must not fail CI even if a skeptic confirmed it; the annotation and the
 // summary.json out_of_scope count are the audit trail.
-func CountAtOrAbove(findings []Merged, threshold string) int {
+func CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) int {
 	n := 0
 	for _, f := range findings {
 		if f.Category == CategoryOutOfScope {
 			continue
 		}
-		if AtOrAbove(f.Severity, threshold) {
-			n++
+		if f.Verification != nil && f.Verification.Verdict == VerdictRefuted {
+			continue
 		}
+		if !AtOrAbove(f.Severity, threshold) {
+			continue
+		}
+		if requireVerified && (f.Verification == nil || f.Verification.Verdict != VerdictConfirmed) {
+			continue
+		}
+		n++
 	}
 	return n
 }

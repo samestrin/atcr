@@ -126,7 +126,7 @@ func gateFindings(res reconcile.Result, threshold string) error {
 	if threshold == "" {
 		return nil
 	}
-	if n := reconcile.CountAtOrAbove(res.Findings, threshold); n > 0 {
+	if n := reconcile.CountAtOrAbove(res.Findings, threshold, false); n > 0 {
 		return fmt.Errorf("%d finding(s) at or above %s survived reconciliation", n, threshold)
 	}
 	return nil
