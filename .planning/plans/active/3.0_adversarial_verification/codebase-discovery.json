@@ -1,0 +1,548 @@
+{
+  "generated": "2026-06-14",
+  "refined": "2026-06-14",
+  "discovery_method": "semantic+keyword+deep-verify",
+  "queries": [
+    "skeptic agent selection different model rule",
+    "per finding prompt invocation tool loop",
+    "verdict envelope parse confirmed refuted unverifiable",
+    "confidence tier recompute VERIFIED HIGH MEDIUM LOW findings",
+    "gate fail-on require-verified severity threshold"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/fanout/engine.go",
+    "reason": "The fan-out engine is the integration point for agent invocation. It already drives the multi-turn tool loop (internal/fanout/loop.go) for reviewers. Skeptics will reuse the same engine with a different agent role filter and a per-finding invocation scope rather than per-review.",
+    "suggested_approach": "Extend Engine (struct at engine.go:132) with a Verify method (or a new VerifyEngine) that accepts a Finding and a Skeptic roster, reuses invokeToolLoop with a skeptic-specific prompt, and collects verdicts. The existing ChatCompleter interface and toolDispatcher are reused unchanged."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/fanout/loop.go",
+      "symbol": "invokeToolLoop",
+      "type": "method",
+      "line": 81,
+      "score": 1.0,
+      "query": "per finding prompt invocation tool loop",
+      "relevance": "The multi-turn tool loop that skeptics will reuse. Takes an Agent, ChatCompleter, and toolDispatcher. Drives the Chat → tool_calls → dispatch → repeat cycle with budget/hygiene halts and partial-success semantics."
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "roleValid",
+      "type": "function",
+      "line": 111,
+      "score": 0.99,
+      "query": "skeptic agent selection different model rule",
+      "relevance": "Role validation function. Already accepts RoleSkeptic ('skeptic') as valid. The Role field on AgentConfig is reserved but validated at load. Epic 3.0 activates it by filtering agents where Role == 'skeptic'."
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "AgentConfig",
+      "type": "struct",
+      "line": 56,
+      "score": 0.99,
+      "query": "skeptic agent selection different model rule",
+      "relevance": "Agent configuration struct. Already has Role field (string, validated as reviewer|skeptic|judge). Tools, MaxTurns, ToolBudgetBytes, SupportsFC are active in 2.0. The skeptic will need tools:true and supports_function_calling:true."
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "RoleSkeptic",
+      "type": "constant",
+      "line": 37,
+      "score": 0.99,
+      "query": "skeptic agent selection different model rule",
+      "relevance": "String constant 'skeptic' for the skeptic role. Use this constant (not the string literal) when filtering agents by role in the verify package."
+    },
+    {
+      "file": "internal/reconcile/reconcile.go",
+      "symbol": "Reconcile",
+      "type": "function",
+      "line": 55,
+      "score": 0.99,
+      "query": "reconcile findings dedup confidence",
+      "relevance": "The reconciler entry point. The verify stage runs AFTER reconcile, consuming reconciled/findings.json (the deduped, confidence-scored output). The reconciler stays deterministic — no LLM calls — so verify is a separate stage."
+    },
+    {
+      "file": "internal/reconcile/emit.go",
+      "symbol": "Verification",
+      "type": "struct",
+      "line": 36,
+      "score": 0.99,
+      "query": "verdict envelope parse confirmed refuted unverifiable",
+      "relevance": "The reserved per-finding verification struct (verdict:string, skeptic:string, notes:string). Already present in the codebase (Epic 1.1 reservation). JSONFinding at emit.go:59 already has a *Verification field tagged 'omitempty'. Epic 3.0 populates it — no struct changes needed, only the writer."
+    },
+    {
+      "file": "internal/reconcile/emit.go",
+      "symbol": "ReadReconciledFindings",
+      "type": "function",
+      "line": 145,
+      "score": 0.98,
+      "query": "reconcile findings dedup confidence",
+      "relevance": "Reads reconciled/findings.json into []JSONFinding. The verify stage uses this to load the deduped findings before iterating and running skeptics."
+    },
+    {
+      "file": "internal/reconcile/gate.go",
+      "symbol": "CountAtOrAbove",
+      "type": "function",
+      "line": 57,
+      "score": 0.98,
+      "query": "gate fail-on require-verified severity threshold",
+      "relevance": "The gate counter used by --fail-on. Returns how many Merged findings are at or above the given severity threshold. Epic 3.0 must extend this logic to skip refuted findings (verdict=='refuted') and support --require-verified (count only VERIFIED). NOTE: the discovery previously listed a non-existent 'FailOn' function; the real gate functions are CountAtOrAbove:57 and AtOrAbove:42."
+    },
+    {
+      "file": "internal/reconcile/gate.go",
+      "symbol": "AtOrAbove",
+      "type": "function",
+      "line": 42,
+      "score": 0.97,
+      "query": "gate fail-on require-verified severity threshold",
+      "relevance": "Per-finding severity comparison helper used by CountAtOrAbove. Epic 3.0 can extend the gate evaluation to also inspect the Verification field."
+    },
+    {
+      "file": "internal/payload/manifest.go",
+      "symbol": "WriteManifest",
+      "type": "function",
+      "line": 86,
+      "score": 0.97,
+      "query": "manifest stages verify",
+      "relevance": "Serializes a Manifest (including the Stages []string field) to manifest.json atomically. Epic 3.0 appends 'verify' to Stages after the verify stage runs. NOTE: the discovery previously attributed WriteManifest to reconcile/emit.go — the correct location is internal/payload/manifest.go:86."
+    },
+    {
+      "file": "internal/payload/manifest.go",
+      "symbol": "Manifest",
+      "type": "struct",
+      "line": 16,
+      "score": 0.97,
+      "query": "manifest stages verify",
+      "relevance": "Manifest struct with Stages []string (line 32). Stages defaults to ['review'] when nil (enforced in WriteManifest at line 90-91). Epic 3.0 appends 'verify' after the verify stage. The 'review' stage is always first; 'verify' always follows reconcile."
+    },
+    {
+      "file": "internal/mcp/handlers.go",
+      "symbol": "handleReconcile",
+      "type": "function",
+      "line": 159,
+      "score": 0.97,
+      "query": "CLI command atcr verify",
+      "relevance": "MCP handler for atcr_reconcile. The atcr_verify tool will be added following the same pattern: register tool, parse args, call internal verify package, return result. NOTE: discovery previously listed line 201; corrected to 159."
+    },
+    {
+      "file": "internal/mcp/handlers.go",
+      "symbol": "failingFindings",
+      "type": "function",
+      "line": 339,
+      "score": 0.96,
+      "query": "gate fail-on require-verified severity threshold",
+      "relevance": "MCP-layer gate helper that filters findings by severity threshold for the --fail-on response. Epic 3.0 must update this to exclude refuted findings from the count and support --require-verified (count only VERIFIED findings)."
+    },
+    {
+      "file": "internal/mcp/server.go",
+      "symbol": "buildServer",
+      "type": "function",
+      "line": 57,
+      "score": 0.95,
+      "query": "CLI command atcr verify",
+      "relevance": "Where all MCP tools are registered via registerTool(). The atcr_verify tool must be added here alongside atcr_review, atcr_reconcile, atcr_report, atcr_range, atcr_status. NOTE: discovery previously listed 'internal/mcp/handlers.go:registerTools' which does not exist — registration is in server.go:buildServer."
+    },
+    {
+      "file": "internal/report/render.go",
+      "symbol": "Render",
+      "type": "function",
+      "line": 45,
+      "score": 0.93,
+      "query": "report generation findings output",
+      "relevance": "Report rendering. Epic 3.0 adds a skeptic section and a collapsed 'Refuted' section to the bottom. Confidence tier display changes to v2 (VERIFIED > HIGH > MEDIUM > LOW). NOTE: discovery previously listed line 1; corrected to 45."
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Tool Loop (invokeToolLoop)",
+      "description": "Multi-turn agent loop in internal/fanout/loop.go:81. Takes an Agent with Tools:true, drives Chat → tool_calls → dispatch → repeat until budget/hygiene/final-answer. Partial-success semantics: a tripped budget still returns accumulated findings. The loop is model-agnostic (any ChatCompleter) and tool-agnostic (any toolDispatcher).",
+      "files": ["internal/fanout/loop.go", "internal/fanout/engine.go"],
+      "follow_for": "Skeptic invocation. The skeptic runs the same loop but with a per-finding prompt ('try to disprove this finding') and a different budget profile (per-finding, not per-review)."
+    },
+    {
+      "name": "Registry Role Validation + Constants",
+      "description": "Role constants defined at registry/config.go:37 (RoleSkeptic='skeptic', RoleReviewer='reviewer', RoleJudge='judge'). Role field on AgentConfig (struct at line 56) validated by roleValid() at line 111. Empty defaults to reviewer at activation time (applyDefaults() at line 262). The loader intentionally leaves Role empty so activating stages can distinguish 'explicitly set' from 'inherited default'.",
+      "files": ["internal/registry/config.go", "docs/registry.md"],
+      "follow_for": "Skeptic selection. Filter agents where Role == RoleSkeptic (use the constant at line 37, not the string literal). The different-model rule is enforced at selection time, not at load."
+    },
+    {
+      "name": "Reconciler Pipeline",
+      "description": "Deterministic Go pipeline entry point at internal/reconcile/reconcile.go:55 (Reconcile func). Stages: discover → normalize → cluster (FILE, LINE ± 3) → dedupe (Jaccard text similarity) → merge (Merge func at merge.go:48; longest PROBLEM/FIX wins) → confidence (HIGH: 2+ reviewers, MEDIUM: 1 reviewer via confidenceFor() at merge.go:210) → emit (Emit at emit.go:85; writes findings.txt, findings.json, reconcile-summary.json). No LLM calls.",
+      "files": ["internal/reconcile/reconcile.go", "internal/reconcile/merge.go", "internal/reconcile/emit.go", "docs/findings-format.md"],
+      "follow_for": "Verify stage placement. Verify runs AFTER reconcile, loading reconciled/findings.json via ReadReconciledFindings (emit.go:145). The reconciler is unchanged; verify is a separate stage that re-emits the reconciled artifacts with verdicts and recomputed confidence."
+    },
+    {
+      "name": "Verification Struct (Reserved)",
+      "description": "type Verification struct at internal/reconcile/emit.go:36. Fields: Verdict string (confirmed|refuted|unverifiable), Skeptic string, Notes string (omitempty). Referenced as *Verification field on JSONFinding at emit.go:59, tagged 'omitempty' so it is absent in 1.x output. Readers must tolerate absence. Writers (Epic 3.0) are responsible for supplying a valid Verdict enum value.",
+      "files": ["internal/reconcile/emit.go"],
+      "follow_for": "Epic 3.0 populate-on-write path. The struct exists — internal/verify/verdict.go will produce a *Verification value, and the re-emit pass will set it on each JSONFinding before writing findings.json."
+    },
+    {
+      "name": "Manifest Stages",
+      "description": "Manifest struct at internal/payload/manifest.go:16 with Stages []string (line 32). Defaults to ['review'] when nil (enforced in WriteManifest at lines 90-91). WriteManifest at line 86 writes atomically to manifest.json. To add 'verify': load manifest, append 'verify' to Stages, call WriteManifest.",
+      "files": ["internal/payload/manifest.go"],
+      "follow_for": "Verify stage emit. After running all skeptics and writing verification.json, the verify stage reads the existing manifest, appends 'verify' to Stages, and calls WriteManifest."
+    },
+    {
+      "name": "CLI Command Structure (Cobra)",
+      "description": "Each subcommand is a separate file in cmd/atcr/ (review.go, reconcile.go, report.go, etc.) registered in main.go at the AddCommand call (line 97). Pattern: define command with cobra.Command, parse flags, load registry, call internal package, emit output. Tests use golden files and mock providers.",
+      "files": ["cmd/atcr/main.go", "cmd/atcr/reconcile.go", "cmd/atcr/review.go"],
+      "follow_for": "The 'atcr verify' subcommand follows this pattern. verify.go defines the command, parses flags (--fresh, --thorough, --min-severity), loads registry, calls internal/verify, emits verification.json and re-emits reconciled artifacts."
+    },
+    {
+      "name": "MCP Tool Handlers + Registration",
+      "description": "MCP server in internal/mcp/server.go registers tools via registerTool() in buildServer() at line 57. Each handler file in handlers.go: handleReview:84, handleReconcile:159, handleReport:222, handleStatus:262. Pattern: parse typed args, call internal package, return structured result. failingFindings() at handlers.go:339 is the current gate helper (filters by severity threshold).",
+      "files": ["internal/mcp/server.go", "internal/mcp/handlers.go"],
+      "follow_for": "The atcr_verify MCP tool is registered in server.go:buildServer. The handler (handleVerify) goes in handlers.go following the handleReconcile pattern. failingFindings() needs updating for refuted exclusion and --require-verified."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/fanout/engine.go",
+      "relevance": "high",
+      "purpose": "Fan-out engine struct (Engine at line 132): agent invocation, ChatCompleter factory, tool dispatcher construction",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/fanout/loop.go",
+      "relevance": "high",
+      "purpose": "Tool loop implementation (invokeToolLoop at line 81): multi-turn Chat → tool_calls → dispatch cycle",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "relevance": "high",
+      "purpose": "Registry config: RoleSkeptic constant (line 37), AgentConfig struct (line 56), roleValid validation (line 111), applyDefaults (line 262)",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/reconcile/reconcile.go",
+      "relevance": "high",
+      "purpose": "Reconciler entry point: Reconcile() at line 55 — pipeline from sources to deduped merged findings",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/reconcile/merge.go",
+      "relevance": "medium",
+      "purpose": "Finding merge logic: Merge() at line 48, confidenceFor() at line 210 (HIGH/MEDIUM assignment)",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/reconcile/emit.go",
+      "relevance": "high",
+      "purpose": "Verification struct (line 36), JSONFinding with *Verification field (line 59), Emit() (line 85), ReadReconciledFindings() (line 145)",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/reconcile/gate.go",
+      "relevance": "high",
+      "purpose": "Gate logic: AtOrAbove() (line 42), CountAtOrAbove() (line 57), ParseSeverity() (line 22), RunReconcile() (line 82)",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/manifest.go",
+      "relevance": "high",
+      "purpose": "Manifest struct (line 16): Stages []string field (line 32). WriteManifest() (line 86) writes atomically. Epic 3.0 appends 'verify' to Stages.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "relevance": "high",
+      "purpose": "Root Cobra command: AddCommand call at line 97 where subcommands are registered",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/review.go",
+      "relevance": "medium",
+      "purpose": "Review subcommand: --verify flag chains review → reconcile → verify",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/mcp/server.go",
+      "relevance": "high",
+      "purpose": "MCP tool registration: buildServer() at line 57 via registerTool(). atcr_verify is registered here.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/mcp/handlers.go",
+      "relevance": "high",
+      "purpose": "MCP handlers: handleReconcile (line 159), failingFindings gate helper (line 339). handleVerify goes here.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/report/render.go",
+      "relevance": "high",
+      "purpose": "Report rendering: Render() at line 45; markdown/json/checklist output",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/report/testdata/findings.json",
+      "relevance": "medium",
+      "purpose": "Test fixture for report rendering — will need a variant with verification blocks for v2 tier tests",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/report/testdata/report.md",
+      "relevance": "medium",
+      "purpose": "Golden output for Render() tests — will need updating when skeptic section and collapsed Refuted section are added",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "docs/findings-format.md",
+      "relevance": "medium",
+      "purpose": "Findings format spec: documents reserved verification block",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "docs/registry.md",
+      "relevance": "medium",
+      "purpose": "Registry documentation: documents reserved role field (currently 'inert')",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "personas/_base.md",
+      "relevance": "medium",
+      "purpose": "Base reviewer persona template — reference for building skeptic_base.md",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/fanout/engine.go:132 (Engine struct)",
+      "type": "entry-point",
+      "description": "The engine struct. Skeptics will call a new Verify method (or VerifyEngine) that takes a Finding + Skeptic roster instead of a review payload. Reuses the existing ChatCompleter factory and toolDispatcher."
+    },
+    {
+      "location": "internal/registry/config.go:37 (RoleSkeptic constant)",
+      "type": "hook",
+      "description": "The 'skeptic' role constant. Use RoleSkeptic (not the string literal) when filtering agents. The different-model rule is enforced at SELECTION TIME per finding, not at load."
+    },
+    {
+      "location": "internal/reconcile/emit.go:36 (Verification struct)",
+      "type": "hook",
+      "description": "The reserved verification envelope struct with Verdict/Skeptic/Notes fields. Already embedded as *Verification (omitempty) in JSONFinding at line 59. Epic 3.0 populates it — no struct changes needed. The writer (internal/verify) must produce a valid Verdict enum value."
+    },
+    {
+      "location": "internal/reconcile/emit.go:145 (ReadReconciledFindings)",
+      "type": "entry-point",
+      "description": "The verify stage loads its input via ReadReconciledFindings(reviewDir). This function reads reconciled/findings.json into []JSONFinding. The verify stage iterates these, runs skeptics, and re-emits with verification blocks."
+    },
+    {
+      "location": "internal/payload/manifest.go:86 (WriteManifest)",
+      "type": "hook",
+      "description": "Manifest writer. The verify stage loads the existing manifest, appends 'verify' to the Stages []string field, and calls WriteManifest to update manifest.json. NOTE: NOT in reconcile/emit.go — correct location is payload/manifest.go."
+    },
+    {
+      "location": "internal/reconcile/gate.go:57 (CountAtOrAbove)",
+      "type": "hook",
+      "description": "Gate counter used by --fail-on. Epic 3.0 extends gate logic to skip findings with verdict=='refuted' and support --require-verified (count only findings with confidence=='VERIFIED'). NOTE: there is no 'FailOn' function; the real gate functions are CountAtOrAbove and AtOrAbove."
+    },
+    {
+      "location": "internal/mcp/handlers.go:339 (failingFindings)",
+      "type": "hook",
+      "description": "MCP-layer gate helper that filters findings by severity for --fail-on response. Must be updated to exclude refuted findings and support --require-verified."
+    },
+    {
+      "location": "cmd/atcr/main.go:97 (AddCommand)",
+      "type": "entry-point",
+      "description": "Root command AddCommand call. The verify subcommand is registered here alongside review, reconcile, report, etc."
+    },
+    {
+      "location": "internal/mcp/server.go:57 (buildServer)",
+      "type": "hook",
+      "description": "MCP tool registration. The atcr_verify tool is registered here via registerTool() alongside atcr_review, atcr_reconcile, etc. NOTE: previous discovery incorrectly pointed to 'handlers.go:registerTools' — registration is in server.go:buildServer."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "Tool Loop (invokeToolLoop)",
+      "path": "internal/fanout/loop.go",
+      "line": 81,
+      "can_extend": true,
+      "usage_example": "Reuse invokeToolLoop directly for skeptic invocation. Pass a skeptic Agent (Role:'skeptic', Tools:true, SupportsFC:true) with a per-finding prompt. The loop handles budget, hygiene, partial-success, and transcript recording."
+    },
+    {
+      "name": "ChatCompleter Interface",
+      "path": "internal/fanout/engine.go",
+      "line": 132,
+      "can_extend": true,
+      "usage_example": "The ChatCompleter interface (Chat method) is reused for skeptic invocation. The same llmclient.Client implementation works for skeptics as for reviewers."
+    },
+    {
+      "name": "Registry Agent Filter",
+      "path": "internal/registry/config.go",
+      "line": 37,
+      "can_extend": true,
+      "usage_example": "Filter agents by Role field using RoleSkeptic constant: for name, a := range reg.Agents { if a.Role == RoleSkeptic { /* eligible */ } }. Then apply the different-model rule at selection time per finding."
+    },
+    {
+      "name": "ReadReconciledFindings",
+      "path": "internal/reconcile/emit.go",
+      "line": 145,
+      "can_extend": true,
+      "usage_example": "The verify stage reads reconciled/findings.json via ReadReconciledFindings(reviewDir). Returns []JSONFinding. Each JSONFinding has a *Verification field (nil until Epic 3.0 populates it). The verify stage adds a *Verification block per finding and re-emits."
+    },
+    {
+      "name": "Verification Struct",
+      "path": "internal/reconcile/emit.go",
+      "line": 36,
+      "can_extend": false,
+      "usage_example": "The struct is already defined with the right shape. internal/verify/verdict.go produces *Verification values. The re-emit pass sets JSONFinding.Verification before writing findings.json. No struct changes needed — only the write path."
+    }
+  ],
+  "architecture_notes": [
+    "The verify stage is a SEPARATE stage after reconcile, not a modification to the reconciler. The reconciler stays deterministic (no LLM calls). Verify is the first LLM call after the review stage.",
+    "Skeptics reuse the existing tool loop (invokeToolLoop at loop.go:81) but with a per-finding scope: the skeptic sees ONE finding (not the whole review) and tries to disprove it. The prompt framing is 'try to prove this wrong' rather than 'find problems'.",
+    "The different-model rule is enforced at SKEPTIC SELECTION time, not at load. Use RoleSkeptic constant (registry/config.go:37). A skeptic sharing a model with any reviewer credited on the finding is ineligible. If no eligible skeptic exists, the finding gets verdict='unverifiable' with reason='no_eligible_skeptic'.",
+    "The Verification struct (emit.go:36) already exists and is already embedded in JSONFinding (line 59) as *Verification with omitempty. Epic 3.0 only needs to populate the field — no struct schema changes required.",
+    "WriteManifest is in internal/payload/manifest.go:86, NOT in reconcile/emit.go. To append 'verify' to the stages array: load manifest, append 'verify', call WriteManifest. The default ['review'] is enforced by WriteManifest when Stages is nil.",
+    "Refuted findings are demoted to LOW confidence but RETAINED in findings.json/report.md under a collapsed 'Refuted' section. Deletion would hide skeptic errors from the human.",
+    "The confidence model v2 adds VERIFIED (confirmed by skeptic) above HIGH. Unverified findings keep their v1 confidence (HIGH/MEDIUM/LOW). Refuted findings become LOW regardless of prior confidence.",
+    "Gate modification targets: CountAtOrAbove() at gate.go:57 (CLI/reconcile path) and failingFindings() at handlers.go:339 (MCP path). Both must be updated to exclude refuted and support --require-verified. There is no 'FailOn' function — that name does not exist in the codebase.",
+    "MCP tool registration lives in internal/mcp/server.go:buildServer() (line 57), not in handlers.go. The handler function goes in handlers.go following the handleReconcile (line 159) pattern.",
+    "Report test fixtures (internal/report/testdata/) will need new variants to cover confidence v2 tiers. The golden files report.md and checklist.md will change when the Refuted section and VERIFIED tier are added."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/registry/config.go",
+      "reason": "Activate Role field: add helpers to filter agents by role (Skeptics(), Reviewers()). Apply default role='reviewer' for empty Role at activation time (applyDefaults() already exists at line 262 — extend it).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "reason": "Add Verify method (or VerifyEngine) that takes a Finding + Skeptic roster and drives per-finding skeptic invocation via invokeToolLoop. Engine struct is at line 132.",
+      "scope": "major"
+    },
+    {
+      "path": "internal/reconcile/gate.go",
+      "reason": "Extend CountAtOrAbove (line 57) and AtOrAbove (line 42) to skip findings with verdict=='refuted' and support --require-verified counting (only VERIFIED confidence). NOTE: there is no 'FailOn' function to modify.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/reconcile/emit.go",
+      "reason": "Add a re-emit function that writes []JSONFinding (with *Verification populated) back to reconciled/findings.json. The Verification struct at line 36 already has the right shape — no struct changes needed.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/payload/manifest.go",
+      "reason": "Extend WriteManifest (line 86) or add a helper to append 'verify' to the Manifest.Stages []string (line 32). Called by the verify stage after it completes.",
+      "scope": "trivial"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "reason": "Register the new 'verify' subcommand at the AddCommand block (line 97).",
+      "scope": "trivial"
+    },
+    {
+      "path": "cmd/atcr/review.go",
+      "reason": "Add --verify flag that chains review → reconcile → verify in one run.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/mcp/server.go",
+      "reason": "Register atcr_verify MCP tool in buildServer() (line 57) via registerTool(). NOTE: registration is here, not in handlers.go.",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/mcp/handlers.go",
+      "reason": "Add handleVerify handler following the handleReconcile (line 159) pattern. Update failingFindings() (line 339) to exclude refuted findings and support --require-verified.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/report/render.go",
+      "reason": "Update Render() (line 45): add skeptic section, collapsed 'Refuted' section, confidence v2 tier display (VERIFIED > HIGH > MEDIUM > LOW).",
+      "scope": "major"
+    },
+    {
+      "path": "internal/report/testdata/report.md",
+      "reason": "Update golden output for Render() tests to include VERIFIED tier and Refuted section.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/report/testdata/checklist.md",
+      "reason": "Update golden checklist output for confidence v2 tiers.",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/registry.md",
+      "reason": "Update documentation: activate 'role' field for skeptic, document skeptic selection rules, different-model enforcement.",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/findings-format.md",
+      "reason": "Update documentation: the reserved 'verification' block is now produced by Epic 3.0. Document the verdict enum and confidence v2 tiers.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "cmd/atcr/verify.go",
+      "purpose": "The 'atcr verify' subcommand: Cobra command, flag parsing (--fresh, --thorough, --min-severity), registry load, call internal/verify, emit verification.json and re-emit reconciled artifacts.",
+      "based_on": "cmd/atcr/reconcile.go"
+    },
+    {
+      "path": "internal/verify/verify.go",
+      "purpose": "Core verify logic: skeptic selection (different-model rule using RoleSkeptic constant from registry/config.go:37), per-finding invocation via invokeToolLoop (loop.go:81), verdict collection, confidence v2 recomputation, re-emit via emit.go.",
+      "based_on": "internal/fanout/engine.go"
+    },
+    {
+      "path": "internal/verify/skeptic.go",
+      "purpose": "Skeptic prompt construction: given a Finding (from ReadReconciledFindings), build the 'try to disprove' prompt with evidence, code context, and verdict envelope spec.",
+      "based_on": null
+    },
+    {
+      "path": "internal/verify/verdict.go",
+      "purpose": "Verdict parsing: extract verdict (confirmed|refuted|unverifiable) + reasoning from skeptic response. Produce *reconcile.Verification. Handle malformed output (fallback: unverifiable with raw text preserved in Notes field).",
+      "based_on": null
+    },
+    {
+      "path": "personas/skeptic_base.md",
+      "purpose": "Base skeptic persona template: 'You are an adversarial skeptic. Your job is to try to disprove the following finding. Read the code, check the evidence, and return a verdict: confirmed, refuted, or unverifiable.'",
+      "based_on": "personas/_base.md"
+    },
+    {
+      "path": "docs/verification.md",
+      "purpose": "Documentation: verification mechanics, confidence v2, gate semantics, skeptic selection rules, cost controls.",
+      "based_on": null
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Verification struct population path",
+      "description": "The Verification struct (emit.go:36) and *Verification field on JSONFinding (emit.go:59) exist and are nil in 1.x output. Epic 3.0 must add a write path: internal/verify/verdict.go produces *Verification values, and internal/reconcile/emit.go needs a new function to write []JSONFinding back to reconciled/findings.json with these blocks set.",
+      "risk": "medium"
+    },
+    {
+      "gap": "WriteManifest location confusion",
+      "description": "WriteManifest is in internal/payload/manifest.go:86, not in reconcile/emit.go. Implementors must import internal/payload, not internal/reconcile, to update manifest stages.",
+      "risk": "low"
+    },
+    {
+      "gap": "Gate function naming mismatch",
+      "description": "Epic 3.0 docs/planning refer to 'FailOn' but no such function exists. The real targets are CountAtOrAbove (gate.go:57) for CLI path and failingFindings (handlers.go:339) for MCP path. Both need refuted-exclusion and --require-verified logic.",
+      "risk": "medium"
+    },
+    {
+      "gap": "MCP tool registration location",
+      "description": "New tools are registered in internal/mcp/server.go:buildServer() (line 57), not in handlers.go. The handler goes in handlers.go but registration goes in server.go.",
+      "risk": "low"
+    },
+    {
+      "gap": "Report golden file cascade",
+      "description": "internal/report/testdata/report.md and checklist.md are golden output files. When Render() is updated for v2 tiers and the Refuted section, these golden files will fail tests until updated. A new findings.json fixture variant with verification blocks must also be created.",
+      "risk": "medium"
+    },
+    {
+      "gap": "Transcript output path for skeptics",
+      "description": "Epic requires verify/raw/<skeptic>/transcript.jsonl (2.0 format). The 2.0 transcript writer is reused, but the output directory (reconciled/verify/raw/<skeptic>/ vs sources/verify/raw/<skeptic>/) must be decided and wired into the verify stage before the loop runs.",
+      "risk": "low"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "internal/verify/*_test.go, cmd/atcr/verify_test.go",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/fanout/loop_test.go",
+    "golden_files": "internal/report/testdata/ (report.md, checklist.md, findings.json)"
+  }
+}

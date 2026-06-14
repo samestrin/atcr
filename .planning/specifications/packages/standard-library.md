@@ -1,13 +1,13 @@
 # Go Standard Library Usage
 
-**Go Version:** 1.24+
+**Go Version:** 1.25+
 **Official Docs:** [pkg.go.dev/std](https://pkg.go.dev/std)
 **Tier:** Reference (consolidated)
 **Last Updated:** June 10, 2026
 
 ---
 
-Everything in atcr beyond the three third-party dependencies is intentionally standard library (Epic 1.0 constraint: keep the dependency tree small). This file documents which stdlib packages carry which subsystem and the conventions that apply.
+Everything in atcr beyond the five direct third-party dependencies (cobra, mcp-go-sdk, yaml.v3, testify, jsonschema-go) is intentionally standard library (Epic 1.0 constraint: keep the dependency tree small). This file documents which stdlib packages carry which subsystem and the conventions that apply.
 
 | Package | atcr subsystem |
 |---------|----------------|

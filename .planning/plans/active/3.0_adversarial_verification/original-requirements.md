@@ -1,0 +1,122 @@
+# Original Requirements
+
+**Date:** 2026-06-14
+**Arguments:** @.planning/epics/active/3.0_adversarial_verification.md
+**Target:** .planning/epics/active/3.0_adversarial_verification.md
+**Purpose:** Preserve the original input verbatim for traceability. Do not modify this file.
+
+---
+
+# Epic Plan 3.0: Adversarial Verification
+
+**Estimated Durations**: 3-4 weeks
+
+## Objective
+
+Add a verification stage in which skeptic agents — different models from the finders, with tool access — attempt to **refute** each unique finding before it reaches the final report. Verdicts feed a second confidence axis, refuted findings are demoted (never deleted), and `--fail-on` counts only non-refuted findings. This is the stage that makes the CI gate trustworthy enough to block merges.
+
+## Context
+
+False positives are the adoption killer for LLM code review: a panel that is 60% noise gets ignored within a week regardless of the other 40%. Epic 1.0's agreement-confidence helps (two independent reviewers agreeing is meaningful) but cannot catch shared blind spots — plausible-but-wrong findings that several models produce for the same reason. An adversarial pass by a model explicitly prompted to disprove the finding, with the Epic 2.0 tool loop available to check the actual code, attacks this directly.
+
+## Problem Statement
+
+1. Reviewer findings are unchallenged opinions; agreement between models is correlated, not independent, evidence.
+2. A CI gate on unverified findings either blocks merges on noise (and gets disabled) or is set so loose it catches nothing.
+3. Verifying every raw finding would double cost on duplicates; verification must run on deduped findings.
+
+## Proposed Solution
+
+### Pipeline placement
+
+`atcr verify [<id-or-path>]` runs **after** `atcr reconcile`, operating on `reconciled/findings.json` (unique, deduped findings — verification cost is paid once per finding, not once per duplicate). It writes `reconciled/verification.json` and re-emits the reconciled artifacts with verdicts and recomputed confidence. `atcr review --verify` (and the Skill) chains review → reconcile → verify in one run.
+
+### Skeptic mechanics
+
+- Skeptics are registry agents with `role: skeptic` (reserved in 1.1). Selection rule: a skeptic must be a **different model** than any reviewer credited on the finding — enforced by the engine, never left to configuration discipline alone.
+- Skeptic prompt contract: given the finding (problem, fix, evidence) and the payload context, *try to prove it wrong* — read the actual code via the 2.0 tool loop, check whether the claimed path is reachable, whether the cited line does what the finding claims. Output verdict + reasoning in a strict parseable envelope.
+- Verdicts: `confirmed` | `refuted` | `unverifiable` (could not be established either way — e.g., budget tripped, evidence outside the jail).
+- Votes: `verify.votes` config (default 1 skeptic per finding; 3 with majority rule for `--thorough`). Disagreeing skeptics → `unverifiable` with both reasonings preserved.
+
+### Confidence model v2
+
+| Tier | Meaning |
+|------|--------|
+| VERIFIED | Confirmed by skeptic(s) |
+| HIGH | 2+ independent reviewers, not yet verified or unverifiable |
+| MEDIUM | Single reviewer, not refuted |
+| LOW | Refuted — demoted, retained for audit with skeptic reasoning |
+
+Refuted findings stay in findings.json/report.md under a collapsed "Refuted" section — deletion would hide skeptic errors from the human.
+
+### Cost controls
+
+- `verify.min_severity` (default MEDIUM): findings below the floor skip verification and keep their v1 confidence.
+- Per-skeptic budgets reuse the 2.0 loop budgets; per-finding timeout.
+- Findings already VERIFIED in a previous run (re-verify after reconcile re-run) are skipped unless `--fresh`.
+
+### Gate semantics
+
+- `--fail-on <severity>` now counts findings at/above threshold whose verdict is not `refuted`. `--fail-on high --require-verified` counts only VERIFIED findings — the strictest gate.
+
+### Artifacts
+
+- `reconciled/verification.json`: per finding — skeptic(s), model(s), verdict, reasoning, budgets used, duration.
+- `sources/`-style transcripts: `verify/raw/<skeptic>/transcript.jsonl` (2.0 format).
+- `manifest.json` stages gains `"verify"`; summary.json gains verdict counts.
+- report.md: confidence tiers reordered, panel table gains a skeptic section, refuted section collapsed at the bottom.
+
+## Success Criteria
+
+### Functional
+- [ ] `atcr verify` runs skeptics over deduped findings and produces verification.json plus re-emitted reconciled artifacts with v2 confidence tiers.
+- [ ] Different-model rule enforced: a skeptic sharing a model with a crediting reviewer is never selected; if no eligible skeptic exists, the finding is `unverifiable` with reason `no_eligible_skeptic`.
+- [ ] Refuted findings are demoted to LOW, retained with skeptic reasoning, and excluded from `--fail-on` counts.
+- [ ] `--fail-on high --require-verified` passes/fails correctly across fixture matrices (confirmed/refuted/unverifiable × severities).
+- [ ] `verify.min_severity` floor and vote majority both honored.
+- [ ] Skill chains review → reconcile → verify and presents the verified report.
+
+### Quality
+- [ ] Skeptic envelope parsing tested against malformed outputs (fallback: `unverifiable` with raw text preserved).
+- [ ] End-to-end fixture: a deliberately false finding (plausible but wrong) gets refuted by a scripted mock skeptic; a true finding gets confirmed.
+- [ ] docs: verification.md (mechanics, confidence v2, gate semantics), registry.md (`role: skeptic`).
+
+## Task Breakdown (dependency order)
+
+1. **Skeptic selection + role plumbing:** registry `role` activation, different-model rule, eligibility resolution.
+2. **Skeptic invocation:** prompt contract + strict verdict envelope, reuse of the 2.0 tool loop, per-finding budgets, votes/majority.
+3. **Confidence v2 + re-emit:** verdict integration into reconciled artifacts, demotion rules, refuted retention.
+4. **`atcr verify` command + `--verify` chaining:** CLI, MCP tool (`atcr_verify`), manifest/summary updates.
+5. **Gate semantics:** `--fail-on` non-refuted counting, `--require-verified`.
+6. **Report updates:** tier reordering, skeptic panel, refuted section.
+7. **Docs + fixtures:** verification.md, fixture corpus with planted true/false findings.
+
+## Technical Constraints
+
+- Skeptics run on the same engine (lanes, budgets, partial-success) — no separate execution path.
+- Verification must be re-runnable and idempotent over the same reconciled input.
+- A skeptic failure (timeout, provider error) yields `unverifiable`, never a dropped finding and never a failed run by itself.
+
+## Out of Scope
+
+- Multi-round debate between finder and skeptic (Epic 4.0).
+- Executing code to prove/refute (Epic 5.0).
+- Auto-tuning skeptic rosters from historical accuracy.
+
+## Dependencies
+
+- Epic 2.0 (tool loop — skeptics without code access cannot meaningfully refute).
+- Epic 1.1 (`role` field, `verification` block reservation).
+
+## Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Over-eager skeptics refute true findings (false negatives) | Medium | High | Refuted findings retained and visible; default 1-vote conservative prompt ("refute only with concrete evidence"); `--thorough` majority voting; fixture corpus tracks refutation accuracy |
+| Skeptic and finder share blind spots despite different models | Medium | Medium | Different-model rule is necessary-not-sufficient; document the limit; Epic 4.0 debate adds pressure |
+| Cost doubling unacceptable for large reviews | Medium | Medium | min_severity floor, dedup-first placement, per-finding budgets, skip-already-verified |
+
+## Clarifications
+
+- **Q: Verify before or after reconcile?** A: After — verification cost is paid per unique finding, not per duplicate, and reconcile stays purely deterministic (no LLM calls inside it). `atcr verify` is its own stage and command. (2026-06-10)
+- **Q: What happens to refuted findings?** A: Demoted to LOW and retained with the skeptic's reasoning — never silently deleted, so a wrong refutation is visible to the human. (2026-06-10)
