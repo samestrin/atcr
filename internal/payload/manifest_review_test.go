@@ -93,6 +93,32 @@ func TestManifest_ReviewStage_SnapshotWorktreeMode(t *testing.T) {
 	assert.Equal(t, "/tmp/atcr-snapshot-abc1234", wtPath)
 }
 
+// AC 03-02 Scenario 5, no-snapshot branch: when Review is non-nil but no
+// snapshot actually ran, snapshot_mode and head_sha are omitted (omitempty) and
+// snapshot_worktree_path is still present as the explicit empty string. This
+// preserves the three-level contract: missing review block = no tool agent,
+// present review block with "" path = live snapshot, non-empty path = worktree.
+func TestManifest_ReviewStage_NoSnapshotRan(t *testing.T) {
+	m := &Manifest{
+		Base: "a", Head: "abc1234",
+		Review: &ReviewStage{
+			Agents:       []string{"agent-a"},
+			ToolsEnabled: []string{"agent-a"},
+			// SnapshotMode, HeadSHA, and SnapshotWorktreePath intentionally left
+			// zero so the serialization contract is tested.
+		},
+	}
+	review := reviewBlock(t, m)
+
+	assert.NotContains(t, review, "snapshot_mode", "no snapshot ran → snapshot_mode omitted")
+	assert.NotContains(t, review, "head_sha", "no snapshot ran → head_sha omitted")
+	require.Contains(t, review, "snapshot_worktree_path",
+		"no snapshot ran → snapshot_worktree_path still present as explicit empty string")
+	var wtPath string
+	require.NoError(t, json.Unmarshal(review["snapshot_worktree_path"], &wtPath))
+	assert.Equal(t, "", wtPath)
+}
+
 // AC 03-03 Scenario 5 (and AC 03-02 Scenario 5, live branch): a fast-path snapshot
 // records snapshot_mode "live" and snapshot_worktree_path as the explicit empty
 // string (present, not omitted) so a reader can distinguish live from missing.
