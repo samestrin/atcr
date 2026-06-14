@@ -666,6 +666,12 @@ func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePat
 	return "worktree", head, root
 }
 
+// resolveHeadSHA resolves a git ref to its full 40-byte SHA. Stub: returns the
+// input unchanged so the RED test fails at runtime rather than compile time.
+func resolveHeadSHA(repo, ref string) (string, error) {
+	return ref, nil
+}
+
 // rosterNames returns the full roster (parallel lane then serial lane).
 func rosterNames(p *registry.ProjectConfig) []string {
 	names := make([]string, 0, len(p.Agents)+len(p.SerialAgents))

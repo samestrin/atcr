@@ -429,6 +429,31 @@ func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "blocks")
 }
 
+// resolveHeadSHA must normalize symbolic refs and short SHAs to the full 40-byte
+// SHA before the value is stamped as head_sha in the manifest review stage.
+func TestResolveHeadSHA(t *testing.T) {
+	repo, base, head := initRepo(t)
+
+	full, err := resolveHeadSHA(repo, head)
+	require.NoError(t, err)
+	assert.Equal(t, head, full, "full SHA must pass through unchanged")
+
+	short := head[:12]
+	resolved, err := resolveHeadSHA(repo, short)
+	require.NoError(t, err)
+	assert.Equal(t, head, resolved, "short SHA must resolve to full SHA")
+
+	// HEAD is the second commit in initRepo.
+	resolvedHEAD, err := resolveHeadSHA(repo, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, head, resolvedHEAD, "symbolic HEAD must resolve to full SHA")
+
+	// Base is also a valid commit but not the current HEAD.
+	resolvedBase, err := resolveHeadSHA(repo, base)
+	require.NoError(t, err)
+	assert.Equal(t, base, resolvedBase)
+}
+
 func TestLoadReviewConfig_DiscoversConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
