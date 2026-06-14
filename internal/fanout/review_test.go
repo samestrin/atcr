@@ -454,6 +454,28 @@ func TestResolveHeadSHA(t *testing.T) {
 	assert.Equal(t, base, resolvedBase)
 }
 
+// snapshotManifestFields must recognize the live worktree even when the paths
+// are represented differently (trailing slash, relative vs. absolute, symlinks).
+func TestSnapshotManifestFields_PathNormalization(t *testing.T) {
+	dir := t.TempDir()
+
+	mode, _, _ := snapshotManifestFields(dir, dir, "")
+	assert.Equal(t, "live", mode, "identical paths should be live")
+
+	mode, _, _ = snapshotManifestFields(dir+"/", dir, "")
+	assert.Equal(t, "live", mode, "trailing slash should not force worktree mode")
+
+	absDir, err := filepath.Abs(dir)
+	require.NoError(t, err)
+	mode, _, _ = snapshotManifestFields(dir, absDir, "")
+	assert.Equal(t, "live", mode, "relative vs absolute same dir should be live")
+
+	// A genuinely different directory must still be worktree mode.
+	other := t.TempDir()
+	mode, _, _ = snapshotManifestFields(other, dir, "")
+	assert.Equal(t, "worktree", mode, "different directories should be worktree")
+}
+
 func TestLoadReviewConfig_DiscoversConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
