@@ -424,8 +424,17 @@ func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // registry the other handlers use (so a default verify call sees the same
 // roster as review/reconcile).
 func (e *engine) loadVerifyRegistry(path string) (*registry.Registry, error) {
-	if strings.TrimSpace(path) != "" {
-		return registry.LoadRegistry(path)
+	if p := strings.TrimSpace(path); p != "" {
+		// Path containment (parity with resolveReviewDir's id validation): an MCP
+		// client must not redirect registry reads to an arbitrary file on the
+		// server — that would be an information-disclosure surface. Reject absolute
+		// paths and any ".." segment, and resolve the override under the server
+		// root. The default (empty) path already loads the user/project registry,
+		// so callers needing the home registry simply omit registryPath.
+		if filepath.IsAbs(p) || strings.Contains(filepath.ToSlash(p), "../") || p == ".." {
+			return nil, fmt.Errorf("invalid registryPath %q: must be a relative path within the project", path)
+		}
+		return registry.LoadRegistry(filepath.Join(e.root, p))
 	}
 	cfg, err := fanout.LoadReviewConfig(e.root, registry.CLIOverrides{})
 	if err != nil {

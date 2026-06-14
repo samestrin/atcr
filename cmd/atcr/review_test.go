@@ -182,3 +182,17 @@ func TestReviewCmd_VerifyInvalidMinSeverity(t *testing.T) {
 	require.Equal(t, 2, code)
 	require.Contains(t, out, "CRITICAL")
 }
+
+// TestReviewCmd_RequireVerifiedNeedsVerifyAndFailOn verifies `review
+// --require-verified` is a usage error (exit 2) without both --verify and
+// --fail-on: a strict gate with no verdicts would silently pass everything.
+func TestReviewCmd_RequireVerifiedNeedsVerifyAndFailOn(t *testing.T) {
+	isolate(t)
+	// --require-verified alone (no --verify, no --fail-on) → exit 2.
+	code, out := execCmdCapture(t, "review", "--require-verified")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--require-verified requires --fail-on and --verify")
+	// --require-verified --verify but no --fail-on → exit 2.
+	code, _ = execCmdCapture(t, "review", "--require-verified", "--verify")
+	require.Equal(t, 2, code)
+}

@@ -66,6 +66,12 @@ var ErrNoReconciledFindings = errors.New("no reconciled findings")
 // a budget yields an "unverifiable" verdict, never a dropped finding or a failed
 // run. The only errors returned are setup failures (missing reconciled findings,
 // unreadable artifacts) before any verdict could be recorded.
+//
+// Findings (and the skeptics within a finding) are processed SERIALLY: unlike the
+// review fan-out there is no concurrency knob, so a --thorough run is
+// findings × votes provider calls back to back. This keeps the stage simple and
+// deterministic; parallelizing it across a bounded worker pool is tracked as
+// TD-009.
 func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts Options) (Result, error) {
 	// Production harness: a real chat client plus a read-only snapshot dispatcher
 	// of repoRoot at the review's head SHA. Built lazily (only when a skeptic will

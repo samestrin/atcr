@@ -99,3 +99,20 @@ func TestHandleReconcile_RequireVerified(t *testing.T) {
 	plain := callOK[ReconcileResult](t, cs, ToolReconcile, map[string]any{"fail_on": "HIGH"})
 	assert.False(t, plain.Pass, "CRITICAL fails a HIGH gate without require_verified")
 }
+
+// TestHandleVerify_RegistryPathTraversalRejected verifies an MCP client cannot
+// redirect the registry read to an arbitrary file via registryPath (path
+// containment, AC 04-03 Security): absolute paths and ".." escapes are rejected.
+func TestHandleVerify_RegistryPathTraversalRejected(t *testing.T) {
+	root := t.TempDir()
+	writeReviewConfig(t, root)
+	id := verifyReviewFixture(t, root, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Reviewers: []string{"greta"}},
+	})
+	cs := connectTest(t, root, fakeCompleter{})
+
+	for _, bad := range []string{"/etc/passwd", "../../../etc/passwd", ".."} {
+		msg := callErr(t, cs, ToolVerify, map[string]any{"id_or_path": id, "registryPath": bad})
+		assert.Contains(t, msg, "invalid registryPath", "registryPath %q must be rejected", bad)
+	}
+}

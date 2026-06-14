@@ -34,6 +34,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (default when unset: 10 from config, not unbounded)")
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
 	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
+	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
@@ -98,6 +99,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
 			return err
 		}
+	}
+
+	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
+	// It is meaningless without both a gate (--fail-on) and the verify stage that
+	// produces verdicts (--verify); a strict gate with no verdicts would silently
+	// pass everything. Fail fast as a usage error (parity with `atcr reconcile`).
+	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+	if requireVerified && (threshold == "" || !verifyFlag) {
+		return usageError(errors.New("--require-verified requires --fail-on and --verify"))
 	}
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
@@ -197,7 +207,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				if ferr != nil {
 					return usageError(ferr)
 				}
-				if n := reconcile.CountFailingJSON(findings, threshold, false); n > 0 {
+				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
 					return fmt.Errorf("%d finding(s) at or above %s survived verification", n, threshold)
 				}
 			}
