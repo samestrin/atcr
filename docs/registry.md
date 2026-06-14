@@ -196,7 +196,9 @@ Three optional per-agent guardrails bound what a reviewer contributes to the fan
 | `min_severity` | string (per agent) | `LOW` (no floor) | one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` (case-insensitive; normalized to upper-case) | **Hard** floor enforced in fan-out post-processing: findings below this severity are dropped from the agent's `findings.txt` before reconciliation. A dropped count is logged to stderr. |
 | `max_findings` | int (per agent) | — (unlimited) | must be `> 0` | **Hard** cap enforced in fan-out post-processing: the agent's findings are truncated to this many, keeping the **most severe** first (a severity-sorted cap, so a flood of `LOW` items can never push out a `HIGH` one). A truncated count is logged to stderr. |
 
-`min_severity` and `max_findings` are enforced deterministically in the fan-out per-source path (right after the engine stamps the `REVIEWER` column from the agent key), never in the reconciler — the reconciler stays source-agnostic. `scope` is applied earlier, as soft prompt injection at agent build time. A fallback agent inherits all three from the primary it stands in for (the constraint follows the slot, like the persona prompt).
+`min_severity` and `max_findings` are enforced deterministically in the fan-out per-source path (right after the engine stamps the `REVIEWER` column from the agent key), never in the reconciler — the reconciler stays source-agnostic. `scope` is applied earlier, as soft prompt injection at agent build time.
+
+**Put these fields on a *rostered* agent** (one listed in `agents` or `serial_agents`). A fallback inherits all three from the primary it stands in for — the constraint follows the slot, like the persona prompt — so `scope`/`min_severity`/`max_findings` set on an entry that is *only* reachable as a fallback are ignored: the primary's constraints govern whoever ultimately answers that slot.
 
 ```yaml
 agents:
@@ -204,13 +206,14 @@ agents:
     persona: bruce
     provider: openrouter
     model: anthropic/claude-3.7-sonnet
-    fallback: bruce-backup
-  # A weaker backup model, constrained so it can substitute without flooding the
-  # stream: focused on performance, no LOW noise, and a hard volume cap.
-  bruce-backup:
+  # A weaker model rostered directly (not as a fallback), constrained so it
+  # contributes a focused, bounded review instead of flooding the stream:
+  # performance-focused, no LOW noise, and a hard volume cap. Because it is a
+  # primary roster entry, its own constraints below actually take effect.
+  nemo:
     persona: bruce
     provider: openrouter
-    model: anthropic/claude-3.5-haiku
+    model: nvidia/nemotron-nano
     scope: ["performance", "efficiency"]   # soft focus hint injected into the prompt
     min_severity: MEDIUM                    # drop LOW findings before reconciliation
     max_findings: 20                        # keep at most the 20 most severe
