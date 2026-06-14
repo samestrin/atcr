@@ -124,6 +124,26 @@ func TestGateMatrix_RefutedNeverCounted(t *testing.T) {
 	}
 }
 
+// TestGateMatrix_NaturallyLowCounts: a finding with naturally-LOW v1 confidence
+// but HIGH severity and no refutation still counts at a HIGH gate — the gate keys
+// on severity + verdict, not confidence (AC 05-01 EC5 / 05-02).
+func TestGateMatrix_NaturallyLowCounts(t *testing.T) {
+	f := []Merged{{Finding: stream.Finding{Severity: SevHigh, Confidence: ConfLow}}} // nil Verification
+	assert.Equal(t, 1, CountAtOrAbove(f, SevHigh, false))
+}
+
+// TestGateMatrix_NonCanonicalVerdictCasing: a verdict stored in non-canonical
+// casing/whitespace (e.g. a hand-edited or externally-produced findings.json) is
+// still honored by the gate — refuted excluded, confirmed counted under
+// require-verified — mirroring the case-insensitive handling in confidenceV2.
+func TestGateMatrix_NonCanonicalVerdictCasing(t *testing.T) {
+	refuted := []Merged{mkMerged(SevHigh, "security", " Refuted ")}
+	assert.Equal(t, 0, CountAtOrAbove(refuted, SevHigh, false), "non-canonical refuted still excluded")
+
+	confirmed := []Merged{mkMerged(SevHigh, "security", "CONFIRMED")}
+	assert.Equal(t, 1, CountAtOrAbove(confirmed, SevHigh, true), "non-canonical confirmed still counts under require-verified")
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

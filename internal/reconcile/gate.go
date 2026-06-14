@@ -86,13 +86,21 @@ func IsFailing(severity, category string, v *Verification, threshold string, req
 	if category == CategoryOutOfScope {
 		return false // out-of-scope never counts, and this takes precedence over any verdict
 	}
-	if v != nil && v.Verdict == VerdictRefuted {
+	// Normalize the verdict (lower-cased, trimmed) before comparing so a
+	// non-canonical casing/whitespace in a hand-edited or externally-produced
+	// findings.json cannot smuggle a refuted finding past the exclusion or drop a
+	// confirmed one from the strict count — mirrors confidenceV2's handling.
+	verdict := ""
+	if v != nil {
+		verdict = strings.ToLower(strings.TrimSpace(v.Verdict))
+	}
+	if verdict == VerdictRefuted {
 		return false // a skeptic disproved it: retained but never blocks CI
 	}
 	if !AtOrAbove(severity, threshold) {
 		return false
 	}
-	if requireVerified && (v == nil || v.Verdict != VerdictConfirmed) {
+	if requireVerified && verdict != VerdictConfirmed {
 		return false // strictest gate: only a confirmed (VERIFIED) finding counts
 	}
 	return true
