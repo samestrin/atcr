@@ -73,7 +73,7 @@ func CountVerdicts(results []VerificationResult) VerdictCounts {
 }
 
 // WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
-// 03-02). VerifiedAt is stamped at call time (RFC 3339, UTC). VerdictCounts is
+// 03-02). VerifiedAt is stamped at call time (RFC 3339Nano, UTC). VerdictCounts is
 // derived from results via CountVerdicts so the tally can never drift from the
 // records it counts. Each result's nil TrippedBudgets is normalized to [] so the
 // field never serializes as null. The reconciled/ directory is created if absent.
@@ -86,7 +86,7 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
 		out[i] = r
 	}
 	vf := VerificationFile{
-		VerifiedAt:    time.Now().UTC().Format(time.RFC3339),
+		VerifiedAt:    time.Now().UTC().Format(time.RFC3339Nano),
 		Findings:      out,
 		VerdictCounts: CountVerdicts(results),
 	}

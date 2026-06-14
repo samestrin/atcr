@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -45,6 +46,21 @@ func TestWriteVerification_RoundTrip(t *testing.T) {
 	assert.Equal(t, 1, got.VerdictCounts.Refuted)
 	assert.Equal(t, 0, got.VerdictCounts.Unverifiable)
 	assert.NotEmpty(t, got.VerifiedAt)
+}
+
+func TestWriteVerification_VerifiedAtHasNanosecondPrecision(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+	require.NoError(t, WriteVerification(dir, []VerificationResult{}))
+
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json"))
+	require.NoError(t, err)
+	var got VerificationFile
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.NotEmpty(t, got.VerifiedAt)
+	ts, err := time.Parse(time.RFC3339Nano, got.VerifiedAt)
+	require.NoError(t, err, "VerifiedAt must be RFC3339Nano parseable")
+	assert.Greater(t, ts.Nanosecond(), 0, "VerifiedAt must include sub-second precision")
 }
 
 func TestWriteVerification_EmptyResults(t *testing.T) {
