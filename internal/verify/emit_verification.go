@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -62,7 +63,10 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
 			r.TrippedBudgets = []string{}
 		}
 		out[i] = r
-		switch r.Verdict {
+		// Normalize before tallying so a non-canonical verdict casing/whitespace
+		// is not silently dropped from the counts — mirrors confidenceV2's
+		// case-insensitive handling so the two never disagree.
+		switch strings.ToLower(strings.TrimSpace(r.Verdict)) {
 		case verdictConfirmed:
 			counts.Confirmed++
 		case verdictRefuted:

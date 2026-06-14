@@ -75,6 +75,25 @@ func TestWriteVerification_TrippedBudgetsSerializeAsArray(t *testing.T) {
 	assert.NotContains(t, string(data), `"trippedBudgets": null`)
 }
 
+func TestWriteVerification_NonCanonicalVerdictCounted(t *testing.T) {
+	// 3.2.A MEDIUM: verdict counting normalizes casing/whitespace so a
+	// non-canonical verdict is not silently dropped from verdictCounts.
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+	results := []VerificationResult{
+		{File: "a.go", Line: 1, Problem: "p", Verdict: "Confirmed", Skeptic: "s"},
+		{File: "b.go", Line: 2, Problem: "q", Verdict: " refuted ", Skeptic: "s"},
+	}
+	require.NoError(t, WriteVerification(dir, results))
+
+	data, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json"))
+	require.NoError(t, err)
+	var got VerificationFile
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, 1, got.VerdictCounts.Confirmed)
+	assert.Equal(t, 1, got.VerdictCounts.Refuted)
+}
+
 func TestWriteVerification_CreatesReconciledDir(t *testing.T) {
 	// AC 03-02 EC2: reconciled/ absent → created before write.
 	dir := t.TempDir()
