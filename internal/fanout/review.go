@@ -673,16 +673,16 @@ func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePat
 	return "worktree", head, root
 }
 
-// samePath reports whether a and b refer to the same existing directory, using
-// os.SameFile so differences in trailing slashes, relative vs absolute form, or
-// symlinks do not spuriously force worktree mode.
+// samePath reports whether a and b refer to the same directory, normalizing
+// trailing separators and relative vs absolute form so they do not spuriously
+// force worktree mode.
 func samePath(a, b string) bool {
-	fi1, err1 := os.Stat(a)
-	fi2, err2 := os.Stat(b)
+	absA, err1 := filepath.Abs(a)
+	absB, err2 := filepath.Abs(b)
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	return os.SameFile(fi1, fi2)
+	return absA == absB
 }
 
 // resolveHeadSHA resolves a git ref to its full 40-byte SHA. It is a defensive
