@@ -97,14 +97,14 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] All 7 original test cases covered (confirmed, refuted, unverifiable, malformed JSON, invalid enum, empty response, extra fields)
-- [ ] JSON extraction from markdown fences and prose implemented and tested
-- [ ] >= 95% coverage on `verdict.go`
+- [x] All 7 original test cases covered (confirmed, refuted, unverifiable, malformed JSON, invalid enum, empty response, extra fields)
+- [x] JSON extraction from markdown fences and prose implemented and tested
+- [x] >= 95% coverage on `verdict.go`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

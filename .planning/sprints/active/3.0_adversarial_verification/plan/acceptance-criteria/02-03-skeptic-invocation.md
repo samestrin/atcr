@@ -90,16 +90,16 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] No import cycle between `internal/verify` and `internal/fanout` (`go build ./...` verifies)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
+- [x] No import cycle between `internal/verify` and `internal/fanout` (`go build ./...` verifies)
 
 **Story-Specific:**
-- [ ] `invokeSkeptic` never propagates runtime errors to the caller — all failures captured in `Verification`
-- [ ] Only programming errors (nil args) return `error`
-- [ ] `Verification.Skeptic` is populated with the agent name in all paths
-- [ ] Tool loop is reused unchanged from `internal/fanout`
+- [x] `invokeSkeptic` never propagates runtime errors to the caller — all failures captured in `Verification`
+- [x] Only programming errors (nil args) return `error`
+- [x] `Verification.Skeptic` is populated with the agent name in all paths
+- [x] Tool loop is reused unchanged from `internal/fanout`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

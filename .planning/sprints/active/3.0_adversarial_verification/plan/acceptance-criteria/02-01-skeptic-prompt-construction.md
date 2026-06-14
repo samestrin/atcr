@@ -73,15 +73,15 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `buildSkepticPrompt` is a pure function with no side effects
-- [ ] Prompt contains all 5 required sections: role framing, finding details, code context, tool instructions, verdict envelope spec
-- [ ] Determinism verified by test (same input → identical output)
-- [ ] >= 95% coverage on `skeptic.go`
+- [x] `buildSkepticPrompt` is a pure function with no side effects
+- [x] Prompt contains all 5 required sections: role framing, finding details, code context, tool instructions, verdict envelope spec
+- [x] Determinism verified by test (same input → identical output)
+- [x] >= 95% coverage on `skeptic.go`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

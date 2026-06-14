@@ -80,16 +80,16 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `MaxTurns` forwarded from `AgentConfig` to `Agent.MaxTurns`
-- [ ] `ToolBudgetBytes` forwarded from `AgentConfig` to `Agent.ToolBudgetBytes`
-- [ ] `TimeoutSecs` forwarded from `AgentConfig` to `Agent.TimeoutSecs`
-- [ ] Tripped budget recorded in `Verification.Notes`
-- [ ] Test for each budget type (max_turns, tool_budget_bytes, timeout) verifies `unverifiable` verdict
+- [x] `MaxTurns` forwarded from `AgentConfig` to `Agent.MaxTurns`
+- [x] `ToolBudgetBytes` forwarded from `AgentConfig` to `Agent.ToolBudgetBytes`
+- [x] `TimeoutSecs` forwarded from `AgentConfig` to `Agent.TimeoutSecs`
+- [x] Tripped budget recorded in `Verification.Notes`
+- [x] Test for each budget type (max_turns, tool_budget_bytes, timeout) verifies `unverifiable` verdict
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

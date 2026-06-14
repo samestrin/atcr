@@ -79,15 +79,15 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors (`go vet ./internal/verify/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors (`go vet ./internal/verify/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Test asserts non-nil `*Verification` on every runtime failure path (provider error, timeout, malformed output, empty response, budget trip)
-- [ ] Test asserts nil `*Verification` is impossible for runtime failures
-- [ ] Structured logging present on all failure paths (verified by log capture in tests or code review)
-- [ ] `error` return is non-nil ONLY for programming errors (nil args)
+- [x] Test asserts non-nil `*Verification` on every runtime failure path (provider error, timeout, malformed output, empty response, budget trip)
+- [x] Test asserts nil `*Verification` is impossible for runtime failures
+- [x] Structured logging present on all failure paths (verified by log capture in tests or code review)
+- [x] `error` return is non-nil ONLY for programming errors (nil args)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

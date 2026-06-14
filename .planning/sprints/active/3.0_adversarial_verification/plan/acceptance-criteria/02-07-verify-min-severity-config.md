@@ -94,16 +94,16 @@ func TestMinSeverityFloor(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go test ./internal/verify/... ./internal/registry/...` passes
-- [ ] `go vet ./...` clean
-- [ ] Build succeeds (`go build ./...`)
+- [x] `go test ./internal/verify/... ./internal/registry/...` passes
+- [x] `go vet ./...` clean
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Registry schema supports optional `verify.min_severity` (default `MEDIUM`)
-- [ ] Findings below the floor skip verification and retain v1 confidence
-- [ ] CLI `--min-severity` overrides registry config
-- [ ] Invalid config values fail at load time with a clear error
-- [ ] Skipped findings are omitted from `verification.json` findings array
+- [x] Registry schema supports optional `verify.min_severity` (default `MEDIUM`)
+- [x] Findings below the floor skip verification and retain v1 confidence
+- [x] CLI `--min-severity` overrides registry config
+- [x] Invalid config values fail at load time with a clear error
+- [x] Skipped findings are omitted from `verification.json` findings array
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

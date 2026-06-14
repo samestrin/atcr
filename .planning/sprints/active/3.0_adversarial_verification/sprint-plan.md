@@ -159,6 +159,48 @@ Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`
 
 ---
 
+## Clarifications
+
+### Phase 2 Clarifications (recorded 2026-06-14)
+
+The three planning documents specify three different `invokeSkeptic` signatures and
+do not fully pin the Phase 2 contracts. Resolved below against the acceptance criteria
+(the DoD validation source of truth) and the actual code. No user input was required;
+recorded here for the Phase 2 gate review.
+
+**Key Decisions:**
+1. **`invokeSkeptic` signature follows AC 02-03:** `invokeSkeptic(ctx context.Context,
+   skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher)
+   (*reconcile.Verification, error)`. Only this form supports AC 02-03's distinct
+   nil-ctx / nil-cc / nil-disp programming-error guards. `invokeToolLoop` is unexported,
+   so invocation goes through `fanout.NewEngine(cc, fanout.WithDispatcher(disp))` +
+   `Engine.Run` with a single tool-enabled `Slot`. Runtime failures (provider error,
+   timeout, budget trip, malformed output) are captured as `verdict:"unverifiable"` and
+   NEVER propagated; the `error` return fires only for nil programming args.
+2. **`Dispatcher` is a verify-local interface** mirroring `fanout`'s unexported
+   `toolDispatcher` (`Execute(ctx, name, args json.RawMessage) (tools.ToolResult, error)`),
+   so tests inject a fake and production passes `*tools.Dispatcher`. Passing it to the
+   exported `fanout.WithDispatcher` is valid (structural satisfaction of the unexported
+   interface).
+3. **Registry gains a `verify` block (AC 02-07):** `VerifyConfig{MinSeverity, Votes}`
+   added to `internal/registry/config.go`, load-time validated (invalid severity →
+   error listing LOW/MEDIUM/HIGH/CRITICAL), defaulted to MEDIUM / 1. A pure severity-
+   floor predicate lives in `internal/verify`.
+
+**Scope Boundaries (Phase 2):**
+- IN: prompt construction, verdict parsing, skeptic invocation, vote aggregation,
+  registry `verify.min_severity` + floor predicate.
+- DEFERRED to later phases (captured in `tech-debt-captured.md` where production-
+  affecting): skeptic `Invocation` provider endpoint (BaseURL/APIKeyEnv) wiring
+  (Phase 4 orchestration owns registry.Providers); CLI `--min-severity` override and
+  `verification.json` `minSeverity` field (Phase 3/4).
+
+**Technical Approach:** Tool loop reused unchanged via `Engine.Run`; skeptic `Agent`
+sets `Tools=true, SupportsFC=true` and forwards `MaxTurns`/`ToolBudgetBytes`/`TimeoutSecs`
+from the skeptic `AgentConfig`; `Result.TrippedBudgets` → `Verification.Notes`.
+
+---
+
 ## Sprint Phases
 
 ---
@@ -347,7 +389,7 @@ Use the Agent tool:
 
 ---
 
-### 2.1 [ ] **[Skeptic Invocation — RED](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
+### 2.1 [x] **[Skeptic Invocation — RED](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
 
 **Mode:** Moderate | **ACs:** [02-01](plan/acceptance-criteria/02-01-skeptic-prompt-construction.md) [02-02](plan/acceptance-criteria/02-02-verdict-parsing.md) [02-03](plan/acceptance-criteria/02-03-skeptic-invocation.md) [02-04](plan/acceptance-criteria/02-04-failure-isolation.md) [02-05](plan/acceptance-criteria/02-05-budget-forwarding.md) [02-06](plan/acceptance-criteria/02-06-test-coverage.md) [02-07](plan/acceptance-criteria/02-07-verify-min-severity-config.md)
 
@@ -386,7 +428,7 @@ Use the Agent tool:
 
 ---
 
-### 2.2 [ ] **[Skeptic Invocation — GREEN](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
+### 2.2 [x] **[Skeptic Invocation — GREEN](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
 
 **Mode:** Moderate | **ACs:** 02-01 through 02-07
 
@@ -446,19 +488,22 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (1 HIGH, 3 MEDIUM, 3 LOW):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| HIGH | invoke.go:88-92 | `buildSkepticAgent` builds the `llmclient.Invocation` with only Model/Temperature/Prompt and drops `Config.Provider`; `Chat` resolves routing from `inv.BaseURL`/`inv.APIKeyEnv` (chat.go:134, client.go:161). In production every skeptic call would hit an empty endpoint with no key → auth fail → all findings degrade to `unverifiable` (feature no-ops; fake-driven tests still pass). | FIXED in 2.3: `Skeptic` gains a resolved `Provider registry.Provider`; `SelectEligibleSkeptics` populates it from `reg.Providers`; `buildSkepticAgent` sets BaseURL/APIKeyEnv. AC 02-03 signature `(ctx, skeptic, prompt, cc, disp)` preserved exactly. |
+| MEDIUM | invoke.go:51-53 | `engine.Run(...)[0]` indexed unconditionally; a future engine returning an empty slice would panic, violating the never-propagate-runtime-error contract. | FIXED in 2.3: length guard → `unverifiable` with `engine_returned_no_result`. |
+| MEDIUM | invoke.go:78 | `SupportsFC` hardcoded `true`; a non-FC skeptic model is forced into the tool loop instead of degrading. Drops `Config.SupportsFC`. | FIXED in 2.3: forward `skeptic.Config.SupportsFC` (mirrors `fanout.buildAgent`); test skeptics set `SupportsFC:true`. |
+| MEDIUM | invoke.go:88-93 | Prompt set on both `Agent.Prompt` and `Invocation.Prompt`. | DISMISSED: both assigned from the same `prompt` variable in one call — cannot diverge. `Agent.Prompt` is part of the engine's Agent contract; `Invocation.Prompt` is what the loop reads. Kept intentionally. |
+| LOW | verdict.go:41,50 | Raw `response` concatenated unbounded into `Notes` (flows to findings.json/report). Not injection (enum switch-validated) but an unbounded diagnostic sink. | FIXED in 2.3: `truncateForNotes` caps the embedded raw text. |
+| LOW | invoke.go:59-65 | A tripped budget discards a possibly-valid verdict in `res.Content`. | DISMISSED: AC-mandated conservative behavior (AC 02-05 — tripped budget → `unverifiable`). Documented in the code comment. |
+| LOW | skeptic.go:42-47 | Code-context fence is a fixed ```` ``` ````; a file body containing a fence line could break out. Low risk (skeptic is adversarial-by-design, enum validated downstream). | DEFERRED → TD-003 (collision-safe fencing in the skeptic prompt). |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** HIGH fixed inline in 2.3 (provider routing — would have no-opped the feature in production). Two MEDIUMs fixed (panic guard, SupportsFC forwarding); one MEDIUM dismissed with rationale. One LOW fixed (Notes truncation); one LOW dismissed (by-design); one LOW deferred to `tech-debt-captured.md` (TD-003).
 
 ---
 
-### 2.3 [ ] **[Skeptic Invocation — REFACTOR](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
+### 2.3 [x] **[Skeptic Invocation — REFACTOR](plan/user-stories/02-skeptic-invocation-verdict-parsing.md)**
 
 1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
 2. Improve code and tests: ensure `invokeSkeptic` error-capture contract is clearly commented (the only place a comment is warranted), structured logging added at invocation site (skeptic name, finding ID, error class)
@@ -470,27 +515,27 @@ Use the Agent tool:
 
 ---
 
-### 2.4 [ ] **Phase 2 DoD Verification**
+### 2.4 [x] **Phase 2 DoD Verification**
 
 **Run all checks — all must pass before gate:**
 
-- [ ] `go test ./internal/verify/...` — all passing
-- [ ] Verdict parsing: all 7 test cases pass (confirmed, refuted, unverifiable, malformed JSON, invalid enum, empty response, extra fields)
-- [ ] Invocation: provider error → `unverifiable`, budget trip → `unverifiable`, `invokeSkeptic` never propagates runtime errors
-- [ ] Vote aggregation: unanimous, majority, disagreement cases all tested
-- [ ] Coverage ≥ 95% on `skeptic.go`, `verdict.go`, `invoke.go`, `votes.go`
-- [ ] `go vet ./...` clean; `go build ./...` succeeds
-- [ ] Fixture files exist: `testdata/true-finding.json`, `testdata/false-finding.json`, `testdata/malformed-response.txt`
+- [x] `go test ./internal/verify/...` — all passing (-race clean)
+- [x] Verdict parsing: all 7 test cases pass + edge cases (16 subtests: confirmed, refuted, unverifiable, malformed JSON, invalid enum, empty response, extra fields, fenced, prose-embedded, empty/missing reasoning, braces-in-reasoning, unbalanced brace, truncation, fixture)
+- [x] Invocation: provider error → `unverifiable`, budget trips (max_turns, tool_budget_bytes) → `unverifiable`, context cancel → `unverifiable`, `invokeSkeptic` never propagates runtime errors (nil-arg guards return error)
+- [x] Vote aggregation: unanimous, majority (confirm & refute), disagreement/tie, single, empty, three-way split all tested
+- [x] Coverage ≥ 95% on `skeptic.go` (96.8%), `verdict.go` (97.2%), `invoke.go` (95.3%), `votes.go` (97.4%); package total 97.1%
+- [x] `go vet ./...` clean; `go build ./...` succeeds (no import cycle; boundary allowlist updated)
+- [x] Fixture files exist: `testdata/true-finding.json`, `testdata/false-finding.json`, `testdata/malformed-response.txt`
 
 ```
 Phase 2 DoD Complete
-Auto: [_]/6 | Story-Specific: [_]/5 (7 verdict cases + 5 invocation paths + majority rule)
-Manual Review: [ ] Code reviewed
+Auto: [6]/6 | Story-Specific: [5]/5 (7+ verdict cases + 5+ invocation paths + majority rule)
+Manual Review: [x] Code reviewed (2.2.A adversarial subagent — 1 HIGH fixed inline, MEDIUM/LOW triaged)
 ```
 
 ---
 
-### 2.5 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+### 2.5 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 2
 
@@ -515,15 +560,21 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Gate review (PASSED — no findings):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| None | None | None | None |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary. Re-run gate.
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Phase gate passed" and proceed to phase stop
+Independently verified by the gate subagent (build, vet, `go test ./internal/verify/... ./internal/registry/...` all green, 97.1% coverage):
+- CONTRACT EXIT: `invokeSkeptic(ctx, skeptic, prompt, cc, disp) (*reconcile.Verification, error)` — runtime failures collapse to `unverifiable`; error only for nil args; zero-result guard prevents panic.
+- CONFIG SURFACE: `verify.min_severity` (default MEDIUM) and `verify.votes` (default 1) defaulted + validated at load.
+- INTEGRATION: no import cycle (`fanout` does not import `verify`); boundary allowlist lists verify's 6 deps.
+- PHASE-EXIT: `pipeline.go` (package `verify`) can call `buildSkepticPrompt`/`invokeSkeptic`/`aggregateVerdicts`/`meetsSeverityFloor`/`parseVerdict` with no rework; they compose into the per-finding pipeline.
+- REGRESSION: `select_test.go` passes with the added `Skeptic.Provider` field.
+
+Non-blocking observations (intentional, documented): (1) a `supports_function_calling=false` skeptic degrades to single-shot — mirrors fanout's per-agent capability gate; (2) Phase 3 must wire `reg.Verify.Votes` → the `n` arg of `SelectEligibleSkeptics` (expected orchestration scope).
+
+**Action Taken:** No CRITICAL/HIGH (no findings at all). **Phase gate passed.** Proceeding to gated-mode phase stop.
 
 **Duration:** 15-30 min
 
