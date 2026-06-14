@@ -284,6 +284,30 @@ func (r *Registry) applyDefaults() {
 	}
 }
 
+// AgentsByRole returns the agents whose effective role matches role, keyed by
+// agent name. An empty Role is normalized to RoleReviewer for the comparison
+// only (backward compatibility for 1.x configs); the underlying AgentConfig is
+// never mutated, preserving the loader's "explicitly set vs inherited default"
+// distinction (option-a decision, see roleValid). The result is always a
+// non-nil map — empty when nothing matches, the registry is empty, or the
+// receiver is nil. An unknown role simply matches nothing.
+func (r *Registry) AgentsByRole(role string) map[string]AgentConfig {
+	out := make(map[string]AgentConfig)
+	if r == nil {
+		return out
+	}
+	for name, a := range r.Agents {
+		effective := a.Role
+		if effective == "" {
+			effective = RoleReviewer
+		}
+		if effective == role {
+			out[name] = a
+		}
+	}
+	return out
+}
+
 // EffectiveTimeoutSecs returns the agent's own timeout when set, otherwise
 // the resolved shared timeout.
 func (a AgentConfig) EffectiveTimeoutSecs(s Settings) int {
