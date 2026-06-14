@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 3 |
 | MEDIUM | 0 | 0 | 42 |
-| LOW | 3 | 1 | 101 |
+| LOW | 5 | 1 | 101 |
 
-**Last Modified:** 2026-06-13 | **Open Items:** 3 | **Deferred Items:** 1 | **Resolved Items:** 146 | **Total Items:** 150
+**Last Modified:** 2026-06-13 | **Open Items:** 5 | **Deferred Items:** 1 | **Resolved Items:** 146 | **Total Items:** 152
 
 ## Directory Structure
 
@@ -32,6 +32,13 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-13] From Sprint: epic-2.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/fanout/postprocess.go:1 | Dropped/truncated finding counts from min_severity/max_findings enforcement are logged to stderr but not persisted in the per-agent status.json | Add dropped_by_min_severity and truncated_by_max_findings counters to AgentStatus so the post-processing volume reduction is observable after the run, not just in transient stderr | observability | 30 | execute-epic-stage3 |
+| U | [ ] | LOW | internal/fanout/postprocess.go:34 | Local variable `min` shadows the Go 1.21+ builtin min/max inside enforceConstraints | Rename the local to floorRank to avoid shadowing the builtin (readability) | style | 5 | execute-epic-independent |
 
 ### [2026-06-13] From Code Review: epic-2.1
 
