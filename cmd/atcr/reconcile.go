@@ -93,7 +93,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 // by either the manifest recording the "verify" stage or a verification.json
 // being present. Best-effort: any read error is treated as "not run".
 func verifyStageRan(reviewDir string) bool {
-	if _, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil {
+	if info, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil && !info.IsDir() {
 		return true
 	}
 	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
