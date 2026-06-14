@@ -324,7 +324,8 @@ func TestJSONFindings_PreservesVerification(t *testing.T) {
 
 	// Full RenderJSON/ReadReconciledFindings round-trip.
 	dir := t.TempDir()
-	require.NoError(t, Emit(dir, res))
+	reconDir := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, Emit(reconDir, res))
 	readBack, err := ReadReconciledFindings(dir)
 	require.NoError(t, err)
 	require.Len(t, readBack, 1)

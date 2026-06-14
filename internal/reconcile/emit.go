@@ -85,6 +85,7 @@ func (r Result) JSONFindings() []JSONFinding {
 			Reviewers:    m.Reviewers,
 			Confidence:   m.Confidence,
 			Disagreement: m.Disagreement,
+			Verification: m.Verification,
 		})
 	}
 	return out
