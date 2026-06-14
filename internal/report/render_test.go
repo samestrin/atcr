@@ -193,25 +193,28 @@ func TestRender_UnknownFormatErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown format")
 }
 
-// --- Epic 1.1: report renders identically regardless of the reserved
-// verification block (success criterion: render is identical with or without it) ---
+// --- Epic 3.0 Phase 5: the verification block is now rendered (it was inert/
+// reserved in Epic 1.1). A NIL block still renders byte-identically to v1 (the
+// backward-compat guarantee, AC 06-02); a NON-NIL block now adds skeptic info. ---
 
-// TestRender_IdenticalWithAndWithoutVerification verifies that adding the
-// reserved verification block to a finding does not change markdown or
-// checklist output, and only adds the (round-tripped) verification key to JSON.
-func TestRender_IdenticalWithAndWithoutVerification(t *testing.T) {
+// TestRender_VerificationBlockAddsSkepticSection supersedes the Epic 1.1
+// "identical with or without verification" test: now a non-nil verification block
+// changes the markdown render (Skeptic section / VERIFIED tier), while a nil block
+// leaves output unchanged and JSON omits the verification key.
+func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
 	without := sample()
 	with := sample()
+	with[0].Confidence = "VERIFIED"
 	with[0].Verification = &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
 
-	for _, format := range []string{FormatMarkdown, FormatChecklist} {
-		t.Run(format, func(t *testing.T) {
-			var a, b strings.Builder
-			require.NoError(t, Render(&a, without, format))
-			require.NoError(t, Render(&b, with, format))
-			assert.Equal(t, a.String(), b.String(), "human formats ignore the reserved verification block")
-		})
-	}
+	t.Run("markdown-differs-and-shows-skeptic", func(t *testing.T) {
+		var a, b strings.Builder
+		require.NoError(t, Render(&a, without, FormatMarkdown))
+		require.NoError(t, Render(&b, with, FormatMarkdown))
+		assert.NotEqual(t, a.String(), b.String(), "a non-nil verification block now changes markdown output")
+		assert.NotContains(t, a.String(), "Skeptic: otto")
+		assert.Contains(t, b.String(), "Skeptic: otto — confirmed")
+	})
 
 	t.Run("json-omitted-when-absent", func(t *testing.T) {
 		var a strings.Builder
