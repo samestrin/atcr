@@ -38,7 +38,17 @@
 - **Relevant:** This is the output stage of Epic 3.0. Without confidence v2 and artifact re-emission, skeptic verdicts have no effect — they sit in memory and are lost. This story makes verification durable: the reconciled artifacts reflect the v2 confidence model, and downstream consumers (report, gate, MCP) can read them.
 - **Time-bound:** Expected to complete within weeks 2–3 of the 3–4 week epic (immediately after Story 2).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-confidence-v2-recomputation.md) | Confidence V2 Recomputation | Unit |
+| [03-02](../acceptance-criteria/03-02-verification-json-emission.md) | Verification JSON Emission | Unit |
+| [03-03](../acceptance-criteria/03-03-findings-re-emit.md) | Findings Re-Emit with Verification Blocks | Unit |
+| [03-04](../acceptance-criteria/03-04-manifest-summary-updates.md) | Manifest Stage & Summary Verdict Updates | Unit |
+| [03-05](../acceptance-criteria/03-05-gate-excludes-refuted.md) | Gate Counter Excludes Refuted Findings | Unit |
+
+## Original Criteria Overview
 
 1. `confidenceV2` recomputes confidence per the v2 model: `confirmed` → `VERIFIED`, `refuted` → `LOW`, `unverifiable` → retains v1 confidence. The function is pure and unit-tested for all verdict × v1-confidence combinations.
 2. `WriteVerification` writes `reconciled/verification.json` with the schema defined in verification-pipeline.md: `verifiedAt`, `minSeverity`, `fresh`, `thorough`, `findings[]` (with file, line, problem, verdict, skeptic, model, reasoning, durationMs, trippedBudgets), and `verdictCounts`.
@@ -48,8 +58,6 @@
 6. The `--fail-on` gate counter (`CountAtOrAbove` at `internal/reconcile/gate.go:57`) excludes refuted findings (confidence=LOW and verdict=refuted) from the count. This is enforced by filtering `[]reconcile.Merged` before counting.
 7. All artifact writes (verification.json, findings.json, manifest.json, summary.json) are atomic: write to temp file in the same directory, then rename. This prevents partial writes on crash.
 8. Table-driven unit tests cover: confidence v2 recomputation (all verdict × v1-confidence combos), verification.json round-trip, findings re-emit with verification block, manifest stage idempotency, summary verdict counts, gate exclusion of refuted findings.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`_
 
 ## Technical Considerations
 
@@ -96,4 +104,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversari
 ---
 
 **Created:** June 14, 2026 09:06:20AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Generated - Ready for Implementation

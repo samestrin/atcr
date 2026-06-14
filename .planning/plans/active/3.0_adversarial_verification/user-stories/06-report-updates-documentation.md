@@ -37,7 +37,16 @@
 - **Relevant:** This is the visibility layer of Epic 3.0. Without report updates, developers cannot see skeptic verdicts in the output — the entire verification pipeline is invisible. Without documentation, operators cannot configure skeptics or understand the v2 confidence model. Without fixtures, end-to-end testing (Story 2 verdict parsing, Story 7 integration tests) has no grounded test data.
 - **Time-bound:** Expected to complete within weeks 3–4 of the 3–4 week epic (the final story, after all pipeline infrastructure is in place).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-report-rendering-with-verification.md) | Report Rendering with Verification Sections | Integration |
+| [06-02](../acceptance-criteria/06-02-backward-compatibility-v1.md) | Backward Compatibility with V1 Findings | Unit |
+| [06-03](../acceptance-criteria/06-03-verification-documentation.md) | Verification Documentation | Unit |
+| [06-04](../acceptance-criteria/06-04-verification-fixture-corpus.md) | Verification Fixture Corpus | Unit |
+
+## Original Criteria Overview
 
 1. Report renderer displays a Skeptic section in the panel table for each verified finding, showing skeptic name, model, verdict, and reasoning.
 2. Report renderer displays a collapsed Refuted section at the bottom of the report, listing refuted findings with skeptic reasoning, hidden behind a collapsible toggle.
@@ -47,8 +56,6 @@
 6. Fixture corpus at `internal/verify/testdata/` contains `true-finding.json` (planted true finding, parseable as `reconcile.JSONFinding`), `false-finding.json` (planted false finding, parseable as `reconcile.JSONFinding`), and `malformed-response.txt` (non-parseable skeptic response text).
 7. Golden file test `TestRenderWithVerification` passes with a `findings-with-verification.json` input fixture and updated `report.md` golden file.
 8. Backward compatibility test `TestRenderV1Findings` passes — findings without verification blocks produce identical output to pre-Epic 3.0 golden files.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`_
 
 ## Technical Considerations
 
@@ -89,4 +96,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversari
 ---
 
 **Created:** June 14, 2026 09:06:20AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Accepted — 4 AC files generated

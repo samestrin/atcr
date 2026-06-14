@@ -36,15 +36,23 @@
 - **Relevant:** Without role-based filtering and the different-model rule, the skeptic stage cannot function — every subsequent story (skeptic invocation, verdict parsing, confidence v2, gate integration) depends on this API.
 - **Time-bound:** Expected to complete within the first week of the 3-4 week epic.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-agentsbyrole-filtering.md) | AgentsByRole Filtering | Unit |
+| [01-02](../acceptance-criteria/01-02-different-model-exclusion.md) | Different-Model Exclusion Rule | Unit |
+| [01-03](../acceptance-criteria/01-03-empty-selection-unverifiable.md) | Empty Selection and Unverifiable Verdict Contract | Unit |
+| [01-04](../acceptance-criteria/01-04-empty-role-backward-compat.md) | Empty-Role Backward Compatibility | Unit |
+| [01-05](../acceptance-criteria/01-05-test-coverage-requirements.md) | Comprehensive Table-Driven Test Coverage | Unit |
+
+## Original Criteria Overview
 
 1. `Registry.AgentsByRole(role)` returns a filtered map of agents matching the given role constant; returns empty map for unknown roles.
 2. `SelectEligibleSkeptics(finding, n)` enforces the different-model rule: a skeptic sharing `Model` with any entry in `finding.Reviewers` is excluded.
 3. When no eligible skeptic exists (no skeptics registered, or all share models with reviewers), the result is an empty selection — callers map this to `verdict="unverifiable", notes="no_eligible_skeptic"`.
 4. Empty-role agents (1.x configs with no `role` field) are treated as `RoleReviewer` by `AgentsByRole` — backward compatible with existing registries.
 5. Table-driven unit tests cover: mixed-role registry filtering, different-model exclusion, no-eligible-skeptic edge case, empty-role defaulting, and n-selection with fewer candidates than requested.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`_
 
 ## Technical Considerations
 
@@ -74,4 +82,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversari
 ---
 
 **Created:** June 14, 2026 09:06:20AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Ready for Implementation

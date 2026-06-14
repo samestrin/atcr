@@ -38,7 +38,16 @@
 - **Relevant:** Without CLI and MCP entry points, the verification pipeline is inaccessible to users. This story is the deliverable — it makes Epic 3.0 usable.
 - **Time-bound:** Expected to complete within week 3 of the 3–4 week epic (immediately after Story 3).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-verify-subcommand.md) | `atcr verify` CLI Subcommand | Unit |
+| [04-02](../acceptance-criteria/04-02-review-verify-chaining.md) | `atcr review --verify` Chaining | Unit |
+| [04-03](../acceptance-criteria/04-03-mcp-verify-tool.md) | `atcr_verify` MCP Tool | Integration |
+| [04-04](../acceptance-criteria/04-04-artifact-consistency-error-handling.md) | Artifact Consistency, Error Handling & Integration Tests | Integration |
+
+## Original Criteria Overview
 
 1. `atcr verify [id-or-path]` subcommand exists in `cmd/atcr/verify.go`, registered in `main.go`, with `--fresh`, `--thorough`, and `--min-severity` flags. It loads the registry, loads reconciled findings, calls `verify.Verify`, and emits all artifacts.
 2. `atcr review --verify` chains review → reconcile → verify in one run, mirroring the existing `--reconcile` chaining behavior. `--verify` implies `--reconcile` (verification requires reconciled input).
@@ -46,8 +55,6 @@
 4. All three entry points (CLI verify, CLI review --verify, MCP atcr_verify) produce identical artifacts for the same input: `verification.json`, re-emitted `findings.json` with verification blocks, `manifest.json` with `"verify"` stage, `summary.json` with `verdictCounts`.
 5. Error handling follows established patterns: missing reconciled findings produces a clear error message suggesting `atcr reconcile` first; registry load failures propagate; skeptic invocation failures produce `unverifiable` verdicts (never crash the run).
 6. Integration tests cover: CLI invocation with all flag combinations, MCP handler invocation, `--verify` chaining, missing-input error path, and idempotent re-runs.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`_
 
 ## Technical Considerations
 
@@ -88,4 +95,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversari
 ---
 
 **Created:** June 14, 2026 09:06:20AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Defined

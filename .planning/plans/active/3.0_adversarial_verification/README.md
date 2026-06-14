@@ -4,7 +4,7 @@ Plan 3.0 adds an adversarial verification stage to atcr. After `atcr reconcile` 
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/3.0_adversarial_verification/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/3.0_adversarial_verification/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/3.0_adversarial_verification/`
 

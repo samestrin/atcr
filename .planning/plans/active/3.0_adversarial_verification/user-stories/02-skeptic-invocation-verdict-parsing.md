@@ -38,16 +38,7 @@
 - **Relevant:** This is the core execution engine of Epic 3.0. Without skeptic invocation and verdict parsing, there is no verification stage — no verdicts to feed confidence v2, no refuted findings to demote, no verified findings to trust. Every downstream story depends on this producing `*Verification` values per finding.
 - **Time-bound:** Expected to complete within weeks 1–2 of the 3–4 week epic (immediately after Story 1).
 
-## Acceptance Criteria Overview
 
-1. `buildSkepticPrompt` produces a deterministic prompt containing: role framing ("adversarial skeptic, try to disprove"), finding details (problem, fix, evidence, severity, confidence), code context from `[]payload.FileEntry`, tool-access instructions, and the JSON verdict envelope spec.
-2. `invokeSkeptic` drives the selected skeptic through `invokeToolLoop` with the constructed prompt and returns a `*reconcile.Verification`. On provider error or timeout, returns `verdict="unverifiable"` with an explanatory `Notes` — does not propagate the error.
-3. `parseVerdict` handles all 7 test cases: valid JSON with `confirmed`/`refuted`/`unverifiable` verdicts → populated `Verification`; malformed JSON → `unverifiable` with raw text in `Notes`; invalid verdict enum → `unverifiable` with the invalid value preserved; empty response → `unverifiable`; extra fields → ignored.
-4. A skeptic that produces no parseable verdict (timeout, provider error, empty response, malformed output) results in `verdict="unverifiable"` — the finding is never dropped nor the run aborted.
-5. Per-finding budgets are respected: `MaxTurns`, `ToolBudgetBytes`, and per-finding timeout are forwarded to the tool loop. A tripped budget produces `verdict="unverifiable"` with `trippedBudgets` recorded.
-6. Table-driven unit tests in `internal/verify/verdict_test.go` and `internal/verify/verify_test.go` cover all cases above with >= 95% coverage on `skeptic.go` and `verdict.go`.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`_
 
 ## Technical Considerations
 
@@ -84,4 +75,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversari
 ---
 
 **Created:** June 14, 2026 09:06:20AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Accepted — 6 acceptance criteria defined

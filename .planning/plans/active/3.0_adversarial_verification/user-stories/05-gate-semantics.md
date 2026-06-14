@@ -37,15 +37,20 @@
 - **Relevant:** This is the CI trust layer. Without correct gate semantics, the verification stage has no operational effect — a refuted finding could still block a merge, or an unverified finding could pass a strict gate. This story ensures the gate reflects adversarial scrutiny.
 - **Time-bound:** Expected to complete within week 3 of the 3–4 week epic (after Stories 3 and 4).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-gate-filtering-require-verified.md) | Gate Filtering with `--fail-on` and `--require-verified` | Unit |
+| [05-02](../acceptance-criteria/05-02-mcp-parity-matrix-tests.md) | MCP Handler Parity and Fixture Matrix Tests | Integration |
+
+## Original Criteria Overview
 
 1. `--fail-on <severity>` excludes findings with `Verification.Verdict == "refuted"` from the count, regardless of their v1 confidence or severity.
 2. `--require-verified` (bool flag, default false) restricts the gate to count only findings with `confidence == "VERIFIED"` at or above the threshold. When combined with `--fail-on high`, only VERIFIED findings at HIGH or above trigger failure.
 3. The MCP handler `failingFindings` at `internal/mcp/handlers.go:339` applies the same filtering logic as the CLI path.
 4. Fixture matrix tests validate: confirmed/refuted/unverifiable findings × HIGH/MEDIUM/LOW severity × `--fail-on` threshold × `--require-verified` on/off, covering at least 12 distinct scenarios.
 5. Existing gate behavior is preserved when `--require-verified` is not set: `--fail-on` counts all non-refuted findings at or above the threshold (including unverified and VERIFIED).
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`_
 
 ## Technical Considerations
 
@@ -77,4 +82,4 @@ _Detailed AC: `/create-acceptance-criteria @.planning/plans/active/3.0_adversari
 ---
 
 **Created:** June 14, 2026 09:06:20AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Accepted
