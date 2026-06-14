@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -186,6 +187,29 @@ func TestRunVerify_ToolHarnessUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, VerdictCounts{Unverifiable: 1}, res.VerdictCounts)
 	assert.Equal(t, "tool_harness_unavailable", readFindings(t, dir)[0].Verification.Notes)
+}
+
+func TestRunVerify_ToolHarnessUnavailable_RedactsDetail(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_, err = runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return nil, nil, nil, errors.New("snapshot failed: /secret/repo/path")
+	})
+	require.NoError(t, w.Close())
+	os.Stderr = oldStderr
+	require.NoError(t, err)
+
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	output := buf.String()
+	assert.Contains(t, output, "tool harness unavailable")
+	assert.NotContains(t, output, "/secret/repo/path")
 }
 
 // TestRunVerify_SkipsAlreadyVerified: without Fresh, a finding that already

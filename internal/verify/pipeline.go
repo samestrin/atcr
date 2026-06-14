@@ -150,7 +150,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if needTool {
 		c, d, cleanup, herr := newHarness()
 		if herr != nil {
-			fmt.Fprintf(os.Stderr, "atcr: verify: tool harness unavailable (%v); skeptics degrade to unverifiable\n", herr)
+			fmt.Fprintln(os.Stderr, "atcr: verify: tool harness unavailable; skeptics degrade to unverifiable")
 		} else {
 			cc = c
 			disp = d
