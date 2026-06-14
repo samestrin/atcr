@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/review.go:654|Snapshot mode path compare uses plain string equality without normalizing|Resolve both paths to absolute form with filepath.Abs or os.SameFile|correctness|15|"if root == repo {"|bruce

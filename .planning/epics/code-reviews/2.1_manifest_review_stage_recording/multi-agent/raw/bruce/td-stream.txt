@@ -1,0 +1,1 @@
+LOW|internal/fanout/engine_e2e_test.go:187|strings.HasSuffix does not verify path leaf boundary|Use filepath.Base(review.SnapshotWorktreePath) == head|correctness|2|HasSuffix matches partial leaf names incorrectly|bruce

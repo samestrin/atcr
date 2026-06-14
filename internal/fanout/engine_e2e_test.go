@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/registry"
@@ -18,6 +19,12 @@ import (
 	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+// snapshot constants keep the worktree-branch assertions self-documenting.
+const (
+	snapshotModeWorktree = "worktree"
+	snapshotPrefix       = "atcr-snapshot-"
 )
 
 // initToolRepo creates a temp git repo whose head commit changes auth.go (the
@@ -37,6 +44,10 @@ func initToolRepo(t *testing.T) (dir, base, head string) {
 	}
 	run("init", "-q")
 	run("config", "commit.gpgsign", "false")
+	// Most projects gitignore the .atcr/ directory; commit the ignore file so
+	// later tests cannot accidentally rely on untracked scaffolding to dirty
+	// the worktree.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".atcr/\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "auth.go"), []byte("package main\n\nfunc a() {}\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "helper.go"), []byte("package main\n\n// helper documents the contract for b.\nfunc helper() { a() }\n"), 0o644))
 	run("add", ".")
@@ -120,10 +131,14 @@ func toolAgentConfig(srvURL string) *ReviewConfig {
 func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	t.Setenv("ATCR_TEST_KEY", "secret")
 	repo, base, head := initToolRepo(t)
+	// Force the slow path deterministically with an uncommitted edit so the
+	// worktree-mode assertion does not depend on incidental .atcr/ scaffolding.
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "dirty-snapshot.txt"), []byte("force worktree snapshot\n"), 0o644))
 	srv := toolMockProvider(t)
 	cfg := toolAgentConfig(srv.URL)
-
-	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := RunReview(ctx, llmclient.New(), cfg, reviewReq(repo, repo, base, head))
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Equal(t, 1, res.Summary.Succeeded)
@@ -171,25 +186,24 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(mdata, &raw))
-	require.Contains(t, raw, "review")
 	assert.Contains(t, string(raw["review"]), "greta")
 
 	// AC 03-02 Scenario 5 + AC 03-03 Scenario 4 (worktree branch), end-to-end:
-	// although head equals HEAD, PrepareReview has already written the untracked
-	// .atcr/reviews/ scaffolding into the repo, so `git status --porcelain` reports
-	// a dirty tree and SnapshotFor falls through to the slow path. The review stage
-	// on disk therefore records worktree mode, the resolved head_sha, and a worktree
-	// path under the OS temp dir whose leaf is the resolved head SHA.
+	// although head equals HEAD, an explicit uncommitted edit keeps the worktree
+	// dirty, so SnapshotFor falls through to the slow path even when .atcr/ is
+	// gitignored. The review stage on disk records worktree mode, the resolved
+	// head_sha, and a worktree path under the OS temp dir whose leaf is the
+	// resolved head SHA.
 	var review struct {
 		SnapshotMode         string `json:"snapshot_mode"`
 		HeadSHA              string `json:"head_sha"`
 		SnapshotWorktreePath string `json:"snapshot_worktree_path"`
 	}
 	require.NoError(t, json.Unmarshal(raw["review"], &review))
-	assert.Equal(t, "worktree", review.SnapshotMode)
+	assert.Equal(t, snapshotModeWorktree, review.SnapshotMode)
 	assert.Equal(t, head, review.HeadSHA)
-	assert.Contains(t, review.SnapshotWorktreePath, "atcr-snapshot-")
-	assert.True(t, strings.HasSuffix(review.SnapshotWorktreePath, head),
+	assert.Contains(t, review.SnapshotWorktreePath, snapshotPrefix)
+	assert.Equal(t, head, filepath.Base(review.SnapshotWorktreePath),
 		"worktree leaf is the resolved head SHA")
 }
 

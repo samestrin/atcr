@@ -1,0 +1,210 @@
+diff --git a/internal/fanout/engine_e2e_test.go b/internal/fanout/engine_e2e_test.go
+index 46a2dbd..ec86de0 100644
+--- a/internal/fanout/engine_e2e_test.go
++++ b/internal/fanout/engine_e2e_test.go
+@@ -173,6 +173,24 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
+ 	require.NoError(t, json.Unmarshal(mdata, &raw))
+ 	require.Contains(t, raw, "review")
+ 	assert.Contains(t, string(raw["review"]), "greta")
++
++	// AC 03-02 Scenario 5 + AC 03-03 Scenario 4 (worktree branch), end-to-end:
++	// although head equals HEAD, PrepareReview has already written the untracked
++	// .atcr/reviews/ scaffolding into the repo, so `git status --porcelain` reports
++	// a dirty tree and SnapshotFor falls through to the slow path. The review stage
++	// on disk therefore records worktree mode, the resolved head_sha, and a worktree
++	// path under the OS temp dir whose leaf is the resolved head SHA.
++	var review struct {
++		SnapshotMode         string `json:"snapshot_mode"`
++		HeadSHA              string `json:"head_sha"`
++		SnapshotWorktreePath string `json:"snapshot_worktree_path"`
++	}
++	require.NoError(t, json.Unmarshal(raw["review"], &review))
++	assert.Equal(t, "worktree", review.SnapshotMode)
++	assert.Equal(t, head, review.HeadSHA)
++	assert.Contains(t, review.SnapshotWorktreePath, "atcr-snapshot-")
++	assert.True(t, strings.HasSuffix(review.SnapshotWorktreePath, head),
++		"worktree leaf is the resolved head SHA")
+ }
+ 
+ // budgetTripMockProvider returns read_file tool_calls on every budgeted turn (a
+diff --git a/internal/fanout/manifest_review_test.go b/internal/fanout/manifest_review_test.go
+index 687ae66..69cb292 100644
+--- a/internal/fanout/manifest_review_test.go
++++ b/internal/fanout/manifest_review_test.go
+@@ -76,3 +76,21 @@ func TestReviewStageFor_SingleAgent(t *testing.T) {
+ 	require.NotNil(t, rs)
+ 	assert.Equal(t, []string{"solo"}, rs.ToolsEnabled)
+ }
++
++// AC 03-03 Scenario 5: a fast-path snapshot (root == repo) is recorded as live
++// mode with an empty worktree path; head is the resolved head_sha verbatim.
++func TestSnapshotManifestFields_LiveMode(t *testing.T) {
++	mode, headSHA, wt := snapshotManifestFields("/repo", "/repo", "abc1234")
++	assert.Equal(t, "live", mode)
++	assert.Equal(t, "abc1234", headSHA)
++	assert.Equal(t, "", wt)
++}
++
++// AC 03-03 Scenario 4: a slow-path snapshot (root != repo) is recorded as
++// worktree mode and carries the worktree path SnapshotFor returned.
++func TestSnapshotManifestFields_WorktreeMode(t *testing.T) {
++	mode, headSHA, wt := snapshotManifestFields("/tmp/atcr-snapshot-x/abc1234", "/repo", "abc1234")
++	assert.Equal(t, "worktree", mode)
++	assert.Equal(t, "abc1234", headSHA)
++	assert.Equal(t, "/tmp/atcr-snapshot-x/abc1234", wt)
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index f53eff1..d4414c6 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -281,12 +281,19 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	// per-agent transcript writer under the pool raw dir. Best-effort: a snapshot
+ 	// or jail failure logs and leaves tool agents to degrade to single-shot
+ 	// (tools_degraded) rather than failing the whole review.
++	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
++	// unless a snapshot actually runs and succeeds below; stamped onto the review
++	// stage after fan-out.
++	var snapMode, snapHeadSHA, snapWorktreePath string
+ 	opts := []EngineOption{WithMaxParallel(p.MaxParallel)}
+ 	if anyToolAgent(p.Slots) && p.Head != "" {
+ 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+ 			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
+ 		} else {
+ 			defer cleanup()
++			// A successful SnapshotFor call fixes the mode/head/path the tool harness
++			// reviewed at (AC 03-02 Scenario 5), recorded even if the jail below fails.
++			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, p.Head)
+ 			if jail, jerr := tools.NewJail(root); jerr != nil {
+ 				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
+ 			} else {
+@@ -333,6 +340,14 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
+ 	// unchanged.
+ 	p.manifest.Review = reviewStageFor(results)
++	// Stamp the snapshot provenance (AC 03-02 / 03-03) onto the review stage when
++	// one is present. When no snapshot ran (snapshot failed, or no tool agent), the
++	// omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays "".
++	if p.manifest.Review != nil {
++		p.manifest.Review.SnapshotMode = snapMode
++		p.manifest.Review.HeadSHA = snapHeadSHA
++		p.manifest.Review.SnapshotWorktreePath = snapWorktreePath
++	}
+ 	if err := WriteManifest(p.Dir, p.manifest); err != nil {
+ 		return nil, err
+ 	}
+@@ -638,6 +653,19 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
+ 	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: degraded}
+ }
+ 
++// snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /
++// 03-03) from the root SnapshotFor returned. root == repo is the live fast path
++// (head matched HEAD on a clean worktree), so mode is "live" and the worktree path
++// is the explicit empty string; any other root is a detached worktree at head, so
++// mode is "worktree" and the path is that root. head is already the resolved head
++// SHA (gitrange resolves it before fan-out), recorded verbatim as head_sha.
++func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePath string) {
++	if root == repo {
++		return "live", head, ""
++	}
++	return "worktree", head, root
++}
++
+ // rosterNames returns the full roster (parallel lane then serial lane).
+ func rosterNames(p *registry.ProjectConfig) []string {
+ 	names := make([]string, 0, len(p.Agents)+len(p.SerialAgents))
+diff --git a/internal/payload/manifest.go b/internal/payload/manifest.go
+index 7fe14cc..8e72e5c 100644
+--- a/internal/payload/manifest.go
++++ b/internal/payload/manifest.go
+@@ -60,6 +60,21 @@ type ReviewStage struct {
+ 	Agents        []string `json:"agents"`
+ 	ToolsEnabled  []string `json:"tools_enabled"`
+ 	ToolsDegraded []string `json:"tools_degraded"`
++
++	// SnapshotMode records the filesystem snapshot the tool harness reviewed at:
++	// "live" when head matched HEAD on a clean worktree (fast path), "worktree"
++	// when a detached git worktree was created (AC 03-02 / 03-03). Omitted (via
++	// omitempty) when no snapshot ran — e.g. the snapshot failed and agents
++	// degraded to single-shot, so the field's absence is meaningful.
++	SnapshotMode string `json:"snapshot_mode,omitempty"`
++	// HeadSHA is the resolved head commit the snapshot was taken at (AC 03-02
++	// Scenario 5). Omitted when no snapshot ran.
++	HeadSHA string `json:"head_sha,omitempty"`
++	// SnapshotWorktreePath is the temporary worktree path on the slow path, or
++	// the explicit empty string on the live fast path. It is intentionally NOT
++	// omitempty: AC 03-03 Scenario 5 requires "snapshot_worktree_path": "" to be
++	// present in live mode so a reader distinguishes live from a missing field.
++	SnapshotWorktreePath string `json:"snapshot_worktree_path"`
+ }
+ 
+ // WriteManifest serializes m to path as indented JSON, writing atomically
+diff --git a/internal/payload/manifest_review_test.go b/internal/payload/manifest_review_test.go
+index 6c32664..efd7cd4 100644
+--- a/internal/payload/manifest_review_test.go
++++ b/internal/payload/manifest_review_test.go
+@@ -55,3 +55,65 @@ func TestManifest_ReviewStageOmittedWhenNil(t *testing.T) {
+ 	assert.NotContains(t, raw, "review", "review must be omitted for a pure 1.x roster")
+ 	require.Contains(t, raw, "stages")
+ }
++
++// reviewBlock writes m, then unmarshals the review object into a key→raw map so a
++// test can assert both the value AND the presence/absence of a field (e.g.
++// snapshot_worktree_path must be present as "" in live mode, not omitted).
++func reviewBlock(t *testing.T, m *Manifest) map[string]json.RawMessage {
++	t.Helper()
++	raw := readManifestJSON(t, m)
++	require.Contains(t, raw, "review")
++	var review map[string]json.RawMessage
++	require.NoError(t, json.Unmarshal(raw["review"], &review))
++	return review
++}
++
++// AC 03-02 Scenario 5 + AC 03-03 Scenario 4: a worktree-mode snapshot records
++// snapshot_mode "worktree", the resolved head_sha, and the worktree path in the
++// review stage.
++func TestManifest_ReviewStage_SnapshotWorktreeMode(t *testing.T) {
++	m := &Manifest{
++		Base: "a", Head: "abc1234",
++		Review: &ReviewStage{
++			Agents:               []string{"agent-a"},
++			ToolsEnabled:         []string{"agent-a"},
++			SnapshotMode:         "worktree",
++			HeadSHA:              "abc1234",
++			SnapshotWorktreePath: "/tmp/atcr-snapshot-abc1234",
++		},
++	}
++	review := reviewBlock(t, m)
++
++	var mode, headSHA, wtPath string
++	require.NoError(t, json.Unmarshal(review["snapshot_mode"], &mode))
++	require.NoError(t, json.Unmarshal(review["head_sha"], &headSHA))
++	require.NoError(t, json.Unmarshal(review["snapshot_worktree_path"], &wtPath))
++	assert.Equal(t, "worktree", mode)
++	assert.Equal(t, "abc1234", headSHA)
++	assert.Equal(t, "/tmp/atcr-snapshot-abc1234", wtPath)
++}
++
++// AC 03-03 Scenario 5 (and AC 03-02 Scenario 5, live branch): a fast-path snapshot
++// records snapshot_mode "live" and snapshot_worktree_path as the explicit empty
++// string (present, not omitted) so a reader can distinguish live from missing.
++func TestManifest_ReviewStage_SnapshotLiveMode(t *testing.T) {
++	m := &Manifest{
++		Base: "a", Head: "abc1234",
++		Review: &ReviewStage{
++			Agents:               []string{"agent-a"},
++			ToolsEnabled:         []string{"agent-a"},
++			SnapshotMode:         "live",
++			HeadSHA:              "abc1234",
++			SnapshotWorktreePath: "",
++		},
++	}
++	review := reviewBlock(t, m)
++
++	require.Contains(t, review, "snapshot_worktree_path",
++		"live mode must serialize snapshot_worktree_path as \"\", not omit it")
++	var mode, wtPath string
++	require.NoError(t, json.Unmarshal(review["snapshot_mode"], &mode))
++	require.NoError(t, json.Unmarshal(review["snapshot_worktree_path"], &wtPath))
++	assert.Equal(t, "live", mode)
++	assert.Equal(t, "", wtPath)
++}

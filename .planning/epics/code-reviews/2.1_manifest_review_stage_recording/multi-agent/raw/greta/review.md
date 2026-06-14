@@ -1,0 +1,1 @@
+MEDIUM|internal/payload/manifest.go:77|SnapshotWorktreePath always serialized even when no snapshot ran, indistinguishable from live mode despite comment claiming it distinguishes them|Use *string pointer so nil omits field and empty string serializes as ""|correctness|20|SnapshotWorktreePath string `json:"snapshot_worktree_path"` lacks omitempty|greta

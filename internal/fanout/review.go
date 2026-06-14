@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -289,11 +290,22 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
 			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
+			snapMode = "failed" // snapshot attempted but failed; distinguishable from no-snapshot-attempted
 		} else {
 			defer cleanup()
 			// A successful SnapshotFor call fixes the mode/head/path the tool harness
 			// reviewed at (AC 03-02 Scenario 5), recorded even if the jail below fails.
-			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, p.Head)
+			// Resolve the head to a full SHA for the manifest even if the caller passed
+			// a symbolic ref or short SHA (e.g., tests constructing PreparedReview directly).
+			// A resolution failure is logged but does not abort the review; the original
+			// value is preserved as a best-effort fallback.
+			headSHA := p.Head
+			if resolved, err := resolveHeadSHA(p.Repo, p.Head); err == nil {
+				headSHA = resolved
+			} else {
+				fmt.Fprintf(os.Stderr, "atcr: warning: could not resolve head SHA for manifest: %v\n", err)
+			}
+			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, headSHA)
 			if jail, jerr := tools.NewJail(root); jerr != nil {
 				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
 			} else {
@@ -330,27 +342,28 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	// Finalize the manifest's partial flag and stamp the completion time now
-	// that the outcomes are known (PrepareReview wrote Partial=false and left
-	// CompletedAt zero). CompletedAt lets downstream tools derive run duration
-	// from manifest.json; summary.json is the completion signal.
-	p.manifest.Partial = sum.Partial
-	p.manifest.CompletedAt = time.Now().UTC()
+	// Finalize the manifest into a local copy. p.manifest is only updated on a
+	// successful write so a caller that retries with the same PreparedReview does
+	// not observe stale completion data from a previous failed attempt.
+	m := *p.manifest
+	m.Partial = sum.Partial
+	m.CompletedAt = time.Now().UTC()
 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
 	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
 	// unchanged.
-	p.manifest.Review = reviewStageFor(results)
+	m.Review = reviewStageFor(results)
 	// Stamp the snapshot provenance (AC 03-02 / 03-03) onto the review stage when
 	// one is present. When no snapshot ran (snapshot failed, or no tool agent), the
 	// omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays "".
-	if p.manifest.Review != nil {
-		p.manifest.Review.SnapshotMode = snapMode
-		p.manifest.Review.HeadSHA = snapHeadSHA
-		p.manifest.Review.SnapshotWorktreePath = snapWorktreePath
+	if m.Review != nil {
+		m.Review.SnapshotMode = snapMode
+		m.Review.HeadSHA = snapHeadSHA
+		m.Review.SnapshotWorktreePath = snapWorktreePath
 	}
-	if err := WriteManifest(p.Dir, p.manifest); err != nil {
+	if err := WriteManifest(p.Dir, &m); err != nil {
 		return nil, err
 	}
+	p.manifest = &m
 
 	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
@@ -599,17 +612,14 @@ func writePayloadArtifacts(dir string, payloads map[string]modePayload) error {
 	return nil
 }
 
-// anyToolAgent reports whether any slot (primary or fallback) requested tools,
-// so ExecuteReview only pays the snapshot/jail cost when the harness is needed.
+// anyToolAgent reports whether any primary slot requested tools, so ExecuteReview
+// only pays the snapshot/jail cost when the harness is needed. Fallbacks always
+// inherit the lane's effective Tools setting from the primary (AC 01-05 S4), so
+// checking fallbacks cannot change the result; the loop is intentionally omitted.
 func anyToolAgent(slots []Slot) bool {
 	for _, s := range slots {
 		if s.Primary.Tools {
 			return true
-		}
-		for _, fb := range s.Fallbacks {
-			if fb.Tools {
-				return true
-			}
 		}
 	}
 	return false
@@ -654,16 +664,43 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 }
 
 // snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /
-// 03-03) from the root SnapshotFor returned. root == repo is the live fast path
-// (head matched HEAD on a clean worktree), so mode is "live" and the worktree path
-// is the explicit empty string; any other root is a detached worktree at head, so
-// mode is "worktree" and the path is that root. head is already the resolved head
-// SHA (gitrange resolves it before fan-out), recorded verbatim as head_sha.
+// 03-03) from the root SnapshotFor returned. root and repo pointing at the same
+// directory is the live fast path (head matched HEAD on a clean worktree), so mode
+// is "live" and the worktree path is the explicit empty string; any other root is
+// a detached worktree at head, so mode is "worktree" and the path is that root.
 func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePath string) {
-	if root == repo {
+	if samePath(root, repo) {
 		return "live", head, ""
 	}
 	return "worktree", head, root
+}
+
+// samePath reports whether a and b refer to the same directory, normalizing
+// trailing separators and relative vs absolute form so they do not spuriously
+// force worktree mode.
+func samePath(a, b string) bool {
+	absA, err1 := filepath.Abs(a)
+	absB, err2 := filepath.Abs(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return absA == absB
+}
+
+// resolveHeadSHA resolves a git ref to its full 40-byte SHA. It is a defensive
+// guard for callers (including tests) that construct PreparedReview with an
+// unresolved head; the production CLI/MCP path already resolves the head through
+// gitrange.Resolve before fan-out.
+func resolveHeadSHA(repo, ref string) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("empty ref")
+	}
+	cmd := exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving %q: %w", ref, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).

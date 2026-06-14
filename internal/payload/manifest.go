@@ -63,9 +63,10 @@ type ReviewStage struct {
 
 	// SnapshotMode records the filesystem snapshot the tool harness reviewed at:
 	// "live" when head matched HEAD on a clean worktree (fast path), "worktree"
-	// when a detached git worktree was created (AC 03-02 / 03-03). Omitted (via
-	// omitempty) when no snapshot ran — e.g. the snapshot failed and agents
-	// degraded to single-shot, so the field's absence is meaningful.
+	// when a detached git worktree was created (AC 03-02 / 03-03), or "failed"
+	// when the snapshot was attempted but could not complete (agents degraded to
+	// single-shot). Omitted (via omitempty) when no snapshot was attempted —
+	// i.e. no tool agents or an empty Head.
 	SnapshotMode string `json:"snapshot_mode,omitempty"`
 	// HeadSHA is the resolved head commit the snapshot was taken at (AC 03-02
 	// Scenario 5). Omitted when no snapshot ran.
