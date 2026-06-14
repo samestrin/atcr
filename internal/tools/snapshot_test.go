@@ -125,17 +125,17 @@ func TestSnapshotCleanupGuard_SymlinkedTMPDIR(t *testing.T) {
 	// Create real dir + symlink, set TMPDIR to the symlink.
 	realBase, err := os.MkdirTemp("", "real-tmpdir-")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(realBase) })
+	t.Cleanup(func() { _ = os.RemoveAll(realBase) })
 	linkBase := realBase + "-link"
 	require.NoError(t, os.Symlink(realBase, linkBase))
-	t.Cleanup(func() { os.Remove(linkBase) })
+	t.Cleanup(func() { _ = os.Remove(linkBase) })
 	t.Setenv("TMPDIR", linkBase+"/")
 
 	// MkdirTemp gives us a path under the symlink; simulate what happens when
 	// that path is later canonicalized (e.g. by git or the OS).
 	base, err := os.MkdirTemp("", "atcr-snapshot-guard-")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(base) })
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
 	canonBase, err := filepath.EvalSymlinks(base)
 	require.NoError(t, err)
 
@@ -158,14 +158,12 @@ func TestSnapshotFor_CleanupRunsWithSymlinkedTMPDIR(t *testing.T) {
 	// the symlink so os.MkdirTemp creates worktrees under the symlinked path.
 	realBase, err := os.MkdirTemp("", "real-tmpdir-")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(realBase) })
+	t.Cleanup(func() { _ = os.RemoveAll(realBase) })
 	linkBase := realBase + "-link"
 	require.NoError(t, os.Symlink(realBase, linkBase))
-	t.Cleanup(func() { os.Remove(linkBase) })
+	t.Cleanup(func() { _ = os.Remove(linkBase) })
 
-	prevTMPDIR := os.Getenv("TMPDIR")
 	t.Setenv("TMPDIR", linkBase+"/")
-	defer os.Setenv("TMPDIR", prevTMPDIR)
 
 	m := NewSnapshotManager(repo)
 	root, cleanup, err := m.SnapshotFor(old)
