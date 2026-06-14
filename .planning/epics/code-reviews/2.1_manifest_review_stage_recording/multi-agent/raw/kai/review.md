@@ -1,0 +1,2 @@
+MEDIUM|internal/fanout/review.go:653|Path comparison uses raw string equality|Normalize with filepath.Clean before comparing|correctness|10|root == repo fails if trailing slash or relative path mismatch|bruce
+MEDIUM|internal/fanout/review.go:298|head_sha may record non-SHA if p.Head unresolved|Assert p.Head is a full SHA or resolve it before stamping|correctness|15|p.Head passed verbatim as head_sha without validation|bruce

@@ -7,11 +7,11 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 0 | 2 |
-| MEDIUM | 0 | 0 | 34 |
-| LOW | 5 | 1 | 76 |
+| HIGH | 1 | 0 | 2 |
+| MEDIUM | 3 | 0 | 39 |
+| LOW | 26 | 1 | 78 |
 
-**Last Modified:** 2026-06-13 | **Open Items:** 5 | **Deferred Items:** 1 | **Resolved Items:** 112 | **Total Items:** 118
+**Last Modified:** 2026-06-13 | **Open Items:** 30 | **Deferred Items:** 1 | **Resolved Items:** 119 | **Total Items:** 150
 
 ## Directory Structure
 
@@ -33,13 +33,51 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+### [2026-06-13] From Code Review: epic-2.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|-----------|------------|
+| 1 | [ ] | HIGH | internal/fanout/review.go:343 | Missing nil check for p.manifest.Review before dereference | Add nil check before setting fields | error-handling | 5 | ace | MEDIUM |
+| 2 | [ ] | MEDIUM | internal/fanout/review.go:290 | Potential resource leak of snapshot worktree - The `cleanup()` function returned by `SnapshotFor` is deferred inside an `if` block. If `NewJail` fails, the function continues, but the `defer` is only registered if the snapshot succeeded. However, the `ExecuteReview` function is long-running. If `SnapshotFor` succeeds but `NewJail` fails, the snapshot is cleaned up at the end of `ExecuteReview`. While technically correct for a single run, if this logic were moved to a loop or if `ExecuteReview` is called frequently in a long-lived process, the deferred cleanup might accumulate. More critically, if `ExecuteReview` returns early due to an error in `WriteManifest` or other logic, the cleanup happens. The real issue is that `cleanup()` is deferred *inside* the `if` block, which is correct for the scope of the function, but if `ExecuteReview` is called in a loop (which the sprint plan implies it is part of an "agent loop"), the cleanup only happens when the function returns. If the "agent loop" is actually *outside* `ExecuteReview`, this is fine. If `ExecuteReview` is the loop, it's a leak. Given the context "wired into the agent loop", `ExecuteReview` seems to be the execution of a single review. However, the `defer` is inside the `if` block, meaning it will execute when `ExecuteReview` returns. This is safe. Wait, looking closer: the `defer cleanup()` is inside the `else` block of `if anyToolAgent...`. This is correct. I will retract this as a high/medium risk unless I see a loop *inside* `ExecuteReview`.* | None | correctness | 0 | otto | MEDIUM |
+| 2 | [x] | MEDIUM | internal/fanout/review.go:298 | head_sha may record non-SHA if p.Head unresolved | Assert p.Head is a full SHA or resolve it before stamping | correctness | 15 | bruce | MEDIUM |
+| 2 | [x] | MEDIUM | internal/fanout/review.go:328 | Defer cleanup() called even when SnapshotFor fails | Move defer inside else block after successful SnapshotFor | error-handling | 3 | ace | MEDIUM |
+| 2 | [x] | MEDIUM | internal/fanout/review.go:653 | Path comparison uses raw string equality | Normalize with filepath.Clean before comparing | correctness | 10 | bruce | MEDIUM |
+| 2 | [x] | MEDIUM | internal/fanout/review.go:654 | Snapshot mode path compare uses plain string equality without normalizing | Resolve both paths to absolute form with filepath.Abs or os.SameFile | correctness | 15 | bruce | MEDIUM |
+| 2 | [x] | MEDIUM | internal/fanout/review.go:665 | Path string comparison `root == repo` is fragile if paths are normalized differently (trailing slashes, symlinks, relative vs absolute) | Normalize both paths with `filepath.Clean` (and `filepath.EvalSymlinks` if applicable) before comparing, or compare canonicalized forms | maintainability | 10 | bruce | MEDIUM |
+| 2 | [ ] | MEDIUM | internal/payload/manifest.go:77 | SnapshotWorktreePath always serialized even when no snapshot ran, indistinguishable from live mode despite comment claiming it distinguishes them | Use *string pointer so nil omits field and empty string serializes as "" | correctness | 20 | greta | MEDIUM |
+| 2 | [ ] | MEDIUM | internal/payload/manifest_review_test.go | No test covers the "no snapshot ran" case where `Review` is non-nil but `SnapshotMode`/`HeadSHA` are empty (snapshot failed or no tool agent) | Add a test asserting `snapshot_mode` and `head_sha` are absent from JSON while `snapshot_worktree_path` is present as "" in that case | maintainability | 15 | bruce | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go | Unnecessary blank lines throughout file | Remove unnecessary blank lines between assertions/declarations | maintainability | 1 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:180 | Hardcoded test values reduce clarity | Replace magic strings with constants | maintainability | 10 | REVIEWER | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:183 | E2E test asserts `"worktree"` mode because `PrepareReview` dirties the tree; this makes the test environment-dependent and brittle to test-order or repo-state changes | Add a setup step that explicitly dirties the tree (or use a separate test for live mode that ensures a clean tree) to remove the implicit dependency | maintainability | 20 | bruce | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:185 | Unnecessary type assertion in end-to-end test | Simplify by directly unmarshalling into struct | maintainability | 3 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:187 | Unnecessary require.Contains for "review" key | Remove redundant check since Unmarshal will fail if missing | maintainability | 2 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:187 | strings.HasSuffix does not verify path leaf boundary | Use filepath.Base(review.SnapshotWorktreePath) == head | correctness | 2 | bruce | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:188 | Missing timeout context in end-to-end test | Add context.WithTimeout to prevent hanging tests | performance | 5 | ace | MEDIUM |
+| 3 | [x] | LOW | internal/fanout/engine_e2e_test.go:190 | Unchecked error from json.Unmarshal | Handle potential JSON unmarshaling error | error-handling | 3 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/engine_e2e_test.go:192 | Redundant assert.Contains and assert.HasSuffix | Combine into single assertion with regex | maintainability | 3 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest.go | Unnecessary blank lines throughout file | Remove unnecessary blank lines between assertions/declarations | maintainability | 1 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest.go:65 | Missing comment explaining why SnapshotWorktreePath is not omitempty | Add comment referencing AC 03-03 Scenario 5 | maintainability | 2 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest.go:68 | Comment typo: "omitted (via omitempty)" should be "omitted (via omitempty)" | Fix typo in comment | maintainability | 1 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go | Unnecessary blank lines throughout file | Remove unnecessary blank lines between assertions/declarations | maintainability | 1 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go:60 | Test function names could be more descriptive | Rename to indicate snapshot mode scenario | maintainability | 5 | REVIEWER | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go:62 | Unnecessary type assertion in reviewBlock helper | Simplify by directly unmarshalling into map[string]json.RawMessage | maintainability | 3 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go:68 | Unnecessary t.Helper() in reviewBlock | Remove t.Helper() as it adds no value | maintainability | 1 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go:75 | Redundant require.NoError for json.Unmarshal | Remove duplicate error handling | maintainability | 2 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go:75 | Unnecessary require.Contains for "review" key | Remove redundant check since Unmarshal will fail if missing | maintainability | 2 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/manifest_review_test.go:82 | Unnecessary require.NoError for json.Unmarshal | Remove duplicate error handling | maintainability | 2 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/review.go | Unnecessary blank lines throughout file | Remove unnecessary blank lines between assertions/declarations | maintainability | 1 | ace | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/review.go:343 | Potential for inconsistent manifest state on partial failure - If `p.manifest.Review` is updated with snapshot fields but `WriteManifest` fails, the in-memory `p.manifest` object is mutated. If the caller retries the operation using the same `p` object, the manifest may contain snapshot data from a previous failed attempt. | Avoid mutating `p.manifest` directly; use a local copy or update only upon successful completion of the review process. | correctness | 15 | otto | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/review.go:660 | snapshotManifestFields infers live-vs-worktree mode purely from root==repo string equality. This is correct only because NewSnapshotManager stores repoRoot verbatim and SnapshotFor's fast path returns that exact string. The call site encodes implicit knowledge of SnapshotFor's internals: if SnapshotFor is later changed to canonicalize repoRoot (EvalSymlinks/filepath.Abs, as snapshotCleanupGuard already does for its temp guard), a clean-HEAD live snapshot misclassifies as worktree and the repo root leaks into snapshot_worktree_path. No integration test drives the real SnapshotFor fast path through to the manifest — the e2e only exercises the worktree slow path and the unit tests pass literal strings — so the coupling is unguarded. | Make the live/worktree distinction explicit at the boundary rather than inferred from path equality: have SnapshotFor return a mode/sentinel (or a small SnapshotResult struct with Mode and WorktreePath) that ExecuteReview records directly. Alternatively add an integration test that runs ExecuteReview against a clean HEAD so the real fast path asserts snapshot_mode==live and snapshot_worktree_path=="" on disk, guarding the root==repo assumption. | maintainability | 30 | claude | MEDIUM |
+| 3 | [ ] | LOW | internal/fanout/review.go:668 | `head` parameter is recorded verbatim as `head_sha` with no runtime check that it's a resolved SHA; a branch name or ref would violate the field's semantic | Add a `git.IsHash` check (or resolve via `gitrange`) before stamping, or assert in a debug build | maintainability | 10 | bruce | MEDIUM |
+
+
 ### [2026-06-13] From Sprint: epic-2.1
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | 1 | [ ] | LOW | internal/fanout/review.go:296 | head_sha is recorded from caller p.Head not SnapshotFor's internally resolved SHA; they coincide only because callers pass full 40-char SHAs and would diverge for an abbreviated or symbolic head | Return the resolved head SHA and root from SnapshotFor and derive head_sha/worktree_path from that single source of truth | CORRECTNESS | 30 | execute-epic-independent |
 | 1 | [ ] | LOW | internal/fanout/engine_e2e_test.go:190 | e2e worktree-mode assertion relies on untracked .atcr/ scaffolding dirtying git status to force the slow path; would silently flip to live and break if .atcr/ is ever gitignored | Force the slow path deterministically (uncommitted edit or review an older head != HEAD) instead of relying on incidental dirtiness | REGRESSION_RISK | 20 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/fanout/review.go:604 | anyToolAgent fallback loop is effectively dead code: fallbacks always inherit primary.Tools so the fallback branch can never change the result (pre-existing, not introduced by this PR) | Drop the fallback loop (check only s.Primary.Tools) or comment that it is defensive given fallbacks inherit the lane Tools setting | OVER_ENGINEERING | 10 | execute-epic-independent |
+| 1 | [x] | LOW | internal/fanout/review.go:604 | anyToolAgent fallback loop is effectively dead code: fallbacks always inherit primary.Tools so the fallback branch can never change the result (pre-existing, not introduced by this PR) | Drop the fallback loop (check only s.Primary.Tools) or comment that it is defensive given fallbacks inherit the lane Tools setting | OVER_ENGINEERING | 10 | execute-epic-independent |
 | U | [ ] | LOW | .planning/.config/config.yaml:25 | Build gate command targets ./cmd/atcr-mcp which does not exist (only ./cmd/atcr); `go build ./...` works but the configured build command fails | Update config build command to `go build -o bin/atcr ./cmd/atcr` (or `go build ./...`) | CONFIG_DRIFT | 5 | execute-epic-cumulative |
 | U | [ ] | LOW | internal/payload/manifest.go:74 | A failed snapshot on a tool roster is indistinguishable in the manifest from no-snapshot-attempted (snapshot_mode omitted, path empty); failure only surfaces on stderr | Record an explicit snapshot_mode such as failed/degraded or a boolean so the failed-snapshot state is observable in the persisted manifest | OBSERVABILITY | 30 | execute-epic-independent |
 

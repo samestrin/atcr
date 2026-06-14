@@ -1,0 +1,3 @@
+SECURITY|internal/fanout/review.go:15|Potential secrets exposure in error message|Remove p.Head from error log|security|5|error message includes head SHA which may be sensitive|REVIEWER
+LOW|internal/fanout/engine_e2e_test.go:180|Hardcoded test values reduce clarity|Replace magic strings with constants|maintainability|10|head variable used directly in assertion|REVIEWER
+LOW|internal/fanout/manifest_review_test.go:60|Test function names could be more descriptive|Rename to indicate snapshot mode scenario|maintainability|5|function name lacks context on test purpose|REVIEWER

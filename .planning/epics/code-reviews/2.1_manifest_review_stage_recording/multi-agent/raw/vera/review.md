@@ -1,0 +1,11 @@
+<|channel|>analysis<|message|>We need to review diff changes, focusing on sprint plan: in scope: internal/payload/manifest.go, agent loop call site (not shown), internal/fanout/manifest_review_test.go. The diff includes changes to internal/fanout/engine_e2e_test.go, internal/fanout/manifest_review_test.go, internal/fanout/review.go, internal/fanout/review.go added snapshotManifestFields, internal/payload/manifest.go added fields, internal/payload/manifest_review_test.go added tests.
+
+We need to find issues: security, error handling, performance, correctness, maintainability. Only flag issues in files mentioned in sprint plan: internal/payload/manifest.go, internal/fanout/manifest_review_test.go, and agent loop call site (not present). So we can flag issues in those files. We can also flag issues in internal/fanout/review.go? The sprint plan didn't mention review.go, but it's part of the agent loop call site? The agent loop call site is TBD, but review.go is part of fanout, not explicitly in scope. The sprint plan says "Wiring SnapshotFor result fields into the manifest review stage" which is done in review.go. So review.go is relevant. Also tests are relevant. So we can flag issues in review.go, manifest.go, tests.
+
+Now find issues:
+
+1. In review.go, snapshotManifestFields function: It returns mode, headSHA, worktreePath. It uses root, repo, head. It checks root == repo. But root may be empty? Not likely. But logic seems fine.
+
+2. In review.go, variable snapMode, snapHeadSHA, snapWorktreePath defined before opts. They are zero values initially. If SnapshotFor fails, they remain empty. Later, after reviewStageFor, they set p.manifest.Review.SnapshotMode = snapMode etc. If no snapshot ran, these fields will be empty strings. In JSON, SnapshotMode has omitempty, so empty string omitted. HeadSHA has omitempty, omitted. SnapshotWorktreePath is not omitempty, so empty string will be serialized. That matches requirement: when no snapshot ran, snapshot_worktree_path stays "". But spec says: "When no snapshot ran (snapshot failed, or no tool agent), the omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays ""." That is correct.
+
+3. In review.go, they call snapshotManifestFields(root, p.Repo, p.Head
