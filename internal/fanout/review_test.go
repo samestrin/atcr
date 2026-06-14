@@ -505,3 +505,40 @@ agents:
 	assert.Equal(t, []string{"greta"}, cfg.Project.Agents)
 	assert.Equal(t, "diff", cfg.Settings.PayloadMode, "project tier overrides the blocks default")
 }
+
+// TestExecuteReview_ManifestNotMutatedOnWriteFailure verifies that a failed
+// WriteManifest at finalization does not leave p.manifest in a mutated state.
+// If p.manifest is mutated before WriteManifest succeeds and the caller retries
+// with the same PreparedReview, it would observe stale snapshot/completion data
+// from the failed attempt (review.go:343).
+//
+// Mechanism: Dir is chmod'd to 0555 after PrepareReview so atomicWriteFile
+// cannot create its temp file directly in Dir (write bit absent), while
+// Dir/sources/pool/ retains its own 0755 permissions so WritePool still
+// completes. The failing final WriteManifest is therefore the only error path
+// exercised.
+func TestExecuteReview_ManifestNotMutatedOnWriteFailure(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+
+	p, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	// Precondition: CompletedAt is zero from PrepareReview.
+	require.True(t, p.manifest.CompletedAt.IsZero(), "precondition: CompletedAt must be zero before ExecuteReview")
+
+	// Make Dir itself unwriteable so atomicWriteFile cannot create a temp file
+	// when writing manifest.json. Dir/sources/pool/ keeps its own 0755 so
+	// WritePool still succeeds; only the final WriteManifest fails.
+	require.NoError(t, os.Chmod(p.Dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(p.Dir, 0o755) }) // restore for t.TempDir cleanup
+
+	_, execErr := ExecuteReview(context.Background(), llmclient.New(), p)
+	require.Error(t, execErr, "ExecuteReview must fail when the final WriteManifest cannot write")
+
+	// p.manifest must NOT be mutated — CompletedAt should still be zero.
+	assert.True(t, p.manifest.CompletedAt.IsZero(),
+		"p.manifest must not be mutated when WriteManifest fails: use a local copy and assign back only on success")
+}
