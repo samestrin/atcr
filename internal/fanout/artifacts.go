@@ -129,9 +129,12 @@ func writeFailureSummary(poolDir string, results []Result) {
 	}
 }
 
-// findingsFor parses an agent's raw review content into findings and stamps the
+// findingsFor parses an agent's raw review content into findings, stamps the
 // REVIEWER as the agent name itself — never trusting any model-supplied column
-// (TD-016). A failed agent (no content) yields no findings.
+// (TD-016) — then applies the agent's per-source review guardrails (min_severity
+// floor + max_findings cap, Epic 2.2). Enforcement runs after stamping so the
+// reviewer attribution is intact on every kept finding. A failed agent (no
+// content) yields no findings.
 func findingsFor(r Result) []stream.Finding {
 	if r.Content == "" {
 		return nil
@@ -140,7 +143,7 @@ func findingsFor(r Result) []stream.Finding {
 	for i := range findings {
 		findings[i].Reviewer = r.Agent
 	}
-	return findings
+	return enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
 }
 
 // agentDirName reduces an agent name to a safe single path segment and rejects
