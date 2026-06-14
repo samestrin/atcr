@@ -77,7 +77,30 @@ type AgentConfig struct {
 	// non-tool-capable unless explicitly declared, and a tools:true agent on an
 	// undeclared model degrades safely to single-shot.
 	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
+
+	// Review-constraint guardrails (Epic 2.2). All optional and
+	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
+	// config keeps loading unchanged. Scope is a SOFT prompt-injection focus hint
+	// (categories the agent should prioritize) — injected into the persona prompt
+	// by the fan-out, it never hard-drops findings. MinSeverity drops findings
+	// below the floor and MaxFindings truncates (severity-sorted) the agent's
+	// findings to a hard cap; both are enforced deterministically in the fan-out
+	// per-source path (internal/fanout), never in the reconciler. MinSeverity is
+	// normalized to canonical upper-case at load so enforcement comparisons are
+	// stable. MaxFindings is a pointer so an absent cap (nil = unlimited) is
+	// distinguishable from any explicit value.
+	Scope       []string `yaml:"scope,omitempty"`        // soft focus categories injected into the prompt
+	MinSeverity string   `yaml:"min_severity,omitempty"` // drop findings below this floor (CRITICAL|HIGH|MEDIUM|LOW)
+	MaxFindings *int     `yaml:"max_findings,omitempty"` // cap on findings (severity-sorted truncate); nil = unlimited
 }
+
+// reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
+// used to validate min_severity. Kept as a set here so the registry validates
+// without depending on the fan-out or reconcile packages.
+var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
+
+// normalizeSeverity upper-cases and trims a severity token to its canonical form.
+func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
 
 // roleValid reports whether r is an allowed reserved role. The empty string is
 // allowed in 1.x (the loader provides no default). Epic 3.0/4.0 contract: when
@@ -213,6 +236,21 @@ func (r *Registry) validate() error {
 		if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
 			return agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes)
 		}
+		// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
+		// not validated. min_severity is checked case-insensitively against the
+		// rubric, max_findings must be a positive cap, and every scope entry must
+		// be a non-empty category (a blank entry is a YAML typo, not "all").
+		if a.MinSeverity != "" && !reviewSeverities[normalizeSeverity(a.MinSeverity)] {
+			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
+		}
+		if a.MaxFindings != nil && *a.MaxFindings <= 0 {
+			return agentErrf(name, "agent '%s': max_findings must be > 0", name)
+		}
+		for _, s := range a.Scope {
+			if strings.TrimSpace(s) == "" {
+				return agentErrf(name, "agent '%s': scope entries must not be empty", name)
+			}
+		}
 	}
 	return nil
 }
@@ -236,6 +274,11 @@ func (r *Registry) applyDefaults() {
 		if a.Tools && a.MaxTurns == nil {
 			mt := DefaultMaxTurns
 			a.MaxTurns = &mt
+		}
+		// Canonicalize min_severity (Epic 2.2) so downstream enforcement compares
+		// against a stable upper-case token regardless of how it was written.
+		if a.MinSeverity != "" {
+			a.MinSeverity = normalizeSeverity(a.MinSeverity)
 		}
 		r.Agents[name] = a
 	}
