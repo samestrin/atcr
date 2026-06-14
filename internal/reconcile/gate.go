@@ -99,7 +99,7 @@ func IsFailing(severity, category string, v *Verification, threshold string, req
 	if verdict == VerdictRefuted {
 		return false // a skeptic disproved it: retained but never blocks CI
 	}
-	if !AtOrAbove(strings.ToUpper(strings.TrimSpace(severity)), threshold) {
+	if !AtOrAbove(strings.ToUpper(strings.TrimSpace(severity)), strings.ToUpper(strings.TrimSpace(threshold))) {
 		return false
 	}
 	if requireVerified && verdict != VerdictConfirmed {
