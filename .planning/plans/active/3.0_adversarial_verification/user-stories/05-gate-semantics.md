@@ -11,8 +11,9 @@
 ## Story Context
 
 - **Background:** Stories 3 and 4 deliver the verification pipeline, re-emit artifacts with v2 confidence tiers, and expose `atcr verify` via CLI and MCP. The gate counter at `internal/reconcile/gate.go:57` (`CountAtOrAbove`) currently counts findings by confidence level but does not distinguish refuted findings (v1=HIGH, verdict=refuted → confidence=LOW) from naturally-LOW findings. The MCP path uses `failingFindings` at `internal/mcp/handlers.go:339`. What is missing is the semantic update: `--fail-on` must skip refuted findings, and `--require-verified` must count only VERIFIED findings — the strictest gate, requiring findings to have been confirmed by a skeptic.
+- **Reference:** [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — defines the `--fail-on` / `--require-verified` gate semantics and the MCP gate-status output.
 - **Assumptions:**
-  - Story 3 is complete: `CountAtOrAbove` already excludes refuted findings (or this story completes the update if Story 3 only prepared the data).
+  - Story 3 updated `CountAtOrAbove` to exclude refuted findings and accept a `requireVerified` parameter; this story updates `failingFindings` and adds the CLI/MCP `--require-verified` flags.
   - Re-emitted `findings.json` contains `verification` blocks with `verdict` fields (confirmed/refuted/unverifiable) per finding.
   - `--fail-on` is already a CLI flag on `atcr review` / `atcr reconcile`; this story adds `--require-verified` as a new flag and updates gate logic.
 - **Constraints:**
@@ -46,7 +47,7 @@
 
 ## Original Criteria Overview
 
-1. `--fail-on <severity>` excludes findings with `Verification.Verdict == "refuted"` from the count, regardless of their v1 confidence or severity.
+1. `--fail-on <severity>` excludes findings with `Verification.Verdict == "refuted"` from the count, regardless of their v1 confidence or severity. `CountAtOrAbove` accepts a `requireVerified bool` parameter to centralize this logic.
 2. `--require-verified` (bool flag, default false) restricts the gate to count only findings with `confidence == "VERIFIED"` at or above the threshold. When combined with `--fail-on high`, only VERIFIED findings at HIGH or above trigger failure.
 3. The MCP handler `failingFindings` at `internal/mcp/handlers.go:339` applies the same filtering logic as the CLI path.
 4. Fixture matrix tests validate: confirmed/refuted/unverifiable findings × HIGH/MEDIUM/LOW severity × `--fail-on` threshold × `--require-verified` on/off, covering at least 12 distinct scenarios.
@@ -55,15 +56,15 @@
 ## Technical Considerations
 
 - **Implementation Notes:**
-  - **CLI flag (`internal/cmd/review.go` or `internal/cmd/gate.go`):** Add `--require-verified` (bool, default false) to the review/reconcile/verify commands. Pass it through to the gate evaluation function. The flag is mutually compatible with `--fail-on` but has no effect without it (or with any gate evaluation).
-  - **Gate logic update (`internal/reconcile/gate.go`):** Modify `CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) int` (or equivalent) to: (1) filter out findings where `finding.Verification != nil && finding.Verification.Verdict == "refuted"`, (2) if `requireVerified` is true, further filter to only findings with `finding.Confidence == "VERIFIED"`, (3) count findings at or above `threshold` (using the existing severity ordering: VERIFIED > HIGH > MEDIUM > LOW). The function signature may need to change to accept `requireVerified`; alternatively, a wrapper function `CountFailing(findings, threshold, requireVerified)` can be added.
+  - **CLI flag (`cmd/atcr/review.go` and `cmd/atcr/reconcile.go`):** Add `--require-verified` (bool, default false) to `atcr review` and `atcr reconcile` (and `atcr verify` if it accepts gate flags). Pass it through to the gate evaluation function. The flag is mutually compatible with `--fail-on` but has no effect without it (or with any gate evaluation).
+  - **Gate logic update (`internal/reconcile/gate.go`):** Update `CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) int` to: (1) skip findings where `finding.Verification != nil && finding.Verification.Verdict == "refuted"`, (2) if `requireVerified` is true, skip findings whose `Confidence` is not `"VERIFIED"`, (3) count remaining findings at or above `threshold` using the existing severity ordering. All callers (`cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, `internal/mcp/handlers.go`) pass the flag value (default false for backward compatibility).
   - **MCP path (`internal/mcp/handlers.go`):** Update `failingFindings` at line 339 to apply the same filtering. The MCP tool `atcr_review` (or equivalent) should accept `requireVerified` as a parameter and pass it to the gate logic.
   - **Fixture matrix tests (`internal/reconcile/gate_test.go` or `internal/verify/gate_test.go`):** Build a test matrix with findings at each combination of verdict (confirmed/refuted/unverifiable) × severity (HIGH/MEDIUM/LOW). For each combination, assert the gate count with `--fail-on high`, `--fail-on medium`, `--fail-on low`, and each with `--require-verified` on/off. The matrix should have >= 12 distinct test cases.
   - **Backward compatibility:** Without `--require-verified`, the gate behavior is: count all non-refuted findings at or above threshold. This is a change from the pre-Epic 3.0 behavior (which counted all findings), but it is the intended semantic: refuted findings should never block merges. Document this change in release notes.
 - **Integration Points:**
   - `internal/reconcile/gate.go` — `CountAtOrAbove` (line 57): gate counter updated to exclude refuted and optionally require VERIFIED.
   - `internal/mcp/handlers.go` — `failingFindings` (line 339): MCP gate path updated to match CLI semantics.
-  - `internal/cmd/review.go` or `internal/cmd/gate.go` — CLI flag `--require-verified` added.
+  - `cmd/atcr/review.go` and `cmd/atcr/reconcile.go` — CLI flag `--require-verified` added.
   - `reconciled/findings.json` — input to gate logic; contains `verification` blocks with verdicts.
 - **Data Requirements:**
   - No new schema changes. The `Verification` struct and `verdict` field are already defined and populated by Story 3.
