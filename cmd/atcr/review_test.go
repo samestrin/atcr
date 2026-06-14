@@ -196,3 +196,13 @@ func TestReviewCmd_RequireVerifiedNeedsVerifyAndFailOn(t *testing.T) {
 	code, _ = execCmdCapture(t, "review", "--require-verified", "--verify")
 	require.Equal(t, 2, code)
 }
+
+// TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
+// with an undefined flag name — a programming error that must fail loudly
+// rather than silently returning false.
+func TestBoolFlag_UndefinedFlagPanics(t *testing.T) {
+	cmd := newReviewCmd()
+	require.Panics(t, func() {
+		boolFlag(cmd, "nonexistent-flag")
+	})
+}
