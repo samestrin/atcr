@@ -165,18 +165,26 @@ Fallback references are validated when the registry loads:
 
 Both fail the load immediately, so a misconfigured chain can never surface mid-run.
 
-## Reserved fields (parsed and validated, inert in 1.x)
+## Tool-using reviewer fields (active in 2.0)
 
-The v1 schema is strict — unknown keys fail the load — but the following agent fields are **reserved for later stages and already accepted**. A 1.x registry may set them; the loader parses and type-validates them, yet **no v1 code path acts on them** and **no load-time default is applied** — an omitted field stays at its zero/unset value until its stage lands. This lets a config target a future stage today without forcing a format-version break.
+Epic 2.0 turns the pool reviewers into bounded, tool-using agents. The fields below were **reserved in 1.1/1.x** (parsed and type-validated but inert) and are now **active in 2.0**: the engine acts on them to drive the multi-turn tool loop. A registry written for 1.x that set these fields keeps working unchanged — the values now take effect instead of being ignored.
+
+| Field | Type | Default | Validated at load | Behavior |
+|-------|------|---------|-------------------|----------|
+| `tools` | bool (per agent) | `false` | type only | `true` enables the multi-turn tool loop (`read_file`, `grep`, `list_files`) for that agent. Default `false` runs the 1.0 single-shot path. |
+| `max_turns` | int (per agent) | `10` when `tools: true` | must be within `1..1000` | Caps the number of Chat-with-tools turns per agent. The default `10` is applied at load **only when `tools: true`**; a non-tool agent leaves it unset. The hard upper bound (`1000`) backstops a runaway loop. |
+| `tool_budget_bytes` | int (per agent) | `0` (unlimited) | must be `>= 0` | Caps cumulative tool-result bytes delivered to the model across the run. `0 = unlimited`; a negative value is rejected at load. |
+| `supports_function_calling` | bool (per model/agent) | `false` | type only | Declares that the agent's model speaks the OpenAI function-calling wire format. **Required for a `tools: true` agent to run the loop** — a `tools: true` agent whose model is not declared capable degrades to single-shot and records `tools_degraded: true`. There is no runtime probing; capability is registry-declared. |
+
+**Safety:** set `tools: true` **only** for a model you have also marked `supports_function_calling: true`. A `tools: true` agent on a non-capable model degrades cleanly to single-shot rather than looping, but the intent will not run — keep the two flags consistent. Tool agents are read-only and path-jailed (no write tools, no shell, no network); see [payload-modes.md](payload-modes.md) for the payload-as-starting-point semantics and the per-agent cost in the [README](../README.md).
+
+An out-of-range value (e.g. `max_turns: 0`, a negative `tool_budget_bytes`, an unknown `role`) is a load error, so a misconfiguration is caught in a second at load rather than mid-run.
+
+### Still reserved (inert until a later stage)
 
 | Field | Type | Planned default | Validated at load | Activated by |
 |-------|------|-----------------|-------------------|--------------|
-| `tools` | bool | false | type only | Stage 2 — tool-using reviewers |
-| `max_turns` | int | 10 | must be `> 0` | Stage 2 |
-| `tool_budget_bytes` | int | — (unset) | must be `>= 0` (0 = unlimited) | Stage 2 |
 | `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
-
-The **planned default** column documents the value each field's owning stage will assume when it activates; 1.x applies none of these. An out-of-range value (e.g. `max_turns: 0`, an unknown `role`) is a load error even though the field is otherwise inert, so a config targeting a future stage is still caught early.
 
 ## Verifying the configuration (`atcr doctor`)
 

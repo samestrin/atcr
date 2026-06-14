@@ -1,3 +1,18 @@
+## [2.0.0] - 2026-06-13
+
+### Fixed
+
+- Normalized zero `Limits` fields to `DefaultLimits` in `NewDispatcher` to prevent silent unlimited-cap behavior
+- Joined first and retry worktree-add errors via `errors.Join` so both causes are surfaced in the error message
+- Used `filepath.EvalSymlinks` in `snapshotCleanupGuard` to handle symlinked TMPDIR on macOS/Windows
+- Logged warning on malformed turn field in replay instead of silently discarding the decode error
+- Used case-insensitive comparison for `.git` directory skip in grep and `list_files`
+- Replaced single-turn oscillation guard with a 3-turn ring buffer to catch ABAB signal oscillation; `loop_hygiene` now recorded in `TrippedBudgets` on hygiene halt
+- Fixed `OriginalBytes` to store byte count (not match count) in truncated grep results
+- Wrapped `JailError` in `ToolError` so the `Execute` contract is maintained
+
+*Shipped via /execute-sprint (sprint 2.0_tool_using_reviewers)*
+
 ## [1.9.0] - 2026-06-13
 
 ### Fixed

@@ -14,6 +14,18 @@ const MaxTimeoutSecs = 86400
 // once Epic 2.0 activates the tool loop.
 const MaxAgentTurns = 1000
 
+// DefaultMaxTurns is the turn budget applied at load when an agent enables
+// tools (tools=true) without an explicit max_turns. 10 covers a typical
+// evidence-gathering loop (3-10 tool calls) while bounding a thrashing model;
+// it stays well under the MaxAgentTurns hard cap.
+const DefaultMaxTurns = 10
+
+// MaxToolBudgetBytes caps the cumulative tool-result budget at the largest
+// value that could ever be consumed: the per-payload byte budget times the
+// maximum turn count. Anything larger is almost certainly a typo and is
+// indistinguishable from the unlimited (0) sentinel in practice.
+const MaxToolBudgetBytes = DefaultPayloadByteBudget * MaxAgentTurns
+
 // DefaultMaxParallel is the embedded-tier bound on concurrent parallel-lane
 // agent calls. 10 preserves the effective behavior of v1 rosters (≤~10 agents,
 // AC 01-04's "10 concurrent agent calls" target) while capping a larger or
@@ -101,10 +113,21 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		s.PayloadMode = v
 	}
 	// Post-resolution sanity: a directly-constructed proj/reg (bypassing the
-	// file loader) can carry a negative MaxParallel. The engine treats n<=0 as
-	// unbounded, so a negative value silently inverts the user's intent.
+	// file loader) can carry out-of-range values. Catch them here so the engine
+	// never receives them.
+	//
+	// MaxParallel: n<=0 is the unbounded escape hatch; only negative is invalid.
 	if s.MaxParallel < 0 {
 		return Settings{}, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", s.MaxParallel)
+	}
+	// TimeoutSecs: review.go's `p.TimeoutSec > 0` guard silently skips the
+	// timeout on <=0 values (no timeout applied — inverse of intent).
+	if s.TimeoutSecs <= 0 || s.TimeoutSecs > MaxTimeoutSecs {
+		return Settings{}, fmt.Errorf("timeout_secs must be within 1..%d, got %d", MaxTimeoutSecs, s.TimeoutSecs)
+	}
+	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
+	if s.PayloadByteBudget < 0 {
+		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
 	}
 	return s, nil
 }

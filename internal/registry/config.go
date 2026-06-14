@@ -41,16 +41,18 @@ const (
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
 // TimeoutSecs are pointers so an explicit zero survives default application.
 //
-// Tools, MaxTurns, ToolBudgetBytes, and Role are reserved for the agentic
-// stages (Epics 2.0–4.0). They are parsed and validated at load so a config
-// targeting a future stage loads cleanly under the strict v1 parser, but no
-// v1 code path acts on them and no load-time default is applied — they stay at
-// their zero/unset value in 1.x. MaxTurns and ToolBudgetBytes are pointers so
-// the activating stage can tell an explicit value from an unset one (the same
-// reason TimeoutSecs is a pointer). Tools is intentionally a value bool (not
-// *bool) because its planned default is false and no stage needs to distinguish
-// "explicitly false" from "unset". Planned defaults (tools=false,
-// max_turns=10, role=reviewer) are documented in docs/registry.md.
+// Tools, MaxTurns, ToolBudgetBytes, and SupportsFC are ACTIVE in Epic 2.0: the
+// engine drives the multi-turn tool loop from them and applyDefaults sets
+// max_turns=10 when tools=true. They were reserved (parsed + validated but
+// inert) in 1.1/1.x; a 1.x config that set them keeps loading and the values now
+// take effect. Role is still reserved for the agentic stages (Epics 3.0/4.0) —
+// parsed and validated, but no code path acts on it yet. MaxTurns and
+// ToolBudgetBytes are pointers so an explicit value is distinguishable from unset
+// (the same reason TimeoutSecs is a pointer). Tools is a value bool because its
+// default is false and nothing needs to distinguish "explicitly false" from
+// "unset". Defaults (tools=false, max_turns=10, tool_budget_bytes=0/unlimited,
+// supports_function_calling=false, role=reviewer) are documented in
+// docs/registry.md.
 type AgentConfig struct {
 	Provider    string   `yaml:"provider"`
 	Model       string   `yaml:"model"`
@@ -61,11 +63,20 @@ type AgentConfig struct {
 	Fallback    string   `yaml:"fallback,omitempty"`
 	Payload     string   `yaml:"payload,omitempty"`
 
-	// Reserved for the agentic stages — parsed + validated, inert in 1.x.
-	Tools           bool   `yaml:"tools"`             // Stage 2 — enables the tool loop
-	MaxTurns        *int   `yaml:"max_turns"`         // Stage 2 — agent-loop turn cap
-	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // Stage 2 — cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
-	Role            string `yaml:"role"`              // Stage 3/4 — reviewer | skeptic | judge
+	// Active in Epic 2.0 — the engine acts on these (tool loop + budgets).
+	Tools           bool   `yaml:"tools"`             // enables the multi-turn tool loop
+	MaxTurns        *int   `yaml:"max_turns"`         // agent-loop turn cap (default 10 when tools=true)
+	ToolBudgetBytes *int64 `yaml:"tool_budget_bytes"` // cumulative tool-result budget (0 = unlimited, matches PayloadByteBudget)
+	// Reserved for the agentic stages — parsed + validated, inert in 2.0.
+	Role string `yaml:"role"` // Stage 3/4 — reviewer | skeptic | judge
+
+	// SupportsFC declares whether this agent's model supports OpenAI-style
+	// function calling. Active in Epic 2.0 (Phase 4): the engine consults it
+	// before starting a tool loop. Default false (a value bool — no stage needs
+	// to distinguish "explicitly false" from "unset"), so a model is assumed
+	// non-tool-capable unless explicitly declared, and a tools:true agent on an
+	// undeclared model degrades safely to single-shot.
+	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
 }
 
 // roleValid reports whether r is an allowed reserved role. The empty string is
@@ -191,15 +202,16 @@ func (r *Registry) validate() error {
 		if !payloadModeValid(a.Payload) {
 			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
 		}
-		// Reserved agentic-stage fields: validated at load (inert in 1.x).
+		// role is still reserved (Stage 3/4) but validated at load; max_turns and
+		// tool_budget_bytes are active in 2.0 and bound the tool loop.
 		if !roleValid(a.Role) {
 			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
 		}
 		if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
 			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
 		}
-		if a.ToolBudgetBytes != nil && *a.ToolBudgetBytes < 0 {
-			return agentErrf(name, "agent '%s': tool_budget_bytes must be >= 0 (0 = unlimited)", name)
+		if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
+			return agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes)
 		}
 	}
 	return nil
@@ -217,6 +229,13 @@ func (r *Registry) applyDefaults() {
 		if a.Temperature == nil {
 			temp := DefaultTemperature
 			a.Temperature = &temp
+		}
+		// Tool-loop default (Epic 2.0): a tool-enabled agent with no explicit
+		// max_turns gets DefaultMaxTurns so the engine loop is always bounded.
+		// Non-tool agents keep MaxTurns unset (nil) — the field is inert for them.
+		if a.Tools && a.MaxTurns == nil {
+			mt := DefaultMaxTurns
+			a.MaxTurns = &mt
 		}
 		r.Agents[name] = a
 	}

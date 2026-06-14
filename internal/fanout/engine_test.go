@@ -299,6 +299,58 @@ func TestRun_ResultsPreserveInputOrder(t *testing.T) {
 	}
 }
 
+// panicCompleter wraps a fakeCompleter and panics for configured models.
+type panicCompleter struct {
+	f        *fakeCompleter
+	panicFor map[string]bool
+}
+
+func (p *panicCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
+	if p.panicFor[inv.Model] {
+		panic("simulated agent panic")
+	}
+	return p.f.Complete(ctx, inv)
+}
+
+// A panicking parallel slot must be isolated to a failed result instead of
+// crashing the process.
+func TestRun_ParallelSlotPanicRecovers(t *testing.T) {
+	f := newFake()
+	p := &panicCompleter{f: f, panicFor: map[string]bool{"b": true}}
+	e := NewEngine(p)
+
+	slots := []Slot{agentSlot("a"), agentSlot("b"), agentSlot("c")}
+	results := e.Run(context.Background(), slots)
+
+	require.Len(t, results, 3)
+	byName := map[string]Result{}
+	for _, r := range results {
+		byName[r.Agent] = r
+	}
+	assert.Equal(t, StatusOK, byName["a"].Status)
+	assert.Equal(t, StatusFailed, byName["b"].Status)
+	assert.ErrorContains(t, byName["b"].Err, "panic")
+	assert.Equal(t, StatusOK, byName["c"].Status)
+}
+
+// A panicking serial slot must be isolated to a failed result.
+func TestRun_SerialSlotPanicRecovers(t *testing.T) {
+	f := newFake()
+	p := &panicCompleter{f: f, panicFor: map[string]bool{"s2": true}}
+	e := NewEngine(p)
+
+	slots := []Slot{
+		{Primary: Agent{Name: "s1", Invocation: llmclient.Invocation{Model: "s1"}}, Serial: true},
+		{Primary: Agent{Name: "s2", Invocation: llmclient.Invocation{Model: "s2"}}, Serial: true},
+	}
+	results := e.Run(context.Background(), slots)
+
+	require.Len(t, results, 2)
+	assert.Equal(t, StatusOK, results[0].Status)
+	assert.Equal(t, StatusFailed, results[1].Status)
+	assert.ErrorContains(t, results[1].Err, "panic")
+}
+
 func parallelSlots(n int) []Slot {
 	var slots []Slot
 	for i := 0; i < n; i++ {

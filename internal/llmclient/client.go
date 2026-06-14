@@ -129,11 +129,10 @@ type chatResponse struct {
 // non-2xx statuses and parse failures fail immediately. The API key value
 // never appears in any error.
 func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
-	key := os.Getenv(inv.APIKeyEnv)
-	if key == "" {
-		return "", fmt.Errorf("API key env var %s is not set", inv.APIKeyEnv)
+	key, err := resolveKey(inv)
+	if err != nil {
+		return "", err
 	}
-
 	body, err := json.Marshal(chatRequest{
 		Model:       inv.Model,
 		Messages:    []message{{Role: "user", Content: inv.Prompt}},
@@ -143,26 +142,58 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("encoding request: %w", err)
 	}
+	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
+	if err != nil {
+		return "", err
+	}
+	var parsed chatResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+	if len(parsed.Choices) == 0 {
+		return "", fmt.Errorf("failed to parse response: no choices returned")
+	}
+	return parsed.Choices[0].Message.Content, nil
+}
 
-	endpoint := strings.TrimRight(inv.BaseURL, "/") + "/chat/completions"
-	// Defensively drop any userinfo embedded in the base URL so transport and
-	// request-creation errors (which echo the endpoint) cannot surface it.
+// resolveKey reads the invocation's API key env var; the value is never logged.
+func resolveKey(inv Invocation) (string, error) {
+	key := os.Getenv(inv.APIKeyEnv)
+	if key == "" {
+		return "", fmt.Errorf("API key env var %s is not set", inv.APIKeyEnv)
+	}
+	return key, nil
+}
+
+// resolveEndpoint builds the chat-completions URL and defensively drops any
+// userinfo embedded in the base URL so transport and request-creation errors
+// (which echo the endpoint) cannot surface it.
+func resolveEndpoint(baseURL string) string {
+	endpoint := strings.TrimRight(baseURL, "/") + "/chat/completions"
 	if u, err := url.Parse(endpoint); err == nil && u.User != nil {
 		u.User = nil
 		endpoint = u.String()
 	}
+	return endpoint
+}
 
+// send performs the request with the retry/backoff schedule and returns the raw
+// 200 response body for the caller to parse. It is shared by Complete (single
+// message) and Chat (multi-turn with tools): both feed it a pre-marshalled body
+// and decode the bytes themselves, so the retry, redirect, key-redaction, and
+// size-cap semantics stay identical across the two call shapes.
+func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
 	var lastErr error
 	delay := c.initialBackoff
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			if err := sleepCtx(ctx, delay); err != nil {
-				return "", err
+				return nil, err
 			}
 			delay = time.Duration(float64(delay) * c.backoffFactor)
 		}
 
-		content, status, err := c.attempt(ctx, endpoint, key, body)
+		payload, status, err := c.attempt(ctx, endpoint, key, body)
 		switch {
 		case status == 0:
 			// Context cancellation/deadline must return immediately so timeout
@@ -170,34 +201,34 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 			// (connection reset, EOF, DNS blip) are as transient as a 5xx and
 			// get the same backoff schedule.
 			if ctx.Err() != nil {
-				return "", err
+				return nil, err
 			}
 			lastErr = err
 			if attempt < c.maxRetries {
 				continue
 			}
-			return "", fmt.Errorf("exhausted retries: %w", lastErr)
+			return nil, fmt.Errorf("exhausted retries: %w", lastErr)
 		case status == http.StatusOK:
-			// A 200 with an unparseable body is a hard failure, not a retry.
+			// A 200 with an unreadable/oversized body is a hard failure, not a retry.
 			if err != nil {
-				return "", err
+				return nil, err
 			}
-			return content, nil
+			return payload, nil
 		case retryableStatus[status]:
-			lastErr = httpStatusError(status, content)
+			lastErr = httpStatusError(status, string(payload))
 			if attempt < c.maxRetries {
 				continue
 			}
 			// Last attempt still retryable: report the exhausted budget.
-			return "", fmt.Errorf("exhausted retries: %w", lastErr)
+			return nil, fmt.Errorf("exhausted retries: %w", lastErr)
 		default:
 			if err != nil {
-				return "", err
+				return nil, err
 			}
-			return "", httpStatusError(status, content)
+			return nil, httpStatusError(status, string(payload))
 		}
 	}
-	return "", fmt.Errorf("exhausted retries: %w", lastErr)
+	return nil, fmt.Errorf("exhausted retries: %w", lastErr)
 }
 
 // HTTPStatusError is a non-2xx provider response surfaced to callers so they
@@ -234,21 +265,21 @@ func readErrorSnippet(r io.Reader) string {
 	return strings.Join(strings.Fields(string(b)), " ")
 }
 
-// attempt performs a single request. It returns the parsed content (on 200)
-// or a sanitized error-body snippet (on non-200), the HTTP status (0 on a
-// transport error), and an error. A 200 with an unparseable body returns the
-// parse error with status 200.
-func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) (string, int, error) {
+// attempt performs a single request. On 200 it returns the raw (bounded)
+// response body for the caller to decode; on non-200 it returns a sanitized
+// error-body snippet (as bytes). status is 0 on a transport error. A 200 whose
+// body exceeds the size cap returns the size error with status 200.
+func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("request failed: %w", err)
+		return nil, 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -257,23 +288,21 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
 		snippet := strings.ReplaceAll(readErrorSnippet(resp.Body), key, "[redacted]")
-		return snippet, resp.StatusCode, nil
+		return []byte(snippet), resp.StatusCode, nil
 	}
 
 	// N is cap+1 so crossing the cap is distinguishable from a body that is
-	// exactly cap bytes.
+	// exactly cap bytes. A misbehaving or hostile endpoint cannot stream
+	// unbounded memory into a long-lived process.
 	limited := &io.LimitedReader{R: resp.Body, N: maxResponseBodyBytes + 1}
-	var parsed chatResponse
-	if err := json.NewDecoder(limited).Decode(&parsed); err != nil {
-		if limited.N <= 0 {
-			return "", resp.StatusCode, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
-		}
-		return "", resp.StatusCode, fmt.Errorf("failed to parse response: %w", err)
+	raw, rerr := io.ReadAll(limited)
+	if rerr != nil {
+		return nil, resp.StatusCode, fmt.Errorf("reading response: %w", rerr)
 	}
-	if len(parsed.Choices) == 0 {
-		return "", resp.StatusCode, fmt.Errorf("failed to parse response: no choices returned")
+	if limited.N <= 0 {
+		return nil, resp.StatusCode, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
 	}
-	return parsed.Choices[0].Message.Content, resp.StatusCode, nil
+	return raw, resp.StatusCode, nil
 }
 
 // sleepCtx waits for d or until ctx is cancelled, whichever comes first.

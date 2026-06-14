@@ -112,6 +112,12 @@ A repo can ship its own providers and agents in `.atcr/registry.yaml`, overlayin
 
 One run can mix payloads — the frontier model reads the `diff`, the local 8B gets `blocks` — and `manifest.json` records who saw what. See [docs/payload-modes.md](docs/payload-modes.md) for the decision guide, byte-budget truncation, and per-mode scope rules.
 
+## Tool-using reviewers (cost guidance)
+
+Set `tools: true` on a function-calling-capable agent to turn it from a single-shot reviewer into a bounded, multi-turn **tool-using agent**: it can `read_file`, `grep`, and `list_files` across a read-only, path-jailed snapshot of the repo to verify a suspicion before reporting it. The payload becomes the starting point of the review, not the whole picture — see [docs/payload-modes.md](docs/payload-modes.md).
+
+Tool agents are not free. A tool-using reviewer **typically consumes 3-10× the provider calls** of a single-shot reviewer (one call per turn, plus the final answer), so cost scales with how much exploration the model does. Each agent is bounded by per-agent budgets — `max_turns`, `tool_budget_bytes`, and `timeout_secs` — documented in [docs/registry.md](docs/registry.md). Enable `tools` selectively (your strongest models, your highest-value lanes) rather than across the whole roster, and tune the budgets to cap spend. A `tools: true` agent on a model without `supports_function_calling: true` degrades cleanly to the single-shot path.
+
 ## CI integration
 
 atcr is a PR gate with no glue code: `--fail-on <severity>` returns a nonzero exit when any finding at or above the threshold survives reconciliation.

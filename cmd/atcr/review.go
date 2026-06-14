@@ -143,6 +143,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// One-shot mode: reconcile in-process and gate on the threshold. Review
 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
 	// them for inspection (AC 03-02 Error Scenario 3).
+	//
+	// result.Summary.Partial is used directly (not ReadManifestPartial) because
+	// the `if err != nil { return err }` guard above ensures this block is only
+	// reached when ExecuteReview succeeded — a WritePool fault returns a non-nil
+	// error and short-circuits before this line. The FailureMarker correction in
+	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
+	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" {
 		rec, rerr := reconcile.RunReconcile(cmd.Context(), result.Dir, nil, reconcile.Options{
 			ReconciledAt: time.Now(),

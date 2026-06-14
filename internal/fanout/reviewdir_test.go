@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,7 +327,14 @@ func TestReadManifestPartial_FailureMarkerForcesPartial(t *testing.T) {
 // A failure-marker summary where NO agent succeeded is a genuine total failure;
 // the marker alone must not fabricate partial=true (there is no surviving
 // subset to protect).
-func TestReadManifestPartial_FailureMarkerAllFailedStaysNonPartial(t *testing.T) {
+// A failure-marker summary where every agent timed out (Succeeded=0, Failed=2)
+// must still be treated as partial. summarize() buckets StatusTimeout as
+// Failed (outcome.go:55), so a roster of timed-out agents that produced content
+// before a WritePool fault appears as all-Failed in the summary — but the
+// per-agent artifacts may still be on disk. Gating on Succeeded>0 misses this
+// class of write-aborted runs; gating on Total>0 covers all failure-path
+// writes conservatively.
+func TestReadManifestPartial_FailureMarkerAllAgents_IsPartial(t *testing.T) {
 	root := t.TempDir()
 	dir, err := ScaffoldReviewDir(root, "2026-06-10_marker_allfailed")
 	require.NoError(t, err)
@@ -337,7 +345,7 @@ func TestReadManifestPartial_FailureMarkerAllFailedStaysNonPartial(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(poolDir, "summary.json"), sum, 0o644))
 
-	assert.False(t, ReadManifestPartial(dir), "marker with zero successes is a total failure, not partial")
+	assert.True(t, ReadManifestPartial(dir), "a failure-marker run with agents is always partial regardless of success count")
 }
 
 // End-to-end AC: ExecuteReview's WritePool-failure branch calls
@@ -410,4 +418,111 @@ func TestWriteManifest_AtReviewRootWithFields(t *testing.T) {
 	assert.Equal(t, "blocks", got.PerAgentPayload["greta"])
 	assert.Equal(t, []string{"greta", "kai"}, got.Roster)
 	assert.False(t, got.Partial)
+}
+
+// --- Epic 1.9: FailureMarker contract across both summary readers ---
+
+// ReadReviewStatus must apply the same FailureMarker-aware partial derivation
+// as ReadManifestPartial. A failure-marker summary with Succeeded>0 and
+// Partial=false must set ReviewStatus.Partial=true so `atcr status` and the
+// atcr_status MCP handler agree with the reconcile path on what is partial.
+func TestReadReviewStatus_FailureMarkerForcesPartial(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_status_marker")
+	require.NoError(t, err)
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta", "kai"},
+	}))
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	// Every agent ran (Succeeded=2) but WritePool aborted mid-flush.
+	sum, err := json.Marshal(PoolSummary{Total: 2, Succeeded: 2, Failed: 0, Partial: false, FailureMarker: true})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, summaryFile), sum, 0o644))
+
+	st, readErr := ReadReviewStatus(dir, "2026-06-10_status_marker")
+	require.NoError(t, readErr)
+	assert.True(t, st.Partial, "ReadReviewStatus must report partial:true for a failure-marker run with surviving successes")
+	assert.Equal(t, RunCompleted, st.Status, "status must be RunCompleted when Succeeded>0")
+}
+
+// A zero-value PoolSummary produced by unmarshalling {} or null must not be
+// trusted as a valid completion signal — ReadManifestPartial must fall through
+// to the manifest fallback and not silently return partial:false.
+func TestReadManifestPartial_EmptyJSONFallsBackToManifest(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_emptyjson")
+	require.NoError(t, err)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+	// An empty JSON object unmarshals to a zero-value PoolSummary (Total=0,
+	// Partial=false, FailureMarker=false). The sanity check (Total>0) must
+	// reject this and fall through to the manifest.
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, summaryFile), []byte("{}"), 0o644))
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{Partial: true}))
+
+	assert.True(t, ReadManifestPartial(dir), "empty-JSON summary must fall through to manifest")
+}
+
+// Integration: a WritePool I/O fault writes a failure-marker summary via
+// writeFailureSummary; EnsureReviewComplete must pass (the review is terminal)
+// and BOTH readers must agree the run is partial so a subsequent reconcile
+// cannot emit a non-partial verdict from an incomplete agent set.
+func TestIntegration_WritePoolFault_BothReadersAgreePartial(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-13_fault-integration")
+	require.NoError(t, err)
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta", "kai"},
+	}))
+
+	// Simulate the WritePool-failure path: two agents ran OK, then persistence
+	// faulted. writeFailureSummary records the real tallies with FailureMarker=true.
+	results := []Result{
+		{Agent: "greta", Status: StatusOK, PayloadMode: "blocks"},
+		{Agent: "kai", Status: StatusOK, PayloadMode: "blocks"},
+	}
+	writeFailureSummary(filepath.Join(dir, "sources", "pool"), results)
+
+	// EnsureReviewComplete must pass: the marker summary makes the review terminal.
+	require.NoError(t, EnsureReviewComplete(dir, "2026-06-13_fault-integration"),
+		"EnsureReviewComplete must not block a reconcile on a failure-marked review")
+
+	// ReadReviewStatus must report partial:true (currently FAILS — bug in item 1).
+	st, readErr := ReadReviewStatus(dir, "2026-06-13_fault-integration")
+	require.NoError(t, readErr)
+	assert.True(t, st.Partial,
+		"ReadReviewStatus must report partial:true for a write-aborted run so atcr status and reconcile agree")
+
+	// ReadManifestPartial must also report true (reconcile path).
+	assert.True(t, ReadManifestPartial(dir),
+		"ReadManifestPartial must report partial:true for the same failure-marker run")
+}
+
+// ReadManifestPartial must not read an unbounded summary.json. A file larger
+// than the read cap must be skipped (falling back to manifest) rather than
+// allocating an unbounded heap slice before json.Unmarshal.
+func TestReadManifestPartial_OversizedSummaryFallsBack(t *testing.T) {
+	root := t.TempDir()
+	dir, err := ScaffoldReviewDir(root, "2026-06-10_oversize")
+	require.NoError(t, err)
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, os.MkdirAll(poolDir, 0o755))
+
+	// Build valid JSON larger than the 1 MiB cap. The summary says partial:false;
+	// the manifest says partial:true. Without the cap, the function trusts the
+	// summary and returns false. With the cap, the oversized file is rejected and
+	// the function falls back to the manifest, returning true.
+	const cap = 1 << 20
+	prefix := `{"total":2,"succeeded":2,"failed":0,"partial":false,"total_findings":0,"note":"`
+	suffix := `"}`
+	note := strings.Repeat("x", cap+10-len(prefix)-len(suffix))
+	summaryContent := prefix + note + suffix
+	require.Greater(t, len(summaryContent), cap, "test precondition: summary must exceed the cap")
+	require.NoError(t, os.WriteFile(filepath.Join(poolDir, summaryFile), []byte(summaryContent), 0o644))
+	require.NoError(t, WriteManifest(dir, &payload.Manifest{Partial: true}))
+
+	// Without the cap: reads valid JSON with partial=false -> returns false -> FAILS.
+	// With the cap: oversized -> falls through -> manifest -> returns true -> PASSES.
+	assert.True(t, ReadManifestPartial(dir), "oversized summary must fall back to manifest")
 }

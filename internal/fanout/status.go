@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -25,6 +26,16 @@ const (
 	StatusOK      = "ok"
 	StatusFailed  = "failed"
 	StatusTimeout = "timeout"
+)
+
+// Tripped-budget markers recorded in AgentStatus.TrippedBudgets and Result
+// (Epic 2.0). They name which per-agent budget halted the tool loop so the
+// status.json reader and report panel can attribute the early stop.
+const (
+	budgetMaxTurns    = "max_turns"
+	budgetToolBytes   = "tool_budget_bytes"
+	budgetTimeout     = "timeout_secs"
+	budgetLoopHygiene = "loop_hygiene"
 )
 
 // Review run states reported by ReadReviewStatus (AC 04-04). in_progress holds
@@ -53,6 +64,24 @@ const (
 // constant or scale it with roster size. (Adjudicated per Epic 1.5 Q2: flat
 // 60s is sufficient for current roster sizes.)
 const staleGraceSecs = 60
+
+// maxSummaryBytes caps the summary.json read in ReadReviewStatus and
+// ReadManifestPartial. A real summary is kilobytes even for large rosters
+// (~100 agents × ~1 KB per agent record ≈ 100 KB); 1 MiB is a generous
+// bound that prevents an unexpectedly large file from allocating an unbounded
+// heap slice before json.Unmarshal.
+const maxSummaryBytes = 1 << 20 // 1 MiB
+
+// EffectivePartial derives the authoritative partial flag from a PoolSummary,
+// applying FailureMarker awareness that the raw Partial field lacks. When
+// WritePool aborted mid-flush (FailureMarker=true) and at least one agent was
+// in the roster (Total>0), the on-disk artifact set is an untrustworthy subset
+// regardless of Succeeded/Failed counts — a timed-out agent may have flushed
+// findings before the fault — so the run is always partial. ReadReviewStatus
+// and ReadManifestPartial both delegate here so the two readers never drift.
+func (ps PoolSummary) EffectivePartial() bool {
+	return ps.Partial || (ps.FailureMarker && ps.Total > 0)
+}
 
 // nowFunc is the clock ReadReviewStatus consults for stale inference; a package
 // var so tests can pin it for deterministic window assertions. Swapping nowFunc
@@ -122,7 +151,25 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		AgentsPending: len(m.Roster),
 	}
 
-	sdata, serr := os.ReadFile(filepath.Join(reviewDir, "sources", "pool", summaryFile))
+	// Cap the summary read to prevent an unexpectedly large file from allocating
+	// an unbounded heap slice (item TD: reviewdir.go:340). Any read problem
+	// (absent file, permission error, oversized) falls through to the same
+	// stale-inference branch as a missing summary — past the deadline the review
+	// is presumed dead regardless of the cause.
+	var sdata []byte
+	var serr error
+	{
+		sf, sfErr := os.Open(filepath.Join(reviewDir, "sources", "pool", summaryFile))
+		if sfErr != nil {
+			serr = sfErr
+		} else {
+			sdata, serr = io.ReadAll(io.LimitReader(sf, maxSummaryBytes+1))
+			_ = sf.Close()
+			if serr == nil && int64(len(sdata)) > maxSummaryBytes {
+				serr = fmt.Errorf("summary.json exceeds read cap (%d B)", maxSummaryBytes)
+			}
+		}
+	}
 	if serr != nil {
 		// No completion signal. The pair is read manifest-first then summary
 		// (Task 4 read invariant); a genuinely absent summary means the fan-out
@@ -149,7 +196,7 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 	if st.AgentsPending < 0 {
 		st.AgentsPending = 0
 	}
-	st.Partial = ps.Partial
+	st.Partial = ps.EffectivePartial()
 	if ps.Succeeded > 0 {
 		st.Status = RunCompleted
 	} else {
@@ -234,12 +281,18 @@ type AgentStatus struct {
 	FallbackFrom  string   `json:"fallback_from,omitempty"`
 	Error         string   `json:"error,omitempty"`
 
-	// Reserved per-agent counters for the agentic stages (Epic 2.0 tool loop).
-	// Pointers + omitempty so they are absent from every 1.x status.json (no
-	// tool loop ran) yet a future stage can record an explicit zero.
-	Turns     *int   `json:"turns,omitempty"`
-	ToolCalls *int   `json:"tool_calls,omitempty"`
-	ToolBytes *int64 `json:"tool_bytes,omitempty"`
+	// Per-agent counters for the agentic stages (Epic 2.0 tool loop). Pointers +
+	// omitempty so they are absent from every 1.x status.json (no tool loop ran),
+	// yet a tool-enabled agent records an explicit zero even when it degraded or
+	// tripped before any tool ran (statusFor sets them iff the agent was
+	// tool-enabled). ToolsDegraded marks a tool agent that fell back to
+	// single-shot; TrippedBudgets names every budget that halted the loop.
+	Turns          *int     `json:"turns,omitempty"`
+	ToolCalls      *int     `json:"tool_calls,omitempty"`
+	ToolBytes      *int64   `json:"tool_bytes,omitempty"`
+	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
+	ToolsRequested bool     `json:"tools_requested,omitempty"`
+	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

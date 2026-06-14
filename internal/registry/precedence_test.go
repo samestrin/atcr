@@ -315,3 +315,54 @@ func TestPrecedence_FileTierNegativeMaxParallelRejectedAtResolve(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "max_parallel")
 }
+
+// TestPrecedence_FileTierOutOfRangeTimeoutRejectedAtResolve mirrors the
+// MaxParallel guard: a directly-constructed ProjectConfig/Registry that bypasses
+// the file loader must not sneak an invalid TimeoutSecs into the engine.
+// review.go's `p.TimeoutSec > 0` guard silently skips the timeout on <=0
+// values, so the inverse-of-intent must be caught here.
+func TestPrecedence_FileTierOutOfRangeTimeoutRejectedAtResolve(t *testing.T) {
+	cases := []struct {
+		name    string
+		secs    int
+		wantErr string
+	}{
+		{"zero", 0, "timeout_secs"},
+		{"negative", -1, "timeout_secs"},
+		{"above max", MaxTimeoutSecs + 1, "timeout_secs"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proj := &ProjectConfig{TimeoutSecs: intPtr(tc.secs)}
+			_, err := ResolveSettings(CLIOverrides{}, proj, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+
+			reg := &Registry{TimeoutSecs: intPtr(tc.secs)}
+			_, err = ResolveSettings(CLIOverrides{}, nil, reg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestPrecedence_FileTierNegativePayloadByteBudgetRejectedAtResolve mirrors
+// the MaxParallel guard for PayloadByteBudget: a negative value bypassing the
+// file loader must be caught at the resolution boundary (0 = unlimited is valid).
+func TestPrecedence_FileTierNegativePayloadByteBudgetRejectedAtResolve(t *testing.T) {
+	neg := int64(-1)
+	proj := &ProjectConfig{PayloadByteBudget: &neg}
+	_, err := ResolveSettings(CLIOverrides{}, proj, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payload_byte_budget")
+
+	reg := &Registry{PayloadByteBudget: &neg}
+	_, err = ResolveSettings(CLIOverrides{}, nil, reg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "payload_byte_budget")
+
+	// Explicit zero (unlimited) must still be accepted.
+	zero := int64(0)
+	_, err = ResolveSettings(CLIOverrides{}, &ProjectConfig{PayloadByteBudget: &zero}, nil)
+	require.NoError(t, err)
+}

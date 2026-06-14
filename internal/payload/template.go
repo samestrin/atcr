@@ -20,6 +20,11 @@ type PayloadContext struct {
 	PayloadMode string
 	Payload     string
 	ScopeRule   string
+	// ToolsEnabled is true for tool-using reviewer agents (Epic 2.0). It gates
+	// {{if .ToolsEnabled}} persona sections (tool-exploration guidance and the
+	// evidence-citation rule, authored in Story 6); it defaults to false so
+	// non-tool personas render exactly as in 1.x.
+	ToolsEnabled bool
 }
 
 // renderPhase distinguishes the two failure points of RenderPrompt.
