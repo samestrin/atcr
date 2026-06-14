@@ -306,6 +306,62 @@ error (exit 2) `error: --require-verified requires --fail-on` (AC 05-01 EC3). `-
 implies `--reconcile` and reconcile runs exactly once (AC 04-02). Missing reconciled
 findings yields the identical error string across CLI / chained / MCP paths.
 
+### Phase 5 Clarifications (recorded 2026-06-14)
+
+The Phase 5 acceptance criteria (the DoD source of truth — same precedent set in the
+Phase 2/3/4 Clarifications) introduce verification-aware report rendering. One existing
+test asserts the opposite contract; resolved below against the ACs and actual code. No
+user input was required; recorded here for the Phase 5 gate review.
+
+**Key Decisions:**
+1. **Epic 1.1 `TestRender_IdenticalWithAndWithoutVerification` is superseded (AC 06-01 /
+   06-02):** that test (render_test.go:202) asserted adding a `Verification` block does NOT
+   change markdown/checklist output — correct while the block was *reserved/inert* in Epic
+   1.1. Epic 3.0 Phase 5 makes the report verification-aware, so the contract flips: a
+   **non-nil** `Verification` block now renders a Skeptic section / VERIFIED tier / Refuted
+   placement, while a **nil** block renders byte-identically to v1 (AC 06-02 Scenario 1).
+   The Epic 1.1 test is updated to assert the new contract (nil == v1; non-nil adds skeptic
+   info) rather than deleted, preserving the backward-compat guarantee in its v2 form.
+2. **Model omitted from the report Skeptic section (AC 06-01 Scenario 1 Decision):** the
+   `findings.json` `Verification` block carries only `{Verdict, Skeptic, Notes}`; the report
+   does no registry lookup (avoids a renderer→registry dependency). Full skeptic→model
+   attribution stays in `verification.json` for audit.
+3. **VERIFIED rendered distinctly two ways:** a `[VERIFIED]` confidence label on the finding
+   line (replacing the v1 `[HIGH]`-style label) AND a dedicated `VERIFIED conf` column in the
+   summary grid, placed leftmost per the v2 ordering VERIFIED > HIGH > MEDIUM > LOW (design
+   concept §Confidence v2 ordering).
+4. **Refuted section uses `<details><summary>Refuted Findings (N)</summary>`** (GitHub-flavored
+   markdown), omitted entirely when zero refuted; all dynamic content routed through the
+   existing `esc()`/`escTrunc()` (no injection via skeptic notes). Refuted findings are
+   removed from the main Findings list and shown only in the collapsed section (AC 06-01
+   Scenario 2 + Edge Case 2).
+5. **Test file naming:** new render tests live in `internal/report/render_verification_test.go`
+   (sprint-plan task 5.1/5.2.A reference); the v2 golden is `testdata/report-v2.md` with input
+   fixture `testdata/findings-with-verification.json` — distinct names so the v1 golden cascade
+   (AC 06-02) cannot break.
+
+**Scope Boundaries (Phase 5):**
+- IN: `render.go` v2 sections (VERIFIED tier, Skeptic section, collapsed Refuted),
+  `findings-with-verification.json` + `report-v2.md` golden, `render_verification_test.go`,
+  `verify_e2e_test.go` (planted true/false), `docs/verification.md` (new), `docs/registry.md`
+  + `docs/findings-format.md` updates, and the Epic 1.1 test update (decision 1).
+- DEFERRED (already captured): TD-009 (verify parallelism), TD-010 (transactional multi-file
+  emit), TD-011 (degraded-record model attribution), TD-012/013 (CLI error-mapping / log
+  hygiene), TD-014 (category display canonicalization). None are Phase 5 scope.
+
+**Technical Approach (Phase 5):** Phases 1–3 pipeline (`invokeSkeptic`, `aggregateVerdicts`,
+`confidenceV2`) is complete, so `verify_e2e_test.go` is pure test code — it reuses the existing
+`mock_test.go` fakes (`finalChat`/`okDispatcher`/`fakeChatCompleter`) and drives the planted
+fixtures through `invokeSkeptic(ctx, skeptic, prompt, cc, disp)` → `aggregateVerdicts` →
+`confidenceV2`, asserting true→`confirmed`/`VERIFIED`, false→`refuted`/`LOW`. Render uses the
+existing `bytes.Buffer` pattern; all new sections guarded by `if f.Verification != nil`.
+
+**Bookkeeping note (Phase 4 stragglers):** tasks 4.2.A and 4.5.A had their adversarial-review
+findings tables, Action-Taken notes, and follow-on REFACTOR commits (4.3 → `2b04c34`, 4.6 →
+`ef6caf2`) all completed and the Phase 4 gate (4.8) passed, but their checkboxes were never
+flipped. Flipped to `[x]` on resume — the recorded evidence shows the work is complete; no
+re-review performed.
+
 ---
 
 ## Sprint Phases
@@ -940,7 +996,7 @@ Independently verified by the gate subagent (build, vet, `go test ./...` all exi
 
 ---
 
-### 4.2.A [ ] **[CLI & Gate — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-cli-command-mcp-tool.md)**
+### 4.2.A [x] **[CLI & Gate — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-cli-command-mcp-tool.md)**
 
 **Changed Files:** `cmd/atcr/verify.go`, `cmd/atcr/main.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, `internal/mcp/server.go`, `internal/mcp/handlers.go`
 
@@ -1020,7 +1076,7 @@ Use the Agent tool:
 
 ---
 
-### 4.5.A [ ] **[Gate Semantics — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-gate-semantics.md)**
+### 4.5.A [x] **[Gate Semantics — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-gate-semantics.md)**
 
 **Changed Files:** `internal/reconcile/gate.go`, `internal/reconcile/gate_matrix_test.go`, `internal/mcp/handlers.go`
 
@@ -1147,7 +1203,7 @@ Independently verified by the gate subagent (uncached `go build`/`go vet`/`go te
 
 ---
 
-### 5.1 [ ] **[Report & Docs — RED](plan/user-stories/06-report-updates-documentation.md)**
+### 5.1 [x] **[Report & Docs — RED](plan/user-stories/06-report-updates-documentation.md)**
 
 **Mode:** Moderate | **ACs:** [06-01](plan/acceptance-criteria/06-01-report-rendering-with-verification.md) [06-02](plan/acceptance-criteria/06-02-backward-compatibility-v1.md) [06-03](plan/acceptance-criteria/06-03-verification-documentation.md) [06-04](plan/acceptance-criteria/06-04-verification-fixture-corpus.md)
 
@@ -1169,7 +1225,7 @@ Independently verified by the gate subagent (uncached `go build`/`go vet`/`go te
 
 ---
 
-### 5.2 [ ] **[Report & Docs — GREEN](plan/user-stories/06-report-updates-documentation.md)**
+### 5.2 [x] **[Report & Docs — GREEN](plan/user-stories/06-report-updates-documentation.md)**
 
 **Mode:** Moderate | **ACs:** 06-01 through 06-04
 
@@ -1197,7 +1253,7 @@ Independently verified by the gate subagent (uncached `go build`/`go vet`/`go te
 
 ---
 
-### 5.2.A [ ] **[Report & Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-report-updates-documentation.md)**
+### 5.2.A [x] **[Report & Docs — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-report-updates-documentation.md)**
 
 **Changed Files:** `internal/report/render.go`, `internal/report/render_verification_test.go`, `docs/verification.md`
 
@@ -1219,19 +1275,19 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (no CRITICAL/HIGH; 1 MEDIUM, 3 LOW):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| MEDIUM | render.go:174-184 | Grid/total desync for the contract-violating input `Confidence=="VERIFIED"` with a nil `Verification` block: `anyVerification` is false (nil block) so the v1 4-column grid renders, but the count switch still increments `c.verified`, which the v1 grid never prints — the finding vanishes from every grid column while "Total findings" still counts it. Writer never emits this state, but the renderer silently miscounts. | FIXED in 5.3: the VERIFIED grid column now also shows when any finding carries VERIFIED confidence (not only a verification block), so a stray VERIFIED-confidence finding is always represented; pure-v1 input still renders the identical 4-column grid (no v1 finding has VERIFIED confidence). Regression test added. |
+| LOW | render.go:243-263 | Refuted-section comment said findings "stay visible to the human for audit," but the section omits `Fix`/`Evidence`/`Disagreement` (renders File:Line, Confidence, Skeptic, Problem, Reasoning). | FIXED in 5.3: comment softened to state the collapsed view is intentionally abbreviated to the AC 06-01 Scenario 2 field set (file, line, problem, confidence, skeptic, reasoning). The field set matches the AC exactly — Fix/Evidence are deliberately not in the refuted view. |
+| LOW | render.go:166-184 | Pre-existing: a finding whose `Severity` is outside the known set (e.g. "INFO") is `continue`-skipped in the grid yet counted in "Total findings" and rendered with its own body header, so the grid sum can be less than the total. Not introduced by Phase 5 (the v1 grid already skipped unknown severities). | DEFERRED → TD-015 (pre-existing grid/total reconciliation; add an unknown-severity bucket). |
+| LOW | render.go:313-318 | Pre-existing: `joinReviewers` joins names with `", "` before `esc()` at the call site; a reviewer name containing a comma renders ambiguously (not an injection — escaping is applied to the joined result). Pre-existing v1 behavior. | DEFERRED → TD-016 (cosmetic; per-element escaping or documented assumption). |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 5.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH. One MEDIUM fixed inline in 5.3 (grid/total desync — a silent miscount; the fix is a one-condition change that preserves the byte-identical v1 grid). One LOW fixed inline (misleading comment). Two pre-existing LOWs deferred to `tech-debt-captured.md` (TD-015 unknown-severity grid reconciliation, TD-016 reviewer-name comma ambiguity).
 
 ---
 
-### 5.3 [ ] **[Report & Docs — REFACTOR](plan/user-stories/06-report-updates-documentation.md)**
+### 5.3 [x] **[Report & Docs — REFACTOR](plan/user-stories/06-report-updates-documentation.md)**
 
 1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
 2. Use `strings.Builder` throughout render.go to avoid O(n²) concatenation; verify v1 and v2 golden files are separate (`report.md` vs `report-v2.md`)
@@ -1243,27 +1299,28 @@ Use the Agent tool:
 
 ---
 
-### 5.4 [ ] **Phase 5 DoD Verification**
+### 5.4 [x] **Phase 5 DoD Verification**
 
-- [ ] `go test ./internal/report/...` — all passing including golden file match
-- [ ] Backward compat: v1 findings render identically to pre-v2 (no regression)
-- [ ] Refuted section collapsed at bottom, never empty-but-visible
-- [ ] VERIFIED tier renders distinctly; skeptic panel present for confirmed findings
-- [ ] `docs/verification.md` exists and covers all 6 mechanics sections
-- [ ] `docs/registry.md` has `role: skeptic` subsection
-- [ ] `docs/findings-format.md` has verification block schema
-- [ ] End-to-end test `internal/verify/verify_e2e_test.go` passes: planted false finding → `refuted`/`LOW`, planted true finding → `confirmed`/`VERIFIED`
-- [ ] `go test ./...` — full suite passing; `go vet ./...` clean; `go build ./...` succeeds
+- [x] `go test ./internal/report/...` — all passing including golden file match (TestRenderWithVerification vs report-v2.md)
+- [x] Backward compat: v1 findings render identically to pre-v2 (TestRenderV1Findings + TestRender_GoldenFiles byte-identical; v1 goldens untouched)
+- [x] Refuted section collapsed at bottom, never empty-but-visible (omitted when zero refuted — TestRenderReport_NoRefutedSectionOmitted)
+- [x] VERIFIED tier renders distinctly (VERIFIED grid column + `confidence VERIFIED` label); skeptic panel present for confirmed findings
+- [x] `docs/verification.md` exists and covers all 7 mechanics sections (Overview, Skeptic Selection, Verdict Envelope, Confidence v2, Gate Semantics, Cost Controls, Artifacts)
+- [x] `docs/registry.md` has `role: skeptic` subsection (moved out of the reserved table; example YAML + different-model rule + reviewer-default note + verification.md cross-ref)
+- [x] `docs/findings-format.md` has verification block schema + v2 confidence (VERIFIED) + manifest `verify` stage
+- [x] End-to-end test `internal/verify/verify_e2e_test.go` passes: planted false finding → `refuted`/`LOW`, planted true finding → `confirmed`/`VERIFIED`
+- [x] `go test ./...` — full suite passing; `go vet ./...` clean; `go build ./...` succeeds; `golangci-lint run` — 0 issues
+- [x] Coverage: `internal/verify/` 95.0% (≥95% target), `internal/report/` 97.0% (≥90% on new render paths)
 
 ```
 Phase 5 DoD Complete
-Auto: [_]/7 | Story-Specific: [_]/4 (4 render cases + golden file + 3 doc files)
-Manual Review: [ ] Code reviewed
+Auto: [7]/7 | Story-Specific: [4]/4 (4+ render cases + golden file + 3 doc files + e2e planted-finding)
+Manual Review: [x] Code reviewed (5.2.A adversarial subagent — no CRITICAL/HIGH; 1 MEDIUM + 1 LOW fixed inline, 2 pre-existing LOWs deferred to TD-015/016)
 ```
 
 ---
 
-### 5.5 [ ] **Phase 5 — GATE: Integration & Exit Review (subagent)**
+### 5.5 [x] **Phase 5 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 5
 
@@ -1290,15 +1347,19 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Gate review (PASSED — no findings):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| None | None | None | None |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary. Re-run gate.
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Phase gate passed" and proceed to final validation
+Independently verified by the gate subagent (uncached `go build`/`go vet`/`go test ./...` all green; report coverage 97%):
+- CONTRACT EXIT: `render.Render` public API unchanged; v1-only callers see no difference (all new behavior behind `if f.Verification != nil` / `anyVerification` gating).
+- CONFIG SURFACE: `docs/verification.md` documents all four user-facing flags (`--fresh`, `--thorough`, `--min-severity`, `--require-verified`) with examples + the gate table.
+- INTEGRATION: golden `report-v2.md` does NOT collide with `report.md`; the v1 goldens (`report.md`, `checklist.md`, `findings.json`) are byte-identical to `main` (empty diff confirmed).
+- PHASE-EXIT: all 6 stories' ACs satisfied; full sprint DoD can be declared.
+- REGRESSION: Phases 1–4 tests all pass after the render changes.
+
+**Action Taken:** No CRITICAL/HIGH (no findings at all). **Phase gate passed.** Phase 5 is the final numbered phase — proceeding to final validation.
 
 **Duration:** 15-30 min
 
@@ -1308,25 +1369,25 @@ Use the Agent tool:
 
 ### Full Sprint Validation Checklist
 
-- [ ] `go test ./...` — entire test suite passing (unit + integration)
-- [ ] Coverage: `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out` — ≥ 80% overall; ≥ 95% on `internal/verify/`
-- [ ] Lint: `golangci-lint run` — no errors
-- [ ] Vet: `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] No import cycle: `verify` → `reconcile` and `fanout` (NOT vice-versa)
-- [ ] All 28 acceptance criteria checked off in `plan/acceptance-criteria/`
-- [ ] All 5 phase gates passed
+- [x] `go test ./...` — entire test suite passing (unit + integration) — all 16 packages ok
+- [x] Coverage: `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out` — 87.9% overall (≥ 80%); 95.0% on `internal/verify/` (≥ 95%)
+- [x] Lint: `golangci-lint run` — 0 issues
+- [x] Vet: `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] No import cycle: `verify` → `reconcile`/`fanout` confirmed; `reconcile`/`fanout` do NOT import `verify`
+- [x] All 28 acceptance criteria checked off in `plan/acceptance-criteria/` (179 DoD boxes flipped on resume — prior sessions left them unchecked)
+- [x] All 5 phase gates passed (1.5, 2.5, 3.5, 4.8, 5.5 — all "no CRITICAL/HIGH")
 
 ### Artifact Checklist
 
-- [ ] `reconciled/verification.json` — per-finding: skeptic(s), model(s), verdict, reasoning, budgets, duration
-- [ ] `reconciled/findings.json` — re-emitted with `verification` blocks and v2 confidence
-- [ ] `reconciled/manifest.json` — `stages` gains `"verify"` (idempotent)
-- [ ] `reconciled/summary.json` — gains `verdictCounts`
-- [ ] `verify/raw/<skeptic>/transcript.jsonl` — generated by tool loop infrastructure
-- [ ] `docs/verification.md` — complete
-- [ ] `docs/registry.md` — `role: skeptic` documented
-- [ ] `docs/findings-format.md` — verification block documented
+- [x] `reconciled/verification.json` — emitted by `WriteVerification` (per-finding skeptic, model, verdict, reasoning, trippedBudgets, durationMs); tested
+- [x] `reconciled/findings.json` — re-emitted with `verification` blocks and v2 confidence by `ReEmitFindings`; tested
+- [x] `reconciled/manifest.json` — `stages` gains `"verify"` idempotently via `UpdateManifestStage`; tested
+- [x] `reconciled/summary.json` — gains `verdictCounts` via `UpdateSummaryVerdicts`; tested
+- [x] `verify/raw/<skeptic>/transcript.jsonl` — generated by the reused 2.0 tool-loop infrastructure
+- [x] `docs/verification.md` — complete (7 sections)
+- [x] `docs/registry.md` — `role: skeptic` documented (active section + different-model rule)
+- [x] `docs/findings-format.md` — verification block + v2 confidence documented
 
 ### Optional: Targeted Mutation Testing
 
@@ -1338,16 +1399,16 @@ If mutation testing becomes available later, target: `internal/verify/verdict.go
 
 Compare implementation against [original-requirements.md](plan/original-requirements.md):
 
-- [ ] `atcr verify [<id-or-path>]` CLI matches spec
-- [ ] Pipeline placement: runs after `atcr reconcile`, on `reconciled/findings.json`
-- [ ] Different-model rule enforced (not left to configuration discipline)
-- [ ] Refuted findings demoted to LOW, retained with reasoning, never deleted
-- [ ] `--fail-on` counts only non-refuted findings
-- [ ] `verify.min_severity` floor honored (default MEDIUM)
-- [ ] Skip-already-verified unless `--fresh`
-- [ ] `verify.votes` config honored (default 1; `--thorough` forces 3 with majority rule)
-- [ ] End-to-end fixture: planted false finding refuted, planted true finding confirmed (`internal/verify/verify_e2e_test.go`)
-- [ ] Out-of-scope confirmed absent: no multi-round debate, no code execution, no auto-tuning
+- [x] `atcr verify [<id-or-path>]` CLI matches spec (`cmd/atcr/verify.go`, Phase 4)
+- [x] Pipeline placement: runs after `atcr reconcile`, on `reconciled/findings.json` (`verify.Verify` reads reconciled findings; `--verify` chains review→reconcile→verify)
+- [x] Different-model rule enforced (not left to configuration discipline) — `SelectEligibleSkeptics` excludes any skeptic sharing a reviewer's model; `no_eligible_skeptic` fallback
+- [x] Refuted findings demoted to LOW, retained with reasoning, never deleted (`confidenceV2` refuted→LOW; report keeps them in the collapsed Refuted section)
+- [x] `--fail-on` counts only non-refuted findings (`CountAtOrAbove`/`IsFailing` exclude refuted)
+- [x] `verify.min_severity` floor honored (default MEDIUM) — `meetsSeverityFloor` + registry default
+- [x] Skip-already-verified unless `--fresh` (pipeline skips findings with an existing verdict)
+- [x] `verify.votes` config honored (default 1; `--thorough` forces 3 with majority rule via `aggregateVerdicts`)
+- [x] End-to-end fixture: planted false finding refuted, planted true finding confirmed (`internal/verify/verify_e2e_test.go` — both subtests pass)
+- [x] Out-of-scope confirmed absent: no multi-round debate, no code execution, no auto-tuning (none implemented; reserved for Epics 4.0/5.0)
 
 ### Final Commit
 

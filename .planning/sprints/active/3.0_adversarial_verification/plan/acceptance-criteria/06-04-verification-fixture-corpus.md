@@ -19,6 +19,7 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 - `internal/verify/testdata/false-finding.json` - create: planted false finding (plausible but incorrect, parseable as `reconcile.JSONFinding`)
 - `internal/verify/testdata/malformed-response.txt` - create: non-parseable skeptic response text (invalid JSON)
 - `internal/verify/` - create: directory for verification test data
+- `internal/verify/verify_e2e_test.go` - create: end-to-end test driving the planted true/false fixtures through the pipeline (scripted mock skeptic → invoke → aggregate → confidence v2) asserting confirmed/refuted
 - `internal/reconcile/emit.go` - read: `JSONFinding` struct definition for schema compliance
 
 ## Happy Path Scenarios
@@ -46,6 +47,11 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 - **Given** the content of `false-finding.json`
 - **When** a developer reads it
 - **Then** it describes a plausible but deliberately incorrect finding (e.g., "nil pointer dereference on line 42" where the code actually checks for nil) — useful for testing that skeptics produce a `refuted` verdict for the false finding in end-to-end tests
+
+**Scenario 6: End-to-end — planted false finding is refuted, planted true finding is confirmed**
+- **Given** the fixtures `true-finding.json` and `false-finding.json`, and a scripted mock skeptic (`fakeChatCompleter`) configured to return a `confirmed` verdict for the true finding and a `refuted` verdict for the false finding
+- **When** each finding is driven through the verification pipeline end-to-end (`invokeSkeptic` → `aggregateVerdicts` → `confidenceV2`) with the mock skeptic
+- **Then** the true finding yields verdict `confirmed` and confidence `VERIFIED`; the false finding yields verdict `refuted` and confidence `LOW` (demoted, retained). This is the executing test for the "deliberately false finding gets refuted / true finding gets confirmed" success criterion — `06-04` no longer only validates that the fixtures parse.
 
 ## Edge Cases
 **Edge Case 1: Fixture files are self-contained**
@@ -96,19 +102,20 @@ func TestFixture_TrueFindingParses(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...` or equivalent)
-- [ ] No linting errors (`go vet ./...`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Fixture files parse without errors
+- [x] All tests passing (`go test ./internal/verify/...` or equivalent)
+- [x] No linting errors (`go vet ./...`)
+- [x] Build succeeds (`go build ./...`)
+- [x] Fixture files parse without errors
 
 **Story-Specific:**
-- [ ] `internal/verify/testdata/true-finding.json` exists and parses as `reconcile.JSONFinding` with all required fields populated
-- [ ] `internal/verify/testdata/false-finding.json` exists and parses as `reconcile.JSONFinding` with all required fields populated
-- [ ] `internal/verify/testdata/malformed-response.txt` exists, is non-empty, and contains invalid JSON resembling a skeptic response
-- [ ] Fixtures are self-contained (no external dependencies)
-- [ ] `true-finding.json` describes a realistic correct finding; `false-finding.json` describes a plausible but incorrect finding
+- [x] `internal/verify/testdata/true-finding.json` exists and parses as `reconcile.JSONFinding` with all required fields populated
+- [x] `internal/verify/testdata/false-finding.json` exists and parses as `reconcile.JSONFinding` with all required fields populated
+- [x] `internal/verify/testdata/malformed-response.txt` exists, is non-empty, and contains invalid JSON resembling a skeptic response
+- [x] Fixtures are self-contained (no external dependencies)
+- [x] `true-finding.json` describes a realistic correct finding; `false-finding.json` describes a plausible but incorrect finding
+- [x] End-to-end test (`verify_e2e_test.go`) drives both planted fixtures through `invokeSkeptic` → `aggregateVerdicts` → `confidenceV2` with a scripted mock skeptic and asserts: true → `confirmed`/`VERIFIED`, false → `refuted`/`LOW`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Fixture content reviewed for realism and appropriateness
-- [ ] No secrets or real codebase paths in fixture files
+- [x] Code reviewed and approved
+- [x] Fixture content reviewed for realism and appropriateness
+- [x] No secrets or real codebase paths in fixture files

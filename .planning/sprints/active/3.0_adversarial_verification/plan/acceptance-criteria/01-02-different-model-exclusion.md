@@ -114,18 +114,18 @@ func TestSelectEligibleSkeptics_DifferentModelExclusion(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/verify/...` passes
-- [ ] `go vet ./internal/verify/...` clean
-- [ ] `go build ./...` succeeds — no import cycle between verify and reconcile
-- [ ] Test coverage >= 95% on `SelectEligibleSkeptics` code path
+- [x] `go test ./internal/verify/...` passes
+- [x] `go vet ./internal/verify/...` clean
+- [x] `go build ./...` succeeds — no import cycle between verify and reconcile
+- [x] Test coverage >= 95% on `SelectEligibleSkeptics` code path
 
 **Story-Specific:**
-- [ ] Skeptic sharing a model with any reviewer is excluded
-- [ ] Model comparison is exact string match (no aliasing)
-- [ ] Unresolvable reviewer names are skipped silently
-- [ ] Result is deterministically ordered by agent name
-- [ ] Result slice length is min(n, eligible_count)
+- [x] Skeptic sharing a model with any reviewer is excluded
+- [x] Model comparison is exact string match (no aliasing)
+- [x] Unresolvable reviewer names are skipped silently
+- [x] Result is deterministically ordered by agent name
+- [x] Result slice length is min(n, eligible_count)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] No import cycle: `verify` imports `reconcile`, but `reconcile` does NOT import `verify`
+- [x] Code reviewed and approved
+- [x] No import cycle: `verify` imports `reconcile`, but `reconcile` does NOT import `verify`

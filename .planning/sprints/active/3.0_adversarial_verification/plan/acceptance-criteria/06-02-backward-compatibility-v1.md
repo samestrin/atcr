@@ -73,17 +73,17 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`go vet ./internal/report/...`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Existing `TestRender_GoldenFiles` passes without modification
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`go vet ./internal/report/...`)
+- [x] Build succeeds (`go build ./...`)
+- [x] Existing `TestRender_GoldenFiles` passes without modification
 
 **Story-Specific:**
-- [ ] `TestRenderV1Findings` passes — findings without verification blocks produce byte-identical output to pre-Epic 3.0 golden files
-- [ ] All new rendering code is guarded behind `if finding.Verification != nil`
-- [ ] JSON output for v1 findings contains no `verification` key (`omitempty` behavior)
-- [ ] Existing golden files (`report.md`, `checklist.md`, `findings.json`) are unchanged
+- [x] `TestRenderV1Findings` passes — findings without verification blocks produce byte-identical output to pre-Epic 3.0 golden files
+- [x] All new rendering code is guarded behind `if finding.Verification != nil`
+- [x] JSON output for v1 findings contains no `verification` key (`omitempty` behavior)
+- [x] Existing golden files (`report.md`, `checklist.md`, `findings.json`) are unchanged
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Diff confirms no changes to v1 rendering logic (only additions behind nil guard)
+- [x] Code reviewed and approved
+- [x] Diff confirms no changes to v1 rendering logic (only additions behind nil guard)

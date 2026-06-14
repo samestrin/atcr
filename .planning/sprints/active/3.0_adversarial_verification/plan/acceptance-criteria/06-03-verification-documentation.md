@@ -89,19 +89,19 @@ Validation approach:
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./...` if any doc-validation tests exist)
-- [ ] No linting errors (`go vet ./...`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Markdown files have no broken headings, unmatched code fences, or broken internal links
+- [x] All tests passing (`go test ./...` if any doc-validation tests exist)
+- [x] No linting errors (`go vet ./...`)
+- [x] Build succeeds (`go build ./...`)
+- [x] Markdown files have no broken headings, unmatched code fences, or broken internal links
 
 **Story-Specific:**
-- [ ] `docs/verification.md` exists and contains all 7 required sections: Overview, Skeptic Selection, Verdict Envelope, Confidence v2, Gate Semantics, Cost Controls, Artifacts
-- [ ] `docs/verification.md` explains the different-model rule clearly
-- [ ] `docs/verification.md` includes a confidence v2 tier table
-- [ ] `docs/registry.md` contains `role: skeptic` subsection with example YAML and cross-reference to `docs/verification.md`
-- [ ] `role` field moved from "reserved/inert" table to active documentation in `registry.md`
+- [x] `docs/verification.md` exists and contains all 7 required sections: Overview, Skeptic Selection, Verdict Envelope, Confidence v2, Gate Semantics, Cost Controls, Artifacts
+- [x] `docs/verification.md` explains the different-model rule clearly
+- [x] `docs/verification.md` includes a confidence v2 tier table
+- [x] `docs/registry.md` contains `role: skeptic` subsection with example YAML and cross-reference to `docs/verification.md`
+- [x] `role` field moved from "reserved/inert" table to active documentation in `registry.md`
 
 **Manual Review:**
-- [ ] Documentation reviewed for accuracy against actual codebase implementation
-- [ ] Examples are correct and copy-pasteable (with placeholder values)
-- [ ] No "we" / plural voice in documentation (per user profile rules)
+- [x] Documentation reviewed for accuracy against actual codebase implementation
+- [x] Examples are correct and copy-pasteable (with placeholder values)
+- [x] No "we" / plural voice in documentation (per user profile rules)

@@ -89,16 +89,16 @@ func TestVerify_SkipsAlreadyVerified(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go test ./internal/verify/... ./cmd/atcr/...` passes
-- [ ] `go vet ./...` clean
-- [ ] Build succeeds (`go build ./...`)
+- [x] `go test ./internal/verify/... ./cmd/atcr/...` passes
+- [x] `go vet ./...` clean
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Findings with `Verification.Verdict` of `confirmed`, `refuted`, or `unverifiable` are skipped by default
-- [ ] `--fresh` forces re-verification of all findings
-- [ ] Findings without a verdict (`nil` or empty) are always verified
-- [ ] Unknown verdict values are not trusted and trigger re-verification
-- [ ] `verification.json` and `findings.json` are still re-emitted on every run
+- [x] Findings with `Verification.Verdict` of `confirmed`, `refuted`, or `unverifiable` are skipped by default
+- [x] `--fresh` forces re-verification of all findings
+- [x] Findings without a verdict (`nil` or empty) are always verified
+- [x] Unknown verdict values are not trusted and trigger re-verification
+- [x] `verification.json` and `findings.json` are still re-emitted on every run
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

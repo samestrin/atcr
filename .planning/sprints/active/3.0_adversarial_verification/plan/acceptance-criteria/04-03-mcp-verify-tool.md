@@ -28,12 +28,12 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 **Scenario 1: MCP verify with valid input**
 - **Given** a review directory with `reconciled/findings.json` and a valid registry
-- **When** the `atcr_verify` MCP tool is called with `{"path": "<review-dir>"}`
+- **When** the `atcr_verify` MCP tool is called with `{"id_or_path": "<review-id>"}` (review id only; paths are not accepted; defaults to `.atcr/latest`)
 - **Then** the handler loads the registry, loads reconciled findings, calls `verify.Verify`, emits all artifacts, and returns a `VerifyResult` with `verdictCounts` (confirmed/refuted/unverifiable), `findingsProcessed`, `durationMs`, and `gateStatus`
 
 **Scenario 2: MCP verify with all optional parameters**
 - **Given** a review directory with reconciled findings
-- **When** `atcr_verify` is called with `{"path": "<dir>", "fresh": true, "thorough": true, "minSeverity": "HIGH", "failOn": "HIGH", "requireVerified": true}`
+- **When** `atcr_verify` is called with `{"id_or_path": "<review-id>", "fresh": true, "thorough": true, "minSeverity": "HIGH", "failOn": "HIGH", "requireVerified": true}`
 - **Then** the handler passes all parameters through to `verify.Verify` options and gate counter; result reflects the filtered/gated output
 
 **Scenario 3: MCP verify returns gate status**
@@ -45,24 +45,24 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 **Edge Case 1: MCP verify with empty findings**
 - **Given** a review directory with reconciled findings containing an empty array
-- **When** `atcr_verify` is called with `{"path": "<dir>"}`
+- **When** `atcr_verify` is called with `{"id_or_path": "<review-id>"}`
 - **Then** the handler returns `VerifyResult` with all verdict counts at zero, `findingsProcessed: 0`, and gate status pass (if applicable)
 
 **Edge Case 2: MCP verify without optional parameters (defaults)**
 - **Given** a review directory with reconciled findings
-- **When** `atcr_verify` is called with only `{"path": "<dir>"}`
+- **When** `atcr_verify` is called with only `{"id_or_path": "<review-id>"}`
 - **Then** defaults are applied: `fresh: false`, `thorough: false`, `minSeverity: "MEDIUM"`; result is correct for those defaults
 
 **Edge Case 3: MCP verify with `requireVerified: true`**
 - **Given** findings where some are unverifiable
-- **When** `atcr_verify` is called with `{"path": "<dir>", "requireVerified": true}`
+- **When** `atcr_verify` is called with `{"id_or_path": "<review-id>", "requireVerified": true}`
 - **Then** the gate status accounts for unverifiable findings according to the `--require-verified` gate logic from Story 3
 
 ## Error Conditions
 
 **Error Scenario 1: No reconciled findings**
 - **Given** a review directory without `reconciled/findings.json`
-- **When** `atcr_verify` is called with `{"path": "<dir>"}`
+- **When** `atcr_verify` is called with `{"id_or_path": "<review-id>"}`
 - **Then** the handler returns an MCP error with message: `"no reconciled findings found in <path> — run 'atcr reconcile' first"`
 
 **Error Scenario 2: Registry load failure**
@@ -81,7 +81,7 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Security Considerations
 - **Authentication/Authorization:** MCP tool runs within the MCP server's permission context; no additional auth needed
-- **Input Validation:** `path` validated for existence; `minSeverity` validated against known constants; `registryPath` validated if provided
+- **Input Validation:** `id_or_path` is a review id (paths not accepted); resolved against the review store, defaulting to `.atcr/latest` when omitted; `minSeverity` validated against known constants; `registryPath` validated if provided
 - **Error Messages:** Do not leak internal paths, API keys, or stack traces to MCP clients
 
 ## Test Implementation Guidance
@@ -99,19 +99,19 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/mcp/...` passes
-- [ ] `go vet ./internal/mcp/...` clean
-- [ ] `go build ./...` succeeds
+- [x] `go test ./internal/mcp/...` passes
+- [x] `go vet ./internal/mcp/...` clean
+- [x] `go build ./...` succeeds
 
 **Story-Specific:**
-- [ ] `ToolVerify` constant defined alongside existing tool constants
-- [ ] `handleVerify` registered in `buildServer()` via `registerTool`
-- [ ] `VerifyArgs` struct has all fields: `Path`, `Fresh`, `Thorough`, `MinSeverity`, `RegistryPath`, `FailOn`, `RequireVerified`
-- [ ] `VerifyResult` struct has: `VerdictCounts`, `FindingsProcessed`, `DurationMs`, `GateStatus`
-- [ ] Handler calls same `verify.Verify` function as CLI entry points
-- [ ] Error messages follow established MCP error patterns
+- [x] `ToolVerify` constant defined alongside existing tool constants
+- [x] `handleVerify` registered in `buildServer()` via `registerTool`
+- [x] `VerifyArgs` struct has all fields: `IDOrPath` (`json:"id_or_path,omitempty"`), `Fresh`, `Thorough`, `MinSeverity`, `RegistryPath`, `FailOn`, `RequireVerified`
+- [x] `VerifyResult` struct has: `VerdictCounts`, `FindingsProcessed`, `DurationMs`, `GateStatus`
+- [x] Handler calls same `verify.Verify` function as CLI entry points
+- [x] Error messages follow established MCP error patterns
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Handler follows same pattern as `handleReconcile` (`internal/mcp/handlers.go:159`)
-- [ ] `VerifyResult` JSON output is well-documented for MCP clients
+- [x] Code reviewed and approved
+- [x] Handler follows same pattern as `handleReconcile` (`internal/mcp/handlers.go:159`)
+- [x] `VerifyResult` JSON output is well-documented for MCP clients

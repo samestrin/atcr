@@ -96,17 +96,17 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./cmd/atcr/...` clean
-- [ ] `go build ./cmd/atcr/...` succeeds
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./cmd/atcr/...` clean
+- [x] `go build ./cmd/atcr/...` succeeds
 
 **Story-Specific:**
-- [ ] `--verify` flag defined on `reviewCmd` with default `false`
-- [ ] `--verify` implies `--reconcile` when reconcile is not explicitly set
-- [ ] Both flags set runs reconcile exactly once (no double reconcile)
-- [ ] `--reconcile` without `--verify` remains unchanged (backward compatible)
-- [ ] Artifacts from `atcr review --verify` match running stages separately
+- [x] `--verify` flag defined on `reviewCmd` with default `false`
+- [x] `--verify` implies `--reconcile` when reconcile is not explicitly set
+- [x] Both flags set runs reconcile exactly once (no double reconcile)
+- [x] `--reconcile` without `--verify` remains unchanged (backward compatible)
+- [x] Artifacts from `atcr review --verify` match running stages separately
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Chaining order (review → reconcile → verify) is clear and documented in code comments
+- [x] Code reviewed and approved
+- [x] Chaining order (review → reconcile → verify) is clear and documented in code comments

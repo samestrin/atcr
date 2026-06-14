@@ -92,7 +92,7 @@
 | `atcr verify` run before `atcr reconcile` produces confusing error | Medium — poor user experience | Check for `reconciled/findings.json` before calling `verify.Verify`. If missing, return a clear error: "no reconciled findings found — run `atcr reconcile` first". Follow the pattern used by `atcr reconcile` when review output is missing. |
 | CLI and MCP entry points diverge in behavior (e.g., different flag handling) | Medium — inconsistent results | Both entry points call the same `verify.Verify` function with the same `Options` struct. The only difference is argument parsing (CLI flags vs MCP JSON). Integration tests verify identical artifacts for the same input via both paths. |
 | `handleVerify` MCP handler does not propagate gate status correctly | Medium — CI gates cannot use MCP path | The handler calls the same `CountAtOrAbove` (updated in Story 3) and `failingFindings` (updated in Story 5) functions as the CLI path. Integration test verifies gate status matches between CLI and MCP for the same input. |
-| Review directory path resolution differs between CLI and MCP | Low — artifacts written to wrong location | Both paths use the same `resolveReviewDir` helper (existing in `cmd/atcr/review.go` or equivalent). The MCP handler accepts an explicit `path` parameter. Unit test path resolution for both. |
+| Review directory path resolution differs between CLI and MCP | Low — artifacts written to wrong location | Both paths use the same `resolveReviewDir` helper (existing in `cmd/atcr/review.go` or equivalent). The MCP handler accepts an `id_or_path` parameter (review id only; paths not accepted; defaults to `.atcr/latest`), consistent with the existing MCP tools. Unit test path resolution for both. |
 
 ---
 

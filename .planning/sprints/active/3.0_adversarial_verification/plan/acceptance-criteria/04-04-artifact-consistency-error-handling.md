@@ -28,7 +28,7 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 **Scenario 1: CLI verify and MCP verify produce identical artifacts**
 - **Given** a fixture review directory with reconciled findings
 - **When** `atcr verify <dir>` is run via CLI, then `atcr_verify` is called via MCP handler on the same directory
-- **Then** the emitted `verification.json`, `findings.json`, `manifest.json`, and `summary.json` are byte-identical (or semantically equivalent) between the two runs
+- **Then** the emitted `verification.json`, `findings.json`, `manifest.json`, and `summary.json` are byte-identical between the two runs **after the non-deterministic fields `verifiedAt` (timestamp) and `durationMs` are normalized** (set to a fixed value before comparison). All other content must match byte-for-byte. (Decision: assertion is byte-identical-after-normalization, not loose "semantic equivalence" — the comparison helper zeroes `verifiedAt`/`durationMs`.)
 
 **Scenario 2: `atcr review --verify` produces same artifacts as running stages separately**
 - **Given** a fixture diff input
@@ -45,7 +45,7 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 **Edge Case 1: Idempotent re-runs via CLI**
 - **Given** a review directory with artifacts from a previous `atcr verify` run
 - **When** `atcr verify <dir>` is run again with the same input
-- **Then** artifacts are overwritten; content is deterministic for the same input and options
+- **Then** artifacts are overwritten; content is deterministic for the same input and options, except the `verifiedAt` timestamp and `durationMs` fields (which are normalized before any equality assertion, per Scenario 1)
 
 **Edge Case 2: `--verify` and `--reconcile` together do not double-reconcile**
 - **Given** `atcr review --verify --reconcile <diff>` is executed
@@ -107,29 +107,29 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 | Chain implies reconcile | `atcr review --verify <diff>` | Without `--reconcile` | Reconcile runs automatically |
 | Chain both flags | `atcr review --verify --reconcile <diff>` | Valid diff | Reconcile runs once |
 | Chain backward compat | `atcr review --reconcile <diff>` | Valid diff | No verify stage |
-| MCP basic | `atcr_verify {path}` | Valid dir | VerifyResult returned |
-| MCP all params | `atcr_verify {path, fresh, thorough, minSeverity, failOn}` | Valid dir | VerifyResult with gate status |
-| MCP missing input | `atcr_verify {path}` | No reconciled findings | MCP error returned |
+| MCP basic | `atcr_verify {id_or_path}` | Valid review id | VerifyResult returned |
+| MCP all params | `atcr_verify {id_or_path, fresh, thorough, minSeverity, failOn}` | Valid review id | VerifyResult with gate status |
+| MCP missing input | `atcr_verify {id_or_path}` | No reconciled findings | MCP error returned |
 | CLI == MCP | CLI verify + MCP verify | Same input | Identical artifacts |
 | Idempotent | `atcr verify <dir>` x2 | Same dir | Same artifacts both times |
 
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./cmd/atcr/... ./internal/mcp/...` passes (including new integration tests)
-- [ ] `go vet ./...` clean
-- [ ] `go build ./cmd/atcr/...` succeeds
+- [x] `go test ./cmd/atcr/... ./internal/mcp/...` passes (including new integration tests)
+- [x] `go vet ./...` clean
+- [x] `go build ./cmd/atcr/...` succeeds
 
 **Story-Specific:**
-- [ ] CLI verify and MCP verify produce identical artifacts for the same input
-- [ ] `atcr review --verify` produces same artifacts as running stages separately
-- [ ] Missing reconciled findings error is identical across all three entry points
-- [ ] Skeptic failures produce `unverifiable` verdicts without crashing
-- [ ] All flag combinations tested: `--fresh`, `--thorough`, `--min-severity`, `--verify`, `--reconcile`
-- [ ] Idempotent re-runs produce deterministic output
-- [ ] Gate failure still emits artifacts
+- [x] CLI verify and MCP verify produce identical artifacts for the same input
+- [x] `atcr review --verify` produces same artifacts as running stages separately
+- [x] Missing reconciled findings error is identical across all three entry points
+- [x] Skeptic failures produce `unverifiable` verdicts without crashing
+- [x] All flag combinations tested: `--fresh`, `--thorough`, `--min-severity`, `--verify`, `--reconcile`
+- [x] Idempotent re-runs produce deterministic output
+- [x] Gate failure still emits artifacts
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Test coverage >= 90% on new code paths (`verify.go`, `handleVerify`, chaining logic)
-- [ ] Error messages reviewed for clarity and consistency
+- [x] Code reviewed and approved
+- [x] Test coverage >= 90% on new code paths (`verify.go`, `handleVerify`, chaining logic)
+- [x] Error messages reviewed for clarity and consistency

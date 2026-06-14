@@ -128,19 +128,19 @@ func TestHandleReconcile_RequireVerified(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/mcp/... ./internal/reconcile/...`)
-- [ ] No linting errors (`go vet ./...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/mcp/... ./internal/reconcile/...`)
+- [x] No linting errors (`go vet ./...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `failingFindings` at `internal/mcp/handlers.go:339` applies refuted exclusion and `requireVerified` filtering
-- [ ] MCP `atcr_reconcile` accepts `require_verified` parameter (boolean, default false)
-- [ ] MCP and CLI paths call the same gate function (no divergence)
-- [ ] Fixture matrix tests cover >= 12 scenarios (verdict × severity × flag state)
-- [ ] Story fixture test passes: 3 findings (HIGH+refuted, MEDIUM+confirmed, HIGH+unverifiable) → count=1 without `require_verified`, count=0 with `require_verified` at `--fail-on high`
-- [ ] Test coverage >= 95% on gate logic (`go test -cover ./internal/reconcile/... ./internal/mcp/...`)
+- [x] `failingFindings` at `internal/mcp/handlers.go:339` applies refuted exclusion and `requireVerified` filtering
+- [x] MCP `atcr_reconcile` accepts `require_verified` parameter (boolean, default false)
+- [x] MCP and CLI paths call the same gate function (no divergence)
+- [x] Fixture matrix tests cover >= 12 scenarios (verdict × severity × flag state)
+- [x] Story fixture test passes: 3 findings (HIGH+refuted, MEDIUM+confirmed, HIGH+unverifiable) → count=1 without `require_verified`, count=0 with `require_verified` at `--fail-on high`
+- [x] Test coverage >= 95% on gate logic (`go test -cover ./internal/reconcile/... ./internal/mcp/...`)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] MCP handler gate logic reviewed for parity with CLI path
-- [ ] Matrix test completeness verified (all verdict × severity × flag combinations covered)
+- [x] Code reviewed and approved
+- [x] MCP handler gate logic reviewed for parity with CLI path
+- [x] Matrix test completeness verified (all verdict × severity × flag combinations covered)

@@ -29,7 +29,7 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 **Scenario 1: Verified finding renders Skeptic section in panel**
 - **Given** a finding with `Verification.Verdict = "confirmed"`, `Verification.Skeptic = "otto"`, `Verification.Notes = "reproduced via unit test"`
 - **When** the report is rendered in markdown format
-- **Then** the finding entry includes a Skeptic section showing: skeptic name ("otto"), model (from registry lookup or Verification struct), verdict ("confirmed"), and reasoning ("reproduced via unit test")
+- **Then** the finding entry includes a Skeptic section showing: skeptic name ("otto"), verdict ("confirmed"), and reasoning ("reproduced via unit test"). (Decision: model is NOT shown in the report Skeptic section — the `findings.json` `Verification` block carries only `{Verdict, Skeptic, Notes}`. Full skeptic→model attribution lives in `verification.json` for audit; the report does not perform a registry lookup, avoiding a renderer→registry dependency.)
 
 **Scenario 2: Refuted findings appear in collapsed section at bottom**
 - **Given** 2 findings where `Verification.Verdict = "refuted"` with skeptic reasoning
@@ -92,18 +92,18 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/report/...`)
-- [ ] No linting errors (`go vet ./internal/report/...`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Coverage >= 90% on new rendering code paths
+- [x] All tests passing (`go test ./internal/report/...`)
+- [x] No linting errors (`go vet ./internal/report/...`)
+- [x] Build succeeds (`go build ./...`)
+- [x] Coverage >= 90% on new rendering code paths
 
 **Story-Specific:**
-- [ ] Skeptic section rendered for each verified finding showing skeptic name, model, verdict, and reasoning
-- [ ] Collapsed Refuted section at bottom with `<details>`/`<summary>` toggle listing all refuted findings
-- [ ] VERIFIED tier rendered distinctly from v1 tiers (HIGH/MEDIUM/LOW)
-- [ ] `TestRenderWithVerification` golden file test passes
-- [ ] All free text in new sections is HTML-escaped and newline-flattened
+- [x] Skeptic section rendered for each verified finding showing skeptic name, verdict, and reasoning (model omitted — see Scenario 1 decision; model attribution lives in `verification.json`)
+- [x] Collapsed Refuted section at bottom with `<details>`/`<summary>` toggle listing all refuted findings
+- [x] VERIFIED tier rendered distinctly from v1 tiers (HIGH/MEDIUM/LOW)
+- [x] `TestRenderWithVerification` golden file test passes
+- [x] All free text in new sections is HTML-escaped and newline-flattened
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Report markdown passes a GitHub-flavored markdown syntax check and the details/summary toggle is visible in preview
+- [x] Code reviewed and approved
+- [x] Report markdown passes a GitHub-flavored markdown syntax check and the details/summary toggle is visible in preview

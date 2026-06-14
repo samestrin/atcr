@@ -115,17 +115,17 @@ func TestAgentsByRole_EmptyRoleBackwardCompat(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/registry/...` passes
-- [ ] `go vet ./internal/registry/...` clean
-- [ ] Existing 1.x/2.0 test fixtures still pass (no regressions)
-- [ ] Test coverage >= 95% on empty-role normalization path
+- [x] `go test ./internal/registry/...` passes
+- [x] `go vet ./internal/registry/...` clean
+- [x] Existing 1.x/2.0 test fixtures still pass (no regressions)
+- [x] Test coverage >= 95% on empty-role normalization path
 
 **Story-Specific:**
-- [ ] Empty-role agents are returned by `AgentsByRole(RoleReviewer)`
-- [ ] Empty-role agents are NOT returned by `AgentsByRole(RoleSkeptic)` or `AgentsByRole(RoleJudge)`
-- [ ] `applyDefaults` does NOT mutate `Role` field (remains empty after load)
-- [ ] 1.x config simulation (all empty roles) returns all agents as reviewers
+- [x] Empty-role agents are returned by `AgentsByRole(RoleReviewer)`
+- [x] Empty-role agents are NOT returned by `AgentsByRole(RoleSkeptic)` or `AgentsByRole(RoleJudge)`
+- [x] `applyDefaults` does NOT mutate `Role` field (remains empty after load)
+- [x] 1.x config simulation (all empty roles) returns all agents as reviewers
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Verified that `AgentsByRole` normalization does not modify the underlying `AgentConfig` in the registry map
+- [x] Code reviewed and approved
+- [x] Verified that `AgentsByRole` normalization does not modify the underlying `AgentConfig` in the registry map

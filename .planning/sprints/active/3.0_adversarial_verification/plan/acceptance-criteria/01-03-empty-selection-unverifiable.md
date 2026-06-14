@@ -107,17 +107,17 @@ func TestSelectEligibleSkeptics_EmptySelection(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/verify/...` passes
-- [ ] `go vet ./internal/verify/...` clean
-- [ ] Test coverage >= 95% on empty-selection code paths
+- [x] `go test ./internal/verify/...` passes
+- [x] `go vet ./internal/verify/...` clean
+- [x] Test coverage >= 95% on empty-selection code paths
 
 **Story-Specific:**
-- [ ] Empty slice returned when no skeptics are registered
-- [ ] Empty slice returned when all skeptics share models with reviewers
-- [ ] Empty slice is non-nil (distinguishable from "not called")
-- [ ] Nil `Reviewers` slice handled without panic
-- [ ] Contract documented: empty selection maps to `verdict="unverifiable"`, `notes="no_eligible_skeptic"`
+- [x] Empty slice returned when no skeptics are registered
+- [x] Empty slice returned when all skeptics share models with reviewers
+- [x] Empty slice is non-nil (distinguishable from "not called")
+- [x] Nil `Reviewers` slice handled without panic
+- [x] Contract documented: empty selection maps to `verdict="unverifiable"`, `notes="no_eligible_skeptic"`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Verdict contract documented in function godoc for future callers (this story defines the contract; later stories implement the caller)
+- [x] Code reviewed and approved
+- [x] Verdict contract documented in function godoc for future callers (this story defines the contract; later stories implement the caller)

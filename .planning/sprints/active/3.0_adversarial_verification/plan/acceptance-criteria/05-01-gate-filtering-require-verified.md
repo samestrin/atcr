@@ -60,8 +60,8 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 
 **Edge Case 3: `--require-verified` without `--fail-on`**
 - **Given** `--require-verified` is set but `--fail-on` is not specified (no threshold)
-- **When** The gate evaluation runs
-- **Then** `--require-verified` has no effect (documented: requires `--fail-on` to take effect); alternatively, returns a usage error
+- **When** the command parses/validates flags (before any gate evaluation)
+- **Then** the command exits with a usage error (exit code 2) and prints to stderr: `error: --require-verified requires --fail-on`. (Decision: fail fast, not a silent no-op. `--require-verified` is meaningless without `--fail-on`; a user who passes it intends a strict gate, so silently exiting 0 would give false confidence that a gate ran — the exact "gate that catches nothing" failure mode Epic 3.0 exists to eliminate. The flag is new in this epic, so there is no backward-compat invocation to preserve.)
 
 **Edge Case 4: Out-of-scope findings still excluded regardless of verdict**
 - **Given** A finding with `Category: "out-of-scope"`, `Severity: "CRITICAL"`, `Verification.Verdict: "confirmed"`
@@ -122,19 +122,19 @@ func TestCountFailing_Matrix(t *testing.T) {
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/reconcile/... ./cmd/atcr/...`)
-- [ ] No linting errors (`go vet ./...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/reconcile/... ./cmd/atcr/...`)
+- [x] No linting errors (`go vet ./...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `CountAtOrAbove` (or wrapper) excludes findings with `Verification.Verdict == "refuted"` before counting
-- [ ] `requireVerified=true` restricts count to findings with `confidence == "VERIFIED"` at or above threshold
-- [ ] `--require-verified` CLI flag added to `atcr reconcile` (and `atcr review` if applicable)
-- [ ] Out-of-scope exclusion preserved regardless of `requireVerified` state
-- [ ] Matrix tests cover >= 12 distinct scenarios (3 verdicts x 3 severities x 2 flag states minimum)
-- [ ] Findings with nil/empty verdict are not excluded by `--fail-on`, not counted by `--require-verified`
+- [x] `CountAtOrAbove` (or wrapper) excludes findings with `Verification.Verdict == "refuted"` before counting
+- [x] `requireVerified=true` restricts count to findings with `confidence == "VERIFIED"` at or above threshold
+- [x] `--require-verified` CLI flag added to `atcr reconcile` (and `atcr review` if applicable)
+- [x] Out-of-scope exclusion preserved regardless of `requireVerified` state
+- [x] Matrix tests cover >= 12 distinct scenarios (3 verdicts x 3 severities x 2 flag states minimum)
+- [x] Findings with nil/empty verdict are not excluded by `--fail-on`, not counted by `--require-verified`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Gate logic reviewed for CI-blocking correctness (refuted never blocks; VERIFIED is strictest gate)
-- [ ] `--require-verified` without `--fail-on` behavior documented (no-op or usage error)
+- [x] Code reviewed and approved
+- [x] Gate logic reviewed for CI-blocking correctness (refuted never blocks; VERIFIED is strictest gate)
+- [x] `--require-verified` without `--fail-on` exits with a usage error (exit code 2) and message `error: --require-verified requires --fail-on`

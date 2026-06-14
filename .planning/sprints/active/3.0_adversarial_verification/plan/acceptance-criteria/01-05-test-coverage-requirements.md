@@ -124,20 +124,20 @@ internal/verify/
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/registry/... ./internal/verify/...` — all pass
-- [ ] `go test -race ./internal/registry/... ./internal/verify/...` — no races
-- [ ] `go test -cover ./internal/registry/... ./internal/verify/...` — >= 95% on new code
-- [ ] `go vet ./internal/registry/... ./internal/verify/...` — clean
-- [ ] `go build ./...` — no import cycles
-- [ ] All 18 minimum test cases present and passing
+- [x] `go test ./internal/registry/... ./internal/verify/...` — all pass
+- [x] `go test -race ./internal/registry/... ./internal/verify/...` — no races
+- [x] `go test -cover ./internal/registry/... ./internal/verify/...` — >= 95% on new code
+- [x] `go vet ./internal/registry/... ./internal/verify/...` — clean
+- [x] `go build ./...` — no import cycles
+- [x] All 18 minimum test cases present and passing
 
 **Story-Specific:**
-- [ ] Table-driven test pattern used consistently (matching existing registry test style)
-- [ ] Test fixtures are clear and self-documenting
-- [ ] Each sub-test has a descriptive name matching the scenario it validates
-- [ ] Test helper functions reduce duplication without hiding behavior
+- [x] Table-driven test pattern used consistently (matching existing registry test style)
+- [x] Test fixtures are clear and self-documenting
+- [x] Each sub-test has a descriptive name matching the scenario it validates
+- [x] Test helper functions reduce duplication without hiding behavior
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Test names and table case names are readable without reading implementation
-- [ ] No test depends on map iteration order (ordering tested explicitly via sorting)
+- [x] Code reviewed and approved
+- [x] Test names and table case names are readable without reading implementation
+- [x] No test depends on map iteration order (ordering tested explicitly via sorting)

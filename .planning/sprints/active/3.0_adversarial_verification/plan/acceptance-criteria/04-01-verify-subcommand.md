@@ -107,18 +107,18 @@ Files identified from codebase-discovery.json (line numbers refer to the discove
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./cmd/atcr/...` clean
-- [ ] `go build ./cmd/atcr/...` succeeds
-- [ ] `atcr verify --help` prints usage with all flags
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./cmd/atcr/...` clean
+- [x] `go build ./cmd/atcr/...` succeeds
+- [x] `atcr verify --help` prints usage with all flags
 
 **Story-Specific:**
-- [ ] `verifyCmd` registered in `main.go` via `AddCommand`
-- [ ] `--fresh`, `--thorough`, `--min-severity` flags defined with correct defaults
-- [ ] Missing reconciled findings produces clear error suggesting `atcr reconcile`
-- [ ] Command calls `verify.Verify` and `result.Emit` with correct arguments
-- [ ] Stdout summary includes verdict counts and gate status
+- [x] `verifyCmd` registered in `main.go` via `AddCommand`
+- [x] `--fresh`, `--thorough`, `--min-severity` flags defined with correct defaults
+- [x] Missing reconciled findings produces clear error suggesting `atcr reconcile`
+- [x] Command calls `verify.Verify` and `result.Emit` with correct arguments
+- [x] Stdout summary includes verdict counts and gate status
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Cobra command follows same pattern as `atcr reconcile` (`cmd/atcr/reconcile.go`)
+- [x] Code reviewed and approved
+- [x] Cobra command follows same pattern as `atcr reconcile` (`cmd/atcr/reconcile.go`)

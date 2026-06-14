@@ -105,17 +105,17 @@ func TestAgentsByRole(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/registry/...` passes
-- [ ] `go vet ./internal/registry/...` clean
-- [ ] `go build ./...` succeeds (no import cycles)
-- [ ] Test coverage >= 95% on `AgentsByRole` code path
+- [x] `go test ./internal/registry/...` passes
+- [x] `go vet ./internal/registry/...` clean
+- [x] `go build ./...` succeeds (no import cycles)
+- [x] Test coverage >= 95% on `AgentsByRole` code path
 
 **Story-Specific:**
-- [ ] `AgentsByRole(RoleSkeptic)` returns only agents with `role: skeptic`
-- [ ] `AgentsByRole(RoleReviewer)` includes empty-role agents (backward compatible)
-- [ ] Returns non-nil empty map for unknown roles and empty registries
-- [ ] Returned map values are usable `AgentConfig` structs (not zeroed)
+- [x] `AgentsByRole(RoleSkeptic)` returns only agents with `role: skeptic`
+- [x] `AgentsByRole(RoleReviewer)` includes empty-role agents (backward compatible)
+- [x] Returns non-nil empty map for unknown roles and empty registries
+- [x] Returned map values are usable `AgentConfig` structs (not zeroed)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Method signature matches the contract in the story (returns `map[string]AgentConfig`)
+- [x] Code reviewed and approved
+- [x] Method signature matches the contract in the story (returns `map[string]AgentConfig`)
