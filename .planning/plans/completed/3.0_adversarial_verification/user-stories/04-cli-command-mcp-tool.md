@@ -47,6 +47,7 @@
 | [04-02](../acceptance-criteria/04-02-review-verify-chaining.md) | `atcr review --verify` Chaining | Unit |
 | [04-03](../acceptance-criteria/04-03-mcp-verify-tool.md) | `atcr_verify` MCP Tool | Integration |
 | [04-04](../acceptance-criteria/04-04-artifact-consistency-error-handling.md) | Artifact Consistency, Error Handling & Integration Tests | Integration |
+| [04-05](../acceptance-criteria/04-05-skip-already-verified.md) | Skip Already-Verified Findings Unless `--fresh` | Unit |
 
 ## Original Criteria Overview
 

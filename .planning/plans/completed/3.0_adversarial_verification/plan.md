@@ -13,7 +13,7 @@
 
 ### Acceptance Criteria
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
-- **Status:** Pending - generate with `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`
+- **Status:** Generated `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/` — 28 acceptance criteria
 
 ## Feature Analysis Summary
 Epic 3.0 adds a verification stage to the atcr pipeline. After `atcr reconcile` produces deduped findings with v1 confidence (HIGH/MEDIUM/LOW based on reviewer agreement), `atcr verify` runs skeptic agents against each finding. Skeptics are registry agents with `role: skeptic`, selected under a different-model rule (a skeptic cannot share a model with any reviewer credited on the finding). Each skeptic receives a per-finding prompt ("try to disprove this finding") and runs the Epic 2.0 tool loop to check the actual code. Verdicts (confirmed | refuted | unverifiable) feed confidence v2: VERIFIED (confirmed by skeptic) sits above HIGH; refuted findings demote to LOW but are retained (never deleted) with skeptic reasoning visible in a collapsed section. Cost controls include a min_severity floor (default MEDIUM), per-finding budgets, and skip-already-verified unless --fresh.

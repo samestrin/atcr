@@ -54,7 +54,7 @@ verification pipeline skeptic registry
 
 - **Architecture:** 2/3 - New `internal/verify/` package with 6+ files; confidence model v2 adds VERIFIED tier; gate semantics update existing `CountAtOrAbove`
 - **Integration:** 2/3 - Integrates with fanout (tool loop), registry (role filtering), reconcile (findings/gate), payload (manifest), MCP (handlers) — 5+ packages
-- **Story/Task & Test:** 3/3 - 6 stories, 26 ACs, 15 unit + 11 integration tests; complex verdict parsing (7 cases), vote aggregation, gate matrix (12+ scenarios)
+- **Story/Task & Test:** 3/3 - 6 stories, 28 ACs, 15 unit + 11 integration tests; complex verdict parsing (7 cases), vote aggregation, gate matrix (12+ scenarios)
 - **Risk/Unknowns:** 1/3 - LLM skeptic accuracy is the main unknown; mechanics are well-specified in documentation; fixture corpus mitigates
 
 **Time Formula:** Base 8 days for COMPLEX + (Integration score + Test score - 2) * 0.5 days adjustment
@@ -97,13 +97,14 @@ verification pipeline skeptic registry
 **Focus:** Prompt construction, verdict parsing, tool loop invocation, vote aggregation
 
 **Items:**
-- Story 2: Skeptic Invocation & Verdict Parsing (all 6 ACs)
+- Story 2: Skeptic Invocation & Verdict Parsing (all 7 ACs)
   - [02-01] Skeptic Prompt Construction
   - [02-02] Verdict Parsing
   - [02-03] Skeptic Invocation via Tool Loop
   - [02-04] Failure Isolation
   - [02-05] Budget Forwarding
   - [02-06] Test Coverage
+  - [02-07] Verify Minimum Severity Registry Config
 
 **Files:**
 - CREATE: `internal/verify/skeptic.go`
@@ -151,11 +152,12 @@ verification pipeline skeptic registry
 **Focus:** User-facing interfaces, gate semantics, flag plumbing
 
 **Items:**
-- Story 4: CLI Command & MCP Tool (all 4 ACs)
+- Story 4: CLI Command & MCP Tool (all 5 ACs)
   - [04-01] `atcr verify` CLI Subcommand
   - [04-02] `atcr review --verify` Chaining
   - [04-03] `atcr_verify` MCP Tool
   - [04-04] Artifact Consistency & Error Handling
+  - [04-05] Skip Already-Verified Findings Unless `--fresh`
 - Story 5: Gate Semantics (all 2 ACs)
   - [05-01] Gate Filtering with `--fail-on` and `--require-verified`
   - [05-02] MCP Handler Parity & Fixture Matrix Tests
@@ -222,7 +224,7 @@ verification pipeline skeptic registry
 4. `aggregateVerdicts` applies majority rule; disagreeing → `unverifiable`
 5. Per-finding budgets forwarded to tool loop
 
-**AC Links:** 02-01, 02-02, 02-03, 02-04, 02-05, 02-06
+**AC Links:** 02-01, 02-02, 02-03, 02-04, 02-05, 02-06, 02-07
 
 ---
 
@@ -249,7 +251,7 @@ verification pipeline skeptic registry
 4. All three entry points produce identical artifacts for same input
 5. Error handling: missing reconciled findings → clear error message
 
-**AC Links:** 04-01, 04-02, 04-03, 04-04
+**AC Links:** 04-01, 04-02, 04-03, 04-04, 04-05
 
 ---
 
@@ -294,7 +296,7 @@ verification pipeline skeptic registry
 - `internal/report/render_verification_test.go` — report rendering with verification
 
 **Unit/Integration/E2E:**
-- **Unit:** 15 ACs require unit tests (table-driven, >= 95% coverage on new code)
+- **Unit:** 17 ACs require unit tests (table-driven, >= 95% coverage on new code)
 - **Integration:** 11 ACs require integration tests (CLI invocation, MCP handler, artifact round-trips)
 - **E2E:** 0 ACs require E2E tests (fixture corpus enables end-to-end validation without real LLM calls)
 - **Tools:** `go test ./...`, `testify/assert`, `testify/require`

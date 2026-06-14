@@ -48,6 +48,7 @@
 | [02-04](../acceptance-criteria/02-04-failure-isolation.md) | Failure Isolation — Finding Never Dropped | Unit |
 | [02-05](../acceptance-criteria/02-05-budget-forwarding.md) | Per-Finding Budget Forwarding | Unit |
 | [02-06](../acceptance-criteria/02-06-test-coverage.md) | Test Coverage & CI Integration | Unit |
+| [02-07](../acceptance-criteria/02-07-verify-min-severity-config.md) | Verify Minimum Severity Registry Config | Unit |
 
 ## Original Criteria Overview
 
