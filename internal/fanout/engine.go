@@ -67,6 +67,14 @@ type Agent struct {
 	// from the registry (per-agent, not per-lane). A tools:true agent whose model
 	// lacks it degrades to single-shot regardless of the harness being wired.
 	SupportsFC bool
+
+	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
+	// AgentConfig by buildAgent and carried onto the Result so findingsFor can
+	// enforce them. Scope is applied earlier (as soft prompt injection) and is
+	// not carried here. A fallback inherits these from its primary (the
+	// constraint follows the slot, like the persona prompt).
+	MinSeverity string
+	MaxFindings *int
 }
 
 // Slot is one reviewer position in the roster: a primary agent plus its
@@ -94,6 +102,13 @@ type Result struct {
 	FallbackFrom string
 	PayloadMode  string
 	Truncation   payload.Truncation
+
+	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
+	// AgentConfig by buildAgent so findingsFor can enforce them per source.
+	// MinSeverity drops findings below the floor; MaxFindings caps the count
+	// (severity-sorted). Both empty/nil mean "no constraint".
+	MinSeverity string
+	MaxFindings *int
 
 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
 	// agent (so status.json emits explicit zero counters even on the degrade
@@ -375,6 +390,8 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		DurationMS:  time.Since(start).Milliseconds(),
 		PayloadMode: a.PayloadMode,
 		Truncation:  a.Truncation,
+		MinSeverity: a.MinSeverity,
+		MaxFindings: a.MaxFindings,
 		// Preserve the original tool request even on the single-shot path so a
 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
 		ToolsRequested: a.Tools,
