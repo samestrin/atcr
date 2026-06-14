@@ -206,3 +206,22 @@ func TestBoolFlag_UndefinedFlagPanics(t *testing.T) {
 		boolFlag(cmd, "nonexistent-flag")
 	})
 }
+
+// TestRunReview_ProjectConfigGateActivatedWithoutFlag reproduces the bug where
+// runReview calls failOnThreshold (flag-only) instead of resolveGateThreshold
+// (flag > project config > registry). A project with fail_on:HIGH must gate
+// atcr review even without --fail-on, just as atcr reconcile does.
+//
+// Observable: --require-verified --verify with project fail_on:HIGH must NOT
+// fire the precondition error ("--require-verified requires --fail-on and
+// --verify"), because the config-supplied threshold satisfies the gate check.
+func TestRunReview_ProjectConfigGateActivatedWithoutFlag(t *testing.T) {
+	isolate(t)
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("fail_on: HIGH\n"), 0o644))
+
+	_, out := execCmdCapture(t, "review", "--require-verified", "--verify")
+	require.NotContains(t, out, "--require-verified requires --fail-on and --verify",
+		"project config fail_on must satisfy --require-verified gate precondition without --fail-on flag")
+}
