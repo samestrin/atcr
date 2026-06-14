@@ -97,3 +97,12 @@ func TestRunReconcile_EmptySourcesProducesEmptyArtifacts(t *testing.T) {
 	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevLow, false), "no findings → gate passes")
 	assert.FileExists(t, filepath.Join(reviewDir, "reconciled", AmbiguousJSON))
 }
+
+func TestIsFailing_NormalizesThreshold(t *testing.T) {
+	// A hand-edited or externally-produced findings.json may reach CountFailingJSON
+	// with a non-canonical threshold; IsFailing must normalize it the same way it
+	// normalizes severity.
+	assert.True(t, IsFailing("HIGH", "security", nil, " high ", false), "padded lower-case threshold must gate HIGH")
+	assert.True(t, IsFailing("CRITICAL", "security", nil, "high", false), "lower-case threshold must gate CRITICAL")
+	assert.False(t, IsFailing("LOW", "security", nil, "high", false), "lower-case threshold must not gate LOW")
+}
