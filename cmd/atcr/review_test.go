@@ -161,3 +161,24 @@ func TestOutputDirFromFlags_WhitespacePaddedResolvesTrimmed(t *testing.T) {
 	cwd, _ := os.Getwd()
 	require.Equal(t, filepath.Join(cwd, "out"), dir, "leading spaces must be trimmed before filepath.Abs")
 }
+
+// TestReviewCmd_VerifyFlagsRegistered verifies the --verify chaining flags exist
+// on reviewCmd with the documented defaults (AC 04-02).
+func TestReviewCmd_VerifyFlagsRegistered(t *testing.T) {
+	cmd := newReviewCmd()
+	for _, name := range []string{"verify", "fresh", "thorough", "min-severity"} {
+		require.NotNil(t, cmd.Flags().Lookup(name), "review must define --%s", name)
+	}
+	v, err := cmd.Flags().GetBool("verify")
+	require.NoError(t, err)
+	require.False(t, v, "--verify defaults to false")
+}
+
+// TestReviewCmd_VerifyInvalidMinSeverity verifies `review --verify` validates
+// --min-severity before any review work, failing fast as a usage error (exit 2).
+func TestReviewCmd_VerifyInvalidMinSeverity(t *testing.T) {
+	isolate(t) // empty CWD: no git repo, but validation runs before range resolution
+	code, out := execCmdCapture(t, "review", "--verify", "--min-severity", "BLOCKER")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "CRITICAL")
+}

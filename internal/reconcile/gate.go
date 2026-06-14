@@ -69,19 +69,45 @@ func AtOrAbove(severity, threshold string) bool {
 func CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) int {
 	n := 0
 	for _, f := range findings {
-		if f.Category == CategoryOutOfScope {
-			continue
+		if IsFailing(f.Severity, f.Category, f.Verification, threshold, requireVerified) {
+			n++
 		}
-		if f.Verification != nil && f.Verification.Verdict == VerdictRefuted {
-			continue
+	}
+	return n
+}
+
+// IsFailing is the single per-finding gate predicate the count helpers and the
+// MCP failing-list builder all share, so the CLI, the MCP handlers, and the
+// verify stage can never diverge on what counts (AC 04-03/05-02). A finding fails
+// the gate when it is in scope, not refuted, at or above threshold, and — under
+// requireVerified — confirmed. category is the finding's category, v its optional
+// verification block (nil for a v1 finding).
+func IsFailing(severity, category string, v *Verification, threshold string, requireVerified bool) bool {
+	if category == CategoryOutOfScope {
+		return false // out-of-scope never counts, and this takes precedence over any verdict
+	}
+	if v != nil && v.Verdict == VerdictRefuted {
+		return false // a skeptic disproved it: retained but never blocks CI
+	}
+	if !AtOrAbove(severity, threshold) {
+		return false
+	}
+	if requireVerified && (v == nil || v.Verdict != VerdictConfirmed) {
+		return false // strictest gate: only a confirmed (VERIFIED) finding counts
+	}
+	return true
+}
+
+// CountFailingJSON mirrors CountAtOrAbove over the re-readable JSONFinding records
+// the verify stage gates on its own re-emitted findings.json. It applies the same
+// IsFailing predicate, so a verify-stage gate decision is identical to the CLI
+// reconcile gate for the same findings (AC 04-03 Scenario 3).
+func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified bool) int {
+	n := 0
+	for _, f := range findings {
+		if IsFailing(f.Severity, f.Category, f.Verification, threshold, requireVerified) {
+			n++
 		}
-		if !AtOrAbove(f.Severity, threshold) {
-			continue
-		}
-		if requireVerified && (f.Verification == nil || f.Verification.Verdict != VerdictConfirmed) {
-			continue
-		}
-		n++
 	}
 	return n
 }

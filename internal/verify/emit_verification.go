@@ -50,22 +50,16 @@ type VerificationFile struct {
 	VerdictCounts VerdictCounts        `json:"verdictCounts"`
 }
 
-// WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
-// 03-02). VerifiedAt is stamped at call time (RFC 3339, UTC). VerdictCounts is
-// derived from results so the tally can never drift from the records it counts.
-// Each result's nil TrippedBudgets is normalized to [] so the field never
-// serializes as null. The reconciled/ directory is created if absent.
-func WriteVerification(reviewDir string, results []VerificationResult) error {
-	out := make([]VerificationResult, len(results))
+// CountVerdicts tallies the three verdict outcomes across a verification result
+// set, normalizing each verdict (lower-cased, trimmed) before counting so a
+// non-canonical casing/whitespace is never silently dropped — the same
+// normalization confidenceV2 applies, so the two never disagree. It is the
+// single source of truth for the tally: both WriteVerification (for the
+// verification.json verdictCounts) and the pipeline (for UpdateSummaryVerdicts)
+// call it, so the summary and the verification file can never drift (TD-008).
+func CountVerdicts(results []VerificationResult) VerdictCounts {
 	var counts VerdictCounts
-	for i, r := range results {
-		if r.TrippedBudgets == nil {
-			r.TrippedBudgets = []string{}
-		}
-		out[i] = r
-		// Normalize before tallying so a non-canonical verdict casing/whitespace
-		// is not silently dropped from the counts — mirrors confidenceV2's
-		// case-insensitive handling so the two never disagree.
+	for _, r := range results {
 		switch strings.ToLower(strings.TrimSpace(r.Verdict)) {
 		case verdictConfirmed:
 			counts.Confirmed++
@@ -75,10 +69,26 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
 			counts.Unverifiable++
 		}
 	}
+	return counts
+}
+
+// WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
+// 03-02). VerifiedAt is stamped at call time (RFC 3339, UTC). VerdictCounts is
+// derived from results via CountVerdicts so the tally can never drift from the
+// records it counts. Each result's nil TrippedBudgets is normalized to [] so the
+// field never serializes as null. The reconciled/ directory is created if absent.
+func WriteVerification(reviewDir string, results []VerificationResult) error {
+	out := make([]VerificationResult, len(results))
+	for i, r := range results {
+		if r.TrippedBudgets == nil {
+			r.TrippedBudgets = []string{}
+		}
+		out[i] = r
+	}
 	vf := VerificationFile{
 		VerifiedAt:    time.Now().UTC().Format(time.RFC3339),
 		Findings:      out,
-		VerdictCounts: counts,
+		VerdictCounts: CountVerdicts(results),
 	}
 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
 	if err := os.MkdirAll(reconDir, 0o755); err != nil {

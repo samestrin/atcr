@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,6 +26,7 @@ func newReconcileCmd() *cobra.Command {
 		RunE:  runReconcile,
 	}
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
+	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
 	return cmd
 }
@@ -34,6 +38,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	threshold, err := resolveGateThreshold(cmd)
 	if err != nil {
 		return err
+	}
+
+	// --require-verified is meaningless without a gate: a strict gate that never
+	// runs gives false confidence (the "gate that catches nothing" failure mode
+	// Epic 3.0 exists to eliminate). Fail fast as a usage error (AC 05-01 EC3).
+	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+	if requireVerified && threshold == "" {
+		return usageError(errors.New("--require-verified requires --fail-on"))
 	}
 
 	arg := ""
@@ -66,7 +78,40 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
 
-	return gateFindings(res, threshold)
+	// TD-004: under --require-verified, warn (do not error — AC 05-01 Scenario 4
+	// defines a pass when no VERIFIED finding exists) if the verify stage never
+	// ran, so a strict gate that silently passes everything is at least visible.
+	if requireVerified && !verifyStageRan(reviewDir) {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
+			"atcr: warning: --require-verified set but the verify stage has not run for this review; the gate counts only VERIFIED findings, so it will pass — run 'atcr verify' first")
+	}
+
+	return gateFindings(res, threshold, requireVerified)
+}
+
+// verifyStageRan reports whether the review has been through the verify stage,
+// by either the manifest recording the "verify" stage or a verification.json
+// being present. Best-effort: any read error is treated as "not run".
+func verifyStageRan(reviewDir string) bool {
+	if _, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil {
+		return true
+	}
+	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
+	if err != nil {
+		return false
+	}
+	var m struct {
+		Stages []string `json:"stages"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	for _, s := range m.Stages {
+		if s == "verify" {
+			return true
+		}
+	}
+	return false
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
@@ -121,12 +166,14 @@ func validateGate(v string) (string, error) {
 }
 
 // gateFindings returns a plain error (exit 1) when any finding at/above the
-// threshold survives, else nil. A "" threshold is a no-op.
-func gateFindings(res reconcile.Result, threshold string) error {
+// threshold survives, else nil. A "" threshold is a no-op. requireVerified
+// restricts the count to skeptic-confirmed (VERIFIED) findings — the strictest
+// gate; refuted findings are always excluded regardless.
+func gateFindings(res reconcile.Result, threshold string, requireVerified bool) error {
 	if threshold == "" {
 		return nil
 	}
-	if n := reconcile.CountAtOrAbove(res.Findings, threshold, false); n > 0 {
+	if n := reconcile.CountAtOrAbove(res.Findings, threshold, requireVerified); n > 0 {
 		return fmt.Errorf("%d finding(s) at or above %s survived reconciliation", n, threshold)
 	}
 	return nil
