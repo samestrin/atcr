@@ -341,27 +341,28 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	// Finalize the manifest's partial flag and stamp the completion time now
-	// that the outcomes are known (PrepareReview wrote Partial=false and left
-	// CompletedAt zero). CompletedAt lets downstream tools derive run duration
-	// from manifest.json; summary.json is the completion signal.
-	p.manifest.Partial = sum.Partial
-	p.manifest.CompletedAt = time.Now().UTC()
+	// Finalize the manifest into a local copy. p.manifest is only updated on a
+	// successful write so a caller that retries with the same PreparedReview does
+	// not observe stale completion data from a previous failed attempt.
+	m := *p.manifest
+	m.Partial = sum.Partial
+	m.CompletedAt = time.Now().UTC()
 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
 	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
 	// unchanged.
-	p.manifest.Review = reviewStageFor(results)
+	m.Review = reviewStageFor(results)
 	// Stamp the snapshot provenance (AC 03-02 / 03-03) onto the review stage when
 	// one is present. When no snapshot ran (snapshot failed, or no tool agent), the
 	// omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays "".
-	if p.manifest.Review != nil {
-		p.manifest.Review.SnapshotMode = snapMode
-		p.manifest.Review.HeadSHA = snapHeadSHA
-		p.manifest.Review.SnapshotWorktreePath = snapWorktreePath
+	if m.Review != nil {
+		m.Review.SnapshotMode = snapMode
+		m.Review.HeadSHA = snapHeadSHA
+		m.Review.SnapshotWorktreePath = snapWorktreePath
 	}
-	if err := WriteManifest(p.Dir, p.manifest); err != nil {
+	if err := WriteManifest(p.Dir, &m); err != nil {
 		return nil, err
 	}
+	p.manifest = &m
 
 	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
