@@ -9,7 +9,12 @@
 | Test Framework | go test + testify | Round-trip write/read test |
 | Key Dependencies | `encoding/json`, `os`, `time`, `path/filepath` | Standard library |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:145` - reference: `ReadReconciledFindings` (input loader pattern)
+
 - `internal/verify/emit_verification.go` - create: `WriteVerification(reviewDir string, results []VerificationResult) error`, `VerificationResult` struct, `VerdictCounts` struct, atomic write helper
 - `internal/verify/emit_verification_test.go` - create: round-trip and schema validation tests
 - `internal/reconcile/emit.go` - modify: none (reference for `Verification` struct and `writeFileAtomic` pattern)
@@ -93,7 +98,7 @@ func TestWriteVerification_RoundTrip(t *testing.T) {
 - [ ] `VerificationResult` struct contains all required fields (File, Line, Problem, Verdict, Skeptic, Model, Reasoning, DurationMs, TrippedBudgets)
 - [ ] `VerdictCounts` struct with Confirmed/Refuted/Unverifiable int fields
 - [ ] Round-trip test passes: write then read back, schema matches
-- [ ] `verdictCounts` computed correctly from results slice
+- [ ] `verdictCounts` equals the observed counts of confirmed/refuted/unverifiable entries in the results slice
 - [ ] `trippedBudgets` serializes as `[]` not `null` when empty
 
 **Manual Review:**

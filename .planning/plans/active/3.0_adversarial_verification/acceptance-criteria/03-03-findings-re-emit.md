@@ -9,7 +9,12 @@
 | Test Framework | go test + testify | Table-driven with temp dir |
 | Key Dependencies | `internal/reconcile` (ReadReconciledFindings, JSONFinding, Verification), `encoding/json` | Must not create import cycle |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:145` - reference: `ReadReconciledFindings` (input loader)
+
 - `internal/verify/emit_findings.go` - create: `ReEmitFindings(reviewDir string, verdicts map[FindingKey]*reconcile.Verification) error`, `FindingKey` struct
 - `internal/verify/emit_findings_test.go` - create: re-emit tests with verification block validation
 - `internal/reconcile/emit.go` - modify: none (reference for `JSONFinding`, `Verification`, `ReadReconciledFindings`, `writeFileAtomic`)

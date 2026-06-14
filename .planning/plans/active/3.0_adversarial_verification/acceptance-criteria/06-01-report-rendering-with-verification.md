@@ -9,7 +9,16 @@
 | Test Framework | `go test` + `testify` (assert/require) | Golden file comparison with `-update` flag |
 | Key Dependencies | `internal/reconcile` (JSONFinding, Verification struct) | Verification block is `*Verification` (nil-safe) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/report/render.go:45` - reference: `Render()` function
+- `internal/report/testdata/findings.json` - reference: existing v1 fixture
+- `internal/report/testdata/report.md` - reference: existing golden output
+- `internal/report/testdata/checklist.md` - reference: existing checklist golden output
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines report rendering conventions for the Skeptic section, collapsed Refuted section, and v2 confidence badge ordering
+
 - `internal/report/render.go` - modify: add Skeptic section rendering per verified finding, collapsed Refuted section, VERIFIED tier label
 - `internal/report/render_test.go` - modify: add `TestRenderWithVerification` golden file test
 - `internal/report/testdata/findings-with-verification.json` - create: input fixture with all verdict types (confirmed, refuted, unverifiable)
@@ -97,4 +106,4 @@
 
 **Manual Review:**
 - [ ] Code reviewed and approved
-- [ ] Report renders correctly in GitHub markdown preview (details/summary supported)
+- [ ] Report markdown passes a GitHub-flavored markdown syntax check and the details/summary toggle is visible in preview

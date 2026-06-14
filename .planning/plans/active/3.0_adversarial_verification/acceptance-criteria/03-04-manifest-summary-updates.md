@@ -9,7 +9,14 @@
 | Test Framework | go test + testify | Table-driven with temp dir |
 | Key Dependencies | `internal/payload` (Manifest, WriteManifest), `encoding/json` | Uses existing manifest writer |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/payload/manifest.go:16` - reference: `Manifest` struct
+- `internal/payload/manifest.go:32` - reference: `Stages []string` field
+- `internal/payload/manifest.go:86` - reference: `WriteManifest` (atomic write)
+
 - `internal/verify/emit_manifest.go` - create: `UpdateManifestStage(reviewDir string) error`
 - `internal/verify/emit_summary.go` - create: `UpdateSummaryVerdicts(reviewDir string, counts VerdictCounts) error`, summary struct with `verdictCounts` field
 - `internal/verify/emit_manifest_test.go` - create: idempotency and atomic write tests

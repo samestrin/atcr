@@ -10,7 +10,14 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests |
 | Key Dependencies | `internal/registry` (Registry, AgentConfig, RoleSkeptic), `internal/reconcile` (JSONFinding) | No reverse import (reconcile must NOT import verify) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/registry/config.go:37` - reference: `RoleSkeptic` constant
+- `internal/registry/config.go:56` - reference: `AgentConfig` struct with `Model` field
+- `internal/reconcile/emit.go:36` - reference: `Verification` struct shape
+
 - `internal/verify/select.go` - create: `SelectEligibleSkeptics` function and package scaffolding
 - `internal/verify/select_test.go` - create: table-driven tests for different-model exclusion
 - `internal/registry/config.go` - reference: `Registry`, `AgentConfig`, `AgentsByRole` (added in AC 01-01)

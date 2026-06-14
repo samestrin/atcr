@@ -5,7 +5,7 @@ Plan 3.0 adds an adversarial verification stage to atcr. After `atcr reconcile` 
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/3.0_adversarial_verification/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/3.0_adversarial_verification/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/3.0_adversarial_verification/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/3.0_adversarial_verification/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/3.0_adversarial_verification/`
 
 ## Timeline & Milestones
@@ -13,7 +13,7 @@ Plan 3.0 adds an adversarial verification stage to atcr. After `atcr reconcile` 
 |-----------|--------|--------|
 | Plan created | 2026-06-14 | ✅ Done |
 | User stories + AC | TBD | Pending |
-| Sprint design | TBD | Pending |
+| Sprint design | 2026-06-14 | ✅ Done |
 | Sprint execution | TBD | Pending |
 | Verification stage functional | TBD | Pending |
 | Docs + fixtures complete | TBD | Pending |
@@ -45,10 +45,11 @@ Estimated duration: 3-4 weeks (per epic plan)
 - [Original Request](original-requirements.md)
 - [Plan](plan.md)
 - [Metadata](metadata.md)
+- [Sprint Design](sprint-design.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [Documentation References](documentation/README.md)
-- [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [User Stories](user-stories/)
+- [Acceptance Criteria](acceptance-criteria/)
 
 ## Documentation References
 

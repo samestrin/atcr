@@ -9,7 +9,12 @@
 | Test Framework | `go test` + `testify` | Table-driven tests covering 7+ cases |
 | Key Dependencies | `internal/reconcile` (Verification struct), `encoding/json` | Output type and JSON parsing |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/fanout/engine.go:132` - reference: `Engine` struct (caller of verdict parser via tool-loop results)
+
 - `internal/verify/verdict.go` - create: `parseVerdict(response string) (*reconcile.Verification, error)`
 - `internal/reconcile/emit.go` - reference: `Verification` struct (line 36) with `Verdict`, `Skeptic`, `Notes` fields
 - `internal/verify/testdata/` - create: test fixtures (`malformed-response.txt`, etc.)

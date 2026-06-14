@@ -9,7 +9,14 @@
 | Test Framework | `go test` + `testify` (assert/require) | Existing golden file pattern with `-update` flag |
 | Key Dependencies | `internal/reconcile` (JSONFinding without Verification) | Pre-Epic 3.0 findings have nil `Verification` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/report/render.go:45` - reference: `Render()` function
+- `internal/report/testdata/checklist.md` - reference: existing checklist golden output
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines backward-compatibility requirement that findings without verification blocks render identically to pre-Epic 3.0 output
+
 - `internal/report/render.go` - modify: guard all new rendering behind `if finding.Verification != nil`
 - `internal/report/render_test.go` - modify: add `TestRenderV1Findings` backward compatibility test
 - `internal/report/testdata/findings.json` - read: existing v1 fixture (no verification blocks)

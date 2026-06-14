@@ -10,7 +10,17 @@
 | Build verification | `go build ./...` | Confirms no import cycles (verify → reconcile, not reverse) |
 | Key Dependencies | `internal/registry`, `internal/verify`, `internal/reconcile` | Cross-package tests exercise integration seams |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/registry/config.go:37` - reference: `RoleSkeptic` constant
+- `internal/registry/config.go:56` - reference: `AgentConfig` struct with `Role` field
+- `internal/registry/config.go:111` - reference: `roleValid()` validates role values
+- `internal/registry/config.go:262` - reference: `applyDefaults()` — intentionally does NOT mutate `Role`
+- `internal/reconcile/emit.go:36` - reference: `Verification` struct shape
+- `internal/reconcile/emit.go:59` - reference: `JSONFinding` struct with `Reviewers` field
+
 - `internal/registry/config_test.go` - modify: add `TestAgentsByRole` table-driven tests
 - `internal/verify/select_test.go` - create: add `TestSelectEligibleSkeptics` table-driven tests covering all scenarios
 - `internal/verify/select.go` - reference: function under test

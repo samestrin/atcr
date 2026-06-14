@@ -10,7 +10,14 @@
 | Test Framework | go test + testify | Shared fixture tests for CLI and MCP paths |
 | Key Dependencies | `internal/reconcile` (CountAtOrAbove/CountFailing, AtOrAbove, JSONFinding, Verification) | Shared gate function called by both paths |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/gate.go:57` - reference: `CountAtOrAbove` (shared gate function)
+- `internal/mcp/handlers.go:339` - reference: `failingFindings` (MCP parity target)
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines gate semantics that must be identical across CLI and MCP
+
 - `internal/mcp/handlers.go` - modify: `failingFindings` (line 339) and `handleReconcile` to apply refuted/requireVerified filtering
 - `internal/mcp/handlers_test.go` - modify: add MCP-specific gate tests with verification fixtures
 - `internal/mcp/tools.go` - modify: add `require_verified` field to ReconcileArgs struct (if separate)

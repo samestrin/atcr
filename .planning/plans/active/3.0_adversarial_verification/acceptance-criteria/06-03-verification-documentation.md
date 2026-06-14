@@ -9,7 +9,16 @@
 | Verification Reference | `docs/verification.md` | New file covering full verification mechanics |
 | Registry Reference | `docs/registry.md` | Modify: add `role: skeptic` subsection |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/registry/config.go:37` - reference: `RoleSkeptic` constant
+- `internal/reconcile/emit.go:36` - reference: `Verification` struct shape
+- `personas/_base.md` - reference: base persona template for skeptic_base.md
+- `docs/registry.md` - modify: activate `role` field documentation
+- `docs/findings-format.md` - modify: document verification block and v2 confidence
+
 - `docs/verification.md` - create: new documentation file with sections: Overview, Skeptic Selection, Verdict Envelope, Confidence v2, Gate Semantics, Cost Controls, Artifacts
 - `docs/registry.md` - modify: add `role: skeptic` configuration subsection with example YAML
 - `personas/_base.md` - read: reference for skeptic persona structure
@@ -83,7 +92,7 @@ Validation approach:
 - [ ] All tests passing (`go test ./...` if any doc-validation tests exist)
 - [ ] No linting errors (`go vet ./...`)
 - [ ] Build succeeds (`go build ./...`)
-- [ ] Markdown files render correctly (no broken syntax)
+- [ ] Markdown files have no broken headings, unmatched code fences, or broken internal links
 
 **Story-Specific:**
 - [ ] `docs/verification.md` exists and contains all 7 required sections: Overview, Skeptic Selection, Verdict Envelope, Confidence v2, Gate Semantics, Cost Controls, Artifacts

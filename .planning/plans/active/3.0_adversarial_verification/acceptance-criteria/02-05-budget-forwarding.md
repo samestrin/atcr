@@ -10,7 +10,13 @@
 | Test Framework | `go test` + `testify` | Assert tripped budgets in Result and Verification |
 | Key Dependencies | `internal/fanout` (Agent, Result.TrippedBudgets), `internal/registry` (AgentConfig) | Budget values flow from AgentConfig to Agent |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/fanout/loop.go:81` - reference: `invokeToolLoop` enforces budgets
+- `internal/registry/config.go:56` - reference: `AgentConfig` struct (MaxTurns, ToolBudgetBytes, TimeoutSecs)
+
 - `internal/verify/invoke.go` - modify: `invokeSkeptic` forwards `MaxTurns`, `ToolBudgetBytes`, `TimeoutSecs` from `AgentConfig` to `Agent`
 - `internal/fanout/engine.go` - reference: `Agent` struct fields `MaxTurns` (line 64), `ToolBudgetBytes` (line 65), `TimeoutSecs` (line 56)
 - `internal/fanout/loop.go` - reference: budget enforcement in `toolLoop.run` (line 106) — MaxTurns check (line 153), context deadline

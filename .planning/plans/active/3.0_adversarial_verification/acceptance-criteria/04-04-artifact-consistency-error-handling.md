@@ -9,7 +9,14 @@
 | Fixture Management | `testdata/` directories | Golden-file artifacts for comparison |
 | Key Dependencies | `internal/verify`, `cmd/atcr`, `internal/mcp` | Cross-package integration |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `cmd/atcr/main.go:97` - reference: CLI command registration
+- `internal/mcp/server.go:57` - reference: MCP tool registration
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines artifact guarantees and cross-interface consistency requirements
+
 - `cmd/atcr/verify_test.go` - modify: integration tests for CLI invocation
 - `cmd/atcr/review_test.go` - modify: integration tests for `--verify` chaining
 - `internal/mcp/handlers_test.go` - modify: integration tests for MCP handler

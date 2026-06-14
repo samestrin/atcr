@@ -10,7 +10,13 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests matching existing registry patterns |
 | Key Dependencies | None (standard library only) | Uses existing `RoleReviewer`, `RoleSkeptic`, `RoleJudge` constants |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/registry/config.go:111` - reference: `roleValid()` validates role values
+- `internal/registry/config.go:262` - reference: `applyDefaults()` — intentionally does NOT mutate `Role`
+
 - `internal/registry/config.go` - modify: add `AgentsByRole(role string) map[string]AgentConfig` method on `*Registry`
 - `internal/registry/config_test.go` - modify: add table-driven tests for `AgentsByRole`
 - `internal/registry/config.go:37` - reference: `RoleReviewer`, `RoleSkeptic`, `RoleJudge` constants

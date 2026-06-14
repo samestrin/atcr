@@ -10,7 +10,15 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests matching existing MCP handler patterns |
 | Key Dependencies | `internal/verify`, `internal/registry`, `internal/reconcile` | Backend pipeline from Stories 1-3 |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/mcp/server.go:57` - reference: `buildServer()` tool registration
+- `internal/mcp/handlers.go:159` - reference: `handleReconcile` pattern to follow
+- `internal/mcp/handlers.go:339` - reference: `failingFindings` gate helper
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines `atcr_verify` MCP tool input/output schema and gate-status output
+
 - `internal/mcp/handlers.go` - modify: add `handleVerify` function, `VerifyArgs` and `VerifyResult` structs, `ToolVerify` constant
 - `internal/mcp/server.go` - modify: register `atcr_verify` in `buildServer()` at line 57 via `registerTool`
 - `internal/mcp/handlers_test.go` - modify: add tests for `handleVerify` with various inputs

@@ -9,7 +9,13 @@
 | Test Framework | `go test` + `testify` | Table-driven tests |
 | Key Dependencies | `internal/reconcile` (JSONFinding), `internal/payload` (FileEntry) | Input types |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:36` - reference: `Verification` struct shape
+- `internal/fanout/engine.go:31` - reference: `ChatCompleter` interface (used by later invocation)
+
 - `internal/verify/skeptic.go` - create: `buildSkepticPrompt(finding reconcile.JSONFinding, entries []payload.FileEntry) string`
 - `internal/reconcile/emit.go` - reference: `JSONFinding` struct (line 59) defines input shape
 - `internal/payload/budget.go` - reference: `FileEntry` struct (line 11) provides code context

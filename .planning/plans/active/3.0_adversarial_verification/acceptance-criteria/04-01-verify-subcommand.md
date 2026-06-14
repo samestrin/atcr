@@ -10,7 +10,14 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests matching existing CLI patterns |
 | Key Dependencies | `internal/verify`, `internal/registry`, `internal/reconcile` | Backend pipeline from Stories 1-3 |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:145` - reference: `ReadReconciledFindings` (input loader)
+- `cmd/atcr/main.go:97` - reference: `AddCommand` registration point
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines `atcr verify` CLI conventions, flags, exit codes, and gate semantics
+
 - `cmd/atcr/verify.go` - create: `verifyCmd` Cobra command with flags `--fresh`, `--thorough`, `--min-severity`
 - `cmd/atcr/main.go` - modify: add `rootCmd.AddCommand(verifyCmd)` at line 97
 - `cmd/atcr/verify_test.go` - create: unit tests for verify command flag parsing and execution

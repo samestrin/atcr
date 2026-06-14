@@ -10,7 +10,12 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests |
 | Key Dependencies | `RoleReviewer`, `RoleSkeptic`, `roleValid` existing constants and validation | `roleValid("")` already returns true |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/registry/config.go:37` - reference: `RoleReviewer`, `RoleSkeptic`, `RoleJudge` constants
+
 - `internal/registry/config.go` - modify: add empty-role normalization in `AgentsByRole` (empty → `RoleReviewer`)
 - `internal/registry/config_test.go` - modify: add backward-compatibility test cases for empty-role agents
 - `internal/registry/config.go:111` - reference: `roleValid` function (empty string already passes validation)

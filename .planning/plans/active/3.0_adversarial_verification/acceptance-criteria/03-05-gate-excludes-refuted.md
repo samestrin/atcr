@@ -9,7 +9,13 @@
 | Test Framework | go test + testify | Table-driven tests |
 | Key Dependencies | `internal/reconcile` (Merged, Verification, CountAtOrAbove) | In-package modification |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:36` - reference: `Verification` struct shape
+- `internal/reconcile/merge.go:48` - reference: `Merge` (produces `Merged` input to gate)
+
 - `internal/reconcile/gate.go` - modify: `CountAtOrAbove` (line 57) to exclude refuted findings
 - `internal/reconcile/gate_test.go` - modify: add test cases for refuted finding exclusion
 - `internal/reconcile/merge.go` - reference: `Merged` struct, confidence constants

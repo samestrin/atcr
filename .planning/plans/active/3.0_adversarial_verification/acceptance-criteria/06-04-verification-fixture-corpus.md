@@ -9,7 +9,12 @@
 | Schema Validation | `go test` + `reconcile.JSONFinding` unmarshal | Fixtures must parse as valid `reconcile.JSONFinding` |
 | Key Dependencies | `internal/reconcile` (JSONFinding struct) | Schema source for fixture validation |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:59` - reference: `JSONFinding` struct (schema for fixtures)
+
 - `internal/verify/testdata/true-finding.json` - create: planted true finding (realistic, parseable as `reconcile.JSONFinding`)
 - `internal/verify/testdata/false-finding.json` - create: planted false finding (plausible but incorrect, parseable as `reconcile.JSONFinding`)
 - `internal/verify/testdata/malformed-response.txt` - create: non-parseable skeptic response text (invalid JSON)
@@ -40,7 +45,7 @@
 **Scenario 5: false-finding.json describes a plausible but incorrect finding**
 - **Given** the content of `false-finding.json`
 - **When** a developer reads it
-- **Then** it describes a plausible but deliberately incorrect finding (e.g., "nil pointer dereference on line 42" where the code actually checks for nil) — useful for testing that skeptics correctly refute false positives
+- **Then** it describes a plausible but deliberately incorrect finding (e.g., "nil pointer dereference on line 42" where the code actually checks for nil) — useful for testing that skeptics produce a `refuted` verdict for the false finding in end-to-end tests
 
 ## Edge Cases
 **Edge Case 1: Fixture files are self-contained**

@@ -10,7 +10,13 @@
 | Test Framework | `go test` + `testify` | Assert non-nil Verification on every failure path |
 | Key Dependencies | `internal/reconcile` (Verification), `internal/fanout` (Result) | Failure modes originate from fanout layer |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/fanout/loop.go:81` - reference: `invokeToolLoop` (source of budget/timeout/provider failures)
+- `internal/fanout/engine.go:95` - reference: `Result` struct and status values
+
 - `internal/verify/invoke.go` - modify: all runtime failure paths return `*Verification` with `verdict="unverifiable"`
 - `internal/fanout/engine.go` - reference: `Result.Status` values (StatusOK, StatusFailed, StatusTimeout) determine failure classification
 - `internal/reconcile/emit.go` - reference: `Verification` struct (line 36) — `Notes` field carries failure explanation

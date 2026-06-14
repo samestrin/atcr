@@ -10,7 +10,12 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests |
 | Key Dependencies | `internal/registry`, `internal/reconcile` | Empty-slice return is caller-mapped to verdict |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/registry/config.go:37` - reference: `RoleSkeptic` constant
+
 - `internal/verify/select.go` - modify: document empty-selection return contract
 - `internal/verify/select_test.go` - modify: test cases for all no-eligible-skeptic conditions
 - `internal/reconcile/emit.go:36` - reference: `Verification` struct (`Verdict`, `Skeptic`, `Notes` fields)
@@ -43,7 +48,7 @@
 **Edge Case 2: Reviewers list contains duplicate names**
 - **Given** a finding with `Reviewers: ["alice", "alice"]` where alice has model "gpt-4o"
 - **When** `SelectEligibleSkeptics(finding, 1)` is called
-- **Then** the duplicate reviewer does not cause errors; model set is built correctly (set deduplication)
+- **Then** the duplicate reviewer does not cause errors; each unique reviewer model appears exactly once in the exclusion set and no duplicate causes a panic or incorrect exclusion
 
 **Edge Case 3: Registry has agents but none with RoleSkeptic**
 - **Given** a registry with agents all having `role: reviewer` or `role: judge`

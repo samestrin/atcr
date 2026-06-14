@@ -10,7 +10,14 @@
 | Test Framework | go test + testify | Table-driven matrix tests |
 | Key Dependencies | `internal/reconcile` (Merged, JSONFinding, Verification, AtOrAbove) | In-package modification |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/gate.go:57` - reference: `CountAtOrAbove` gate counter
+- `internal/mcp/handlers.go:339` - reference: `failingFindings` MCP gate helper (parity target)
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines `--fail-on` / `--require-verified` gate semantics and examples
+
 - `internal/reconcile/gate.go` - modify: add `requireVerified` filtering to `CountAtOrAbove` (line 57) or add new `CountFailing` wrapper
 - `internal/reconcile/gate_test.go` - modify: add matrix tests for all verdict/severity/flag combinations
 - `cmd/atcr/reconcile.go` - modify: add `--require-verified` flag, pass through to gate logic

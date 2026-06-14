@@ -10,7 +10,13 @@
 | Test Framework | `go test` + `testify/assert` | Table-driven tests for flag combinations |
 | Key Dependencies | `internal/verify`, `internal/reconcile` | Pipeline stages called in sequence |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `cmd/atcr/review.go` - modify: add `--verify` flag and chaining logic
+- [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) — defines `atcr review --verify` chaining behavior and exit-code semantics
+
 - `cmd/atcr/review.go` - modify: add `--verify` bool flag, chaining logic after review and reconcile stages
 - `cmd/atcr/review_test.go` - modify: add tests for `--verify` flag behavior and flag combinations
 - `cmd/atcr/verify.go` - reference: shared verify logic called by both `atcr verify` and `atcr review --verify`

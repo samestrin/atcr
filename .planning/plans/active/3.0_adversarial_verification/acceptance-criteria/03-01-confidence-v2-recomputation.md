@@ -9,7 +9,13 @@
 | Test Framework | go test + testify | Table-driven tests |
 | Key Dependencies | `internal/reconcile` constants (ConfHigh, ConfMedium, ConfLow) | Import for constant values |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/reconcile/emit.go:36` - reference: `Verification` struct shape
+- `internal/reconcile/gate.go:57` - reference: `CountAtOrAbove` (consumer of confidence v2)
+
 - `internal/verify/confidence_v2.go` - create: `confidenceV2(v1Confidence, verdict string) string` pure function and `ConfidenceVerified` constant
 - `internal/verify/confidence_v2_test.go` - create: table-driven tests covering all verdict x v1-confidence combinations
 - `internal/reconcile/merge.go` - modify: none (read-only reference for ConfHigh/ConfMedium/ConfLow constants)

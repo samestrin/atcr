@@ -10,7 +10,13 @@
 | Test Framework | `go test` + `testify` | Fake `ChatCompleter` and `toolDispatcher` |
 | Key Dependencies | `internal/fanout` (Engine, ChatCompleter, Agent, Result), `internal/registry` (AgentConfig) | Reused infrastructure |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/fanout/engine.go:31` - reference: `ChatCompleter` interface
+- `internal/fanout/loop.go:81` - reference: `invokeToolLoop` (reused unchanged)
+
 - `internal/verify/invoke.go` - create: `invokeSkeptic(ctx, skeptic, prompt, cc, disp) (*reconcile.Verification, error)`
 - `internal/fanout/loop.go` - reference: `invokeToolLoop` (line 81) — reused unchanged
 - `internal/fanout/engine.go` - reference: `Engine` struct (line 132), `Agent` struct (line 48), `Result` struct (line 95)

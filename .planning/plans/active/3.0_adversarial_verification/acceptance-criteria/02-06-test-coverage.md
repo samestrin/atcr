@@ -10,7 +10,12 @@
 | Test Fixtures | `internal/verify/testdata/` | JSON fixtures for findings and responses |
 | Key Dependencies | `internal/fanout` (fake ChatCompleter/Dispatcher), `internal/reconcile` (Verification) | Test doubles for isolation |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
+
+Files identified from codebase-discovery.json (line numbers refer to the discovery snapshot):
+
+- `internal/fanout/loop.go:81` - reference: `invokeToolLoop` (exercised via fake `ChatCompleter`)
+
 - `internal/verify/verdict_test.go` - create: table-driven tests for `parseVerdict` (>= 11 cases)
 - `internal/verify/verify_test.go` - create: table-driven tests for `invokeSkeptic` and `buildSkepticPrompt`
 - `internal/verify/testdata/true-finding.json` - create: fixture for a confirmed-verdict scenario
