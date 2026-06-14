@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/samestrin/atcr/internal/payload"
 )
 
 // manifestFile is the provenance file at the review-dir root (not under
@@ -30,18 +28,28 @@ func UpdateManifestStage(reviewDir string) error {
 	if err != nil {
 		return err // includes os.ErrNotExist
 	}
-	var m payload.Manifest
+	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		return fmt.Errorf("parsing manifest.json: %w", err)
 	}
-	for _, s := range m.Stages {
+	if m == nil {
+		m = map[string]any{}
+	}
+	rawStages, _ := m["stages"].([]any)
+	stages := make([]string, 0, len(rawStages))
+	for _, s := range rawStages {
+		if str, ok := s.(string); ok {
+			stages = append(stages, str)
+		}
+	}
+	for _, s := range stages {
 		if s == verifyStage {
 			return nil // already recorded — idempotent no-op, no rewrite
 		}
 	}
-	if len(m.Stages) == 0 {
-		m.Stages = []string{"review"}
+	if len(stages) == 0 {
+		stages = []string{"review"}
 	}
-	m.Stages = append(m.Stages, verifyStage)
-	return payload.WriteManifest(path, &m)
+	m["stages"] = append(stages, verifyStage)
+	return writeJSONAtomic(path, m)
 }

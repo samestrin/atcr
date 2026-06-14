@@ -219,6 +219,21 @@ func TestUpdateManifestStage_Idempotent(t *testing.T) {
 	assert.Equal(t, []string{"review", "verify"}, got.Stages, "no duplicate verify")
 }
 
+func TestUpdateManifestStage_PreservesUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	raw := `{"base":"abc","head":"def","stages":["review"],"futureField":"survive"}` + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(raw), 0o644))
+
+	require.NoError(t, UpdateManifestStage(dir))
+
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, []any{"review", "verify"}, got["stages"])
+	assert.Equal(t, "survive", got["futureField"], "unknown fields must survive round-trip")
+}
+
 func TestUpdateManifestStage_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	err := UpdateManifestStage(dir)
