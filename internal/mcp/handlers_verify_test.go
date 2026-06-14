@@ -41,6 +41,7 @@ func verifyReviewFixture(t *testing.T, root string, findings []reconcile.JSONFin
 // VerifyResult with verdict counts and the count of findings processed. With a
 // reviewer-only registry no skeptic is eligible, so the single finding is
 // recorded unverifiable without any LLM call (AC 04-03 Scenario 1).
+// FindingsProcessed is 0 because no finding was sent through a live skeptic.
 func TestHandleVerify_Basic(t *testing.T) {
 	root := t.TempDir()
 	writeReviewConfig(t, root)
@@ -50,7 +51,7 @@ func TestHandleVerify_Basic(t *testing.T) {
 	cs := connectTest(t, root, fakeCompleter{})
 
 	out := callOK[VerifyResult](t, cs, ToolVerify, map[string]any{"id_or_path": id})
-	assert.Equal(t, 1, out.FindingsProcessed)
+	assert.Equal(t, 0, out.FindingsProcessed, "no eligible skeptic: no finding sent through a live skeptic")
 	assert.Equal(t, 1, out.VerdictCounts.Unverifiable, "no eligible skeptic -> unverifiable")
 	assert.Equal(t, 0, out.VerdictCounts.Confirmed)
 	assert.Equal(t, 0, out.VerdictCounts.Refuted)
