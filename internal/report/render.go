@@ -171,31 +171,33 @@ func renderChecklist(w io.Writer, findings []reconcile.JSONFinding) error {
 // LOW. When false it renders the exact pre-Epic-3.0 four-column grid (AC 06-02): no
 // finding has VERIFIED confidence in that case, so the count would be zero anyway.
 func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verified bool) {
-	type cell struct{ verified, high, medium, low int }
+	type cell struct{ verified, high, medium, low, other int }
 	order := []string{reconcile.SevCritical, reconcile.SevHigh, reconcile.SevMedium, reconcile.SevLow}
 	counts := map[string]*cell{}
 	for _, s := range order {
 		counts[s] = &cell{}
 	}
 	refutedCount := 0
-	other := &cell{}
+	otherSev := &cell{}
 	for _, f := range findings {
 		if verified && isRefuted(f) {
 			refutedCount++
 		}
 		c, ok := counts[f.Severity]
 		if !ok {
-			c = other
+			c = otherSev
 		}
-		switch f.Confidence {
+		switch canonicalize(f.Confidence) {
 		case confVerified:
 			c.verified++
 		case reconcile.ConfHigh:
 			c.high++
 		case reconcile.ConfMedium:
 			c.medium++
-		default:
+		case reconcile.ConfLow:
 			c.low++
+		default:
+			c.other++
 		}
 	}
 	// Show the VERIFIED column when the verify stage ran (param) OR when any
@@ -208,32 +210,63 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 	for _, s := range order {
 		totalVerified += counts[s].verified
 	}
-	totalVerified += other.verified
+	totalVerified += otherSev.verified
+	hasOtherConf := false
+	for _, s := range order {
+		hasOtherConf = hasOtherConf || counts[s].other > 0
+	}
+	hasOtherConf = hasOtherConf || otherSev.other > 0
 	if refutedCount > 0 {
 		fmt.Fprintf(b, "Total findings: %d (%d refuted, shown below)\n\n", len(findings), refutedCount)
 	} else {
 		fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
 	}
 	if verified || totalVerified > 0 {
-		b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf |\n")
-		b.WriteString("|----------|---------------|-----------|-------------|----------|\n")
+		if hasOtherConf {
+			b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf | OTHER conf |\n")
+			b.WriteString("|----------|---------------|-----------|-------------|----------|------------|\n")
+		} else {
+			b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf |\n")
+			b.WriteString("|----------|---------------|-----------|-------------|----------|\n")
+		}
 		for _, s := range order {
 			c := counts[s]
-			fmt.Fprintf(b, "| %s | %d | %d | %d | %d |\n", s, c.verified, c.high, c.medium, c.low)
+			if hasOtherConf {
+				fmt.Fprintf(b, "| %s | %d | %d | %d | %d | %d |\n", s, c.verified, c.high, c.medium, c.low, c.other)
+			} else {
+				fmt.Fprintf(b, "| %s | %d | %d | %d | %d |\n", s, c.verified, c.high, c.medium, c.low)
+			}
 		}
-		if other.verified+other.high+other.medium+other.low > 0 {
-			fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d |\n", other.verified, other.high, other.medium, other.low)
+		if otherSev.verified+otherSev.high+otherSev.medium+otherSev.low+otherSev.other > 0 {
+			if hasOtherConf {
+				fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d | %d |\n", otherSev.verified, otherSev.high, otherSev.medium, otherSev.low, otherSev.other)
+			} else {
+				fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d |\n", otherSev.verified, otherSev.high, otherSev.medium, otherSev.low)
+			}
 		}
 		return
 	}
-	b.WriteString("| Severity | HIGH conf | MEDIUM conf | LOW conf |\n")
-	b.WriteString("|----------|-----------|-------------|----------|\n")
+	if hasOtherConf {
+		b.WriteString("| Severity | HIGH conf | MEDIUM conf | LOW conf | OTHER conf |\n")
+		b.WriteString("|----------|-----------|-------------|----------|------------|\n")
+	} else {
+		b.WriteString("| Severity | HIGH conf | MEDIUM conf | LOW conf |\n")
+		b.WriteString("|----------|-----------|-------------|----------|\n")
+	}
 	for _, s := range order {
 		c := counts[s]
-		fmt.Fprintf(b, "| %s | %d | %d | %d |\n", s, c.high, c.medium, c.low)
+		if hasOtherConf {
+			fmt.Fprintf(b, "| %s | %d | %d | %d | %d |\n", s, c.high, c.medium, c.low, c.other)
+		} else {
+			fmt.Fprintf(b, "| %s | %d | %d | %d |\n", s, c.high, c.medium, c.low)
+		}
 	}
-	if other.high+other.medium+other.low > 0 {
-		fmt.Fprintf(b, "| OTHER | %d | %d | %d |\n", other.high, other.medium, other.low)
+	if otherSev.high+otherSev.medium+otherSev.low+otherSev.other > 0 {
+		if hasOtherConf {
+			fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d |\n", otherSev.high, otherSev.medium, otherSev.low, otherSev.other)
+		} else {
+			fmt.Fprintf(b, "| OTHER | %d | %d | %d |\n", otherSev.high, otherSev.medium, otherSev.low)
+		}
 	}
 }
 
@@ -259,7 +292,7 @@ func anyVerification(findings []reconcile.JSONFinding) bool {
 // same normalization the gate and confidence-v2 mapping use).
 func isRefuted(f reconcile.JSONFinding) bool {
 	return f.Verification != nil &&
-		strings.EqualFold(strings.TrimSpace(f.Verification.Verdict), reconcile.VerdictRefuted)
+		canonicalize(f.Verification.Verdict) == canonicalize(reconcile.VerdictRefuted)
 }
 
 // writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an
@@ -268,7 +301,7 @@ func isRefuted(f reconcile.JSONFinding) bool {
 // flattened so skeptic output cannot inject markup or escape the section.
 func writeSkepticBlock(b *bytes.Buffer, v *reconcile.Verification) {
 	annotation := ""
-	if strings.EqualFold(strings.TrimSpace(v.Verdict), reconcile.VerdictUnverifiable) {
+	if canonicalize(v.Verdict) == canonicalize(reconcile.VerdictUnverifiable) {
 		annotation = " (skeptic could not verify)"
 	}
 	fmt.Fprintf(b, "  - Skeptic: %s — %s%s\n", esc(v.Skeptic), esc(v.Verdict), annotation)
@@ -355,6 +388,13 @@ func joinReviewers(names []string) string {
 		return "(none)"
 	}
 	return strings.Join(names, ", ")
+}
+
+// canonicalize normalizes a free-text token to a trimmed, upper-cased form so
+// that mixed-case or padded enum values match the canonical constants used by
+// the report layer.
+func canonicalize(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
 }
 
 // severityRank maps canonical severities to their display ordering. Unknown

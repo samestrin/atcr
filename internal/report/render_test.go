@@ -248,7 +248,7 @@ func TestRender_MixedCaseConfidenceNormalized(t *testing.T) {
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
 	out := b.String()
 	assert.Contains(t, out, "VERIFIED conf", "VERIFIED column shown for mixed-case Verified")
-	assert.Contains(t, out, "| HIGH | 1 | 1 | 0 | 0 | 0 |", "Verified→VERIFIED, High→HIGH, unknown→OTHER")
+	assert.Contains(t, out, "| HIGH | 1 | 1 | 0 | 0 | 1 |", "Verified→VERIFIED, High→HIGH, unknown→OTHER")
 	assert.Contains(t, out, "OTHER conf", "unknown confidence gets an OTHER column")
 }
 
