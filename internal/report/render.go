@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -101,6 +102,16 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
 			}
 		}
 	}
+
+	// Render severity groups in a fixed canonical order regardless of input
+	// ordering. This prevents duplicate headers when findings.json is hand-edited
+	// or produced by an external source (TD item: main-list severity ordering).
+	sorted := make([]reconcile.JSONFinding, len(main))
+	copy(sorted, main)
+	sort.Slice(sorted, func(i, j int) bool {
+		return severityRankOf(sorted[i].Severity) > severityRankOf(sorted[j].Severity)
+	})
+	main = sorted
 
 	b.WriteString("\n## Findings\n")
 	if len(main) == 0 {
@@ -336,4 +347,21 @@ func joinReviewers(names []string) string {
 		return "(none)"
 	}
 	return strings.Join(names, ", ")
+}
+
+// severityRank maps canonical severities to their display ordering. Unknown
+// severities sort last (rank 0) so they do not interleave canonical groups.
+var severityRank = map[string]int{
+	reconcile.SevCritical: 4,
+	reconcile.SevHigh:     3,
+	reconcile.SevMedium:   2,
+	reconcile.SevLow:      1,
+}
+
+// severityRankOf returns the display rank for a severity string.
+func severityRankOf(s string) int {
+	if r, ok := severityRank[s]; ok {
+		return r
+	}
+	return 0
 }
