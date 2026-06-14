@@ -516,6 +516,11 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 	if err != nil {
 		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
 	}
+	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
+	// renders so it lands in every persona regardless of its template, and feeds
+	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
+	// primary's prompt, so it inherits the focus too). No-op when scope is unset.
+	prompt += payload.ScopeFocus(ac.Scope)
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
