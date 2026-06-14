@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -144,8 +145,14 @@ func modalCategory(group []stream.Finding) string {
 	counts := map[string]int{}
 	allOutOfScope := true
 	for _, f := range group {
-		counts[f.Category]++
-		if f.Category != CategoryOutOfScope {
+		// Canonicalize (lower+trim) so non-canonical casings like "Out-Of-Scope"
+		// or "SECURITY" collapse to the same key the gate, summary, and report
+		// all compare against — without this, the gate excludes the finding via
+		// normalized match but the summary count and report section miss it via
+		// exact-match against CategoryOutOfScope.
+		cat := strings.ToLower(strings.TrimSpace(f.Category))
+		counts[cat]++
+		if cat != CategoryOutOfScope {
 			allOutOfScope = false
 		}
 	}
