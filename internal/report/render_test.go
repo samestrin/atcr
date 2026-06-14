@@ -193,6 +193,31 @@ func TestRender_UnknownFormatErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown format")
 }
 
+// TestRender_MarkdownSortsSeverities — findings arriving in non-canonical
+// severity order are rendered under one header per severity, in canonical
+// descending order, rather than producing duplicate headers as the arrival
+// order changes.
+func TestRender_MarkdownSortsSeverties(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 1, Problem: "p1", Confidence: "MEDIUM"},
+		{Severity: "CRITICAL", File: "b.go", Line: 2, Problem: "p2", Confidence: "HIGH"},
+		{Severity: "HIGH", File: "c.go", Line: 3, Problem: "p3", Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "d.go", Line: 4, Problem: "p4", Confidence: "LOW"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	critIdx := strings.Index(out, "### CRITICAL")
+	highIdx := strings.Index(out, "### HIGH")
+	lowIdx := strings.Index(out, "### LOW")
+	require.Greater(t, critIdx, 0)
+	require.Greater(t, highIdx, critIdx)
+	require.Greater(t, lowIdx, highIdx)
+	assert.Equal(t, 1, strings.Count(out, "### CRITICAL"), "one CRITICAL header")
+	assert.Equal(t, 1, strings.Count(out, "### HIGH"), "one HIGH header")
+	assert.Equal(t, 1, strings.Count(out, "### LOW"), "one LOW header")
+}
+
 // --- Epic 3.0 Phase 5: the verification block is now rendered (it was inert/
 // reserved in Epic 1.1). A NIL block still renders byte-identically to v1 (the
 // backward-compat guarantee, AC 06-02); a NON-NIL block now adds skeptic info. ---
