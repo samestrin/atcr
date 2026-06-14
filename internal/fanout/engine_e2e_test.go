@@ -201,7 +201,7 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	assert.Equal(t, snapshotModeWorktree, review.SnapshotMode)
 	assert.Equal(t, head, review.HeadSHA)
 	assert.Contains(t, review.SnapshotWorktreePath, snapshotPrefix)
-	assert.True(t, strings.HasSuffix(review.SnapshotWorktreePath, head),
+	assert.Equal(t, head, filepath.Base(review.SnapshotWorktreePath),
 		"worktree leaf is the resolved head SHA")
 }
 
