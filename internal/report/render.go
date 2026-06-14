@@ -11,6 +11,7 @@ import (
 	"html"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -216,57 +217,46 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 		hasOtherConf = hasOtherConf || counts[s].other > 0
 	}
 	hasOtherConf = hasOtherConf || otherSev.other > 0
+	showVerified := verified || totalVerified > 0
+
 	if refutedCount > 0 {
 		fmt.Fprintf(b, "Total findings: %d (%d refuted, shown below)\n\n", len(findings), refutedCount)
 	} else {
 		fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
 	}
-	if verified || totalVerified > 0 {
-		if hasOtherConf {
-			b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf | OTHER conf |\n")
-			b.WriteString("|----------|---------------|-----------|-------------|----------|------------|\n")
-		} else {
-			b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf |\n")
-			b.WriteString("|----------|---------------|-----------|-------------|----------|\n")
-		}
-		for _, s := range order {
-			c := counts[s]
-			if hasOtherConf {
-				fmt.Fprintf(b, "| %s | %d | %d | %d | %d | %d |\n", s, c.verified, c.high, c.medium, c.low, c.other)
-			} else {
-				fmt.Fprintf(b, "| %s | %d | %d | %d | %d |\n", s, c.verified, c.high, c.medium, c.low)
-			}
-		}
-		if otherSev.verified+otherSev.high+otherSev.medium+otherSev.low+otherSev.other > 0 {
-			if hasOtherConf {
-				fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d | %d |\n", otherSev.verified, otherSev.high, otherSev.medium, otherSev.low, otherSev.other)
-			} else {
-				fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d |\n", otherSev.verified, otherSev.high, otherSev.medium, otherSev.low)
-			}
-		}
-		return
+
+	headers := []string{"Severity"}
+	if showVerified {
+		headers = append(headers, "VERIFIED conf")
 	}
+	headers = append(headers, "HIGH conf", "MEDIUM conf", "LOW conf")
 	if hasOtherConf {
-		b.WriteString("| Severity | HIGH conf | MEDIUM conf | LOW conf | OTHER conf |\n")
-		b.WriteString("|----------|-----------|-------------|----------|------------|\n")
-	} else {
-		b.WriteString("| Severity | HIGH conf | MEDIUM conf | LOW conf |\n")
-		b.WriteString("|----------|-----------|-------------|----------|\n")
+		headers = append(headers, "OTHER conf")
 	}
+	seps := make([]string, len(headers))
+	for i, h := range headers {
+		seps[i] = strings.Repeat("-", len(h)+2)
+	}
+	fmt.Fprintf(b, "| %s |\n", strings.Join(headers, " | "))
+	fmt.Fprintf(b, "|%s|\n", strings.Join(seps, "|"))
+
+	writeRow := func(label string, c *cell) {
+		vals := []string{label}
+		if showVerified {
+			vals = append(vals, strconv.Itoa(c.verified))
+		}
+		vals = append(vals, strconv.Itoa(c.high), strconv.Itoa(c.medium), strconv.Itoa(c.low))
+		if hasOtherConf {
+			vals = append(vals, strconv.Itoa(c.other))
+		}
+		fmt.Fprintf(b, "| %s |\n", strings.Join(vals, " | "))
+	}
+
 	for _, s := range order {
-		c := counts[s]
-		if hasOtherConf {
-			fmt.Fprintf(b, "| %s | %d | %d | %d | %d |\n", s, c.high, c.medium, c.low, c.other)
-		} else {
-			fmt.Fprintf(b, "| %s | %d | %d | %d |\n", s, c.high, c.medium, c.low)
-		}
+		writeRow(s, counts[s])
 	}
-	if otherSev.high+otherSev.medium+otherSev.low+otherSev.other > 0 {
-		if hasOtherConf {
-			fmt.Fprintf(b, "| OTHER | %d | %d | %d | %d |\n", otherSev.high, otherSev.medium, otherSev.low, otherSev.other)
-		} else {
-			fmt.Fprintf(b, "| OTHER | %d | %d | %d |\n", otherSev.high, otherSev.medium, otherSev.low)
-		}
+	if otherSev.verified+otherSev.high+otherSev.medium+otherSev.low+otherSev.other > 0 {
+		writeRow("OTHER", otherSev)
 	}
 }
 
