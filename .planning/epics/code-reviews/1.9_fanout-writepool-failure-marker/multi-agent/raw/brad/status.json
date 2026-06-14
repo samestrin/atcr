@@ -1,0 +1,7 @@
+{
+  "agent_name": "brad",
+  "model": "poolside-laguna",
+  "status": "timeout",
+  "duration_ms": 120004,
+  "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+}

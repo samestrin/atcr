@@ -1,6 +1,6 @@
 # Feature Request: Multi-Tenant Dashboard Analytics
 
-**Estimated Durations**: TBD
+- **Estimated time**: 3 weeks
 
 ## Context
 
@@ -55,6 +55,15 @@ Build a multi-tenant analytics dashboard that provides:
 4. Identifies top/bottom performing accounts
 
 ## Acceptance Criteria
+
+- [ ] AC1: Portfolio view dashboard loads in < 2 seconds for accounts managing up to 30 customers
+- [ ] AC2: Health scores recalculate within 1 hour of tracked user activity
+- [ ] AC3: Alerts deliver via both email and in-app notification when a health score drops below configurable threshold
+- [ ] AC4: Reports export in both PDF and CSV formats with correct data
+- [ ] AC5: No cross-tenant data leakage — verified by security review before production deployment
+- [ ] AC6: Role-based access control enforced on all dashboard API endpoints (account manager sees only their accounts; VP sees all)
+
+## Success Criteria
 
 ### Functional
 - [ ] Dashboard loads portfolio view in < 2 seconds

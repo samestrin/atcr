@@ -21,6 +21,23 @@ func sampleCtx() PayloadContext {
 	}
 }
 
+// AC 01-06 S3 / Story 6 seam: ToolsEnabled gates {{if .ToolsEnabled}} sections
+// so a tool agent can render tool-aware guidance while non-tool agents do not.
+func TestRenderPrompt_ToolsEnabledGatesSection(t *testing.T) {
+	const tmpl = "base{{if .ToolsEnabled}} TOOLS{{end}}"
+
+	on := sampleCtx()
+	on.ToolsEnabled = true
+	out, err := RenderPrompt(tmpl, on)
+	require.NoError(t, err)
+	assert.Equal(t, "base TOOLS", out)
+
+	off := sampleCtx() // ToolsEnabled defaults to false
+	out, err = RenderPrompt(tmpl, off)
+	require.NoError(t, err)
+	assert.Equal(t, "base", out)
+}
+
 func TestRenderPrompt_AllVars(t *testing.T) {
 	tmpl := "Agent {{.AgentName}} reviews {{.FileCount}} files from {{.BaseRef}} to {{.HeadRef}} in {{.PayloadMode}} mode.\nScope: {{.ScopeRule}}\n{{.Payload}}"
 	out, err := RenderPrompt(tmpl, sampleCtx())

@@ -1,0 +1,1 @@
+LOW|internal/fanout/artifacts.go:123|Manual struct copy omits fields, risking future breakage|Copy summarize() result directly then set FailureMarker=true|maintainability|5|PoolSummary{...} misses TotalFindings/Agents; use summarize() directly|bruce

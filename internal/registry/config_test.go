@@ -9,6 +9,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// AC 01-03 S4 / AC 02-01 S3: applyDefaults sets max_turns=10 for a tool-enabled
+// agent with max_turns unset; an explicit value is kept and a non-tool agent's
+// max_turns stays nil (the field is inert for single-shot agents).
+func TestApplyDefaults_MaxTurnsForToolAgents(t *testing.T) {
+	r := &Registry{Agents: map[string]AgentConfig{
+		"toolDefault":  {Provider: "p", Model: "m", Tools: true},
+		"toolExplicit": {Provider: "p", Model: "m", Tools: true, MaxTurns: intPtr(3)},
+		"nonTool":      {Provider: "p", Model: "m", Tools: false},
+	}}
+	r.applyDefaults()
+
+	if mt := r.Agents["toolDefault"].MaxTurns; mt == nil || *mt != DefaultMaxTurns {
+		t.Fatalf("toolDefault MaxTurns = %v, want %d", mt, DefaultMaxTurns)
+	}
+	if mt := r.Agents["toolExplicit"].MaxTurns; mt == nil || *mt != 3 {
+		t.Fatalf("toolExplicit MaxTurns = %v, want 3 (explicit kept)", mt)
+	}
+	if mt := r.Agents["nonTool"].MaxTurns; mt != nil {
+		t.Fatalf("nonTool MaxTurns = %v, want nil (inert for single-shot)", mt)
+	}
+}
+
 // writeRegistry writes content as a registry.yaml inside a temp dir and
 // returns its path.
 func writeRegistry(t *testing.T, content string) string {
@@ -406,6 +428,11 @@ func TestRegistryLoad_ReservedFieldValidation(t *testing.T) {
 		{
 			"negative tool_budget_bytes",
 			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tool_budget_bytes: -1\n",
+			"tool_budget_bytes must be",
+		},
+		{
+			"absurd tool_budget_bytes",
+			"providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    tool_budget_bytes: 9223372036854775807\n",
 			"tool_budget_bytes must be",
 		},
 		{

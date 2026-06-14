@@ -1,0 +1,415 @@
+{
+  "generated": "2026-06-13",
+  "refined": "2026-06-13",
+  "discovery_method": "keyword+semantic",
+  "keywords_searched": ["InvokeDirect", "ToolCall", "tools", "registry", "fanout", "Completer", "Agent", "Slot", "Invocation", "PayloadContext", "RenderPrompt", "personas", "MaxAgentTurns"],
+  "match_count": 445,
+  "build_from": {
+    "primary_file": "internal/fanout/engine.go",
+    "reason": "The Engine.Run/invokeAgent flow is the exact seam Epic 2.0 extends. Currently a single-shot completer.Complete(ctx, inv) call per agent (line 252); the tool loop wraps this in a turn loop that consumes tool_calls from the response, executes them locally, and re-invokes the completer with appended role:tool messages.",
+    "suggested_approach": "Introduce a new AgentLoop struct (or extend invokeAgent) that, when an Agent has Tools==true, drives a multi-turn conversation. Add a ChatCompleter interface with Chat(ctx, inv, messages, tools) -> (message, tool_calls, error). llmclient.Client implements it; test fakes script tool_calls sequences. The existing Completer interface is preserved for non-tool agents and for the doctor package (internal/doctor/run.go:43) which only needs Complete."
+  },
+  "existing_patterns": [
+    {
+      "name": "Completer interface",
+      "description": "fanout.Completer abstracts the LLM call (Complete(ctx, inv) -> string). Engine takes a Completer; production uses *llmclient.Client; tests use fakes. The doctor package has its own separate Completer (internal/doctor/run.go:43) that only needs Complete — no coupling to the new Chat method.",
+      "files": ["internal/fanout/engine.go:17", "internal/llmclient/client.go", "internal/doctor/run.go:43"],
+      "follow_for": "Add a ChatCompleter interface alongside Completer with Chat(ctx, inv, messages, tools) -> (message, tool_calls, error). llmclient.Client implements both; test fakes script tool_calls sequences. The doctor.Completer is unaffected — it never sees tool agents."
+    },
+    {
+      "name": "Reserved registry fields",
+      "description": "AgentConfig already has Tools (bool, line 64), MaxTurns (*int, line 66), ToolBudgetBytes (*int64, line 67), Role (string, line 68) — parsed, validated, inert in 1.x. MaxAgentTurns constant (1000) bounds the turn budget and is defined in internal/registry/precedence.go:15.",
+      "files": ["internal/registry/config.go:54", "internal/registry/precedence.go:15"],
+      "follow_for": "Epic 2.0 activates these fields. No schema changes needed — just wire the engine to read AgentConfig.Tools/MaxTurns/ToolBudgetBytes and apply them. Add default application (max_turns=10 when tools=true and unset). The MaxAgentTurns=1000 ceiling in precedence.go already guards the upper bound."
+    },
+    {
+      "name": "Slot/Agent with fallback chain",
+      "description": "Slot{Primary Agent, Fallbacks []Agent, Serial bool} (engine.go:39). Agent has Name, Invocation, Prompt, PayloadMode, Truncation, TimeoutSecs (engine.go:24). invokeSlot tries primary then fallbacks (engine.go:169).",
+      "files": ["internal/fanout/engine.go:24", "internal/fanout/engine.go:39"],
+      "follow_for": "Extend Agent struct with Tools bool, MaxTurns int, ToolBudgetBytes int64. When Tools is true, invokeAgent runs the tool loop instead of single-shot. Fallback inherits effective tools setting per epic spec. Result struct (engine.go:56) also needs Turns/ToolCalls/ToolBytes fields to propagate loop counters to the artifact layer."
+    },
+    {
+      "name": "PayloadContext template rendering",
+      "description": "PayloadContext (template.go:15) is the typed data passed to persona prompt templates. RenderPrompt (template.go:70) parses and executes against it. Currently has AgentName, BaseRef, HeadRef, FileCount, PayloadMode, Payload, ScopeRule. The personas render test (personas_render_test.go:11) verifies every embedded persona renders cleanly against PayloadContext.",
+      "files": ["internal/payload/template.go:15", "internal/payload/personas_render_test.go:11", "internal/payload/template_test.go:12"],
+      "follow_for": "Add ToolsEnabled bool field to PayloadContext. Update RenderPrompt callers in review.go:438 to set it from AgentConfig.Tools. Update personas_render_test.go sample context with ToolsEnabled=false (existing personas render without tool sections). Add a test that {{if .ToolsEnabled}} conditionals work."
+    },
+    {
+      "name": "Status/artifact layer",
+      "description": "AgentStatus (status.go:225) already has reserved *int ToolCalls (line 241), *int64 ToolBytes (line 242), *int Turns (line 240) fields (parsed+tested, inert). status.json is written per-agent via WriteStatus (status.go:249). statusFor() in artifacts.go:176 builds AgentStatus from a Result.",
+      "files": ["internal/fanout/status.go:225", "internal/fanout/artifacts.go:176"],
+      "follow_for": "Epic 2.0 populates these fields during the tool loop. Add ToolsDegraded bool field to AgentStatus. Result struct gains Turns/ToolCalls/ToolBytes fields so statusFor() can propagate them. writeAgentArtifacts (artifacts.go:160) also writes transcript.jsonl alongside review.md."
+    },
+    {
+      "name": "OpenAI wire format",
+      "description": "llmclient uses a minimal chatRequest/chatResponse struct with messages[{role,content}] (client.go:155-162). No tool_calls support yet. Complete (client.go:165) sends a single user message and returns the assistant content string.",
+      "files": ["internal/llmclient/client.go:155", "internal/llmclient/client.go:162", "internal/llmclient/client.go:165"],
+      "follow_for": "Extend chatRequest with Tools []ToolDef (omitted when nil), chatResponse choices with Message.ToolCalls, and a new role:tool message type. Add Chat method alongside Complete. Keep backward compat — tools omitted when no tool agent. The attempt() method (client.go:243) parses the response and needs to handle tool_calls in choices."
+    },
+    {
+      "name": "Embedded persona files",
+      "description": "Six embedded persona files (bruce.md, greta.md, kai.md, mira.md, dax.md, otto.md) plus _base.md under personas/. Accessed via personas.Get(name) and personas.Base(). These are Go embed files — any change requires re-compilation.",
+      "files": ["personas/personas.go", "personas/_base.md", "personas/bruce.md", "personas/greta.md", "personas/kai.md", "personas/mira.md", "personas/dax.md", "personas/otto.md"],
+      "follow_for": "Add {{if .ToolsEnabled}} conditional sections to _base.md and each persona .md file. These sections contain tool-specific guidance: how to budget exploration, verify suspicions before reporting, prefer reading enclosing files over guessing, and the rule that findings must cite evidence actually read. The conditional keeps non-tool personas unchanged."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/fanout/engine.go",
+      "relevance": "high",
+      "purpose": "Core fanout engine — Run/invokeSlot/invokeAgent (line 228). This is where the tool loop gets inserted. Agent struct (line 24) and Result struct (line 56) need tool fields.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "relevance": "high",
+      "purpose": "Review orchestration — PrepareReview, ExecuteReview, buildAgent (line 411), buildSlots (line 360). Propagate Tools/MaxTurns/ToolBudgetBytes from AgentConfig to Agent; pass ToolsEnabled to PayloadContext at prompt render time (line 438).",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "relevance": "high",
+      "purpose": "OpenAI-compatible HTTP client. Needs Chat method with tool_calls support in request/response wire format. chatRequest (line 155) and chatResponse (line 162) structs need extension.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "relevance": "high",
+      "purpose": "AgentConfig (line 54) with reserved Tools/MaxTurns/ToolBudgetBytes/Role fields already parsed+validated. applyDefaults (line 209) needs activation for max_turns=10 when tools=true.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/status.go",
+      "relevance": "high",
+      "purpose": "AgentStatus (line 225) with reserved ToolCalls/ToolBytes/Turns fields. Needs ToolsDegraded bool field.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/template.go",
+      "relevance": "high",
+      "purpose": "PayloadContext struct (line 15) needs ToolsEnabled bool field. RenderPrompt (line 70) is the template engine that will render {{if .ToolsEnabled}} sections.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/artifacts.go",
+      "relevance": "medium",
+      "purpose": "writeAgentArtifacts (line 160) writes review.md/findings.txt/status.json. Needs transcript.jsonl writer alongside review.md. statusFor() (line 176) propagates Result fields to AgentStatus.",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/payload/manifest.go",
+      "relevance": "medium",
+      "purpose": "Manifest struct (line 18). Stages field (line 35) already reserved for review stage. Needs richer stages entry listing tools:true agents.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/registry/persona.go",
+      "relevance": "medium",
+      "purpose": "Persona resolution chain (ResolvePersona, line 54). No changes to resolution logic — the {{if .ToolsEnabled}} support is in PayloadContext/template.go, not in persona resolution.",
+      "likely_modification": "none"
+    },
+    {
+      "path": "docs/registry.md",
+      "relevance": "medium",
+      "purpose": "Registry documentation (line 54 has agent fields table). Needs to activate tools/max_turns/tool_budget_bytes from 'reserved' to 'active'.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "docs/payload-modes.md",
+      "relevance": "medium",
+      "purpose": "Payload mode documentation. Needs section on payload-as-starting-point semantics for tool agents — tools widen evidence gathering, not scope.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/registry/precedence.go",
+      "relevance": "medium",
+      "purpose": "MaxAgentTurns=1000 constant (line 15) bounds the turn budget. May need DefaultMaxTurns=10 constant for the tools=true default.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/personas_render_test.go",
+      "relevance": "medium",
+      "purpose": "TestEmbeddedPersonasRenderAgainstContext (line 11) verifies all personas render against PayloadContext. Must update sample context when ToolsEnabled is added.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/template_test.go",
+      "relevance": "low",
+      "purpose": "Unit tests for RenderPrompt. sampleCtx() (line 12) and TestRenderPrompt_AllVars need ToolsEnabled field.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/doctor/run.go",
+      "relevance": "low",
+      "purpose": "Has its own Completer interface (line 43). Doctor only uses Complete, not Chat — no modification needed, but useful reference for interface segregation.",
+      "likely_modification": "none"
+    },
+    {
+      "path": "internal/mcp/server.go",
+      "relevance": "low",
+      "purpose": "MCP server creates *llmclient.Client and passes it as fanout.Completer. Will automatically get Chat capability without code changes. Verify at integration time.",
+      "likely_modification": "none"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "internal/fanout/engine.go:invokeAgent (line 228)",
+      "type": "entry-point",
+      "description": "The tool loop replaces the single completer.Complete call (line 252) when Agent.Tools is true. New code path: build messages from prompt, call ChatCompleter.Chat with tools, loop on tool_calls, append tool results, repeat until final message or budget trip. Result struct (line 56) gains Turns/ToolCalls/ToolBytes fields."
+    },
+    {
+      "location": "internal/llmclient/client.go:Complete (line 165)",
+      "type": "hook",
+      "description": "Add a Chat(ctx, inv, messages, tools) method alongside Complete. The wire format adds tools array to chatRequest and parses tool_calls from chatResponse choices. New message struct variant with ToolCalls and tool_call_id fields."
+    },
+    {
+      "location": "internal/fanout/review.go:buildAgent (line 411)",
+      "type": "hook",
+      "description": "When building Agent from AgentConfig, propagate Tools/MaxTurns/ToolBudgetBytes to the Agent struct so the engine sees them. Also pass ToolsEnabled to PayloadContext at RenderPrompt call (line 438)."
+    },
+    {
+      "location": "internal/fanout/review.go:buildFallbackAgent (line 460)",
+      "type": "hook",
+      "description": "Fallback agents inherit the effective tools setting of the lane invocation. Propagate Tools/MaxTurns/ToolBudgetBytes from the primary's AgentConfig (the fallback's own config), not from the primary agent."
+    },
+    {
+      "location": "internal/fanout/artifacts.go:writeAgentArtifacts (line 160)",
+      "type": "hook",
+      "description": "Write raw/<agent>/transcript.jsonl alongside review.md. Each turn (tool_calls + tool results + final message) is one JSONL line. statusFor() (line 176) propagates Result.Turns/ToolCalls/ToolBytes to AgentStatus."
+    },
+    {
+      "location": "internal/payload/template.go:PayloadContext (line 15)",
+      "type": "hook",
+      "description": "Add ToolsEnabled bool field. This enables {{if .ToolsEnabled}} conditional sections in persona templates. Set by buildAgent when AgentConfig.Tools is true."
+    },
+    {
+      "location": "internal/registry/config.go:applyDefaults (line 209)",
+      "type": "hook",
+      "description": "When tools==true and max_turns is nil, apply max_turns=10 default. This is the activation point for the reserved fields."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "description": "Result struct (engine.go:56) lacks Turns/ToolCalls/ToolBytes fields — the tool loop cannot propagate counters to the artifact/status layer without them.",
+      "resolution": "Add Turns int, ToolCalls int, ToolBytes int64 fields to Result. Populate in the tool loop; consume in statusFor() and writeAgentArtifacts()."
+    },
+    {
+      "description": "PayloadContext (template.go:15) lacks ToolsEnabled bool — persona templates cannot conditionally render tool-specific guidance sections.",
+      "resolution": "Add ToolsEnabled bool field to PayloadContext. Set it in buildAgent (review.go:411) from AgentConfig.Tools before calling RenderPrompt."
+    },
+    {
+      "description": "AgentStatus (status.go:225) lacks ToolsDegraded bool — when a non-tool-capable model has tools:true and degrades to single-shot, status.json has no field to record this.",
+      "resolution": "Add ToolsDegraded bool field to AgentStatus with json tag \"tools_degraded,omitempty\". Set true in the degrade path."
+    },
+    {
+      "description": "Manifest Stages (manifest.go:35) only records []string{\"review\"} — no way to record which agents used tools in the review stage.",
+      "resolution": "Either extend Stages to a richer type (e.g., map[string]StageInfo) or add a separate ToolAgents []string field. The plan says 'stages.review entry with tools:true agents listed'."
+    },
+    {
+      "description": "applyDefaults (config.go:209) does not apply max_turns=10 when tools=true — the reserved fields have no defaults in 1.x.",
+      "resolution": "In applyDefaults or in a new applyToolDefaults method, check a.Tools==true && a.MaxTurns==nil and set MaxTurns=&10. Similarly consider default tool_budget_bytes."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "llmclient.Invocation",
+      "path": "internal/llmclient/client.go:127",
+      "can_extend": true,
+      "usage_example": "Extend with optional Tools []ToolDef field for the Chat method. Existing Complete callers unaffected."
+    },
+    {
+      "name": "fanout.Completer interface",
+      "path": "internal/fanout/engine.go:17",
+      "can_extend": true,
+      "usage_example": "Add a ChatCompleter interface (Chat method) alongside Completer. Engine checks for ChatCompleter via type assertion when Agent.Tools is true. Test fakes implement both for deterministic tool-loop tests. Doctor.Completer (internal/doctor/run.go:43) remains unaffected."
+    },
+    {
+      "name": "registry.AgentConfig reserved fields",
+      "path": "internal/registry/config.go:54",
+      "can_extend": true,
+      "usage_example": "Already parsed+validated. Just wire engine to read them. Add default application for max_turns=10 when tools=true and unset."
+    },
+    {
+      "name": "fanout.AgentStatus counters",
+      "path": "internal/fanout/status.go:225",
+      "can_extend": true,
+      "usage_example": "ToolCalls/ToolBytes/Turns fields exist as *int/*int64 pointers (lines 240-242). Populate during tool loop execution. Add ToolsDegraded bool."
+    },
+    {
+      "name": "payload.PayloadContext",
+      "path": "internal/payload/template.go:15",
+      "can_extend": true,
+      "usage_example": "Add ToolsEnabled bool field. RenderPrompt (line 70) and existing template engine handle it automatically via {{if .ToolsEnabled}} conditionals."
+    },
+    {
+      "name": "fanout.atomicWriteFile",
+      "path": "internal/fanout/status.go:275",
+      "can_extend": true,
+      "usage_example": "Use for writing transcript.jsonl — temp file + rename for crash safety. Already used by writeAgentArtifacts for review.md and status.json."
+    }
+  ],
+  "architecture_notes": [
+    "The engine's Completer interface is the clean seam for adding tool calling. llmclient.Client implements Complete; add Chat alongside it. The Engine.invokeAgent method branches on Agent.Tools to choose single-shot vs. loop. A type assertion (Completer → ChatCompleter) avoids polluting the base interface.",
+    "Registry already validates Tools/MaxTurns/ToolBudgetBytes/Role at load (config.go:197-202). No schema migration needed — just activate defaults (max_turns=10 when tools=true) and wire the engine. MaxAgentTurns=1000 in precedence.go:15 already caps the upper bound.",
+    "The path jail and snapshot manager are new packages (internal/tools/jail.go, internal/tools/snapshot.go). They are consumed by the tool dispatcher, not the engine directly. The jail resolves paths relative to snapshot root; rejects absolute paths, .. escapes, out-of-root symlinks, .git/ access. The persona.go readNonEmpty function (line 130) already refuses symlinks — a similar security pattern for the path jail.",
+    "transcript.jsonl is a new artifact alongside review.md. The existing writeAgentArtifacts flow (artifacts.go:160) is the natural place to add it. Each JSONL line records one turn: role, content, tool_calls (if any), tool results (if any).",
+    "The tool loop must respect context cancellation and per-agent timeout (TimeoutSecs). The existing per-agent context.WithTimeout in invokeAgent (engine.go:237) already handles this — the tool loop inherits the same timeout.",
+    "Provider function-calling wire format: OpenAI's tools/tool_calls/role:tool is the lowest common denominator. litellm normalizes most providers to this format. The degrade path (tools:true on incapable model) falls back to single-shot with tools_degraded:true in status.json.",
+    "PayloadContext.ToolsEnabled is the template-level switch for persona conditional sections. The buildAgent function (review.go:411) sets it from AgentConfig.Tools before calling RenderPrompt. This keeps persona resolution (persona.go) unchanged — it only selects which text to use; the template engine handles the conditional rendering.",
+    "The doctor.Completer (internal/doctor/run.go:43) and MCP server (internal/mcp/server.go) both consume fanout.Completer but never invoke tool agents. Doctor probes are single-shot; MCP passes *llmclient.Client as Completer. No code changes needed in either — the Chat method is opt-in via ChatCompleter type assertion."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/fanout/engine.go",
+      "reason": "Extend invokeAgent (line 228) with tool loop when Agent.Tools is true; add Agent fields for Tools/MaxTurns/ToolBudgetBytes; add Turns/ToolCalls/ToolBytes to Result struct (line 56); add ChatCompleter interface alongside Completer.",
+      "scope": "major"
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "reason": "Add Chat method with tools array in request, tool_calls in response parsing, role:tool message support. Extend chatRequest (line 155) and chatResponse (line 162) structs.",
+      "scope": "major"
+    },
+    {
+      "path": "internal/payload/template.go",
+      "reason": "Add ToolsEnabled bool field to PayloadContext (line 15). This enables {{if .ToolsEnabled}} conditional sections in persona templates.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "reason": "Propagate Tools/MaxTurns/ToolBudgetBytes from AgentConfig to Agent struct during slot building (buildAgent line 411). Set PayloadContext.ToolsEnabled at RenderPrompt call (line 438). Propagate in buildFallbackAgent (line 460).",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "reason": "Add default application for max_turns=10 when tools=true and unset in applyDefaults (line 209). Possibly add validation for tool_budget_bytes bounds.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/registry/precedence.go",
+      "reason": "Add DefaultMaxTurns=10 constant for the tools=true default. MaxAgentTurns=1000 (line 15) already exists.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/status.go",
+      "reason": "Add ToolsDegraded bool field to AgentStatus (line 225). Populate ToolCalls/ToolBytes/Turns during tool loop execution.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/artifacts.go",
+      "reason": "Add transcript.jsonl writer in writeAgentArtifacts (line 160); update statusFor() (line 176) to propagate Turns/ToolCalls/ToolBytes from Result.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/payload/manifest.go",
+      "reason": "Add richer stages entry listing tools:true agents. Current Stages []string (line 35) only records [\"review\"].",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/registry.md",
+      "reason": "Activate tools/max_turns/tool_budget_bytes documentation from 'reserved' to 'active' in agent fields table (line 54).",
+      "scope": "minor"
+    },
+    {
+      "path": "docs/payload-modes.md",
+      "reason": "Add section on payload-as-starting-point semantics for tool agents — tools widen evidence gathering, not scope. File already exists with 67 lines of payload mode documentation.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/payload/personas_render_test.go",
+      "reason": "Update sample PayloadContext with ToolsEnabled=false field (line 16) so existing persona render tests pass unchanged.",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/payload/template_test.go",
+      "reason": "Update sampleCtx() (line 12) and TestRenderPrompt_AllVars with ToolsEnabled field. Add test for {{if .ToolsEnabled}} conditional rendering.",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/tools/dispatch.go",
+      "purpose": "Tool dispatcher — receives tool_calls from model, routes to read_file/grep/list_files handlers, returns tool results.",
+      "based_on": null
+    },
+    {
+      "path": "internal/tools/defs.go",
+      "purpose": "Tool definitions (JSON Schema) for read_file, grep, list_files. OpenAI function-calling format.",
+      "based_on": null
+    },
+    {
+      "path": "internal/tools/jail.go",
+      "purpose": "Path jail — resolves paths relative to snapshot root, rejects absolute paths, .. escapes, out-of-root symlinks, .git/ access. Pattern: similar security posture to persona.go readNonEmpty (line 130) which already refuses symlinks.",
+      "based_on": null
+    },
+    {
+      "path": "internal/tools/snapshot.go",
+      "purpose": "Snapshot manager — live worktree fast path (head==HEAD && clean), git worktree add for other heads, cleanup after run.",
+      "based_on": null
+    },
+    {
+      "path": "internal/tools/transcript.go",
+      "purpose": "transcript.jsonl writer — one JSON line per turn (tool_calls, tool results, final message).",
+      "based_on": null
+    },
+    {
+      "path": "internal/tools/tools_test.go",
+      "purpose": "Unit tests for tool dispatch, path jail, snapshot manager — no LLM involved.",
+      "based_on": null
+    },
+    {
+      "path": "internal/llmclient/chat_test.go",
+      "purpose": "httptest-scripted integration tests for Chat method with multi-turn tool_calls exchanges.",
+      "based_on": "internal/llmclient/client_test.go"
+    },
+    {
+      "path": "internal/fanout/toolloop_test.go",
+      "purpose": "Integration tests for the tool loop — scripted mock provider, budget trips, degrade path.",
+      "based_on": "internal/fanout/engine_test.go"
+    }
+  ],
+  "files_to_modify_persona": [
+    {
+      "path": "personas/_base.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section with tool-specific guidance: budget exploration, verify suspicions, cite evidence read.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/bruce.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section for tool-specific reviewer guidance.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/greta.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section for tool-specific reviewer guidance.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/kai.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section for tool-specific reviewer guidance.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/mira.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section for tool-specific reviewer guidance.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/dax.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section for tool-specific reviewer guidance.",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/otto.md",
+      "reason": "Add {{if .ToolsEnabled}} conditional section for tool-specific reviewer guidance.",
+      "scope": "minor"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "internal/tools/, internal/llmclient/, internal/fanout/, internal/payload/",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/fanout/engine_test.go",
+    "render_test": "internal/payload/personas_render_test.go:11",
+    "httptest_pattern": "internal/llmclient/client_test.go uses httptest.Server for scripted responses"
+  }
+}

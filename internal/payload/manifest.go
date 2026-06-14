@@ -31,6 +31,14 @@ type Manifest struct {
 	// "debate", etc. Optional so a manifest written without it parses cleanly.
 	Stages []string `json:"stages,omitempty"`
 
+	// Review is the enriched record of the review stage's tool-using agents
+	// (Epic 2.0, AC 05-04). It is a sibling of Stages (which stays the ordered
+	// stage-name list, unchanged from 1.x) rather than nested inside it, because
+	// Stages is a string array and reshaping it would break the 1.x on-disk
+	// contract. Present only when at least one agent ran with tools enabled, so a
+	// pure 1.x roster omits it entirely and older readers are unaffected.
+	Review *ReviewStage `json:"review,omitempty"`
+
 	// MaxParallel and TimeoutSecs are the effective fan-out settings recorded
 	// for post-hoc diagnosis: a throttled run can be identified by max_parallel
 	// in the manifest without replaying the registry precedence chain.
@@ -38,6 +46,20 @@ type Manifest struct {
 	// distinguishable from an older manifest that never carried the field.
 	MaxParallel int `json:"max_parallel"`
 	TimeoutSecs int `json:"timeout_secs,omitempty"`
+}
+
+// ReviewStage records which agents executed the review stage with tools enabled
+// (Epic 2.0). ToolsEnabled lists every agent that had tools:true effective at
+// invocation time — including agents that later degraded to single-shot, tripped
+// a budget, or hit a provider error — because membership is derived from the
+// invocation-time flag, not the completion path (AC 05-04). ToolsDegraded is the
+// subset that fell back to single-shot. Agents mirrors ToolsEnabled (the agents
+// participating in this stage). Slices marshal as [] (never null) so a present
+// review entry always has explicit arrays.
+type ReviewStage struct {
+	Agents        []string `json:"agents"`
+	ToolsEnabled  []string `json:"tools_enabled"`
+	ToolsDegraded []string `json:"tools_degraded"`
 }
 
 // WriteManifest serializes m to path as indented JSON, writing atomically
@@ -51,6 +73,19 @@ func WriteManifest(path string, m *Manifest) error {
 	}
 	if m.Stages == nil {
 		m.Stages = []string{"review"}
+	}
+	if m.Review != nil {
+		// Normalize the review-stage slices so they serialize as [] (never null),
+		// keeping the tools_enabled/tools_degraded arrays explicit for readers.
+		if m.Review.Agents == nil {
+			m.Review.Agents = []string{}
+		}
+		if m.Review.ToolsEnabled == nil {
+			m.Review.ToolsEnabled = []string{}
+		}
+		if m.Review.ToolsDegraded == nil {
+			m.Review.ToolsDegraded = []string{}
+		}
 	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

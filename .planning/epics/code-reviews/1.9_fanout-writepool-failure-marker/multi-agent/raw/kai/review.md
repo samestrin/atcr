@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/reviewdir_test.go:355|Missing directory creation in test before writeFailureSummary|Add `require.NoError(t, os.MkdirAll(poolDir, 0o755))` after poolDir assignment|correctness|2|Test calls writeFailureSummary without ensuring poolDir exists; writeJSON silently fails and the subsequent os.ReadFile will error|bruce

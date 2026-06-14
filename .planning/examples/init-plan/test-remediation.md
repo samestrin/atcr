@@ -1,6 +1,6 @@
 # Test Remediation: Improve API Endpoint Coverage
 
-**Estimated Durations**: TBD
+- **Estimated time**: 1 week
 
 ## Current State
 
@@ -118,6 +118,16 @@ const order = fixtures.order({ user, items: 5 })
 - Backward compatibility checks
 
 ## Acceptance Criteria
+
+- [ ] AC1: `tests/utils/testDb.ts` created — database setup/teardown in < 1 second per test file
+- [ ] AC2: `tests/utils/auth.ts` created — `.withAuth(role)` helper supports at least admin, user, guest roles
+- [ ] AC3: `tests/fixtures/index.ts` created — factory functions for user, order, product, payment models
+- [ ] AC4: All 5 critical endpoints (payments/charge, payments/refund, admin/users/:id DELETE, admin/permissions, orders POST) have unit + integration tests
+- [ ] AC5: All 4 high-priority endpoints (users/me GET+PUT, orders/:id GET, products POST) have tests covering happy path and error cases
+- [ ] AC6: Overall API endpoint coverage reaches >= 60% (measured by Jest coverage report)
+- [ ] AC7: Full test suite executes in < 2 minutes in CI
+
+## Success Criteria
 
 - [ ] Test utilities created and documented
 - [ ] All critical endpoints have tests (5 endpoints)

@@ -1,6 +1,6 @@
 # Bug Report: Payment Processing Timeout on Large Orders
 
-**Estimated Durations**: TBD
+- **Estimated time**: 2 days
 
 ## Summary
 
@@ -77,6 +77,14 @@ Sequential inventory validation is O(n) with no batching. Combined with network 
 ### Recommended: Option A
 
 ## Acceptance Criteria
+
+- [ ] AC1: `InventoryChecker` accepts an array of SKUs and executes a single batched query instead of N sequential queries
+- [ ] AC2: Orders with 100+ line items complete payment in < 10 seconds (p95 latency)
+- [ ] AC3: Payment success rate returns to >= 99.5% measured over a 7-day window post-deploy
+- [ ] AC4: Inventory over-sell rate remains at or below current baseline (no regression)
+- [ ] AC5: All existing checkout and payment tests pass with no modifications to test assertions
+
+## Success Criteria
 
 - [ ] Orders with 100+ items complete in < 10 seconds
 - [ ] No increase in inventory over-sell rate

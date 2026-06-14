@@ -65,3 +65,11 @@ Each persona prompt carries a scope rule matched to the payload mode:
 
 - **`diff` and `blocks`** constrain findings to the changed regions. Function-context expansion shows surrounding code for context but does **not** widen the review scope.
 - **`files`** intentionally widens visibility. Reviewers may notice pre-existing issues in unchanged regions; the prompt instructs them to focus on the change but to tag any pre-existing issue with `CATEGORY` `out-of-scope`, so the reconciler **annotates** rather than promotes it. Consumers can then filter out-of-scope findings.
+
+## Tool agents (payload as starting point)
+
+For an agent with `tools: true` (see [registry.md](registry.md)), the payload above is the **starting point** of the review, not the whole universe of context. Rather than reasoning only over what the payload contains, a tool agent can look things up during the review: it may read additional files with `read_file`, search the tree with `grep`, and list directories with `list_files`, all within a **read-only, path-jailed snapshot** of the repository at the resolved `head`. There are no write tools, no shell, and no network — a reviewer can never mutate the repo or reach beyond the snapshot.
+
+This widens **evidence gathering**, not **review scope**. A tool agent still targets the changed range exactly as a single-shot reviewer does: findings must concern the change unless the agent explicitly tags a pre-existing issue in unchanged code with `CATEGORY` `out-of-scope` (the same convention as `files` mode above). Tools exist so a reviewer can verify a suspicion — read the caller that passes `nil`, confirm the invariant two packages away — and cite the file and lines it actually read, not to expand what counts as in-scope.
+
+Tool agents are bounded by per-agent budgets (`max_turns`, `tool_budget_bytes`, `timeout_secs`) and typically cost several times the provider calls of a single-shot reviewer; see the [README](../README.md) for cost guidance and [registry.md](registry.md) for the budget fields.

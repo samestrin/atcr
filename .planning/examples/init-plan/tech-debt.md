@@ -1,6 +1,6 @@
 # Tech Debt: Migrate from Moment.js to date-fns
 
-**Estimated Durations**: TBD
+- **Estimated time**: 1 week
 
 ## Current State
 
@@ -90,6 +90,14 @@ High-level inventory (45 files total):
 - `src/components/Calendar/CalendarGrid.tsx` - heavy date math
 
 ## Acceptance Criteria
+
+- [ ] AC1: Zero `moment` or `moment-timezone` imports remain in source code (verified by lint rule or `grep -r 'from moment\|require("moment")'`)
+- [ ] AC2: Vendor bundle size reduced by >= 50KB compared to pre-migration baseline
+- [ ] AC3: All existing date-related unit and integration tests pass without modification to test assertions
+- [ ] AC4: No date-related production bugs filed within 14 days post-deploy
+- [ ] AC5: All 45 affected files migrated — no partial/half-migrated state remains
+
+## Success Criteria
 
 - [ ] Zero Moment.js imports in codebase
 - [ ] Bundle size reduced by 50KB+
