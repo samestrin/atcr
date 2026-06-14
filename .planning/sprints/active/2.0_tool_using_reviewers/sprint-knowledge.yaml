@@ -4,3 +4,6 @@
 created: []
 
 referenced: []
+
+clarifications:
+  - mem-2026-06-13-c27dfe  # max_turns / tool_budget_bytes mutual exclusion in TrippedBudgets (loop.go timing)
