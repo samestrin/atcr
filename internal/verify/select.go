@@ -48,8 +48,9 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 
 	skeptics := reg.AgentsByRole(registry.RoleSkeptic)
 
-	// Collect eligible names first so ordering is deterministic regardless of
-	// Go's randomized map iteration.
+	// Collect eligible names, then sort, so the result order is deterministic
+	// regardless of Go's randomized map iteration — selection must be stable
+	// across runs for the same registry and finding.
 	names := make([]string, 0, len(skeptics))
 	for name, a := range skeptics {
 		if !reviewerModels[a.Model] {
@@ -58,8 +59,10 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 	}
 	sort.Strings(names)
 
+	// Take the first n by name. The >= guard is defensive: out grows by one per
+	// iteration today, but >= keeps the cap correct if that ever changes.
 	for _, name := range names {
-		if len(out) == n {
+		if len(out) >= n {
 			break
 		}
 		out = append(out, skeptics[name])
