@@ -184,7 +184,6 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(mdata, &raw))
-	require.Contains(t, raw, "review")
 	assert.Contains(t, string(raw["review"]), "greta")
 
 	// AC 03-02 Scenario 5 + AC 03-03 Scenario 4 (worktree branch), end-to-end:
