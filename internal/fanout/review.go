@@ -281,12 +281,19 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// per-agent transcript writer under the pool raw dir. Best-effort: a snapshot
 	// or jail failure logs and leaves tool agents to degrade to single-shot
 	// (tools_degraded) rather than failing the whole review.
+	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
+	// unless a snapshot actually runs and succeeds below; stamped onto the review
+	// stage after fan-out.
+	var snapMode, snapHeadSHA, snapWorktreePath string
 	opts := []EngineOption{WithMaxParallel(p.MaxParallel)}
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
 			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
 		} else {
 			defer cleanup()
+			// A successful SnapshotFor call fixes the mode/head/path the tool harness
+			// reviewed at (AC 03-02 Scenario 5), recorded even if the jail below fails.
+			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, p.Head)
 			if jail, jerr := tools.NewJail(root); jerr != nil {
 				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
 			} else {
@@ -333,6 +340,14 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
 	// unchanged.
 	p.manifest.Review = reviewStageFor(results)
+	// Stamp the snapshot provenance (AC 03-02 / 03-03) onto the review stage when
+	// one is present. When no snapshot ran (snapshot failed, or no tool agent), the
+	// omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays "".
+	if p.manifest.Review != nil {
+		p.manifest.Review.SnapshotMode = snapMode
+		p.manifest.Review.HeadSHA = snapHeadSHA
+		p.manifest.Review.SnapshotWorktreePath = snapWorktreePath
+	}
 	if err := WriteManifest(p.Dir, p.manifest); err != nil {
 		return nil, err
 	}
@@ -636,6 +651,19 @@ func reviewStageFor(results []Result) *payload.ReviewStage {
 	// Agents is a distinct copy of ToolsEnabled so the two slices never alias (a
 	// later mutation of one must not silently mutate the other).
 	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: degraded}
+}
+
+// snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /
+// 03-03) from the root SnapshotFor returned. root == repo is the live fast path
+// (head matched HEAD on a clean worktree), so mode is "live" and the worktree path
+// is the explicit empty string; any other root is a detached worktree at head, so
+// mode is "worktree" and the path is that root. head is already the resolved head
+// SHA (gitrange resolves it before fan-out), recorded verbatim as head_sha.
+func snapshotManifestFields(root, repo, head string) (mode, headSHA, worktreePath string) {
+	if root == repo {
+		return "live", head, ""
+	}
+	return "worktree", head, root
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).

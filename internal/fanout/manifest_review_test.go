@@ -76,3 +76,21 @@ func TestReviewStageFor_SingleAgent(t *testing.T) {
 	require.NotNil(t, rs)
 	assert.Equal(t, []string{"solo"}, rs.ToolsEnabled)
 }
+
+// AC 03-03 Scenario 5: a fast-path snapshot (root == repo) is recorded as live
+// mode with an empty worktree path; head is the resolved head_sha verbatim.
+func TestSnapshotManifestFields_LiveMode(t *testing.T) {
+	mode, headSHA, wt := snapshotManifestFields("/repo", "/repo", "abc1234")
+	assert.Equal(t, "live", mode)
+	assert.Equal(t, "abc1234", headSHA)
+	assert.Equal(t, "", wt)
+}
+
+// AC 03-03 Scenario 4: a slow-path snapshot (root != repo) is recorded as
+// worktree mode and carries the worktree path SnapshotFor returned.
+func TestSnapshotManifestFields_WorktreeMode(t *testing.T) {
+	mode, headSHA, wt := snapshotManifestFields("/tmp/atcr-snapshot-x/abc1234", "/repo", "abc1234")
+	assert.Equal(t, "worktree", mode)
+	assert.Equal(t, "abc1234", headSHA)
+	assert.Equal(t, "/tmp/atcr-snapshot-x/abc1234", wt)
+}

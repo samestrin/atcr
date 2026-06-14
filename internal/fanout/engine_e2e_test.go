@@ -173,6 +173,24 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	require.NoError(t, json.Unmarshal(mdata, &raw))
 	require.Contains(t, raw, "review")
 	assert.Contains(t, string(raw["review"]), "greta")
+
+	// AC 03-02 Scenario 5 + AC 03-03 Scenario 4 (worktree branch), end-to-end:
+	// although head equals HEAD, PrepareReview has already written the untracked
+	// .atcr/reviews/ scaffolding into the repo, so `git status --porcelain` reports
+	// a dirty tree and SnapshotFor falls through to the slow path. The review stage
+	// on disk therefore records worktree mode, the resolved head_sha, and a worktree
+	// path under the OS temp dir whose leaf is the resolved head SHA.
+	var review struct {
+		SnapshotMode         string `json:"snapshot_mode"`
+		HeadSHA              string `json:"head_sha"`
+		SnapshotWorktreePath string `json:"snapshot_worktree_path"`
+	}
+	require.NoError(t, json.Unmarshal(raw["review"], &review))
+	assert.Equal(t, "worktree", review.SnapshotMode)
+	assert.Equal(t, head, review.HeadSHA)
+	assert.Contains(t, review.SnapshotWorktreePath, "atcr-snapshot-")
+	assert.True(t, strings.HasSuffix(review.SnapshotWorktreePath, head),
+		"worktree leaf is the resolved head SHA")
 }
 
 // budgetTripMockProvider returns read_file tool_calls on every budgeted turn (a

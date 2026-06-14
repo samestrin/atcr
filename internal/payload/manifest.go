@@ -60,6 +60,21 @@ type ReviewStage struct {
 	Agents        []string `json:"agents"`
 	ToolsEnabled  []string `json:"tools_enabled"`
 	ToolsDegraded []string `json:"tools_degraded"`
+
+	// SnapshotMode records the filesystem snapshot the tool harness reviewed at:
+	// "live" when head matched HEAD on a clean worktree (fast path), "worktree"
+	// when a detached git worktree was created (AC 03-02 / 03-03). Omitted (via
+	// omitempty) when no snapshot ran — e.g. the snapshot failed and agents
+	// degraded to single-shot, so the field's absence is meaningful.
+	SnapshotMode string `json:"snapshot_mode,omitempty"`
+	// HeadSHA is the resolved head commit the snapshot was taken at (AC 03-02
+	// Scenario 5). Omitted when no snapshot ran.
+	HeadSHA string `json:"head_sha,omitempty"`
+	// SnapshotWorktreePath is the temporary worktree path on the slow path, or
+	// the explicit empty string on the live fast path. It is intentionally NOT
+	// omitempty: AC 03-03 Scenario 5 requires "snapshot_worktree_path": "" to be
+	// present in live mode so a reader distinguishes live from a missing field.
+	SnapshotWorktreePath string `json:"snapshot_worktree_path"`
 }
 
 // WriteManifest serializes m to path as indented JSON, writing atomically
