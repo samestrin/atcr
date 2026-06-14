@@ -218,10 +218,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// boolFlag reads a bool flag, ignoring the lookup error (an undefined flag is a
-// programming error caught in tests, not a runtime condition).
+// boolFlag reads a bool flag, panicking on lookup error (an undefined flag is a
+// programming error that must fail loudly, not silently return false).
 func boolFlag(cmd *cobra.Command, name string) bool {
-	v, _ := cmd.Flags().GetBool(name)
+	v, err := cmd.Flags().GetBool(name)
+	if err != nil {
+		panic(fmt.Sprintf("boolFlag: undefined flag %q: %v", name, err))
+	}
 	return v
 }
 
