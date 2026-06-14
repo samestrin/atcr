@@ -180,7 +180,7 @@ Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`
 
 ---
 
-### 1.1 [ ] **[Skeptic Selection — RED](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
+### 1.1 [x] **[Skeptic Selection — RED](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
 
 **Mode:** Moderate | **ACs:** [01-01](plan/acceptance-criteria/01-01-agentsbyrole-filtering.md) [01-02](plan/acceptance-criteria/01-02-different-model-exclusion.md) [01-03](plan/acceptance-criteria/01-03-empty-selection-unverifiable.md) [01-04](plan/acceptance-criteria/01-04-empty-role-backward-compat.md) [01-05](plan/acceptance-criteria/01-05-test-coverage-requirements.md)
 
@@ -200,7 +200,7 @@ Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`
 
 ---
 
-### 1.2 [ ] **[Skeptic Selection — GREEN](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
+### 1.2 [x] **[Skeptic Selection — GREEN](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
 
 **Mode:** Moderate | **ACs:** 01-01 through 01-05
 
@@ -222,7 +222,7 @@ Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`
 
 ---
 
-### 1.2.A [ ] **[Skeptic Selection — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
+### 1.2.A [x] **[Skeptic Selection — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
 
 **Changed Files:** `internal/verify/select.go`, `internal/verify/select_test.go`, `internal/registry/config.go`
 
@@ -244,19 +244,20 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings (no CRITICAL/HIGH):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| LOW | select.go:65 / config.go:294 | Returned AgentConfig values shallow-copy reference fields (Scope, *Temperature, etc.) — alias registry backing memory; caller writing through them corrupts the registry. | Deferred to TD-001: deep-copy or document read-only. |
+| LOW | select.go:61-66 | Truncation loop re-looks-up `skeptics[name]` (redundant); `len(out) == n` is a brittle invariant. | Addressed in 1.3: capture configs in first pass; use `>=`. |
+| LOW | select_test.go:28-39 | `namesOf` reverse-maps via reflect.DeepEqual, fragile if two configs are identical. | Deferred to TD-002: test-only robustness. |
 
-**Action Required:**
-- CRITICAL/HIGH found → List issues for 1.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Adversarial review passed" and proceed
+**Action Taken:** No CRITICAL/HIGH. Loop redundancy + `>=` defensiveness folded into 1.3 REFACTOR; aliasing (TD-001) and test-fragility (TD-002) deferred to `tech-debt-captured.md`.
+
+**Deviation note:** Plan 1.3 step 2 suggests a "structured warning" log for unresolvable reviewers, but AC 01-02 specifies they are "skipped silently" (defensive — an agent may have been removed). AC wins: no logging added; `SelectEligibleSkeptics` stays a pure, logger-free function.
 
 ---
 
-### 1.3 [ ] **[Skeptic Selection — REFACTOR](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
+### 1.3 [x] **[Skeptic Selection — REFACTOR](plan/user-stories/01-skeptic-selection-role-plumbing.md)**
 
 1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
 2. Improve code quality: ensure deterministic ordering is documented, empty-role normalization is clear, reviewer-not-found skip is logged (structured warning)
@@ -268,25 +269,25 @@ Use the Agent tool:
 
 ---
 
-### 1.4 [ ] **Phase 1 DoD Verification**
+### 1.4 [x] **Phase 1 DoD Verification**
 
 **Run all checks — all must pass before gate:**
 
-- [ ] `go test ./internal/verify/... ./internal/registry/...` — all passing
-- [ ] Coverage ≥ 95% on new code: `go test -coverprofile=coverage.out -coverpkg=./internal/verify/...,./internal/registry/... ./internal/verify/... ./internal/registry/...`
-- [ ] `go vet ./...` — clean
-- [ ] `go build ./...` — succeeds (no import cycles)
-- [ ] `AgentsByRole` and `SelectEligibleSkeptics` APIs match spec in [verification-pipeline.md](plan/documentation/verification-pipeline.md)
+- [x] `go test ./internal/verify/... ./internal/registry/...` — all passing
+- [x] Coverage ≥ 95% on new code: 100% on both `AgentsByRole` and `SelectEligibleSkeptics`
+- [x] `go vet ./...` — clean
+- [x] `go build ./...` — succeeds (no import cycles)
+- [x] `AgentsByRole` and `SelectEligibleSkeptics` APIs match spec (signatures as specified in plan task 1.2)
 
 ```
 Phase 1 DoD Complete
-Auto: [_]/4 | Story-Specific: [_]/1
-Manual Review: [ ] Code reviewed
+Auto: [4]/4 | Story-Specific: [1]/1
+Manual Review: [x] Code reviewed (1.2.A adversarial subagent — no CRITICAL/HIGH)
 ```
 
 ---
 
-### 1.5 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+### 1.5 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
@@ -309,15 +310,17 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Gate review (first pass — CRITICAL found):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| | | | |
+| CRITICAL | select.go:34,68 | `SelectEligibleSkeptics` returned bare `[]registry.AgentConfig`; `AgentConfig` has no Name field, so Phase 2 could not recover the skeptic name needed for `reconcile.Verification.Skeptic`. | FIXED before phase exit — return `[]Skeptic{Name, Config}`; tests assert names directly (commit 66f4401). |
 
-**Action Required:**
-- CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-- None found → Note "Phase gate passed" and proceed to phase stop
+**Gate review (re-run after fix — PASSED):**
+| Severity | File:Line | Issue | Fix |
+|----------|-----------|-------|-----|
+| None | None | None | None |
+
+**Action Taken:** CRITICAL fixed in-phase (Skeptic return type), gate re-run, **Phase gate passed.** Resolved TD-002 as a side effect. Proceeding to gated phase stop.
 
 **Duration:** 15-30 min
 
@@ -726,7 +729,7 @@ Use the Agent tool:
 
 ### 4.1 [ ] **[CLI & Gate — RED](plan/user-stories/04-cli-command-mcp-tool.md)**
 
-**Mode:** Moderate | **ACs:** [04-01](plan/acceptance-criteria/04-01-verify-cli-subcommand.md) [04-02](plan/acceptance-criteria/04-02-review-verify-chaining.md) [04-03](plan/acceptance-criteria/04-03-mcp-tool.md) [04-04](plan/acceptance-criteria/04-04-artifact-consistency.md) [04-05](plan/acceptance-criteria/04-05-skip-already-verified.md) [05-01](plan/acceptance-criteria/05-01-gate-filtering.md) [05-02](plan/acceptance-criteria/05-02-mcp-parity-fixture-matrix.md)
+**Mode:** Moderate | **ACs:** [04-01](plan/acceptance-criteria/04-01-verify-subcommand.md) [04-02](plan/acceptance-criteria/04-02-review-verify-chaining.md) [04-03](plan/acceptance-criteria/04-03-mcp-verify-tool.md) [04-04](plan/acceptance-criteria/04-04-artifact-consistency-error-handling.md) [04-05](plan/acceptance-criteria/04-05-skip-already-verified.md) [05-01](plan/acceptance-criteria/05-01-gate-filtering-require-verified.md) [05-02](plan/acceptance-criteria/05-02-mcp-parity-matrix-tests.md)
 
 1. Write failing tests in `cmd/atcr/verify_test.go`:
    - `TestVerifyCmd_Exists` — `atcr verify` subcommand registered and help text includes `--fresh`, `--thorough`, `--min-severity`
@@ -822,7 +825,7 @@ Use the Agent tool:
 
 ### 4.4 [ ] **[Gate Semantics — RED](plan/user-stories/05-gate-semantics.md)**
 
-**Mode:** Moderate | **ACs:** [05-01](plan/acceptance-criteria/05-01-gate-filtering.md) [05-02](plan/acceptance-criteria/05-02-mcp-parity-fixture-matrix.md)
+**Mode:** Moderate | **ACs:** [05-01](plan/acceptance-criteria/05-01-gate-filtering-require-verified.md) [05-02](plan/acceptance-criteria/05-02-mcp-parity-matrix-tests.md)
 
 (Gate matrix tests were written in 4.1 — verify they cover all 12+ scenarios. Add any missing edge cases here.)
 
@@ -965,6 +968,7 @@ Use the Agent tool:
 - CREATE: `internal/report/testdata/findings-with-verification.json`
 - CREATE: `internal/report/testdata/report-v2.md` (golden file)
 - CREATE: `internal/report/render_verification_test.go`
+- CREATE: `internal/verify/verify_e2e_test.go` (end-to-end: planted true/false findings through the pipeline with a scripted mock skeptic — AC 06-04 Scenario 6)
 - CREATE: `docs/verification.md`
 - MODIFY: `docs/registry.md` (add `role: skeptic` subsection)
 - MODIFY: `docs/findings-format.md` (document verification block)
@@ -975,7 +979,7 @@ Use the Agent tool:
 
 ### 5.1 [ ] **[Report & Docs — RED](plan/user-stories/06-report-updates-documentation.md)**
 
-**Mode:** Moderate | **ACs:** [06-01](plan/acceptance-criteria/06-01-report-rendering.md) [06-02](plan/acceptance-criteria/06-02-backward-compatibility.md) [06-03](plan/acceptance-criteria/06-03-verification-documentation.md) [06-04](plan/acceptance-criteria/06-04-fixture-corpus.md)
+**Mode:** Moderate | **ACs:** [06-01](plan/acceptance-criteria/06-01-report-rendering-with-verification.md) [06-02](plan/acceptance-criteria/06-02-backward-compatibility-v1.md) [06-03](plan/acceptance-criteria/06-03-verification-documentation.md) [06-04](plan/acceptance-criteria/06-04-verification-fixture-corpus.md)
 
 1. Create `internal/report/testdata/findings-with-verification.json` — test fixture with:
    - One VERIFIED (confirmed) finding with skeptic section
@@ -988,9 +992,10 @@ Use the Agent tool:
    - `TestRenderReport_VerifiedTier` — VERIFIED rendered distinctly (e.g., ✅ badge or distinct heading)
    - `TestRenderReport_V1Backward` — findings without verification block render identically to pre-v2
    - `TestRenderReport_GoldenFile` — full report matches `testdata/report-v2.md` golden file
-3. Verify tests fail correctly
+3. Write failing end-to-end test in `internal/verify/verify_e2e_test.go` (AC [06-04](plan/acceptance-criteria/06-04-verification-fixture-corpus.md) Scenario 6): load `internal/verify/testdata/true-finding.json` and `false-finding.json`, drive each through `invokeSkeptic` → `aggregateVerdicts` → `confidenceV2` with a scripted mock skeptic (`fakeChatCompleter`) returning `confirmed` for the true finding and `refuted` for the false finding; assert true → `confirmed`/`VERIFIED`, false → `refuted`/`LOW` (the "false finding refuted, true finding confirmed" success criterion)
+4. Verify tests fail correctly
 
-**Files:** `internal/report/testdata/`, `internal/report/render_verification_test.go` | **Duration:** 2h
+**Files:** `internal/report/testdata/`, `internal/report/render_verification_test.go`, `internal/verify/verify_e2e_test.go` | **Duration:** 2h
 
 ---
 
@@ -1014,10 +1019,11 @@ Use the Agent tool:
    - Cost controls (`min_severity`, `verify.votes`, `--fresh`)
 4. Update `docs/registry.md`: add `role: skeptic` subsection with example YAML and note on backward compat
 5. Update `docs/findings-format.md`: document `verification` block schema
-6. Verify all tests pass (T2): `go test ./internal/report/...`
-7. COMMIT: `git add internal/report/ docs/ && git commit -m "feat(verify): add report v2 rendering with skeptic/refuted sections; add verification.md"`
+6. Confirm the end-to-end test in `internal/verify/verify_e2e_test.go` passes — all pipeline components (`invokeSkeptic`, `aggregateVerdicts`, `confidenceV2`) from Phases 1–3 already exist, so no new production code is expected: `go test ./internal/verify/... -run TestVerifyE2E`
+7. Verify all tests pass (T2): `go test ./internal/report/... ./internal/verify/...`
+8. COMMIT: `git add internal/report/ internal/verify/verify_e2e_test.go docs/ && git commit -m "feat(verify): add report v2 rendering with skeptic/refuted sections; add verification.md; add end-to-end planted-finding test"`
 
-**Files:** `internal/report/render.go`, `docs/verification.md`, `docs/registry.md`, `docs/findings-format.md` | **Duration:** 4h
+**Files:** `internal/report/render.go`, `internal/verify/verify_e2e_test.go`, `docs/verification.md`, `docs/registry.md`, `docs/findings-format.md` | **Duration:** 4h
 
 ---
 
@@ -1076,6 +1082,7 @@ Use the Agent tool:
 - [ ] `docs/verification.md` exists and covers all 6 mechanics sections
 - [ ] `docs/registry.md` has `role: skeptic` subsection
 - [ ] `docs/findings-format.md` has verification block schema
+- [ ] End-to-end test `internal/verify/verify_e2e_test.go` passes: planted false finding → `refuted`/`LOW`, planted true finding → `confirmed`/`VERIFIED`
 - [ ] `go test ./...` — full suite passing; `go vet ./...` clean; `go build ./...` succeeds
 
 ```
@@ -1169,6 +1176,7 @@ Compare implementation against [original-requirements.md](plan/original-requirem
 - [ ] `verify.min_severity` floor honored (default MEDIUM)
 - [ ] Skip-already-verified unless `--fresh`
 - [ ] `verify.votes` config honored (default 1; `--thorough` forces 3 with majority rule)
+- [ ] End-to-end fixture: planted false finding refuted, planted true finding confirmed (`internal/verify/verify_e2e_test.go`)
 - [ ] Out-of-scope confirmed absent: no multi-round debate, no code execution, no auto-tuning
 
 ### Final Commit
