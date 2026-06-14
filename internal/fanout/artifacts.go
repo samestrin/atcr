@@ -188,6 +188,19 @@ func statusFor(r Result, findingsCount int) AgentStatus {
 	if r.Err != nil {
 		st.Error = r.Err.Error()
 	}
+	// Tool-loop accounting: emit the counters (as explicit, possibly-zero
+	// pointers) only for tool-enabled agents, so a pure 1.x single-shot agent's
+	// status.json is byte-for-byte unchanged (the pointers stay nil/omitted). A
+	// degraded tool agent still reports zeros and tools_degraded (AC 02-04 EC3).
+	if r.Tools {
+		turns, calls, bytes := r.Turns, r.ToolCalls, r.ToolBytes
+		st.Turns = &turns
+		st.ToolCalls = &calls
+		st.ToolBytes = &bytes
+		st.ToolsDegraded = r.ToolsDegraded
+		st.ToolsRequested = r.ToolsRequested
+		st.TrippedBudgets = r.TrippedBudgets
+	}
 	return st
 }
 

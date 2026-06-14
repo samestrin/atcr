@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/tools"
 )
 
 // ErrPayloadFullyDropped is returned by buildPayloads when a non-empty input
@@ -138,7 +140,13 @@ type PreparedReview struct {
 	Slots       []Slot
 	TimeoutSec  int
 	MaxParallel int
-	manifest    *payload.Manifest
+	// Repo and Head locate the read-only snapshot the tool harness reads (Epic
+	// 2.0). Set from the request; ExecuteReview builds the snapshot→jail→dispatcher
+	// only when a slot is tool-enabled. An empty Head leaves the harness unwired,
+	// so a tool agent degrades to single-shot.
+	Repo     string
+	Head     string
+	manifest *payload.Manifest
 }
 
 // AgentCount is the number of reviewer slots the prepared review will run.
@@ -245,7 +253,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 			return nil, err
 		}
 	}
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, manifest: m}, nil
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
 }
 
 // ExecuteReview runs phase two: fan out the prepared roster under the global
@@ -265,9 +273,37 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(p.TimeoutSec)*time.Second)
 		defer cancel()
 	}
-	results := NewEngine(completer, WithMaxParallel(p.MaxParallel)).Run(runCtx, p.Slots)
 
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
+
+	// Wire the read-only tool harness only when a slot is tool-enabled: a snapshot
+	// of the repo at head → path jail → dispatcher, shared across the run, plus a
+	// per-agent transcript writer under the pool raw dir. Best-effort: a snapshot
+	// or jail failure logs and leaves tool agents to degrade to single-shot
+	// (tools_degraded) rather than failing the whole review.
+	opts := []EngineOption{WithMaxParallel(p.MaxParallel)}
+	if anyToolAgent(p.Slots) && p.Head != "" {
+		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
+		} else {
+			defer cleanup()
+			if jail, jerr := tools.NewJail(root); jerr != nil {
+				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
+			} else {
+				disp := tools.NewDispatcher(jail, tools.DefaultLimits())
+				rawBase := filepath.Join(poolDir, poolRawAgentDir)
+				opts = append(opts, WithDispatcher(disp), WithTranscript(func(agent string) *tools.Transcript {
+					dir := filepath.Join(rawBase, transcriptAgentDir(agent))
+					if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+						fmt.Fprintf(os.Stderr, "atcr: warning: transcript dir for %s: %v\n", agent, mkErr)
+					}
+					return tools.OpenTranscript(filepath.Join(dir, "transcript.jsonl"), agent)
+				}))
+			}
+		}
+	}
+
+	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 	sum, err := WritePool(poolDir, results)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
@@ -293,6 +329,10 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// from manifest.json; summary.json is the completion signal.
 	p.manifest.Partial = sum.Partial
 	p.manifest.CompletedAt = time.Now().UTC()
+	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
+	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
+	// unchanged.
+	p.manifest.Review = reviewStageFor(results)
 	if err := WriteManifest(p.Dir, p.manifest); err != nil {
 		return nil, err
 	}
@@ -436,13 +476,14 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", err
 	}
 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
-		AgentName:   name,
-		BaseRef:     rng.Base,
-		HeadRef:     rng.Head,
-		PayloadMode: mode,
-		FileCount:   mp.FileCount,
-		Payload:     mp.Text,
-		ScopeRule:   payload.ScopeRule(payload.PayloadMode(mode)),
+		AgentName:    name,
+		BaseRef:      rng.Base,
+		HeadRef:      rng.Head,
+		PayloadMode:  mode,
+		FileCount:    mp.FileCount,
+		Payload:      mp.Text,
+		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
+		ToolsEnabled: ac.Tools,
 	})
 	if err != nil {
 		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
@@ -452,11 +493,15 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
 	return Agent{
-		Name:        name,
-		Prompt:      prompt,
-		PayloadMode: mode,
-		Truncation:  mp.Truncation,
-		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
+		Name:            name,
+		Prompt:          prompt,
+		PayloadMode:     mode,
+		Truncation:      mp.Truncation,
+		TimeoutSecs:     ac.EffectiveTimeoutSecs(cfg.Settings),
+		Tools:           ac.Tools,
+		SupportsFC:      ac.SupportsFC,
+		MaxTurns:        derefMaxTurns(ac.MaxTurns),
+		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -465,6 +510,26 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 			Prompt:      prompt,
 		},
 	}, mode, nil
+}
+
+// derefMaxTurns resolves the agent's MaxTurns pointer to a value. Registry load
+// applies the default (10) when tools=true and it was unset, so a tool agent
+// arrives here with a non-nil pointer; a nil pointer (non-tool agent, or direct
+// construction) yields 0, which the engine treats as "use the default".
+func derefMaxTurns(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// derefInt64 resolves an optional int64 (e.g. ToolBudgetBytes) to its value, with
+// nil meaning 0 (unlimited, matching the registry's documented escape hatch).
+func derefInt64(p *int64) int64 {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // buildFallbackAgent builds a fallback that reviews the SAME persona prompt and
@@ -485,6 +550,18 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		PayloadMode: primary.PayloadMode,
 		Truncation:  primary.Truncation,
 		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
+		// Fallbacks inherit the lane's effective tool settings from the primary,
+		// not the fallback's own config (AC 01-05 S4, AC 04-03: "fallbacks inherit
+		// the lane's effective tools setting"). Degrade stays per-agent — a
+		// fallback whose model cannot do function calling degrades independently
+		// (Phase 4), but the requested Tools/MaxTurns/ToolBudgetBytes are the lane's.
+		Tools:           primary.Tools,
+		MaxTurns:        primary.MaxTurns,
+		ToolBudgetBytes: primary.ToolBudgetBytes,
+		// SupportsFC is per-agent: the fallback uses its OWN model's capability,
+		// NOT the primary's, so the degrade decision is re-evaluated per agent
+		// (AC 04-03 EC3 — lane governs Tools, the model governs capability).
+		SupportsFC: ac.SupportsFC,
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -505,6 +582,60 @@ func writePayloadArtifacts(dir string, payloads map[string]modePayload) error {
 		}
 	}
 	return nil
+}
+
+// anyToolAgent reports whether any slot (primary or fallback) requested tools,
+// so ExecuteReview only pays the snapshot/jail cost when the harness is needed.
+func anyToolAgent(slots []Slot) bool {
+	for _, s := range slots {
+		if s.Primary.Tools {
+			return true
+		}
+		for _, fb := range s.Fallbacks {
+			if fb.Tools {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// transcriptAgentDir maps an agent name to the same single-segment directory the
+// pool artifacts use (raw/agent/<dir>), so transcript.jsonl lands beside the
+// agent's status.json/review.md. An unusable name falls back to a safe constant
+// rather than escaping the pool.
+func transcriptAgentDir(agent string) string {
+	dir, err := agentDirName(agent)
+	if err != nil {
+		return "transcript-unknown"
+	}
+	return dir
+}
+
+// reviewStageFor classifies fan-out results into the manifest's review-stage
+// entry (AC 05-04). An agent is tools-enabled when it requested tools at
+// invocation time (ToolsRequested) — preserved across the degrade, budget-trip,
+// and provider-error paths, so membership reflects the configured intent, not
+// the completion outcome. The degraded subset is the agents that fell back to
+// single-shot. Returns nil when no agent ran with tools, so the manifest omits
+// the review entry for a pure 1.x roster (Scenario 5).
+func reviewStageFor(results []Result) *payload.ReviewStage {
+	var enabled, degraded []string
+	for _, r := range results {
+		if !r.ToolsRequested {
+			continue
+		}
+		enabled = append(enabled, r.Agent)
+		if r.ToolsDegraded {
+			degraded = append(degraded, r.Agent)
+		}
+	}
+	if len(enabled) == 0 {
+		return nil
+	}
+	// Agents is a distinct copy of ToolsEnabled so the two slices never alias (a
+	// later mutation of one must not silently mutate the other).
+	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: degraded}
 }
 
 // rosterNames returns the full roster (parallel lane then serial lane).
