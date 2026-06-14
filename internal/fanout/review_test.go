@@ -542,3 +542,40 @@ func TestExecuteReview_ManifestNotMutatedOnWriteFailure(t *testing.T) {
 	assert.True(t, p.manifest.CompletedAt.IsZero(),
 		"p.manifest must not be mutated when WriteManifest fails: use a local copy and assign back only on success")
 }
+
+// TestExecuteReview_SnapshotFailureRecordsFailedMode verifies that when a
+// snapshot is attempted (tool agent + non-empty Head) but SnapshotFor fails,
+// the finalized manifest records snapshot_mode="failed" so a reader can
+// distinguish a failed-snapshot run from one where no snapshot was attempted
+// (internal/payload/manifest.go:74).
+func TestExecuteReview_SnapshotFailureRecordsFailedMode(t *testing.T) {
+	repo, _, _ := initRepo(t)
+	dir := t.TempDir()
+
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta"},
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600,
+	}
+	require.NoError(t, WriteManifest(dir, m))
+
+	// A nonexistent SHA forces SnapshotFor to fail while anyToolAgent returns
+	// true, so the snapshot path is entered and the failure branch is exercised.
+	prep := &PreparedReview{
+		ID:       "x",
+		Dir:      dir,
+		Repo:     repo,
+		Head:     "0000000000000000000000000000000000000000",
+		Slots:    []Slot{{Primary: Agent{Name: "greta", Tools: true}}},
+		manifest: m,
+	}
+	_, _ = ExecuteReview(context.Background(), newFake(), prep)
+
+	mdata, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	require.NoError(t, err)
+	var got payload.Manifest
+	require.NoError(t, json.Unmarshal(mdata, &got))
+
+	require.NotNil(t, got.Review, "tool agent must produce a non-nil review stage")
+	assert.Equal(t, "failed", got.Review.SnapshotMode,
+		"a failed snapshot must record snapshot_mode=failed so the state is observable in the manifest")
+}
