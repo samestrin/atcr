@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 2 |
 | MEDIUM | 0 | 0 | 34 |
-| LOW | 0 | 1 | 76 |
+| LOW | 5 | 1 | 76 |
 
-**Last Modified:** 2026-06-13 | **Open Items:** 0 | **Deferred Items:** 1 | **Resolved Items:** 112 | **Total Items:** 113
+**Last Modified:** 2026-06-13 | **Open Items:** 5 | **Deferred Items:** 1 | **Resolved Items:** 112 | **Total Items:** 118
 
 ## Directory Structure
 
@@ -32,6 +32,16 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-13] From Sprint: epic-2.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/fanout/review.go:296 | head_sha is recorded from caller p.Head not SnapshotFor's internally resolved SHA; they coincide only because callers pass full 40-char SHAs and would diverge for an abbreviated or symbolic head | Return the resolved head SHA and root from SnapshotFor and derive head_sha/worktree_path from that single source of truth | CORRECTNESS | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/engine_e2e_test.go:190 | e2e worktree-mode assertion relies on untracked .atcr/ scaffolding dirtying git status to force the slow path; would silently flip to live and break if .atcr/ is ever gitignored | Force the slow path deterministically (uncommitted edit or review an older head != HEAD) instead of relying on incidental dirtiness | REGRESSION_RISK | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/review.go:604 | anyToolAgent fallback loop is effectively dead code: fallbacks always inherit primary.Tools so the fallback branch can never change the result (pre-existing, not introduced by this PR) | Drop the fallback loop (check only s.Primary.Tools) or comment that it is defensive given fallbacks inherit the lane Tools setting | OVER_ENGINEERING | 10 | execute-epic-independent |
+| U | [ ] | LOW | .planning/.config/config.yaml:25 | Build gate command targets ./cmd/atcr-mcp which does not exist (only ./cmd/atcr); `go build ./...` works but the configured build command fails | Update config build command to `go build -o bin/atcr ./cmd/atcr` (or `go build ./...`) | CONFIG_DRIFT | 5 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/payload/manifest.go:74 | A failed snapshot on a tool roster is indistinguishable in the manifest from no-snapshot-attempted (snapshot_mode omitted, path empty); failure only surfaces on stderr | Record an explicit snapshot_mode such as failed/degraded or a boolean so the failed-snapshot state is observable in the persisted manifest | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-13] From Sprint: 2.0_tool_using_reviewers
 

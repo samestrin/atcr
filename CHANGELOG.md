@@ -1,3 +1,11 @@
+## [2.1.0] - 2026-06-13
+
+### Added
+
+- The `manifest.json` review stage now records the filesystem snapshot the tool-using reviewers ran against: `snapshot_mode` (`"live"` when head matched a clean HEAD on the fast path, `"worktree"` when a detached git worktree was created), `head_sha` (the resolved head the snapshot was taken at), and `snapshot_worktree_path` (the temporary worktree path, or `""` in live mode). These are backward-compatible additions present only when a review runs tool-enabled agents, so 1.x manifests and pure single-shot rosters are unchanged.
+
+*Shipped via /execute-epic (epic 2.1)*
+
 ## [2.0.0] - 2026-06-13
 
 ### Fixed
