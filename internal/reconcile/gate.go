@@ -82,14 +82,16 @@ func CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) i
 // the gate when it is in scope, not refuted, at or above threshold, and — under
 // requireVerified — confirmed. category is the finding's category, v its optional
 // verification block (nil for a v1 finding).
+// All three input axes are normalized (lower/upper + trim) before comparison so a
+// non-canonical casing/whitespace in a hand-edited or externally-produced
+// findings.json — which the JSON-gate path reads without validation — cannot flip
+// a gate decision: smuggle a refuted finding past the exclusion, mask an
+// out-of-scope finding into the count, drop a confirmed one from the strict count,
+// or un-gate a finding via a lower-cased severity.
 func IsFailing(severity, category string, v *Verification, threshold string, requireVerified bool) bool {
-	if category == CategoryOutOfScope {
+	if strings.ToLower(strings.TrimSpace(category)) == CategoryOutOfScope {
 		return false // out-of-scope never counts, and this takes precedence over any verdict
 	}
-	// Normalize the verdict (lower-cased, trimmed) before comparing so a
-	// non-canonical casing/whitespace in a hand-edited or externally-produced
-	// findings.json cannot smuggle a refuted finding past the exclusion or drop a
-	// confirmed one from the strict count — mirrors confidenceV2's handling.
 	verdict := ""
 	if v != nil {
 		verdict = strings.ToLower(strings.TrimSpace(v.Verdict))
@@ -97,7 +99,7 @@ func IsFailing(severity, category string, v *Verification, threshold string, req
 	if verdict == VerdictRefuted {
 		return false // a skeptic disproved it: retained but never blocks CI
 	}
-	if !AtOrAbove(severity, threshold) {
+	if !AtOrAbove(strings.ToUpper(strings.TrimSpace(severity)), threshold) {
 		return false
 	}
 	if requireVerified && verdict != VerdictConfirmed {

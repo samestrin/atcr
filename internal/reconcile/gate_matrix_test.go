@@ -144,6 +144,25 @@ func TestGateMatrix_NonCanonicalVerdictCasing(t *testing.T) {
 	assert.Equal(t, 1, CountAtOrAbove(confirmed, SevHigh, true), "non-canonical confirmed still counts under require-verified")
 }
 
+// TestGateMatrix_NonCanonicalCategory: a non-canonical out-of-scope category
+// casing/whitespace is still excluded — the exclusion must not be bypassable, or
+// a pre-existing/untouched finding would wrongly block CI.
+func TestGateMatrix_NonCanonicalCategory(t *testing.T) {
+	for _, cat := range []string{"Out-Of-Scope", "OUT-OF-SCOPE", " out-of-scope "} {
+		f := []Merged{mkMerged(SevCritical, cat, VerdictConfirmed)}
+		assert.Equal(t, 0, CountAtOrAbove(f, SevCritical, false), "category %q must be excluded", cat)
+		assert.Equal(t, 0, CountAtOrAbove(f, SevCritical, true), "category %q excluded under require-verified", cat)
+	}
+}
+
+// TestGateMatrix_NonCanonicalSeverity: a non-canonical severity casing is ranked
+// correctly (defense-in-depth for the JSON-gate path, which does not validate
+// severity on read).
+func TestGateMatrix_NonCanonicalSeverity(t *testing.T) {
+	f := []Merged{{Finding: stream.Finding{Severity: " high "}}}
+	assert.Equal(t, 1, CountAtOrAbove(f, SevHigh, false), "lower/padded HIGH still counts at a HIGH gate")
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
