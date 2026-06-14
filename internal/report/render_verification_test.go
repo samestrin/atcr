@@ -185,6 +185,22 @@ func TestRenderReport_AllRefuted(t *testing.T) {
 	assert.Contains(t, out, "<summary>Refuted Findings (2)</summary>")
 }
 
+// TestRenderReport_VerifiedConfidenceWithoutBlock — a finding carrying VERIFIED
+// confidence but no verification block (a writer contract violation) must still
+// appear in the summary grid: the VERIFIED column shows and counts it, so the
+// grid sum reconciles with "Total findings" rather than the finding silently
+// vanishing from every column (5.2.A MEDIUM fix).
+func TestRenderReport_VerifiedConfidenceWithoutBlock(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "CRITICAL", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "VERIFIED conf", "VERIFIED column shown when a finding has VERIFIED confidence")
+	assert.Contains(t, out, "| CRITICAL | 1 | 0 | 0 | 0 |", "the VERIFIED finding is counted, not lost")
+}
+
 // TestRenderReport_RefutedEmptySkeptic — a refuted finding with no skeptic name
 // renders "(unknown)" in the Refuted section rather than an empty attribution.
 func TestRenderReport_RefutedEmptySkeptic(t *testing.T) {

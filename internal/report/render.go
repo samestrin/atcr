@@ -182,8 +182,18 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 			c.low++
 		}
 	}
+	// Show the VERIFIED column when the verify stage ran (param) OR when any
+	// finding actually carries VERIFIED confidence. The latter guards a desync:
+	// a finding with VERIFIED confidence but a nil verification block (a writer
+	// contract violation) would otherwise be counted in the total yet vanish
+	// from every column of the v1 grid. Pure v1 input has neither, so the
+	// four-column grid is rendered byte-identically (AC 06-02).
+	totalVerified := 0
+	for _, s := range order {
+		totalVerified += counts[s].verified
+	}
 	fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
-	if verified {
+	if verified || totalVerified > 0 {
 		b.WriteString("| Severity | VERIFIED conf | HIGH conf | MEDIUM conf | LOW conf |\n")
 		b.WriteString("|----------|---------------|-----------|-------------|----------|\n")
 		for _, s := range order {
@@ -242,9 +252,12 @@ func writeSkepticBlock(b *bytes.Buffer, v *reconcile.Verification) {
 
 // writeRefutedSection renders refuted findings in a collapsed <details> block at
 // the bottom of the report (AC 06-01 Scenario 2). Omitted entirely when none are
-// refuted (Edge Case 1). Findings are never deleted — a wrong refutation stays
-// visible to the human for audit. The <details>/<summary> tags are static; every
-// dynamic field is routed through esc()/escTrunc().
+// refuted (Edge Case 1). A refuted finding is never deleted — it stays in the
+// report so a wrong refutation is visible to the human. The collapsed view is
+// intentionally abbreviated to the AC 06-01 Scenario 2 field set (file:line,
+// confidence, skeptic, problem, reasoning); Fix/Evidence are not repeated here.
+// The <details>/<summary> tags are static; every dynamic field is routed through
+// esc()/escTrunc().
 func writeRefutedSection(b *bytes.Buffer, refuted []reconcile.JSONFinding) {
 	if len(refuted) == 0 {
 		return
