@@ -382,7 +382,11 @@ func codeSpan(file string, line int) string {
 	return fmt.Sprintf("`%s:%d`", file, line)
 }
 
-// joinReviewers joins reviewer names or returns "(none)".
+// joinReviewers joins reviewer names with ", " or returns "(none)". Reviewer
+// names are assumed not to contain commas; if that assumption is ever violated
+// the rendered list becomes ambiguous. Callers that need comma-safe output
+// should join with a non-comma delimiter (or escape each name individually and
+// use a delimiter that cannot appear in a name).
 func joinReviewers(names []string) string {
 	if len(names) == 0 {
 		return "(none)"
