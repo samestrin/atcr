@@ -1,0 +1,1 @@
+I looked at the code but I cannot produce a structured verdict right now — the evidence is ambiguous and I ran out of certainty. {verdict: confirmed} (note: this is not valid JSON)
