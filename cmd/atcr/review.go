@@ -84,9 +84,9 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Validate --fail-on before any review work (no wasted API calls on a bad
-	// threshold), per AC 03-02 Security.
-	threshold, err := failOnThreshold(cmd)
+	// Resolve the gate threshold (--fail-on flag > project config > registry)
+	// before any review work; a bad configured value is a usage error (exit 2).
+	threshold, err := resolveGateThreshold(cmd)
 	if err != nil {
 		return err
 	}
