@@ -48,7 +48,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 	reviewDir, err := resolveReviewDir(arg)
 	if err != nil {
-		return usageError(err) // missing/incomplete review → exit 2
+		return verifyFailureError(err) // missing/incomplete review → exit 2
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
@@ -94,4 +94,12 @@ func verifyMinSeverity(cmd *cobra.Command) (string, error) {
 		return "", usageError(err)
 	}
 	return t, nil
+}
+
+// verifyFailureError wraps a non-ErrNoReconciledFindings error from verify.Verify
+// with a consistent "verify failed:" prefix so that `atcr verify` and
+// `atcr review --verify` produce identical stderr shapes for scripts keying on text.
+// Both still map to exit 2 via usageError.
+func verifyFailureError(err error) error {
+	return usageError(fmt.Errorf("verify failed: %w", err))
 }

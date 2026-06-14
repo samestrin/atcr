@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -175,6 +176,17 @@ func TestVerifyCmd_SkipAlreadyVerified(t *testing.T) {
 	// No skeptic re-invoked (registry has none anyway); the prior confirmed verdict
 	// survives rather than being overwritten by no_eligible_skeptic.
 	require.Equal(t, "confirmed", readFindingVerdict(t, "r"))
+}
+
+// TestVerifyFailureError_ConsistentWrapping verifies that verifyFailureError wraps
+// a non-ErrNoReconciledFindings error with a consistent prefix so that `atcr verify`
+// and `atcr review --verify` produce identical stderr shapes (TD verify.go:72).
+func TestVerifyFailureError_ConsistentWrapping(t *testing.T) {
+	inner := errors.New("manifest has no head SHA")
+	got := verifyFailureError(inner)
+	require.Error(t, got)
+	require.Contains(t, got.Error(), "verify failed:")
+	require.Contains(t, got.Error(), "manifest has no head SHA")
 }
 
 // TestVerifyCmd_FreshReverifies: with --fresh, an already-verified finding is

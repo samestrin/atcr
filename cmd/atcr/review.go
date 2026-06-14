@@ -194,7 +194,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				MinSeverity: verifyMinSev,
 			})
 			if verr != nil {
-				return usageError(fmt.Errorf("review failed: %w", verr))
+				return verifyFailureError(verr)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
