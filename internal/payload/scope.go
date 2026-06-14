@@ -1,5 +1,29 @@
 package payload
 
+import "strings"
+
+// ScopeFocus renders an agent's per-agent scope categories (Epic 2.2) as a soft
+// focus instruction appended to its persona prompt. It is a SOFT constraint:
+// it steers the model toward the listed categories but the fan-out never
+// hard-drops out-of-category findings, so a genuine cross-cutting issue is not
+// silently lost. Blank entries are skipped; an empty/nil scope yields "" so an
+// unscoped agent's prompt is unchanged. The leading blank lines separate the
+// block from whatever the persona template rendered before it.
+func ScopeFocus(scope []string) string {
+	cats := make([]string, 0, len(scope))
+	for _, c := range scope {
+		if c = strings.TrimSpace(c); c != "" {
+			cats = append(cats, c)
+		}
+	}
+	if len(cats) == 0 {
+		return ""
+	}
+	return "\n\n## Review Focus\nConcentrate this review on the following categories: " +
+		strings.Join(cats, ", ") + ". Prioritize findings in these areas. This is a focus " +
+		"hint, not a hard limit — still report any genuinely critical issue you find outside them."
+}
+
 // Per-payload-mode scope rules injected into persona prompts as {{.ScopeRule}}.
 // diff and blocks constrain findings to the changed regions; files mode widens
 // visibility to whole files and routes pre-existing issues to the out-of-scope

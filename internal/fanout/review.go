@@ -516,6 +516,11 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 	if err != nil {
 		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
 	}
+	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
+	// renders so it lands in every persona regardless of its template, and feeds
+	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
+	// primary's prompt, so it inherits the focus too). No-op when scope is unset.
+	prompt += payload.ScopeFocus(ac.Scope)
 	prov, ok := cfg.Registry.Providers[ac.Provider]
 	if !ok {
 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
@@ -530,6 +535,8 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		SupportsFC:      ac.SupportsFC,
 		MaxTurns:        derefMaxTurns(ac.MaxTurns),
 		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
+		MinSeverity:     ac.MinSeverity,
+		MaxFindings:     ac.MaxFindings,
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -590,6 +597,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		// NOT the primary's, so the degrade decision is re-evaluated per agent
 		// (AC 04-03 EC3 — lane governs Tools, the model governs capability).
 		SupportsFC: ac.SupportsFC,
+		// Review constraints follow the slot, not the substitute model (Epic 2.2):
+		// a fallback answers in the primary's place, so the primary's min_severity
+		// and max_findings still govern the output.
+		MinSeverity: primary.MinSeverity,
+		MaxFindings: primary.MaxFindings,
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
