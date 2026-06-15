@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,7 +161,10 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 // Both call sites previously inlined the ReadAmbiguousClusters + BuildDisagreements
 // pair; this helper is the single shared entry point.
 func LoadDisagreements(reviewDir string, findings []JSONFinding) DisagreementsFile {
-	clusters, _ := ReadAmbiguousClusters(reviewDir)
+	clusters, err := ReadAmbiguousClusters(reviewDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: LoadDisagreements: %v\n", err)
+	}
 	return BuildDisagreements(findings, clusters)
 }
 
