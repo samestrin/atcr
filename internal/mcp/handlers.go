@@ -19,6 +19,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/report"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/verify"
 )
 
@@ -209,6 +210,11 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	if err != nil {
 		return nil, ReconcileResult{}, err
 	}
+
+	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
+	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical
+	// scorecard records (TD-005 — no entry-point divergence). Best-effort.
+	scorecard.EmitForReconcile(dir, res)
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if in.RequireVerified {

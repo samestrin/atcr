@@ -33,10 +33,10 @@ var allowedInternalImports = map[string][]string{
 	"doctor":    {"llmclient", "registry"},
 	"fanout":    {"llmclient", "registry", "stream", "payload", "tools"},
 	"reconcile": {"stream", "atomicfs"},
-	"scorecard": {"llmclient"},
+	"scorecard": {"llmclient", "reconcile", "fanout"},
 	"report":    {"stream", "reconcile"},
 	"verify":    {"reconcile", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
-	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify"},
+	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard"},
 }
 
 // repoRoot walks up from the working directory to the directory containing

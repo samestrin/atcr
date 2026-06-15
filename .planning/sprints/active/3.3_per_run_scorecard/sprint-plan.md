@@ -32,6 +32,18 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 - Reviewer→model and reviewer→usage are recovered at reconcile time by reading per-agent `sources/pool/raw/agent/<agent>/status.json` (the only on-disk per-reviewer record). reconcile is a separate process from `atcr review`, so in-memory `fanout.Result` is unavailable — persistence to `status.json` is mandatory.
 - `latency_ms` ← `AgentStatus.DurationMS`; finding-derived metrics (raised/corroborated/solo/corroboration_rate) ← `findings.json` `Reviewers`; verification fields ← `reconciled/verification.json`.
 
+### TD-005 Decision (recorded 2026-06-15)
+
+**MCP parity: `atcr_reconcile` MUST emit local scorecards.** The store is not intentionally CLI-only.
+
+**Rationale:**
+- `original-requirements.md` says "automatically at the end of `atcr reconcile`" — no CLI-only qualifier
+- The codebase has an explicit parity contract: `handleVerify`'s comment in `handlers.go` states "MCP and CLI emit identical artifacts for the same input"
+- The shared gate-threshold resolver (`registry.ResolveGateThreshold`) is the existing pattern for cross-entry-point parity
+- Monitoring-foundation goal fails if the dominant agentic (MCP) path produces no records
+
+**Fix path (before Phase 5 docs):** Extract `emitScorecard(reviewDir string, res reconcile.Result)` into a shared helper; call it from both `cmd/atcr/reconcile.go` and `internal/mcp/handlers.go:handleReconcile` after `RunReconcile` succeeds — mirrors the gate-threshold resolver pattern so the two entry points cannot diverge again.
+
 ---
 
 ## Sprint Overview
@@ -478,7 +490,7 @@ Use the Agent tool:
 **Paste the subagent's findings table here (delete rows if none):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| MEDIUM (→ TD-005) | internal/mcp/handlers.go (atcr_reconcile) | MCP `atcr_reconcile` runs `RunReconcile` but does not emit a scorecard, while the CLI `atcr reconcile` does. Reconciles driven through MCP produce no scorecard records → the local store silently omits all MCP-driven runs. | Product decision: extract a shared `emitScorecard` helper called from both entry points, OR document scorecard as intentionally CLI-only. Deferred (touches internal/mcp, outside Phase 2's approved scope). |
+| MEDIUM (→ TD-005, RESOLVED 2026-06-15) | internal/mcp/handlers.go (atcr_reconcile) | MCP `atcr_reconcile` ran `RunReconcile` but did not emit a scorecard, while the CLI did → MCP-driven runs silently omitted from the store. | RESOLVED: user decision = MCP must emit (monitoring foundation, not CLI-only). Extracted `scorecard.EmitForReconcile(reviewDir, res)` shared bridge; both CLI and MCP `handleReconcile` call it post-RunReconcile. Bridge unit-tested; MCP test HOME-isolated. |
 | LOW (no action) | internal/scorecard/scorecard.go:42-60 | Aggregate record serializes empty `reviewer`/`model`/`role`. Phase 3 readers must key on `record_type` to avoid treating the aggregate as a reviewer row — already the established pattern (`findReviewer` filters by `RecordTypeReviewer`). | No change; pattern established. |
 | LOW (→ TD-006) | internal/fanout/loop.go:128,284 | Tool-loop token accumulation (`addUsage`) is unit-tested, and persistence-through-`status.json` is covered for the single-shot path, but no single e2e test asserts a tool-enabled agent's summed usage lands in `status.json`. Currently harmless (statusFor is path-agnostic). | Add a tool-loop e2e usage assertion (extend engine_e2e_test.go). Deferred as test-coverage debt. |
 

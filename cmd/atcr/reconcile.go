@@ -77,10 +77,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
 
-	// Emit the per-run scorecard (Epic 3.3). Best-effort: a scorecard failure is
-	// logged but never fails the reconcile (AC 01-01). The --no-scorecard flag
-	// (Story 5) is wired in Phase 4.
-	emitScorecard(reviewDir, res)
+	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
+	// entry points call (CLI here, MCP atcr_reconcile handler), so the two never
+	// diverge. Best-effort: a scorecard failure is logged but never fails the
+	// reconcile (AC 01-01). The --no-scorecard flag (Story 5) is wired in Phase 4.
+	scorecard.EmitForReconcile(reviewDir, res)
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if requireVerified {
@@ -90,59 +91,6 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	return gateFindings(res, threshold, requireVerified)
-}
-
-// emitScorecard writes the per-run scorecard JSONL records for a completed
-// reconcile (Epic 3.3). Per-reviewer model/token/latency metadata is sourced from
-// the fan-out's persisted pool summary.json; finding counts come from the
-// reconcile result; the conditional skeptic fields come from reconciled/
-// verification.json when present. It is fully best-effort — every failure path
-// degrades to a logged warning and an emitted (possibly partial) record set,
-// never a reconcile failure. opts.NoScorecard wiring arrives in Phase 4.
-func emitScorecard(reviewDir string, res reconcile.Result) {
-	reviewers := map[string]scorecard.ReviewerMeta{}
-	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
-		for _, a := range ps.Agents {
-			reviewers[a.Agent] = scorecard.ReviewerMeta{
-				Model:     a.Model,
-				TokensIn:  a.TokensIn,
-				TokensOut: a.TokensOut,
-				LatencyMS: a.DurationMS,
-			}
-		}
-	}
-	// A path-anchored review with no fan-out pool summary still has reviewers in
-	// the findings; ensure each gets a record even without usage metadata.
-	findings := make([]scorecard.Finding, 0, len(res.Findings))
-	for _, m := range res.Findings {
-		findings = append(findings, scorecard.Finding{
-			File:      m.File,
-			Line:      m.Line,
-			Problem:   m.Problem,
-			Reviewers: m.Reviewers,
-		})
-		for _, rev := range m.Reviewers {
-			// Skip a blank reviewer column so a malformed finding cannot emit a
-			// junk record keyed on the empty name.
-			if rev == "" {
-				continue
-			}
-			if _, ok := reviewers[rev]; !ok {
-				reviewers[rev] = scorecard.ReviewerMeta{}
-			}
-		}
-	}
-
-	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
-	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
-	// Emit is best-effort and logs its own failures to stderr; ignore the return
-	// so reconcile never fails on a scorecard write and the failure is logged once.
-	_ = scorecard.Emit(scorecard.EmitInput{
-		RunID:            runID,
-		Findings:         findings,
-		Reviewers:        reviewers,
-		VerificationPath: verPath,
-	}, scorecard.EmitOpts{})
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
