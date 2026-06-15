@@ -215,6 +215,20 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// run's rich record when available and synthesizing a compact one from the
 	// on-disk block for a finding that was skipped this run (TD-007: a verdict
 	// whose key matched no finding is surfaced below rather than silently dropped).
+	// Load the prior verification.json so a finding skipped this run (already
+	// verified, no --fresh) carries its rich audit metadata (Model/DurationMs/
+	// TrippedBudgets) forward instead of being re-synthesized as a lossy compact
+	// record — the findings.json block lacks those fields (AC4). A missing or
+	// unreadable prior degrades to no carry-forward rather than failing the run.
+	priorByKey := map[FindingKey]VerificationResult{}
+	if prior, perr := ReadVerificationResults(reviewDir); perr != nil {
+		fmt.Fprintf(os.Stderr, "atcr: verify: prior verification.json unreadable, skip-path metadata not carried forward: %v\n", perr)
+	} else {
+		for _, r := range prior {
+			priorByKey[FindingKey{File: r.File, Line: r.Line, Problem: r.Problem}] = r
+		}
+	}
+
 	matched := make(map[FindingKey]bool, len(rich))
 	results := make([]VerificationResult, 0, len(findings))
 	for _, f := range findings {
@@ -227,11 +241,18 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			results = append(results, r)
 			continue
 		}
+		// Skipped this run: keep the authoritative verdict/skeptic/reasoning from the
+		// findings.json block, but carry Model/DurationMs/TrippedBudgets forward from
+		// the prior verification.json record (zero values if no prior exists) (AC4).
+		prior := priorByKey[key]
 		results = append(results, VerificationResult{
 			File: f.File, Line: f.Line, Problem: f.Problem,
-			Verdict:   f.Verification.Verdict,
-			Skeptic:   f.Verification.Skeptic,
-			Reasoning: f.Verification.Notes,
+			Verdict:        f.Verification.Verdict,
+			Skeptic:        f.Verification.Skeptic,
+			Reasoning:      f.Verification.Notes,
+			Model:          prior.Model,
+			DurationMs:     prior.DurationMs,
+			TrippedBudgets: prior.TrippedBudgets,
 		})
 	}
 	// TD-007: a verdict computed this run whose key matched no re-emitted finding
