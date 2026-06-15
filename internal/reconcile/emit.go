@@ -21,6 +21,9 @@ const (
 	ReportMD      = "report.md"
 	SummaryJSON   = "summary.json"
 	AmbiguousJSON = "ambiguous.json"
+	// DisagreementsJSON is the disagreement-radar handoff artifact (Epic 3.2) —
+	// the stable, versioned queue Epic 6.0 (Cross-Examination) consumes directly.
+	DisagreementsJSON = "disagreements.json"
 )
 
 // Verification is the reserved per-finding adversarial-verification block for a
@@ -107,6 +110,9 @@ func Emit(reconciledDir string, r Result) error {
 		{ReportMD, func(w io.Writer) error { return RenderMarkdown(w, r) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
 		{AmbiguousJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Ambiguous) }},
+		{DisagreementsJSON, func(w io.Writer) error {
+			return renderIndentedJSON(w, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
+		}},
 	}
 	// Render every artifact first so a render error aborts before any file is
 	// published — the published set is then never partially from this run.
@@ -170,6 +176,53 @@ func ReadReconciledFindings(reviewDir string) ([]JSONFinding, error) {
 	return findings, nil
 }
 
+// ReadAmbiguousClusters loads reviewDir/reconciled/ambiguous.json — the gray-zone
+// sidecar the disagreement radar reads. A missing or empty file returns
+// (nil, nil): the radar degrades to a findings-only view rather than erroring,
+// since ambiguous.json is absent whenever a review produced no gray-zone pairs.
+// A present-but-unparseable file is an error.
+func ReadAmbiguousClusters(reviewDir string) ([]AmbiguousCluster, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, AmbiguousJSON)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil
+	}
+	var clusters []AmbiguousCluster
+	if err := json.Unmarshal(data, &clusters); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", AmbiguousJSON, err)
+	}
+	return clusters, nil
+}
+
+// ReadDisagreements loads reviewDir/reconciled/disagreements.json — the Epic 6.0
+// cross-exam handoff queue written by Emit. A missing or empty file returns a
+// zero DisagreementsFile (no error): a review with no disagreements still has a
+// valid, empty queue. A present-but-unparseable file is an error.
+func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, DisagreementsJSON)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return DisagreementsFile{}, nil
+		}
+		return DisagreementsFile{}, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return DisagreementsFile{}, nil
+	}
+	var df DisagreementsFile
+	if err := json.Unmarshal(data, &df); err != nil {
+		return DisagreementsFile{}, fmt.Errorf("parsing %s: %w", DisagreementsJSON, err)
+	}
+	return df, nil
+}
+
 // RenderMarkdown writes the human report.md: an executive summary (counts by
 // severity x confidence) followed by findings grouped by severity. Findings
 // annotated out-of-scope are listed in their own section (AC 06-04) — they do
@@ -204,6 +257,11 @@ func RenderMarkdown(w io.Writer, r Result) error {
 	}
 	b.WriteString("\n")
 	writeSeverityConfidenceTable(&b, inScope)
+
+	// Disagreement radar above the consensus findings (Epic 3.2). Nothing is
+	// written when there is no tension, so report.md is byte-identical to the
+	// pre-3.2 output for a review with no disagreements.
+	writeRadarSection(&b, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
 
 	if len(r.Findings) == 0 {
 		b.WriteString("\nNo findings.\n")
