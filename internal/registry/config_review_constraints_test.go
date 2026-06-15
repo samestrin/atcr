@@ -137,3 +137,21 @@ agents:
 	require.NoError(t, err, "whitespace-only min_severity should be treated as unset, not a validation error")
 	assert.Empty(t, reg.Agents["bruce"].MinSeverity, "whitespace-only min_severity normalized to empty")
 }
+
+// Scope entries should be trimmed at load (mirroring MinSeverity canonicalization)
+// so that " performance " survives into ScopeFocus as "performance".
+func TestRegistryLoad_ScopeEntriesTrimmed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: [" performance ", "  efficiency"]
+`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"performance", "efficiency"}, reg.Agents["bruce"].Scope,
+		"scope entries trimmed at load so downstream comparisons are stable")
+}
