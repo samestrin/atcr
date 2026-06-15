@@ -55,6 +55,7 @@ const (
 type VerifyConfig struct {
 	MinSeverity string `yaml:"min_severity,omitempty"` // floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
 	Votes       int    `yaml:"votes,omitempty"`        // skeptics per finding (default 1)
+	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
 }
 
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
@@ -215,6 +216,9 @@ func (r *Registry) validate() error {
 	}
 	if r.Verify.Votes < 0 {
 		return fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes)
+	}
+	if r.Verify.MaxParallel < 0 {
+		return fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel)
 	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {

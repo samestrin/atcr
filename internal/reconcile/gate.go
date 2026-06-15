@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,6 +122,31 @@ func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified 
 		}
 	}
 	return n
+}
+
+// ValidateRequireVerified checks whether the verify stage has run for reviewDir.
+// Returns a non-nil error when the stage has not run — the caller surfaces this
+// as a warning (TD-004): --require-verified gates only on VERIFIED findings, so
+// a gate over a review where verify never ran trivially passes everything.
+// Best-effort: any read error is treated as "not run".
+func ValidateRequireVerified(reviewDir string) error {
+	if info, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil && !info.IsDir() {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
+	if err == nil {
+		var m struct {
+			Stages []string `json:"stages"`
+		}
+		if json.Unmarshal(data, &m) == nil {
+			for _, s := range m.Stages {
+				if s == "verify" {
+					return nil
+				}
+			}
+		}
+	}
+	return errors.New("verify stage has not run for this review; the gate counts only VERIFIED findings, so it will pass — run 'atcr verify' first")
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic

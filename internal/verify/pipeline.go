@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -161,33 +162,62 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		}
 	}
 
+	type jobResult struct {
+		ver *reconcile.Verification
+		vr  VerificationResult
+	}
+	jobResults := make([]jobResult, len(jobs))
+
+	maxPar := reg.Verify.MaxParallel
+	if maxPar <= 0 {
+		maxPar = 4
+	}
+	sem := make(chan struct{}, maxPar)
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, jb job) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			ver, vr := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp)
+			jobResults[idx] = jobResult{ver: ver, vr: vr}
+		}(i, j)
+	}
+	wg.Wait()
+
 	verdicts := make(map[FindingKey]*reconcile.Verification, len(jobs))
 	rich := make(map[FindingKey]VerificationResult, len(jobs))
-	for _, j := range jobs {
-		ver, vr := verifyFinding(ctx, j.finding, j.skeptics, cc, disp)
-		verdicts[j.key] = ver
-		rich[j.key] = vr
+	for i, j := range jobs {
+		verdicts[j.key] = jobResults[i].ver
+		rich[j.key] = jobResults[i].vr
 	}
 
-	// Re-emit findings.json with the new verdicts + recomputed confidence. Skipped
-	// and below-floor findings are left untouched (their on-disk blocks survive).
-	if err := ReEmitFindings(reviewDir, verdicts); err != nil {
+	// Apply the VERIFIED guard then mutate findings in-memory: update verdicts and
+	// recompute confidence. Skipped and below-floor findings keep their existing
+	// on-disk blocks because they are not in the verdicts map.
+	if err := checkVERIFIEDGuard(findings, verdicts); err != nil {
 		return Result{}, err
+	}
+	for i := range findings {
+		key := FindingKey{File: findings[i].File, Line: findings[i].Line, Problem: findings[i].Problem}
+		v, ok := verdicts[key]
+		if !ok || v == nil {
+			continue
+		}
+		findings[i].Verification = v
+		findings[i].Confidence = confidenceV2(findings[i].Confidence, v.Verdict)
 	}
 
-	// Build the complete verification.json from the re-emitted findings so a
-	// no-op re-run reproduces the same snapshot rather than an empty file: every
-	// finding that carries a verdict is recorded, using this run's rich record
-	// when available and synthesizing a compact one from the on-disk block for a
-	// finding that was skipped this run (TD-007: a verdict whose key matched no
-	// finding is surfaced below rather than silently dropped).
-	final, err := reconcile.ReadReconciledFindings(reviewDir)
-	if err != nil {
-		return Result{}, err
-	}
+	// Build the complete verification.json from in-memory findings (no disk
+	// round-trip) so a no-op re-run reproduces the same snapshot rather than an
+	// empty file: every finding that carries a verdict is recorded, using this
+	// run's rich record when available and synthesizing a compact one from the
+	// on-disk block for a finding that was skipped this run (TD-007: a verdict
+	// whose key matched no finding is surfaced below rather than silently dropped).
 	matched := make(map[FindingKey]bool, len(rich))
-	results := make([]VerificationResult, 0, len(final))
-	for _, f := range final {
+	results := make([]VerificationResult, 0, len(findings))
+	for _, f := range findings {
 		if f.Verification == nil {
 			continue
 		}
@@ -214,14 +244,37 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		}
 	}
 
-	if err := WriteVerification(reviewDir, results); err != nil {
-		return Result{}, err
-	}
-	if err := UpdateManifestStage(reviewDir); err != nil {
-		return Result{}, err
-	}
+	// Compute all 4 artifact byte-slices then flush in a single atomic group to
+	// minimise the partial-write window (writeGroupAtomic stages every file to a
+	// temp before the first rename, then renames them in sequence).
 	counts := CountVerdicts(results)
-	if err := UpdateSummaryVerdicts(reviewDir, counts); err != nil {
+
+	findingsPath, findingsData, err := computeFindingsBytes(findings, reviewDir)
+	if err != nil {
+		return Result{}, err
+	}
+	verPath, verData, err := computeVerificationBytes(reviewDir, results, counts)
+	if err != nil {
+		return Result{}, err
+	}
+	mfPath, mfData, mfNoOp, err := computeManifestStageBytes(reviewDir)
+	if err != nil {
+		return Result{}, err
+	}
+	sumPath, sumData, err := computeSummaryVerdictsBytes(reviewDir, counts)
+	if err != nil {
+		return Result{}, err
+	}
+
+	artifacts := []stagingEntry{
+		{path: findingsPath, data: findingsData},
+		{path: verPath, data: verData},
+		{path: sumPath, data: sumData},
+	}
+	if !mfNoOp {
+		artifacts = append(artifacts, stagingEntry{path: mfPath, data: mfData})
+	}
+	if err := writeGroupAtomic(artifacts); err != nil {
 		return Result{}, err
 	}
 
@@ -236,6 +289,53 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		FindingsProcessed: processed,
 		DurationMs:        int(time.Since(start).Milliseconds()),
 	}, nil
+}
+
+// stagingEntry is one artifact in a writeGroupAtomic batch.
+type stagingEntry struct {
+	path string
+	data []byte
+}
+
+// writeGroupAtomic stages all entries to temp files then renames them in
+// sequence, minimising the partial-write window. All data is flushed before the
+// first rename; temps for entries that were not renamed are cleaned up on return.
+func writeGroupAtomic(artifacts []stagingEntry) error {
+	temps := make([]string, len(artifacts))
+	renamed := make([]bool, len(artifacts))
+	defer func() {
+		for i, t := range temps {
+			if t != "" && !renamed[i] {
+				_ = os.Remove(t)
+			}
+		}
+	}()
+	for i, a := range artifacts {
+		dir := filepath.Dir(a.path)
+		tmp, err := os.CreateTemp(dir, "."+filepath.Base(a.path)+".tmp-*")
+		if err != nil {
+			return err
+		}
+		temps[i] = tmp.Name()
+		if _, err := tmp.Write(a.data); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+		if err := tmp.Chmod(0o644); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			return err
+		}
+	}
+	for i, a := range artifacts {
+		if err := os.Rename(temps[i], a.path); err != nil {
+			return err
+		}
+		renamed[i] = true
+	}
+	return nil
 }
 
 // verifyFinding produces the verdict (the compact block for findings.json) and

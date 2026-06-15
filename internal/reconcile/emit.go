@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -118,7 +119,7 @@ func Emit(reconciledDir string, r Result) error {
 		rendered[x.name] = bytes.Clone(buf.Bytes())
 	}
 	for _, x := range writers {
-		if err := writeFileAtomic(filepath.Join(reconciledDir, x.name), rendered[x.name]); err != nil {
+		if err := atomicfs.WriteFileAtomic(filepath.Join(reconciledDir, x.name), rendered[x.name]); err != nil {
 			return err
 		}
 	}
@@ -318,28 +319,4 @@ func joinOrNone(names []string) string {
 		out += ", " + n
 	}
 	return out
-}
-
-// writeFileAtomic writes data to a sibling temp file (0644) then renames it over
-// path so a reader never sees a partial write.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }

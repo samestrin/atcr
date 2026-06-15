@@ -71,6 +71,29 @@ func TestRunReconcile_EndToEnd(t *testing.T) {
 	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevCritical, false))
 }
 
+// --- ValidateRequireVerified (TD-004) ---
+
+func TestValidateRequireVerified_NoVerifyRan(t *testing.T) {
+	dir := t.TempDir() // no verification.json, no manifest.json
+	err := ValidateRequireVerified(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "verify stage has not run")
+}
+
+func TestValidateRequireVerified_VerificationJSONPresent(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", "verification.json"), []byte(`{}`), 0o644))
+	assert.NoError(t, ValidateRequireVerified(dir))
+}
+
+func TestValidateRequireVerified_ManifestVerifyStage(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
+		[]byte(`{"stages":["review","verify"]}`), 0o644))
+	assert.NoError(t, ValidateRequireVerified(dir))
+}
+
 func TestRunReconcile_PreCancelledContext(t *testing.T) {
 	reviewDir := t.TempDir()
 	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",

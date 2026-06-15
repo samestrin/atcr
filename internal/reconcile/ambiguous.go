@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/samestrin/atcr/internal/atomicfs"
 )
 
 // Adjudication artifact filenames written/read in the reconciled dir.
@@ -187,7 +189,7 @@ func preserveOriginalAmbiguous(reconDir string) error {
 	// writeFileAtomic (temp + rename), like every other reconciled/ artifact: a
 	// crash mid-write must never leave a truncated baseline — the stat guard
 	// above would then block it from ever being repaired from the true original.
-	if err := writeFileAtomic(filepath.Join(reconDir, OriginalAmbiguousJSON), data); err != nil {
+	if err := atomicfs.WriteFileAtomic(filepath.Join(reconDir, OriginalAmbiguousJSON), data); err != nil {
 		return fmt.Errorf("writing %s: %w", OriginalAmbiguousJSON, err)
 	}
 	return nil

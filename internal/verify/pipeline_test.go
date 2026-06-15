@@ -367,6 +367,31 @@ func TestRunVerify_ManifestUpdateErrorPropagates(t *testing.T) {
 
 // TestBuildDispatcher covers the snapshot/jail success path (a real git repo) and
 // the missing-head and missing-manifest error paths.
+// TestRunVerify_WorkerPoolPreservesOrder verifies that a MaxParallel>1 run
+// produces the same per-finding verdict ordering as a serial run.
+func TestRunVerify_WorkerPoolPreservesOrder(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "leak", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+		{Severity: "HIGH", File: "c.go", Line: 3, Problem: "race", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	}
+	reg := skepticRegistry()
+	reg.Verify.MaxParallel = 2 // exercise the bounded pool path
+	dir := pipelineReview(t, findings)
+	handle := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return alwaysChat{`{"verdict":"confirmed","reasoning":"ok"}`}, okDispatcher(), nil, nil
+	}
+	res, err := runVerify(context.Background(), dir, reg, Options{}, handle)
+	require.NoError(t, err)
+	assert.Equal(t, 3, res.FindingsProcessed)
+	updated := readFindings(t, dir)
+	require.Len(t, updated, 3)
+	for _, f := range updated {
+		assert.Equal(t, "VERIFIED", f.Confidence, "each finding confirmed → VERIFIED")
+		assert.Equal(t, "confirmed", f.Verification.Verdict)
+	}
+}
+
 func TestBuildDispatcher(t *testing.T) {
 	repo := initGitRepo(t)
 	sha := gitHeadSHA(t, repo)

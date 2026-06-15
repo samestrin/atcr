@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/atomicfs"
 )
 
 // reconciledSubdir is the review-dir child the verify stage re-emits into,
@@ -72,12 +74,12 @@ func CountVerdicts(results []VerificationResult) VerdictCounts {
 	return counts
 }
 
-// WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
-// 03-02). VerifiedAt is stamped at call time (RFC 3339Nano, UTC). VerdictCounts is
-// derived from results via CountVerdicts so the tally can never drift from the
-// records it counts. Each result's nil TrippedBudgets is normalized to [] so the
-// field never serializes as null. The reconciled/ directory is created if absent.
-func WriteVerification(reviewDir string, results []VerificationResult) error {
+// computeVerificationBytes builds the VerificationFile from results and counts,
+// marshals it, and returns the path and bytes to write. counts is taken as a
+// parameter so the pipeline can pass the already-computed tally rather than
+// recount. VerifiedAt is stamped at call time (RFC 3339Nano, UTC). The
+// reconciled/ directory is created if absent.
+func computeVerificationBytes(reviewDir string, results []VerificationResult, counts VerdictCounts) (string, []byte, error) {
 	out := make([]VerificationResult, len(results))
 	for i, r := range results {
 		if r.TrippedBudgets == nil {
@@ -88,48 +90,28 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
 	vf := VerificationFile{
 		VerifiedAt:    time.Now().UTC().Format(time.RFC3339Nano),
 		Findings:      out,
-		VerdictCounts: CountVerdicts(results),
+		VerdictCounts: counts,
 	}
 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
 	if err := os.MkdirAll(reconDir, 0o755); err != nil {
-		return fmt.Errorf("creating reconciled dir: %w", err)
+		return "", nil, fmt.Errorf("creating reconciled dir: %w", err)
 	}
-	return writeJSONAtomic(filepath.Join(reconDir, "verification.json"), vf)
+	path := filepath.Join(reconDir, "verification.json")
+	data, err := json.MarshalIndent(vf, "", "  ")
+	if err != nil {
+		return "", nil, err
+	}
+	return path, append(data, '\n'), nil
 }
 
-// writeJSONAtomic marshals v as 2-space-indented JSON with a trailing newline
-// (matching reconcile's renderIndentedJSON) and writes it to path atomically.
-func writeJSONAtomic(path string, v any) error {
-	data, err := json.MarshalIndent(v, "", "  ")
+// WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
+// 03-02). VerdictCounts is derived from results via CountVerdicts so the tally
+// can never drift from the records it counts. Each result's nil TrippedBudgets
+// is normalized to [] so the field never serializes as null.
+func WriteVerification(reviewDir string, results []VerificationResult) error {
+	path, data, err := computeVerificationBytes(reviewDir, results, CountVerdicts(results))
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, append(data, '\n'))
-}
-
-// writeFileAtomic writes data to a sibling temp file (0644) then renames it over
-// path, so a reader never observes a partial write. It mirrors the temp-file +
-// rename pattern in internal/reconcile and internal/payload — duplicated here
-// because both of those copies are unexported. The rename is atomic within a
-// single POSIX filesystem.
-func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op after rename; SIGKILL-orphaned .tmp-* files in the same dir are accepted (readers use exact filenames)
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return atomicfs.WriteFileAtomic(path, data)
 }

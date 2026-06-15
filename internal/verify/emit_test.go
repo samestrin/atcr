@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -198,6 +199,28 @@ func TestReEmitFindings_EmptyVerdictMap(t *testing.T) {
 	assert.Nil(t, updated[0].Verification)
 }
 
+func TestReEmitFindings_AlreadyVERIFIEDGuard(t *testing.T) {
+	// Inconsistent state: Confidence=VERIFIED but no trusted Verification block
+	// (hasTrustedVerdict returns false). The pipeline would NOT have skipped this
+	// finding, so it lands in verdicts — a caller contract violation the guard catches.
+	dir := t.TempDir()
+	writeReconciledFindings(t, dir, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "main.go", Line: 10, Problem: "nil deref",
+			Confidence: "VERIFIED", Reviewers: []string{"agent-a"},
+			// No Verification block — inconsistent state (VERIFIED confidence without
+			// a trusted block means hasTrustedVerdict returns false, so the pipeline
+			// did not skip it, yet the finding already claims VERIFIED confidence).
+		},
+	})
+	verdicts := map[FindingKey]*reconcile.Verification{
+		{File: "main.go", Line: 10, Problem: "nil deref"}: {Verdict: "confirmed", Skeptic: "agent-c"},
+	}
+	err := ReEmitFindings(dir, verdicts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already VERIFIED")
+	assert.Contains(t, err.Error(), "re-run with --fresh")
+}
+
 func TestReEmitFindings_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	err := ReEmitFindings(dir, map[FindingKey]*reconcile.Verification{})
@@ -373,6 +396,6 @@ func TestWriteVerification_MkdirError(t *testing.T) {
 
 func TestWriteFileAtomic_BadDir(t *testing.T) {
 	// A path whose parent directory does not exist fails at temp-file creation.
-	err := writeFileAtomic(filepath.Join(t.TempDir(), "missing-subdir", "f.json"), []byte("data"))
+	err := atomicfs.WriteFileAtomic(filepath.Join(t.TempDir(), "missing-subdir", "f.json"), []byte("data"))
 	require.Error(t, err)
 }

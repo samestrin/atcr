@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -78,40 +76,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
 
-	// TD-004: under --require-verified, warn (do not error — AC 05-01 Scenario 4
-	// defines a pass when no VERIFIED finding exists) if the verify stage never
-	// ran, so a strict gate that silently passes everything is at least visible.
-	if requireVerified && !verifyStageRan(reviewDir) {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
-			"atcr: warning: --require-verified set but the verify stage has not run for this review; the gate counts only VERIFIED findings, so it will pass — run 'atcr verify' first")
+	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+	if requireVerified {
+		if verr := reconcile.ValidateRequireVerified(reviewDir); verr != nil {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "atcr: warning: --require-verified set but", verr)
+		}
 	}
 
 	return gateFindings(res, threshold, requireVerified)
-}
-
-// verifyStageRan reports whether the review has been through the verify stage,
-// by either the manifest recording the "verify" stage or a verification.json
-// being present. Best-effort: any read error is treated as "not run".
-func verifyStageRan(reviewDir string) bool {
-	if info, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil && !info.IsDir() {
-		return true
-	}
-	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
-	if err != nil {
-		return false
-	}
-	var m struct {
-		Stages []string `json:"stages"`
-	}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return false
-	}
-	for _, s := range m.Stages {
-		if s == "verify" {
-			return true
-		}
-	}
-	return false
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold

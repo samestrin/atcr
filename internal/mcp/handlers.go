@@ -210,6 +210,13 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, err
 	}
 
+	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+	if in.RequireVerified {
+		if verr := reconcile.ValidateRequireVerified(dir); verr != nil {
+			e.log.Warn("require_verified: verify stage not complete", "detail", verr.Error())
+		}
+	}
+
 	out := ReconcileResult{
 		ReviewID:      id,
 		Pass:          true,

@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // isolate chdirs into a fresh temp working dir AND points HOME/XDG at another
@@ -167,7 +169,7 @@ func TestVerifyStageRan_RejectsDirectory(t *testing.T) {
 	// A directory named verification.json must not be treated as a verification
 	// artifact; only a regular file should count.
 	require.NoError(t, os.MkdirAll(filepath.Join(reconciled, "verification.json"), 0o755))
-	require.False(t, verifyStageRan(base))
+	require.Error(t, reconcile.ValidateRequireVerified(base))
 }
 
 func TestReconcileCmd_SourcesAllowlist(t *testing.T) {
