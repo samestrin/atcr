@@ -287,6 +287,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			rec.DurationMs = prior.DurationMs
 			rec.TrippedBudgets = prior.TrippedBudgets
 		}
+		// Coerce nil TrippedBudgets to empty slice to avoid null in JSON output.
+		if rec.TrippedBudgets == nil {
+			rec.TrippedBudgets = []string{}
+		}
 		results = append(results, rec)
 	}
 	// TD-007: a verdict computed this run whose key matched no re-emitted finding
@@ -401,6 +405,8 @@ func writeGroupAtomic(artifacts []stagingEntry) error {
 // It never returns an error — failure isolation is the stage's contract.
 func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, VerificationResult) {
 	base := VerificationResult{File: f.File, Line: f.Line, Problem: f.Problem}
+	// Initialize TrippedBudgets to empty slice to avoid null in JSON output.
+	base.TrippedBudgets = []string{}
 
 	if len(skeptics) == 0 {
 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
@@ -499,6 +505,10 @@ func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification
 				budgets = append(budgets, b)
 			}
 		}
+	}
+	// Coerce nil budgets to empty slice to avoid null in JSON output.
+	if budgets == nil {
+		budgets = []string{}
 	}
 	return strings.Join(models, ", "), budgets
 }
