@@ -101,7 +101,14 @@ Installed personas land in `~/.config/atcr/personas/` and are available for use 
 - **Adoption** — domain-specific personas make ATCR useful for more teams
 - **Community** — contributors become advocates; word-of-mouth growth
 - **Enterprise licensing** — teams that love the OSS personas want the team edition (shared registry, audit trail)
-- **Consulting** — custom persona development for enterprise clients
+- **Enterprise Persona Development** — custom persona development as a paid service (see enterprise-persona-dev.md); the OSS ecosystem is the foundation, the custom work is the revenue
+
+## Relationship to Other Concepts
+
+- **Enterprise Persona Development** — the paid tier; enterprises that need custom personas buy consulting, not OSS.
+- **Team Edition** — enterprises that buy custom personas will want the Team Edition (shared registry, audit trail).
+- **Model-Eval Leaderboard** — more personas make the eval matrix richer; the leaderboard scores persona×model combinations.
+- **Model Selection Consulting** — clients often need both (which model + which personas); sell them together.
 
 ## Engineering Effort
 
