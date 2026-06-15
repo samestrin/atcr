@@ -12,6 +12,28 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+## Clarifications
+
+### Phase 2 Clarifications (recorded 2026-06-15)
+
+**Key Decisions:**
+
+1. **Per-reviewer usage sourcing — FULL WIRING (option a).** Phase 2 adds `TokensIn`, `TokensOut`, and `Model` to `fanout.Result` (engine.go), accumulates per-turn usage in the tool loop (loop.go), persists model + tokens through `AgentStatus` (status.go + artifacts.go), and the scorecard emitter reads each reviewer's `status.json` to source model/tokens/latency. Rejected "degraded now, defer wiring" — it would ship the exact failure the hard prerequisite was designed to prevent (cost/token columns always empty). TD-002 from the Phase 1 gate explicitly handed this to Phase 2.
+2. **Cost computed at emit time, not persisted.** `status.json` persists `model` + `tokens_in` + `tokens_out` only. `cost_usd` is computed in the emitter via `llmclient.ComputeCostUSD(model, tokensIn, tokensOut)` so a future rate-table correction (TD-003) retroactively re-prices historical JSONL records. Token counts are stable raw measurements; cost is derived and follows the current rate table at read time. The JSONL record still carries `cost_usd` as a computed field.
+
+**Scope Boundaries:**
+
+- Approved Phase 2 edits OUTSIDE the originally declared file list: `internal/fanout/engine.go`, `internal/fanout/loop.go`, `internal/fanout/status.go`, `internal/fanout/artifacts.go`. All changes are additive (new fields + accumulation + wiring).
+- `internal/fanout/review.go` is explicitly EXCLUDED — no changes needed there; the scorecard hook lives in `cmd/atcr/reconcile.go`, not the review execution path.
+- Single-shot path: the engine's `Completer.Complete()` returns content only; the engine must obtain usage on the single-shot path (e.g. via `CompleteWithUsage`) to populate `Result.TokensIn/TokensOut/Model` — handled within the approved engine.go edits.
+
+**Technical Approach:**
+
+- Reviewer→model and reviewer→usage are recovered at reconcile time by reading per-agent `sources/pool/raw/agent/<agent>/status.json` (the only on-disk per-reviewer record). reconcile is a separate process from `atcr review`, so in-memory `fanout.Result` is unavailable — persistence to `status.json` is mandatory.
+- `latency_ms` ← `AgentStatus.DurationMS`; finding-derived metrics (raised/corroborated/solo/corroboration_rate) ← `findings.json` `Reviewers`; verification fields ← `reconciled/verification.json`.
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -177,7 +199,7 @@ No external documentation sources identified. Refer to:
 
 ---
 
-### 1.1 [ ] **llmclient Usage Parsing — RED**
+### 1.1 [x] **llmclient Usage Parsing — RED**
 
 1. Read `internal/llmclient/client.go` (`chatResponse`) and `internal/llmclient/chat.go` (`chatToolResponse`) to understand current structure
 2. Identify where provider `usage` block is dropped/ignored
@@ -192,7 +214,7 @@ No external documentation sources identified. Refer to:
 
 ---
 
-### 1.2 [ ] **llmclient Usage Parsing — GREEN**
+### 1.2 [x] **llmclient Usage Parsing — GREEN**
 
 1. Add `UsageData` struct with `PromptTokens int`, `CompletionTokens int` fields
 2. Decode `usage` in `chatResponse` in `client.go` — unmarshal from provider response JSON
@@ -207,7 +229,7 @@ No external documentation sources identified. Refer to:
 
 ---
 
-### 1.2.A [ ] **llmclient Usage Parsing — ADVERSARIAL REVIEW (subagent)**
+### 1.2.A [x] **llmclient Usage Parsing — ADVERSARIAL REVIEW (subagent)**
 
 **Changed Files:** `internal/llmclient/client.go`, `internal/llmclient/chat.go`, `internal/llmclient/rates.go`, `internal/llmclient/client_test.go`
 
@@ -229,8 +251,9 @@ Use the Agent tool:
 **Paste the subagent's findings table here (delete rows if none):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| HIGH (escalated from MEDIUM) | client.go:122-127, chat.go:113 | `UsageData` fields are `int`. A provider emitting `prompt_tokens`/`completion_tokens` as a JSON float (some gateways do) makes `json.Unmarshal` fail the ENTIRE response, turning a successful 200 into a hard parse error and discarding the assistant content. Regression introduced by this change (usage was previously not decoded, so a float block was harmlessly ignored). | Give `UsageData` a custom `UnmarshalJSON` that tolerates float/malformed usage and degrades to zero rather than failing the parent decode. Fix in 1.3. |
+| MEDIUM (deferred → TD-001) | rates.go:19 | Rate-table keys are bare model ids; real ids carry suffixes/prefixes (`claude-opus-4-8[1m]`, `anthropic/claude-...`). Variants miss the map and silently yield $0 cost, hiding a misconfigured model. | Normalize model key before lookup (strip `[...]` suffix / provider prefix). Deferred. |
+| LOW (addressed in 1.3) | client_test.go | No tests for partial usage block, negative counts into `ComputeCostUSD`, or empty-model lookup. | Add table cases in REFACTOR. |
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 1.3, do NOT proceed until fixed
@@ -239,7 +262,7 @@ Use the Agent tool:
 
 ---
 
-### 1.3 [ ] **llmclient Usage Parsing — REFACTOR**
+### 1.3 [x] **llmclient Usage Parsing — REFACTOR**
 
 1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
 2. Review rate table structure — consider provider-keyed map for extensibility; handle providers that omit usage (zero values, not panics)
@@ -251,25 +274,25 @@ Use the Agent tool:
 
 ---
 
-### 1.4 [ ] **Phase 1 DoD Verification**
+### 1.4 [x] **Phase 1 DoD Verification**
 
 ```
 Phase-1 Prereq DoD
-Auto: {X}/5 | Story-Specific: 0/0 ACs (prerequisite phase)
-Manual Review: [ ] Code reviewed
+Auto: 5/5 | Story-Specific: 0/0 ACs (prerequisite phase)
+Manual Review: [x] Code reviewed (adversarial 1.2.A + REFACTOR 1.3)
 ```
 
-- [ ] T3: `go test ./internal/llmclient/...` — all passing
-- [ ] Coverage ≥ 80% for `internal/llmclient/`
-- [ ] `golangci-lint run ./internal/llmclient/...` — no errors
-- [ ] `go vet ./internal/llmclient/...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] Manual: `Complete()` and `Chat()` return correct `tokens_in`/`tokens_out`/`cost_usd` from test fixtures
-- [ ] Hard prerequisite resolved: cost and token fields will populate in scorecard emitter (Phase 2)
+- [x] T3: `go test ./internal/llmclient/...` — all passing
+- [x] Coverage ≥ 80% for `internal/llmclient/` (92.2%)
+- [x] `golangci-lint run ./internal/llmclient/...` — no errors (0 issues)
+- [x] `go vet ./internal/llmclient/...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] Manual: `Complete()`/`CompleteWithUsage()` and `Chat()` return correct `tokens_in`/`tokens_out` from fixtures; `ComputeCostUSD` correct for known model, zero for unknown
+- [x] Hard prerequisite resolved: cost and token fields will populate in scorecard emitter (Phase 2)
 
 ---
 
-### 1.5 [ ] **Phase 1 — GATE: Integration & Exit Review (subagent)**
+### 1.5 [x] **Phase 1 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
 
@@ -292,8 +315,12 @@ Use the Agent tool:
 **Paste the subagent's findings table here (delete rows if none):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM (→ TD-002) | chat.go:85-93; fanout/loop.go | `ChatResponse.Usage` is per-turn; tool agents call `Chat()` N times. Phase 2 must accumulate per-agent usage in the fanout loop/`Result` or it undercounts multi-turn token/cost. | Deferred to Phase 2 (fanout integration). |
+| MEDIUM (→ TD-003) | rates.go:17-27 | Rate table hardcoded, no override path; stale rate yields confidently-wrong cost; model id not surfaced for audit. | Phase 5 docs note cost approximate; config override follow-up. |
+| LOW (fixed inline) | client.go UnmarshalJSON | Negative counts only clamped in `ComputeCostUSD`, not at data boundary. | Added `clampNonNegative` at decode so all consumers see non-negative counts. |
+| LOW (fixed inline) | rates.go / UsageData | Three vocabularies (PromptTokens/CompletionTokens vs tokensIn/tokensOut vs tokens_in/tokens_out) invite transposition. | Added `UsageData.CostUSD(model)` so field→arg mapping is written once. |
+
+**Verdict:** No CRITICAL/HIGH. Two LOW items fixed inline; two MEDIUM items captured as TD-002/TD-003. **Phase gate passed.**
 
 **Action Required:**
 - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
@@ -311,7 +338,7 @@ Use the Agent tool:
 
 ---
 
-### 2.1 [ ] **[Auto-emit Scorecard — RED](plan/user-stories/01-auto-emit-scorecard.md)**
+### 2.1 [x] **[Auto-emit Scorecard — RED](plan/user-stories/01-auto-emit-scorecard.md)**
 
 **Mode:** Moderate | **AC:** 01-01, 01-02, 01-03, 01-04, 01-05
 
@@ -326,13 +353,14 @@ Use the Agent tool:
 3. Write tests in `internal/scorecard/store_test.go`:
    - `TestStore_AppendAndRead` — assert records written are readable back via `ReadRecords()`
    - `TestStore_FilePermissions` — assert JSONL file created with `0600` permissions
+   - `TestStore_ConcurrentAppend_SameMonthFile` — spawn N concurrent goroutines appending records to the same month file; assert every line is intact and JSON-parseable (no interleaved/torn lines) and total line count == total records written (covers sprint-design "Concurrent reconcile runs" atomic-append risk)
 4. Verify all tests fail (RED confirmed)
 
 **Files:** `internal/scorecard/scorecard_test.go`, `internal/scorecard/store_test.go` | **Duration:** 2-3 hours
 
 ---
 
-### 2.2 [ ] **[Auto-emit Scorecard — GREEN](plan/user-stories/01-auto-emit-scorecard.md)**
+### 2.2 [x] **[Auto-emit Scorecard — GREEN](plan/user-stories/01-auto-emit-scorecard.md)**
 
 1. Create `internal/scorecard/` package
 2. Implement `internal/scorecard/scorecard.go`:
@@ -346,7 +374,7 @@ Use the Agent tool:
      - Build one `ScorecardRecord` per reviewer; build one aggregate record for the run
      - Call `store.Append()` for each record; log errors, never return them (best-effort)
 3. Implement `internal/scorecard/store.go`:
-   - `Append(record ScorecardRecord) error` — derive month path from `record.RunID` timestamp; open with `O_APPEND|O_CREATE|O_WRONLY`, `0600`; write JSON line + newline via `bufio.Writer`; flush
+   - `Append(record ScorecardRecord) error` — derive month path from `record.RunID` timestamp; open with `O_APPEND|O_CREATE|O_WRONLY`, `0600`; write JSON line + newline via `bufio.Writer`; flush. **Concurrency contract:** marshal each record to a single `[]byte` (line + `\n`) and emit it in one `Write` per record — each record is < `PIPE_BUF`, so `O_APPEND` makes concurrent same-file writes atomic and non-interleaved; do NOT batch multiple records through one shared `bufio.Writer`/flush (that can merge writes past `PIPE_BUF` and tear lines under concurrency)
    - `ReadRecords(path string) ([]ScorecardRecord, error)` — stream-parse JSONL line-by-line; log+skip malformed lines; return valid records
    - Directory auto-created with `0700` on first write
 4. Integrate `Emit()` call into `cmd/atcr/reconcile.go` after `RunReconcile()` succeeds
@@ -357,7 +385,7 @@ Use the Agent tool:
 
 ---
 
-### 2.2.A [ ] **[Auto-emit Scorecard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-auto-emit-scorecard.md)**
+### 2.2.A [x] **[Auto-emit Scorecard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-auto-emit-scorecard.md)**
 
 **Changed Files:** `internal/scorecard/scorecard.go`, `internal/scorecard/store.go`, `internal/scorecard/scorecard_test.go`, `internal/scorecard/store_test.go`, `cmd/atcr/reconcile.go`
 
@@ -379,17 +407,21 @@ Use the Agent tool:
 **Paste the subagent's findings table here (delete rows if none):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM | store.go:17-23 | Atomicity rationale cites PIPE_BUF (governs pipes/FIFOs, not regular files) and claims records are "well under PIPE_BUF" (darwin PIPE_BUF=512B, a full record can approach it). Behavior is correct on Linux/macOS (single-`write()` `O_APPEND` atomic offset update for regular files), but the stated invariant is unsound and the concurrency test only asserts line count, not un-torn lines. | Correct rationale to cite single-`write()` `O_APPEND` regular-file atomicity; strengthen the concurrency test to parse every line + assert a unique sentinel per record. Portability caveat → TD-004. |
+| LOW | reconcile.go:124-128 | `emitScorecard` inserts `reviewers[rev]` for every reviewer string incl. a possible empty `""` (blank reviewer column) → junk record with name `""`. | Skip/trim empty reviewer names before inserting and counting. |
+| LOW | scorecard.go:116-120 + reconcile.go:139 | Double-logging on `resolveDir` failure: `Emit` logs `scorecard: write failed` and returns the err; caller logs again. Two stderr lines per fault. | Don't return the resolveDir error as aggregate `firstErr` (it is already logged in `Emit`). |
+| LOW | store.go:42-43 | `Append` re-opens the month file per record (N open/close cycles for one run's batch). Required for cross-process atomicity; minor in-process cost. | Deliberate trade-off; documented. No change. |
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-- MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+- MEDIUM/LOW found → Append to `tech-debt-captured.md`
 - None found → Note "Adversarial review passed" and proceed
+
+**Verdict:** No CRITICAL/HIGH. The MEDIUM is a doc/test-quality issue (no runtime bug on Linux/macOS today). Cheap correctness items (empty-reviewer skip, double-log, comment correction, concurrency-test strengthening) fixed inline in 2.3; the forward-looking platform-portability caveat captured as TD-004.
 
 ---
 
-### 2.3 [ ] **[Auto-emit Scorecard — REFACTOR](plan/user-stories/01-auto-emit-scorecard.md)**
+### 2.3 [x] **[Auto-emit Scorecard — REFACTOR](plan/user-stories/01-auto-emit-scorecard.md)**
 
 1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
 2. Ensure `corroboration_rate` handles zero denominator (findings_raised == 0 → rate = 0.0)
@@ -402,28 +434,28 @@ Use the Agent tool:
 
 ---
 
-### 2.4 [ ] **Phase 2 DoD Verification**
+### 2.4 [x] **Phase 2 DoD Verification**
 
 ```
 Story-1 DoD Complete
-Auto: {X}/5 | Story-Specific: 5/5 ACs
-Manual Review: [ ] Code reviewed
+Auto: 5/5 | Story-Specific: 5/5 ACs
+Manual Review: [x] Code reviewed (adversarial 2.2.A + REFACTOR 2.3)
 ```
 
-- [ ] T3: `go test ./internal/scorecard/... ./cmd/atcr/...` — all passing
-- [ ] Coverage ≥ 80% for `internal/scorecard/`
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 01-01: JSONL file created at `~/.config/atcr/scorecard/YYYY-MM.jsonl` ✓
-- [ ] AC 01-02: All required schema fields present in emitted records ✓
-- [ ] AC 01-03: Verification fields conditional on verification.json presence ✓
-- [ ] AC 01-04: NoScorecard flag prevents all writes (fully tested in Phase 4 integration) ✓
-- [ ] AC 01-05: Aggregate record appended per run alongside per-reviewer records ✓
+- [x] T3: `go test ./internal/scorecard/... ./cmd/atcr/...` — all passing
+- [x] Coverage ≥ 80% for `internal/scorecard/` (84.7%)
+- [x] `golangci-lint run` — no errors (0 issues)
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 01-01: JSONL file created at `~/.config/atcr/scorecard/YYYY-MM.jsonl` ✓ (TestEmit_CreatesJSONLFile, TestStore_*)
+- [x] AC 01-02: All required schema fields present in emitted records ✓ (TestEmit_SchemaValidation)
+- [x] AC 01-03: Verification fields conditional on verification.json presence ✓ (TestEmit_ConditionalFields_*)
+- [x] AC 01-04: NoScorecard flag prevents all writes (Emit-level gate tested; full CLI flag in Phase 4) ✓ (TestEmit_NoScorecardFlag)
+- [x] AC 01-05: Aggregate record appended per run alongside per-reviewer records ✓ (TestEmit_AggregateRecord)
 
 ---
 
-### 2.5 [ ] **Phase 2 — GATE: Integration & Exit Review (subagent)**
+### 2.5 [x] **Phase 2 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 2 (integration-level, not TDD cadence)
 
@@ -446,8 +478,11 @@ Use the Agent tool:
 **Paste the subagent's findings table here (delete rows if none):**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM (→ TD-005) | internal/mcp/handlers.go (atcr_reconcile) | MCP `atcr_reconcile` runs `RunReconcile` but does not emit a scorecard, while the CLI `atcr reconcile` does. Reconciles driven through MCP produce no scorecard records → the local store silently omits all MCP-driven runs. | Product decision: extract a shared `emitScorecard` helper called from both entry points, OR document scorecard as intentionally CLI-only. Deferred (touches internal/mcp, outside Phase 2's approved scope). |
+| LOW (no action) | internal/scorecard/scorecard.go:42-60 | Aggregate record serializes empty `reviewer`/`model`/`role`. Phase 3 readers must key on `record_type` to avoid treating the aggregate as a reviewer row — already the established pattern (`findReviewer` filters by `RecordTypeReviewer`). | No change; pattern established. |
+| LOW (→ TD-006) | internal/fanout/loop.go:128,284 | Tool-loop token accumulation (`addUsage`) is unit-tested, and persistence-through-`status.json` is covered for the single-shot path, but no single e2e test asserts a tool-enabled agent's summed usage lands in `status.json`. Currently harmless (statusFor is path-agnostic). | Add a tool-loop e2e usage assertion (extend engine_e2e_test.go). Deferred as test-coverage debt. |
+
+**Verdict:** No CRITICAL/HIGH. Build + full suite + vet green. Contract-exit, config back-compat (status.json byte-identical for zero-usage runs), reconcile integration (strictly post-RunReconcile, best-effort, no exit-code/stdout impact), Phase 3 reusability (monthFromRunID reusable for FindByRunID), and regression (single-shot + tool-loop behavior preserved) all confirmed. **Phase gate passed.** MEDIUM/LOW captured as TD-005/TD-006.
 
 **Action Required:**
 - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
