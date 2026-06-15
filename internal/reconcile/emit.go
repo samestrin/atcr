@@ -219,6 +219,13 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 	if err := json.Unmarshal(data, &df); err != nil {
 		return DisagreementsFile{}, fmt.Errorf("parsing %s: %w", DisagreementsJSON, err)
 	}
+	if df.SchemaVersion != "" {
+		wantMajor := strings.SplitN(DisagreementsSchemaVersion, ".", 2)[0]
+		gotMajor := strings.SplitN(df.SchemaVersion, ".", 2)[0]
+		if gotMajor != wantMajor {
+			return DisagreementsFile{}, fmt.Errorf("%s: schema version %q is incompatible with reader version %q", DisagreementsJSON, df.SchemaVersion, DisagreementsSchemaVersion)
+		}
+	}
 	return df, nil
 }
 
