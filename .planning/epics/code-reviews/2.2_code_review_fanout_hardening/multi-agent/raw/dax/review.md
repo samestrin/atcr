@@ -1,0 +1,11 @@
+HIGH|internal/fanout/postprocess.go:42|severityRank map uses string keys but findings are compared with strings.ToUpper — inconsistent; if a finding severity is lowercase, it maps to 0 (below LOW), dropping it silently|Normalize finding severity to upper-case before lookup, or pre-normalize in ParseModelOutput|correctness|10|severityRank[strings.ToUpper(f.Severity)] uses upper-case key but map keys are "CRITICAL","HIGH","MEDIUM","LOW" — lowercase input maps to 0, dropping findings incorrectly
+
+MEDIUM|internal/fanout/postprocess.go:42|severityRank map is package-level mutable global — concurrent fan-out agents could race if map is modified (though currently read-only)|Guard with sync.RWMutex or make it a function returning a copy|maintainability|5|var severityRank = map[string]int{...} — package-level mutable map
+
+MEDIUM|internal/fanout/postprocess.go:42|severityRank duplicates reconcile's private severityRank — drift risk if rubric changes|Extract shared severity ranking to a common package or auto-generate from rubric|maintainability|15|severityRank mirrors reconcile's private severityRank — kept local to avoid cross-package dependency
+
+LOW|internal/fanout/postprocess.go:42|enforceConstraints sorts in-place, mutating caller's slice — callers may not expect mutation|Document mutation behavior or return a new slice|maintainability|5|sort.SliceStable mutates findings slice in-place
+
+LOW|internal/fanout/artifacts.go:143|findingsFor passes r.MinSeverity and r.MaxFindings directly to enforceConstraints — if Result fields are empty/nil, enforcement is no-op; but no validation that MinSeverity is a valid rubric level|Add validation in buildAgent or enforceConstraints that MinSeverity is a recognized level|correctness|5|MinSeverity: a.MinSeverity — no validation that value is a valid rubric level
+
+LOW|internal/fanout/scope_inject_test.go:1|Test file has typo in filename: "scope_inject_test.go" should be "scope_inject_test.go" — inconsistent with Go conventions|Rename file to scope_inject_test.go|maintainability|2|scope_inject_test.go filename has typo "inject"

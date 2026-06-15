@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/postprocess.go:27|Finding severity not trimmed before rank lookup|Trim severity with strings.TrimSpace before severityRank lookup|correctness|2|Untrimmed severity ranks as unknown and may be dropped|atcr

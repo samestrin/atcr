@@ -1,0 +1,2 @@
+MEDIUM|internal/reconcile/disagree.go:130|Solo finding detection includes zero-reviewer findings|Change len(f.Reviewers) <= 1 to == 1|correctness|5|case len(f.Reviewers) <= 1: also matches empty slice|code-reviewer
+MEDIUM|internal/reconcile/disagree.go:100|Exact problem match may double-surface gray-zone members with slightly different texts|Use file+line as key for gray-zone exclusion, drop problem|correctness|10|findingKey(file,line,problem) causes missed dedup when problem string differs|code-reviewer

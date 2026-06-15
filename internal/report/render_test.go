@@ -281,3 +281,14 @@ func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
 		assert.NotContains(t, a.String(), "verification")
 	})
 }
+
+// TestSeverityRankOf_MatchesReconcile — the report view and the reconcile radar
+// must agree on severity ordering. After unifying on reconcile.SeverityRank, a
+// finding ranks identically whether it is sorted by BuildDisagreements or
+// grouped by Render.
+func TestSeverityRankOf_MatchesReconcile(t *testing.T) {
+	for sev, rank := range reconcile.SeverityRank {
+		assert.Equal(t, rank, severityRankOf(sev), "severity %s must rank identically in report and reconcile", sev)
+	}
+	assert.Equal(t, 0, severityRankOf("unknown"), "unknown severity must rank 0 in report view")
+}

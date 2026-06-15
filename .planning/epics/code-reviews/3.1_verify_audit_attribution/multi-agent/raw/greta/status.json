@@ -1,0 +1,7 @@
+{
+  "agent_name": "greta",
+  "model": "glm-5.1",
+  "status": "failed",
+  "duration_ms": 382545,
+  "error": "no content in stream"
+}

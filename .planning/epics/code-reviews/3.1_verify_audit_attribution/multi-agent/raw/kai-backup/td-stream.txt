@@ -1,0 +1,5 @@
+MEDIUM|internal/verify/pipeline.go:212|Missing error handling for ReadVerificationResults|Check perr before logging|error-handling|2|if prior, perr := ReadVerificationResults(...); perr != nil|bruce
+MEDIUM|internal/verify/pipeline.go:242|Case-insensitive verdict comparison may be fragile|Use canonical verdict constants|correctness|3|strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict))|bruce
+LOW|internal/verify/pipeline.go:350|Explicit base.Model = "" is redundant|Remove redundant assignment|maintainability|1|base.Model = "" after struct initialization|bruce
+LOW|internal/verify/pipeline.go:356|Explicit base.Model = "" is redundant|Remove redundant assignment|maintainability|1|base.Model = "" after struct initialization|bruce
+MEDIUM|internal/verify/pipeline.go:379|winningAttribution ignores nil skeptics check|Add nil check before accessing skeptics[i].Config.Model|correctness|3|if m := skeptics[i].Config.Model; skeptics[i] could be nil|bruce

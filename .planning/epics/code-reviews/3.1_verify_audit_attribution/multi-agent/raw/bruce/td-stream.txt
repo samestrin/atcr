@@ -1,0 +1,1 @@
+HIGH|internal/verify/pipeline.go:245|Nil pointer dereference on f.Verification for unverified findings|Guard with if f.Verification == nil before field access|correctness|5|Verdict: f.Verification.Verdict panics when f.Verification is nil|bruce

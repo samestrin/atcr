@@ -1,0 +1,1449 @@
+diff --git a/README.md b/README.md
+index bc6c8cb..e239072 100644
+--- a/README.md
++++ b/README.md
+@@ -78,7 +78,7 @@ Key flags:
+ 
+ - `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+-- `atcr report --format md|json|checklist` / `--output <file>`
++- `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+ 
+ ### Redirecting output for orchestrators (`--output-dir`)
+@@ -164,6 +164,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
+ - [docs/registry.md](docs/registry.md) — providers, personas, agents, fallbacks, lanes, precedence
+ - [docs/payload-modes.md](docs/payload-modes.md) — blocks vs. diff vs. files, token guidance
+ - [docs/findings-format.md](docs/findings-format.md) — the versioned `atcr-findings/v1` contract
++- [docs/disagreement-radar.md](docs/disagreement-radar.md) — the disagreement radar, `--disagreements` view, and `disagreements.json` handoff schema
+ - [docs/ci-integration.md](docs/ci-integration.md) — exit codes and PR gates
+ - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
+ 
+diff --git a/cmd/atcr/report.go b/cmd/atcr/report.go
+index fc0b8ba..a1f8ad2 100644
+--- a/cmd/atcr/report.go
++++ b/cmd/atcr/report.go
+@@ -22,6 +22,7 @@ func newReportCmd() *cobra.Command {
+ 	}
+ 	cmd.Flags().String("format", "md", "output format: md, json, or checklist")
+ 	cmd.Flags().String("output", "", "write to a file instead of stdout")
++	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
+ 	return cmd
+ }
+ 
+@@ -48,8 +49,33 @@ func runReport(cmd *cobra.Command, args []string) error {
+ 	}
+ 
+ 	var buf bytes.Buffer
+-	if err := report.Render(&buf, findings, format); err != nil {
+-		return usageError(err)
++	disagreements, _ := cmd.Flags().GetBool("disagreements")
++	// The disagreement radar is a focused, ranked view; it replaces the standard
++	// report rather than layering onto a chosen --format.
++	switch {
++	case disagreements:
++		clusters, err := reconcile.ReadAmbiguousClusters(reviewDir)
++		if err != nil {
++			return usageError(fmt.Errorf("failed to read ambiguous clusters: %w", err))
++		}
++		df := reconcile.BuildDisagreements(findings, clusters)
++		if err := report.RenderDisagreements(&buf, df); err != nil {
++			return usageError(err)
++		}
++	case format == report.FormatMarkdown:
++		// The standard markdown report carries the radar above its findings. A
++		// corrupt ambiguous.json must not break the main report, so a read error
++		// degrades to a findings-only radar rather than failing (the dedicated
++		// --disagreements view above surfaces such errors explicitly instead).
++		clusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)
++		df := reconcile.BuildDisagreements(findings, clusters)
++		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
++			return usageError(err)
++		}
++	default:
++		if err := report.Render(&buf, findings, format); err != nil {
++			return usageError(err)
++		}
+ 	}
+ 
+ 	output, _ := cmd.Flags().GetString("output")
+diff --git a/cmd/atcr/report_test.go b/cmd/atcr/report_test.go
+index b3c7c94..d8c6bb6 100644
+--- a/cmd/atcr/report_test.go
++++ b/cmd/atcr/report_test.go
+@@ -33,6 +33,58 @@ func TestReportCmd_DefaultFormatAndOutputFile(t *testing.T) {
+ 	require.Contains(t, string(data), "`a.go:1`")
+ }
+ 
++// fixtureReconciledWithAmbiguous writes findings.json plus an ambiguous.json
++// sidecar under a review dir, with a .atcr/latest pointer.
++func fixtureReconciledWithAmbiguous(t *testing.T, id, findingsJSON, ambiguousJSON string) {
++	t.Helper()
++	dir := filepath.Join(".atcr", "reviews", id, "reconciled")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "findings.json"), []byte(findingsJSON), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "ambiguous.json"), []byte(ambiguousJSON), 0o644))
++	require.NoError(t, os.MkdirAll(filepath.Join(".atcr"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte(id+"\n"), 0o644))
++}
++
++const splitFinding = `[{"severity":"CRITICAL","file":"a.go","line":1,"problem":"boom","fix":"f","category":"security","est_minutes":10,"evidence":"e","reviewers":["greta","host"],"confidence":"HIGH","disagreement":"LOW vs CRITICAL"}]`
++
++func TestReportCmd_DisagreementsMode(t *testing.T) {
++	isolate(t)
++	fixtureReconciled(t, "2026-06-10_d", splitFinding)
++
++	out := filepath.Join(t.TempDir(), "radar.md")
++	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "--output", out, "2026-06-10_d"))
++	data, err := os.ReadFile(out)
++	require.NoError(t, err)
++	s := string(data)
++	require.Contains(t, s, "Disagreement Radar")
++	require.Contains(t, s, "LOW vs CRITICAL")
++	require.Contains(t, s, "`a.go:1`")
++}
++
++func TestReportCmd_DisagreementsModeReadsAmbiguousSidecar(t *testing.T) {
++	isolate(t)
++	ambiguous := `[{"id":"amb-1","file":"g.go","line":7,"similarity":0.55,"findings":[` +
++		`{"severity":"HIGH","file":"g.go","line":7,"problem":"overrun","reviewer":"greta"},` +
++		`{"severity":"LOW","file":"g.go","line":8,"problem":"bounds","reviewer":"kai"}]}]`
++	fixtureReconciledWithAmbiguous(t, "2026-06-10_g", oneFinding, ambiguous)
++
++	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "2026-06-10_g"))
++}
++
++func TestReportCmd_DisagreementsModeEmptyIsClean(t *testing.T) {
++	isolate(t)
++	// A multi-reviewer consensus finding with no disagreement → no tension.
++	consensus := `[{"severity":"HIGH","file":"a.go","line":1,"problem":"p","reviewers":["greta","host"],"confidence":"HIGH"}]`
++	fixtureReconciled(t, "2026-06-10_c", consensus)
++	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "2026-06-10_c"))
++}
++
++func TestReportCmd_DisagreementsModeMalformedAmbiguousIsUsageError(t *testing.T) {
++	isolate(t)
++	fixtureReconciledWithAmbiguous(t, "2026-06-10_bad", oneFinding, "{not json")
++	require.Equal(t, 2, execCmd(t, "report", "--disagreements", "2026-06-10_bad"))
++}
++
+ func TestReportCmd_InvalidFormatIsUsageError(t *testing.T) {
+ 	isolate(t)
+ 	fixtureReconciled(t, "r", oneFinding)
+diff --git a/docs/disagreement-radar.md b/docs/disagreement-radar.md
+new file mode 100644
+index 0000000..015a383
+--- /dev/null
++++ b/docs/disagreement-radar.md
+@@ -0,0 +1,141 @@
++# Disagreement Radar
++
++The disagreement radar promotes reviewer disagreement from a buried artifact to a
++first-class output. It points a human reviewer at the highest-tension spots in a
++change — where independent reviewers split, where a single reviewer raised
++something alone, where the reconciler could not decide, and where skeptics could
++not agree a finding is even real.
++
++The radar is a deterministic projection over data the reconciler already
++produces. It collects no new reviewer data and does not change clustering, dedup,
++or merge behavior.
++
++## What the radar surfaces
++
++| Class | Source | Signal |
++|-------|--------|--------|
++| `severity_split` | a merged finding with a `disagreement` annotation (`reconciled/findings.json`) | reviewers assigned different severities to the same location |
++| `solo_finding` | a finding raised by a single reviewer (MEDIUM confidence) | a spot only one reviewer flagged — others may have missed it |
++| `gray_zone` | a pair in `reconciled/ambiguous.json` | similarity fell in the gray zone `[0.4, 0.7)`; the reconciler left it unmerged |
++| `verification_disagreement` | a `verdict: unverifiable` reached with **2+ skeptics** (`reconciled/verification.json`, Epic 3.0) | skeptics could not resolve whether the finding is real |
++
++> **v1 heuristic.** The persisted verdict block does not record per-skeptic
++> verdicts, so a genuine confirmed-vs-refuted tie cannot be distinguished from a
++> unanimous "unverifiable". The radar therefore surfaces any multi-skeptic
++> `unverifiable`, which over-includes the unanimous case. Precise tie detection
++> requires the verify stage to record per-verdict counts (tracked as technical
++> debt).
++
++Out-of-scope findings (pre-existing issues outside the reviewed change) and
++refuted findings never enter the radar.
++
++Persona tension (correctness reviewer vs. design reviewer) is **not** surfaced:
++the data model carries no persona/role metadata, only model names.
++
++## Scoring and ranking
++
++Items are ranked highest-tension first, deterministically (the same input always
++produces the same order).
++
++- **Severity spread** is the tier distance between the highest and lowest severity
++  on a location: `CRITICAL=4, HIGH=3, MEDIUM=2, LOW=1`, so `LOW vs CRITICAL` has a
++  spread of 3.
++- **Independence** is the count of distinct reviewers on the finding. This is a
++  **v1 proxy** recorded in the handoff file as `independenceModel:
++  "distinct-reviewer-count"`. The data model carries no model-strength or
++  near-duplicate-model signal, so a richer independence metric is out of scope.
++- **Score**: when a severity spread exists, `score = spread × independence`;
++  otherwise `score = the finding's severity rank`. So a CRITICAL solo finding
++  (score 4) outranks a `LOW vs MEDIUM` split (spread 1 × independence 2 = 2),
++  while a `LOW vs CRITICAL` split among two reviewers (3 × 2 = 6) tops both.
++
++Ties on score break by severity rank (desc), then file, line, kind, and problem
++text — a total order, so ranking is reproducible.
++
++The inclusion threshold is a fixed default in v1: every severity split
++(spread ≥ 1), every solo finding, every gray-zone pair, and every verification
++tie is surfaced. It is not configurable yet.
++
++## Surfaces
++
++### `atcr report --disagreements`
++
++Renders the focused radar — a ranked list of the tension spots, each with the
++model positions side by side — instead of the standard report:
++
++```
++atcr report --disagreements [id-or-path]
++```
++
++The flag is listed in `atcr report --help`. When there is no tension the view
++prints `No disagreements detected.`
++
++### Radar section in `report.md`
++
++The standard markdown report (`atcr report`, `atcr report --format md`, and the
++persisted `reconciled/report.md`) carries a `## Disagreements` section **above**
++the consensus findings. The section is omitted entirely when there are no
++disagreements, so a review with no tension produces byte-identical report output
++to the pre-radar format.
++
++## Handoff schema — `reconciled/disagreements.json`
++
++`reconciled/disagreements.json` is the stable, versioned queue Epic 6.0
++(Cross-Examination) consumes directly, without re-parsing `ambiguous.json` or
++`findings.json`.
++
++```json
++{
++  "schemaVersion": "1.0",
++  "independenceModel": "distinct-reviewer-count",
++  "items": [
++    {
++      "kind": "severity_split",
++      "file": "internal/store/cache.go",
++      "line": 88,
++      "severity": "CRITICAL",
++      "problem": "unbounded map grows without eviction",
++      "score": 6,
++      "spread": 3,
++      "independence": 2,
++      "reviewers": ["greta", "otto"],
++      "disagreement": "LOW vs CRITICAL"
++    }
++  ]
++}
++```
++
++| Field | Type | Meaning |
++|-------|------|---------|
++| `schemaVersion` | string | Contract version. `"1.0"`. Bumped on any breaking change. |
++| `independenceModel` | string | Names the independence proxy that produced the scores (`"distinct-reviewer-count"` in v1). |
++| `items` | array | Ranked tension items, highest first. |
++| `items[].kind` | string | One of `severity_split`, `solo_finding`, `gray_zone`, `verification_disagreement`. |
++| `items[].file` / `line` | string / int | Location of the tension. |
++| `items[].severity` | string | The finding's (max) severity. |
++| `items[].problem` | string | The contested problem statement. |
++| `items[].score` | number | Ranking score (see Scoring). |
++| `items[].spread` | int | Severity tier distance (0 when there is no severity disagreement). |
++| `items[].independence` | int | Distinct-reviewer count. |
++| `items[].reviewers` | string[] | Distinct reviewers (omitted when empty). |
++| `items[].disagreement` | string | `"<lo> vs <hi>"` for severity splits (omitted otherwise). |
++| `items[].skeptics` | string | Comma-joined skeptics on a verification tie (omitted otherwise). |
++| `items[].detail` | string | Gray-zone similarity, or combined skeptic reasoning (omitted otherwise). |
++| `items[].positions` | array | Side-by-side reviewer stances (`reviewer`, `severity`, `problem`) — populated for gray-zone pairs, whose member findings are unmerged. |
++
++### Snapshot semantics
++
++`disagreements.json` is written at reconcile time. Because the verify stage runs
++after reconcile, the **file** reflects the reconcile-time tension and does not
++include the `verification_disagreement` class. The **live** radar
++(`atcr report --disagreements` and the `report.md` section) reads the embedded
++verification blocks from `findings.json` and surfaces verification disagreements
++whenever a verified review is present. A consumer that needs the verification
++tier in structured form should call the radar builder over the current
++`findings.json` rather than rely on the snapshot file.
++
++### Evolution policy
++
++The schema is additive-only within `schemaVersion: 1.x`: new optional item fields
++may be added, but existing field names and the scoring contract do not change
++under `1.x`. Any breaking change increments `schemaVersion`.
+diff --git a/docs/findings-format.md b/docs/findings-format.md
+index e55c4d9..2a2c902 100644
+--- a/docs/findings-format.md
++++ b/docs/findings-format.md
+@@ -123,6 +123,14 @@ The other v1 review artifacts carry reserved fields for the agentic stages on th
+ | `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran; `WriteManifest` normalizes nil to `["review"]` so the field is always present; readers MUST default an absent `stages` to `["review"]` for older manifests written before this field existed. **Active in 3.0:** `atcr verify` appends `"verify"` (idempotently) | later stages append `"debate"` (Epics 4.0–5.0) |
+ | per-agent `status.json` | `turns`, `tool_calls`, `tool_bytes` | absent — no tool loop ran | **Epic 2.0** — tool-using reviewer loop |
+ 
++## Companion artifact: `disagreements.json`
++
++`reconciled/disagreements.json` is a deterministic projection over the merged
++findings and the gray-zone sidecar — the disagreement-radar handoff queue Epic
++6.0 consumes. It is versioned independently (`schemaVersion`) and documented in
++[disagreement-radar.md](disagreement-radar.md), along with the
++`atcr report --disagreements` view and the `report.md` radar section.
++
+ ## Evolution policy
+ 
+ The version header is in force from day one. **Evolution is additive-only within a major version:** new optional columns may be appended and new optional JSON fields may be added, but existing column positions, the severity enum, and the extraction regex never change under `v1`. Any breaking change increments the version (`atcr-findings/v2`), and the header gate guarantees old consumers reject it loudly rather than misparsing.
+diff --git a/internal/mcp/handlers.go b/internal/mcp/handlers.go
+index 40de8b8..9781c11 100644
+--- a/internal/mcp/handlers.go
++++ b/internal/mcp/handlers.go
+@@ -265,7 +265,16 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
+ 	}
+ 
+ 	var buf bytes.Buffer
+-	if err := report.Render(&buf, findings, format); err != nil {
++	if format == report.FormatMarkdown {
++		// The markdown report carries the disagreement radar above its findings
++		// (Epic 3.2). A corrupt ambiguous.json degrades to a findings-only radar
++		// rather than failing the report.
++		clusters, _ := reconcile.ReadAmbiguousClusters(dir)
++		df := reconcile.BuildDisagreements(findings, clusters)
++		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
++			return nil, ReportResult{}, err
++		}
++	} else if err := report.Render(&buf, findings, format); err != nil {
+ 		return nil, ReportResult{}, err
+ 	}
+ 	return nil, ReportResult{Format: format, Content: buf.String()}, nil
+diff --git a/internal/reconcile/disagree.go b/internal/reconcile/disagree.go
+new file mode 100644
+index 0000000..472cbca
+--- /dev/null
++++ b/internal/reconcile/disagree.go
+@@ -0,0 +1,431 @@
++package reconcile
++
++import (
++	"bytes"
++	"fmt"
++	"sort"
++	"strconv"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// DisagreementsSchemaVersion is the version of the reconciled/disagreements.json
++// contract consumed by Epic 6.0 (Cross-Examination). Bump it on any
++// backward-incompatible change to DisagreementsFile / DisagreementItem.
++const DisagreementsSchemaVersion = "1.0"
++
++// IndependenceModelReviewerCount documents the v1 independence proxy recorded in
++// the handoff file. The independence factor in the score is the count of distinct
++// reviewers on a finding; the data model carries no model-strength or
++// near-duplicate-model signal (clarification 2026-06-14), so a richer metric is
++// out of scope for this epic. Epic 6.0 reads this field to know which proxy
++// produced the scores.
++const IndependenceModelReviewerCount = "distinct-reviewer-count"
++
++// Disagreement kinds — the tension classes the radar surfaces.
++const (
++	KindSeveritySplit            = "severity_split"
++	KindSoloFinding              = "solo_finding"
++	KindGrayZone                 = "gray_zone"
++	KindVerificationDisagreement = "verification_disagreement"
++)
++
++// Position is one reviewer's stance on a contested location: the severity they
++// assigned and (for gray-zone pairs) the problem text they wrote. It powers the
++// "model positions side by side" view. For a merged severity split the per-
++// reviewer severities are not recoverable (the merge collapsed them into a single
++// record), so Positions is populated only for gray-zone clusters, whose member
++// findings remain unmerged.
++type Position struct {
++	Reviewer string `json:"reviewer"`
++	Severity string `json:"severity,omitempty"`
++	Problem  string `json:"problem,omitempty"`
++}
++
++// DisagreementItem is one ranked tension spot in the radar and in the Epic 6.0
++// handoff queue.
++type DisagreementItem struct {
++	Kind         string     `json:"kind"`
++	File         string     `json:"file"`
++	Line         int        `json:"line"`
++	Severity     string     `json:"severity"`
++	Problem      string     `json:"problem"`
++	Score        float64    `json:"score"`
++	Spread       int        `json:"spread"`
++	Independence int        `json:"independence"`
++	Reviewers    []string   `json:"reviewers,omitempty"`
++	Disagreement string     `json:"disagreement,omitempty"`
++	Skeptics     string     `json:"skeptics,omitempty"`
++	Detail       string     `json:"detail,omitempty"`
++	Positions    []Position `json:"positions,omitempty"`
++}
++
++// DisagreementsFile is the reconciled/disagreements.json document — the stable
++// Epic 6.0 cross-exam handoff queue. Items are ranked highest-tension first.
++//
++// The file is written at reconcile time, so it carries the reconcile-time tension
++// classes (severity splits, solo findings, gray-zone clusters). The
++// verification_disagreement class exists only after the verify stage runs and is
++// surfaced by the live radar (atcr report), not by this snapshot file. See
++// docs/disagreement-radar.md (Snapshot semantics).
++type DisagreementsFile struct {
++	SchemaVersion     string             `json:"schemaVersion"`
++	IndependenceModel string             `json:"independenceModel"`
++	Items             []DisagreementItem `json:"items"`
++}
++
++// BuildDisagreements projects reconciled findings and gray-zone clusters into a
++// ranked radar / handoff document. It is pure and deterministic: the same inputs
++// always yield byte-identical output.
++//
++// Tension classes, by per-finding precedence (a single finding yields at most one
++// item; gray-zone cluster members are excluded from the per-finding tiers so a
++// pair is never double-surfaced):
++//
++//   - verification_disagreement: a skeptic-vote tie (verdict unverifiable with
++//     2+ distinct skeptics). Present only when findings carry verification blocks
++//     (Epic 3.0); absent otherwise.
++//   - severity_split: reviewers assigned different severities (Disagreement set).
++//   - solo_finding: a single reviewer raised it (MEDIUM confidence).
++//   - gray_zone: an ambiguous.json pair (cluster-level item).
++//
++// Refuted findings are never surfaced (a skeptic rejected them — not a tension to
++// action). Scoring: when a severity spread exists, score = spread × independence
++// (distinct-reviewer count); otherwise score = the finding's severity rank, so a
++// CRITICAL solo outranks a LOW-vs-MEDIUM split (clarification 2026-06-14).
++func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) DisagreementsFile {
++	items := make([]DisagreementItem, 0, len(findings)+len(clusters))
++
++	// Locations covered by a gray-zone cluster: their member findings surface as
++	// the cluster item, never again as solo/split items.
++	grayKeys := map[string]bool{}
++	for _, c := range clusters {
++		for _, f := range c.Findings {
++			grayKeys[findingKey(f.File, f.Line, f.Problem)] = true
++		}
++	}
++
++	for _, f := range findings {
++		if isRefutedJSON(f) {
++			continue
++		}
++		// Out-of-scope findings are pre-existing issues outside the reviewed
++		// change; they are annotated in their own report section and excluded from
++		// the gate, so they are not change-tension and never enter the radar.
++		if f.Category == CategoryOutOfScope {
++			continue
++		}
++		if grayKeys[findingKey(f.File, f.Line, f.Problem)] {
++			continue
++		}
++		switch {
++		case isVerificationTie(f.Verification):
++			items = append(items, verificationItem(f))
++		case f.Disagreement != "":
++			items = append(items, severitySplitItem(f))
++		case len(f.Reviewers) <= 1:
++			items = append(items, soloItem(f))
++		}
++	}
++	for _, c := range clusters {
++		// Skip a gray-zone pair only when every member is out-of-scope (fail-
++		// closed, matching modalCategory): an in-scope member keeps the pair as
++		// real change-tension.
++		if allOutOfScope(c.Findings) {
++			continue
++		}
++		items = append(items, grayZoneItem(c))
++	}
++
++	sortDisagreements(items)
++	return DisagreementsFile{
++		SchemaVersion:     DisagreementsSchemaVersion,
++		IndependenceModel: IndependenceModelReviewerCount,
++		Items:             items,
++	}
++}
++
++// allOutOfScope reports whether every finding in the group is tagged
++// out-of-scope (an empty group is not).
++func allOutOfScope(findings []stream.Finding) bool {
++	if len(findings) == 0 {
++		return false
++	}
++	for _, f := range findings {
++		if strings.ToLower(strings.TrimSpace(f.Category)) != CategoryOutOfScope {
++			return false
++		}
++	}
++	return true
++}
++
++// findingKey is the dedup identity of a finding across the findings.json and
++// ambiguous.json projections: file + line + problem text.
++func findingKey(file string, line int, problem string) string {
++	return file + "\x00" + strconv.Itoa(line) + "\x00" + problem
++}
++
++// canonVerdict normalizes a verdict the same way the report layer and gate do.
++func canonVerdict(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
++
++// isRefutedJSON reports whether a skeptic refuted the finding.
++func isRefutedJSON(f JSONFinding) bool {
++	return f.Verification != nil && canonVerdict(f.Verification.Verdict) == VerdictRefuted
++}
++
++// isVerificationTie reports whether v is an unverifiable verdict reached with
++// multiple skeptics — the radar's verification-disagreement signal. The verify
++// stage records every voter in Skeptic (comma-joined) and yields unverifiable on
++// a tie; a single-skeptic unverifiable (could-not-verify) or the empty-verdict
++// "no_skeptic_verdicts" case is not a disagreement.
++//
++// v1 heuristic limitation: the persisted verdict block does not carry per-skeptic
++// verdicts, so a genuine confirmed-vs-refuted tie cannot be distinguished from a
++// unanimous "unverifiable" (both collapse to verdict=unverifiable with all voters
++// named). This therefore over-includes the unanimous-unverifiable case; precise
++// tie detection needs per-verdict counts from the verify stage (tracked as TD).
++func isVerificationTie(v *Verification) bool {
++	if v == nil || canonVerdict(v.Verdict) != VerdictUnverifiable {
++		return false
++	}
++	return len(splitNames(v.Skeptic)) >= 2
++}
++
++// splitNames splits a comma-joined name list, trimming blanks.
++func splitNames(s string) []string {
++	parts := strings.Split(s, ",")
++	out := make([]string, 0, len(parts))
++	for _, p := range parts {
++		if t := strings.TrimSpace(p); t != "" {
++			out = append(out, t)
++		}
++	}
++	return out
++}
++
++// spreadFromDisagreement returns the tier distance encoded in a "<lo> vs <hi>"
++// annotation, or 0 if it cannot be parsed. mergeSeverity guarantees lo is the
++// minimum and hi the maximum, so the distance is never negative.
++func spreadFromDisagreement(d string) int {
++	parts := strings.SplitN(d, " vs ", 2)
++	if len(parts) != 2 {
++		return 0
++	}
++	lo := severityRank[strings.TrimSpace(parts[0])]
++	hi := severityRank[strings.TrimSpace(parts[1])]
++	if hi < lo {
++		return 0
++	}
++	return hi - lo
++}
++
++// scoreFor is the single scoring rule: a severity spread (reviewers disagree on
++// severity) scores spread × independence; otherwise the finding's own severity
++// rank, so a CRITICAL solo (4) outranks a LOW-vs-MEDIUM split (1×independence).
++func scoreFor(spread, independence, sevRank int) float64 {
++	if spread > 0 {
++		return float64(spread * independence)
++	}
++	return float64(sevRank)
++}
++
++func atLeastOne(n int) int {
++	if n < 1 {
++		return 1
++	}
++	return n
++}
++
++func severitySplitItem(f JSONFinding) DisagreementItem {
++	spread := spreadFromDisagreement(f.Disagreement)
++	indep := atLeastOne(len(f.Reviewers))
++	return DisagreementItem{
++		Kind:         KindSeveritySplit,
++		File:         f.File,
++		Line:         f.Line,
++		Severity:     f.Severity,
++		Problem:      f.Problem,
++		Score:        scoreFor(spread, indep, severityRank[f.Severity]),
++		Spread:       spread,
++		Independence: indep,
++		Reviewers:    f.Reviewers,
++		Disagreement: f.Disagreement,
++	}
++}
++
++func soloItem(f JSONFinding) DisagreementItem {
++	indep := atLeastOne(len(f.Reviewers))
++	return DisagreementItem{
++		Kind:         KindSoloFinding,
++		File:         f.File,
++		Line:         f.Line,
++		Severity:     f.Severity,
++		Problem:      f.Problem,
++		Score:        scoreFor(0, indep, severityRank[f.Severity]),
++		Spread:       0,
++		Independence: indep,
++		Reviewers:    f.Reviewers,
++	}
++}
++
++func verificationItem(f JSONFinding) DisagreementItem {
++	// A tie finding may also be a severity split; keep the stronger spread-based
++	// score when present so labeling it a verification disagreement never demotes
++	// a high-spread split.
++	spread := spreadFromDisagreement(f.Disagreement)
++	indep := atLeastOne(len(f.Reviewers))
++	return DisagreementItem{
++		Kind:         KindVerificationDisagreement,
++		File:         f.File,
++		Line:         f.Line,
++		Severity:     f.Severity,
++		Problem:      f.Problem,
++		Score:        scoreFor(spread, indep, severityRank[f.Severity]),
++		Spread:       spread,
++		Independence: indep,
++		Reviewers:    f.Reviewers,
++		Disagreement: f.Disagreement,
++		Skeptics:     f.Verification.Skeptic,
++		Detail:       f.Verification.Notes,
++	}
++}
++
++func grayZoneItem(c AmbiguousCluster) DisagreementItem {
++	maxRank, minRank := 0, 1<<31
++	var maxSev string
++	revSet := map[string]bool{}
++	positions := make([]Position, 0, len(c.Findings))
++	for _, f := range c.Findings {
++		if r, ok := severityRank[f.Severity]; ok {
++			if r > maxRank {
++				maxRank, maxSev = r, f.Severity
++			}
++			if r < minRank {
++				minRank = r
++			}
++		}
++		if f.Reviewer != "" {
++			revSet[f.Reviewer] = true
++		}
++		positions = append(positions, Position{Reviewer: f.Reviewer, Severity: f.Severity, Problem: f.Problem})
++	}
++	spread := 0
++	if maxRank > 0 && minRank <= maxRank {
++		spread = maxRank - minRank
++	}
++	if maxSev == "" && len(c.Findings) > 0 {
++		maxSev = c.Findings[0].Severity
++	}
++	reviewers := sortedKeys(revSet)
++	indep := atLeastOne(len(reviewers))
++	return DisagreementItem{
++		Kind:         KindGrayZone,
++		File:         c.File,
++		Line:         c.Line,
++		Severity:     maxSev,
++		Problem:      longestProblem(c.Findings),
++		Score:        scoreFor(spread, indep, severityRank[maxSev]),
++		Spread:       spread,
++		Independence: indep,
++		Reviewers:    reviewers,
++		Detail:       "similarity " + strconv.FormatFloat(c.Similarity, 'f', 2, 64),
++		Positions:    positions,
++	}
++}
++
++// longestProblem returns the longest PROBLEM in the cluster (a stable, content-
++// based representative of the contested location).
++func longestProblem(findings []stream.Finding) string {
++	best := ""
++	for _, f := range findings {
++		if len(f.Problem) > len(best) {
++			best = f.Problem
++		}
++	}
++	return best
++}
++
++func sortedKeys(set map[string]bool) []string {
++	out := make([]string, 0, len(set))
++	for k := range set {
++		out = append(out, k)
++	}
++	sort.Strings(out)
++	return out
++}
++
++// writeRadarSection appends the "Disagreements" section to the reconciled
++// report.md, above the consensus findings. It writes nothing when there are no
++// items, so a review with no disagreements yields byte-identical report output.
++// Free text is routed through esc/codeSpan (emit.go), the same injection defenses
++// the rest of the report uses.
++func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
++	if len(df.Items) == 0 {
++		return
++	}
++	fmt.Fprintf(b, "\n## Disagreements\n\nTop %d tension spot(s) — reviewer splits, solo findings, and gray-zone clusters, highest first.\n", len(df.Items))
++	for i, it := range df.Items {
++		fmt.Fprintf(b, "\n### %d. %s — %s (%s) · score %s\n",
++			i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
++		if it.Disagreement != "" {
++			fmt.Fprintf(b, "- Severity disagreement: %s\n", esc(it.Disagreement))
++		}
++		if it.Skeptics != "" {
++			fmt.Fprintf(b, "- Skeptics split: %s\n", esc(it.Skeptics))
++		}
++		if len(it.Reviewers) > 0 {
++			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinOrNone(it.Reviewers)), it.Independence)
++		}
++		if it.Problem != "" {
++			fmt.Fprintf(b, "- Problem: %s\n", esc(it.Problem))
++		}
++		if it.Detail != "" {
++			fmt.Fprintf(b, "- Detail: %s\n", esc(it.Detail))
++		}
++		if len(it.Positions) > 0 {
++			b.WriteString("- Positions:\n")
++			for _, p := range it.Positions {
++				name := p.Reviewer
++				if name == "" {
++					name = "(unknown)"
++				}
++				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(name), esc(p.Severity), esc(p.Problem))
++			}
++		}
++	}
++}
++
++// formatScore renders the ranking score compactly: an integer-valued score drops
++// the decimal (6, not 6.0); a fractional score keeps two places.
++func formatScore(s float64) string {
++	if s == float64(int64(s)) {
++		return strconv.FormatInt(int64(s), 10)
++	}
++	return strconv.FormatFloat(s, 'f', 2, 64)
++}
++
++// sortDisagreements orders items highest-tension first with a total order so the
++// ranking is deterministic (same input → same order): score desc, then severity
++// rank desc, file asc, line asc, kind asc, problem asc.
++func sortDisagreements(items []DisagreementItem) {
++	sort.SliceStable(items, func(i, j int) bool {
++		a, b := items[i], items[j]
++		if a.Score != b.Score {
++			return a.Score > b.Score
++		}
++		if ra, rb := severityRank[a.Severity], severityRank[b.Severity]; ra != rb {
++			return ra > rb
++		}
++		if a.File != b.File {
++			return a.File < b.File
++		}
++		if a.Line != b.Line {
++			return a.Line < b.Line
++		}
++		if a.Kind != b.Kind {
++			return a.Kind < b.Kind
++		}
++		return a.Problem < b.Problem
++	})
++}
+diff --git a/internal/reconcile/disagree_test.go b/internal/reconcile/disagree_test.go
+new file mode 100644
+index 0000000..30c36b7
+--- /dev/null
++++ b/internal/reconcile/disagree_test.go
+@@ -0,0 +1,303 @@
++package reconcile
++
++import (
++	"bytes"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// jf builds a findings.json record with the radar-relevant fields.
++func jf(sev, file string, line int, problem string, reviewers []string, disagreement string) JSONFinding {
++	conf := ConfMedium
++	if len(reviewers) >= 2 {
++		conf = ConfHigh
++	}
++	return JSONFinding{
++		Severity: sev, File: file, Line: line, Problem: problem,
++		Reviewers: reviewers, Confidence: conf, Disagreement: disagreement,
++	}
++}
++
++func itemsByKind(df DisagreementsFile, kind string) []DisagreementItem {
++	var out []DisagreementItem
++	for _, it := range df.Items {
++		if it.Kind == kind {
++			out = append(out, it)
++		}
++	}
++	return out
++}
++
++func TestBuildDisagreements_SeveritySplitScoredBySpreadTimesIndependence(t *testing.T) {
++	findings := []JSONFinding{
++		jf("CRITICAL", "a.go", 10, "split here", []string{"greta", "kai"}, "LOW vs CRITICAL"),
++	}
++	df := BuildDisagreements(findings, nil)
++
++	splits := itemsByKind(df, KindSeveritySplit)
++	require.Len(t, splits, 1)
++	s := splits[0]
++	assert.Equal(t, 3, s.Spread, "CRITICAL(4) - LOW(1) = 3")
++	assert.Equal(t, 2, s.Independence, "two distinct reviewers")
++	assert.Equal(t, 6.0, s.Score, "spread 3 x independence 2")
++	assert.Equal(t, "LOW vs CRITICAL", s.Disagreement)
++}
++
++func TestBuildDisagreements_SoloScoredBySeverityRank(t *testing.T) {
++	findings := []JSONFinding{
++		jf("CRITICAL", "solo.go", 1, "only greta saw this", []string{"greta"}, ""),
++		jf("LOW", "solo2.go", 2, "only kai saw this", []string{"kai"}, ""),
++	}
++	df := BuildDisagreements(findings, nil)
++
++	solos := itemsByKind(df, KindSoloFinding)
++	require.Len(t, solos, 2)
++	// Highest-tension first: CRITICAL solo (rank 4) before LOW solo (rank 1).
++	assert.Equal(t, "solo.go", df.Items[0].File)
++	assert.Equal(t, 4.0, df.Items[0].Score)
++	assert.Equal(t, 1, df.Items[0].Independence)
++}
++
++func TestBuildDisagreements_CriticalSoloOutranksLowMediumSplit(t *testing.T) {
++	findings := []JSONFinding{
++		jf("MEDIUM", "split.go", 5, "low-vs-medium split", []string{"greta", "kai"}, "LOW vs MEDIUM"),
++		jf("CRITICAL", "solo.go", 9, "critical solo", []string{"greta"}, ""),
++	}
++	df := BuildDisagreements(findings, nil)
++
++	require.GreaterOrEqual(t, len(df.Items), 2)
++	// Per clarification 2026-06-14: a CRITICAL solo (score 4) outranks a
++	// LOW-vs-MEDIUM split (spread 1 x independence 2 = 2).
++	assert.Equal(t, KindSoloFinding, df.Items[0].Kind)
++	assert.Equal(t, "solo.go", df.Items[0].File)
++	assert.Equal(t, KindSeveritySplit, df.Items[1].Kind)
++}
++
++func TestBuildDisagreements_MultiReviewerConsensusIsNotSurfaced(t *testing.T) {
++	// Two reviewers, same severity, no disagreement — consensus, not tension.
++	findings := []JSONFinding{
++		jf("HIGH", "agree.go", 3, "both agree", []string{"greta", "kai"}, ""),
++	}
++	df := BuildDisagreements(findings, nil)
++	assert.Empty(t, df.Items, "agreed multi-reviewer findings are not disagreements")
++}
++
++func TestBuildDisagreements_GrayZoneClusterSurfacedWithPositions(t *testing.T) {
++	clusters := []AmbiguousCluster{
++		{
++			ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
++			Findings: []stream.Finding{
++				mf("HIGH", "g.go", 7, "buffer overrun risk", "f", "security", 10, "e", "greta"),
++				mf("LOW", "g.go", 8, "minor bounds note", "f", "security", 10, "e", "kai"),
++			},
++		},
++	}
++	df := BuildDisagreements(nil, clusters)
++	gray := itemsByKind(df, KindGrayZone)
++	require.Len(t, gray, 1)
++	g := gray[0]
++	assert.Equal(t, 2, len(g.Positions), "side-by-side model positions")
++	assert.Equal(t, 2, g.Spread, "HIGH(3) - LOW(1) = 2")
++	assert.Equal(t, 2, g.Independence)
++	assert.Equal(t, 4.0, g.Score, "spread 2 x independence 2")
++	assert.Contains(t, g.Detail, "0.55", "similarity recorded")
++}
++
++func TestBuildDisagreements_GrayZoneMembersNotDoubleSurfacedAsSolo(t *testing.T) {
++	// The same two findings appear as singletons in findings.json AND as a
++	// gray-zone pair; they must surface once (as the cluster), never as solos.
++	clusterFindings := []stream.Finding{
++		mf("HIGH", "g.go", 7, "buffer overrun risk", "f", "security", 10, "e", "greta"),
++		mf("LOW", "g.go", 7, "minor bounds note", "f", "security", 10, "e", "kai"),
++	}
++	clusters := []AmbiguousCluster{{ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55, Findings: clusterFindings}}
++	findings := []JSONFinding{
++		jf("HIGH", "g.go", 7, "buffer overrun risk", []string{"greta"}, ""),
++		jf("LOW", "g.go", 7, "minor bounds note", []string{"kai"}, ""),
++	}
++	df := BuildDisagreements(findings, clusters)
++	assert.Empty(t, itemsByKind(df, KindSoloFinding), "gray-zone members excluded from solo tier")
++	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
++}
++
++func TestBuildDisagreements_ExcludesOutOfScope(t *testing.T) {
++	findings := []JSONFinding{
++		{Severity: "CRITICAL", File: "pre.go", Line: 1, Problem: "pre-existing",
++			Category: CategoryOutOfScope, Reviewers: []string{"greta"}, Confidence: ConfMedium},
++		jf("HIGH", "real.go", 2, "in the change", []string{"kai"}, ""),
++	}
++	df := BuildDisagreements(findings, nil)
++	require.Len(t, df.Items, 1, "out-of-scope finding excluded from the radar")
++	assert.Equal(t, "real.go", df.Items[0].File)
++}
++
++func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
++	findings := []JSONFinding{
++		jf("MEDIUM", "b.go", 2, "p2", []string{"kai"}, ""),
++		jf("MEDIUM", "a.go", 1, "p1", []string{"greta"}, ""),
++		jf("CRITICAL", "c.go", 3, "p3", []string{"greta", "kai"}, "LOW vs CRITICAL"),
++	}
++	first := BuildDisagreements(findings, nil)
++	second := BuildDisagreements(findings, nil)
++	require.Equal(t, first, second, "same input yields identical output")
++	// Tie-break between the two MEDIUM solos (equal score 2) is by file asc.
++	medSolos := itemsByKind(first, KindSoloFinding)
++	require.Len(t, medSolos, 2)
++	assert.Equal(t, "a.go", medSolos[0].File)
++	assert.Equal(t, "b.go", medSolos[1].File)
++}
++
++func TestBuildDisagreements_VerificationTieSurfaced(t *testing.T) {
++	findings := []JSONFinding{
++		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "contested validity",
++			Reviewers: []string{"greta"}, Confidence: ConfMedium,
++			Verification: &Verification{
++				Verdict: VerdictUnverifiable,
++				Skeptic: "skeptic-a, skeptic-b",
++				Notes:   "skeptic-a: real | skeptic-b: not real",
++			}},
++	}
++	df := BuildDisagreements(findings, nil)
++	items := itemsByKind(df, KindVerificationDisagreement)
++	require.Len(t, items, 1)
++	assert.Equal(t, "skeptic-a, skeptic-b", items[0].Skeptics)
++	assert.Equal(t, 3.0, items[0].Score, "no spread → scored by severity rank HIGH(3)")
++	assert.Contains(t, items[0].Detail, "not real")
++}
++
++func TestBuildDisagreements_SingleSkepticUnverifiableIsNotTension(t *testing.T) {
++	// One skeptic that simply could not verify is not a disagreement.
++	findings := []JSONFinding{
++		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "couldn't check",
++			Reviewers: []string{"greta", "kai"}, Confidence: ConfHigh,
++			Verification: &Verification{Verdict: VerdictUnverifiable, Skeptic: "skeptic-a", Notes: "timeout"}},
++	}
++	df := BuildDisagreements(findings, nil)
++	assert.Empty(t, itemsByKind(df, KindVerificationDisagreement))
++}
++
++func TestBuildDisagreements_RefutedNeverSurfaced(t *testing.T) {
++	findings := []JSONFinding{
++		{Severity: "CRITICAL", File: "r.go", Line: 1, Problem: "false alarm",
++			Reviewers: []string{"greta"}, Confidence: ConfMedium,
++			Verification: &Verification{Verdict: VerdictRefuted, Skeptic: "skeptic-a", Notes: "not a bug"}},
++	}
++	df := BuildDisagreements(findings, nil)
++	assert.Empty(t, df.Items, "a refuted finding is not actionable tension")
++}
++
++func TestBuildDisagreements_VerificationTieAlsoSplitKeepsSpreadScore(t *testing.T) {
++	// A finding that is both a severity split and a skeptic tie is labeled a
++	// verification disagreement but keeps the stronger spread-based score.
++	findings := []JSONFinding{
++		{Severity: "CRITICAL", File: "v.go", Line: 4, Problem: "double tension",
++			Reviewers: []string{"greta", "kai"}, Confidence: ConfHigh, Disagreement: "LOW vs CRITICAL",
++			Verification: &Verification{Verdict: VerdictUnverifiable, Skeptic: "s-a, s-b", Notes: "split"}},
++	}
++	df := BuildDisagreements(findings, nil)
++	require.Len(t, df.Items, 1)
++	assert.Equal(t, KindVerificationDisagreement, df.Items[0].Kind)
++	assert.Equal(t, 6.0, df.Items[0].Score, "spread 3 x independence 2 retained")
++}
++
++func TestRenderMarkdown_RadarSectionAboveFindings(t *testing.T) {
++	// Two reviewers, same location/problem, different severity → merged into one
++	// finding carrying a severity-disagreement annotation.
++	sources := []Source{
++		{Name: "pool", Findings: []stream.Finding{mf("CRITICAL", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
++		{Name: "host", Findings: []stream.Finding{mf("LOW", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
++	}
++	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
++	var buf bytes.Buffer
++	require.NoError(t, RenderMarkdown(&buf, res))
++	out := buf.String()
++	require.Contains(t, out, "## Disagreements")
++	assert.Less(t, strings.Index(out, "## Disagreements"), strings.Index(out, "## Findings"),
++		"radar section renders above consensus findings")
++	assert.Contains(t, out, "LOW vs CRITICAL")
++}
++
++func TestRenderMarkdown_NoDisagreementsOmitsRadar(t *testing.T) {
++	// Two reviewers agree on severity → consensus, no tension, no radar section.
++	sources := []Source{
++		{Name: "pool", Findings: []stream.Finding{mf("HIGH", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
++		{Name: "host", Findings: []stream.Finding{mf("HIGH", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
++	}
++	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
++	var buf bytes.Buffer
++	require.NoError(t, RenderMarkdown(&buf, res))
++	assert.NotContains(t, buf.String(), "## Disagreements", "no disagreements → section omitted")
++}
++
++func TestEmit_WritesDisagreementsJSON(t *testing.T) {
++	reviewDir := t.TempDir()
++	reconDir := filepath.Join(reviewDir, "reconciled")
++	sources := []Source{
++		{Name: "pool", Findings: []stream.Finding{mf("CRITICAL", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
++		{Name: "host", Findings: []stream.Finding{mf("LOW", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
++	}
++	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
++	require.NoError(t, Emit(reconDir, res))
++	assert.FileExists(t, filepath.Join(reconDir, DisagreementsJSON))
++
++	df, err := ReadDisagreements(reviewDir)
++	require.NoError(t, err)
++	assert.Equal(t, DisagreementsSchemaVersion, df.SchemaVersion)
++	assert.Equal(t, IndependenceModelReviewerCount, df.IndependenceModel)
++	require.Len(t, df.Items, 1)
++	assert.Equal(t, KindSeveritySplit, df.Items[0].Kind)
++	assert.Equal(t, "LOW vs CRITICAL", df.Items[0].Disagreement)
++}
++
++func TestReadDisagreements_MissingReturnsEmpty(t *testing.T) {
++	df, err := ReadDisagreements(t.TempDir())
++	require.NoError(t, err)
++	assert.Empty(t, df.Items)
++}
++
++func TestReadDisagreements_MalformedIsError(t *testing.T) {
++	reviewDir := t.TempDir()
++	reconDir := filepath.Join(reviewDir, "reconciled")
++	require.NoError(t, os.MkdirAll(reconDir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(reconDir, DisagreementsJSON), []byte("{not json"), 0o644))
++	_, err := ReadDisagreements(reviewDir)
++	require.Error(t, err)
++}
++
++func TestBuildDisagreements_SchemaMetadata(t *testing.T) {
++	df := BuildDisagreements(nil, nil)
++	assert.Equal(t, DisagreementsSchemaVersion, df.SchemaVersion)
++	assert.Equal(t, IndependenceModelReviewerCount, df.IndependenceModel)
++	assert.Empty(t, df.Items)
++}
++
++// TestDisagreementsSchema_StableContract pins the literal schema version and the
++// JSON field names Epic 6.0 (Cross-Examination) consumes. A rename or version
++// bump here is a breaking change to a downstream contract — update Epic 6.0 and
++// docs/disagreement-radar.md before changing this test.
++func TestDisagreementsSchema_StableContract(t *testing.T) {
++	assert.Equal(t, "1.0", DisagreementsSchemaVersion, "Epic 6.0 contract version")
++	assert.Equal(t, "distinct-reviewer-count", IndependenceModelReviewerCount)
++
++	df := BuildDisagreements([]JSONFinding{
++		jf("CRITICAL", "a.go", 1, "p", []string{"greta", "kai"}, "LOW vs CRITICAL"),
++	}, nil)
++	data, err := json.MarshalIndent(df, "", "  ")
++	require.NoError(t, err)
++	out := string(data)
++	for _, key := range []string{
++		`"schemaVersion"`, `"independenceModel"`, `"items"`,
++		`"kind"`, `"file"`, `"line"`, `"severity"`, `"problem"`,
++		`"score"`, `"spread"`, `"independence"`, `"reviewers"`, `"disagreement"`,
++	} {
++		assert.Contains(t, out, key, "handoff schema must expose %s", key)
++	}
++}
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index 29f6e36..decee42 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -21,6 +21,9 @@ const (
+ 	ReportMD      = "report.md"
+ 	SummaryJSON   = "summary.json"
+ 	AmbiguousJSON = "ambiguous.json"
++	// DisagreementsJSON is the disagreement-radar handoff artifact (Epic 3.2) —
++	// the stable, versioned queue Epic 6.0 (Cross-Examination) consumes directly.
++	DisagreementsJSON = "disagreements.json"
+ )
+ 
+ // Verification is the reserved per-finding adversarial-verification block for a
+@@ -107,6 +110,9 @@ func Emit(reconciledDir string, r Result) error {
+ 		{ReportMD, func(w io.Writer) error { return RenderMarkdown(w, r) }},
+ 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
+ 		{AmbiguousJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Ambiguous) }},
++		{DisagreementsJSON, func(w io.Writer) error {
++			return renderIndentedJSON(w, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
++		}},
+ 	}
+ 	// Render every artifact first so a render error aborts before any file is
+ 	// published — the published set is then never partially from this run.
+@@ -170,6 +176,53 @@ func ReadReconciledFindings(reviewDir string) ([]JSONFinding, error) {
+ 	return findings, nil
+ }
+ 
++// ReadAmbiguousClusters loads reviewDir/reconciled/ambiguous.json — the gray-zone
++// sidecar the disagreement radar reads. A missing or empty file returns
++// (nil, nil): the radar degrades to a findings-only view rather than erroring,
++// since ambiguous.json is absent whenever a review produced no gray-zone pairs.
++// A present-but-unparseable file is an error.
++func ReadAmbiguousClusters(reviewDir string) ([]AmbiguousCluster, error) {
++	path := filepath.Join(reviewDir, reconciledSubdir, AmbiguousJSON)
++	data, err := os.ReadFile(path)
++	if err != nil {
++		if os.IsNotExist(err) {
++			return nil, nil
++		}
++		return nil, err
++	}
++	if len(bytes.TrimSpace(data)) == 0 {
++		return nil, nil
++	}
++	var clusters []AmbiguousCluster
++	if err := json.Unmarshal(data, &clusters); err != nil {
++		return nil, fmt.Errorf("parsing %s: %w", AmbiguousJSON, err)
++	}
++	return clusters, nil
++}
++
++// ReadDisagreements loads reviewDir/reconciled/disagreements.json — the Epic 6.0
++// cross-exam handoff queue written by Emit. A missing or empty file returns a
++// zero DisagreementsFile (no error): a review with no disagreements still has a
++// valid, empty queue. A present-but-unparseable file is an error.
++func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
++	path := filepath.Join(reviewDir, reconciledSubdir, DisagreementsJSON)
++	data, err := os.ReadFile(path)
++	if err != nil {
++		if os.IsNotExist(err) {
++			return DisagreementsFile{}, nil
++		}
++		return DisagreementsFile{}, err
++	}
++	if len(bytes.TrimSpace(data)) == 0 {
++		return DisagreementsFile{}, nil
++	}
++	var df DisagreementsFile
++	if err := json.Unmarshal(data, &df); err != nil {
++		return DisagreementsFile{}, fmt.Errorf("parsing %s: %w", DisagreementsJSON, err)
++	}
++	return df, nil
++}
++
+ // RenderMarkdown writes the human report.md: an executive summary (counts by
+ // severity x confidence) followed by findings grouped by severity. Findings
+ // annotated out-of-scope are listed in their own section (AC 06-04) — they do
+@@ -205,6 +258,11 @@ func RenderMarkdown(w io.Writer, r Result) error {
+ 	b.WriteString("\n")
+ 	writeSeverityConfidenceTable(&b, inScope)
+ 
++	// Disagreement radar above the consensus findings (Epic 3.2). Nothing is
++	// written when there is no tension, so report.md is byte-identical to the
++	// pre-3.2 output for a review with no disagreements.
++	writeRadarSection(&b, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
++
+ 	if len(r.Findings) == 0 {
+ 		b.WriteString("\nNo findings.\n")
+ 		_, err := w.Write(b.Bytes())
+diff --git a/internal/reconcile/emit_test.go b/internal/reconcile/emit_test.go
+index db0370b..651fa05 100644
+--- a/internal/reconcile/emit_test.go
++++ b/internal/reconcile/emit_test.go
+@@ -52,7 +52,7 @@ func TestReconcile_AmbiguousAlwaysWrittenEvenWhenEmpty(t *testing.T) {
+ 	assert.Equal(t, 0, res.Summary.TotalFindings)
+ }
+ 
+-func TestEmit_WritesAllFiveArtifacts(t *testing.T) {
++func TestEmit_WritesAllArtifacts(t *testing.T) {
+ 	dir := t.TempDir()
+ 	sources := []Source{
+ 		{Name: "pool", Findings: []stream.Finding{
+@@ -65,7 +65,7 @@ func TestEmit_WritesAllFiveArtifacts(t *testing.T) {
+ 	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+ 	require.NoError(t, Emit(dir, res))
+ 
+-	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON} {
++	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON, DisagreementsJSON} {
+ 		assert.FileExists(t, filepath.Join(dir, name))
+ 	}
+ 
+@@ -127,7 +127,7 @@ func TestEmit_DeterministicOutput(t *testing.T) {
+ 	d1, d2 := t.TempDir(), t.TempDir()
+ 	require.NoError(t, Emit(d1, Reconcile(sources, recAt())))
+ 	require.NoError(t, Emit(d2, Reconcile(sources, recAt())))
+-	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON} {
++	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, DisagreementsJSON} {
+ 		a, _ := os.ReadFile(filepath.Join(d1, name))
+ 		b, _ := os.ReadFile(filepath.Join(d2, name))
+ 		assert.Equal(t, string(a), string(b), "%s must be byte-identical across runs", name)
+diff --git a/internal/report/disagree.go b/internal/report/disagree.go
+new file mode 100644
+index 0000000..68debd5
+--- /dev/null
++++ b/internal/report/disagree.go
+@@ -0,0 +1,86 @@
++package report
++
++import (
++	"bytes"
++	"fmt"
++	"io"
++	"strconv"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++)
++
++// RenderDisagreements writes the focused `atcr report --disagreements` view: a
++// ranked list of the highest-tension spots in a change, each with the model
++// positions side by side. Free text is HTML-escaped and newline-flattened and
++// file paths render in backtick code spans, the same injection defenses the main
++// report applies.
++func RenderDisagreements(w io.Writer, df reconcile.DisagreementsFile) error {
++	var b bytes.Buffer
++	b.WriteString("# atcr Disagreement Radar\n\n")
++	if len(df.Items) == 0 {
++		b.WriteString("No disagreements detected.\n")
++		_, err := w.Write(b.Bytes())
++		return err
++	}
++	fmt.Fprintf(&b, "%d tension spot(s), highest first.\n", len(df.Items))
++	writeRadarItems(&b, df.Items, "## ")
++	_, err := w.Write(b.Bytes())
++	return err
++}
++
++// writeRadarSection appends the collapsible "Disagreements" section used inside
++// the standard report.md, above the consensus findings. It writes nothing when
++// there are no items, so a review with no disagreements produces byte-identical
++// report output.
++func writeRadarSection(b *bytes.Buffer, df reconcile.DisagreementsFile) {
++	if len(df.Items) == 0 {
++		return
++	}
++	fmt.Fprintf(b, "\n## Disagreements\n\nTop %d tension spot(s) — reviewer splits, solo findings, and gray-zone clusters, highest first.\n", len(df.Items))
++	writeRadarItems(b, df.Items, "### ")
++}
++
++// writeRadarItems renders each ranked item under the given heading prefix.
++func writeRadarItems(b *bytes.Buffer, items []reconcile.DisagreementItem, heading string) {
++	for i, it := range items {
++		fmt.Fprintf(b, "\n%s%d. %s — %s (%s) · score %s\n",
++			heading, i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
++		if it.Disagreement != "" {
++			fmt.Fprintf(b, "- Severity disagreement: %s\n", esc(it.Disagreement))
++		}
++		if it.Skeptics != "" {
++			fmt.Fprintf(b, "- Skeptics split: %s\n", esc(it.Skeptics))
++		}
++		if len(it.Reviewers) > 0 {
++			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinReviewers(it.Reviewers)), it.Independence)
++		}
++		if it.Problem != "" {
++			fmt.Fprintf(b, "- Problem: %s\n", escTrunc(it.Problem))
++		}
++		if it.Detail != "" {
++			fmt.Fprintf(b, "- Detail: %s\n", escTrunc(it.Detail))
++		}
++		if len(it.Positions) > 0 {
++			b.WriteString("- Positions:\n")
++			for _, p := range it.Positions {
++				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(reviewerOrUnknown(p.Reviewer)), esc(p.Severity), escTrunc(p.Problem))
++			}
++		}
++	}
++}
++
++// formatScore renders the ranking score compactly: an integer-valued score drops
++// the decimal (6, not 6.0); a fractional score keeps two places.
++func formatScore(s float64) string {
++	if s == float64(int64(s)) {
++		return strconv.FormatInt(int64(s), 10)
++	}
++	return strconv.FormatFloat(s, 'f', 2, 64)
++}
++
++func reviewerOrUnknown(name string) string {
++	if name == "" {
++		return "(unknown)"
++	}
++	return name
++}
+diff --git a/internal/report/disagree_test.go b/internal/report/disagree_test.go
+new file mode 100644
+index 0000000..a9b45ca
+--- /dev/null
++++ b/internal/report/disagree_test.go
+@@ -0,0 +1,114 @@
++package report
++
++import (
++	"bytes"
++	"strings"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestRenderDisagreements_EmptyIsExplicit(t *testing.T) {
++	var buf bytes.Buffer
++	require.NoError(t, RenderDisagreements(&buf, reconcile.DisagreementsFile{
++		SchemaVersion: reconcile.DisagreementsSchemaVersion,
++	}))
++	out := buf.String()
++	assert.Contains(t, out, "Disagreement Radar")
++	assert.Contains(t, out, "No disagreements")
++}
++
++func TestRenderDisagreements_RanksHighestTensionFirst(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "MEDIUM", File: "split.go", Line: 5, Problem: "low-vs-medium split",
++			Reviewers: []string{"greta", "kai"}, Confidence: "HIGH", Disagreement: "LOW vs MEDIUM"},
++		{Severity: "CRITICAL", File: "big.go", Line: 9, Problem: "critical-vs-low split",
++			Reviewers: []string{"greta", "kai"}, Confidence: "HIGH", Disagreement: "LOW vs CRITICAL"},
++	}
++	df := reconcile.BuildDisagreements(findings, nil)
++
++	var buf bytes.Buffer
++	require.NoError(t, RenderDisagreements(&buf, df))
++	out := buf.String()
++
++	// Highest score (CRITICAL-vs-LOW, spread 3 x indep 2 = 6) renders before the
++	// LOW-vs-MEDIUM split (spread 1 x indep 2 = 2).
++	assert.Less(t, strings.Index(out, "big.go:9"), strings.Index(out, "split.go:5"))
++	assert.Contains(t, out, "LOW vs CRITICAL")
++	assert.Contains(t, out, "score 6")
++}
++
++func TestRenderDisagreements_GrayZoneShowsPositionsSideBySide(t *testing.T) {
++	clusters := []reconcile.AmbiguousCluster{{
++		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
++		Findings: []stream.Finding{
++			{Severity: "HIGH", File: "g.go", Line: 7, Problem: "buffer overrun risk", Reviewer: "greta"},
++			{Severity: "LOW", File: "g.go", Line: 8, Problem: "minor bounds note", Reviewer: "kai"},
++		},
++	}}
++	df := reconcile.BuildDisagreements(nil, clusters)
++
++	var buf bytes.Buffer
++	require.NoError(t, RenderDisagreements(&buf, df))
++	out := buf.String()
++	assert.Contains(t, out, "greta")
++	assert.Contains(t, out, "kai")
++	assert.Contains(t, out, "buffer overrun risk")
++	assert.Contains(t, out, "minor bounds note")
++	assert.Contains(t, out, "0.55")
++}
++
++func TestRenderMarkdownWithDisagreements_RadarAboveFindings(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "CRITICAL", File: "a.go", Line: 1, Problem: "boom",
++			Reviewers: []string{"greta", "host"}, Confidence: "HIGH", Disagreement: "LOW vs CRITICAL"},
++	}
++	df := reconcile.BuildDisagreements(findings, nil)
++	var buf bytes.Buffer
++	require.NoError(t, RenderMarkdownWithDisagreements(&buf, findings, df))
++	out := buf.String()
++	require.Contains(t, out, "## Disagreements")
++	require.Contains(t, out, "## Findings")
++	assert.Less(t, strings.Index(out, "## Disagreements"), strings.Index(out, "## Findings"))
++}
++
++func TestRenderMarkdownWithDisagreements_EmptyMatchesPlainRender(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p",
++			Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
++	}
++	df := reconcile.BuildDisagreements(findings, nil) // no tension → empty
++	var withRadar, plain bytes.Buffer
++	require.NoError(t, RenderMarkdownWithDisagreements(&withRadar, findings, df))
++	require.NoError(t, Render(&plain, findings, FormatMarkdown))
++	assert.Equal(t, plain.String(), withRadar.String(),
++		"no disagreements → byte-identical to the plain markdown report")
++}
++
++func TestRenderDisagreements_ShowsVerificationSkepticSplit(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "contested",
++			Reviewers: []string{"greta"}, Confidence: "MEDIUM",
++			Verification: &reconcile.Verification{
++				Verdict: reconcile.VerdictUnverifiable, Skeptic: "skeptic-a, skeptic-b", Notes: "disagreed"}},
++	}
++	df := reconcile.BuildDisagreements(findings, nil)
++	var buf bytes.Buffer
++	require.NoError(t, RenderDisagreements(&buf, df))
++	out := buf.String()
++	assert.Contains(t, out, "Skeptics split: skeptic-a, skeptic-b")
++}
++
++func TestRenderDisagreements_EscapesFreeText(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "<script>alert(1)</script>",
++			Reviewers: []string{"a"}, Confidence: "MEDIUM"},
++	}
++	df := reconcile.BuildDisagreements(findings, nil)
++	var buf bytes.Buffer
++	require.NoError(t, RenderDisagreements(&buf, df))
++	assert.NotContains(t, buf.String(), "<script>", "free text must be HTML-escaped")
++}
+diff --git a/internal/report/render.go b/internal/report/render.go
+index ec3f804..4accfa2 100644
+--- a/internal/report/render.go
++++ b/internal/report/render.go
+@@ -47,7 +47,11 @@ func Formats() string { return FormatMarkdown + ", " + FormatJSON + ", " + Forma
+ func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error {
+ 	switch format {
+ 	case FormatMarkdown:
+-		return renderMarkdown(w, findings)
++		// The plain markdown report carries no radar section (empty
++		// DisagreementsFile); callers that want the radar use
++		// RenderMarkdownWithDisagreements. This keeps Render's md output
++		// byte-identical to its pre-3.2 form for every existing caller.
++		return renderMarkdown(w, findings, reconcile.DisagreementsFile{})
+ 	case FormatJSON:
+ 		return renderJSON(w, findings)
+ 	case FormatChecklist:
+@@ -76,12 +80,16 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
+ // (so neither raw HTML nor markdown structure can be injected) and truncated to
+ // maxTextLen; file paths render verbatim inside backtick code spans (no escape,
+ // no truncation — preserving unicode paths byte-for-byte, AC 01-06 Edge Case 3).
+-func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
++func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile) error {
+ 	var b bytes.Buffer
+ 	b.WriteString("# atcr Review Report\n\n")
+ 	verified := anyVerification(findings)
+ 	writeSummaryGrid(&b, findings, verified)
+ 
++	// Disagreement radar above the consensus findings (Epic 3.2). Empty df →
++	// nothing written → output identical to the plain report.
++	writeRadarSection(&b, df)
++
+ 	if len(findings) == 0 {
+ 		b.WriteString("\nNo findings.\n")
+ 		_, err := w.Write(b.Bytes())
+@@ -147,6 +155,14 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
+ 	return err
+ }
+ 
++// RenderMarkdownWithDisagreements writes the standard markdown report with the
++// disagreement radar injected above the consensus findings (Epic 3.2). When df
++// has no items the output is byte-identical to the plain markdown report, so a
++// review with no disagreements is unchanged.
++func RenderMarkdownWithDisagreements(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile) error {
++	return renderMarkdown(w, findings, df)
++}
++
+ // renderChecklist writes a render-only markdown checkbox list — one "- [ ]" item
+ // per finding, no numbering, no persistence, no state (AC 01-06). Suitable for
+ // pasting into a PR comment.

@@ -1,0 +1,2 @@
+MEDIUM|internal/verify/pipeline.go:249|Skipped-finding verdict comparison uses case-insensitive trim which may match different strings|Use exact equality or normalize both sides identically|correctness|5|`strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict))`|case-reviewer
+MEDIUM|internal/verify/pipeline.go:391|Error path sets tripped to nil instead of empty slice, losing budget info from partial runs|Set tripped to a non-nil empty slice or nil consistently|error-handling|3|`tripped = nil` on invokeSkeptic error path|case-reviewer

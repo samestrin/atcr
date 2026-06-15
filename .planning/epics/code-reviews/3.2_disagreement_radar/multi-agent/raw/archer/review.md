@@ -1,0 +1,1 @@
+SECURITY|cmd/atcr/report.go:42|Missing input validation|Add bounds check for negative severity values|security|5|Severity values are assumed to be valid enum strings; no validation against severityRank map keys|bruce

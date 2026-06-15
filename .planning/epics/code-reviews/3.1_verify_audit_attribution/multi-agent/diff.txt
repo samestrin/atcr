@@ -1,0 +1,675 @@
+diff --git a/internal/verify/emit_test.go b/internal/verify/emit_test.go
+index 28ecb1d..54a4e18 100644
+--- a/internal/verify/emit_test.go
++++ b/internal/verify/emit_test.go
+@@ -399,3 +399,33 @@ func TestWriteFileAtomic_BadDir(t *testing.T) {
+ 	err := atomicfs.WriteFileAtomic(filepath.Join(t.TempDir(), "missing-subdir", "f.json"), []byte("data"))
+ 	require.Error(t, err)
+ }
++
++// TestReadVerificationResults covers the verification.json reader's three paths:
++// missing file (nil, nil — a first-ever verify is not an error), a successful
++// round-trip against WriteVerification, and a corrupt file (error).
++func TestReadVerificationResults(t *testing.T) {
++	t.Parallel()
++	// Missing file → (nil, nil), not an error.
++	got, err := ReadVerificationResults(t.TempDir())
++	require.NoError(t, err)
++	assert.Nil(t, got)
++
++	// Round-trip: WriteVerification then read back the same records.
++	dir := t.TempDir()
++	want := []VerificationResult{{
++		File: "a.go", Line: 7, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
++		Model: "m-x", Reasoning: "ok", DurationMs: 99, TrippedBudgets: []string{"timeout_secs"},
++	}}
++	require.NoError(t, WriteVerification(dir, want))
++	got, err = ReadVerificationResults(dir)
++	require.NoError(t, err)
++	require.Len(t, got, 1)
++	assert.Equal(t, want[0], got[0])
++
++	// Corrupt file → error.
++	bad := t.TempDir()
++	require.NoError(t, os.MkdirAll(filepath.Join(bad, reconciledSubdir), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(bad, reconciledSubdir, "verification.json"), []byte("{not json"), 0o644))
++	_, err = ReadVerificationResults(bad)
++	assert.Error(t, err)
++}
+diff --git a/internal/verify/emit_verification.go b/internal/verify/emit_verification.go
+index cf744ea..a387f0d 100644
+--- a/internal/verify/emit_verification.go
++++ b/internal/verify/emit_verification.go
+@@ -2,6 +2,7 @@ package verify
+ 
+ import (
+ 	"encoding/json"
++	"errors"
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
+@@ -21,6 +22,13 @@ const reconciledSubdir = "reconciled"
+ // back into findings.json: this record additionally carries the skeptic's model
+ // (the different-model rule's evidence), the full reasoning, and the cost/outcome
+ // metadata (duration, tripped budgets) a human needs to judge a verdict.
++//
++// Skeptic names every participating voter; Model names only the skeptics whose
++// verdict produced the recorded outcome — a winners-only subset on a decisive vote,
++// all participants on a tie, and "" when no skeptic executed. So for a multi-vote
++// run Model may list fewer entries than Skeptic by design (see winningAttribution).
++// DurationMs is the wall-clock of the run that produced the verdict; for a finding
++// skipped on a later re-run it is carried forward unchanged, not recomputed.
+ type VerificationResult struct {
+ 	File           string   `json:"file"`
+ 	Line           int      `json:"line"`
+@@ -104,6 +112,29 @@ func computeVerificationBytes(reviewDir string, results []VerificationResult, co
+ 	return path, append(data, '\n'), nil
+ }
+ 
++// ReadVerificationResults reads reviewDir/reconciled/verification.json and returns
++// its per-finding records. A missing file returns (nil, nil): a first-ever verify
++// has no prior file, so the caller treats absent priors as "no metadata to carry
++// forward" rather than an error. A present-but-unparseable file returns an error.
++// It is the read counterpart of computeVerificationBytes/WriteVerification, used by
++// the skip-already-verified path to recover a prior run's Model/DurationMs/
++// TrippedBudgets (AC4).
++func ReadVerificationResults(reviewDir string) ([]VerificationResult, error) {
++	path := filepath.Join(reviewDir, reconciledSubdir, "verification.json")
++	data, err := os.ReadFile(path)
++	if err != nil {
++		if errors.Is(err, os.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, err
++	}
++	var vf VerificationFile
++	if err := json.Unmarshal(data, &vf); err != nil {
++		return nil, fmt.Errorf("parsing verification.json: %w", err)
++	}
++	return vf.Findings, nil
++}
++
+ // WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
+ // 03-02). VerdictCounts is derived from results via CountVerdicts so the tally
+ // can never drift from the records it counts. Each result's nil TrippedBudgets
+diff --git a/internal/verify/invoke.go b/internal/verify/invoke.go
+index fd1d67a..601630c 100644
+--- a/internal/verify/invoke.go
++++ b/internal/verify/invoke.go
+@@ -37,15 +37,20 @@ type Dispatcher interface {
+ // tool-enabled fanout.Slot and runs it through a throwaway fanout.Engine wired to
+ // the supplied completer and dispatcher. Per-finding budgets (MaxTurns,
+ // ToolBudgetBytes, TimeoutSecs) are forwarded from the skeptic's AgentConfig.
+-func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, error) {
++//
++// The second return is the tripped-budget slice (e.g. ["max_turns"]): the same
++// budgets failureNotes folds into Notes for humans, surfaced structurally so the
++// caller can populate VerificationResult.TrippedBudgets (AC1). It is non-empty
++// only on a halted run; a clean verdict returns nil.
++func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, []string, error) {
+ 	if ctx == nil {
+-		return nil, errors.New("invokeSkeptic: nil context")
++		return nil, nil, errors.New("invokeSkeptic: nil context")
+ 	}
+ 	if cc == nil {
+-		return nil, errors.New("invokeSkeptic: nil ChatCompleter")
++		return nil, nil, errors.New("invokeSkeptic: nil ChatCompleter")
+ 	}
+ 	if disp == nil {
+-		return nil, errors.New("invokeSkeptic: nil dispatcher")
++		return nil, nil, errors.New("invokeSkeptic: nil dispatcher")
+ 	}
+ 
+ 	agent := buildSkepticAgent(skeptic, prompt)
+@@ -55,18 +60,19 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
+ 	// exactly one result. Guard the index anyway: a zero-length return must not
+ 	// panic (a panic would violate the never-propagate-runtime-error contract).
+ 	if len(results) == 0 {
+-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil
++		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil, nil
+ 	}
+ 	res := results[0]
+ 
+ 	// A non-OK status (provider error, timeout) or ANY tripped budget means the
+ 	// skeptic could not complete a trustworthy investigation — even though the tool
+ 	// loop returns StatusOK after a budget trip (partial-success final answer), a
+-	// trip must not be read as a real verdict. Both collapse to unverifiable.
++	// trip must not be read as a real verdict. Both collapse to unverifiable. The
++	// tripped-budget slice is returned so the caller records it structurally.
+ 	if res.Status != fanout.StatusOK || len(res.TrippedBudgets) > 0 {
+ 		notes := failureNotes(res)
+ 		logSkepticFailure(skeptic.Name, failureClass(res), notes)
+-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, nil
++		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+ 	}
+ 
+ 	v, _ := parseVerdict(res.Content)
+@@ -74,7 +80,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
+ 	if v.Verdict == verdictUnverifiable {
+ 		logSkepticFailure(skeptic.Name, "malformed_output", v.Notes)
+ 	}
+-	return v, nil
++	return v, nil, nil
+ }
+ 
+ // buildSkepticAgent assembles the tool-enabled fanout.Agent for a skeptic. Tools
+diff --git a/internal/verify/invoke_test.go b/internal/verify/invoke_test.go
+index a675b60..736cd0b 100644
+--- a/internal/verify/invoke_test.go
++++ b/internal/verify/invoke_test.go
+@@ -31,7 +31,7 @@ func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
+ 	t.Parallel()
+ 	sk := testSkeptic()
+ 	sk.Config.SupportsFC = false
+-	v, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
+ 	require.NoError(t, err)
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+@@ -61,7 +61,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
+ func TestInvokeSkeptic_Confirms(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
+-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+ 	require.NoError(t, err)
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, verdictConfirmed, v.Verdict)
+@@ -72,7 +72,7 @@ func TestInvokeSkeptic_Confirms(t *testing.T) {
+ func TestInvokeSkeptic_Refutes(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat(`{"verdict": "refuted", "reasoning": "false positive"}`)
+-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictRefuted, v.Verdict)
+ 	assert.Equal(t, "skeptic-1", v.Skeptic)
+@@ -85,7 +85,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
+ 		{content: `{"verdict": "confirmed", "reasoning": "verified via file read"}`},
+ 	}}
+ 	disp := okDispatcher()
+-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp)
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictConfirmed, v.Verdict)
+ 	assert.Equal(t, "verified via file read", v.Notes)
+@@ -95,7 +95,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
+ func TestInvokeSkeptic_ProviderError(t *testing.T) {
+ 	t.Parallel()
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
+-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+ 	require.NoError(t, err) // runtime failure NOT propagated
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+@@ -108,7 +108,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
+ 	ctx, cancel := context.WithCancel(context.Background())
+ 	cancel() // already cancelled before the first turn
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+-	v, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Equal(t, "skeptic-1", v.Skeptic)
+@@ -117,7 +117,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
+ func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat("I don't know")
+-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "malformed_output")
+@@ -127,7 +127,7 @@ func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
+ func TestInvokeSkeptic_EmptyResponse(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat("")
+-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "empty_response")
+@@ -138,7 +138,7 @@ func TestInvokeSkeptic_BudgetTripMaxTurns(t *testing.T) {
+ 	sk := testSkeptic()
+ 	sk.Config.MaxTurns = intPtr(2)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+-	v, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "max_turns")
+@@ -150,26 +150,52 @@ func TestInvokeSkeptic_BudgetTripToolBytes(t *testing.T) {
+ 	sk.Config.ToolBudgetBytes = int64Ptr(10)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file")}}
+ 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "this content is definitely more than ten bytes", OriginalBytes: 46}}
+-	v, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
++	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "tool_budget_bytes")
+ }
+ 
++// TestInvokeSkeptic_SurfacesTrippedBudgets locks AC1: a budget trip is returned
++// as a separate []string, not only folded into the free-text Notes, so the caller
++// can populate VerificationResult.TrippedBudgets structurally.
++func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
++	t.Parallel()
++	sk := testSkeptic()
++	sk.Config.MaxTurns = intPtr(2)
++	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
++	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
++	require.NoError(t, err)
++	require.NotNil(t, v)
++	assert.Equal(t, verdictUnverifiable, v.Verdict)
++	assert.Contains(t, tripped, "max_turns", "tripped budgets must be surfaced separately from Notes")
++}
++
++// TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict: a verdict reached without a
++// trip returns an empty tripped-budgets slice (the field never carries noise).
++func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
++	t.Parallel()
++	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt",
++		finalChat(`{"verdict":"confirmed","reasoning":"ok"}`), okDispatcher())
++	require.NoError(t, err)
++	assert.Equal(t, verdictConfirmed, v.Verdict)
++	assert.Empty(t, tripped, "a clean verdict trips no budgets")
++}
++
+ func TestInvokeSkeptic_NilContext(t *testing.T) {
+ 	t.Parallel()
+-	_, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher()) //nolint:staticcheck // intentional nil-ctx guard test
++	_, _, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher()) //nolint:staticcheck // intentional nil-ctx guard test
+ 	require.Error(t, err)
+ }
+ 
+ func TestInvokeSkeptic_NilChatCompleter(t *testing.T) {
+ 	t.Parallel()
+-	_, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher())
++	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher())
+ 	require.Error(t, err)
+ }
+ 
+ func TestInvokeSkeptic_NilDispatcher(t *testing.T) {
+ 	t.Parallel()
+-	_, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil)
++	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil)
+ 	require.Error(t, err)
+ }
+diff --git a/internal/verify/pipeline.go b/internal/verify/pipeline.go
+index 72c9d77..e82b098 100644
+--- a/internal/verify/pipeline.go
++++ b/internal/verify/pipeline.go
+@@ -212,9 +212,24 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 	// Build the complete verification.json from in-memory findings (no disk
+ 	// round-trip) so a no-op re-run reproduces the same snapshot rather than an
+ 	// empty file: every finding that carries a verdict is recorded, using this
+-	// run's rich record when available and synthesizing a compact one from the
+-	// on-disk block for a finding that was skipped this run (TD-007: a verdict
+-	// whose key matched no finding is surfaced below rather than silently dropped).
++	// run's rich record when available and, for a finding skipped this run,
++	// rebuilding from the on-disk findings.json block enriched with the prior
++	// run's audit metadata (TD-007: a verdict whose key matched no finding is
++	// surfaced below rather than silently dropped).
++	// Load the prior verification.json so a finding skipped this run (already
++	// verified, no --fresh) carries its rich audit metadata (Model/DurationMs/
++	// TrippedBudgets) forward instead of being re-synthesized as a lossy compact
++	// record — the findings.json block lacks those fields (AC4). A missing or
++	// unreadable prior degrades to no carry-forward rather than failing the run.
++	priorByKey := map[FindingKey]VerificationResult{}
++	if prior, perr := ReadVerificationResults(reviewDir); perr != nil {
++		fmt.Fprintf(os.Stderr, "atcr: verify: prior verification.json unreadable, skip-path metadata not carried forward: %v\n", perr)
++	} else {
++		for _, r := range prior {
++			priorByKey[FindingKey{File: r.File, Line: r.Line, Problem: r.Problem}] = r
++		}
++	}
++
+ 	matched := make(map[FindingKey]bool, len(rich))
+ 	results := make([]VerificationResult, 0, len(findings))
+ 	for _, f := range findings {
+@@ -227,12 +242,26 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 			results = append(results, r)
+ 			continue
+ 		}
+-		results = append(results, VerificationResult{
++		// Skipped this run: keep the authoritative verdict/skeptic/reasoning from the
++		// findings.json block (AC4).
++		rec := VerificationResult{
+ 			File: f.File, Line: f.Line, Problem: f.Problem,
+ 			Verdict:   f.Verification.Verdict,
+ 			Skeptic:   f.Verification.Skeptic,
+ 			Reasoning: f.Verification.Notes,
+-		})
++		}
++		// Carry Model/DurationMs/TrippedBudgets forward from the prior
++		// verification.json — but only when the prior verdict still matches the
++		// current block. A stale or hand-edited prior with a different verdict must
++		// not lend its audit metadata to a now-different outcome (zero values left
++		// if no prior, or a mismatched one, exists).
++		prior := priorByKey[key]
++		if strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
++			rec.Model = prior.Model
++			rec.DurationMs = prior.DurationMs
++			rec.TrippedBudgets = prior.TrippedBudgets
++		}
++		results = append(results, rec)
+ 	}
+ 	// TD-007: a verdict computed this run whose key matched no re-emitted finding
+ 	// indicates a key-construction mismatch; surface it on stderr rather than
+@@ -350,40 +379,109 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
+ 	if len(skeptics) == 0 {
+ 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
+ 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
++		// No skeptic ran, so no model is attributed: Model stays "" by the
++		// "attribute only to what executed" rule (AC3 / epic 3.1 clarification). Set
++		// explicitly so a future change to base's initializer cannot leak a default.
++		base.Model = ""
+ 		return v, base
+ 	}
+ 	if disp == nil {
+ 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "tool_harness_unavailable"}
+ 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
++		// Skeptics were eligible but the tool harness never built, so none executed —
++		// Model stays "" (same rule). Recording the candidate models would misattribute
++		// the record to models that produced nothing (AC3 / epic 3.1 clarification).
++		base.Model = ""
+ 		return v, base
+ 	}
+ 
+ 	prompt := buildSkepticPrompt(f, nil) // nil entries: the skeptic reads code via the tool loop
+ 	start := time.Now()
+ 	perSkeptic := make([]*reconcile.Verification, 0, len(skeptics))
++	perTripped := make([][]string, 0, len(skeptics))
+ 	for _, sk := range skeptics {
+-		v, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
++		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
+ 		if ierr != nil {
+ 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
+ 			// none can occur here, but never let one drop a finding.
+ 			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
++			tripped = nil
+ 		}
+ 		perSkeptic = append(perSkeptic, v)
++		perTripped = append(perTripped, tripped)
+ 	}
+ 	ver := aggregateVerdicts(perSkeptic)
+ 
+ 	base.Verdict = ver.Verdict
+ 	base.Skeptic = ver.Skeptic
+ 	base.Reasoning = ver.Notes
+-	models := make([]string, 0, len(skeptics))
+-	for _, sk := range skeptics {
+-		models = append(models, sk.Config.Model)
+-	}
+-	base.Model = strings.Join(models, ", ")
++	// Attribute Model/TrippedBudgets to the winning skeptics only — not all of
++	// skeptics[0..n] — so a multi-vote verdict records the majority's models, not
++	// the losers' (AC2/AC1).
++	base.Model, base.TrippedBudgets = winningAttribution(skeptics, perSkeptic, perTripped, ver.Verdict)
+ 	base.DurationMs = int(time.Since(start).Milliseconds())
+ 	return ver, base
+ }
+ 
++// winningAttribution derives the audit Model and TrippedBudgets for a finding
++// from the skeptics that produced the recorded verdict — mirroring how
++// joinSkeptics names contributors, but resolving who "won".
++//
++// perSkeptic[i] and perTripped[i] are the verdict and tripped-budget slice of
++// skeptics[i] (verifyFinding builds the three slices together, so indices align).
++// Models are deduplicated and joined in selection order. Tripped budgets attach
++// only to unverifiable verdicts (a budget trip collapses a skeptic to
++// unverifiable), so a confirmed/refuted winner contributes none.
++//
++// Attribution depends on whether `winner` was decisive or a tie sentinel:
++//   - Decisive (a strict plurality, e.g. 2 confirmed > 1 refuted → confirmed):
++//     record only the skeptics whose verdict equals `winner` (AC2) — the losers'
++//     models are dropped.
++//   - Tie (aggregateVerdicts emits unverifiable with Skeptic naming every voter,
++//     e.g. 1 confirmed + 1 refuted, or 1+1+1): no skeptic "won", so record every
++//     participant's model so Model stays consistent with Skeptic rather than
++//     misattributing the outcome to the lone unverifiable voter.
++func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
++	// A verdict is decisive when no other verdict matches or exceeds its count;
++	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
++	counts := map[string]int{}
++	for _, v := range perSkeptic {
++		if v != nil {
++			counts[v.Verdict]++
++		}
++	}
++	decisive := true
++	for verdict, n := range counts {
++		if verdict != winner && n >= counts[winner] {
++			decisive = false
++			break
++		}
++	}
++
++	var models, budgets []string
++	seenModel := map[string]bool{}
++	seenBudget := map[string]bool{}
++	for i, v := range perSkeptic {
++		if v == nil {
++			continue
++		}
++		if decisive && v.Verdict != winner {
++			continue // decisive vote: skip the losers
++		}
++		if m := skeptics[i].Config.Model; m != "" && !seenModel[m] {
++			seenModel[m] = true
++			models = append(models, m)
++		}
++		for _, b := range perTripped[i] {
++			if !seenBudget[b] {
++				seenBudget[b] = true
++				budgets = append(budgets, b)
++			}
++		}
++	}
++	return strings.Join(models, ", "), budgets
++}
++
+ // hasTrustedVerdict reports whether a finding's existing verification block is a
+ // cached result safe to skip (AC 04-05). Only the three canonical verdicts are
+ // trusted; nil, empty, or an unknown verdict is treated as unverified so the
+diff --git a/internal/verify/pipeline_test.go b/internal/verify/pipeline_test.go
+index 37679f8..a54511e 100644
+--- a/internal/verify/pipeline_test.go
++++ b/internal/verify/pipeline_test.go
+@@ -102,6 +102,20 @@ func (a alwaysChat) Chat(_ context.Context, _ llmclient.Invocation, _ []llmclien
+ 	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+ }
+ 
++// byModelChat answers each skeptic according to its Invocation.Model, so a
++// multi-skeptic run can script a different verdict per skeptic (e.g. 2-confirm/
++// 1-refute) — unlike alwaysChat, which answers every skeptic identically.
++type byModelChat struct{ byModel map[string]string }
++
++func (b byModelChat) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
++	return b.byModel[inv.Model], nil
++}
++
++func (b byModelChat) Chat(_ context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
++	c := b.byModel[inv.Model]
++	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
++}
++
+ func readFindings(t *testing.T, dir string) []reconcile.JSONFinding {
+ 	t.Helper()
+ 	f, err := reconcile.ReadReconciledFindings(dir)
+@@ -288,6 +302,162 @@ func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
+ 	assert.Contains(t, vf.Findings[0].Model, "m-skep", "all participating skeptic models must be recorded")
+ }
+ 
++// TestVerifyFinding_EarlyReturnsRecordEmptyModel locks AC3: neither early-return
++// path reaches a skeptic execution, so VerificationResult.Model is "" — a model is
++// attributed only to what actually ran (epic 3.1 clarification). Candidate skeptic
++// models present on the tool_harness_unavailable path are deliberately NOT recorded.
++func TestVerifyFinding_EarlyReturnsRecordEmptyModel(t *testing.T) {
++	t.Parallel()
++	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
++
++	// no_eligible_skeptic: no skeptics at all.
++	_, vr := verifyFinding(context.Background(), f, nil, finalChat("{}"), okDispatcher())
++	assert.Equal(t, "unverifiable", vr.Verdict)
++	assert.Equal(t, "no_eligible_skeptic", vr.Reasoning)
++	assert.Empty(t, vr.Model, "no skeptic ran → no model attributed")
++
++	// tool_harness_unavailable: skeptics eligible but the dispatcher never built.
++	_, vr = verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, finalChat("{}"), nil)
++	assert.Equal(t, "unverifiable", vr.Verdict)
++	assert.Equal(t, "tool_harness_unavailable", vr.Reasoning)
++	assert.Empty(t, vr.Model, "skeptics selected but none executed → no model attributed")
++}
++
++// TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute locks AC2: in a
++// 3-skeptic run where two confirm and one refutes, VerificationResult.Model must
++// name only the two winning (confirming) skeptics' models — never the losing
++// (refuting) skeptic's model, and never default to skeptics[0].
++func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
++	reg := skepticRegistry() // skep=m-skep
++	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
++	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
++	// Alphabetical selection: s2(m-s2), s3(m-s3), skep(m-skep). s3 refutes; the
++	// other two confirm → winner=confirmed, winners={m-s2, m-skep}.
++	dir := pipelineReview(t, []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
++	})
++	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
++		return byModelChat{byModel: map[string]string{
++			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
++			"m-skep": `{"verdict":"confirmed","reasoning":"yes"}`,
++			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
++		}}, okDispatcher(), nil, nil
++	}
++	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
++	require.NoError(t, err)
++
++	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
++	require.NoError(t, rerr)
++	var vf VerificationFile
++	require.NoError(t, json.Unmarshal(data, &vf))
++	require.Len(t, vf.Findings, 1)
++	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
++	assert.Contains(t, vf.Findings[0].Model, "m-s2", "winning skeptic model must be recorded")
++	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning skeptic model must be recorded")
++	assert.NotContains(t, vf.Findings[0].Model, "m-s3", "losing (refuting) skeptic model must NOT be attributed")
++}
++
++// TestRunVerify_ThreeWayTieRecordsAllParticipantModels locks the tie branch of
++// winningAttribution: when three skeptics split 1 confirmed / 1 refuted / 1
++// unverifiable, the aggregate is a tie → unverifiable, and Model must name every
++// participant — not just the lone unverifiable voter (independent-review MED).
++func TestRunVerify_ThreeWayTieRecordsAllParticipantModels(t *testing.T) {
++	reg := skepticRegistry() // skep=m-skep
++	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
++	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
++	// Selection s2(m-s2), s3(m-s3), skep(m-skep): confirmed / refuted / unverifiable.
++	dir := pipelineReview(t, []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
++	})
++	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
++		return byModelChat{byModel: map[string]string{
++			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
++			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
++			"m-skep": `{"verdict":"unverifiable","reasoning":"dunno"}`,
++		}}, okDispatcher(), nil, nil
++	}
++	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
++	require.NoError(t, err)
++
++	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
++	require.NoError(t, rerr)
++	var vf VerificationFile
++	require.NoError(t, json.Unmarshal(data, &vf))
++	require.Len(t, vf.Findings, 1)
++	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "a 1/1/1 split is a tie → unverifiable")
++	for _, m := range []string{"m-s2", "m-s3", "m-skep"} {
++		assert.Contains(t, vf.Findings[0].Model, m, "tie must record every participant's model")
++	}
++}
++
++// TestRunVerify_SkipDropsMismatchedPriorMetadata locks the carry-forward guard: a
++// prior verification.json whose verdict no longer matches the current findings.json
++// block must NOT lend its Model/DurationMs/TrippedBudgets to the now-different
++// outcome (independent-review LOW).
++func TestRunVerify_SkipDropsMismatchedPriorMetadata(t *testing.T) {
++	dir := pipelineReview(t, []reconcile.JSONFinding{{
++		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
++		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
++	}})
++	// Prior verdict is "refuted" — a stale/hand-edited mismatch against the current
++	// "confirmed" block; its rich metadata must be dropped, not carried.
++	require.NoError(t, WriteVerification(dir, []VerificationResult{{
++		File: "a.go", Line: 1, Problem: "boom", Verdict: "refuted", Skeptic: "s1",
++		Model: "m-stale", DurationMs: 9999, TrippedBudgets: []string{"timeout_secs"},
++	}}))
++
++	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
++		t.Fatal("already-verified finding must not invoke the harness")
++		return nil, nil, nil, nil
++	})
++	require.NoError(t, err)
++
++	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
++	require.NoError(t, rerr)
++	var vf VerificationFile
++	require.NoError(t, json.Unmarshal(data, &vf))
++	require.Len(t, vf.Findings, 1)
++	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
++	assert.Empty(t, vf.Findings[0].Model, "mismatched prior verdict must not carry its model")
++	assert.Zero(t, vf.Findings[0].DurationMs, "mismatched prior verdict must not carry its duration")
++	assert.Empty(t, vf.Findings[0].TrippedBudgets, "mismatched prior verdict must not carry its tripped budgets")
++}
++
++// TestRunVerify_SkipPreservesPriorMetadata locks AC4: a finding skipped on a
++// re-run (already-verified, no --fresh) must carry Model/DurationMs/TrippedBudgets
++// forward from the prior on-disk verification.json rather than re-synthesizing a
++// lossy compact record from the findings.json block (which lacks those fields).
++func TestRunVerify_SkipPreservesPriorMetadata(t *testing.T) {
++	dir := pipelineReview(t, []reconcile.JSONFinding{{
++		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
++		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
++	}})
++	// Seed a prior verification.json carrying rich metadata for that finding.
++	require.NoError(t, WriteVerification(dir, []VerificationResult{{
++		File: "a.go", Line: 1, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
++		Model: "m-prior", Reasoning: "checked the line", DurationMs: 4242, TrippedBudgets: []string{"max_turns"},
++	}}))
++
++	// Without --fresh the finding is skipped: the harness must never build, and the
++	// rewritten verification.json must retain the prior metadata.
++	res, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
++		t.Fatal("already-verified finding must not invoke the harness")
++		return nil, nil, nil, nil
++	})
++	require.NoError(t, err)
++	assert.Equal(t, 0, res.FindingsProcessed)
++
++	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
++	require.NoError(t, rerr)
++	var vf VerificationFile
++	require.NoError(t, json.Unmarshal(data, &vf))
++	require.Len(t, vf.Findings, 1)
++	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
++	assert.Equal(t, "m-prior", vf.Findings[0].Model, "skip path must carry prior model")
++	assert.Equal(t, 4242, vf.Findings[0].DurationMs, "skip path must carry prior duration")
++	assert.Equal(t, []string{"max_turns"}, vf.Findings[0].TrippedBudgets, "skip path must carry prior tripped budgets")
++}
++
+ // TestRunVerify_MissingReconciledFindings: a review with no findings.json returns
+ // ErrNoReconciledFindings (the caller renders the reconcile-first guidance).
+ func TestRunVerify_MissingReconciledFindings(t *testing.T) {
+diff --git a/internal/verify/verify_e2e_test.go b/internal/verify/verify_e2e_test.go
+index 4a60e9b..17d3876 100644
+--- a/internal/verify/verify_e2e_test.go
++++ b/internal/verify/verify_e2e_test.go
+@@ -69,7 +69,7 @@ func TestVerifyE2E_PlantedFindings(t *testing.T) {
+ 
+ 			// Phase 2: invocation with a scripted mock skeptic (no real LLM / network).
+ 			cc := finalChat(tc.skepticReply)
+-			v, err := invokeSkeptic(context.Background(), testSkeptic(), prompt, cc, okDispatcher())
++			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), prompt, cc, okDispatcher())
+ 			require.NoError(t, err, "runtime failures collapse to unverifiable, never an error")
+ 			require.NotNil(t, v)
+ 

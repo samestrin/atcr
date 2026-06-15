@@ -1,0 +1,1 @@
+MEDIUM|internal/registry/config.go:248|Scope entries not validated for newlines or control chars, enabling prompt injection via ScopeFocus|Reject scope entries containing \n, \r, or other control characters at load validation|security|10|scope entries only checked for non-empty; newlines pass into LLM prompt|greta

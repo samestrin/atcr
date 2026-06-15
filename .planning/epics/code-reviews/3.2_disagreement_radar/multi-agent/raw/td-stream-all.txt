@@ -1,0 +1,24 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|internal/reconcile/disagree.go:168|Potential panic on empty gray-zone cluster|Add check for len(c.Findings) > 0 before accessing index 0|correctness|10|maxSev = c.Findings[0].Severity called without checking if cluster is empty|otto
+LOW|internal/reconcile/disagree.go:413|Redundant implementation of writeRadarSection|Remove duplicate function from internal/reconcile and use internal/report|maintainability|15|writeRadarSection is defined in both internal/reconcile/disagree.go and internal/report/disagree.go|otto
+MEDIUM|internal/reconcile/disagree.go:174|Inconsistent out-of-scope filtering|Normalize JSONFinding.Category with ToLower/TrimSpace like allOutOfScope|correctness|5|exact match on finding category but normalized match on cluster members|bruce
+MEDIUM|internal/reconcile/disagree.go:288|spreadFromDisagreement accepts invalid severities|Validate both lo and hi exist in severityRank with ok before subtracting|correctness|3|severityRank lookup without ok returns 0 for unknown keys, inflating spread|bruce
+MEDIUM|internal/reconcile/disagree.go:354|Duplicated radar markdown rendering diverges|Extract shared writer or make reconcile use report package's escTrunc|maintainability|10|reconcile writeRadarSection uses esc not escTrunc for problem/detail text|bruce
+LOW|cmd/atcr/report_test.go:70|Incomplete ambiguous-sidecar test|Assert rendered output contains the gray-zone cluster content|maintainability|3|only checks exit code 0, not radar output|bruce
+MEDIUM|cmd/atcr/report.go:68|Silent error suppression on ReadAmbiguousClusters hides corrupted or tampered ambiguous.json|Log warning or annotate report output when ambiguous.json read fails|security|10|clusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)|greta
+MEDIUM|internal/mcp/handlers.go:270|Silent error suppression on ReadAmbiguousClusters hides corrupted or tampered ambiguous.json|Log warning or annotate report output when ambiguous.json read fails|security|10|clusters, _ := reconcile.ReadAmbiguousClusters(dir)|greta
+LOW|internal/reconcile/disagree.go:280|Duplicate writeRadarSection rendering logic risks divergent escaping across packages|Consolidate radar rendering into report package; reconcile should call report.writeRadarSection|security|20|writeRadarSection defined in both reconcile and report packages|greta
+MEDIUM|internal/reconcile/disagree.go:118|Inconsistent out-of-scope category check|Use case-insensitive comparison in BuildDisagreements|correctness|5|f.Category == CategoryOutOfScope vs strings.ToLower in allOutOfScope|bruce
+LOW|internal/reconcile/disagree.go:121|Solo finding condition includes zero reviewers|Change <= 1 to == 1 per sprint plan spec|correctness|2|len(f.Reviewers) <= 1 matches 0-reviewer findings|bruce
+LOW|internal/reconcile/disagree.go:165|Unsafe severity rank lookup in spread calculation|Validate severity exists in map before subtraction|correctness|3|severityRank lookup returns 0 for unknown strings|bruce
+LOW|internal/reconcile/disagree.go:350|Duplicated radar section rendering logic|Extract shared writeRadarSection to a common package|maintainability|10|Identical writeRadarSection in reconcile and report packages|bruce
+MEDIUM|internal/reconcile/disagree.go:430|Missing import for html/template|Add "html/template" to imports|correctness|5|template.HTMLEscapeString used but package not imported|bruce
+MEDIUM|internal/report/disagree.go:47|Undefined function esc|Define esc function or import from reconcile|correctness|5|esc used but not defined|bruce
+MEDIUM|internal/report/disagree.go:55|Undefined function joinReviewers|Define joinReviewers function|correctness|5|joinReviewers used but not defined|bruce
+MEDIUM|internal/report/disagree.go:58|Undefined function escTrunc|Define escTrunc function|correctness|5|escTrunc used but not defined|bruce
+MEDIUM|internal/report/disagree.go:74|Missing return statement in formatScore|Add return statement for the false case|correctness|5|formatScore missing return|bruce
+MEDIUM|internal/report/disagree.go:77|Unreachable code in formatScore|Remove the unreachable return statement|correctness|5|formatScore has unreachable code|bruce
+MEDIUM|internal/reconcile/disagree.go:130|Solo finding detection includes zero-reviewer findings|Change len(f.Reviewers) <= 1 to == 1|correctness|5|case len(f.Reviewers) <= 1: also matches empty slice|code-reviewer
+MEDIUM|internal/reconcile/disagree.go:100|Exact problem match may double-surface gray-zone members with slightly different texts|Use file+line as key for gray-zone exclusion, drop problem|correctness|10|findingKey(file,line,problem) causes missed dedup when problem string differs|code-reviewer
