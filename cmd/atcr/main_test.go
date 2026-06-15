@@ -31,14 +31,14 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	out, err := execute(t, "--help")
 	require.NoError(t, err)
 
-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor", "trust"} {
+	for _, sub := range []string{"review", "reconcile", "verify", "report", "range", "status", "init", "serve", "doctor", "trust"} {
 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
 	}
 }
 
-func TestRootCmd_HasExactlyNineSubcommands(t *testing.T) {
-	// The eight prior commands plus `trust` (epic 1.3), the project-provider
-	// authorization gate.
+func TestRootCmd_HasExactlyTenSubcommands(t *testing.T) {
+	// The nine prior commands plus `verify` (epic 3.0), the adversarial
+	// verification stage.
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -47,8 +47,8 @@ func TestRootCmd_HasExactlyNineSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 9)
-	for _, sub := range []string{"review", "reconcile", "report", "range", "status", "init", "serve", "doctor", "trust"} {
+	assert.Len(t, names, 10)
+	for _, sub := range []string{"review", "reconcile", "verify", "report", "range", "status", "init", "serve", "doctor", "trust"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }

@@ -1,0 +1,12 @@
+{
+  "severity": "HIGH",
+  "file": "internal/server/handler.go",
+  "line": 42,
+  "problem": "Possible nil pointer dereference: req.User is dereferenced without a nil check after an unauthenticated request path.",
+  "fix": "Guard req.User != nil before accessing req.User.ID, or return 401 earlier.",
+  "category": "correctness",
+  "est_minutes": 15,
+  "evidence": "handler.go:42 reads req.User.ID; the auth middleware at handler.go:18 can pass req.User == nil on the public route.",
+  "reviewers": ["alice", "bob"],
+  "confidence": "HIGH"
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +33,11 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Int64("byte-budget", 0, "per-payload byte budget, 0 = unlimited (overrides config)")
 	cmd.Flags().Int("max-parallel", 0, "max concurrent parallel-lane agent calls, 0 = unbounded (default when unset: 10 from config, not unbounded)")
 	cmd.Flags().String("fail-on", "", "one-shot: review + reconcile, then exit 1 if any finding at/above this severity survives")
+	cmd.Flags().Bool("verify", false, "one-shot: chain review -> reconcile -> verify (adversarial skeptics) in a single run")
+	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
+	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
+	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
 	addRangeFlags(cmd)
 	return cmd
 }
@@ -78,11 +84,30 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	// Validate --fail-on before any review work (no wasted API calls on a bad
-	// threshold), per AC 03-02 Security.
-	threshold, err := failOnThreshold(cmd)
+	// Resolve the gate threshold (--fail-on flag > project config > registry)
+	// before any review work; a bad configured value is a usage error (exit 2).
+	threshold, err := resolveGateThreshold(cmd)
 	if err != nil {
 		return err
+	}
+
+	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
+	// --min-severity here too, before any API calls, so a bad value fails fast.
+	verifyFlag, _ := cmd.Flags().GetBool("verify")
+	verifyMinSev := ""
+	if verifyFlag {
+		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
+			return err
+		}
+	}
+
+	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
+	// It is meaningless without both a gate (--fail-on) and the verify stage that
+	// produces verdicts (--verify); a strict gate with no verdicts would silently
+	// pass everything. Fail fast as a usage error (parity with `atcr reconcile`).
+	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+	if requireVerified && (threshold == "" || !verifyFlag) {
+		return usageError(errors.New("--require-verified requires --fail-on and --verify"))
 	}
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
@@ -150,7 +175,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// error and short-circuits before this line. The FailureMarker correction in
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
-	if threshold != "" {
+	if threshold != "" || verifyFlag {
 		rec, rerr := reconcile.RunReconcile(cmd.Context(), result.Dir, nil, reconcile.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
@@ -159,9 +184,48 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			return usageError(fmt.Errorf("review failed: %w", rerr))
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
-		return gateFindings(rec, threshold)
+
+		// --verify implies the reconcile stage (run exactly once, above) and then
+		// chains the adversarial verify stage in the same process (AC 04-02).
+		if verifyFlag {
+			vres, verr := verify.Verify(cmd.Context(), ".", result.Dir, cfg.Registry, verify.Options{
+				Fresh:       boolFlag(cmd, "fresh"),
+				Thorough:    boolFlag(cmd, "thorough"),
+				MinSeverity: verifyMinSev,
+			})
+			if verr != nil {
+				return verifyFailureError(verr)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
+				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
+				vres.VerdictCounts.Unverifiable)
+			// Gate on the post-verify findings so a refuted finding never blocks the
+			// one-shot gate (the whole point of the verify stage).
+			if threshold != "" {
+				findings, ferr := reconcile.ReadReconciledFindings(result.Dir)
+				if ferr != nil {
+					return usageError(ferr)
+				}
+				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
+					return fmt.Errorf("%d finding(s) at or above %s survived verification", n, threshold)
+				}
+			}
+			return nil
+		}
+		return gateFindings(rec, threshold, false)
 	}
 	return nil
+}
+
+// boolFlag reads a bool flag, panicking on lookup error (an undefined flag is a
+// programming error that must fail loudly, not silently return false).
+func boolFlag(cmd *cobra.Command, name string) bool {
+	v, err := cmd.Flags().GetBool(name)
+	if err != nil {
+		panic(fmt.Sprintf("boolFlag: undefined flag %q: %v", name, err))
+	}
+	return v
 }
 
 // preflightAPIKeys fails fast (exit 2, per AC 03-02 Error Scenario 1) when no

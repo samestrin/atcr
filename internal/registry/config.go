@@ -38,6 +38,26 @@ const (
 	RoleJudge    = "judge"
 )
 
+// Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
+// which findings skip adversarial verification and keep their v1 confidence;
+// DefaultVerifyVotes is the number of skeptics consulted per finding (1; the
+// --thorough flag forces 3 with majority rule at the orchestration layer).
+const (
+	DefaultVerifyMinSeverity = "MEDIUM"
+	DefaultVerifyVotes       = 1
+)
+
+// VerifyConfig is the optional registry-level adversarial-verification block
+// (Epic 3.0). It is backward-compatible: an absent block, or a present block with
+// unset fields, resolves to the defaults (min_severity=MEDIUM, votes=1) at load.
+// MinSeverity is normalized to canonical upper-case and validated against the
+// review severity rubric at load so the verify stage compares a stable token.
+type VerifyConfig struct {
+	MinSeverity string `yaml:"min_severity,omitempty"` // floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
+	Votes       int    `yaml:"votes,omitempty"`        // skeptics per finding (default 1)
+	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
+}
+
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
 // TimeoutSecs are pointers so an explicit zero survives default application.
 //
@@ -133,6 +153,11 @@ type Registry struct {
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
 
+	// Verify is the optional adversarial-verification block (Epic 3.0). Defaults
+	// (min_severity=MEDIUM, votes=1) are applied at load, so a registry without a
+	// verify block still yields the resolved defaults.
+	Verify VerifyConfig `yaml:"verify,omitempty"`
+
 	// ProviderSource and AgentSource record the tier (and defining file) each
 	// effective entry came from after the project overlay merge — user or
 	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
@@ -182,6 +207,18 @@ func (r *Registry) validate() error {
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
+	}
+	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
+	// any non-empty value must be a canonical review severity. Error wording lists
+	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
+	if r.Verify.MinSeverity != "" && !reviewSeverities[normalizeSeverity(r.Verify.MinSeverity)] {
+		return fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity)
+	}
+	if r.Verify.Votes < 0 {
+		return fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes)
+	}
+	if r.Verify.MaxParallel < 0 {
+		return fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel)
 	}
 	for name, p := range r.Providers {
 		if strings.TrimSpace(name) == "" {
@@ -282,6 +319,46 @@ func (r *Registry) applyDefaults() {
 		}
 		r.Agents[name] = a
 	}
+	// Verification defaults (Epic 3.0): an unset min_severity resolves to MEDIUM,
+	// an unset (or zero) votes to 1; a set min_severity is canonicalized so the
+	// verify stage compares a stable upper-case token. Validation already rejected
+	// any non-canonical value, so normalizeSeverity here only fixes casing.
+	if r.Verify.MinSeverity == "" {
+		r.Verify.MinSeverity = DefaultVerifyMinSeverity
+	} else {
+		r.Verify.MinSeverity = normalizeSeverity(r.Verify.MinSeverity)
+	}
+	if r.Verify.Votes == 0 {
+		r.Verify.Votes = DefaultVerifyVotes
+	}
+}
+
+// AgentsByRole returns the agents whose effective role matches role, keyed by
+// agent name. An empty Role is normalized to RoleReviewer for the comparison
+// only (backward compatibility for 1.x configs); the underlying AgentConfig is
+// never mutated, preserving the loader's "explicitly set vs inherited default"
+// distinction (option-a decision, see roleValid). The result is always a
+// non-nil map — empty when nothing matches, the registry is empty, or the
+// receiver is nil. An unknown role simply matches nothing.
+//
+// Read-only contract: callers must not mutate the returned AgentConfig values.
+// Reference fields (Scope, pointer fields) alias the registry's backing memory;
+// mutating them corrupts the shared registry for the lifetime of the process.
+func (r *Registry) AgentsByRole(role string) map[string]AgentConfig {
+	out := make(map[string]AgentConfig)
+	if r == nil {
+		return out
+	}
+	for name, a := range r.Agents {
+		effective := a.Role
+		if effective == "" {
+			effective = RoleReviewer
+		}
+		if effective == role {
+			out[name] = a
+		}
+	}
+	return out
 }
 
 // EffectiveTimeoutSecs returns the agent's own timeout when set, otherwise

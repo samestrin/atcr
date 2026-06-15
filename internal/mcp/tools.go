@@ -7,6 +7,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
+	"github.com/samestrin/atcr/internal/verify"
 )
 
 // Tool names — the public MCP contract. Renaming any of these is a breaking
@@ -14,6 +15,7 @@ import (
 const (
 	ToolReview    = "atcr_review"
 	ToolReconcile = "atcr_reconcile"
+	ToolVerify    = "atcr_verify"
 	ToolReport    = "atcr_report"
 	ToolRange     = "atcr_range"
 	ToolStatus    = "atcr_status"
@@ -36,8 +38,25 @@ type ReviewArgs struct {
 
 // ReconcileArgs are the atcr_reconcile tool arguments (all optional).
 type ReconcileArgs struct {
-	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to reconcile (review id only; paths are not accepted); defaults to .atcr/latest"`
-	FailOn   string `json:"fail_on,omitempty" jsonschema:"set pass=false if any finding at or above this severity survives: CRITICAL, HIGH, MEDIUM, or LOW"`
+	IDOrPath        string `json:"id_or_path,omitempty" jsonschema:"review id to reconcile (review id only; paths are not accepted); defaults to .atcr/latest"`
+	FailOn          string `json:"fail_on,omitempty" jsonschema:"set pass=false if any finding at or above this severity survives: CRITICAL, HIGH, MEDIUM, or LOW"`
+	RequireVerified bool   `json:"require_verified,omitempty" jsonschema:"with fail_on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate; requires fail_on"`
+}
+
+// VerifyArgs are the atcr_verify tool arguments. id_or_path is the review id
+// (paths are not accepted), defaulting to .atcr/latest. fresh re-verifies
+// already-verified findings; thorough uses 3 skeptics with majority rule;
+// min_severity is the floor below which findings keep their v1 confidence;
+// fail_on / require_verified drive the returned gate status (require_verified
+// requires fail_on).
+type VerifyArgs struct {
+	IDOrPath        string `json:"id_or_path,omitempty" jsonschema:"review id to verify (review id only; paths are not accepted); defaults to .atcr/latest"`
+	Fresh           bool   `json:"fresh,omitempty" jsonschema:"re-verify findings that already carry a verdict"`
+	Thorough        bool   `json:"thorough,omitempty" jsonschema:"use 3 skeptics per finding with majority rule (default 1)"`
+	MinSeverity     string `json:"minSeverity,omitempty" jsonschema:"skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, or LOW (default MEDIUM)"`
+	RegistryPath    string `json:"registryPath,omitempty" jsonschema:"override the registry file path (default: the user/project merged registry)"`
+	FailOn          string `json:"failOn,omitempty" jsonschema:"compute a gate status: not-passing if any finding at or above this severity survives verification"`
+	RequireVerified bool   `json:"requireVerified,omitempty" jsonschema:"with failOn: gate counts only skeptic-confirmed (VERIFIED) findings; requires failOn"`
 }
 
 // ReportArgs are the atcr_report tool arguments (all optional). Format is
@@ -82,6 +101,28 @@ type ReconcileResult struct {
 	Findings      []reconcile.JSONFinding `json:"findings,omitempty"`
 }
 
+// GateStatus is the verify gate outcome, present in VerifyResult only when a
+// failOn threshold was supplied. Pass is false when at least one non-refuted
+// finding (or, under requireVerified, VERIFIED finding) sits at or above the
+// threshold; FailingCount is how many.
+type GateStatus struct {
+	Pass         bool   `json:"pass"`
+	FailingCount int    `json:"failingCount"`
+	FailOn       string `json:"failOn,omitempty"`
+}
+
+// VerifyResult is the atcr_verify summary: the verdict tally, the number of
+// findings sent through verification this run, the wall-clock duration, and —
+// when failOn was given — the gate status (AC 04-03). Artifacts are always
+// emitted to disk regardless of the gate outcome.
+type VerifyResult struct {
+	ReviewID          string               `json:"review_id"`
+	VerdictCounts     verify.VerdictCounts `json:"verdictCounts"`
+	FindingsProcessed int                  `json:"findingsProcessed"`
+	DurationMs        int                  `json:"durationMs"`
+	GateStatus        *GateStatus          `json:"gateStatus,omitempty"`
+}
+
 // ReportResult carries the rendered report content and the format it was
 // rendered in (AC 04-04).
 type ReportResult struct {
@@ -113,7 +154,10 @@ const (
 		"Returns immediately with {review_id, review_path, status:\"running\", agent_count}; " +
 		"poll atcr_status for completion. Optional args: id, base, head, merge_commit (all optional; defaults to the current branch vs. the default branch)."
 	descReconcile = "Merge findings from all sources of a review into deduplicated, confidence-scored results. " +
-		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives)."
+		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), fail_on (CRITICAL|HIGH|MEDIUM|LOW; sets pass=false when a finding at or above it survives), require_verified (with fail_on: count only VERIFIED findings)."
+	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
+		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
+		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."
 	descReport = "Render a view over a review's reconciled findings. " +
 		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), format (md|json|checklist; default md)."
 	descRange = "Resolve a git review range without calling any provider. " +

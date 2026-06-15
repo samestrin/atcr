@@ -299,6 +299,43 @@ func TestChat_LengthFinishReasonWithToolCallsSucceeds(t *testing.T) {
 	assert.Len(t, resp.Message.ToolCalls, 1)
 }
 
+// TestChat_LengthFinishReasonWithPartialContentSetsTruncated verifies that a
+// "length"-truncated response with non-empty content and no tool_calls sets
+// ChatResponse.Truncated rather than silently returning as a clean stop.
+func TestChat_LengthFinishReasonWithPartialContentSetsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"partial review"}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Message.Content)
+	assert.Equal(t, "partial review", *resp.Message.Content)
+	assert.True(t, resp.Truncated, "length finish_reason with partial content must set Truncated")
+}
+
+// TestChat_LengthFinishReasonWithToolCallsSetsTruncated verifies that a
+// "length"-truncated response carrying tool_calls (possibly with truncated
+// arguments) also sets ChatResponse.Truncated.
+func TestChat_LengthFinishReasonWithToolCallsSetsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"grep","arguments":"{\"pattern\":\"x\"}"}}]}}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1",
+	}, nil, nil)
+	require.NoError(t, err)
+	assert.Len(t, resp.Message.ToolCalls, 1)
+	assert.True(t, resp.Truncated, "length finish_reason with tool_calls must set Truncated")
+}
+
 // Backward-compat sanity: Complete still works after the shared-send refactor.
 func TestChat_CompleteStillWorksAfterRefactor(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

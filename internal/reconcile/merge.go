@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -36,6 +37,12 @@ const CategoryOutOfScope = "out-of-scope"
 type Merged struct {
 	stream.Finding
 	Disagreement string // "<lo> vs <hi>" when the group spans multiple severities, else ""
+
+	// Verification is the skeptic verdict block populated during the verify
+	// re-emit (Epic 3.0); nil for a v1 finding or one below the min-severity
+	// floor. The gate reads Verdict directly: a refuted finding is excluded, and
+	// under requireVerified only a confirmed finding counts.
+	Verification *Verification
 }
 
 // Merge collapses a group of duplicate findings into one reconciled finding per
@@ -138,8 +145,14 @@ func modalCategory(group []stream.Finding) string {
 	counts := map[string]int{}
 	allOutOfScope := true
 	for _, f := range group {
-		counts[f.Category]++
-		if f.Category != CategoryOutOfScope {
+		// Canonicalize (lower+trim) so non-canonical casings like "Out-Of-Scope"
+		// or "SECURITY" collapse to the same key the gate, summary, and report
+		// all compare against — without this, the gate excludes the finding via
+		// normalized match but the summary count and report section miss it via
+		// exact-match against CategoryOutOfScope.
+		cat := strings.ToLower(strings.TrimSpace(f.Category))
+		counts[cat]++
+		if cat != CategoryOutOfScope {
 			allOutOfScope = false
 		}
 	}

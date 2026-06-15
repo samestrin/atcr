@@ -1,0 +1,12 @@
+{
+  "severity": "HIGH",
+  "file": "internal/cache/store.go",
+  "line": 88,
+  "problem": "Data race: the cache map is read and written from multiple goroutines without synchronization.",
+  "fix": "Wrap map access in a sync.RWMutex.",
+  "category": "concurrency",
+  "est_minutes": 30,
+  "evidence": "store.go:88 writes to s.entries; store.go:71 reads from it — claimed to run concurrently.",
+  "reviewers": ["carol"],
+  "confidence": "MEDIUM"
+}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/report"
+	"github.com/samestrin/atcr/internal/verify"
 )
 
 // engine is the shared state every handler closes over. Handlers are thin
@@ -171,6 +173,12 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		threshold = t
 	}
 
+	// --require-verified is meaningless without a gate (the same fail-fast rule as
+	// the CLI, AC 05-01 EC3): a strict gate that never runs gives false confidence.
+	if in.RequireVerified && threshold == "" {
+		return nil, ReconcileResult{}, fmt.Errorf("require_verified requires fail_on")
+	}
+
 	dir, id, err := e.resolveReviewDir(in.IDOrPath)
 	if err != nil {
 		return nil, ReconcileResult{}, err
@@ -202,6 +210,13 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, err
 	}
 
+	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+	if in.RequireVerified {
+		if verr := reconcile.ValidateRequireVerified(dir); verr != nil {
+			e.log.Warn("require_verified: verify stage not complete", "detail", verr.Error())
+		}
+	}
+
 	out := ReconcileResult{
 		ReviewID:      id,
 		Pass:          true,
@@ -209,9 +224,9 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		Partial:       res.Summary.Partial,
 		FailOn:        threshold,
 	}
-	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold) > 0 {
+	if threshold != "" && reconcile.CountAtOrAbove(res.Findings, threshold, in.RequireVerified) > 0 {
 		out.Pass = false
-		out.Findings = failingFindings(res, threshold)
+		out.Findings = failingFindings(res, threshold, in.RequireVerified)
 	}
 	return nil, out, nil
 }
@@ -334,15 +349,114 @@ func rangeError(err error) error {
 	return fmt.Errorf("failed to resolve range: %w", err)
 }
 
-// failingFindings returns the reconciled findings at or above threshold as JSON
-// records, so a failing gate can render them inline (AC 04-03 Scenario 7).
-func failingFindings(res reconcile.Result, threshold string) []reconcile.JSONFinding {
-	all := res.JSONFindings()
-	out := make([]reconcile.JSONFinding, 0, len(all))
-	for _, f := range all {
-		if reconcile.AtOrAbove(f.Severity, threshold) {
-			out = append(out, f)
+// failingFindings returns the reconciled findings that fail the gate as JSON
+// records, so a failing gate can render them inline (AC 04-03 Scenario 7). It
+// applies the SAME reconcile.IsFailing predicate the count uses — refuted
+// excluded, out-of-scope excluded, and under requireVerified only VERIFIED — so
+// the inline list never diverges from the pass/fail verdict (AC 05-02). The JSON
+// records preserve their 1:1 order with res.Findings, so the merged finding's
+// verification block (if any) rides along.
+func failingFindings(res reconcile.Result, threshold string, requireVerified bool) []reconcile.JSONFinding {
+	jsons := res.JSONFindings()
+	out := make([]reconcile.JSONFinding, 0, len(jsons))
+	for i, m := range res.Findings {
+		if reconcile.IsFailing(m.Severity, m.Category, m.Verification, threshold, requireVerified) {
+			out = append(out, jsons[i])
 		}
 	}
 	return out
+}
+
+// handleVerify runs adversarial verification over a review's reconciled findings
+// and returns the verdict tally plus an optional gate status. It shares the
+// internal/verify.Verify orchestration with the `atcr verify` CLI, so MCP and
+// CLI emit identical artifacts for the same input (AC 04-03/04-04). failOn /
+// requireVerified are validated before any work; missing reconciled findings
+// yields the same reconcile-first guidance as the CLI. A skeptic failure becomes
+// an unverifiable verdict, never a handler error (AC 04-03 Error Scenario 3).
+func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in VerifyArgs) (*mcpsdk.CallToolResult, VerifyResult, error) {
+	minSev, err := parseOptionalSeverity(in.MinSeverity)
+	if err != nil {
+		return nil, VerifyResult{}, err
+	}
+	threshold, err := parseOptionalSeverity(in.FailOn)
+	if err != nil {
+		return nil, VerifyResult{}, err
+	}
+	if in.RequireVerified && threshold == "" {
+		return nil, VerifyResult{}, fmt.Errorf("requireVerified requires failOn")
+	}
+
+	dir, id, err := e.resolveReviewDir(in.IDOrPath)
+	if err != nil {
+		return nil, VerifyResult{}, err
+	}
+
+	reg, err := e.loadVerifyRegistry(in.RegistryPath)
+	if err != nil {
+		return nil, VerifyResult{}, err
+	}
+
+	res, err := verify.Verify(ctx, e.root, dir, reg, verify.Options{
+		Fresh:       in.Fresh,
+		Thorough:    in.Thorough,
+		MinSeverity: minSev,
+	})
+	if err != nil {
+		if errors.Is(err, verify.ErrNoReconciledFindings) {
+			return nil, VerifyResult{}, fmt.Errorf("no reconciled findings found in %s — run 'atcr reconcile' first", dir)
+		}
+		return nil, VerifyResult{}, err
+	}
+
+	out := VerifyResult{
+		ReviewID:          id,
+		VerdictCounts:     res.VerdictCounts,
+		FindingsProcessed: res.FindingsProcessed,
+		DurationMs:        res.DurationMs,
+	}
+	if threshold != "" {
+		findings, ferr := reconcile.ReadReconciledFindings(dir)
+		if ferr != nil {
+			return nil, VerifyResult{}, ferr
+		}
+		n := reconcile.CountFailingJSON(findings, threshold, in.RequireVerified)
+		out.GateStatus = &GateStatus{Pass: n == 0, FailingCount: n, FailOn: threshold}
+	}
+	return nil, out, nil
+}
+
+// loadVerifyRegistry resolves the registry the verify stage selects skeptics
+// from: an explicit registryPath when supplied, else the user/project merged
+// registry the other handlers use (so a default verify call sees the same
+// roster as review/reconcile).
+func (e *engine) loadVerifyRegistry(path string) (*registry.Registry, error) {
+	if p := strings.TrimSpace(path); p != "" {
+		// Path containment (parity with resolveReviewDir's id validation): an MCP
+		// client must not redirect registry reads to an arbitrary file on the
+		// server — that would be an information-disclosure surface. Reject absolute
+		// paths and any ".." segment, and resolve the override under the server
+		// root. The default (empty) path already loads the user/project registry,
+		// so callers needing the home registry simply omit registryPath.
+		if filepath.IsAbs(p) || strings.Contains(filepath.ToSlash(p), "../") || p == ".." {
+			return nil, fmt.Errorf("invalid registryPath %q: must be a relative path within the project", path)
+		}
+		return registry.LoadRegistry(filepath.Join(e.root, p))
+	}
+	cfg, err := fanout.LoadReviewConfig(e.root, registry.CLIOverrides{})
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Registry, nil
+}
+
+// parseOptionalSeverity canonicalizes an optional severity arg: "" (or
+// whitespace) means unset; any other value must be a valid severity or it is a
+// handler error (the threshold-validation order is unaffected by other flags).
+func parseOptionalSeverity(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	return reconcile.ParseSeverity(s)
 }

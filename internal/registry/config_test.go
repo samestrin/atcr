@@ -3,11 +3,152 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// AC 01-01 / 01-04: AgentsByRole filters agents by role, normalizing empty Role
+// to reviewer for backward compatibility, and returns a non-nil map keyed by
+// agent name.
+func TestAgentsByRole(t *testing.T) {
+	tests := []struct {
+		name     string
+		agents   map[string]AgentConfig
+		role     string
+		wantKeys []string
+	}{
+		{
+			name: "filter skeptics from mixed registry",
+			agents: map[string]AgentConfig{
+				"alice": {Provider: "p", Model: "m", Role: RoleReviewer},
+				"bob":   {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"carol": {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"dave":  {Provider: "p", Model: "m", Role: RoleJudge},
+			},
+			role:     RoleSkeptic,
+			wantKeys: []string{"bob", "carol"},
+		},
+		{
+			name: "filter reviewers includes empty role",
+			agents: map[string]AgentConfig{
+				"alice": {Provider: "p", Model: "m", Role: RoleReviewer},
+				"bob":   {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"carol": {Provider: "p", Model: "m", Role: ""},
+			},
+			role:     RoleReviewer,
+			wantKeys: []string{"alice", "carol"},
+		},
+		{
+			name: "filter judges",
+			agents: map[string]AgentConfig{
+				"alice": {Provider: "p", Model: "m", Role: RoleJudge},
+				"bob":   {Provider: "p", Model: "m", Role: RoleReviewer},
+			},
+			role:     RoleJudge,
+			wantKeys: []string{"alice"},
+		},
+		{
+			name:     "unknown role returns empty map",
+			agents:   map[string]AgentConfig{"alice": {Provider: "p", Model: "m", Role: RoleReviewer}},
+			role:     "unknown_role",
+			wantKeys: nil,
+		},
+		{
+			name:     "empty registry returns empty map",
+			agents:   map[string]AgentConfig{},
+			role:     RoleSkeptic,
+			wantKeys: nil,
+		},
+		{
+			name: "all reviewer, no skeptic match",
+			agents: map[string]AgentConfig{
+				"alice": {Provider: "p", Model: "m", Role: RoleReviewer},
+				"bob":   {Provider: "p", Model: "m", Role: RoleReviewer},
+			},
+			role:     RoleSkeptic,
+			wantKeys: nil,
+		},
+		{
+			name: "1.x config all empty roles return as reviewers",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: ""},
+				"a2": {Provider: "p", Model: "m", Role: ""},
+			},
+			role:     RoleReviewer,
+			wantKeys: []string{"a1", "a2"},
+		},
+		{
+			name: "mixed roles, reviewer filter excludes skeptic and judge",
+			agents: map[string]AgentConfig{
+				"a1": {Provider: "p", Model: "m", Role: ""},
+				"a2": {Provider: "p", Model: "m", Role: RoleReviewer},
+				"a3": {Provider: "p", Model: "m", Role: RoleSkeptic},
+				"a4": {Provider: "p", Model: "m", Role: RoleJudge},
+			},
+			role:     RoleReviewer,
+			wantKeys: []string{"a1", "a2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := &Registry{Agents: tt.agents}
+			got := reg.AgentsByRole(tt.role)
+			assert.NotNil(t, got, "result map must be non-nil")
+			keys := make([]string, 0, len(got))
+			for k := range got {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			want := append([]string{}, tt.wantKeys...)
+			sort.Strings(want)
+			assert.Equal(t, want, keys)
+		})
+	}
+}
+
+// TestAgentsByRole_NilReceiver covers the defensive nil-registry guard
+// (AC 01-01 Error Scenario 1): no panic, non-nil empty map.
+func TestAgentsByRole_NilReceiver(t *testing.T) {
+	var reg *Registry
+	got := reg.AgentsByRole(RoleSkeptic)
+	assert.NotNil(t, got)
+	assert.Empty(t, got)
+}
+
+// TestAgentsByRole_ReturnsUsableConfigs confirms the filtered values are the
+// full AgentConfig structs, not zeroed.
+func TestAgentsByRole_ReturnsUsableConfigs(t *testing.T) {
+	reg := &Registry{Agents: map[string]AgentConfig{
+		"bob": {Provider: "openai", Model: "gpt-4o", Role: RoleSkeptic},
+	}}
+	got := reg.AgentsByRole(RoleSkeptic)
+	require.Contains(t, got, "bob")
+	assert.Equal(t, "openai", got["bob"].Provider)
+	assert.Equal(t, "gpt-4o", got["bob"].Model)
+}
+
+// TestAgentsByRole_DoesNotMutateRole verifies the empty-role normalization is
+// local to the filter and never written back to the registry (AC 01-04 EC3).
+func TestAgentsByRole_DoesNotMutateRole(t *testing.T) {
+	reg := &Registry{Agents: map[string]AgentConfig{
+		"legacy": {Provider: "p", Model: "m", Role: ""},
+	}}
+	_ = reg.AgentsByRole(RoleReviewer)
+	assert.Equal(t, "", reg.Agents["legacy"].Role, "AgentsByRole must not mutate the underlying Role")
+}
+
+// TestApplyDefaults_DoesNotSetRole confirms applyDefaults leaves an empty Role
+// empty after load (option-a decision; AC 01-04 EC3).
+func TestApplyDefaults_DoesNotSetRole(t *testing.T) {
+	r := &Registry{Agents: map[string]AgentConfig{
+		"legacy": {Provider: "p", Model: "m", Role: ""},
+	}}
+	r.applyDefaults()
+	assert.Equal(t, "", r.Agents["legacy"].Role)
+}
 
 // AC 01-03 S4 / AC 02-01 S3: applyDefaults sets max_turns=10 for a tool-enabled
 // agent with max_turns unset; an explicit value is kept and a non-tool agent's

@@ -180,11 +180,39 @@ Epic 2.0 turns the pool reviewers into bounded, tool-using agents. The fields be
 
 An out-of-range value (e.g. `max_turns: 0`, a negative `tool_budget_bytes`, an unknown `role`) is a load error, so a misconfiguration is caught in a second at load rather than mid-run.
 
-### Still reserved (inert until a later stage)
+## Skeptic agents (`role: skeptic`, active in 3.0)
 
-| Field | Type | Planned default | Validated at load | Activated by |
-|-------|------|-----------------|-------------------|--------------|
-| `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
+The `role` field selects what an agent does in the pipeline. It was **reserved (parsed but inert) in 1.1/1.x** and is **active in 3.0** for the adversarial-verification stage:
+
+| Value | Active in | Purpose |
+|-------|-----------|---------|
+| `reviewer` | 1.x | Produces findings in the review fan-out. The default when `role` is unset. |
+| `skeptic` | 3.0 | Attempts to **refute** reconciled findings in `atcr verify` (see [verification.md](verification.md)). |
+| `judge` | reserved | Inert until a later stage; accepted at load but not yet acted on. |
+
+An agent with no `role` defaults to `reviewer`, so every 1.x registry keeps working unchanged. The enum is validated at load (`reviewer`, `skeptic`, `judge`); any other value is a load error.
+
+A skeptic is an ordinary agent — provider, model, persona — flagged `role: skeptic`. Because a skeptic reads the actual code to refute a finding, give it `tools: true` and `supports_function_calling: true` (same tool-loop fields as a tool-using reviewer, above):
+
+```yaml
+agents:
+  otto:                       # a reviewer (role defaults to reviewer)
+    persona: otto
+    provider: openrouter
+    model: openai/gpt-4o
+
+  skeptic-sonnet:             # a skeptic on a different model than the reviewers
+    persona: otto             # any persona; the skeptic prompt is engine-supplied
+    provider: openrouter
+    model: claude-sonnet-4-6
+    role: skeptic
+    tools: true               # reads the cited code to confirm/refute
+    supports_function_calling: true
+```
+
+**Different-model rule.** The verify engine never selects a skeptic whose `model` exactly matches the model of any reviewer credited on the finding — a model cannot verify its own work, even indirectly through a shared blind spot. This is enforced by the engine, not left to configuration discipline. If no eligible skeptic remains for a finding, that finding is recorded `unverifiable` (reason `no_eligible_skeptic`) and keeps its v1 confidence — it is never dropped. Roster enough skeptics on distinct models that every reviewer model is covered.
+
+The verification stage also reads an optional registry-level `verify:` block (`min_severity`, `votes`) — see [verification.md](verification.md#cost-controls) for those knobs and the full mechanics.
 
 ## Review-constraint fields (active in 2.2)
 

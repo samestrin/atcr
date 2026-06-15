@@ -193,25 +193,87 @@ func TestRender_UnknownFormatErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown format")
 }
 
-// --- Epic 1.1: report renders identically regardless of the reserved
-// verification block (success criterion: render is identical with or without it) ---
+// TestRender_MarkdownSortsSeverities — findings arriving in non-canonical
+// severity order are rendered under one header per severity, in canonical
+// descending order, rather than producing duplicate headers as the arrival
+// order changes.
+func TestRender_MarkdownSortsSeverties(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 1, Problem: "p1", Confidence: "MEDIUM"},
+		{Severity: "CRITICAL", File: "b.go", Line: 2, Problem: "p2", Confidence: "HIGH"},
+		{Severity: "HIGH", File: "c.go", Line: 3, Problem: "p3", Confidence: "MEDIUM"},
+		{Severity: "LOW", File: "d.go", Line: 4, Problem: "p4", Confidence: "LOW"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	critIdx := strings.Index(out, "### CRITICAL")
+	highIdx := strings.Index(out, "### HIGH")
+	lowIdx := strings.Index(out, "### LOW")
+	require.Greater(t, critIdx, 0)
+	require.Greater(t, highIdx, critIdx)
+	require.Greater(t, lowIdx, highIdx)
+	assert.Equal(t, 1, strings.Count(out, "### CRITICAL"), "one CRITICAL header")
+	assert.Equal(t, 1, strings.Count(out, "### HIGH"), "one HIGH header")
+	assert.Equal(t, 1, strings.Count(out, "### LOW"), "one LOW header")
+}
 
-// TestRender_IdenticalWithAndWithoutVerification verifies that adding the
-// reserved verification block to a finding does not change markdown or
-// checklist output, and only adds the (round-tripped) verification key to JSON.
-func TestRender_IdenticalWithAndWithoutVerification(t *testing.T) {
+// TestRender_UnknownSeverityReconcilesGrid — findings with non-canonical
+// severities are still counted in the summary grid so the grid's per-row sum
+// matches "Total findings".
+func TestRender_UnknownSeverityReconcilesGrid(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "MEDIUM"},
+		{Severity: "weird", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Total findings: 2")
+	assert.Contains(t, out, "| OTHER |", "unknown severity gets a grid row so the grid sums to the total")
+	assert.Contains(t, out, "### weird", "unknown severity still renders its own body header")
+}
+
+// TestRender_MixedCaseConfidenceNormalized — mixed-case and unknown confidence
+// values are normalized before tallying: "Verified" counts as VERIFIED, "High"
+// as HIGH, and unrecognized values land in an explicit OTHER confidence bucket
+// instead of being silently folded into LOW.
+func TestRender_MixedCaseConfidenceNormalized(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "Verified"},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "p2", Confidence: "High"},
+		{Severity: "HIGH", File: "c.go", Line: 3, Problem: "p3", Confidence: "unknown"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "VERIFIED conf", "VERIFIED column shown for mixed-case Verified")
+	assert.Contains(t, out, "| HIGH | 1 | 1 | 0 | 0 | 1 |", "Verified→VERIFIED, High→HIGH, unknown→OTHER")
+	assert.Contains(t, out, "OTHER conf", "unknown confidence gets an OTHER column")
+}
+
+// --- Epic 3.0 Phase 5: the verification block is now rendered (it was inert/
+// reserved in Epic 1.1). A NIL block still renders byte-identically to v1 (the
+// backward-compat guarantee, AC 06-02); a NON-NIL block now adds skeptic info. ---
+
+// TestRender_VerificationBlockAddsSkepticSection supersedes the Epic 1.1
+// "identical with or without verification" test: now a non-nil verification block
+// changes the markdown render (Skeptic section / VERIFIED tier), while a nil block
+// leaves output unchanged and JSON omits the verification key.
+func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
 	without := sample()
 	with := sample()
+	with[0].Confidence = "VERIFIED"
 	with[0].Verification = &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
 
-	for _, format := range []string{FormatMarkdown, FormatChecklist} {
-		t.Run(format, func(t *testing.T) {
-			var a, b strings.Builder
-			require.NoError(t, Render(&a, without, format))
-			require.NoError(t, Render(&b, with, format))
-			assert.Equal(t, a.String(), b.String(), "human formats ignore the reserved verification block")
-		})
-	}
+	t.Run("markdown-differs-and-shows-skeptic", func(t *testing.T) {
+		var a, b strings.Builder
+		require.NoError(t, Render(&a, without, FormatMarkdown))
+		require.NoError(t, Render(&b, with, FormatMarkdown))
+		assert.NotEqual(t, a.String(), b.String(), "a non-nil verification block now changes markdown output")
+		assert.NotContains(t, a.String(), "Skeptic: otto")
+		assert.Contains(t, b.String(), "Skeptic: otto — confirmed")
+	})
 
 	t.Run("json-omitted-when-absent", func(t *testing.T) {
 		var a strings.Builder
