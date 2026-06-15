@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // maxLineBytes bounds a single JSONL line on read. Records are ~500 bytes; 1 MiB
@@ -83,4 +85,83 @@ func ReadRecords(path string) ([]Record, error) {
 		return recs, fmt.Errorf("reading scorecard file: %w", err)
 	}
 	return recs, nil
+}
+
+// FindByRunID returns every record in dir carrying the given run_id. The month
+// file is derived from the run_id's YYYY-MM prefix (single-file read, no full
+// scan); a run_id without that prefix is a clear error rather than an empty
+// result. A missing month file is "no records" (nil, nil), not an error. If the
+// primary month yields nothing, the adjacent months are scanned as a fallback for
+// a record that landed in a neighbouring file via clock skew or a late write
+// (AC 02-01 EC1); a hit there is logged to stderr.
+func FindByRunID(dir, runID string) ([]Record, error) {
+	month, err := monthFromRunID(runID)
+	if err != nil {
+		return nil, err
+	}
+	months := []string{month}
+	if prev, next, ok := adjacentMonths(month); ok {
+		months = append(months, prev, next)
+	}
+	for i, m := range months {
+		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		var got []Record
+		for _, r := range recs {
+			if r.RunID == runID {
+				got = append(got, r)
+			}
+		}
+		if len(got) > 0 {
+			if i > 0 {
+				fmt.Fprintf(os.Stderr, "scorecard: run %s found in adjacent month %s (clock skew or late write)\n", runID, m)
+			}
+			return got, nil
+		}
+	}
+	return nil, nil
+}
+
+// ReadAll reads every *.jsonl month file under dir and returns the concatenated
+// records (malformed lines skipped per-file by ReadRecords). A missing directory
+// is empty (nil, nil), not an error — the leaderboard's "no data yet" state.
+// Non-.jsonl files are ignored.
+func ReadAll(dir string) ([]Record, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading scorecard dir: %w", err)
+	}
+	var all []Record
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		recs, err := ReadRecords(filepath.Join(dir, e.Name()))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return all, err
+		}
+		all = append(all, recs...)
+	}
+	return all, nil
+}
+
+// adjacentMonths returns the YYYY-MM stems on either side of month. ok is false
+// for an unparseable month (the caller then scans the primary month only).
+func adjacentMonths(month string) (prev, next string, ok bool) {
+	t, err := time.Parse("2006-01", month)
+	if err != nil {
+		return "", "", false
+	}
+	return t.AddDate(0, -1, 0).Format("2006-01"), t.AddDate(0, 1, 0).Format("2006-01"), true
 }

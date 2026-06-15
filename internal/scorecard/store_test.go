@@ -139,6 +139,71 @@ func TestStore_ConcurrentAppend_SameMonthFile(t *testing.T) {
 	}
 }
 
+func TestStore_FindByRunID(t *testing.T) {
+	dir := t.TempDir()
+	runID := "2026-06-14T10:00:00Z-abc123"
+	require.NoError(t, Append(dir, sampleRecord(runID, "bruce")))
+	require.NoError(t, Append(dir, sampleRecord(runID, "greta")))
+	// A different run in the same month file must NOT match.
+	require.NoError(t, Append(dir, sampleRecord("2026-06-13T08:00:00Z-xyz789", "diana")))
+
+	recs, err := FindByRunID(dir, runID)
+	require.NoError(t, err)
+	require.Len(t, recs, 2, "only the two records for the requested run_id")
+	for _, r := range recs {
+		assert.Equal(t, runID, r.RunID)
+	}
+}
+
+func TestStore_FindByRunID_InvalidFormat(t *testing.T) {
+	dir := t.TempDir()
+	_, err := FindByRunID(dir, "not-a-valid-run-id")
+	require.Error(t, err, "a run_id without a YYYY-MM prefix is a clear error, not empty")
+}
+
+func TestStore_FindByRunID_MissingFileNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	recs, err := FindByRunID(dir, "2026-06-14T10:00:00Z-abc123")
+	require.NoError(t, err, "a missing month file is 'no records', not an error")
+	assert.Empty(t, recs)
+}
+
+// TestStore_FindByRunID_AdjacentMonthFallback covers AC 02-01 EC1: a run whose
+// timestamp month is 2026-06 but whose record landed in 2026-07.jsonl (clock
+// skew / late write) is still found by scanning adjacent month files.
+func TestStore_FindByRunID_AdjacentMonthFallback(t *testing.T) {
+	dir := t.TempDir()
+	runID := "2026-06-30T23:59:59Z-edge"
+	rec := sampleRecord(runID, "bruce")
+	line, err := json.Marshal(rec)
+	require.NoError(t, err)
+	// Write the June run_id's record directly into the July file.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), append(line, '\n'), 0o600))
+
+	recs, err := FindByRunID(dir, runID)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "record found in adjacent month via fallback scan")
+	assert.Equal(t, runID, recs[0].RunID)
+}
+
+func TestStore_ReadAll(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Append(dir, sampleRecord("2026-06-14T10:00:00Z-jun", "bruce")))
+	require.NoError(t, Append(dir, sampleRecord("2026-07-01T00:01:00Z-jul", "greta")))
+	// A non-JSONL file in the directory must be ignored.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me\n"), 0o600))
+
+	recs, err := ReadAll(dir)
+	require.NoError(t, err)
+	require.Len(t, recs, 2, "records from every monthly JSONL file, txt ignored")
+}
+
+func TestStore_ReadAll_MissingDir(t *testing.T) {
+	recs, err := ReadAll(filepath.Join(t.TempDir(), "does-not-exist"))
+	require.NoError(t, err, "a missing store directory is empty, not an error")
+	assert.Empty(t, recs)
+}
+
 // splitNonEmptyLines splits raw JSONL bytes into trimmed non-empty lines so a
 // torn line (missing newline / merged with another) is observable as a parse
 // failure or a wrong line count, not silently absorbed.

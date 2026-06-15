@@ -34,6 +34,14 @@ func resolveDir(override string) (string, error) {
 	return DefaultDir()
 }
 
+// IsRunID reports whether s carries the YYYY-MM timestamp prefix of a run_id —
+// the shape the store derives a month file from. Used by the CLI to tell a bare
+// run_id argument apart from a malformed one before any store lookup.
+func IsRunID(s string) bool {
+	_, err := monthFromRunID(s)
+	return err == nil
+}
+
 // monthFromRunID derives the YYYY-MM month file stem from a run_id whose prefix
 // is an RFC3339 timestamp (e.g. "2026-06-14T10:00:00Z-abc123" -> "2026-06").
 // The month drives monthly JSONL rotation, so all records from one run share a
