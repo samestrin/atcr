@@ -281,6 +281,11 @@ type AgentStatus struct {
 	FallbackFrom  string   `json:"fallback_from,omitempty"`
 	Error         string   `json:"error,omitempty"`
 
+	// Post-processing enforcement counters (Epic 2.2). Always present so a
+	// zero is distinguishable from an older status.json that predates the field.
+	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
+	TruncatedByMaxFindings int `json:"truncated_by_max_findings"`
+
 	// Per-agent counters for the agentic stages (Epic 2.0 tool loop). Pointers +
 	// omitempty so they are absent from every 1.x status.json (no tool loop ran),
 	// yet a tool-enabled agent records an explicit zero even when it degraded or

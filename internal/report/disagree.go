@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -25,6 +26,19 @@ func RenderDisagreements(w io.Writer, df reconcile.DisagreementsFile) error {
 	fmt.Fprintf(&b, "%d tension spot(s), highest first.\n", len(df.Items))
 	writeRadarItems(&b, df.Items, "## ")
 	_, err := w.Write(b.Bytes())
+	return err
+}
+
+// RenderDisagreementsJSON writes the disagreements radar as indented JSON. The
+// DisagreementsFile already carries the schema version and machine-contract
+// field names (see TestDisagreementsSchema_StableContract); this is the format
+// `atcr report --disagreements --format json` emits.
+func RenderDisagreementsJSON(w io.Writer, df reconcile.DisagreementsFile) error {
+	data, err := json.MarshalIndent(df, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(data, '\n'))
 	return err
 }
 
@@ -54,6 +68,9 @@ func writeRadarItems(b *bytes.Buffer, items []reconcile.DisagreementItem, headin
 		if len(it.Reviewers) > 0 {
 			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinReviewers(it.Reviewers)), it.Independence)
 		}
+		// escTrunc (500-rune cap) is intentional for display output; the reconcile
+		// counterpart (reconcile/disagree.go writeRadarSection) uses esc (no cap) for
+		// archival fidelity.
 		if it.Problem != "" {
 			fmt.Fprintf(b, "- Problem: %s\n", escTrunc(it.Problem))
 		}

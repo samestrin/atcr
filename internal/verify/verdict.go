@@ -33,25 +33,45 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, nil
 	}
 
-	var parsed struct {
-		Verdict   string `json:"verdict"`
-		Reasoning string `json:"reasoning"`
-	}
-	obj := extractJSONObject(response)
-	if obj == "" || json.Unmarshal([]byte(obj), &parsed) != nil {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
+	// Iterate candidate balanced JSON objects. Skip candidates that fail to
+	// unmarshal or lack the "verdict" key — a decoy brace pair (Go struct{},
+	// ${VAR}, example snippet) before the real verdict envelope should not
+	// degrade the verdict to unverifiable. On extractJSONObject returning ""
+	// (unbalanced leading brace), advance past the first '{' and retry.
+	rest := response
+	for {
+		obj := extractJSONObject(rest)
+		if obj == "" {
+			next := strings.IndexByte(rest, '{')
+			if next < 0 {
+				break
+			}
+			rest = rest[next+1:]
+			continue
+		}
+		// Use a pointer for Verdict so json.Unmarshal can distinguish a present
+		// key (even empty) from an absent key — avoids a second unmarshal pass.
+		var candidate struct {
+			Verdict   *string `json:"verdict"`
+			Reasoning string  `json:"reasoning"`
+		}
+		if json.Unmarshal([]byte(obj), &candidate) == nil && candidate.Verdict != nil {
+			normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
+			switch normVerdict {
+			case verdictConfirmed, verdictRefuted, verdictUnverifiable:
+				return &reconcile.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}, nil
+			default:
+				return &reconcile.Verification{
+					Verdict: verdictUnverifiable,
+					Notes:   "invalid_verdict: " + truncateForNotes(*candidate.Verdict) + " (raw: " + truncateForNotes(response) + ")",
+				}, nil
+			}
+		}
+		idx := strings.Index(rest, obj)
+		rest = rest[idx+len(obj):]
 	}
 
-	normVerdict := strings.ToLower(strings.TrimSpace(parsed.Verdict))
-	switch normVerdict {
-	case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-		return &reconcile.Verification{Verdict: normVerdict, Notes: parsed.Reasoning}, nil
-	default:
-		return &reconcile.Verification{
-			Verdict: verdictUnverifiable,
-			Notes:   "invalid_verdict: " + truncateForNotes(parsed.Verdict) + " (raw: " + truncateForNotes(response) + ")",
-		}, nil
-	}
+	return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes

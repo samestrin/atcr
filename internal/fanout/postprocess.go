@@ -24,18 +24,19 @@ var severityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 
 // their field is unset, so an unconstrained agent's findings pass through in
 // emission order. Dropped/truncated counts are logged to stderr (AC4). The agent
 // name is used only for the log line. The input slice may be reordered in place.
-func enforceConstraints(findings []stream.Finding, agent, minSeverity string, maxFindings *int) []stream.Finding {
+func enforceConstraints(findings []stream.Finding, agent, minSeverity string, maxFindings *int) ([]stream.Finding, int, int) {
 	if len(findings) == 0 {
-		return findings
+		return findings, 0, 0
 	}
+
+	var dropped, truncated int
 
 	// 1. Severity floor.
 	if floor := strings.ToUpper(strings.TrimSpace(minSeverity)); floor != "" {
-		min := severityRank[floor]
+		floorRank := severityRank[floor]
 		kept := findings[:0]
-		dropped := 0
 		for _, f := range findings {
-			if severityRank[strings.ToUpper(f.Severity)] >= min {
+			if severityRank[strings.ToUpper(f.Severity)] >= floorRank {
 				kept = append(kept, f)
 			} else {
 				dropped++
@@ -53,10 +54,10 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 		sort.SliceStable(findings, func(i, j int) bool {
 			return severityRank[strings.ToUpper(findings[i].Severity)] > severityRank[strings.ToUpper(findings[j].Severity)]
 		})
-		truncated := len(findings) - *maxFindings
+		truncated = len(findings) - *maxFindings
 		findings = findings[:*maxFindings]
 		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: truncated %d finding(s) to max_findings %d\n", agent, truncated, *maxFindings)
 	}
 
-	return findings
+	return findings, dropped, truncated
 }

@@ -480,7 +480,7 @@ func TestAccounting_NonToolResultZeroAndPointersNil(t *testing.T) {
 	assert.Equal(t, 0, r.ToolCalls)
 	assert.EqualValues(t, 0, r.ToolBytes)
 
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	assert.Nil(t, st.Turns)
 	assert.Nil(t, st.ToolCalls)
 	assert.Nil(t, st.ToolBytes)
@@ -498,7 +498,7 @@ func TestAccounting_ToolResultPropagatesToStatus(t *testing.T) {
 	require.Equal(t, StatusOK, r.Status)
 	assert.EqualValues(t, 4, r.ToolBytes)
 
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	require.NotNil(t, st.Turns)
 	require.NotNil(t, st.ToolCalls)
 	require.NotNil(t, st.ToolBytes)

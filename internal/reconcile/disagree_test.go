@@ -301,3 +301,42 @@ func TestDisagreementsSchema_StableContract(t *testing.T) {
 		assert.Contains(t, out, key, "handoff schema must expose %s", key)
 	}
 }
+
+func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *testing.T) {
+	// A gray-zone member may also be merged with a third finding, causing the
+	// JSONFinding.Problem to become the merged longestField text while the
+	// AmbiguousCluster.Findings retains the raw member's original problem. The
+	// gray-zone exclusion must still apply — otherwise the location
+	// double-surfaces as both gray_zone and solo/split.
+	clusterFindings := []stream.Finding{
+		mf("HIGH", "g.go", 7, "raw cluster problem A", "f", "security", 10, "e", "greta"),
+		mf("LOW", "g.go", 8, "raw cluster problem B", "f", "security", 10, "e", "kai"),
+	}
+	clusters := []AmbiguousCluster{{ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55, Findings: clusterFindings}}
+	// JSONFinding with problem text that differs from the cluster's raw members
+	// (simulating the merge pipeline's longestField replacement).
+	findings := []JSONFinding{
+		jf("HIGH", "g.go", 7, "raw cluster problem A", []string{"greta"}, ""),
+		jf("LOW", "g.go", 8, "MERGED LONGER REPLACEMENT TEXT", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, clusters)
+	assert.Empty(t, itemsByKind(df, KindSoloFinding),
+		"gray-zone member must be excluded even when JSONFinding.Problem differs from cluster member's problem")
+	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
+}
+
+func TestBuildDisagreements_GrayZoneAllUnknownSeverityStillScoresAboveZero(t *testing.T) {
+	// A gray-zone cluster whose members all carry unknown/blank severities must
+	// not score 0 — otherwise a real tension cluster sorts below every solo LOW
+	// finding. The cluster has two distinct reviewers and real ambiguity; it
+	// deserves a floor score above a LOW solo (rank 1).
+	clusterFindings := []stream.Finding{
+		mf("", "u.go", 1, "unknown sev A", "f", "misc", 5, "e", "greta"),
+		mf("", "u.go", 2, "unknown sev B", "f", "misc", 5, "e", "kai"),
+	}
+	clusters := []AmbiguousCluster{{ID: "amb-u", File: "u.go", Line: 1, Similarity: 0.5, Findings: clusterFindings}}
+	df := BuildDisagreements(nil, clusters)
+	gray := itemsByKind(df, KindGrayZone)
+	require.Len(t, gray, 1)
+	assert.Greater(t, gray[0].Score, 0.0, "unknown-severity cluster must still score above zero")
+}

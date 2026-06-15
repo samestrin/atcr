@@ -51,7 +51,9 @@ func runReport(cmd *cobra.Command, args []string) error {
 	var buf bytes.Buffer
 	disagreements, _ := cmd.Flags().GetBool("disagreements")
 	// The disagreement radar is a focused, ranked view; it replaces the standard
-	// report rather than layering onto a chosen --format.
+	// report rather than layering onto a chosen --format. --format json is
+	// honored (machine-contract DisagreementsFile); unsupported combinations
+	// (e.g. --disagreements --format checklist) are usage errors.
 	switch {
 	case disagreements:
 		clusters, err := reconcile.ReadAmbiguousClusters(reviewDir)
@@ -59,16 +61,24 @@ func runReport(cmd *cobra.Command, args []string) error {
 			return usageError(fmt.Errorf("failed to read ambiguous clusters: %w", err))
 		}
 		df := reconcile.BuildDisagreements(findings, clusters)
-		if err := report.RenderDisagreements(&buf, df); err != nil {
-			return usageError(err)
+		switch format {
+		case report.FormatJSON:
+			if err := report.RenderDisagreementsJSON(&buf, df); err != nil {
+				return usageError(err)
+			}
+		case report.FormatMarkdown:
+			if err := report.RenderDisagreements(&buf, df); err != nil {
+				return usageError(err)
+			}
+		default:
+			return usageError(fmt.Errorf("--disagreements does not support --format %s", format))
 		}
 	case format == report.FormatMarkdown:
 		// The standard markdown report carries the radar above its findings. A
-		// corrupt ambiguous.json must not break the main report, so a read error
-		// degrades to a findings-only radar rather than failing (the dedicated
-		// --disagreements view above surfaces such errors explicitly instead).
-		clusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)
-		df := reconcile.BuildDisagreements(findings, clusters)
+		// corrupt ambiguous.json degrades to a findings-only radar rather than
+		// failing the report (the dedicated --disagreements view above surfaces
+		// such errors explicitly instead).
+		df := reconcile.LoadDisagreements(reviewDir, findings)
 		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
 			return usageError(err)
 		}

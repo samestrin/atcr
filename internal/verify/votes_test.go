@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +101,23 @@ func TestAggregateVerdicts_ThreeWaySplit(t *testing.T) {
 	})
 	require.NotNil(t, got)
 	assert.Equal(t, verdictUnverifiable, got.Verdict)
+}
+
+// TestAggregateVerdicts_MajorityRefuterAbsentFromSkeptic asserts that in a
+// 2-confirmed/1-refuted majority the dissenter's name and reasoning are either
+// both present or both absent — the current bug lists the dissenter in Skeptic
+// but omits their reasoning, making it look like they agreed.
+func TestAggregateVerdicts_MajorityRefuterAbsentFromSkeptic(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictConfirmed, "alice", "evidence holds"),
+		v(verdictConfirmed, "bob", "also holds"),
+		v(verdictRefuted, "carol", "disagrees"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictConfirmed, got.Verdict)
+	// carol is the dissenter — name and reasoning must both be absent or both present
+	carolInSkeptic := strings.Contains(got.Skeptic, "carol")
+	carolInNotes := strings.Contains(got.Notes, "disagrees")
+	assert.Equal(t, carolInSkeptic, carolInNotes, "dissenter name and reasoning must be consistent (both present or both absent)")
 }

@@ -465,3 +465,27 @@ func TestStatusHandler_PathContainment(t *testing.T) {
 	msg := callErr(t, cs, ToolStatus, map[string]any{"id_or_path": "../../etc/passwd"})
 	assert.Contains(t, msg, "invalid review id")
 }
+
+// TestLoadVerifyRegistry_CanonicalContainment checks that balanced traversal
+// paths are rejected. "a/.." resolves to root and slips through the current
+// string-matching check (Contains("a/..", "../") is false); canonical
+// path containment must catch all three cases.
+func TestLoadVerifyRegistry_CanonicalContainment(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	e := &engine{root: root}
+	cases := []string{
+		"a/..",          // resolves to root — slips through string-matching check
+		"../x",          // resolves above root
+		"sub/../../etc", // balanced traversal escaping root
+	}
+	for _, p := range cases {
+		p := p
+		t.Run(filepath.ToSlash(p), func(t *testing.T) {
+			t.Parallel()
+			_, err := e.loadVerifyRegistry(p)
+			require.Error(t, err, "path %q must be rejected", p)
+			assert.Contains(t, err.Error(), "invalid registryPath", "path %q must return invalid registryPath error", p)
+		})
+	}
+}

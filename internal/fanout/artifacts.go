@@ -78,13 +78,13 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 		}
 		seen[dir] = true
 
-		findings := findingsFor(r)
-		merged = append(merged, findings...)
+		fr := findingsFor(r)
+		merged = append(merged, fr.Findings...)
 
-		if err := writeAgentArtifacts(poolDir, dir, r, findings); err != nil {
+		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
 			return Summary{}, err
 		}
-		statuses = append(statuses, statusFor(r, len(findings)))
+		statuses = append(statuses, statusFor(r, fr))
 	}
 
 	// Merged pool findings (8-col, REVIEWER per row) for downstream convenience.
@@ -135,15 +135,22 @@ func writeFailureSummary(poolDir string, results []Result) {
 // floor + max_findings cap, Epic 2.2). Enforcement runs after stamping so the
 // reviewer attribution is intact on every kept finding. A failed agent (no
 // content) yields no findings.
-func findingsFor(r Result) []stream.Finding {
+type findingsResult struct {
+	Findings  []stream.Finding
+	Dropped   int
+	Truncated int
+}
+
+func findingsFor(r Result) findingsResult {
 	if r.Content == "" {
-		return nil
+		return findingsResult{}
 	}
 	findings := stream.ParseModelOutput([]byte(r.Content))
 	for i := range findings {
 		findings[i].Reviewer = r.Agent
 	}
-	return enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
+	f, dropped, truncated := enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
+	return findingsResult{Findings: f, Dropped: dropped, Truncated: truncated}
 }
 
 // agentDirName reduces an agent name to a safe single path segment and rejects
@@ -160,7 +167,7 @@ func agentDirName(agent string) (string, error) {
 
 // writeAgentArtifacts creates the agent's raw dir and writes review.md,
 // findings.txt, and status.json. dir is the pre-sanitized single-segment name.
-func writeAgentArtifacts(poolDir, dir string, r Result, findings []stream.Finding) error {
+func writeAgentArtifacts(poolDir, dir string, r Result, fr findingsResult) error {
 	agentDir := filepath.Join(poolDir, poolRawAgentDir, dir)
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		return fmt.Errorf("creating agent dir for '%s': %w", r.Agent, err)
@@ -168,25 +175,27 @@ func writeAgentArtifacts(poolDir, dir string, r Result, findings []stream.Findin
 	if err := atomicWriteFile(filepath.Join(agentDir, reviewFile), []byte(r.Content)); err != nil {
 		return fmt.Errorf("writing review.md for '%s': %w", r.Agent, err)
 	}
-	if err := writeFindings(filepath.Join(agentDir, findingsFile), findings); err != nil {
+	if err := writeFindings(filepath.Join(agentDir, findingsFile), fr.Findings); err != nil {
 		return fmt.Errorf("writing findings.txt for '%s': %w", r.Agent, err)
 	}
-	st := statusFor(r, len(findings))
+	st := statusFor(r, fr)
 	return WriteStatus(filepath.Join(agentDir, statusFile), &st)
 }
 
 // statusFor builds the per-agent status.json record from a result.
-func statusFor(r Result, findingsCount int) AgentStatus {
+func statusFor(r Result, fr findingsResult) AgentStatus {
 	st := AgentStatus{
-		Agent:         r.Agent,
-		Status:        r.Status,
-		FindingsCount: findingsCount,
-		DurationMS:    r.DurationMS,
-		PayloadMode:   r.PayloadMode,
-		Truncated:     r.Truncation.Truncated,
-		FilesDropped:  r.Truncation.FilesDropped,
-		FallbackUsed:  r.FallbackUsed,
-		FallbackFrom:  r.FallbackFrom,
+		Agent:                  r.Agent,
+		Status:                 r.Status,
+		FindingsCount:          len(fr.Findings),
+		DurationMS:             r.DurationMS,
+		PayloadMode:            r.PayloadMode,
+		Truncated:              r.Truncation.Truncated,
+		FilesDropped:           r.Truncation.FilesDropped,
+		FallbackUsed:           r.FallbackUsed,
+		FallbackFrom:           r.FallbackFrom,
+		DroppedByMinSeverity:   fr.Dropped,
+		TruncatedByMaxFindings: fr.Truncated,
 	}
 	if r.Err != nil {
 		st.Error = r.Err.Error()

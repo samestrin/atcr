@@ -269,8 +269,7 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// The markdown report carries the disagreement radar above its findings
 		// (Epic 3.2). A corrupt ambiguous.json degrades to a findings-only radar
 		// rather than failing the report.
-		clusters, _ := reconcile.ReadAmbiguousClusters(dir)
-		df := reconcile.BuildDisagreements(findings, clusters)
+		df := reconcile.LoadDisagreements(dir, findings)
 		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
 			return nil, ReportResult{}, err
 		}
@@ -441,16 +440,21 @@ func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // roster as review/reconcile).
 func (e *engine) loadVerifyRegistry(path string) (*registry.Registry, error) {
 	if p := strings.TrimSpace(path); p != "" {
-		// Path containment (parity with resolveReviewDir's id validation): an MCP
-		// client must not redirect registry reads to an arbitrary file on the
-		// server — that would be an information-disclosure surface. Reject absolute
-		// paths and any ".." segment, and resolve the override under the server
-		// root. The default (empty) path already loads the user/project registry,
-		// so callers needing the home registry simply omit registryPath.
-		if filepath.IsAbs(p) || strings.Contains(filepath.ToSlash(p), "../") || p == ".." {
+		// Absolute paths are rejected upfront because filepath.Join appends them
+		// rather than replacing the base, so the canonical check below would
+		// incorrectly allow "/etc/passwd" as root+"/etc/passwd".
+		if filepath.IsAbs(p) {
 			return nil, fmt.Errorf("invalid registryPath %q: must be a relative path within the project", path)
 		}
-		return registry.LoadRegistry(filepath.Join(e.root, p))
+		// Canonical containment: filepath.Clean resolves all .. segments so balanced
+		// traversals like "a/.." (which don't contain "../" as a substring) are
+		// caught regardless of how .. segments balance.
+		cleanRoot := filepath.Clean(e.root)
+		resolved := filepath.Clean(filepath.Join(e.root, p))
+		if !strings.HasPrefix(resolved, cleanRoot+string(filepath.Separator)) {
+			return nil, fmt.Errorf("invalid registryPath %q: must be a relative path within the project", path)
+		}
+		return registry.LoadRegistry(resolved)
 	}
 	cfg, err := fanout.LoadReviewConfig(e.root, registry.CLIOverrides{})
 	if err != nil {
