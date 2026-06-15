@@ -110,11 +110,13 @@ func TestBuildSkepticPrompt_FindingContentInXMLDelimiters(t *testing.T) {
 	assert.Contains(t, prompt, "<finding>", "finding section must start with <finding> XML delimiter")
 	assert.Contains(t, prompt, "</finding>", "finding section must close with </finding> XML delimiter")
 
-	// The verdict-spec instructions must appear AFTER the closing </finding> tag.
+	// The verdict-spec instructions (distinct from any user content) must appear
+	// AFTER the closing </finding> tag. Use the pipe-separated enum string which
+	// only appears in the spec, not in any finding field.
 	findingEnd := strings.Index(prompt, "</finding>")
 	require.Greater(t, findingEnd, 0, "</finding> tag must be present")
-	instructionsIdx := strings.Index(prompt, `"verdict"`)
-	require.Greater(t, instructionsIdx, 0, "verdict spec must be present")
-	assert.Greater(t, instructionsIdx, findingEnd,
+	specIdx := strings.Index(prompt, "confirmed|refuted|unverifiable")
+	require.Greater(t, specIdx, 0, "verdict spec enum must be present")
+	assert.Greater(t, specIdx, findingEnd,
 		"verdict spec must appear after </finding> to prevent adversarial content injection")
 }
