@@ -216,18 +216,32 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// rebuilding from the on-disk findings.json block enriched with the prior
 	// run's audit metadata (TD-007: a verdict whose key matched no finding is
 	// surfaced below rather than silently dropped).
-	// Load the prior verification.json so a finding skipped this run (already
-	// verified, no --fresh) carries its rich audit metadata (Model/DurationMs/
-	// TrippedBudgets) forward instead of being re-synthesized as a lossy compact
-	// record — the findings.json block lacks those fields (AC4). A missing or
-	// unreadable prior degrades to no carry-forward rather than failing the run.
-	priorByKey := map[FindingKey]VerificationResult{}
-	if prior, perr := ReadVerificationResults(reviewDir); perr != nil {
-		fmt.Fprintf(os.Stderr, "atcr: verify: prior verification.json unreadable, skip-path metadata not carried forward: %v\n", perr)
-	} else {
+	// Load the prior verification.json LAZILY: only when at least one finding is
+	// skipped this run (already verified, no --fresh). A skipped finding carries
+	// its rich audit metadata (Model/DurationMs/TrippedBudgets) forward from the
+	// prior instead of being re-synthesized as a lossy compact record — the
+	// findings.json block lacks those fields (AC4). A missing or unreadable prior
+	// degrades to no carry-forward rather than failing the run. Loading eagerly
+	// caused a spurious stderr warning when the prior was corrupt but no finding
+	// was skipped (the prior data was never consulted).
+	var priorByKey map[FindingKey]VerificationResult
+	var priorLoaded, priorLoadFailed bool
+	loadPrior := func() map[FindingKey]VerificationResult {
+		if priorLoaded {
+			return priorByKey
+		}
+		priorLoaded = true
+		prior, perr := ReadVerificationResults(reviewDir)
+		if perr != nil {
+			priorLoadFailed = true
+			fmt.Fprintf(os.Stderr, "atcr: verify: prior verification.json unreadable, skip-path metadata not carried forward: %v\n", perr)
+			return nil
+		}
+		priorByKey = make(map[FindingKey]VerificationResult, len(prior))
 		for _, r := range prior {
 			priorByKey[FindingKey{File: r.File, Line: r.Line, Problem: r.Problem}] = r
 		}
+		return priorByKey
 	}
 
 	matched := make(map[FindingKey]bool, len(rich))
@@ -255,8 +269,12 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// current block. A stale or hand-edited prior with a different verdict must
 		// not lend its audit metadata to a now-different outcome (zero values left
 		// if no prior, or a mismatched one, exists).
-		prior := priorByKey[key]
-		if strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
+		pk := loadPrior()
+		var prior VerificationResult
+		if pk != nil {
+			prior = pk[key]
+		}
+		if !priorLoadFailed && strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
 			rec.Model = prior.Model
 			rec.DurationMs = prior.DurationMs
 			rec.TrippedBudgets = prior.TrippedBudgets
