@@ -24,6 +24,13 @@ import (
 // aggregateVerdicts applies (Epic 3.0 / AC 04-01 Scenario 3).
 const thoroughVotes = 3
 
+// logPipelineWarning emits a single structured stderr line for pipeline-level
+// warnings (prior load failures, key mismatches). Mirrors logSkepticFailure's
+// pattern so all verify-stage logs follow a consistent format.
+func logPipelineWarning(class, detail string) {
+	fmt.Fprintf(os.Stderr, "atcr: verify: class=%s: %s\n", class, detail)
+}
+
 // Options are the verify-stage run controls, set from CLI flags or MCP args.
 // MinSeverity is the floor below which a finding keeps its v1 confidence and is
 // never sent to a skeptic; "" means "use the registry default" (MEDIUM). Fresh
@@ -234,7 +241,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		prior, perr := ReadVerificationResults(reviewDir)
 		if perr != nil {
 			priorLoadFailed = true
-			fmt.Fprintf(os.Stderr, "atcr: verify: prior verification.json unreadable, skip-path metadata not carried forward: %v\n", perr)
+			logPipelineWarning("prior_unreadable", fmt.Sprintf("skip-path metadata not carried forward: %v", perr))
 			return nil
 		}
 		priorByKey = make(map[FindingKey]VerificationResult, len(prior))
@@ -287,7 +294,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// should never fire — but a future merge-text change would make it visible.
 	for key := range rich {
 		if !matched[key] {
-			fmt.Fprintf(os.Stderr, "atcr: verify: verdict for %s:%d matched no finding (dropped)\n", key.File, key.Line)
+			logPipelineWarning("orphan_verdict", fmt.Sprintf("%s:%d matched no finding (dropped)", key.File, key.Line))
 		}
 	}
 
