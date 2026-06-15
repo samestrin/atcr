@@ -80,9 +80,12 @@ type Message struct {
 
 // ChatResponse is the engine-facing result of one Chat turn: the assistant
 // message (which may carry tool_calls) and the provider's finish_reason.
+// Truncated is true when the provider reported finish_reason "length" (token
+// budget exhausted); the content or tool_call arguments may be partial.
 type ChatResponse struct {
 	Message      Message
 	FinishReason string
+	Truncated    bool
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
@@ -151,7 +154,11 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return nil, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	return &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason}, nil
+	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason}
+	if ch.FinishReason == "length" {
+		resp.Truncated = true
+	}
+	return resp, nil
 }
 
 // ToolCallArguments normalizes a tool call's arguments to a raw JSON value,

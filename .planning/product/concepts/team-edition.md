@@ -1,8 +1,8 @@
-# Concept: Self-Hosted Team Edition
+# Concept: Self-Hosted Team Edition + Compliance Wrapper
 
-**Status:** Conceptual  
-**Created:** 2026-06-11  
-**Priority:** High  
+**Status:** Conceptual
+**Created:** 2026-06-11
+**Priority:** Medium (high ceiling, slow)
 
 ## Problem
 
@@ -68,10 +68,22 @@ A **team edition** of ATCR that adds:
   - Team (20 users): $Y/month
   - Enterprise (unlimited): custom pricing, support contract
 
+**Compliance wrapper** (add-on):
+- Compliance report generator (SOC 2, HIPAA, ISO 27001)
+- "Survived-a-Skeptic" certification integration (see survived-a-skeptic-cert.md)
+- Audit trail hardening for regulated industries
+- $5k-20k/year per org (on top of Team Edition license)
+
 **Support contracts** for enterprise:
 - Priority bug fixes
-- Custom persona development
+- Custom persona development (see enterprise-persona-dev.md)
 - Onboarding assistance
+
+**Why this works:**
+- Regulated industries need to prove code quality.
+- The compliance wrapper is a thin layer on top of the audit trail.
+- Enterprises will pay for compliance; it's a legal requirement, not a nice-to-have.
+- Recurring revenue (annual licenses).
 
 ## Engineering Effort
 
@@ -106,6 +118,14 @@ A **team edition** of ATCR that adds:
 - **Where does history live?** Repo-local (each repo has its own `findings-history.jsonl`) or team-shared (one history DB for all repos)?
 - **Dashboard tech stack?** React + Express (full-featured) or static site generator (lightweight, export-focused)?
 - **Compliance frameworks?** Which frameworks to target first (SOC 2, ISO 27001, FedRAMP)?
+
+## Relationship to Other Concepts
+
+- **"Survived-a-Skeptic" Certification** — the compliance wrapper integrates with the certification; enterprises that buy Team Edition will want the certification.
+- **Enterprise Persona Development** — enterprises that buy Team Edition will want custom personas; the two are often sold together.
+- **Review-as-a-Service API** — the SaaS alternative; offer both, let teams choose.
+- **Review Intelligence Analytics** — the Team Edition finding history is the data source; Team Edition users opt-in to aggregation.
+- **CI Integration** — the finding history is built on top of CI integration; build CI first, then Team Edition.
 
 ## References
 

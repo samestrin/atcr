@@ -108,3 +108,37 @@ func TestMerge_EvidenceReviewerPrefixedWhenMultiple(t *testing.T) {
 	assert.Contains(t, m.Evidence, "[greta] saw X")
 	assert.Contains(t, m.Evidence, "[kai] saw Y")
 }
+
+func TestMerge_ModalCategoryCanonicalizesCase(t *testing.T) {
+	// Non-canonical "Out-Of-Scope" must be normalized to the canonical
+	// "out-of-scope" so the gate, the summary out_of_scope count, and the
+	// report out-of-scope section all agree on what counts as out-of-scope.
+	nonCanonical := []stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "Out-Of-Scope", 10, "e", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", "Out-Of-Scope", 10, "e", "kai"),
+	}
+	m := Merge(nonCanonical)
+	assert.Equal(t, CategoryOutOfScope, m.Category,
+		"non-canonical 'Out-Of-Scope' normalized to canonical 'out-of-scope'")
+
+	// Mixed casing across reviewers: all non-canonical out-of-scope variants
+	// must collapse to the canonical form so unanimous detection works.
+	mixedCase := []stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "OUT-OF-SCOPE", 10, "e", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", "out-of-scope", 10, "e", "kai"),
+	}
+	assert.Equal(t, CategoryOutOfScope, Merge(mixedCase).Category,
+		"all-caps and canonical variants collapse to the same canonical form")
+}
+
+func TestMerge_ModalCategoryCanonicalizesAllCategories(t *testing.T) {
+	// All category values must emerge canonicalized (lower+trim), not just
+	// out-of-scope — otherwise the same casing mismatch breaks the summary
+	// counts and report sections for any category.
+	m := Merge([]stream.Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "Security", 10, "e", "greta"),
+		mf("HIGH", "a.go", 1, "p", "f", "SECURITY", 10, "e", "kai"),
+	})
+	assert.Equal(t, "security", m.Category,
+		"non-canonical category casing normalized to canonical lowercase")
+}

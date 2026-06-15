@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,20 +53,100 @@ func AtOrAbove(severity, threshold string) bool {
 // threshold must be a canonical severity (validated via ParseSeverity). The
 // ordering is CRITICAL > HIGH > MEDIUM > LOW, so --fail-on HIGH counts HIGH and
 // CRITICAL. This is the pure helper the centralized exit-code logic uses.
-// Findings annotated out-of-scope never count (AC 06-04): a pre-existing
-// CRITICAL the change never touched must not fail CI; the annotation and the
+//
+// Verification verdicts (Epic 3.0) refine the count via Verification.Verdict,
+// read directly off each finding:
+//   - A refuted finding is never counted, at any severity — a skeptic disproved
+//     it, so it must not block CI (it is retained in the artifacts, just demoted).
+//   - When requireVerified is true, only a confirmed finding counts — the
+//     strictest gate (--fail-on <sev> --require-verified). A v1 finding (nil
+//     Verification), an unverifiable one, and an empty-verdict one are all NOT
+//     VERIFIED and therefore excluded under requireVerified, but DO count under
+//     the default (requireVerified=false) since they are not refuted.
+//
+// Findings annotated out-of-scope never count (AC 06-04) and that exclusion takes
+// precedence over any verdict: a pre-existing CRITICAL the change never touched
+// must not fail CI even if a skeptic confirmed it; the annotation and the
 // summary.json out_of_scope count are the audit trail.
-func CountAtOrAbove(findings []Merged, threshold string) int {
+func CountAtOrAbove(findings []Merged, threshold string, requireVerified bool) int {
 	n := 0
 	for _, f := range findings {
-		if f.Category == CategoryOutOfScope {
-			continue
-		}
-		if AtOrAbove(f.Severity, threshold) {
+		if IsFailing(f.Severity, f.Category, f.Verification, threshold, requireVerified) {
 			n++
 		}
 	}
 	return n
+}
+
+// IsFailing is the single per-finding gate predicate the count helpers and the
+// MCP failing-list builder all share, so the CLI, the MCP handlers, and the
+// verify stage can never diverge on what counts (AC 04-03/05-02). A finding fails
+// the gate when it is in scope, not refuted, at or above threshold, and — under
+// requireVerified — confirmed. category is the finding's category, v its optional
+// verification block (nil for a v1 finding).
+// All three input axes are normalized (lower/upper + trim) before comparison so a
+// non-canonical casing/whitespace in a hand-edited or externally-produced
+// findings.json — which the JSON-gate path reads without validation — cannot flip
+// a gate decision: smuggle a refuted finding past the exclusion, mask an
+// out-of-scope finding into the count, drop a confirmed one from the strict count,
+// or un-gate a finding via a lower-cased severity.
+func IsFailing(severity, category string, v *Verification, threshold string, requireVerified bool) bool {
+	if strings.ToLower(strings.TrimSpace(category)) == CategoryOutOfScope {
+		return false // out-of-scope never counts, and this takes precedence over any verdict
+	}
+	verdict := ""
+	if v != nil {
+		verdict = strings.ToLower(strings.TrimSpace(v.Verdict))
+	}
+	if verdict == VerdictRefuted {
+		return false // a skeptic disproved it: retained but never blocks CI
+	}
+	if !AtOrAbove(strings.ToUpper(strings.TrimSpace(severity)), strings.ToUpper(strings.TrimSpace(threshold))) {
+		return false
+	}
+	if requireVerified && verdict != VerdictConfirmed {
+		return false // strictest gate: only a confirmed (VERIFIED) finding counts
+	}
+	return true
+}
+
+// CountFailingJSON mirrors CountAtOrAbove over the re-readable JSONFinding records
+// the verify stage gates on its own re-emitted findings.json. It applies the same
+// IsFailing predicate, so a verify-stage gate decision is identical to the CLI
+// reconcile gate for the same findings (AC 04-03 Scenario 3).
+func CountFailingJSON(findings []JSONFinding, threshold string, requireVerified bool) int {
+	n := 0
+	for _, f := range findings {
+		if IsFailing(f.Severity, f.Category, f.Verification, threshold, requireVerified) {
+			n++
+		}
+	}
+	return n
+}
+
+// ValidateRequireVerified checks whether the verify stage has run for reviewDir.
+// Returns a non-nil error when the stage has not run — the caller surfaces this
+// as a warning (TD-004): --require-verified gates only on VERIFIED findings, so
+// a gate over a review where verify never ran trivially passes everything.
+// Best-effort: any read error is treated as "not run".
+func ValidateRequireVerified(reviewDir string) error {
+	if info, err := os.Stat(filepath.Join(reviewDir, "reconciled", "verification.json")); err == nil && !info.IsDir() {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(reviewDir, "manifest.json"))
+	if err == nil {
+		var m struct {
+			Stages []string `json:"stages"`
+		}
+		if json.Unmarshal(data, &m) == nil {
+			for _, s := range m.Stages {
+				if s == "verify" {
+					return nil
+				}
+			}
+		}
+	}
+	return errors.New("verify stage has not run for this review; the gate counts only VERIFIED findings, so it will pass — run 'atcr verify' first")
 }
 
 // RunReconcile discovers sources under reviewDir/sources, runs the deterministic

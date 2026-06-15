@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,7 @@ func newReconcileCmd() *cobra.Command {
 		RunE:  runReconcile,
 	}
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
+	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
 	return cmd
 }
@@ -34,6 +36,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	threshold, err := resolveGateThreshold(cmd)
 	if err != nil {
 		return err
+	}
+
+	// --require-verified is meaningless without a gate: a strict gate that never
+	// runs gives false confidence (the "gate that catches nothing" failure mode
+	// Epic 3.0 exists to eliminate). Fail fast as a usage error (AC 05-01 EC3).
+	requireVerified, _ := cmd.Flags().GetBool("require-verified")
+	if requireVerified && threshold == "" {
+		return usageError(errors.New("--require-verified requires --fail-on"))
 	}
 
 	arg := ""
@@ -66,7 +76,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
 
-	return gateFindings(res, threshold)
+	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+	if requireVerified {
+		if verr := reconcile.ValidateRequireVerified(reviewDir); verr != nil {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "atcr: warning: --require-verified set but", verr)
+		}
+	}
+
+	return gateFindings(res, threshold, requireVerified)
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold
@@ -121,12 +138,14 @@ func validateGate(v string) (string, error) {
 }
 
 // gateFindings returns a plain error (exit 1) when any finding at/above the
-// threshold survives, else nil. A "" threshold is a no-op.
-func gateFindings(res reconcile.Result, threshold string) error {
+// threshold survives, else nil. A "" threshold is a no-op. requireVerified
+// restricts the count to skeptic-confirmed (VERIFIED) findings — the strictest
+// gate; refuted findings are always excluded regardless.
+func gateFindings(res reconcile.Result, threshold string, requireVerified bool) error {
 	if threshold == "" {
 		return nil
 	}
-	if n := reconcile.CountAtOrAbove(res.Findings, threshold); n > 0 {
+	if n := reconcile.CountAtOrAbove(res.Findings, threshold, requireVerified); n > 0 {
 		return fmt.Errorf("%d finding(s) at or above %s survived reconciliation", n, threshold)
 	}
 	return nil

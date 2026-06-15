@@ -3,9 +3,9 @@ package payload
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/samestrin/atcr/internal/atomicfs"
 )
 
 // Manifest is the per-review provenance record written to manifest.json so
@@ -107,34 +107,8 @@ func WriteManifest(path string, m *Manifest) error {
 	if err != nil {
 		return fmt.Errorf("failed to write manifest.json: %w", err)
 	}
-	if err := atomicWriteFile(path, append(data, '\n')); err != nil {
+	if err := atomicfs.WriteFileAtomic(path, append(data, '\n')); err != nil {
 		return fmt.Errorf("failed to write manifest.json: %w", err)
 	}
 	return nil
-}
-
-// atomicWriteFile writes data to a sibling temp file then renames it over path,
-// so a reader never observes a partially-written file. The temp is chmod'd to
-// 0644 before the rename so the artifact lands with the AC 01-03 file mode
-// (matching internal/fanout's copy) rather than os.CreateTemp's 0600 default.
-func atomicWriteFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
 }

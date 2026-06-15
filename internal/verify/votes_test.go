@@ -1,0 +1,103 @@
+package verify
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/reconcile"
+)
+
+func v(verdict, skeptic, notes string) *reconcile.Verification {
+	return &reconcile.Verification{Verdict: verdict, Skeptic: skeptic, Notes: notes}
+}
+
+func TestAggregateVerdicts_Unanimous(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictConfirmed, "s1", "a"),
+		v(verdictConfirmed, "s2", "b"),
+		v(verdictConfirmed, "s3", "c"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictConfirmed, got.Verdict)
+}
+
+func TestAggregateVerdicts_Majority(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictConfirmed, "s1", "holds"),
+		v(verdictConfirmed, "s2", "also holds"),
+		v(verdictRefuted, "s3", "nope"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictConfirmed, got.Verdict)
+}
+
+func TestAggregateVerdicts_MajorityRefuted(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictRefuted, "s1", "wrong"),
+		v(verdictRefuted, "s2", "also wrong"),
+		v(verdictConfirmed, "s3", "right"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictRefuted, got.Verdict)
+}
+
+func TestAggregateVerdicts_DisagreementTie(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictConfirmed, "s1", "reason-confirm"),
+		v(verdictRefuted, "s2", "reason-refute"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictUnverifiable, got.Verdict)
+	// all reasonings preserved
+	assert.Contains(t, got.Notes, "reason-confirm")
+	assert.Contains(t, got.Notes, "reason-refute")
+}
+
+func TestAggregateVerdicts_SingleSkeptic(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{v(verdictRefuted, "s1", "single reason")})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictRefuted, got.Verdict)
+	assert.Equal(t, "single reason", got.Notes)
+}
+
+func TestAggregateVerdicts_EmptySlice(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts(nil)
+	require.NotNil(t, got)
+	assert.Equal(t, verdictUnverifiable, got.Verdict)
+}
+
+// TestAggregateVerdicts_TieNoSkepticNames covers aggregation when per-skeptic
+// verdicts carry no Skeptic name: the combined notes fall back to the verdict as
+// the label and the aggregate Skeptic field is empty (no names to join).
+func TestAggregateVerdicts_TieNoSkepticNames(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictConfirmed, "", "yes reason"),
+		v(verdictRefuted, "", "no reason"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictUnverifiable, got.Verdict)
+	assert.Empty(t, got.Skeptic)
+	assert.Contains(t, got.Notes, "yes reason")
+	assert.Contains(t, got.Notes, "no reason")
+	assert.Contains(t, got.Notes, verdictConfirmed)
+}
+
+func TestAggregateVerdicts_ThreeWaySplit(t *testing.T) {
+	t.Parallel()
+	got := aggregateVerdicts([]*reconcile.Verification{
+		v(verdictConfirmed, "s1", "c"),
+		v(verdictRefuted, "s2", "r"),
+		v(verdictUnverifiable, "s3", "u"),
+	})
+	require.NotNil(t, got)
+	assert.Equal(t, verdictUnverifiable, got.Verdict)
+}

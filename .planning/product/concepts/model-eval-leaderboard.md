@@ -83,6 +83,9 @@ So the leaderboard's credibility compounds with the roadmap already planned — 
 - Private team leaderboards / regression tracking (folds into team-edition).
 - Benchmark-as-a-service: BYO private review suite, scored by the standard methodology.
 
+**Immediate revenue (services play):**
+- Model Selection Consulting (see model-selection-consulting.md) — sell the leaderboard data as a service; every team asks "which model should I use?"; funds OSS development.
+
 The asset sold is **a trusted measurement**, not infrastructure — and it falls out of the architecture already built.
 
 ## Engineering Effort
@@ -116,6 +119,14 @@ The asset sold is **a trusted measurement**, not infrastructure — and it falls
 - **Anonymization?** What must be stripped from a run summary before it can be published?
 - **Where does the local scorecard live?** Alongside each review dir, or a rolled-up `~/.config/atcr/eval/`?
 - **Headline metric?** Lead with cost-per-corroborated-finding (pragmatic) or survived-skeptic rate (rigorous)?
+
+## Relationship to Other Concepts
+
+- **Model Selection Consulting** — the services play that monetizes the leaderboard data; sell the evaluation as a service.
+- **Reconciler Library** — the reconciler is the foundation; the leaderboard consumes the same per-finding reviewer-attribution.
+- **Team Edition** — private team leaderboards fold into the Team Edition; regression tracking is a Team Edition feature.
+- **Review Intelligence Analytics** — the model performance data is a subset of the analytics; the leaderboard is the model-eval slice.
+- **"Survived-a-Skeptic" Certification** — the survived-skeptic axis (post-3.0) is the headline metric for the certification.
 
 ## References
 

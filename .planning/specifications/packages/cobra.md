@@ -96,7 +96,11 @@ func init() {
 
 ## Integration Notes (atcr)
 
-- One root `atcr` command with subcommands `review`, `reconcile`, `report`, `range`, `init`, `serve` (Epic 1.0 task 1).
+- One root `atcr` command with subcommands: `review`, `reconcile`, `report`, `range`, `init`, `serve`, `status`, `anchor`, `doctor`, `trust` (Epic 1.0 task 1).
+  - `anchor` — resolves a review id or path to its review directory (`.atcr/latest` default)
+  - `doctor` — pre-flight self-test: invokes every configured model endpoint and reports which agents are reachable
+  - `status [id-or-path]` — prints a review's fan-out progress as JSON (backs the `atcr_status` MCP tool)
+  - `trust [name...]` — lists or authorizes project-defined providers from `.atcr/registry.yaml`
 - Use `RunE` variants everywhere and return errors; map `--fail-on` threshold violations to a distinct exit code in `main()` (CI gate semantics) rather than calling `os.Exit` inside handlers.
 - Use `ExecuteContext` so one root context carries the global timeout into the fan-out engine.
 - `MarkFlagsMutuallyExclusive("base", "merge-commit")` and friends express the range-resolution flag rules declaratively.

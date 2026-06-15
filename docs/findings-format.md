@@ -89,7 +89,30 @@ Discovery is **leaf-preference**: a directory's `findings.txt` is an input only 
 
 ## JSON form
 
-`reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. A reserved per-finding `verification` block (`{verdict, skeptic, notes}`) is reserved for the adversarial-verification stage (**Epic 3.0**): parsed if present, but never produced by any v1 code path and **absent from 1.x output**. Renderers and readers must tolerate both its absence and its presence — `atcr report` renders identically either way. When `verification` is present, readers must treat an absent or unrecognized `verdict` value (including `""`) as `"unverified"` rather than trusting it — the allowed enum is `confirmed | refuted | unverifiable`; any other value indicates a future format or a write error.
+`reconciled/findings.json` carries the same records in structured form, plus run metadata, for scripting. Each finding may carry a per-finding `verification` block, **produced by the adversarial-verification stage (`atcr verify`, Epic 3.0)** and **absent from 1.x output** and from any review that has not been verified. Renderers and readers must tolerate both its absence and its presence: `atcr report` renders a finding with no block identically to pre-Epic-3.0 output, and renders the Skeptic section / v2 confidence only when the block is present.
+
+```json
+{
+  "severity": "HIGH",
+  "file": "internal/auth/token.go",
+  "line": 42,
+  "problem": "JWT signature not verified before claims are read",
+  "confidence": "VERIFIED",
+  "verification": { "verdict": "confirmed", "skeptic": "otto", "notes": "read token.go:42 — jwt.Parse called without Verify" }
+}
+```
+
+The block fields are:
+
+| Field | Meaning |
+|-------|---------|
+| `verdict` | `confirmed`, `refuted`, or `unverifiable`. |
+| `skeptic` | The agent name that produced the verdict. |
+| `notes` | The skeptic's reasoning (omitted when empty). |
+
+When `verification` is present, readers must treat an absent or unrecognized `verdict` value (including `""`) as unverified rather than trusting it — the allowed enum is `confirmed | refuted | unverifiable`; any other value indicates a future format or a write error.
+
+**Confidence v2.** When a finding is verified, its `confidence` is recomputed onto a four-tier axis, ordered `VERIFIED > HIGH > MEDIUM > LOW`: a `confirmed` verdict promotes the finding to `VERIFIED`, a `refuted` verdict demotes it to `LOW` (retained for audit, never deleted), and `unverifiable` leaves the v1 confidence unchanged. The v1 tiers (`HIGH`/`MEDIUM`/`LOW`, the reviewer-agreement signal) are unchanged for unverified findings. Full mechanics and gate semantics are in [verification.md](verification.md).
 
 ## Reserved fields in companion artifacts
 
@@ -97,7 +120,7 @@ The other v1 review artifacts carry reserved fields for the agentic stages on th
 
 | Artifact | Field | 1.x value | Reserved for |
 |----------|-------|-----------|--------------|
-| `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran; `WriteManifest` normalizes nil to `["review"]` so the field is always present; readers MUST default an absent `stages` to `["review"]` for older manifests written before this field existed | **Epics 3.0–5.0** — later runs append `"verify"`, `"debate"` |
+| `manifest.json` | `stages` (array) | `["review"]` — records the one stage that ran; `WriteManifest` normalizes nil to `["review"]` so the field is always present; readers MUST default an absent `stages` to `["review"]` for older manifests written before this field existed. **Active in 3.0:** `atcr verify` appends `"verify"` (idempotently) | later stages append `"debate"` (Epics 4.0–5.0) |
 | per-agent `status.json` | `turns`, `tool_calls`, `tool_bytes` | absent — no tool loop ran | **Epic 2.0** — tool-using reviewer loop |
 
 ## Evolution policy

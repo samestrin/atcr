@@ -161,3 +161,67 @@ func TestOutputDirFromFlags_WhitespacePaddedResolvesTrimmed(t *testing.T) {
 	cwd, _ := os.Getwd()
 	require.Equal(t, filepath.Join(cwd, "out"), dir, "leading spaces must be trimmed before filepath.Abs")
 }
+
+// TestReviewCmd_VerifyFlagsRegistered verifies the --verify chaining flags exist
+// on reviewCmd with the documented defaults (AC 04-02).
+func TestReviewCmd_VerifyFlagsRegistered(t *testing.T) {
+	cmd := newReviewCmd()
+	for _, name := range []string{"verify", "fresh", "thorough", "min-severity"} {
+		require.NotNil(t, cmd.Flags().Lookup(name), "review must define --%s", name)
+	}
+	v, err := cmd.Flags().GetBool("verify")
+	require.NoError(t, err)
+	require.False(t, v, "--verify defaults to false")
+}
+
+// TestReviewCmd_VerifyInvalidMinSeverity verifies `review --verify` validates
+// --min-severity before any review work, failing fast as a usage error (exit 2).
+func TestReviewCmd_VerifyInvalidMinSeverity(t *testing.T) {
+	isolate(t) // empty CWD: no git repo, but validation runs before range resolution
+	code, out := execCmdCapture(t, "review", "--verify", "--min-severity", "BLOCKER")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "CRITICAL")
+}
+
+// TestReviewCmd_RequireVerifiedNeedsVerifyAndFailOn verifies `review
+// --require-verified` is a usage error (exit 2) without both --verify and
+// --fail-on: a strict gate with no verdicts would silently pass everything.
+func TestReviewCmd_RequireVerifiedNeedsVerifyAndFailOn(t *testing.T) {
+	isolate(t)
+	// --require-verified alone (no --verify, no --fail-on) → exit 2.
+	code, out := execCmdCapture(t, "review", "--require-verified")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--require-verified requires --fail-on and --verify")
+	// --require-verified --verify but no --fail-on → exit 2.
+	code, _ = execCmdCapture(t, "review", "--require-verified", "--verify")
+	require.Equal(t, 2, code)
+}
+
+// TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
+// with an undefined flag name — a programming error that must fail loudly
+// rather than silently returning false.
+func TestBoolFlag_UndefinedFlagPanics(t *testing.T) {
+	cmd := newReviewCmd()
+	require.Panics(t, func() {
+		boolFlag(cmd, "nonexistent-flag")
+	})
+}
+
+// TestRunReview_ProjectConfigGateActivatedWithoutFlag reproduces the bug where
+// runReview calls failOnThreshold (flag-only) instead of resolveGateThreshold
+// (flag > project config > registry). A project with fail_on:HIGH must gate
+// atcr review even without --fail-on, just as atcr reconcile does.
+//
+// Observable: --require-verified --verify with project fail_on:HIGH must NOT
+// fire the precondition error ("--require-verified requires --fail-on and
+// --verify"), because the config-supplied threshold satisfies the gate check.
+func TestRunReview_ProjectConfigGateActivatedWithoutFlag(t *testing.T) {
+	isolate(t)
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("fail_on: HIGH\n"), 0o644))
+
+	_, out := execCmdCapture(t, "review", "--require-verified", "--verify")
+	require.NotContains(t, out, "--require-verified requires --fail-on and --verify",
+		"project config fail_on must satisfy --require-verified gate precondition without --fail-on flag")
+}
