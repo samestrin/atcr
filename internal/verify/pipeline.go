@@ -361,27 +361,73 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	prompt := buildSkepticPrompt(f, nil) // nil entries: the skeptic reads code via the tool loop
 	start := time.Now()
 	perSkeptic := make([]*reconcile.Verification, 0, len(skeptics))
+	perTripped := make([][]string, 0, len(skeptics))
 	for _, sk := range skeptics {
-		v, _, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
+		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
 			// none can occur here, but never let one drop a finding.
 			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
+			tripped = nil
 		}
 		perSkeptic = append(perSkeptic, v)
+		perTripped = append(perTripped, tripped)
 	}
 	ver := aggregateVerdicts(perSkeptic)
 
 	base.Verdict = ver.Verdict
 	base.Skeptic = ver.Skeptic
 	base.Reasoning = ver.Notes
-	models := make([]string, 0, len(skeptics))
-	for _, sk := range skeptics {
-		models = append(models, sk.Config.Model)
-	}
-	base.Model = strings.Join(models, ", ")
+	// Attribute Model/TrippedBudgets to the winning skeptics only — not all of
+	// skeptics[0..n] — so a multi-vote verdict records the majority's models, not
+	// the losers' (AC2/AC1).
+	base.Model, base.TrippedBudgets = winningAttribution(skeptics, perSkeptic, perTripped, ver.Verdict)
 	base.DurationMs = int(time.Since(start).Milliseconds())
 	return ver, base
+}
+
+// winningAttribution derives the audit Model and TrippedBudgets for a finding
+// from the skeptics whose verdict matched the aggregated (winning) verdict —
+// mirroring how joinSkeptics names contributors, but for the winners only.
+//
+// perSkeptic[i] and perTripped[i] are the verdict and tripped-budget slice of
+// skeptics[i] (verifyFinding builds the three slices together, so indices align).
+// Models are deduplicated and joined in selection order. Tripped budgets attach
+// only to unverifiable verdicts (a budget trip collapses a skeptic to
+// unverifiable), so a confirmed/refuted winner contributes none.
+//
+// When no per-skeptic verdict matches the aggregate — only possible on a tie that
+// aggregates to unverifiable with no unverifiable voter (e.g. 1 confirmed + 1
+// refuted) — every candidate model is recorded so a run that actually executed
+// never reports an empty Model.
+func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
+	var models, budgets []string
+	seenModel := map[string]bool{}
+	seenBudget := map[string]bool{}
+	for i, v := range perSkeptic {
+		if v == nil || v.Verdict != winner {
+			continue
+		}
+		if m := skeptics[i].Config.Model; m != "" && !seenModel[m] {
+			seenModel[m] = true
+			models = append(models, m)
+		}
+		for _, b := range perTripped[i] {
+			if !seenBudget[b] {
+				seenBudget[b] = true
+				budgets = append(budgets, b)
+			}
+		}
+	}
+	if len(models) == 0 {
+		for _, sk := range skeptics {
+			if m := sk.Config.Model; m != "" && !seenModel[m] {
+				seenModel[m] = true
+				models = append(models, m)
+			}
+		}
+	}
+	return strings.Join(models, ", "), budgets
 }
 
 // hasTrustedVerdict reports whether a finding's existing verification block is a
