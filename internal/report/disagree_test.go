@@ -88,6 +88,20 @@ func TestRenderMarkdownWithDisagreements_EmptyMatchesPlainRender(t *testing.T) {
 		"no disagreements → byte-identical to the plain markdown report")
 }
 
+func TestRenderDisagreements_ShowsVerificationSkepticSplit(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "contested",
+			Reviewers: []string{"greta"}, Confidence: "MEDIUM",
+			Verification: &reconcile.Verification{
+				Verdict: reconcile.VerdictUnverifiable, Skeptic: "skeptic-a, skeptic-b", Notes: "disagreed"}},
+	}
+	df := reconcile.BuildDisagreements(findings, nil)
+	var buf bytes.Buffer
+	require.NoError(t, RenderDisagreements(&buf, df))
+	out := buf.String()
+	assert.Contains(t, out, "Skeptics split: skeptic-a, skeptic-b")
+}
+
 func TestRenderDisagreements_EscapesFreeText(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "<script>alert(1)</script>",

@@ -152,6 +152,59 @@ func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	assert.Equal(t, "b.go", medSolos[1].File)
 }
 
+func TestBuildDisagreements_VerificationTieSurfaced(t *testing.T) {
+	findings := []JSONFinding{
+		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "contested validity",
+			Reviewers: []string{"greta"}, Confidence: ConfMedium,
+			Verification: &Verification{
+				Verdict: VerdictUnverifiable,
+				Skeptic: "skeptic-a, skeptic-b",
+				Notes:   "skeptic-a: real | skeptic-b: not real",
+			}},
+	}
+	df := BuildDisagreements(findings, nil)
+	items := itemsByKind(df, KindVerificationDisagreement)
+	require.Len(t, items, 1)
+	assert.Equal(t, "skeptic-a, skeptic-b", items[0].Skeptics)
+	assert.Equal(t, 3.0, items[0].Score, "no spread → scored by severity rank HIGH(3)")
+	assert.Contains(t, items[0].Detail, "not real")
+}
+
+func TestBuildDisagreements_SingleSkepticUnverifiableIsNotTension(t *testing.T) {
+	// One skeptic that simply could not verify is not a disagreement.
+	findings := []JSONFinding{
+		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "couldn't check",
+			Reviewers: []string{"greta", "kai"}, Confidence: ConfHigh,
+			Verification: &Verification{Verdict: VerdictUnverifiable, Skeptic: "skeptic-a", Notes: "timeout"}},
+	}
+	df := BuildDisagreements(findings, nil)
+	assert.Empty(t, itemsByKind(df, KindVerificationDisagreement))
+}
+
+func TestBuildDisagreements_RefutedNeverSurfaced(t *testing.T) {
+	findings := []JSONFinding{
+		{Severity: "CRITICAL", File: "r.go", Line: 1, Problem: "false alarm",
+			Reviewers: []string{"greta"}, Confidence: ConfMedium,
+			Verification: &Verification{Verdict: VerdictRefuted, Skeptic: "skeptic-a", Notes: "not a bug"}},
+	}
+	df := BuildDisagreements(findings, nil)
+	assert.Empty(t, df.Items, "a refuted finding is not actionable tension")
+}
+
+func TestBuildDisagreements_VerificationTieAlsoSplitKeepsSpreadScore(t *testing.T) {
+	// A finding that is both a severity split and a skeptic tie is labeled a
+	// verification disagreement but keeps the stronger spread-based score.
+	findings := []JSONFinding{
+		{Severity: "CRITICAL", File: "v.go", Line: 4, Problem: "double tension",
+			Reviewers: []string{"greta", "kai"}, Confidence: ConfHigh, Disagreement: "LOW vs CRITICAL",
+			Verification: &Verification{Verdict: VerdictUnverifiable, Skeptic: "s-a, s-b", Notes: "split"}},
+	}
+	df := BuildDisagreements(findings, nil)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, KindVerificationDisagreement, df.Items[0].Kind)
+	assert.Equal(t, 6.0, df.Items[0].Score, "spread 3 x independence 2 retained")
+}
+
 func TestRenderMarkdown_RadarSectionAboveFindings(t *testing.T) {
 	// Two reviewers, same location/problem, different severity → merged into one
 	// finding carrying a severity-disagreement annotation.
