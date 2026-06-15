@@ -397,3 +397,24 @@ func TestScoreFor_LargeInputsNoIntOverflow(t *testing.T) {
 	// float64 first: float64(MaxInt64)*float64(MaxInt64) ≈ 8.5e37 (correct).
 	assert.Greater(t, score, 1e30, "scoreFor must widen to float64 before multiplying to avoid int overflow")
 }
+
+func TestVerificationItem_NilVerificationDoesNotPanic(t *testing.T) {
+	// verificationItem dereferences f.Verification.Skeptic and f.Verification.Notes.
+	// Currently safe only because the caller guards with isVerificationTie (which
+	// returns false for nil). A future call path without that precondition would
+	// panic. The function must defend itself.
+	f := JSONFinding{
+		Severity:     "HIGH",
+		File:         "v.go",
+		Line:         1,
+		Problem:      "nil verification",
+		Reviewers:    []string{"greta", "kai"},
+		Confidence:   ConfHigh,
+		Verification: nil,
+	}
+	assert.NotPanics(t, func() {
+		item := verificationItem(f)
+		assert.Empty(t, item.Skeptics, "nil Verification yields empty Skeptics")
+		assert.Empty(t, item.Detail, "nil Verification yields empty Detail")
+	})
+}
