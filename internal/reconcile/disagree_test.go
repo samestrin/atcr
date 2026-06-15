@@ -1,7 +1,10 @@
 package reconcile
 
 import (
+	"bytes"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
@@ -122,6 +125,17 @@ func TestBuildDisagreements_GrayZoneMembersNotDoubleSurfacedAsSolo(t *testing.T)
 	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
 }
 
+func TestBuildDisagreements_ExcludesOutOfScope(t *testing.T) {
+	findings := []JSONFinding{
+		{Severity: "CRITICAL", File: "pre.go", Line: 1, Problem: "pre-existing",
+			Category: CategoryOutOfScope, Reviewers: []string{"greta"}, Confidence: ConfMedium},
+		jf("HIGH", "real.go", 2, "in the change", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	require.Len(t, df.Items, 1, "out-of-scope finding excluded from the radar")
+	assert.Equal(t, "real.go", df.Items[0].File)
+}
+
 func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	findings := []JSONFinding{
 		jf("MEDIUM", "b.go", 2, "p2", []string{"kai"}, ""),
@@ -136,6 +150,35 @@ func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	require.Len(t, medSolos, 2)
 	assert.Equal(t, "a.go", medSolos[0].File)
 	assert.Equal(t, "b.go", medSolos[1].File)
+}
+
+func TestRenderMarkdown_RadarSectionAboveFindings(t *testing.T) {
+	// Two reviewers, same location/problem, different severity → merged into one
+	// finding carrying a severity-disagreement annotation.
+	sources := []Source{
+		{Name: "pool", Findings: []stream.Finding{mf("CRITICAL", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
+		{Name: "host", Findings: []stream.Finding{mf("LOW", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
+	}
+	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+	var buf bytes.Buffer
+	require.NoError(t, RenderMarkdown(&buf, res))
+	out := buf.String()
+	require.Contains(t, out, "## Disagreements")
+	assert.Less(t, strings.Index(out, "## Disagreements"), strings.Index(out, "## Findings"),
+		"radar section renders above consensus findings")
+	assert.Contains(t, out, "LOW vs CRITICAL")
+}
+
+func TestRenderMarkdown_NoDisagreementsOmitsRadar(t *testing.T) {
+	// Two reviewers agree on severity → consensus, no tension, no radar section.
+	sources := []Source{
+		{Name: "pool", Findings: []stream.Finding{mf("HIGH", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
+		{Name: "host", Findings: []stream.Finding{mf("HIGH", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
+	}
+	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+	var buf bytes.Buffer
+	require.NoError(t, RenderMarkdown(&buf, res))
+	assert.NotContains(t, buf.String(), "## Disagreements", "no disagreements → section omitted")
 }
 
 func TestBuildDisagreements_SchemaMetadata(t *testing.T) {

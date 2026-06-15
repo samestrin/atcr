@@ -61,6 +61,33 @@ func TestRenderDisagreements_GrayZoneShowsPositionsSideBySide(t *testing.T) {
 	assert.Contains(t, out, "0.55")
 }
 
+func TestRenderMarkdownWithDisagreements_RadarAboveFindings(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "CRITICAL", File: "a.go", Line: 1, Problem: "boom",
+			Reviewers: []string{"greta", "host"}, Confidence: "HIGH", Disagreement: "LOW vs CRITICAL"},
+	}
+	df := reconcile.BuildDisagreements(findings, nil)
+	var buf bytes.Buffer
+	require.NoError(t, RenderMarkdownWithDisagreements(&buf, findings, df))
+	out := buf.String()
+	require.Contains(t, out, "## Disagreements")
+	require.Contains(t, out, "## Findings")
+	assert.Less(t, strings.Index(out, "## Disagreements"), strings.Index(out, "## Findings"))
+}
+
+func TestRenderMarkdownWithDisagreements_EmptyMatchesPlainRender(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p",
+			Reviewers: []string{"greta", "host"}, Confidence: "HIGH"},
+	}
+	df := reconcile.BuildDisagreements(findings, nil) // no tension → empty
+	var withRadar, plain bytes.Buffer
+	require.NoError(t, RenderMarkdownWithDisagreements(&withRadar, findings, df))
+	require.NoError(t, Render(&plain, findings, FormatMarkdown))
+	assert.Equal(t, plain.String(), withRadar.String(),
+		"no disagreements → byte-identical to the plain markdown report")
+}
+
 func TestRenderDisagreements_EscapesFreeText(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "<script>alert(1)</script>",

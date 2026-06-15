@@ -229,6 +229,11 @@ func RenderMarkdown(w io.Writer, r Result) error {
 	b.WriteString("\n")
 	writeSeverityConfidenceTable(&b, inScope)
 
+	// Disagreement radar above the consensus findings (Epic 3.2). Nothing is
+	// written when there is no tension, so report.md is byte-identical to the
+	// pre-3.2 output for a review with no disagreements.
+	writeRadarSection(&b, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
+
 	if len(r.Findings) == 0 {
 		b.WriteString("\nNo findings.\n")
 		_, err := w.Write(b.Bytes())

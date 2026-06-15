@@ -1,6 +1,8 @@
 package reconcile
 
 import (
+	"bytes"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,6 +104,12 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		if isRefutedJSON(f) {
 			continue
 		}
+		// Out-of-scope findings are pre-existing issues outside the reviewed
+		// change; they are annotated in their own report section and excluded from
+		// the gate, so they are not change-tension and never enter the radar.
+		if f.Category == CategoryOutOfScope {
+			continue
+		}
 		if grayKeys[findingKey(f.File, f.Line, f.Problem)] {
 			continue
 		}
@@ -115,6 +123,12 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		}
 	}
 	for _, c := range clusters {
+		// Skip a gray-zone pair only when every member is out-of-scope (fail-
+		// closed, matching modalCategory): an in-scope member keeps the pair as
+		// real change-tension.
+		if allOutOfScope(c.Findings) {
+			continue
+		}
 		items = append(items, grayZoneItem(c))
 	}
 
@@ -124,6 +138,20 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		IndependenceModel: IndependenceModelReviewerCount,
 		Items:             items,
 	}
+}
+
+// allOutOfScope reports whether every finding in the group is tagged
+// out-of-scope (an empty group is not).
+func allOutOfScope(findings []stream.Finding) bool {
+	if len(findings) == 0 {
+		return false
+	}
+	for _, f := range findings {
+		if strings.ToLower(strings.TrimSpace(f.Category)) != CategoryOutOfScope {
+			return false
+		}
+	}
+	return true
 }
 
 // findingKey is the dedup identity of a finding across the findings.json and
@@ -313,6 +341,56 @@ func sortedKeys(set map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// writeRadarSection appends the "Disagreements" section to the reconciled
+// report.md, above the consensus findings. It writes nothing when there are no
+// items, so a review with no disagreements yields byte-identical report output.
+// Free text is routed through esc/codeSpan (emit.go), the same injection defenses
+// the rest of the report uses.
+func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
+	if len(df.Items) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n## Disagreements\n\nTop %d tension spot(s) — reviewer splits, solo findings, and gray-zone clusters, highest first.\n", len(df.Items))
+	for i, it := range df.Items {
+		fmt.Fprintf(b, "\n### %d. %s — %s (%s) · score %s\n",
+			i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
+		if it.Disagreement != "" {
+			fmt.Fprintf(b, "- Severity disagreement: %s\n", esc(it.Disagreement))
+		}
+		if it.Skeptics != "" {
+			fmt.Fprintf(b, "- Skeptics split: %s\n", esc(it.Skeptics))
+		}
+		if len(it.Reviewers) > 0 {
+			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinOrNone(it.Reviewers)), it.Independence)
+		}
+		if it.Problem != "" {
+			fmt.Fprintf(b, "- Problem: %s\n", esc(it.Problem))
+		}
+		if it.Detail != "" {
+			fmt.Fprintf(b, "- Detail: %s\n", esc(it.Detail))
+		}
+		if len(it.Positions) > 0 {
+			b.WriteString("- Positions:\n")
+			for _, p := range it.Positions {
+				name := p.Reviewer
+				if name == "" {
+					name = "(unknown)"
+				}
+				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(name), esc(p.Severity), esc(p.Problem))
+			}
+		}
+	}
+}
+
+// formatScore renders the ranking score compactly: an integer-valued score drops
+// the decimal (6, not 6.0); a fractional score keeps two places.
+func formatScore(s float64) string {
+	if s == float64(int64(s)) {
+		return strconv.FormatInt(int64(s), 10)
+	}
+	return strconv.FormatFloat(s, 'f', 2, 64)
 }
 
 // sortDisagreements orders items highest-tension first with a total order so the
