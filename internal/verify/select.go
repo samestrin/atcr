@@ -84,10 +84,21 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 		}
 		cfg := skeptics[name]
 		// Resolve the provider here, where the registry is in hand, so the skeptic
-		// is invocation-ready. A registry that passed validation always has the
-		// agent's provider defined; reg.Providers[cfg.Provider] is a zero Provider
-		// only for an unvalidated/hand-built registry, which the caller tolerates.
-		out = append(out, Skeptic{Name: name, Config: cfg, Provider: reg.Providers[cfg.Provider]})
+		// is invocation-ready. When Providers is non-nil, use comma-ok to skip
+		// skeptics whose provider key is absent: a missing provider would yield an
+		// empty BaseURL/APIKeyEnv and fail at invocation time with no diagnostic.
+		// When Providers is nil (unvalidated/test registry), fall through to a zero
+		// Provider — the caller tolerates it and validated production registries
+		// always define every provider their agents reference.
+		var provider registry.Provider
+		if reg.Providers != nil {
+			var ok bool
+			provider, ok = reg.Providers[cfg.Provider]
+			if !ok {
+				continue
+			}
+		}
+		out = append(out, Skeptic{Name: name, Config: cfg, Provider: provider})
 	}
 	return out
 }
