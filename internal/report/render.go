@@ -47,7 +47,11 @@ func Formats() string { return FormatMarkdown + ", " + FormatJSON + ", " + Forma
 func Render(w io.Writer, findings []reconcile.JSONFinding, format string) error {
 	switch format {
 	case FormatMarkdown:
-		return renderMarkdown(w, findings)
+		// The plain markdown report carries no radar section (empty
+		// DisagreementsFile); callers that want the radar use
+		// RenderMarkdownWithDisagreements. This keeps Render's md output
+		// byte-identical to its pre-3.2 form for every existing caller.
+		return renderMarkdown(w, findings, reconcile.DisagreementsFile{})
 	case FormatJSON:
 		return renderJSON(w, findings)
 	case FormatChecklist:
@@ -76,11 +80,15 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 // (so neither raw HTML nor markdown structure can be injected) and truncated to
 // maxTextLen; file paths render verbatim inside backtick code spans (no escape,
 // no truncation — preserving unicode paths byte-for-byte, AC 01-06 Edge Case 3).
-func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
+func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile) error {
 	var b bytes.Buffer
 	b.WriteString("# atcr Review Report\n\n")
 	verified := anyVerification(findings)
 	writeSummaryGrid(&b, findings, verified)
+
+	// Disagreement radar above the consensus findings (Epic 3.2). Empty df →
+	// nothing written → output identical to the plain report.
+	writeRadarSection(&b, df)
 
 	if len(findings) == 0 {
 		b.WriteString("\nNo findings.\n")
@@ -145,6 +153,14 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
 	writeRefutedSection(&b, refuted)
 	_, err := w.Write(b.Bytes())
 	return err
+}
+
+// RenderMarkdownWithDisagreements writes the standard markdown report with the
+// disagreement radar injected above the consensus findings (Epic 3.2). When df
+// has no items the output is byte-identical to the plain markdown report, so a
+// review with no disagreements is unchanged.
+func RenderMarkdownWithDisagreements(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile) error {
+	return renderMarkdown(w, findings, df)
 }
 
 // renderChecklist writes a render-only markdown checkbox list — one "- [ ]" item
