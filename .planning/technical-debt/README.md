@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 1 |
 | MEDIUM | 1 | 0 | 12 |
-| LOW | 5 | 3 | 22 |
+| LOW | 6 | 3 | 22 |
 
 
-**Last Modified:** 2026-06-14 | **Open Items:** 6 | **Deferred Items:** 3 | **Resolved Items:** 35 | **Total Items:** 44
+**Last Modified:** 2026-06-14 | **Open Items:** 7 | **Deferred Items:** 3 | **Resolved Items:** 35 | **Total Items:** 45
 
 ## Directory Structure
 
@@ -33,6 +33,12 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-14] From Sprint: epic-3.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/verify/pipeline.go:225 | ReadVerificationResults runs unconditionally, so a corrupt prior verification.json prints a "metadata not carried forward" stderr warning even when no finding is skipped this run and the prior is irrelevant | Defer the prior read until at least one finding is known to be skipped, or suppress the warning when the rich map already covers every re-emitted finding | OBSERVABILITY | 15 | execute-epic-independent |
 
 ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
 
