@@ -31,7 +31,7 @@ func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false
-	v, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
@@ -61,7 +61,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
 func TestInvokeSkeptic_Confirms(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
 	require.NoError(t, err)
 	require.NotNil(t, v)
 	assert.Equal(t, verdictConfirmed, v.Verdict)
@@ -72,7 +72,7 @@ func TestInvokeSkeptic_Confirms(t *testing.T) {
 func TestInvokeSkeptic_Refutes(t *testing.T) {
 	t.Parallel()
 	cc := finalChat(`{"verdict": "refuted", "reasoning": "false positive"}`)
-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
 	require.NoError(t, err)
 	assert.Equal(t, verdictRefuted, v.Verdict)
 	assert.Equal(t, "skeptic-1", v.Skeptic)
@@ -85,7 +85,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
 		{content: `{"verdict": "confirmed", "reasoning": "verified via file read"}`},
 	}}
 	disp := okDispatcher()
-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp)
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp)
 	require.NoError(t, err)
 	assert.Equal(t, verdictConfirmed, v.Verdict)
 	assert.Equal(t, "verified via file read", v.Notes)
@@ -95,7 +95,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
 func TestInvokeSkeptic_ProviderError(t *testing.T) {
 	t.Parallel()
 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
 	require.NoError(t, err) // runtime failure NOT propagated
 	require.NotNil(t, v)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
@@ -108,7 +108,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled before the first turn
 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
-	v, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Equal(t, "skeptic-1", v.Skeptic)
@@ -117,7 +117,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
 func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
 	t.Parallel()
 	cc := finalChat("I don't know")
-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "malformed_output")
@@ -127,7 +127,7 @@ func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
 func TestInvokeSkeptic_EmptyResponse(t *testing.T) {
 	t.Parallel()
 	cc := finalChat("")
-	v, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "empty_response")
@@ -138,7 +138,7 @@ func TestInvokeSkeptic_BudgetTripMaxTurns(t *testing.T) {
 	sk := testSkeptic()
 	sk.Config.MaxTurns = intPtr(2)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
-	v, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "max_turns")
@@ -150,26 +150,52 @@ func TestInvokeSkeptic_BudgetTripToolBytes(t *testing.T) {
 	sk.Config.ToolBudgetBytes = int64Ptr(10)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file")}}
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "this content is definitely more than ten bytes", OriginalBytes: 46}}
-	v, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "tool_budget_bytes")
 }
 
+// TestInvokeSkeptic_SurfacesTrippedBudgets locks AC1: a budget trip is returned
+// as a separate []string, not only folded into the free-text Notes, so the caller
+// can populate VerificationResult.TrippedBudgets structurally.
+func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.MaxTurns = intPtr(2)
+	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
+	require.NoError(t, err)
+	require.NotNil(t, v)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Contains(t, tripped, "max_turns", "tripped budgets must be surfaced separately from Notes")
+}
+
+// TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict: a verdict reached without a
+// trip returns an empty tripped-budgets slice (the field never carries noise).
+func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
+	t.Parallel()
+	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt",
+		finalChat(`{"verdict":"confirmed","reasoning":"ok"}`), okDispatcher())
+	require.NoError(t, err)
+	assert.Equal(t, verdictConfirmed, v.Verdict)
+	assert.Empty(t, tripped, "a clean verdict trips no budgets")
+}
+
 func TestInvokeSkeptic_NilContext(t *testing.T) {
 	t.Parallel()
-	_, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher()) //nolint:staticcheck // intentional nil-ctx guard test
+	_, _, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher()) //nolint:staticcheck // intentional nil-ctx guard test
 	require.Error(t, err)
 }
 
 func TestInvokeSkeptic_NilChatCompleter(t *testing.T) {
 	t.Parallel()
-	_, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher())
+	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher())
 	require.Error(t, err)
 }
 
 func TestInvokeSkeptic_NilDispatcher(t *testing.T) {
 	t.Parallel()
-	_, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil)
+	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil)
 	require.Error(t, err)
 }
