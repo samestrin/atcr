@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/stream"
@@ -143,6 +144,60 @@ func TestEnforceConstraints_DoesNotMutateInput(t *testing.T) {
 	if len(got) != 1 || got[0].Severity != "HIGH" {
 		t.Fatalf("enforceConstraints result = %v, want [HIGH]", sevs(got))
 	}
+}
+
+// enforceConstraints must emit AC4 warning logs to stderr when findings are
+// dropped (min_severity floor) or truncated (max_findings cap). Without these
+// assertions the warning path is executed but never verified — a regression
+// that silently swallowed the warning would go undetected.
+func TestEnforceConstraints_StderrWarnings(t *testing.T) {
+	t.Run("dropped findings emit a warning", func(t *testing.T) {
+		in := []stream.Finding{f("LOW"), f("HIGH"), f("LOW")}
+		out := captureStderr(t, func() {
+			got, dropped, _ := enforceConstraints(in, "test-agent", "HIGH", nil)
+			if dropped != 2 {
+				t.Fatalf("dropped = %d, want 2", dropped)
+			}
+			if len(got) != 1 || got[0].Severity != "HIGH" {
+				t.Fatalf("got %v, want [HIGH]", sevs(got))
+			}
+		})
+		if !strings.Contains(out, "dropped") {
+			t.Fatalf("stderr missing 'dropped' warning: %q", out)
+		}
+		if !strings.Contains(out, "test-agent") {
+			t.Fatalf("stderr missing agent name: %q", out)
+		}
+	})
+
+	t.Run("truncated findings emit a warning", func(t *testing.T) {
+		in := []stream.Finding{f("LOW"), f("MEDIUM"), f("HIGH"), f("CRITICAL")}
+		out := captureStderr(t, func() {
+			got, _, truncated := enforceConstraints(in, "test-agent", "", intp(2))
+			if truncated != 2 {
+				t.Fatalf("truncated = %d, want 2", truncated)
+			}
+			if len(got) != 2 {
+				t.Fatalf("got %d findings, want 2", len(got))
+			}
+		})
+		if !strings.Contains(out, "truncated") {
+			t.Fatalf("stderr missing 'truncated' warning: %q", out)
+		}
+		if !strings.Contains(out, "test-agent") {
+			t.Fatalf("stderr missing agent name: %q", out)
+		}
+	})
+
+	t.Run("no warnings when nothing dropped or truncated", func(t *testing.T) {
+		in := []stream.Finding{f("HIGH"), f("CRITICAL")}
+		out := captureStderr(t, func() {
+			_, _, _ = enforceConstraints(in, "test-agent", "LOW", intp(10))
+		})
+		if strings.Contains(out, "dropped") || strings.Contains(out, "truncated") {
+			t.Fatalf("unexpected warning on no-op path: %q", out)
+		}
+	})
 }
 
 // enforceConstraints treats *maxFindings <= 0 as "no cap" rather than a silent
