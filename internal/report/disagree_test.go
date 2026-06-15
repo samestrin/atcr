@@ -112,3 +112,19 @@ func TestRenderDisagreements_EscapesFreeText(t *testing.T) {
 	require.NoError(t, RenderDisagreements(&buf, df))
 	assert.NotContains(t, buf.String(), "<script>", "free text must be HTML-escaped")
 }
+
+func TestRenderDisagreements_EscapesBackticksInFreeText(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "problem",
+			Reviewers: []string{"reviewer`name"}, Confidence: "MEDIUM", Disagreement: "a`b"},
+	}
+	df := reconcile.BuildDisagreements(findings, nil)
+	var buf bytes.Buffer
+	require.NoError(t, RenderDisagreements(&buf, df))
+	out := buf.String()
+	// Backticks in reviewer-controlled free text must be escaped so they cannot
+	// open an inline code span; file-path code spans still use literal backticks.
+	assert.Contains(t, out, "&#96;", "backtick must be HTML-escaped")
+	assert.NotContains(t, out, "reviewer`name", "literal backtick must not appear in free text")
+	assert.NotContains(t, out, "a`b", "literal backtick must not appear in free text")
+}
