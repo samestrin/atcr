@@ -64,10 +64,11 @@ func aggregateVerdicts(perSkeptic []*reconcile.Verification) *reconcile.Verifica
 			Notes:   combineReasonings(valid),
 		}
 	}
+	winners := filterByVerdict(valid, winner)
 	return &reconcile.Verification{
 		Verdict: winner,
-		Skeptic: joinSkeptics(filterByVerdict(valid, winner)),
-		Notes:   combineReasonings(filterByVerdict(valid, winner)),
+		Skeptic: joinSkeptics(winners),
+		Notes:   combineReasonings(winners),
 	}
 }
 
