@@ -2,6 +2,7 @@ package verify
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,13 @@ const reconciledSubdir = "reconciled"
 // back into findings.json: this record additionally carries the skeptic's model
 // (the different-model rule's evidence), the full reasoning, and the cost/outcome
 // metadata (duration, tripped budgets) a human needs to judge a verdict.
+//
+// Skeptic names every participating voter; Model names only the skeptics whose
+// verdict produced the recorded outcome — a winners-only subset on a decisive vote,
+// all participants on a tie, and "" when no skeptic executed. So for a multi-vote
+// run Model may list fewer entries than Skeptic by design (see winningAttribution).
+// DurationMs is the wall-clock of the run that produced the verdict; for a finding
+// skipped on a later re-run it is carried forward unchanged, not recomputed.
 type VerificationResult struct {
 	File           string   `json:"file"`
 	Line           int      `json:"line"`
@@ -102,6 +110,29 @@ func computeVerificationBytes(reviewDir string, results []VerificationResult, co
 		return "", nil, err
 	}
 	return path, append(data, '\n'), nil
+}
+
+// ReadVerificationResults reads reviewDir/reconciled/verification.json and returns
+// its per-finding records. A missing file returns (nil, nil): a first-ever verify
+// has no prior file, so the caller treats absent priors as "no metadata to carry
+// forward" rather than an error. A present-but-unparseable file returns an error.
+// It is the read counterpart of computeVerificationBytes/WriteVerification, used by
+// the skip-already-verified path to recover a prior run's Model/DurationMs/
+// TrippedBudgets (AC4).
+func ReadVerificationResults(reviewDir string) ([]VerificationResult, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, "verification.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var vf VerificationFile
+	if err := json.Unmarshal(data, &vf); err != nil {
+		return nil, fmt.Errorf("parsing verification.json: %w", err)
+	}
+	return vf.Findings, nil
 }
 
 // WriteVerification writes reviewDir/reconciled/verification.json atomically (AC
