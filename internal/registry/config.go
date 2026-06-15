@@ -277,7 +277,7 @@ func (r *Registry) validate() error {
 		// not validated. min_severity is checked case-insensitively against the
 		// rubric, max_findings must be a positive cap, and every scope entry must
 		// be a non-empty category (a blank entry is a YAML typo, not "all").
-		if a.MinSeverity != "" && !reviewSeverities[normalizeSeverity(a.MinSeverity)] {
+		if normalized := normalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
 		}
 		if a.MaxFindings != nil && *a.MaxFindings <= 0 {
