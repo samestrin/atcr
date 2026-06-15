@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 1 | 0 | 0 |
-| MEDIUM | 2 | 0 | 10 |
-| LOW | 10 | 2 | 17 |
+| MEDIUM | 3 | 0 | 10 |
+| LOW | 11 | 2 | 17 |
 
 
-**Last Modified:** 2026-06-14 | **Open Items:** 13 | **Deferred Items:** 2 | **Resolved Items:** 27 | **Total Items:** 42
+**Last Modified:** 2026-06-14 | **Open Items:** 15 | **Deferred Items:** 2 | **Resolved Items:** 27 | **Total Items:** 44
 
 ## Directory Structure
 
@@ -33,6 +33,13 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| U | [ ] | MEDIUM | internal/llmclient/chat.go:149 | The finish_reason guard only treats a non-`stop`/`tool_calls`/`""` reason as truncation when content is empty AND there are no tool_calls; `finish_reason:"length"` (max_tokens hit) with PARTIAL content and no tool_calls passes through as a successful, complete review, and a tool_call whose arguments were truncated mid-JSON is caught only incidentally downstream by `json.Valid` as a malformed-args error. A budget-truncated completion is silently returned as if whole. | Branch explicitly on `finish_reason=="length"`: surface a distinct truncated/partial condition (record a tripped budget or a partial flag on the result) rather than returning the partial completion as a clean `stop`. Add tests for length+partial-content (no tool_calls) and length+truncated-tool-arguments. | correctness | 45 | review | claude | MEDIUM |
+| U | [ ] | LOW | internal/llmclient/chat.go:1 | No provider-conformance test matrix for the OpenAI-compatible surface. The client deliberately absorbs real wire divergence (string-encoded vs raw-object tool_call `arguments`, lenient finish_reason) but is exercised only against synthetic fixtures, so a regression against a specific provider's actual tool_call shape (OpenAI, litellm, Ollama, vLLM, Together) would not be caught. This is the robustness the official SDK is assumed to provide, achievable here without adopting it. | Add a recorded-fixture conformance suite: capture a real `tool_calls` response from each target provider and assert the parser (`ToolCallArguments`, `chatToolResponse` decode, finish_reason handling) yields identical engine-facing results. NOTE: scope is a few days, not a quick-win — consider promoting to a standalone test-remediation plan rather than resolving inline. | testing | 480 | review | claude | LOW |
 
 ### [2026-06-14] From Sprint: 3.0_adversarial_verification
 
