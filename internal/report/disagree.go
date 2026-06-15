@@ -68,6 +68,9 @@ func writeRadarItems(b *bytes.Buffer, items []reconcile.DisagreementItem, headin
 		if len(it.Reviewers) > 0 {
 			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinReviewers(it.Reviewers)), it.Independence)
 		}
+		// escTrunc (500-rune cap) is intentional for display output; the reconcile
+		// counterpart (reconcile/disagree.go writeRadarSection) uses esc (no cap) for
+		// archival fidelity.
 		if it.Problem != "" {
 			fmt.Fprintf(b, "- Problem: %s\n", escTrunc(it.Problem))
 		}
