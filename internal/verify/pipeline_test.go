@@ -102,6 +102,20 @@ func (a alwaysChat) Chat(_ context.Context, _ llmclient.Invocation, _ []llmclien
 	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
 }
 
+// byModelChat answers each skeptic according to its Invocation.Model, so a
+// multi-skeptic run can script a different verdict per skeptic (e.g. 2-confirm/
+// 1-refute) — unlike alwaysChat, which answers every skeptic identically.
+type byModelChat struct{ byModel map[string]string }
+
+func (b byModelChat) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	return b.byModel[inv.Model], nil
+}
+
+func (b byModelChat) Chat(_ context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	c := b.byModel[inv.Model]
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+}
+
 func readFindings(t *testing.T, dir string) []reconcile.JSONFinding {
 	t.Helper()
 	f, err := reconcile.ReadReconciledFindings(dir)
@@ -286,6 +300,40 @@ func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
 	require.Len(t, vf.Findings, 1)
 	assert.Contains(t, vf.Findings[0].Model, "m-s2", "lead skeptic model must be recorded")
 	assert.Contains(t, vf.Findings[0].Model, "m-skep", "all participating skeptic models must be recorded")
+}
+
+// TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute locks AC2: in a
+// 3-skeptic run where two confirm and one refutes, VerificationResult.Model must
+// name only the two winning (confirming) skeptics' models — never the losing
+// (refuting) skeptic's model, and never default to skeptics[0].
+func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	// Alphabetical selection: s2(m-s2), s3(m-s3), skep(m-skep). s3 refutes; the
+	// other two confirm → winner=confirmed, winners={m-s2, m-skep}.
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-skep": `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
+	assert.Contains(t, vf.Findings[0].Model, "m-s2", "winning skeptic model must be recorded")
+	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning skeptic model must be recorded")
+	assert.NotContains(t, vf.Findings[0].Model, "m-s3", "losing (refuting) skeptic model must NOT be attributed")
 }
 
 // TestRunVerify_MissingReconciledFindings: a review with no findings.json returns
