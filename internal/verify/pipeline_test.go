@@ -302,6 +302,27 @@ func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
 	assert.Contains(t, vf.Findings[0].Model, "m-skep", "all participating skeptic models must be recorded")
 }
 
+// TestVerifyFinding_EarlyReturnsRecordEmptyModel locks AC3: neither early-return
+// path reaches a skeptic execution, so VerificationResult.Model is "" — a model is
+// attributed only to what actually ran (epic 3.1 clarification). Candidate skeptic
+// models present on the tool_harness_unavailable path are deliberately NOT recorded.
+func TestVerifyFinding_EarlyReturnsRecordEmptyModel(t *testing.T) {
+	t.Parallel()
+	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
+
+	// no_eligible_skeptic: no skeptics at all.
+	_, vr := verifyFinding(context.Background(), f, nil, finalChat("{}"), okDispatcher())
+	assert.Equal(t, "unverifiable", vr.Verdict)
+	assert.Equal(t, "no_eligible_skeptic", vr.Reasoning)
+	assert.Empty(t, vr.Model, "no skeptic ran → no model attributed")
+
+	// tool_harness_unavailable: skeptics eligible but the dispatcher never built.
+	_, vr = verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, finalChat("{}"), nil)
+	assert.Equal(t, "unverifiable", vr.Verdict)
+	assert.Equal(t, "tool_harness_unavailable", vr.Reasoning)
+	assert.Empty(t, vr.Model, "skeptics selected but none executed → no model attributed")
+}
+
 // TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute locks AC2: in a
 // 3-skeptic run where two confirm and one refutes, VerificationResult.Model must
 // name only the two winning (confirming) skeptics' models — never the losing

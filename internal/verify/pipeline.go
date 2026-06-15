@@ -371,11 +371,19 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	if len(skeptics) == 0 {
 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
+		// No skeptic ran, so no model is attributed: Model stays "" by the
+		// "attribute only to what executed" rule (AC3 / epic 3.1 clarification). Set
+		// explicitly so a future change to base's initializer cannot leak a default.
+		base.Model = ""
 		return v, base
 	}
 	if disp == nil {
 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "tool_harness_unavailable"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
+		// Skeptics were eligible but the tool harness never built, so none executed —
+		// Model stays "" (same rule). Recording the candidate models would misattribute
+		// the record to models that produced nothing (AC3 / epic 3.1 clarification).
+		base.Model = ""
 		return v, base
 	}
 
