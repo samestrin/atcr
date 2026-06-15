@@ -25,17 +25,20 @@ func testSkeptic() Skeptic {
 
 // TestInvokeSkeptic_DegradesWhenNotFC verifies SupportsFC is forwarded: a skeptic
 // whose model lacks function calling degrades to single-shot rather than being
-// forced into the tool loop. The fake's single-shot Complete returns empty, so the
-// verdict is unverifiable (empty_response) — but no error and a populated Skeptic.
+// forced into the tool loop. The fake's Complete returns a real verdict so the
+// single-shot path produces a confirmed outcome — proving the degrade happened
+// and the tool loop was skipped (dispatcher call count == 0).
 func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false
-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
+	disp := okDispatcher()
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), disp)
 	require.NoError(t, err)
 	require.NotNil(t, v)
-	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Equal(t, "confirmed", v.Verdict, "degrade path should return the single-shot verdict, not unverifiable")
 	assert.Equal(t, "skeptic-1", v.Skeptic)
+	assert.Equal(t, 0, disp.count(), "tool loop must not be entered on degrade — dispatcher never called")
 }
 
 // TestBuildSkepticAgent_ForwardsProviderAndBudgets locks the provider routing and
