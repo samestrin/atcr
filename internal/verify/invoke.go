@@ -151,6 +151,7 @@ func failureClass(res fanout.Result) string {
 // logSkepticFailure emits a single structured stderr line so a skeptic failure is
 // visible in logs even though it is intentionally not propagated as an error.
 func logSkepticFailure(skeptic, class, detail string) {
+	detail = strings.ReplaceAll(detail, "\n", " ")
 	fmt.Fprintf(os.Stderr, "atcr: verify: skeptic=%s class=%s: %s\n", skeptic, class, detail)
 }
 
