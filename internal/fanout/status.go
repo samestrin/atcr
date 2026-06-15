@@ -286,6 +286,16 @@ type AgentStatus struct {
 	DroppedByMinSeverity   int `json:"dropped_by_min_severity"`
 	TruncatedByMaxFindings int `json:"truncated_by_max_findings"`
 
+	// Per-agent usage (Epic 3.3 scorecard): the model id and provider-reported
+	// token counts, persisted so the reconcile-time scorecard emitter can source
+	// per-reviewer model/tokens (and derive cost) from a separate process.
+	// omitempty so a zero-usage run (a failed agent, or a fake completer in tests
+	// that reports no usage) keeps status.json byte-identical to the pre-3.3
+	// shape; statusFor only sets them when real usage was reported.
+	Model     string `json:"model,omitempty"`
+	TokensIn  int    `json:"tokens_in,omitempty"`
+	TokensOut int    `json:"tokens_out,omitempty"`
+
 	// Per-agent counters for the agentic stages (Epic 2.0 tool loop). Pointers +
 	// omitempty so they are absent from every 1.x status.json (no tool loop ran),
 	// yet a tool-enabled agent records an explicit zero even when it degraded or
