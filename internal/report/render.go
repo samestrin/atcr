@@ -411,18 +411,11 @@ func canonicalize(s string) string {
 	return strings.ToUpper(strings.TrimSpace(s))
 }
 
-// severityRank maps canonical severities to their display ordering. Unknown
-// severities sort last (rank 0) so they do not interleave canonical groups.
-var severityRank = map[string]int{
-	reconcile.SevCritical: 4,
-	reconcile.SevHigh:     3,
-	reconcile.SevMedium:   2,
-	reconcile.SevLow:      1,
-}
-
-// severityRankOf returns the display rank for a severity string.
+// severityRankOf returns the display rank for a severity string using the
+// canonical rank exported by the reconcile package so the report view and the
+// radar sort never drift.
 func severityRankOf(s string) int {
-	if r, ok := severityRank[s]; ok {
+	if r, ok := reconcile.SeverityRank[s]; ok {
 		return r
 	}
 	return 0

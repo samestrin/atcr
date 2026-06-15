@@ -241,8 +241,8 @@ func spreadFromDisagreement(d string) int {
 	if len(parts) != 2 {
 		return 0
 	}
-	lo := severityRank[strings.TrimSpace(parts[0])]
-	hi := severityRank[strings.TrimSpace(parts[1])]
+	lo := SeverityRank[strings.TrimSpace(parts[0])]
+	hi := SeverityRank[strings.TrimSpace(parts[1])]
 	if hi < lo {
 		return 0
 	}
@@ -275,7 +275,7 @@ func severitySplitItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, severityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -291,7 +291,7 @@ func soloItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(0, indep, severityRank[f.Severity]),
+		Score:        scoreFor(0, indep, SeverityRank[f.Severity]),
 		Spread:       0,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -315,7 +315,7 @@ func verificationItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, severityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -331,7 +331,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	revSet := map[string]bool{}
 	positions := make([]Position, 0, len(c.Findings))
 	for _, f := range c.Findings {
-		if r, ok := severityRank[f.Severity]; ok {
+		if r, ok := SeverityRank[f.Severity]; ok {
 			if r > maxRank {
 				maxRank, maxSev = r, f.Severity
 			}
@@ -353,10 +353,10 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
-	score := scoreFor(spread, indep, severityRank[maxSev])
+	score := scoreFor(spread, indep, SeverityRank[maxSev])
 	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
 	// never sort below a LOW solo (rank 1). When all members carry unknown or
-	// blank severities, severityRank[maxSev] is 0 and spread is 0, so scoreFor
+	// blank severities, SeverityRank[maxSev] is 0 and spread is 0, so scoreFor
 	// returns 0 — the cluster would sort dead last despite being real tension.
 	if score == 0 && len(c.Findings) > 0 {
 		score = 1
@@ -456,7 +456,7 @@ func sortDisagreements(items []DisagreementItem) {
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
-		if ra, rb := severityRank[a.Severity], severityRank[b.Severity]; ra != rb {
+		if ra, rb := SeverityRank[a.Severity], SeverityRank[b.Severity]; ra != rb {
 			return ra > rb
 		}
 		if a.File != b.File {
