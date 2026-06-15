@@ -325,6 +325,50 @@ func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *tes
 	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
 }
 
+func TestBuildDisagreements_OutOfScopeNormalizationExcludesUntrimmedVariants(t *testing.T) {
+	// Per-finding out-of-scope check uses exact match while allOutOfScope
+	// lower-cases and trims — a finding with " Out-Of-Scope " entered the radar
+	// via the per-finding tier but was excluded by the cluster guard.
+	findings := []JSONFinding{
+		{Severity: "CRITICAL", File: "pre.go", Line: 1, Problem: "pre-existing",
+			Category: " Out-Of-Scope ", Reviewers: []string{"greta"}, Confidence: ConfMedium},
+		jf("HIGH", "real.go", 2, "in the change", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	require.Len(t, df.Items, 1, "untrimmed/upper out-of-scope finding excluded from radar")
+	assert.Equal(t, "real.go", df.Items[0].File)
+}
+
+func TestBuildDisagreements_EmptyReviewersNotPromotedToSolo(t *testing.T) {
+	// A malformed finding with an empty Reviewers slice (len==0, data
+	// corruption) must NOT be surfaced as a solo with fabricated Independence=1.
+	findings := []JSONFinding{
+		{Severity: "HIGH", File: "bad.go", Line: 1, Problem: "no reviewer",
+			Reviewers: []string{}, Confidence: ConfMedium},
+		jf("LOW", "real.go", 2, "solo", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	solos := itemsByKind(df, KindSoloFinding)
+	for _, s := range solos {
+		assert.NotEqual(t, "bad.go", s.File, "empty-reviewers finding must not surface as solo")
+	}
+}
+
+func TestBuildDisagreements_EmptyClusterDoesNotPanic(t *testing.T) {
+	// allOutOfScope returns false for empty clusters, so they reach grayZoneItem.
+	// grayZoneItem must guard c.Findings[0] access with a len check.
+	clusters := []AmbiguousCluster{
+		{ID: "amb-empty", File: "e.go", Line: 1, Similarity: 0.5, Findings: []stream.Finding{}},
+	}
+	assert.NotPanics(t, func() {
+		df := BuildDisagreements(nil, clusters)
+		// Empty cluster must not appear in the radar.
+		for _, it := range df.Items {
+			assert.NotEqual(t, "e.go", it.File)
+		}
+	})
+}
+
 func TestBuildDisagreements_GrayZoneAllUnknownSeverityStillScoresAboveZero(t *testing.T) {
 	// A gray-zone cluster whose members all carry unknown/blank severities must
 	// not score 0 — otherwise a real tension cluster sorts below every solo LOW
