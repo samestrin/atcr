@@ -701,3 +701,24 @@ func TestVerifyFinding_TrippedBudgetsNeverNil(t *testing.T) {
 		finalChat(`{"verdict":"confirmed"}`), okDispatcher())
 	assert.NotNil(t, vr.TrippedBudgets, "TrippedBudgets must be [] not nil")
 }
+
+// TestWinningAttribution_MismatchedSlicesNoPanic guards the bounds safety
+// invariant: winningAttribution must not panic when perSkeptic is longer than
+// skeptics or perTripped (TD-379 / TD-482).
+func TestWinningAttribution_MismatchedSlicesNoPanic(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("winningAttribution panicked with mismatched slices: %v", r)
+		}
+	}()
+	confirmed := &reconcile.Verification{Verdict: "confirmed"}
+	// perSkeptic has 2 entries; skeptics has only 1.
+	// Without the bounds guard, skeptics[1] causes an index-out-of-range panic.
+	_, _ = winningAttribution(
+		[]Skeptic{testSkeptic()},
+		[]*reconcile.Verification{confirmed, confirmed},
+		[][]string{nil, nil},
+		"confirmed",
+	)
+}

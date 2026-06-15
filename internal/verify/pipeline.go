@@ -496,6 +496,9 @@ func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification
 		if v == nil {
 			continue
 		}
+		if i >= len(skeptics) || i >= len(perTripped) {
+			continue
+		}
 		if decisive && v.Verdict != winner {
 			continue // decisive vote: skip the losers
 		}
