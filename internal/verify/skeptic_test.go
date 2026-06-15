@@ -90,6 +90,28 @@ func TestBuildSkepticPrompt_ZeroValueFinding(t *testing.T) {
 	assert.Contains(t, got, "confirmed|refuted|unverifiable")
 }
 
+// TestBuildSkepticPrompt_BodyWithTripleBacktickPreserved verifies that a file
+// body containing a triple-backtick line does not prematurely close the code
+// fence and break the prompt structure. The body must appear verbatim between
+// a fence whose run is longer than any run inside the body.
+func TestBuildSkepticPrompt_BodyWithTripleBacktickPreserved(t *testing.T) {
+	t.Parallel()
+	entries := []payload.FileEntry{{
+		Path: "a.go",
+		Body: "line1\n```\nline3\n",
+	}}
+	prompt := buildSkepticPrompt(reconcile.JSONFinding{}, entries)
+
+	// Body text must appear intact in the prompt.
+	assert.Contains(t, prompt, "line1\n```\nline3", "body with triple-backtick must appear verbatim")
+
+	// The code-context fence must use a longer backtick run than the body's
+	// own ``` line so it cannot be prematurely closed. Verify the prompt
+	// contains at least one ````-or-longer fence boundary (open or close).
+	assert.Contains(t, prompt, "````",
+		"code-context fence must use ≥4 backticks when body contains a triple-backtick line")
+}
+
 func TestBuildSkepticPrompt_SpecialCharsVerbatim(t *testing.T) {
 	t.Parallel()
 	f := sampleFinding()

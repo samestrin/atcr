@@ -43,12 +43,13 @@ func buildSkepticPrompt(finding reconcile.JSONFinding, entries []payload.FileEnt
 		b.WriteString("\n## Code Context\n\n")
 		for _, e := range entries {
 			fmt.Fprintf(&b, "### %s\n", e.Path)
-			b.WriteString("```\n")
+			fence := strings.Repeat("`", max(3, longestBacktickRun(e.Body)+1))
+			b.WriteString(fence + "\n")
 			b.WriteString(e.Body)
 			if !strings.HasSuffix(e.Body, "\n") {
 				b.WriteByte('\n')
 			}
-			b.WriteString("```\n\n")
+			b.WriteString(fence + "\n\n")
 		}
 	}
 
@@ -62,6 +63,24 @@ func buildSkepticPrompt(finding reconcile.JSONFinding, entries []payload.FileEnt
 	b.WriteString("Use `unverifiable` if you cannot determine the verdict, and explain why in the reasoning.\n")
 
 	return b.String()
+}
+
+// longestBacktickRun returns the length of the longest consecutive backtick run
+// in s. Used to choose a fence delimiter that cannot be closed by content inside
+// the fence (CommonMark §4.5 info-string approach).
+func longestBacktickRun(s string) int {
+	longest, cur := 0, 0
+	for _, c := range s {
+		if c == '`' {
+			cur++
+			if cur > longest {
+				longest = cur
+			}
+		} else {
+			cur = 0
+		}
+	}
+	return longest
 }
 
 // writeField appends a "**Name:** value" line only when value is non-empty, so an
