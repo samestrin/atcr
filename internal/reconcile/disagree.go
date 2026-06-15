@@ -150,6 +150,17 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 	}
 }
 
+// LoadDisagreements reads the ambiguous clusters from reviewDir and builds the
+// disagreements radar file. A missing or corrupt ambiguous.json degrades to a
+// findings-only radar (the read error is swallowed), matching the tolerant-read
+// contract at the two call sites (cmd/atcr/report.go and internal/mcp/handlers.go).
+// Both call sites previously inlined the ReadAmbiguousClusters + BuildDisagreements
+// pair; this helper is the single shared entry point.
+func LoadDisagreements(reviewDir string, findings []JSONFinding) DisagreementsFile {
+	clusters, _ := ReadAmbiguousClusters(reviewDir)
+	return BuildDisagreements(findings, clusters)
+}
+
 // allOutOfScope reports whether every finding in the group is tagged
 // out-of-scope (an empty group is not).
 func allOutOfScope(findings []stream.Finding) bool {

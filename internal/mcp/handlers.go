@@ -269,8 +269,7 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// The markdown report carries the disagreement radar above its findings
 		// (Epic 3.2). A corrupt ambiguous.json degrades to a findings-only radar
 		// rather than failing the report.
-		clusters, _ := reconcile.ReadAmbiguousClusters(dir)
-		df := reconcile.BuildDisagreements(findings, clusters)
+		df := reconcile.LoadDisagreements(dir, findings)
 		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
 			return nil, ReportResult{}, err
 		}
