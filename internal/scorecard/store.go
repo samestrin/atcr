@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -87,22 +88,24 @@ func ReadRecords(path string) ([]Record, error) {
 	return recs, nil
 }
 
-// FindByRunID returns every record in dir carrying the given run_id. The month
-// file is derived from the run_id's YYYY-MM prefix (single-file read, no full
-// scan); a run_id without that prefix is a clear error rather than an empty
-// result. A missing month file is "no records" (nil, nil), not an error. If the
-// primary month yields nothing, the adjacent months are scanned as a fallback for
-// a record that landed in a neighbouring file via clock skew or a late write
-// (AC 02-01 EC1); a hit there is logged to stderr.
+// FindByRunID returns every record in dir carrying the given run_id, unioned
+// across the relevant month files. The primary month is derived from the run_id's
+// YYYY-MM prefix (a run_id without a valid prefix is a clear error, not an empty
+// result). When the run_id timestamp sits on a month boundary (1st or 28th-31st),
+// the neighbouring month file is also scanned and merged, because a clock-skewed
+// or late write can split one run's records across two month files (AC 02-01
+// EC1) — returning only one file's records would silently drop the rest. A hit
+// in a neighbouring file is logged to stderr. A missing month file is "no
+// records" for that month (skipped), not an error.
 func FindByRunID(dir, runID string) ([]Record, error) {
 	month, err := monthFromRunID(runID)
 	if err != nil {
 		return nil, err
 	}
-	months := []string{month}
-	if prev, next, ok := adjacentMonths(month); ok {
-		months = append(months, prev, next)
-	}
+	months := monthsToScan(runID, month)
+
+	var matches []Record
+	var fromNeighbour bool
 	for i, m := range months {
 		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"))
 		if err != nil {
@@ -111,20 +114,42 @@ func FindByRunID(dir, runID string) ([]Record, error) {
 			}
 			return nil, err
 		}
-		var got []Record
 		for _, r := range recs {
 			if r.RunID == runID {
-				got = append(got, r)
+				matches = append(matches, r)
+				if i > 0 {
+					fromNeighbour = true
+				}
 			}
-		}
-		if len(got) > 0 {
-			if i > 0 {
-				fmt.Fprintf(os.Stderr, "scorecard: run %s found in adjacent month %s (clock skew or late write)\n", runID, m)
-			}
-			return got, nil
 		}
 	}
-	return nil, nil
+	if fromNeighbour {
+		fmt.Fprintf(os.Stderr, "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+	}
+	return matches, nil
+}
+
+// monthsToScan returns the month stems FindByRunID must read for runID: always
+// the primary month, plus a neighbouring month only when the run_id day is on a
+// month boundary (so the common mid-month lookup stays a single-file read while
+// a boundary-straddling run is still found whole).
+func monthsToScan(runID, month string) []string {
+	months := []string{month}
+	prev, next, ok := adjacentMonths(month)
+	if !ok || len(runID) < 10 {
+		return months
+	}
+	day, err := strconv.Atoi(runID[8:10])
+	if err != nil {
+		return months
+	}
+	if day <= 1 {
+		months = append(months, prev)
+	}
+	if day >= 28 {
+		months = append(months, next)
+	}
+	return months
 }
 
 // ReadAll reads every *.jsonl month file under dir and returns the concatenated

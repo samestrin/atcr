@@ -5,14 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // storeSubdir is the scorecard store location under the user config dir:
 // ~/.config/atcr/scorecard/ on Linux, the platform equivalent elsewhere.
 const storeSubdir = "atcr/scorecard"
 
-// monthRe validates the YYYY-MM month prefix derived from a run_id.
-var monthRe = regexp.MustCompile(`^\d{4}-\d{2}$`)
+// monthRe validates the YYYY-MM month prefix derived from a run_id. The month is
+// constrained to 01-12 so a structurally impossible month (e.g. 2026-99) is a
+// clear error rather than a silently-empty lookup.
+var monthRe = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
 
 // DefaultDir returns the default scorecard store directory
 // (os.UserConfigDir()/atcr/scorecard). The directory is never created here —
@@ -34,12 +37,15 @@ func resolveDir(override string) (string, error) {
 	return DefaultDir()
 }
 
-// IsRunID reports whether s carries the YYYY-MM timestamp prefix of a run_id —
-// the shape the store derives a month file from. Used by the CLI to tell a bare
-// run_id argument apart from a malformed one before any store lookup.
+// IsRunID reports whether s has the shape of a run_id: a YYYY-MM month prefix
+// AND an RFC3339 time component (the 'T' separator). The time component is
+// required so a bare month typo like "2026-06" is rejected as a malformed
+// argument (usage error) rather than accepted and resolved to an empty run.
 func IsRunID(s string) bool {
-	_, err := monthFromRunID(s)
-	return err == nil
+	if _, err := monthFromRunID(s); err != nil {
+		return false
+	}
+	return strings.ContainsRune(s, 'T')
 }
 
 // monthFromRunID derives the YYYY-MM month file stem from a run_id whose prefix

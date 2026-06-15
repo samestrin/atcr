@@ -186,6 +186,28 @@ func TestStore_FindByRunID_AdjacentMonthFallback(t *testing.T) {
 	assert.Equal(t, runID, recs[0].RunID)
 }
 
+// TestStore_FindByRunID_UnionAcrossMonths locks the adversarial-review fix: when
+// one run's records are split across a month boundary (June primary + a late
+// July write), FindByRunID must return BOTH, not just the first file's records.
+func TestStore_FindByRunID_UnionAcrossMonths(t *testing.T) {
+	dir := t.TempDir()
+	runID := "2026-06-30T23:59:59Z-edge"
+	require.NoError(t, Append(dir, sampleRecord(runID, "bruce"))) // → 2026-06.jsonl
+	line, err := json.Marshal(sampleRecord(runID, "greta"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), append(line, '\n'), 0o600))
+
+	recs, err := FindByRunID(dir, runID)
+	require.NoError(t, err)
+	require.Len(t, recs, 2, "records split across month files must all be returned")
+}
+
+func TestStore_FindByRunID_RejectsInvalidMonth(t *testing.T) {
+	dir := t.TempDir()
+	_, err := FindByRunID(dir, "2026-13-01T00:00:00Z-x")
+	require.Error(t, err, "an impossible month (13) is a clear error, not an empty result")
+}
+
 func TestStore_ReadAll(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, Append(dir, sampleRecord("2026-06-14T10:00:00Z-jun", "bruce")))

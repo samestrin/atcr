@@ -69,8 +69,7 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no scorecard records found for run %s: run 'atcr reconcile' to generate data", runID)
 	}
 
-	renderScorecard(cmd.OutOrStdout(), reviewers)
-	return nil
+	return renderScorecard(cmd.OutOrStdout(), reviewers)
 }
 
 // resolveScorecardRunID maps the id-or-path argument to a run_id. A path (mirrors
@@ -127,7 +126,9 @@ func runIDFromReviewDir(arg string) (string, error) {
 // record carries verification data; reviewers without it show "-". Duplicate
 // reviewer rows (a retried emit) collapse last-write-wins. The whole table is
 // built in a buffer and written once so a flush error cannot emit a half table.
-func renderScorecard(w io.Writer, recs []scorecard.Record) {
+// The single stdout write's error is propagated so a broken pipe is not silently
+// reported as success.
+func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 	byRev := make(map[string]scorecard.Record, len(recs))
 	for _, r := range recs {
 		byRev[r.Reviewer] = r // last-write-wins (AC 02-01 EC3)
@@ -152,7 +153,7 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) {
 	if hasVer {
 		header += "\tVERIFIED\tREFUTED\tSURV%"
 	}
-	fmt.Fprintln(tw, header)
+	_, _ = fmt.Fprintln(tw, header)
 	for _, n := range names {
 		r := byRev[n]
 		row := fmt.Sprintf("%s\t%s\t%d\t%d\t%d\t%s\t$%.4f\t%dms",
@@ -174,10 +175,11 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) {
 				row += "\t-\t-\t-"
 			}
 		}
-		fmt.Fprintln(tw, row)
+		_, _ = fmt.Fprintln(tw, row)
 	}
 	_ = tw.Flush()
-	_, _ = w.Write(buf.Bytes())
+	_, err := w.Write(buf.Bytes())
+	return err
 }
 
 // formatPercent renders a 0..1 rate as a rounded integer percentage ("58%").

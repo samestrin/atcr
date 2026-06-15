@@ -148,3 +148,9 @@ func TestScorecardCmd_InvalidRunID(t *testing.T) {
 	code, _ := execCmdCapture(t, "scorecard", "garbage-not-a-runid")
 	require.Equal(t, 2, code, "a bare id that is not a valid run_id is a usage error")
 }
+
+func TestScorecardCmd_BareMonthPrefixIsUsageError(t *testing.T) {
+	isolate(t)
+	code, _ := execCmdCapture(t, "scorecard", "2026-06")
+	require.Equal(t, 2, code, "a bare YYYY-MM with no timestamp is a malformed run_id, not an empty run")
+}
