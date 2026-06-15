@@ -375,7 +375,11 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	base.Verdict = ver.Verdict
 	base.Skeptic = ver.Skeptic
 	base.Reasoning = ver.Notes
-	base.Model = skeptics[0].Config.Model // lead skeptic's model (the different-model evidence)
+	models := make([]string, 0, len(skeptics))
+	for _, sk := range skeptics {
+		models = append(models, sk.Config.Model)
+	}
+	base.Model = strings.Join(models, ", ")
 	base.DurationMs = int(time.Since(start).Milliseconds())
 	return ver, base
 }
