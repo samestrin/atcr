@@ -33,6 +33,58 @@ func TestReportCmd_DefaultFormatAndOutputFile(t *testing.T) {
 	require.Contains(t, string(data), "`a.go:1`")
 }
 
+// fixtureReconciledWithAmbiguous writes findings.json plus an ambiguous.json
+// sidecar under a review dir, with a .atcr/latest pointer.
+func fixtureReconciledWithAmbiguous(t *testing.T, id, findingsJSON, ambiguousJSON string) {
+	t.Helper()
+	dir := filepath.Join(".atcr", "reviews", id, "reconciled")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "findings.json"), []byte(findingsJSON), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "ambiguous.json"), []byte(ambiguousJSON), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(".atcr"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte(id+"\n"), 0o644))
+}
+
+const splitFinding = `[{"severity":"CRITICAL","file":"a.go","line":1,"problem":"boom","fix":"f","category":"security","est_minutes":10,"evidence":"e","reviewers":["greta","host"],"confidence":"HIGH","disagreement":"LOW vs CRITICAL"}]`
+
+func TestReportCmd_DisagreementsMode(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_d", splitFinding)
+
+	out := filepath.Join(t.TempDir(), "radar.md")
+	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "--output", out, "2026-06-10_d"))
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	s := string(data)
+	require.Contains(t, s, "Disagreement Radar")
+	require.Contains(t, s, "LOW vs CRITICAL")
+	require.Contains(t, s, "`a.go:1`")
+}
+
+func TestReportCmd_DisagreementsModeReadsAmbiguousSidecar(t *testing.T) {
+	isolate(t)
+	ambiguous := `[{"id":"amb-1","file":"g.go","line":7,"similarity":0.55,"findings":[` +
+		`{"severity":"HIGH","file":"g.go","line":7,"problem":"overrun","reviewer":"greta"},` +
+		`{"severity":"LOW","file":"g.go","line":8,"problem":"bounds","reviewer":"kai"}]}]`
+	fixtureReconciledWithAmbiguous(t, "2026-06-10_g", oneFinding, ambiguous)
+
+	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "2026-06-10_g"))
+}
+
+func TestReportCmd_DisagreementsModeEmptyIsClean(t *testing.T) {
+	isolate(t)
+	// A multi-reviewer consensus finding with no disagreement → no tension.
+	consensus := `[{"severity":"HIGH","file":"a.go","line":1,"problem":"p","reviewers":["greta","host"],"confidence":"HIGH"}]`
+	fixtureReconciled(t, "2026-06-10_c", consensus)
+	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "2026-06-10_c"))
+}
+
+func TestReportCmd_DisagreementsModeMalformedAmbiguousIsUsageError(t *testing.T) {
+	isolate(t)
+	fixtureReconciledWithAmbiguous(t, "2026-06-10_bad", oneFinding, "{not json")
+	require.Equal(t, 2, execCmd(t, "report", "--disagreements", "2026-06-10_bad"))
+}
+
 func TestReportCmd_InvalidFormatIsUsageError(t *testing.T) {
 	isolate(t)
 	fixtureReconciled(t, "r", oneFinding)

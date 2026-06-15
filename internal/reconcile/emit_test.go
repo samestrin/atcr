@@ -52,7 +52,7 @@ func TestReconcile_AmbiguousAlwaysWrittenEvenWhenEmpty(t *testing.T) {
 	assert.Equal(t, 0, res.Summary.TotalFindings)
 }
 
-func TestEmit_WritesAllFiveArtifacts(t *testing.T) {
+func TestEmit_WritesAllArtifacts(t *testing.T) {
 	dir := t.TempDir()
 	sources := []Source{
 		{Name: "pool", Findings: []stream.Finding{
@@ -65,7 +65,7 @@ func TestEmit_WritesAllFiveArtifacts(t *testing.T) {
 	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
 	require.NoError(t, Emit(dir, res))
 
-	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON} {
+	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON, DisagreementsJSON} {
 		assert.FileExists(t, filepath.Join(dir, name))
 	}
 
@@ -127,7 +127,7 @@ func TestEmit_DeterministicOutput(t *testing.T) {
 	d1, d2 := t.TempDir(), t.TempDir()
 	require.NoError(t, Emit(d1, Reconcile(sources, recAt())))
 	require.NoError(t, Emit(d2, Reconcile(sources, recAt())))
-	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON} {
+	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, DisagreementsJSON} {
 		a, _ := os.ReadFile(filepath.Join(d1, name))
 		b, _ := os.ReadFile(filepath.Join(d2, name))
 		assert.Equal(t, string(a), string(b), "%s must be byte-identical across runs", name)

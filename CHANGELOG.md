@@ -1,3 +1,18 @@
+## [3.2.0] - 2026-06-14
+
+### Added
+
+- Disagreement radar: surfaces the highest-tension spots in a change — severity splits, solo findings, gray-zone clusters, and verification disagreements — ranked by severity spread × reviewer independence
+- `atcr report --disagreements` focused view showing ranked tension spots with model positions side by side
+- "Disagreements" section in the standard `report.md`, above the consensus findings and omitted when there are none
+- `reconciled/disagreements.json` — a versioned cross-exam handoff artifact for downstream consumption
+
+### Changed
+
+- The markdown report (`atcr report`, `reconciled/report.md`, and the MCP report tool) now carries the disagreement radar above its findings; output is byte-identical for reviews with no disagreements
+
+*Shipped via /execute-epic (epic 3.2)*
+
 ## [3.1.0] - 2026-06-14
 
 ### Fixed

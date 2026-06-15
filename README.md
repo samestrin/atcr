@@ -78,7 +78,7 @@ Key flags:
 
 - `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
 - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
-- `atcr report --format md|json|checklist` / `--output <file>`
+- `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
 - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
 
 ### Redirecting output for orchestrators (`--output-dir`)
@@ -164,6 +164,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/registry.md](docs/registry.md) — providers, personas, agents, fallbacks, lanes, precedence
 - [docs/payload-modes.md](docs/payload-modes.md) — blocks vs. diff vs. files, token guidance
 - [docs/findings-format.md](docs/findings-format.md) — the versioned `atcr-findings/v1` contract
+- [docs/disagreement-radar.md](docs/disagreement-radar.md) — the disagreement radar, `--disagreements` view, and `disagreements.json` handoff schema
 - [docs/ci-integration.md](docs/ci-integration.md) — exit codes and PR gates
 - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
 
