@@ -98,11 +98,15 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 	items := make([]DisagreementItem, 0, len(findings)+len(clusters))
 
 	// Locations covered by a gray-zone cluster: their member findings surface as
-	// the cluster item, never again as solo/split items.
+	// the cluster item, never again as solo/split items. Keyed on file+line only
+	// (not problem text): a gray-zone member may also be merged with a third
+	// finding, replacing its problem text via longestField — the cluster's raw
+	// member problem no longer matches the JSONFinding.Problem, but the location
+	// identity is stable.
 	grayKeys := map[string]bool{}
 	for _, c := range clusters {
 		for _, f := range c.Findings {
-			grayKeys[findingKey(f.File, f.Line, f.Problem)] = true
+			grayKeys[locationKey(f.File, f.Line)] = true
 		}
 	}
 
@@ -116,7 +120,7 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		if f.Category == CategoryOutOfScope {
 			continue
 		}
-		if grayKeys[findingKey(f.File, f.Line, f.Problem)] {
+		if grayKeys[locationKey(f.File, f.Line)] {
 			continue
 		}
 		switch {
@@ -146,6 +150,17 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 	}
 }
 
+// LoadDisagreements reads the ambiguous clusters from reviewDir and builds the
+// disagreements radar file. A missing or corrupt ambiguous.json degrades to a
+// findings-only radar (the read error is swallowed), matching the tolerant-read
+// contract at the two call sites (cmd/atcr/report.go and internal/mcp/handlers.go).
+// Both call sites previously inlined the ReadAmbiguousClusters + BuildDisagreements
+// pair; this helper is the single shared entry point.
+func LoadDisagreements(reviewDir string, findings []JSONFinding) DisagreementsFile {
+	clusters, _ := ReadAmbiguousClusters(reviewDir)
+	return BuildDisagreements(findings, clusters)
+}
+
 // allOutOfScope reports whether every finding in the group is tagged
 // out-of-scope (an empty group is not).
 func allOutOfScope(findings []stream.Finding) bool {
@@ -160,10 +175,13 @@ func allOutOfScope(findings []stream.Finding) bool {
 	return true
 }
 
-// findingKey is the dedup identity of a finding across the findings.json and
-// ambiguous.json projections: file + line + problem text.
-func findingKey(file string, line int, problem string) string {
-	return file + "\x00" + strconv.Itoa(line) + "\x00" + problem
+// locationKey is the file+line identity used for gray-zone exclusion. It is
+// intentionally coarser than findingKey: a cluster member may also be merged
+// with a third finding, replacing its problem text via longestField, so the
+// full findingKey would not match between the cluster's raw stream.Finding and
+// the reconciled JSONFinding.
+func locationKey(file string, line int) string {
+	return file + "\x00" + strconv.Itoa(line)
 }
 
 // canonVerdict normalizes a verdict the same way the report layer and gate do.
@@ -319,13 +337,21 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
+	score := scoreFor(spread, indep, severityRank[maxSev])
+	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
+	// never sort below a LOW solo (rank 1). When all members carry unknown or
+	// blank severities, severityRank[maxSev] is 0 and spread is 0, so scoreFor
+	// returns 0 — the cluster would sort dead last despite being real tension.
+	if score == 0 && len(c.Findings) > 0 {
+		score = 1
+	}
 	return DisagreementItem{
 		Kind:         KindGrayZone,
 		File:         c.File,
 		Line:         c.Line,
 		Severity:     maxSev,
 		Problem:      longestProblem(c.Findings),
-		Score:        scoreFor(spread, indep, severityRank[maxSev]),
+		Score:        score,
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    reviewers,

@@ -151,3 +151,28 @@ func TestParseVerdict_MalformedFixture(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 }
+
+// TestParseVerdict_DecoyBracesBeforeVerdict checks that a decoy balanced brace
+// pair before the real verdict envelope does not degrade the verdict to
+// unverifiable. Regression for extractJSONObject returning the first '{...}'
+// regardless of whether it contains a verdict key.
+func TestParseVerdict_DecoyBracesBeforeVerdict(t *testing.T) {
+	t.Parallel()
+	raw := `{} {"verdict": "confirmed", "reasoning": "ok"}`
+	v, err := parseVerdict(raw)
+	require.NoError(t, err)
+	assert.Equal(t, verdictConfirmed, v.Verdict)
+	assert.Equal(t, "ok", v.Notes)
+}
+
+// TestParseVerdict_UnbalancedLeadingBraceFollowedByValidEnvelope checks that
+// an unbalanced leading '{' (e.g. prose containing a Go struct example) does
+// not swallow the real verdict envelope that appears later in the response.
+func TestParseVerdict_UnbalancedLeadingBraceFollowedByValidEnvelope(t *testing.T) {
+	t.Parallel()
+	raw := `here is an unbalanced { brace followed by {"verdict": "refuted", "reasoning": "no evidence"}`
+	v, err := parseVerdict(raw)
+	require.NoError(t, err)
+	assert.Equal(t, verdictRefuted, v.Verdict)
+	assert.Equal(t, "no evidence", v.Notes)
+}

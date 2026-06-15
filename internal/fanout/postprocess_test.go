@@ -90,7 +90,7 @@ func TestEnforceConstraints(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := enforceConstraints(tt.in, "bruce-backup", tt.minSeverity, tt.maxFindings)
+			got, _, _ := enforceConstraints(tt.in, "bruce-backup", tt.minSeverity, tt.maxFindings)
 			if !eq(sevs(got), tt.want) {
 				t.Fatalf("enforceConstraints severities = %v, want %v", sevs(got), tt.want)
 			}
@@ -105,14 +105,14 @@ func TestFindingsFor_AppliesConstraints(t *testing.T) {
 		"LOW|a.go:2|nit|fix|style|5|ev\n" +
 		"MEDIUM|a.go:3|gap|fix|correctness|5|ev\n"
 	r := Result{Agent: "bruce-backup", Content: content, Status: StatusOK, MinSeverity: "MEDIUM", MaxFindings: intp(1)}
-	got := findingsFor(r)
-	if len(got) != 1 {
-		t.Fatalf("got %d findings, want 1 (LOW dropped, capped to 1)", len(got))
+	fr := findingsFor(r)
+	if len(fr.Findings) != 1 {
+		t.Fatalf("got %d findings, want 1 (LOW dropped, capped to 1)", len(fr.Findings))
 	}
-	if got[0].Severity != "HIGH" {
-		t.Fatalf("survivor severity = %s, want HIGH (most severe kept)", got[0].Severity)
+	if fr.Findings[0].Severity != "HIGH" {
+		t.Fatalf("survivor severity = %s, want HIGH (most severe kept)", fr.Findings[0].Severity)
 	}
-	if got[0].Reviewer != "bruce-backup" {
-		t.Fatalf("reviewer = %q, want bruce-backup (stamped before enforcement)", got[0].Reviewer)
+	if fr.Findings[0].Reviewer != "bruce-backup" {
+		t.Fatalf("reviewer = %q, want bruce-backup (stamped before enforcement)", fr.Findings[0].Reviewer)
 	}
 }

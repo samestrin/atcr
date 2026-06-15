@@ -123,3 +123,17 @@ func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
 	fixtureReconciled(t, "r", "") // 0-byte findings.json → malformed, not "no findings"
 	require.Equal(t, 2, execCmd(t, "report", "r"))
 }
+
+func TestReportCmd_DisagreementsWithJSONFormat(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_dj", splitFinding)
+
+	out := filepath.Join(t.TempDir(), "radar.json")
+	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "--format", "json", "--output", out, "2026-06-10_dj"))
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	s := string(data)
+	require.Contains(t, s, `"schemaVersion"`, "JSON output must include the schema version")
+	require.Contains(t, s, `"items"`, "JSON output must include the items array")
+	require.Contains(t, s, `"LOW vs CRITICAL"`, "JSON output must include the disagreement annotation")
+}

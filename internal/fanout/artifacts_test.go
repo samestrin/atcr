@@ -205,3 +205,29 @@ func TestWriteFailureSummary_AllFailed(t *testing.T) {
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+// TestWritePool_ConstrainedAgentPersistsDroppedCounts checks that
+// dropped_by_min_severity and truncated_by_max_findings are written to
+// status.json so volume reduction is observable after the run, not just in
+// transient stderr.
+func TestWritePool_ConstrainedAgentPersistsDroppedCounts(t *testing.T) {
+	content := "HIGH|a.go:1|bug|fix|correctness|5|ev\n" +
+		"LOW|b.go:2|nit|fix|style|5|ev\n" + // below MEDIUM floor
+		"MEDIUM|c.go:3|gap|fix|correctness|5|ev\n"
+	pool := filepath.Join(t.TempDir(), "pool")
+	r := Result{Agent: "greta", Content: content, Status: StatusOK,
+		MinSeverity: "MEDIUM", DurationMS: 100, PayloadMode: "blocks"}
+	r.Truncation = payload.Truncation{FilesDropped: []string{}}
+	_, err := WritePool(pool, []Result{r})
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(pool, "raw", "agent", "greta", "status.json"))
+	require.NoError(t, err)
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	assert.Equal(t, float64(1), raw["dropped_by_min_severity"],
+		"LOW finding dropped below MEDIUM floor must be recorded in status.json")
+	assert.Equal(t, float64(0), raw["truncated_by_max_findings"],
+		"truncated_by_max_findings must be zero when no max_findings cap applied")
+}
