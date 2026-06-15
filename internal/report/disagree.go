@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -25,6 +26,19 @@ func RenderDisagreements(w io.Writer, df reconcile.DisagreementsFile) error {
 	fmt.Fprintf(&b, "%d tension spot(s), highest first.\n", len(df.Items))
 	writeRadarItems(&b, df.Items, "## ")
 	_, err := w.Write(b.Bytes())
+	return err
+}
+
+// RenderDisagreementsJSON writes the disagreements radar as indented JSON. The
+// DisagreementsFile already carries the schema version and machine-contract
+// field names (see TestDisagreementsSchema_StableContract); this is the format
+// `atcr report --disagreements --format json` emits.
+func RenderDisagreementsJSON(w io.Writer, df reconcile.DisagreementsFile) error {
+	data, err := json.MarshalIndent(df, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(data, '\n'))
 	return err
 }
 
