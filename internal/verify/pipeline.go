@@ -231,6 +231,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// was skipped (the prior data was never consulted).
 	var priorByKey map[FindingKey]VerificationResult
 	var priorLoaded, priorLoadFailed bool
+	// loadPrior builds an in-memory map from verification.json. A streaming decoder
+	// is not warranted at current scale: one record per finding, < 1 MB for any
+	// realistic review run (10–500 findings). The closure is lazy — only fires when
+	// at least one finding is skipped — so the memory cost is deferred and bounded.
 	loadPrior := func() map[FindingKey]VerificationResult {
 		if priorLoaded {
 			return priorByKey
