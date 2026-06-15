@@ -31,14 +31,14 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	out, err := execute(t, "--help")
 	require.NoError(t, err)
 
-	for _, sub := range []string{"review", "reconcile", "verify", "report", "range", "status", "init", "serve", "doctor", "trust", "scorecard"} {
+	for _, sub := range []string{"review", "reconcile", "verify", "report", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard"} {
 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
 	}
 }
 
-func TestRootCmd_HasExactlyElevenSubcommands(t *testing.T) {
-	// The ten prior commands plus `scorecard` (epic 3.3), the per-run scorecard
-	// reader. `leaderboard` is added later in the same phase.
+func TestRootCmd_HasExactlyTwelveSubcommands(t *testing.T) {
+	// The ten prior commands plus `scorecard` and `leaderboard` (epic 3.3), the
+	// per-run scorecard reader and the aggregated leaderboard.
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -47,8 +47,8 @@ func TestRootCmd_HasExactlyElevenSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 11)
-	for _, sub := range []string{"review", "reconcile", "verify", "report", "range", "status", "init", "serve", "doctor", "trust", "scorecard"} {
+	assert.Len(t, names, 12)
+	for _, sub := range []string{"review", "reconcile", "verify", "report", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
 }
