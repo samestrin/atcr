@@ -72,6 +72,22 @@ agents:
 	assert.Contains(t, err.Error(), "max_findings")
 }
 
+func TestRegistryLoad_MaxFindingsExceedsCap(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    max_findings: 99999
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "max_findings")
+}
+
 func TestRegistryLoad_EmptyScopeEntry(t *testing.T) {
 	_, err := LoadRegistry(writeRegistry(t, `
 providers:
