@@ -301,3 +301,26 @@ func TestDisagreementsSchema_StableContract(t *testing.T) {
 		assert.Contains(t, out, key, "handoff schema must expose %s", key)
 	}
 }
+
+func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *testing.T) {
+	// A gray-zone member may also be merged with a third finding, causing the
+	// JSONFinding.Problem to become the merged longestField text while the
+	// AmbiguousCluster.Findings retains the raw member's original problem. The
+	// gray-zone exclusion must still apply — otherwise the location
+	// double-surfaces as both gray_zone and solo/split.
+	clusterFindings := []stream.Finding{
+		mf("HIGH", "g.go", 7, "raw cluster problem A", "f", "security", 10, "e", "greta"),
+		mf("LOW", "g.go", 8, "raw cluster problem B", "f", "security", 10, "e", "kai"),
+	}
+	clusters := []AmbiguousCluster{{ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55, Findings: clusterFindings}}
+	// JSONFinding with problem text that differs from the cluster's raw members
+	// (simulating the merge pipeline's longestField replacement).
+	findings := []JSONFinding{
+		jf("HIGH", "g.go", 7, "raw cluster problem A", []string{"greta"}, ""),
+		jf("LOW", "g.go", 8, "MERGED LONGER REPLACEMENT TEXT", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, clusters)
+	assert.Empty(t, itemsByKind(df, KindSoloFinding),
+		"gray-zone member must be excluded even when JSONFinding.Problem differs from cluster member's problem")
+	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
+}
