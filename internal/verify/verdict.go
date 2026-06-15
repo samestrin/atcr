@@ -33,11 +33,6 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, nil
 	}
 
-	var parsed struct {
-		Verdict   string `json:"verdict"`
-		Reasoning string `json:"reasoning"`
-	}
-
 	// Iterate candidate balanced JSON objects. Skip candidates that fail to
 	// unmarshal or lack the "verdict" key — a decoy brace pair (Go struct{},
 	// ${VAR}, example snippet) before the real verdict envelope should not
@@ -54,20 +49,22 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 			rest = rest[next+1:]
 			continue
 		}
-		var keys map[string]json.RawMessage
-		if json.Unmarshal([]byte(obj), &keys) == nil {
-			if _, ok := keys["verdict"]; ok {
-				json.Unmarshal([]byte(obj), &parsed) //nolint:errcheck // already validated above
-				normVerdict := strings.ToLower(strings.TrimSpace(parsed.Verdict))
-				switch normVerdict {
-				case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-					return &reconcile.Verification{Verdict: normVerdict, Notes: parsed.Reasoning}, nil
-				default:
-					return &reconcile.Verification{
-						Verdict: verdictUnverifiable,
-						Notes:   "invalid_verdict: " + truncateForNotes(parsed.Verdict) + " (raw: " + truncateForNotes(response) + ")",
-					}, nil
-				}
+		// Use a pointer for Verdict so json.Unmarshal can distinguish a present
+		// key (even empty) from an absent key — avoids a second unmarshal pass.
+		var candidate struct {
+			Verdict   *string `json:"verdict"`
+			Reasoning string  `json:"reasoning"`
+		}
+		if json.Unmarshal([]byte(obj), &candidate) == nil && candidate.Verdict != nil {
+			normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
+			switch normVerdict {
+			case verdictConfirmed, verdictRefuted, verdictUnverifiable:
+				return &reconcile.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}, nil
+			default:
+				return &reconcile.Verification{
+					Verdict: verdictUnverifiable,
+					Notes:   "invalid_verdict: " + truncateForNotes(*candidate.Verdict) + " (raw: " + truncateForNotes(response) + ")",
+				}, nil
 			}
 		}
 		idx := strings.Index(rest, obj)
