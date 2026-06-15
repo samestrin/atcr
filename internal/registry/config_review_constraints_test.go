@@ -104,3 +104,20 @@ agents:
 	require.NoError(t, err)
 	assert.Equal(t, "HIGH", reg.Agents["bruce"].MinSeverity, "min_severity normalized to canonical upper-case")
 }
+
+// Whitespace-only min_severity should be treated as unset rather than producing
+// a confusing "must be one of CRITICAL, HIGH, MEDIUM, LOW" validation error.
+func TestRegistryLoad_MinSeverityWhitespaceOnly(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    min_severity: "   "
+`))
+	require.NoError(t, err, "whitespace-only min_severity should be treated as unset, not a validation error")
+	assert.Empty(t, reg.Agents["bruce"].MinSeverity, "whitespace-only min_severity normalized to empty")
+}
