@@ -616,3 +616,36 @@ func TestBuildDispatcher(t *testing.T) {
 	_, _, err = buildDispatcher(repo, t.TempDir())
 	assert.Error(t, err)
 }
+
+// TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings: a corrupt prior
+// verification.json must not print a spurious stderr warning when every finding
+// gets a fresh verdict this run (no skipped findings, so the prior is never
+// consulted — the warning was firing unconditionally on the eager load).
+func TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	// Write a corrupt prior verification.json.
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
+
+	// Capture stderr.
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{},
+		scriptedHarness(`{"verdict":"confirmed","reasoning":"checked"}`))
+	require.NoError(t, runErr)
+
+	_ = w.Close()
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	os.Stderr = oldStderr
+	stderrOutput := buf.String()
+
+	assert.NotContains(t, stderrOutput, "prior verification.json unreadable",
+		"corrupt prior must not warn when no findings are skipped")
+}

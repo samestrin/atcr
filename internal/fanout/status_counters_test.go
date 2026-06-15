@@ -26,7 +26,7 @@ func TestCounters_FinalizedOnNormalCompletion(t *testing.T) {
 	r := toolEngine(cc, d).invokeAgent(context.Background(), toolAgent("a", 10, 0))
 	require.Equal(t, StatusOK, r.Status)
 
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	require.NotNil(t, st.Turns)
 	assert.Equal(t, 3, *st.Turns)
 	assert.Equal(t, 2, *st.ToolCalls)
@@ -48,7 +48,7 @@ func TestCounters_FinalizedOnBudgetTrip(t *testing.T) {
 	r := toolEngine(cc, d).invokeAgent(context.Background(), toolAgent("a", 10, 15))
 	require.Equal(t, StatusOK, r.Status)
 
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	require.NotNil(t, st.ToolBytes)
 	assert.EqualValues(t, 20, *st.ToolBytes)
 	assert.Equal(t, 2, *st.ToolCalls)
@@ -58,7 +58,7 @@ func TestCounters_FinalizedOnBudgetTrip(t *testing.T) {
 // AC 05-03 Edge Case 3: tool_bytes above the int32 range serializes exactly.
 func TestCounters_LargeInt64ToolBytes(t *testing.T) {
 	r := Result{Agent: "a", Status: StatusOK, Tools: true, Turns: 1, ToolCalls: 1, ToolBytes: 3_000_000_000}
-	data, err := json.Marshal(statusFor(r, 0))
+	data, err := json.Marshal(statusFor(r, findingsResult{}))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"tool_bytes":3000000000`)
 

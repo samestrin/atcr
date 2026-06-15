@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -75,23 +76,11 @@ func verifyFixture(t *testing.T, id string, findings []reconcile.JSONFinding) st
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(recon, "findings.json"), append(data, '\n'), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(recon, "summary.json"),
-		[]byte(`{"total_findings":`+itoa(len(findings))+`}`+"\n"), 0o644))
+		[]byte(`{"total_findings":`+strconv.Itoa(len(findings))+`}`+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"),
 		[]byte(`{"base":"a","head":"HEAD","roster":["bruce"],"partial":false,"stages":["review"]}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte(id+"\n"), 0o644))
 	return id
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
 
 // readFindingVerdict reads reconciled/findings.json under review id and returns

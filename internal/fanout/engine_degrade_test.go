@@ -96,7 +96,7 @@ func TestInvokeAgent_DegradeStatusPreservesRequested(t *testing.T) {
 	cc := &scriptedChat{completeResp: "x"}
 	r := NewEngine(cc, WithDispatcher(newFakeDispatcher())).invokeAgent(context.Background(), incapableToolAgent("m"))
 
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	data, err := json.Marshal(&st)
 	require.NoError(t, err)
 	s := string(data)
@@ -111,7 +111,7 @@ func TestInvokeAgent_SingleShotStatusOmitsToolFields(t *testing.T) {
 	a := Agent{Name: "a", Invocation: llmclient.Invocation{Model: "a"}, PayloadMode: "blocks"}
 	r := NewEngine(cc).invokeAgent(context.Background(), a)
 
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	data, err := json.Marshal(&st)
 	require.NoError(t, err)
 	s := string(data)
@@ -172,14 +172,14 @@ func TestMixedRoster_BothShapesReconcileIdentically(t *testing.T) {
 
 	// Both shapes serialize through the same status path without error.
 	for _, r := range []Result{loopRes, plainRes} {
-		st := statusFor(r, 0)
+		st := statusFor(r, findingsResult{})
 		_, err := json.Marshal(&st)
 		require.NoError(t, err, "status.json must serialize for %s", r.Agent)
 	}
 
 	// Tool agent's status exposes counters; single-shot agent's does not.
-	toolSt := statusFor(loopRes, 0)
+	toolSt := statusFor(loopRes, findingsResult{})
 	require.NotNil(t, toolSt.Turns, "tool agent reports turns")
-	plainSt := statusFor(plainRes, 0)
+	plainSt := statusFor(plainRes, findingsResult{})
 	assert.Nil(t, plainSt.Turns, "single-shot agent omits tool counters")
 }
