@@ -60,8 +60,10 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	}
 	if len(filtered) == 0 {
 		// Data exists but no record survived the filters: a real "nothing to
-		// show" outcome (exit 1), distinct from the empty-store state above.
-		return fmt.Errorf("no records match filters. Try widening --since or removing filters")
+		// show" outcome (exit 1), distinct from the empty-store state above. The
+		// active window is named so data hidden purely by the default 30d --since
+		// is not mistaken for a bad --model/--persona.
+		return fmt.Errorf("no records match filters (window: last %s). Try a wider --since or removing --model/--persona", since)
 	}
 
 	return renderLeaderboard(out, scorecard.Aggregate(filtered))

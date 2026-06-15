@@ -97,6 +97,32 @@ func TestAggregate_GroupsByReviewerModel(t *testing.T) {
 	assert.InDelta(t, 10.0/15.0, sonnet.CorroborationRate, 1e-9)
 }
 
+// TestAggregate_RankStableOnEqualRate locks the adversarial-review fix: two
+// groups whose corroboration rate is equal-by-value but summed from different run
+// counts must tie-break deterministically by reviewer name, not by float jitter.
+func TestAggregate_RankStableOnEqualRate(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	records := []Record{
+		reviewer(runIDAt(now, "z"), "zara", "m", 2, 1, 0, 0),  // 1/2 = 0.5
+		reviewer(runIDAt(now, "a1"), "alan", "m", 2, 1, 0, 0), // summed → 2/4 = 0.5
+		reviewer(runIDAt(now, "a2"), "alan", "m", 2, 1, 0, 0),
+	}
+	rows := Aggregate(records)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "alan", rows[0].Reviewer, "equal rate → tie-break by reviewer name asc")
+	assert.Equal(t, "zara", rows[1].Reviewer)
+}
+
+func TestApplyFilters_ParsesOffsetTimestamp(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	// A run_id whose timestamp carries a numeric offset (not 'Z') must still be
+	// time-filtered, not silently dropped.
+	runID := "2026-06-15T11:00:00+00:00-offset"
+	got, err := ApplyFilters([]Record{reviewer(runID, "a", "m", 1, 1, 0, 0)}, FilterOpts{Since: "7d"}, now)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "offset-form RFC3339 timestamps are parsed, not dropped")
+}
+
 func TestAggregate_CostPerCorroborated_ZeroCorroborated(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	rows := Aggregate([]Record{reviewer(runIDAt(now, "x"), "eve", "haiku", 5, 0, 0.02, 1000)})

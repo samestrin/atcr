@@ -189,10 +189,15 @@ func formatPercent(rate float64) string {
 
 // sanitizeCell strips control characters from a JSONL string field before it is
 // rendered, so a crafted reviewer/model value cannot inject terminal control
-// sequences into the table output.
+// sequences (ANSI/C1) or row-fracturing line separators into the table output.
 func sanitizeCell(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		switch {
+		case r < 0x20, r == 0x7f: // C0 controls (incl. ESC) + DEL
+			return -1
+		case r >= 0x80 && r <= 0x9f: // C1 controls
+			return -1
+		case r == '\u2028' || r == '\u2029': // line/paragraph separators
 			return -1
 		}
 		return r

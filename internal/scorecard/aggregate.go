@@ -2,6 +2,7 @@ package scorecard
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,8 +152,14 @@ func Aggregate(records []Record) []LeaderboardRow {
 	}
 
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].CorroborationRate != rows[j].CorroborationRate {
-			return rows[i].CorroborationRate > rows[j].CorroborationRate
+		// Compare rates exactly via cross-multiplication (a/b vs c/d ⇔ a*d vs c*b,
+		// all non-negative) rather than the stored float: two groups that are
+		// equal-by-value but summed in a different order can differ by a sub-ULP
+		// as floats and break the intended (reviewer, model) tie-break.
+		li := int64(rows[i].FindingsCorroborated) * int64(rows[j].FindingsRaised)
+		lj := int64(rows[j].FindingsCorroborated) * int64(rows[i].FindingsRaised)
+		if li != lj {
+			return li > lj
 		}
 		if rows[i].Reviewer != rows[j].Reviewer {
 			return rows[i].Reviewer < rows[j].Reviewer
@@ -162,15 +169,20 @@ func Aggregate(records []Record) []LeaderboardRow {
 	return rows
 }
 
-// runIDTime extracts the RFC3339 UTC timestamp prefix from a run_id
-// (<timestamp>-<base>). The emitter always formats the timestamp in UTC, so it
-// ends at the first 'Z'; ok is false for a run_id without a parseable prefix.
+// rfc3339Prefix matches the leading RFC3339 timestamp of a run_id
+// (<timestamp>-<base>), tolerating both the UTC 'Z' form the emitter writes and a
+// numeric offset, so a record is never silently dropped from a --since window
+// just because its timestamp carries an offset.
+var rfc3339Prefix = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
+
+// runIDTime extracts the RFC3339 timestamp prefix from a run_id; ok is false for
+// a run_id without a parseable prefix.
 func runIDTime(runID string) (time.Time, bool) {
-	i := strings.IndexByte(runID, 'Z')
-	if i < 0 {
+	m := rfc3339Prefix.FindString(runID)
+	if m == "" {
 		return time.Time{}, false
 	}
-	ts, err := time.Parse(time.RFC3339, runID[:i+1])
+	ts, err := time.Parse(time.RFC3339, m)
 	if err != nil {
 		return time.Time{}, false
 	}

@@ -83,6 +83,16 @@ func TestLeaderboardCmd_NoFilterMatchExit1(t *testing.T) {
 	require.Contains(t, out, "no records match filters")
 }
 
+func TestLeaderboardCmd_AllRecordsOlderThanDefaultWindow(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 45, "bruce", "m") // older than the default 30d window
+
+	code, out := execCmdCapture(t, "leaderboard")
+	require.Equal(t, 1, code, "data exists but all predates the default window → exit 1")
+	require.Contains(t, out, "no records match filters")
+	require.Contains(t, out, "window", "no-match message names the active window so hidden data is explained")
+}
+
 func TestLeaderboardCmd_InvalidSinceExit1(t *testing.T) {
 	isolate(t)
 	storeLeaderboardRec(t, 1, "bruce", "m")
