@@ -117,7 +117,7 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		// Out-of-scope findings are pre-existing issues outside the reviewed
 		// change; they are annotated in their own report section and excluded from
 		// the gate, so they are not change-tension and never enter the radar.
-		if f.Category == CategoryOutOfScope {
+		if categoryIsOutOfScope(f.Category) {
 			continue
 		}
 		if grayKeys[locationKey(f.File, f.Line)] {
@@ -128,15 +128,18 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 			items = append(items, verificationItem(f))
 		case f.Disagreement != "":
 			items = append(items, severitySplitItem(f))
-		case len(f.Reviewers) <= 1:
+		case len(f.Reviewers) == 0:
+			// Malformed finding (no reviewer) — not a solo; skip.
+			continue
+		case len(f.Reviewers) == 1:
 			items = append(items, soloItem(f))
 		}
 	}
 	for _, c := range clusters {
-		// Skip a gray-zone pair only when every member is out-of-scope (fail-
-		// closed, matching modalCategory): an in-scope member keeps the pair as
-		// real change-tension.
-		if allOutOfScope(c.Findings) {
+		// Skip empty clusters (no members to surface) and groups where every
+		// member is out-of-scope (fail-closed, matching modalCategory): an
+		// in-scope member keeps the pair as real change-tension.
+		if len(c.Findings) == 0 || allOutOfScope(c.Findings) {
 			continue
 		}
 		items = append(items, grayZoneItem(c))
@@ -161,6 +164,14 @@ func LoadDisagreements(reviewDir string, findings []JSONFinding) DisagreementsFi
 	return BuildDisagreements(findings, clusters)
 }
 
+// categoryIsOutOfScope reports whether c matches the out-of-scope category
+// using the same normalization the cluster-level allOutOfScope helper applies
+// (case-insensitive, trimmed). A single helper prevents the per-finding and
+// cluster-level checks from drifting apart.
+func categoryIsOutOfScope(c string) bool {
+	return strings.ToLower(strings.TrimSpace(c)) == CategoryOutOfScope
+}
+
 // allOutOfScope reports whether every finding in the group is tagged
 // out-of-scope (an empty group is not).
 func allOutOfScope(findings []stream.Finding) bool {
@@ -168,7 +179,7 @@ func allOutOfScope(findings []stream.Finding) bool {
 		return false
 	}
 	for _, f := range findings {
-		if strings.ToLower(strings.TrimSpace(f.Category)) != CategoryOutOfScope {
+		if !categoryIsOutOfScope(f.Category) {
 			return false
 		}
 	}
