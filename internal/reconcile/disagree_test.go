@@ -140,6 +140,38 @@ func TestBuildDisagreements_ExcludesOutOfScope(t *testing.T) {
 	assert.Equal(t, "real.go", df.Items[0].File)
 }
 
+func TestBuildDisagreements_GrayZoneAllOutOfScopeExcluded(t *testing.T) {
+	// A cluster where every member is out-of-scope must be excluded (fail-closed):
+	// no in-scope member means no change-tension to surface.
+	clusters := []AmbiguousCluster{
+		{
+			ID: "amb-oos", File: "pre.go", Line: 5, Similarity: 0.7,
+			Findings: []stream.Finding{
+				mf("HIGH", "pre.go", 5, "pre-existing A", "f", CategoryOutOfScope, 10, "e", "greta"),
+				mf("LOW", "pre.go", 5, "pre-existing B", "f", CategoryOutOfScope, 10, "e", "kai"),
+			},
+		},
+	}
+	df := BuildDisagreements(nil, clusters)
+	assert.Empty(t, itemsByKind(df, KindGrayZone), "all-out-of-scope cluster must be excluded from radar")
+}
+
+func TestBuildDisagreements_GrayZoneMixedScopeKept(t *testing.T) {
+	// A cluster with at least one in-scope member is real change-tension and
+	// must surface as a gray_zone item.
+	clusters := []AmbiguousCluster{
+		{
+			ID: "amb-mix", File: "src.go", Line: 10, Similarity: 0.6,
+			Findings: []stream.Finding{
+				mf("HIGH", "src.go", 10, "in-scope finding", "f", "security", 10, "e", "greta"),
+				mf("LOW", "src.go", 10, "pre-existing", "f", CategoryOutOfScope, 10, "e", "kai"),
+			},
+		},
+	}
+	df := BuildDisagreements(nil, clusters)
+	assert.Len(t, itemsByKind(df, KindGrayZone), 1, "cluster with one in-scope member must survive as gray_zone")
+}
+
 func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	findings := []JSONFinding{
 		jf("MEDIUM", "b.go", 2, "p2", []string{"kai"}, ""),
@@ -154,6 +186,39 @@ func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	require.Len(t, medSolos, 2)
 	assert.Equal(t, "a.go", medSolos[0].File)
 	assert.Equal(t, "b.go", medSolos[1].File)
+}
+
+func TestBuildDisagreements_DeterministicOrderingUnderShuffledInput(t *testing.T) {
+	// Proves sort-stability under different input orderings — not just idempotence
+	// on the same slice. A broken tie-break key would still pass idempotence but
+	// fail this test.
+	findings := []JSONFinding{
+		jf("MEDIUM", "b.go", 2, "p2", []string{"kai"}, ""),
+		jf("MEDIUM", "a.go", 1, "p1", []string{"greta"}, ""),
+		jf("CRITICAL", "c.go", 3, "p3", []string{"greta", "kai"}, "LOW vs CRITICAL"),
+	}
+	reversed := []JSONFinding{findings[2], findings[1], findings[0]}
+	first := BuildDisagreements(findings, nil)
+	second := BuildDisagreements(reversed, nil)
+	require.Equal(t, first.Items, second.Items, "reversed input must yield identical item order")
+}
+
+func TestBuildDisagreements_TieBreakByLineThenProblem(t *testing.T) {
+	// When score, severity, and file all tie, line asc then problem asc must decide
+	// order — exercising the lower tie-break tiers in sortDisagreements.
+	findings := []JSONFinding{
+		jf("LOW", "x.go", 20, "z problem", []string{"kai"}, ""),
+		jf("LOW", "x.go", 10, "b problem", []string{"otto"}, ""),
+		jf("LOW", "x.go", 10, "a problem", []string{"greta"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	solos := itemsByKind(df, KindSoloFinding)
+	require.Len(t, solos, 3)
+	assert.Equal(t, 10, solos[0].Line, "lower line first")
+	assert.Equal(t, "a problem", solos[0].Problem, "problem asc within same line")
+	assert.Equal(t, 10, solos[1].Line)
+	assert.Equal(t, "b problem", solos[1].Problem)
+	assert.Equal(t, 20, solos[2].Line)
 }
 
 func TestBuildDisagreements_VerificationTieSurfaced(t *testing.T) {
