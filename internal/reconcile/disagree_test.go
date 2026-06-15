@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -232,6 +234,41 @@ func TestRenderMarkdown_NoDisagreementsOmitsRadar(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, RenderMarkdown(&buf, res))
 	assert.NotContains(t, buf.String(), "## Disagreements", "no disagreements → section omitted")
+}
+
+func TestEmit_WritesDisagreementsJSON(t *testing.T) {
+	reviewDir := t.TempDir()
+	reconDir := filepath.Join(reviewDir, "reconciled")
+	sources := []Source{
+		{Name: "pool", Findings: []stream.Finding{mf("CRITICAL", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
+		{Name: "host", Findings: []stream.Finding{mf("LOW", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
+	}
+	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+	require.NoError(t, Emit(reconDir, res))
+	assert.FileExists(t, filepath.Join(reconDir, DisagreementsJSON))
+
+	df, err := ReadDisagreements(reviewDir)
+	require.NoError(t, err)
+	assert.Equal(t, DisagreementsSchemaVersion, df.SchemaVersion)
+	assert.Equal(t, IndependenceModelReviewerCount, df.IndependenceModel)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, KindSeveritySplit, df.Items[0].Kind)
+	assert.Equal(t, "LOW vs CRITICAL", df.Items[0].Disagreement)
+}
+
+func TestReadDisagreements_MissingReturnsEmpty(t *testing.T) {
+	df, err := ReadDisagreements(t.TempDir())
+	require.NoError(t, err)
+	assert.Empty(t, df.Items)
+}
+
+func TestReadDisagreements_MalformedIsError(t *testing.T) {
+	reviewDir := t.TempDir()
+	reconDir := filepath.Join(reviewDir, "reconciled")
+	require.NoError(t, os.MkdirAll(reconDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(reconDir, DisagreementsJSON), []byte("{not json"), 0o644))
+	_, err := ReadDisagreements(reviewDir)
+	require.Error(t, err)
 }
 
 func TestBuildDisagreements_SchemaMetadata(t *testing.T) {

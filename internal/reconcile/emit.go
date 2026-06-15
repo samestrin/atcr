@@ -21,6 +21,9 @@ const (
 	ReportMD      = "report.md"
 	SummaryJSON   = "summary.json"
 	AmbiguousJSON = "ambiguous.json"
+	// DisagreementsJSON is the disagreement-radar handoff artifact (Epic 3.2) —
+	// the stable, versioned queue Epic 6.0 (Cross-Examination) consumes directly.
+	DisagreementsJSON = "disagreements.json"
 )
 
 // Verification is the reserved per-finding adversarial-verification block for a
@@ -107,6 +110,9 @@ func Emit(reconciledDir string, r Result) error {
 		{ReportMD, func(w io.Writer) error { return RenderMarkdown(w, r) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
 		{AmbiguousJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Ambiguous) }},
+		{DisagreementsJSON, func(w io.Writer) error {
+			return renderIndentedJSON(w, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
+		}},
 	}
 	// Render every artifact first so a render error aborts before any file is
 	// published — the published set is then never partially from this run.
@@ -192,6 +198,29 @@ func ReadAmbiguousClusters(reviewDir string) ([]AmbiguousCluster, error) {
 		return nil, fmt.Errorf("parsing %s: %w", AmbiguousJSON, err)
 	}
 	return clusters, nil
+}
+
+// ReadDisagreements loads reviewDir/reconciled/disagreements.json — the Epic 6.0
+// cross-exam handoff queue written by Emit. A missing or empty file returns a
+// zero DisagreementsFile (no error): a review with no disagreements still has a
+// valid, empty queue. A present-but-unparseable file is an error.
+func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, DisagreementsJSON)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return DisagreementsFile{}, nil
+		}
+		return DisagreementsFile{}, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return DisagreementsFile{}, nil
+	}
+	var df DisagreementsFile
+	if err := json.Unmarshal(data, &df); err != nil {
+		return DisagreementsFile{}, fmt.Errorf("parsing %s: %w", DisagreementsJSON, err)
+	}
+	return df, nil
 }
 
 // RenderMarkdown writes the human report.md: an executive summary (counts by
