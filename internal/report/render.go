@@ -353,7 +353,11 @@ func skepticName(v *reconcile.Verification) string {
 var newlineFlattener = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 // esc flattens newlines then HTML-escapes free text so it renders inert.
-func esc(s string) string { return html.EscapeString(newlineFlattener.Replace(s)) }
+// Backticks are also escaped so reviewer-controlled fields cannot open an
+// inline code span inside a normal bullet.
+func esc(s string) string {
+	return strings.ReplaceAll(html.EscapeString(newlineFlattener.Replace(s)), "`", "&#96;")
+}
 
 // escTrunc truncates to maxTextLen runes (with an ellipsis) then escapes.
 func escTrunc(s string) string { return esc(truncate(s, maxTextLen)) }
