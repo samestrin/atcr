@@ -42,9 +42,10 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
 	}
 
-	switch parsed.Verdict {
+	normVerdict := strings.ToLower(strings.TrimSpace(parsed.Verdict))
+	switch normVerdict {
 	case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-		return &reconcile.Verification{Verdict: parsed.Verdict, Notes: parsed.Reasoning}, nil
+		return &reconcile.Verification{Verdict: normVerdict, Notes: parsed.Reasoning}, nil
 	default:
 		return &reconcile.Verification{
 			Verdict: verdictUnverifiable,
