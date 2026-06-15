@@ -18,6 +18,11 @@ import (
 const (
 	DefaultTemperature = 0.7
 	DefaultTimeoutSecs = 600
+	// MaxFindingsCap is the ceiling for per-agent max_findings; consistent with
+	// MaxTimeoutSecs/MaxAgentTurns/MaxToolBudgetBytes which each have documented
+	// upper bounds. nil = unlimited (unset); any explicit value must be within
+	// 1..MaxFindingsCap.
+	MaxFindingsCap = 10000
 )
 
 // envVarName matches valid POSIX environment variable names.
@@ -211,7 +216,7 @@ func (r *Registry) validate() error {
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
-	if r.Verify.MinSeverity != "" && !reviewSeverities[normalizeSeverity(r.Verify.MinSeverity)] {
+	if normalized := normalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		return fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity)
 	}
 	if r.Verify.Votes < 0 {
@@ -277,15 +282,18 @@ func (r *Registry) validate() error {
 		// not validated. min_severity is checked case-insensitively against the
 		// rubric, max_findings must be a positive cap, and every scope entry must
 		// be a non-empty category (a blank entry is a YAML typo, not "all").
-		if a.MinSeverity != "" && !reviewSeverities[normalizeSeverity(a.MinSeverity)] {
+		if normalized := normalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
 		}
-		if a.MaxFindings != nil && *a.MaxFindings <= 0 {
-			return agentErrf(name, "agent '%s': max_findings must be > 0", name)
+		if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
+			return agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap)
 		}
 		for _, s := range a.Scope {
 			if strings.TrimSpace(s) == "" {
 				return agentErrf(name, "agent '%s': scope entries must not be empty", name)
+			}
+			if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
+				return agentErrf(name, "agent '%s': scope entries must not contain control characters", name)
 			}
 		}
 	}
@@ -316,6 +324,11 @@ func (r *Registry) applyDefaults() {
 		// against a stable upper-case token regardless of how it was written.
 		if a.MinSeverity != "" {
 			a.MinSeverity = normalizeSeverity(a.MinSeverity)
+		}
+		// Canonicalize scope entries (Epic 2.2): trim whitespace so downstream
+		// comparisons (ScopeFocus rendering, prompt injection) use stable tokens.
+		for i, s := range a.Scope {
+			a.Scope[i] = strings.TrimSpace(s)
 		}
 		r.Agents[name] = a
 	}

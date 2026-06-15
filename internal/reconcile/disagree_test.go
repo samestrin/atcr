@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -139,6 +140,38 @@ func TestBuildDisagreements_ExcludesOutOfScope(t *testing.T) {
 	assert.Equal(t, "real.go", df.Items[0].File)
 }
 
+func TestBuildDisagreements_GrayZoneAllOutOfScopeExcluded(t *testing.T) {
+	// A cluster where every member is out-of-scope must be excluded (fail-closed):
+	// no in-scope member means no change-tension to surface.
+	clusters := []AmbiguousCluster{
+		{
+			ID: "amb-oos", File: "pre.go", Line: 5, Similarity: 0.7,
+			Findings: []stream.Finding{
+				mf("HIGH", "pre.go", 5, "pre-existing A", "f", CategoryOutOfScope, 10, "e", "greta"),
+				mf("LOW", "pre.go", 5, "pre-existing B", "f", CategoryOutOfScope, 10, "e", "kai"),
+			},
+		},
+	}
+	df := BuildDisagreements(nil, clusters)
+	assert.Empty(t, itemsByKind(df, KindGrayZone), "all-out-of-scope cluster must be excluded from radar")
+}
+
+func TestBuildDisagreements_GrayZoneMixedScopeKept(t *testing.T) {
+	// A cluster with at least one in-scope member is real change-tension and
+	// must surface as a gray_zone item.
+	clusters := []AmbiguousCluster{
+		{
+			ID: "amb-mix", File: "src.go", Line: 10, Similarity: 0.6,
+			Findings: []stream.Finding{
+				mf("HIGH", "src.go", 10, "in-scope finding", "f", "security", 10, "e", "greta"),
+				mf("LOW", "src.go", 10, "pre-existing", "f", CategoryOutOfScope, 10, "e", "kai"),
+			},
+		},
+	}
+	df := BuildDisagreements(nil, clusters)
+	assert.Len(t, itemsByKind(df, KindGrayZone), 1, "cluster with one in-scope member must survive as gray_zone")
+}
+
 func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	findings := []JSONFinding{
 		jf("MEDIUM", "b.go", 2, "p2", []string{"kai"}, ""),
@@ -153,6 +186,39 @@ func TestBuildDisagreements_DeterministicOrdering(t *testing.T) {
 	require.Len(t, medSolos, 2)
 	assert.Equal(t, "a.go", medSolos[0].File)
 	assert.Equal(t, "b.go", medSolos[1].File)
+}
+
+func TestBuildDisagreements_DeterministicOrderingUnderShuffledInput(t *testing.T) {
+	// Proves sort-stability under different input orderings — not just idempotence
+	// on the same slice. A broken tie-break key would still pass idempotence but
+	// fail this test.
+	findings := []JSONFinding{
+		jf("MEDIUM", "b.go", 2, "p2", []string{"kai"}, ""),
+		jf("MEDIUM", "a.go", 1, "p1", []string{"greta"}, ""),
+		jf("CRITICAL", "c.go", 3, "p3", []string{"greta", "kai"}, "LOW vs CRITICAL"),
+	}
+	reversed := []JSONFinding{findings[2], findings[1], findings[0]}
+	first := BuildDisagreements(findings, nil)
+	second := BuildDisagreements(reversed, nil)
+	require.Equal(t, first.Items, second.Items, "reversed input must yield identical item order")
+}
+
+func TestBuildDisagreements_TieBreakByLineThenProblem(t *testing.T) {
+	// When score, severity, and file all tie, line asc then problem asc must decide
+	// order — exercising the lower tie-break tiers in sortDisagreements.
+	findings := []JSONFinding{
+		jf("LOW", "x.go", 20, "z problem", []string{"kai"}, ""),
+		jf("LOW", "x.go", 10, "b problem", []string{"otto"}, ""),
+		jf("LOW", "x.go", 10, "a problem", []string{"greta"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	solos := itemsByKind(df, KindSoloFinding)
+	require.Len(t, solos, 3)
+	assert.Equal(t, 10, solos[0].Line, "lower line first")
+	assert.Equal(t, "a problem", solos[0].Problem, "problem asc within same line")
+	assert.Equal(t, 10, solos[1].Line)
+	assert.Equal(t, "b problem", solos[1].Problem)
+	assert.Equal(t, 20, solos[2].Line)
 }
 
 func TestBuildDisagreements_VerificationTieSurfaced(t *testing.T) {
@@ -272,6 +338,19 @@ func TestReadDisagreements_MalformedIsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestReadDisagreements_IncompatibleMajorVersionIsError(t *testing.T) {
+	// A disagreements.json written by a future 2.x writer is incompatible with
+	// the 1.x reader — ReadDisagreements must error rather than silently
+	// returning a partially-populated struct with missing fields.
+	reviewDir := t.TempDir()
+	reconDir := filepath.Join(reviewDir, "reconciled")
+	require.NoError(t, os.MkdirAll(reconDir, 0o755))
+	payload := `{"schemaVersion":"2.0","independenceModel":"x","items":[]}`
+	require.NoError(t, os.WriteFile(filepath.Join(reconDir, DisagreementsJSON), []byte(payload), 0o644))
+	_, err := ReadDisagreements(reviewDir)
+	require.Error(t, err, "schema version 2.0 must be rejected by a 1.x reader")
+}
+
 func TestBuildDisagreements_SchemaMetadata(t *testing.T) {
 	df := BuildDisagreements(nil, nil)
 	assert.Equal(t, DisagreementsSchemaVersion, df.SchemaVersion)
@@ -279,27 +358,72 @@ func TestBuildDisagreements_SchemaMetadata(t *testing.T) {
 	assert.Empty(t, df.Items)
 }
 
-// TestDisagreementsSchema_StableContract pins the literal schema version and the
-// JSON field names Epic 6.0 (Cross-Examination) consumes. A rename or version
-// bump here is a breaking change to a downstream contract — update Epic 6.0 and
-// docs/disagreement-radar.md before changing this test.
+// TestDisagreementsSchema_StableContract pins the literal schema version, the
+// JSON field names, and the value types Epic 6.0 (Cross-Examination) consumes.
+// A rename, retyping, or version bump here is a breaking change to a downstream
+// contract — update Epic 6.0 and docs/disagreement-radar.md before changing.
 func TestDisagreementsSchema_StableContract(t *testing.T) {
 	assert.Equal(t, "1.0", DisagreementsSchemaVersion, "Epic 6.0 contract version")
 	assert.Equal(t, "distinct-reviewer-count", IndependenceModelReviewerCount)
 
+	// Use a gray-zone cluster so positions/skeptics/detail keys are exercised.
+	clusters := []AmbiguousCluster{
+		{
+			ID: "amb-1", File: "b.go", Line: 2, Similarity: 0.6,
+			Findings: []stream.Finding{
+				mf("HIGH", "b.go", 2, "risk A", "f", "security", 10, "e", "greta"),
+				mf("LOW", "b.go", 2, "risk B", "f", "security", 10, "e", "kai"),
+			},
+		},
+	}
 	df := BuildDisagreements([]JSONFinding{
 		jf("CRITICAL", "a.go", 1, "p", []string{"greta", "kai"}, "LOW vs CRITICAL"),
-	}, nil)
+	}, clusters)
 	data, err := json.MarshalIndent(df, "", "  ")
 	require.NoError(t, err)
-	out := string(data)
-	for _, key := range []string{
-		`"schemaVersion"`, `"independenceModel"`, `"items"`,
-		`"kind"`, `"file"`, `"line"`, `"severity"`, `"problem"`,
-		`"score"`, `"spread"`, `"independence"`, `"reviewers"`, `"disagreement"`,
-	} {
-		assert.Contains(t, out, key, "handoff schema must expose %s", key)
+
+	// Unmarshal into map[string]any to pin structure and value types.
+	var top map[string]any
+	require.NoError(t, json.Unmarshal(data, &top))
+
+	// Top-level keys and types.
+	assert.IsType(t, "", top["schemaVersion"], "schemaVersion must be string")
+	assert.Equal(t, "1.0", top["schemaVersion"])
+	assert.IsType(t, "", top["independenceModel"], "independenceModel must be string")
+	items, ok := top["items"].([]any)
+	require.True(t, ok, "items must be a JSON array")
+	require.NotEmpty(t, items)
+
+	// Per-item key structure and value types (first item = severity split).
+	item := items[0].(map[string]any)
+	assert.IsType(t, "", item["kind"], "kind must be string")
+	assert.IsType(t, "", item["file"], "file must be string")
+	assert.IsType(t, float64(0), item["line"], "line must be number (float64 in JSON)")
+	assert.IsType(t, "", item["severity"], "severity must be string")
+	assert.IsType(t, "", item["problem"], "problem must be string")
+	assert.IsType(t, float64(0), item["score"], "score must be number")
+	assert.IsType(t, float64(0), item["spread"], "spread must be number")
+	assert.IsType(t, float64(0), item["independence"], "independence must be number")
+	_, hasReviewers := item["reviewers"]
+	assert.True(t, hasReviewers, "reviewers key must be present")
+
+	// Gray-zone item must carry positions with reviewer/severity/problem.
+	var grayItem map[string]any
+	for _, raw := range items {
+		m := raw.(map[string]any)
+		if m["kind"] == KindGrayZone {
+			grayItem = m
+			break
+		}
 	}
+	require.NotNil(t, grayItem, "must have a gray_zone item to test positions contract")
+	positions, ok := grayItem["positions"].([]any)
+	require.True(t, ok, "positions must be a JSON array on gray_zone items")
+	require.NotEmpty(t, positions)
+	pos := positions[0].(map[string]any)
+	assert.Contains(t, pos, "reviewer")
+	assert.Contains(t, pos, "severity")
+	assert.Contains(t, pos, "problem")
 }
 
 func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *testing.T) {
@@ -325,18 +449,101 @@ func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *tes
 	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
 }
 
+func TestBuildDisagreements_OutOfScopeNormalizationExcludesUntrimmedVariants(t *testing.T) {
+	// Per-finding out-of-scope check uses exact match while allOutOfScope
+	// lower-cases and trims — a finding with " Out-Of-Scope " entered the radar
+	// via the per-finding tier but was excluded by the cluster guard.
+	findings := []JSONFinding{
+		{Severity: "CRITICAL", File: "pre.go", Line: 1, Problem: "pre-existing",
+			Category: " Out-Of-Scope ", Reviewers: []string{"greta"}, Confidence: ConfMedium},
+		jf("HIGH", "real.go", 2, "in the change", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	require.Len(t, df.Items, 1, "untrimmed/upper out-of-scope finding excluded from radar")
+	assert.Equal(t, "real.go", df.Items[0].File)
+}
+
+func TestBuildDisagreements_EmptyReviewersNotPromotedToSolo(t *testing.T) {
+	// A malformed finding with an empty Reviewers slice (len==0, data
+	// corruption) must NOT be surfaced as a solo with fabricated Independence=1.
+	findings := []JSONFinding{
+		{Severity: "HIGH", File: "bad.go", Line: 1, Problem: "no reviewer",
+			Reviewers: []string{}, Confidence: ConfMedium},
+		jf("LOW", "real.go", 2, "solo", []string{"kai"}, ""),
+	}
+	df := BuildDisagreements(findings, nil)
+	solos := itemsByKind(df, KindSoloFinding)
+	for _, s := range solos {
+		assert.NotEqual(t, "bad.go", s.File, "empty-reviewers finding must not surface as solo")
+	}
+}
+
+func TestBuildDisagreements_EmptyClusterDoesNotPanic(t *testing.T) {
+	// allOutOfScope returns false for empty clusters, so they reach grayZoneItem.
+	// grayZoneItem must guard c.Findings[0] access with a len check.
+	clusters := []AmbiguousCluster{
+		{ID: "amb-empty", File: "e.go", Line: 1, Similarity: 0.5, Findings: []stream.Finding{}},
+	}
+	assert.NotPanics(t, func() {
+		df := BuildDisagreements(nil, clusters)
+		// Empty cluster must not appear in the radar.
+		for _, it := range df.Items {
+			assert.NotEqual(t, "e.go", it.File)
+		}
+	})
+}
+
 func TestBuildDisagreements_GrayZoneAllUnknownSeverityStillScoresAboveZero(t *testing.T) {
 	// A gray-zone cluster whose members all carry unknown/blank severities must
-	// not score 0 — otherwise a real tension cluster sorts below every solo LOW
-	// finding. The cluster has two distinct reviewers and real ambiguity; it
-	// deserves a floor score above a LOW solo (rank 1).
+	// not score 0. The floor is exactly 1, so it sorts at or above a LOW solo
+	// (rank 1).
 	clusterFindings := []stream.Finding{
 		mf("", "u.go", 1, "unknown sev A", "f", "misc", 5, "e", "greta"),
 		mf("", "u.go", 2, "unknown sev B", "f", "misc", 5, "e", "kai"),
 	}
 	clusters := []AmbiguousCluster{{ID: "amb-u", File: "u.go", Line: 1, Similarity: 0.5, Findings: clusterFindings}}
-	df := BuildDisagreements(nil, clusters)
+	// Include a LOW solo so we can verify the cluster ranks at-or-above it.
+	soloFinding := jf("LOW", "solo.go", 99, "low solo", []string{"otto"}, "")
+	df := BuildDisagreements([]JSONFinding{soloFinding}, clusters)
 	gray := itemsByKind(df, KindGrayZone)
 	require.Len(t, gray, 1)
-	assert.Greater(t, gray[0].Score, 0.0, "unknown-severity cluster must still score above zero")
+	assert.Equal(t, 1.0, gray[0].Score, "unknown-severity cluster floor score must be exactly 1")
+
+	solos := itemsByKind(df, KindSoloFinding)
+	require.Len(t, solos, 1)
+	// Both score 1.0 — the cluster sorts at-or-above a LOW solo.
+	assert.GreaterOrEqual(t, gray[0].Score, solos[0].Score, "unknown-severity cluster must sort at or above a LOW solo")
+}
+
+func TestScoreFor_LargeInputsNoIntOverflow(t *testing.T) {
+	// scoreFor multiplies spread × independence. Both are int, and independence
+	// is derived from len(f.Reviewers) — unbounded external input. When the int
+	// product overflows, the float64 conversion yields a wrong score. The fix
+	// converts operands to float64 before multiplying.
+	big := int(math.MaxInt64)
+	score := scoreFor(big, big, 0)
+	// int64 overflow: MaxInt64*MaxInt64 wraps to 1 → float64(1) = 1.0 (wrong).
+	// float64 first: float64(MaxInt64)*float64(MaxInt64) ≈ 8.5e37 (correct).
+	assert.Greater(t, score, 1e30, "scoreFor must widen to float64 before multiplying to avoid int overflow")
+}
+
+func TestVerificationItem_NilVerificationDoesNotPanic(t *testing.T) {
+	// verificationItem dereferences f.Verification.Skeptic and f.Verification.Notes.
+	// Currently safe only because the caller guards with isVerificationTie (which
+	// returns false for nil). A future call path without that precondition would
+	// panic. The function must defend itself.
+	f := JSONFinding{
+		Severity:     "HIGH",
+		File:         "v.go",
+		Line:         1,
+		Problem:      "nil verification",
+		Reviewers:    []string{"greta", "kai"},
+		Confidence:   ConfHigh,
+		Verification: nil,
+	}
+	assert.NotPanics(t, func() {
+		item := verificationItem(f)
+		assert.Empty(t, item.Skeptics, "nil Verification yields empty Skeptics")
+		assert.Empty(t, item.Detail, "nil Verification yields empty Detail")
+	})
 }

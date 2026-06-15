@@ -289,6 +289,8 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 							DurationMS:  time.Since(start).Milliseconds(),
 							PayloadMode: s.Primary.PayloadMode,
 							Truncation:  s.Primary.Truncation,
+							MinSeverity: s.Primary.MinSeverity,
+							MaxFindings: s.Primary.MaxFindings,
 						}
 						return
 					}
@@ -342,6 +344,8 @@ func (e *Engine) invokeSlot(ctx context.Context, s Slot) Result {
 	last.Agent = s.Primary.Name
 	last.PayloadMode = s.Primary.PayloadMode
 	last.Truncation = s.Primary.Truncation
+	last.MinSeverity = s.Primary.MinSeverity
+	last.MaxFindings = s.Primary.MaxFindings
 	last.DurationMS = time.Since(start).Milliseconds()
 	return last
 }

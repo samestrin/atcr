@@ -15,7 +15,10 @@ const (
 	SevLow      = "LOW"
 )
 
-var severityRank = map[string]int{SevCritical: 4, SevHigh: 3, SevMedium: 2, SevLow: 1}
+// SeverityRank maps canonical severities to their display ordering. Higher rank
+// wins a merge and sorts earlier in both the reconcile radar and the report
+// view. Unknown severities sort last (rank 0).
+var SeverityRank = map[string]int{SevCritical: 4, SevHigh: 3, SevMedium: 2, SevLow: 1}
 
 // Confidence values. HIGH = 2+ distinct reviewers, MEDIUM = single reviewer,
 // LOW = reserved for untrusted sources (unused in v1).
@@ -98,7 +101,7 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 	maxRank, minRank := -1, 1<<31
 	var minSev string
 	for _, f := range group {
-		rank, ok := severityRank[f.Severity]
+		rank, ok := SeverityRank[f.Severity]
 		if !ok {
 			continue // unknown severity ignored for max/min
 		}

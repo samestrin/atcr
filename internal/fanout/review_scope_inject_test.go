@@ -28,4 +28,7 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
 	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng)
 	require.NoError(t, err)
 	require.NotContains(t, kaiAgent.Prompt, "Review Focus", "unscoped agent prompt must be unchanged")
+	// Lock the invocation prompt too — the model actually receives this, so an
+	// unscoped agent must not carry scope focus text there either.
+	require.NotContains(t, kaiAgent.Invocation.Prompt, "Review Focus", "unscoped agent invocation prompt must be unchanged")
 }

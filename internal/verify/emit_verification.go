@@ -23,7 +23,9 @@ const reconciledSubdir = "reconciled"
 // (the different-model rule's evidence), the full reasoning, and the cost/outcome
 // metadata (duration, tripped budgets) a human needs to judge a verdict.
 //
-// Skeptic names every participating voter; Model names only the skeptics whose
+// Skeptic names the participating voters: all voters on a tie, the lead voter
+// on a decisive outcome, or a single name carried forward from an on-disk block
+// when no new skeptic executed. Model names only the skeptics whose
 // verdict produced the recorded outcome — a winners-only subset on a decisive vote,
 // all participants on a tie, and "" when no skeptic executed. So for a multi-vote
 // run Model may list fewer entries than Skeptic by design (see winningAttribution).

@@ -105,7 +105,7 @@ func Reconcile(sources []Source, opts Options) Result {
 // line — a total order for deterministic emission.
 func sortMerged(m []Merged) {
 	sort.SliceStable(m, func(i, j int) bool {
-		ri, rj := severityRank[m[i].Severity], severityRank[m[j].Severity]
+		ri, rj := SeverityRank[m[i].Severity], SeverityRank[m[j].Severity]
 		if ri != rj {
 			return ri > rj
 		}

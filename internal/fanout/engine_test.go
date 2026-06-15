@@ -259,6 +259,37 @@ func TestRun_SerialShortCircuitStampsElapsedDuration(t *testing.T) {
 		"short-circuited slot must record elapsed wall-clock, not 0")
 }
 
+// A serial slot short-circuited by cancellation must carry the primary's review
+// constraints (MinSeverity/MaxFindings) so the cancelled slot's Result is
+// structurally identical to one produced by invokeSlot. Without this, a future
+// change stamping synthetic findings onto cancelled slots would skip guardrails
+// only on the serial lane.
+func TestRun_SerialShortCircuitStampsConstraints(t *testing.T) {
+	f := newFake()
+	f.delay = time.Hour
+	e := NewEngine(f)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+
+	maxFindings := 3
+	slots := []Slot{
+		{Primary: Agent{Name: "s1", Invocation: llmclient.Invocation{Model: "s1"}}, Serial: true},
+		{Primary: Agent{
+			Name: "s2", Invocation: llmclient.Invocation{Model: "s2"},
+			MinSeverity: "HIGH", MaxFindings: &maxFindings,
+		}, Serial: true},
+	}
+	results := e.Run(ctx, slots)
+
+	require.Len(t, results, 2)
+	assert.Equal(t, "HIGH", results[1].MinSeverity,
+		"cancelled serial slot must carry MinSeverity from primary")
+	require.NotNil(t, results[1].MaxFindings)
+	assert.Equal(t, 3, *results[1].MaxFindings,
+		"cancelled serial slot must carry MaxFindings from primary")
+}
+
 // DurationMS is slot wall time: a slot whose primary burned time before
 // failing must report primary + fallback duration, not just the winner's.
 func TestInvokeSlot_DurationCoversWholeChain(t *testing.T) {

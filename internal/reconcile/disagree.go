@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,7 +118,7 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 		// Out-of-scope findings are pre-existing issues outside the reviewed
 		// change; they are annotated in their own report section and excluded from
 		// the gate, so they are not change-tension and never enter the radar.
-		if f.Category == CategoryOutOfScope {
+		if categoryIsOutOfScope(f.Category) {
 			continue
 		}
 		if grayKeys[locationKey(f.File, f.Line)] {
@@ -128,15 +129,18 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 			items = append(items, verificationItem(f))
 		case f.Disagreement != "":
 			items = append(items, severitySplitItem(f))
-		case len(f.Reviewers) <= 1:
+		case len(f.Reviewers) == 0:
+			// Malformed finding (no reviewer) — not a solo; skip.
+			continue
+		case len(f.Reviewers) == 1:
 			items = append(items, soloItem(f))
 		}
 	}
 	for _, c := range clusters {
-		// Skip a gray-zone pair only when every member is out-of-scope (fail-
-		// closed, matching modalCategory): an in-scope member keeps the pair as
-		// real change-tension.
-		if allOutOfScope(c.Findings) {
+		// Skip empty clusters (no members to surface) and groups where every
+		// member is out-of-scope (fail-closed, matching modalCategory): an
+		// in-scope member keeps the pair as real change-tension.
+		if len(c.Findings) == 0 || allOutOfScope(c.Findings) {
 			continue
 		}
 		items = append(items, grayZoneItem(c))
@@ -157,8 +161,19 @@ func BuildDisagreements(findings []JSONFinding, clusters []AmbiguousCluster) Dis
 // Both call sites previously inlined the ReadAmbiguousClusters + BuildDisagreements
 // pair; this helper is the single shared entry point.
 func LoadDisagreements(reviewDir string, findings []JSONFinding) DisagreementsFile {
-	clusters, _ := ReadAmbiguousClusters(reviewDir)
+	clusters, err := ReadAmbiguousClusters(reviewDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warn: LoadDisagreements: %v\n", err)
+	}
 	return BuildDisagreements(findings, clusters)
+}
+
+// categoryIsOutOfScope reports whether c matches the out-of-scope category
+// using the same normalization the cluster-level allOutOfScope helper applies
+// (case-insensitive, trimmed). A single helper prevents the per-finding and
+// cluster-level checks from drifting apart.
+func categoryIsOutOfScope(c string) bool {
+	return strings.ToLower(strings.TrimSpace(c)) == CategoryOutOfScope
 }
 
 // allOutOfScope reports whether every finding in the group is tagged
@@ -168,7 +183,7 @@ func allOutOfScope(findings []stream.Finding) bool {
 		return false
 	}
 	for _, f := range findings {
-		if strings.ToLower(strings.TrimSpace(f.Category)) != CategoryOutOfScope {
+		if !categoryIsOutOfScope(f.Category) {
 			return false
 		}
 	}
@@ -230,8 +245,8 @@ func spreadFromDisagreement(d string) int {
 	if len(parts) != 2 {
 		return 0
 	}
-	lo := severityRank[strings.TrimSpace(parts[0])]
-	hi := severityRank[strings.TrimSpace(parts[1])]
+	lo := SeverityRank[strings.TrimSpace(parts[0])]
+	hi := SeverityRank[strings.TrimSpace(parts[1])]
 	if hi < lo {
 		return 0
 	}
@@ -243,7 +258,7 @@ func spreadFromDisagreement(d string) int {
 // rank, so a CRITICAL solo (4) outranks a LOW-vs-MEDIUM split (1×independence).
 func scoreFor(spread, independence, sevRank int) float64 {
 	if spread > 0 {
-		return float64(spread * independence)
+		return float64(spread) * float64(independence)
 	}
 	return float64(sevRank)
 }
@@ -264,7 +279,7 @@ func severitySplitItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, severityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -280,7 +295,7 @@ func soloItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(0, indep, severityRank[f.Severity]),
+		Score:        scoreFor(0, indep, SeverityRank[f.Severity]),
 		Spread:       0,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -293,19 +308,24 @@ func verificationItem(f JSONFinding) DisagreementItem {
 	// a high-spread split.
 	spread := spreadFromDisagreement(f.Disagreement)
 	indep := atLeastOne(len(f.Reviewers))
+	var skeptic, notes string
+	if f.Verification != nil {
+		skeptic = f.Verification.Skeptic
+		notes = f.Verification.Notes
+	}
 	return DisagreementItem{
 		Kind:         KindVerificationDisagreement,
 		File:         f.File,
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, severityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
 		Disagreement: f.Disagreement,
-		Skeptics:     f.Verification.Skeptic,
-		Detail:       f.Verification.Notes,
+		Skeptics:     skeptic,
+		Detail:       notes,
 	}
 }
 
@@ -315,7 +335,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	revSet := map[string]bool{}
 	positions := make([]Position, 0, len(c.Findings))
 	for _, f := range c.Findings {
-		if r, ok := severityRank[f.Severity]; ok {
+		if r, ok := SeverityRank[f.Severity]; ok {
 			if r > maxRank {
 				maxRank, maxSev = r, f.Severity
 			}
@@ -337,10 +357,10 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
-	score := scoreFor(spread, indep, severityRank[maxSev])
+	score := scoreFor(spread, indep, SeverityRank[maxSev])
 	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
 	// never sort below a LOW solo (rank 1). When all members carry unknown or
-	// blank severities, severityRank[maxSev] is 0 and spread is 0, so scoreFor
+	// blank severities, SeverityRank[maxSev] is 0 and spread is 0, so scoreFor
 	// returns 0 — the cluster would sort dead last despite being real tension.
 	if score == 0 && len(c.Findings) > 0 {
 		score = 1
@@ -440,7 +460,7 @@ func sortDisagreements(items []DisagreementItem) {
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
-		if ra, rb := severityRank[a.Severity], severityRank[b.Severity]; ra != rb {
+		if ra, rb := SeverityRank[a.Severity], SeverityRank[b.Severity]; ra != rb {
 			return ra > rb
 		}
 		if a.File != b.File {
