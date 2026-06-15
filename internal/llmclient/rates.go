@@ -26,6 +26,13 @@ var modelRates = map[string]rateUSDPerMillion{
 	"gpt-4o-mini": {input: 0.15, output: 0.6},
 }
 
+// CostUSD returns the USD cost of this usage for the given model. It maps the
+// prompt/completion fields to ComputeCostUSD's input/output arguments in exactly
+// one place so callers cannot transpose the two counts.
+func (u UsageData) CostUSD(model string) float64 {
+	return ComputeCostUSD(model, u.PromptTokens, u.CompletionTokens)
+}
+
 // ComputeCostUSD returns the USD cost of a call given its model and token
 // counts. Unknown models return 0 (never a panic), and a zero-value UsageData
 // (tokensIn == tokensOut == 0) yields 0 for any model. Negative token counts are

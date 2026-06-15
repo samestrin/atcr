@@ -140,13 +140,20 @@ func (u *UsageData) UnmarshalJSON(data []byte) error {
 		// Structurally malformed usage block: degrade to zero, never error.
 		return nil
 	}
-	if v, err := raw.PromptTokens.Float64(); err == nil {
-		u.PromptTokens = int(v)
-	}
-	if v, err := raw.CompletionTokens.Float64(); err == nil {
-		u.CompletionTokens = int(v)
-	}
+	u.PromptTokens = clampNonNegative(raw.PromptTokens)
+	u.CompletionTokens = clampNonNegative(raw.CompletionTokens)
 	return nil
+}
+
+// clampNonNegative truncates a usage count toward zero and clamps negatives to
+// zero at the data boundary, so every consumer of UsageData — not just
+// ComputeCostUSD — sees a non-negative count. A non-numeric value yields zero.
+func clampNonNegative(n json.Number) int {
+	v, err := n.Float64()
+	if err != nil || v < 0 {
+		return 0
+	}
+	return int(v)
 }
 
 type chatResponse struct {

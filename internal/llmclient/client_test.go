@@ -530,6 +530,24 @@ func TestComputeCostUSD_NegativeTokensClamped(t *testing.T) {
 	assert.Equal(t, 0.0, ComputeCostUSD("claude-sonnet-4-6", -100, -200))
 }
 
+func TestUsageData_CostUSD(t *testing.T) {
+	// The convenience method maps prompt/completion to in/out exactly once, so
+	// callers cannot transpose the two arguments.
+	u := UsageData{PromptTokens: 1_000_000, CompletionTokens: 1_000_000}
+	assert.InDelta(t, 18.0, u.CostUSD("claude-sonnet-4-6"), 1e-9)
+	assert.Equal(t, 0.0, UsageData{}.CostUSD("claude-sonnet-4-6"))
+}
+
+func TestUsageData_NegativeCountsClampedAtDecode(t *testing.T) {
+	// A negative provider count is clamped to zero at the data boundary, so every
+	// consumer of UsageData (not just ComputeCostUSD) sees non-negative counts.
+	var u UsageData
+	err := json.Unmarshal([]byte(`{"prompt_tokens":-5,"completion_tokens":10}`), &u)
+	require.NoError(t, err)
+	assert.Equal(t, 0, u.PromptTokens)
+	assert.Equal(t, 10, u.CompletionTokens)
+}
+
 func TestCompleteWithUsage_PartialUsage(t *testing.T) {
 	// Provider sends only prompt_tokens; completion_tokens defaults to zero.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
