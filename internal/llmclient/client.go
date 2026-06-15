@@ -126,6 +126,29 @@ type UsageData struct {
 	CompletionTokens int `json:"completion_tokens"`
 }
 
+// UnmarshalJSON tolerates malformed or non-integer usage blocks. Token usage is
+// non-load-bearing metadata, so a provider that emits counts as JSON floats
+// (e.g. 14200.0, which some gateways do) or otherwise malforms the block must
+// NOT fail the parent response decode and discard the assistant content — it
+// degrades to zero counts instead. Counts are truncated toward zero.
+func (u *UsageData) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		PromptTokens     json.Number `json:"prompt_tokens"`
+		CompletionTokens json.Number `json:"completion_tokens"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// Structurally malformed usage block: degrade to zero, never error.
+		return nil
+	}
+	if v, err := raw.PromptTokens.Float64(); err == nil {
+		u.PromptTokens = int(v)
+	}
+	if v, err := raw.CompletionTokens.Float64(); err == nil {
+		u.CompletionTokens = int(v)
+	}
+	return nil
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message message `json:"message"`

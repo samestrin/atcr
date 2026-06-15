@@ -518,3 +518,72 @@ func TestComputeCostUSD_UnknownModel(t *testing.T) {
 	// Unknown model must yield zero cost, never panic.
 	assert.Equal(t, 0.0, ComputeCostUSD("totally-unknown-model-xyz", 1000, 1000))
 }
+
+func TestComputeCostUSD_EmptyModel(t *testing.T) {
+	// Empty model string must behave as unknown: zero, no panic.
+	assert.Equal(t, 0.0, ComputeCostUSD("", 1000, 1000))
+}
+
+func TestComputeCostUSD_NegativeTokensClamped(t *testing.T) {
+	// Negative token counts (malformed provider response) clamp to zero, so cost
+	// is never negative.
+	assert.Equal(t, 0.0, ComputeCostUSD("claude-sonnet-4-6", -100, -200))
+}
+
+func TestCompleteWithUsage_PartialUsage(t *testing.T) {
+	// Provider sends only prompt_tokens; completion_tokens defaults to zero.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{
+				map[string]any{"message": map[string]any{"role": "assistant", "content": "x"}},
+			},
+			"usage": map[string]any{"prompt_tokens": 500},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 500, usage.PromptTokens)
+	assert.Equal(t, 0, usage.CompletionTokens)
+}
+
+func TestCompleteWithUsage_FloatUsageDoesNotFailDecode(t *testing.T) {
+	// Some gateways emit token counts as JSON floats (e.g. 14200.0). The usage
+	// block is non-load-bearing metadata; a float must NOT fail the whole
+	// response decode and discard the assistant content.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"findings"}}],"usage":{"prompt_tokens":14200.0,"completion_tokens":4000.0}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "findings", out)
+	assert.Equal(t, 14200, usage.PromptTokens)
+	assert.Equal(t, 4000, usage.CompletionTokens)
+}
+
+func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
+	// A structurally wrong usage block (string instead of number) must not kill
+	// the call; usage degrades to zero and the content still returns.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":"oops"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", out)
+	assert.Equal(t, 0, usage.PromptTokens)
+	assert.Equal(t, 0, usage.CompletionTokens)
+}
