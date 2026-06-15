@@ -76,11 +76,9 @@ var ErrNoReconciledFindings = errors.New("no reconciled findings")
 // run. The only errors returned are setup failures (missing reconciled findings,
 // unreadable artifacts) before any verdict could be recorded.
 //
-// Findings (and the skeptics within a finding) are processed SERIALLY: unlike the
-// review fan-out there is no concurrency knob, so a --thorough run is
-// findings × votes provider calls back to back. This keeps the stage simple and
-// deterministic; parallelizing it across a bounded worker pool is tracked as
-// TD-009.
+// Findings are processed concurrently via a bounded worker pool
+// (reg.Verify.MaxParallel, default 4). Each finding's skeptics run sequentially
+// within their goroutine. The pool bounds peak provider concurrency for cost control.
 func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Registry, opts Options) (Result, error) {
 	// Production harness: a real chat client plus a read-only snapshot dispatcher
 	// of repoRoot at the review's head SHA. Built lazily (only when a skeptic will
@@ -436,6 +434,9 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	// skeptics[0..n] — so a multi-vote verdict records the majority's models, not
 	// the losers' (AC2/AC1).
 	base.Model, base.TrippedBudgets = winningAttribution(skeptics, perSkeptic, perTripped, ver.Verdict)
+	if base.TrippedBudgets == nil {
+		base.TrippedBudgets = []string{}
+	}
 	base.DurationMs = int(time.Since(start).Milliseconds())
 	return ver, base
 }
