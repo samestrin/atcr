@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,6 +11,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRenderDisagreementsJSON_RoundTripAndTrailingNewline(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "p",
+			Reviewers: []string{"a"}, Confidence: "MEDIUM"},
+	}
+	df := reconcile.BuildDisagreements(findings, nil)
+
+	var buf bytes.Buffer
+	require.NoError(t, RenderDisagreementsJSON(&buf, df))
+	out := buf.String()
+
+	require.True(t, strings.HasSuffix(out, "\n"), "JSON output must end with a trailing newline")
+
+	var roundTrip reconcile.DisagreementsFile
+	require.NoError(t, json.Unmarshal([]byte(out), &roundTrip))
+	assert.Equal(t, df.SchemaVersion, roundTrip.SchemaVersion)
+	assert.Len(t, roundTrip.Items, len(df.Items))
+}
 
 func TestRenderDisagreements_EmptyIsExplicit(t *testing.T) {
 	var buf bytes.Buffer
