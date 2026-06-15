@@ -22,6 +22,7 @@ func newReportCmd() *cobra.Command {
 	}
 	cmd.Flags().String("format", "md", "output format: md, json, or checklist")
 	cmd.Flags().String("output", "", "write to a file instead of stdout")
+	cmd.Flags().Bool("disagreements", false, "render the disagreement radar: a ranked view of the highest-tension spots (severity splits, solo findings, gray-zone clusters) instead of the standard report")
 	return cmd
 }
 
@@ -48,7 +49,18 @@ func runReport(cmd *cobra.Command, args []string) error {
 	}
 
 	var buf bytes.Buffer
-	if err := report.Render(&buf, findings, format); err != nil {
+	// The disagreement radar is a focused, ranked view; it replaces the standard
+	// report rather than layering onto a chosen --format.
+	if disagreements, _ := cmd.Flags().GetBool("disagreements"); disagreements {
+		clusters, err := reconcile.ReadAmbiguousClusters(reviewDir)
+		if err != nil {
+			return usageError(fmt.Errorf("failed to read ambiguous clusters: %w", err))
+		}
+		df := reconcile.BuildDisagreements(findings, clusters)
+		if err := report.RenderDisagreements(&buf, df); err != nil {
+			return usageError(err)
+		}
+	} else if err := report.Render(&buf, findings, format); err != nil {
 		return usageError(err)
 	}
 

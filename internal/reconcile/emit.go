@@ -170,6 +170,30 @@ func ReadReconciledFindings(reviewDir string) ([]JSONFinding, error) {
 	return findings, nil
 }
 
+// ReadAmbiguousClusters loads reviewDir/reconciled/ambiguous.json — the gray-zone
+// sidecar the disagreement radar reads. A missing or empty file returns
+// (nil, nil): the radar degrades to a findings-only view rather than erroring,
+// since ambiguous.json is absent whenever a review produced no gray-zone pairs.
+// A present-but-unparseable file is an error.
+func ReadAmbiguousClusters(reviewDir string) ([]AmbiguousCluster, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, AmbiguousJSON)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, nil
+	}
+	var clusters []AmbiguousCluster
+	if err := json.Unmarshal(data, &clusters); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", AmbiguousJSON, err)
+	}
+	return clusters, nil
+}
+
 // RenderMarkdown writes the human report.md: an executive summary (counts by
 // severity x confidence) followed by findings grouped by severity. Findings
 // annotated out-of-scope are listed in their own section (AC 06-04) — they do
