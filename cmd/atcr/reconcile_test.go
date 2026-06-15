@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // isolate chdirs into a fresh temp working dir AND points HOME/XDG at another
@@ -157,6 +159,17 @@ func TestReconcileCmd_TraversalIdRejected(t *testing.T) {
 	// A bare ".." id must not resolve above .atcr/reviews/ — exit 2, not a read
 	// of the parent directory.
 	require.Equal(t, 2, execCmd(t, "reconcile", ".."))
+}
+
+func TestVerifyStageRan_RejectsDirectory(t *testing.T) {
+	isolate(t)
+	base := t.TempDir()
+	reconciled := filepath.Join(base, "reconciled")
+	require.NoError(t, os.MkdirAll(reconciled, 0o755))
+	// A directory named verification.json must not be treated as a verification
+	// artifact; only a regular file should count.
+	require.NoError(t, os.MkdirAll(filepath.Join(reconciled, "verification.json"), 0o755))
+	require.Error(t, reconcile.ValidateRequireVerified(base))
 }
 
 func TestReconcileCmd_SourcesAllowlist(t *testing.T) {

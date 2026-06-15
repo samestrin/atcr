@@ -1,0 +1,75 @@
+[
+  {
+    "severity": "CRITICAL",
+    "file": "auth.go",
+    "line": 42,
+    "problem": "token never expires",
+    "fix": "check expiry",
+    "category": "security",
+    "est_minutes": 15,
+    "evidence": "expiresAt unread",
+    "reviewers": [
+      "greta",
+      "host"
+    ],
+    "confidence": "VERIFIED",
+    "verification": {
+      "verdict": "confirmed",
+      "skeptic": "otto",
+      "notes": "read auth.go:42 — expiresAt is parsed but never compared; token is accepted past expiry"
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "db/query.go",
+    "line": 13,
+    "problem": "SQL string built via concatenation — injection risk",
+    "fix": "use parameterized queries",
+    "category": "security",
+    "est_minutes": 20,
+    "evidence": "user input concatenated into query",
+    "reviewers": [
+      "greta"
+    ],
+    "confidence": "LOW",
+    "verification": {
+      "verdict": "refuted",
+      "skeptic": "otto",
+      "notes": "the cited line uses db.Query(q, args...) with placeholders — the input is bound, not concatenated; false positive"
+    }
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "cache/store.go",
+    "line": 88,
+    "problem": "data race on the cache map across goroutines",
+    "fix": "guard map access with a sync.RWMutex",
+    "category": "concurrency",
+    "est_minutes": 30,
+    "evidence": "store.go:88 writes while store.go:71 reads",
+    "reviewers": [
+      "host",
+      "greta"
+    ],
+    "confidence": "MEDIUM",
+    "verification": {
+      "verdict": "unverifiable",
+      "skeptic": "otto",
+      "notes": "could not establish whether the two call sites run concurrently — call graph is outside the snapshot jail"
+    }
+  },
+  {
+    "severity": "LOW",
+    "file": "util.go",
+    "line": 7,
+    "problem": "unused var",
+    "fix": "",
+    "category": "style",
+    "est_minutes": 0,
+    "evidence": "",
+    "reviewers": [
+      "otto"
+    ],
+    "confidence": "LOW"
+  }
+]

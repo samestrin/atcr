@@ -65,6 +65,7 @@ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (
 
 	registerTool(r, &mcpsdk.Tool{Name: ToolReview, Description: descReview}, e.handleReview)
 	registerTool(r, &mcpsdk.Tool{Name: ToolReconcile, Description: descReconcile}, e.handleReconcile)
+	registerTool(r, &mcpsdk.Tool{Name: ToolVerify, Description: descVerify}, e.handleVerify)
 
 	reportSchema, err := reportInputSchema()
 	if err != nil {

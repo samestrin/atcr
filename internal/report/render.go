@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -77,7 +79,8 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
 	var b bytes.Buffer
 	b.WriteString("# atcr Review Report\n\n")
-	writeSummaryGrid(&b, findings)
+	verified := anyVerification(findings)
+	writeSummaryGrid(&b, findings, verified)
 
 	if len(findings) == 0 {
 		b.WriteString("\nNo findings.\n")
@@ -85,9 +88,38 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
 		return err
 	}
 
+	// Refuted findings are demoted out of the main list and shown only in the
+	// collapsed Refuted section at the bottom (AC 06-01 Edge Case 2). When no
+	// finding carries a verification block this partition is skipped and the
+	// output is byte-identical to the pre-Epic-3.0 report (AC 06-02).
+	main, refuted := findings, []reconcile.JSONFinding(nil)
+	if verified {
+		main = make([]reconcile.JSONFinding, 0, len(findings))
+		for _, f := range findings {
+			if isRefuted(f) {
+				refuted = append(refuted, f)
+			} else {
+				main = append(main, f)
+			}
+		}
+	}
+
+	// Render severity groups in a fixed canonical order regardless of input
+	// ordering. This prevents duplicate headers when findings.json is hand-edited
+	// or produced by an external source (TD item: main-list severity ordering).
+	sorted := make([]reconcile.JSONFinding, len(main))
+	copy(sorted, main)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return severityRankOf(sorted[i].Severity) > severityRankOf(sorted[j].Severity)
+	})
+	main = sorted
+
 	b.WriteString("\n## Findings\n")
+	if len(main) == 0 {
+		b.WriteString("\nAll findings were refuted — see the Refuted Findings section below.\n")
+	}
 	lastSev := ""
-	for _, f := range findings {
+	for _, f := range main {
 		if f.Severity != lastSev {
 			fmt.Fprintf(&b, "\n### %s\n\n", esc(f.Severity))
 			lastSev = f.Severity
@@ -104,7 +136,13 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding) error {
 		if f.Evidence != "" {
 			fmt.Fprintf(&b, "  - Evidence: %s\n", escTrunc(f.Evidence))
 		}
+		// Skeptic section: only for findings the verify stage touched (AC 06-01
+		// Scenario 1). A nil block (v1 finding) renders nothing extra (AC 06-02).
+		if f.Verification != nil {
+			writeSkepticBlock(&b, f.Verification)
+		}
 	}
+	writeRefutedSection(&b, refuted)
 	_, err := w.Write(b.Bytes())
 	return err
 }
@@ -129,34 +167,170 @@ func renderChecklist(w io.Writer, findings []reconcile.JSONFinding) error {
 }
 
 // writeSummaryGrid writes the counts-by-severity x confidence grid plus totals.
-func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding) {
-	type cell struct{ high, medium, low int }
+// When verified is true (any finding carries a verification block) the grid gains
+// a leftmost VERIFIED column, reflecting the v2 ordering VERIFIED > HIGH > MEDIUM >
+// LOW. When false it renders the exact pre-Epic-3.0 four-column grid (AC 06-02): no
+// finding has VERIFIED confidence in that case, so the count would be zero anyway.
+func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verified bool) {
+	type cell struct{ verified, high, medium, low, other int }
 	order := []string{reconcile.SevCritical, reconcile.SevHigh, reconcile.SevMedium, reconcile.SevLow}
 	counts := map[string]*cell{}
 	for _, s := range order {
 		counts[s] = &cell{}
 	}
+	refutedCount := 0
+	otherSev := &cell{}
 	for _, f := range findings {
+		if verified && isRefuted(f) {
+			refutedCount++
+		}
 		c, ok := counts[f.Severity]
 		if !ok {
-			continue
+			c = otherSev
 		}
-		switch f.Confidence {
+		switch canonicalize(f.Confidence) {
+		case confVerified:
+			c.verified++
 		case reconcile.ConfHigh:
 			c.high++
 		case reconcile.ConfMedium:
 			c.medium++
-		default:
+		case reconcile.ConfLow:
 			c.low++
+		default:
+			c.other++
 		}
 	}
-	fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
-	b.WriteString("| Severity | HIGH conf | MEDIUM conf | LOW conf |\n")
-	b.WriteString("|----------|-----------|-------------|----------|\n")
+	// Show the VERIFIED column when the verify stage ran (param) OR when any
+	// finding actually carries VERIFIED confidence. The latter guards a desync:
+	// a finding with VERIFIED confidence but a nil verification block (a writer
+	// contract violation) would otherwise be counted in the total yet vanish
+	// from every column of the v1 grid. Pure v1 input has neither, so the
+	// four-column grid is rendered byte-identically (AC 06-02).
+	totalVerified := 0
 	for _, s := range order {
-		c := counts[s]
-		fmt.Fprintf(b, "| %s | %d | %d | %d |\n", s, c.high, c.medium, c.low)
+		totalVerified += counts[s].verified
 	}
+	totalVerified += otherSev.verified
+	hasOtherConf := false
+	for _, s := range order {
+		hasOtherConf = hasOtherConf || counts[s].other > 0
+	}
+	hasOtherConf = hasOtherConf || otherSev.other > 0
+	showVerified := verified || totalVerified > 0
+
+	if refutedCount > 0 {
+		fmt.Fprintf(b, "Total findings: %d (%d refuted, shown below)\n\n", len(findings), refutedCount)
+	} else {
+		fmt.Fprintf(b, "Total findings: %d\n\n", len(findings))
+	}
+
+	headers := []string{"Severity"}
+	if showVerified {
+		headers = append(headers, "VERIFIED conf")
+	}
+	headers = append(headers, "HIGH conf", "MEDIUM conf", "LOW conf")
+	if hasOtherConf {
+		headers = append(headers, "OTHER conf")
+	}
+	seps := make([]string, len(headers))
+	for i, h := range headers {
+		seps[i] = strings.Repeat("-", len(h)+2)
+	}
+	fmt.Fprintf(b, "| %s |\n", strings.Join(headers, " | "))
+	fmt.Fprintf(b, "|%s|\n", strings.Join(seps, "|"))
+
+	writeRow := func(label string, c *cell) {
+		vals := []string{label}
+		if showVerified {
+			vals = append(vals, strconv.Itoa(c.verified))
+		}
+		vals = append(vals, strconv.Itoa(c.high), strconv.Itoa(c.medium), strconv.Itoa(c.low))
+		if hasOtherConf {
+			vals = append(vals, strconv.Itoa(c.other))
+		}
+		fmt.Fprintf(b, "| %s |\n", strings.Join(vals, " | "))
+	}
+
+	for _, s := range order {
+		writeRow(s, counts[s])
+	}
+	if otherSev.verified+otherSev.high+otherSev.medium+otherSev.low+otherSev.other > 0 {
+		writeRow("OTHER", otherSev)
+	}
+}
+
+// confVerified is the confidence-v2 tier a skeptic-confirmed finding carries in
+// findings.json. The verify stage owns the v2 axis and writes this token into
+// Confidence; the report renders it verbatim. Defined locally so the view layer
+// does not import the verify package.
+const confVerified = "VERIFIED"
+
+// anyVerification reports whether any finding carries a verification block, which
+// switches the renderer into v2 mode (VERIFIED grid column, Skeptic sections,
+// collapsed Refuted section). With none, output is byte-identical to v1.
+func anyVerification(findings []reconcile.JSONFinding) bool {
+	for _, f := range findings {
+		if f.Verification != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// isRefuted reports whether a skeptic refuted the finding (case-insensitive, the
+// same normalization the gate and confidence-v2 mapping use).
+func isRefuted(f reconcile.JSONFinding) bool {
+	return f.Verification != nil &&
+		canonicalize(f.Verification.Verdict) == canonicalize(reconcile.VerdictRefuted)
+}
+
+// writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an
+// annotation when the verdict is unverifiable, and the reasoning (omitted when
+// empty, AC 06-01 Edge Case 3). All free text is HTML-escaped and newline-
+// flattened so skeptic output cannot inject markup or escape the section.
+func writeSkepticBlock(b *bytes.Buffer, v *reconcile.Verification) {
+	annotation := ""
+	if canonicalize(v.Verdict) == canonicalize(reconcile.VerdictUnverifiable) {
+		annotation = " (skeptic could not verify)"
+	}
+	fmt.Fprintf(b, "  - Skeptic: %s — %s%s\n", esc(v.Skeptic), esc(v.Verdict), annotation)
+	if strings.TrimSpace(v.Notes) != "" {
+		fmt.Fprintf(b, "    - Reasoning: %s\n", escTrunc(v.Notes))
+	}
+}
+
+// writeRefutedSection renders refuted findings in a collapsed <details> block at
+// the bottom of the report (AC 06-01 Scenario 2). Omitted entirely when none are
+// refuted (Edge Case 1). A refuted finding is never deleted — it stays in the
+// report so a wrong refutation is visible to the human. The collapsed view is
+// intentionally abbreviated to the AC 06-01 Scenario 2 field set (file:line,
+// confidence, skeptic, problem, reasoning); Fix/Evidence are not repeated here.
+// The <details>/<summary> tags are static; every dynamic field is routed through
+// esc()/escTrunc().
+func writeRefutedSection(b *bytes.Buffer, refuted []reconcile.JSONFinding) {
+	if len(refuted) == 0 {
+		return
+	}
+	b.WriteString("\n## Refuted Findings\n\n")
+	fmt.Fprintf(b, "<details>\n<summary>Refuted Findings (%d)</summary>\n\n", len(refuted))
+	for _, f := range refuted {
+		fmt.Fprintf(b, "- %s — confidence %s, skeptic: %s\n",
+			codeSpan(f.File, f.Line), esc(f.Confidence), esc(skepticName(f.Verification)))
+		fmt.Fprintf(b, "  - Problem: %s\n", escTrunc(f.Problem))
+		if f.Verification != nil && strings.TrimSpace(f.Verification.Notes) != "" {
+			fmt.Fprintf(b, "  - Reasoning: %s\n", escTrunc(f.Verification.Notes))
+		}
+	}
+	b.WriteString("\n</details>\n")
+}
+
+// skepticName returns the skeptic that produced a verdict, or "(unknown)".
+func skepticName(v *reconcile.Verification) string {
+	if v == nil || strings.TrimSpace(v.Skeptic) == "" {
+		return "(unknown)"
+	}
+	return v.Skeptic
 }
 
 // newlineFlattener collapses CR/LF so a field cannot inject markdown structure.
@@ -198,10 +372,38 @@ func codeSpan(file string, line int) string {
 	return fmt.Sprintf("`%s:%d`", file, line)
 }
 
-// joinReviewers joins reviewer names or returns "(none)".
+// joinReviewers joins reviewer names with ", " or returns "(none)". Reviewer
+// names are assumed not to contain commas; if that assumption is ever violated
+// the rendered list becomes ambiguous. Callers that need comma-safe output
+// should join with a non-comma delimiter (or escape each name individually and
+// use a delimiter that cannot appear in a name).
 func joinReviewers(names []string) string {
 	if len(names) == 0 {
 		return "(none)"
 	}
 	return strings.Join(names, ", ")
+}
+
+// canonicalize normalizes a free-text token to a trimmed, upper-cased form so
+// that mixed-case or padded enum values match the canonical constants used by
+// the report layer.
+func canonicalize(s string) string {
+	return strings.ToUpper(strings.TrimSpace(s))
+}
+
+// severityRank maps canonical severities to their display ordering. Unknown
+// severities sort last (rank 0) so they do not interleave canonical groups.
+var severityRank = map[string]int{
+	reconcile.SevCritical: 4,
+	reconcile.SevHigh:     3,
+	reconcile.SevMedium:   2,
+	reconcile.SevLow:      1,
+}
+
+// severityRankOf returns the display rank for a severity string.
+func severityRankOf(s string) int {
+	if r, ok := severityRank[s]; ok {
+		return r
+	}
+	return 0
 }

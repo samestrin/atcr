@@ -23,17 +23,19 @@ const modulePath = "github.com/samestrin/atcr"
 // internal packages it may import (subpackages inherit their top-level
 // entry). Absence of a directory here fails the completeness check.
 var allowedInternalImports = map[string][]string{
+	"atomicfs":  {},
 	"stream":    {},
 	"gitrange":  {},
 	"registry":  {},
 	"tools":     {},
-	"payload":   {"gitrange"},
+	"payload":   {"gitrange", "atomicfs"},
 	"llmclient": {"registry"},
 	"doctor":    {"llmclient", "registry"},
 	"fanout":    {"llmclient", "registry", "stream", "payload", "tools"},
-	"reconcile": {"stream"},
+	"reconcile": {"stream", "atomicfs"},
 	"report":    {"stream", "reconcile"},
-	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report"},
+	"verify":    {"reconcile", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
+	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify"},
 }
 
 // repoRoot walks up from the working directory to the directory containing

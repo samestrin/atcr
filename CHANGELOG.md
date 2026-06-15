@@ -1,3 +1,29 @@
+## [3.0.0] - 2026-06-14
+
+### Added
+
+- `atcr verify` command with MCP tool, skeptic invocation pipeline, verdict parsing, vote aggregation, and `--require-verified` review gate
+- Report v2 rendering with skeptic/refuted sections and `verification.md` output
+- Confidence v2 scoring with artifact emission and gate counter updates
+- `AgentsByRole` and `SelectEligibleSkeptics` for adversarial agent selection
+
+### Fixed
+
+- Mitigated prompt injection in finding fields via XML delimiters and randomized per-call sentinel tags
+- Prevented triple-backtick injection using adaptive fence length in findings output
+- Excluded skeptics with undefined provider at selection time
+- Recorded all participating skeptic models in `verifyFinding`
+- Surfaced `Truncated` flag on `ChatResponse` when `finish_reason=length`
+- Corrected `FindingsProcessed` count to exclude no-eligible-skeptic findings
+- Normalized verdict case/whitespace before enum switch in `parseVerdict`
+- Resolved review gate ignoring `fail_on` from project config
+- Fixed `IsFailing` threshold normalization and severity sorting in report grid
+- Added `OTHER` buckets for non-canonical severity and confidence values in summary grid
+- Preserved unknown fields during `manifest.json` round-trip in `UpdateManifestStage`
+- Preserved large integer precision in `UpdateSummaryVerdicts` using `json.Decoder.UseNumber`
+
+*Shipped via /execute-sprint (sprint 3.0_adversarial_verification)*
+
 ## [2.2.0] - 2026-06-13
 
 ### Added

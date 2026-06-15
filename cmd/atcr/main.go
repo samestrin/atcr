@@ -97,6 +97,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(
 		newReviewCmd(),
 		newReconcileCmd(),
+		newVerifyCmd(),
 		newReportCmd(),
 		newRangeCmd(),
 		newStatusCmd(),
