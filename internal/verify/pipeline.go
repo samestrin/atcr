@@ -362,7 +362,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	start := time.Now()
 	perSkeptic := make([]*reconcile.Verification, 0, len(skeptics))
 	for _, sk := range skeptics {
-		v, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
+		v, _, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
 			// none can occur here, but never let one drop a finding.
