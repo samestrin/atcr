@@ -100,6 +100,30 @@ func TestEnforceConstraints(t *testing.T) {
 			in:   nil,
 			want: nil,
 		},
+		{
+			name:        "max_findings exact boundary (len(in) == cap) is a no-op",
+			in:          []stream.Finding{f("LOW"), f("HIGH"), f("MEDIUM")},
+			maxFindings: intp(3),
+			want:        []string{"LOW", "HIGH", "MEDIUM"},
+		},
+		{
+			name:        "unknown severity finding is silently dropped by min_severity floor",
+			in:          []stream.Finding{f("BLOCKER"), f("HIGH"), f("LOW")},
+			minSeverity: "LOW",
+			want:        []string{"HIGH", "LOW"},
+		},
+		{
+			name:        "finding with lowercase severity is normalized and survives floor",
+			in:          []stream.Finding{f("high"), f("low")},
+			minSeverity: "HIGH",
+			want:        []string{"high"},
+		},
+		{
+			name:        "mixed-case finding severity normalized under truncation",
+			in:          []stream.Finding{f("Critical"), f("low"), f("HIGH")},
+			maxFindings: intp(2),
+			want:        []string{"Critical", "HIGH"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
