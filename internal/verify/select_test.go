@@ -254,6 +254,28 @@ func TestSelectEligibleSkeptics_NoMutation(t *testing.T) {
 	assert.Len(t, reg.Agents, 2)
 }
 
+// TestSelectEligibleSkeptics_UndefinedProviderExcludesSkeptic asserts that a
+// skeptic whose provider key is absent from reg.Providers is excluded at
+// selection time rather than being returned with a zero-value Provider that
+// silently routes to an empty endpoint at invocation.
+func TestSelectEligibleSkeptics_UndefinedProviderExcludesSkeptic(t *testing.T) {
+	reg := &registry.Registry{
+		Providers: map[string]registry.Provider{
+			"known": {BaseURL: "http://api.example.com", APIKeyEnv: "KEY"},
+		},
+		Agents: map[string]registry.AgentConfig{
+			"s-valid":   {Provider: "known", Model: "m1", Role: registry.RoleSkeptic, SupportsFC: true},
+			"s-missing": {Provider: "undefined", Model: "m2", Role: registry.RoleSkeptic, SupportsFC: true},
+		},
+	}
+	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{}, 10)
+	names := skepticNames(got)
+	assert.Equal(t, []string{"s-valid"}, names, "skeptic with undefined provider must be excluded")
+	// Additionally, the returned skeptic must carry the resolved Provider.
+	require.Len(t, got, 1)
+	assert.Equal(t, "http://api.example.com", got[0].Provider.BaseURL)
+}
+
 // TestSelectEligibleSkeptics_CarriesConfig confirms the selection carries the
 // usable AgentConfig alongside the name, so Phase 2 can invoke the skeptic
 // without re-resolving it (AC 01-02: result values are usable, not zeroed).
