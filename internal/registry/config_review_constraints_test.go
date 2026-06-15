@@ -104,6 +104,25 @@ agents:
 	assert.Contains(t, err.Error(), "scope")
 }
 
+// Whitespace-only scope entries exercise the strings.TrimSpace branch in
+// validation; without this case, the TrimSpace call could be removed and only
+// the "" case would catch the regression.
+func TestRegistryLoad_WhitespaceOnlyScopeEntry(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance", "   "]
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "scope")
+}
+
 // min_severity accepts every rubric level, case-insensitively normalized to the
 // canonical upper-case form so enforcement comparisons are stable.
 func TestRegistryLoad_MinSeverityCaseInsensitive(t *testing.T) {
