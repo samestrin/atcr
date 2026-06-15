@@ -175,12 +175,6 @@ func allOutOfScope(findings []stream.Finding) bool {
 	return true
 }
 
-// findingKey is the dedup identity of a finding across the findings.json and
-// ambiguous.json projections: file + line + problem text.
-func findingKey(file string, line int, problem string) string {
-	return file + "\x00" + strconv.Itoa(line) + "\x00" + problem
-}
-
 // locationKey is the file+line identity used for gray-zone exclusion. It is
 // intentionally coarser than findingKey: a cluster member may also be merged
 // with a third finding, replacing its problem text via longestField, so the
