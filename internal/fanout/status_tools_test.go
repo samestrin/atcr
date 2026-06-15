@@ -17,7 +17,7 @@ func TestStatusFor_ToolAgentSerializesCounters(t *testing.T) {
 		Turns: 4, ToolCalls: 6, ToolBytes: 2500,
 		TrippedBudgets: []string{budgetMaxTurns},
 	}
-	data, err := json.Marshal(statusFor(r, 0))
+	data, err := json.Marshal(statusFor(r, findingsResult{}))
 	require.NoError(t, err)
 	s := string(data)
 	assert.Contains(t, s, `"turns":4`)
@@ -31,7 +31,7 @@ func TestStatusFor_ToolAgentSerializesCounters(t *testing.T) {
 // (no tool fields at all).
 func TestStatusFor_NonToolAgentOmitsAllToolFields(t *testing.T) {
 	r := Result{Agent: "a", Status: StatusOK} // Tools:false
-	data, err := json.Marshal(statusFor(r, 0))
+	data, err := json.Marshal(statusFor(r, findingsResult{}))
 	require.NoError(t, err)
 	s := string(data)
 	for _, f := range []string{"turns", "tool_calls", "tool_bytes", "tripped_budgets", "tools_degraded"} {
@@ -42,7 +42,7 @@ func TestStatusFor_NonToolAgentOmitsAllToolFields(t *testing.T) {
 // AC 02-04 EC3: the degrade path records explicit zero counters and tools_degraded.
 func TestStatusFor_DegradePathExplicitZeros(t *testing.T) {
 	r := Result{Agent: "a", Status: StatusOK, Tools: true, ToolsDegraded: true}
-	data, err := json.Marshal(statusFor(r, 0))
+	data, err := json.Marshal(statusFor(r, findingsResult{}))
 	require.NoError(t, err)
 	s := string(data)
 	assert.Contains(t, s, `"turns":0`)
@@ -58,7 +58,7 @@ func TestWriteStatus_ToolFieldsRoundTrip(t *testing.T) {
 		Turns: 2, ToolCalls: 3, ToolBytes: 1200,
 		TrippedBudgets: []string{budgetToolBytes, budgetTimeout},
 	}
-	st := statusFor(r, 0)
+	st := statusFor(r, findingsResult{})
 	path := filepath.Join(t.TempDir(), "status.json")
 	require.NoError(t, WriteStatus(path, &st))
 
