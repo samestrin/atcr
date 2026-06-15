@@ -203,3 +203,38 @@ agents:
 	assert.Equal(t, "MUTATED", reg.Agents["bruce"].Scope[0],
 		"Scope slice aliases registry backing memory; mutation corrupts shared state")
 }
+
+// Scope entries containing control characters (\n, \r, etc.) must be rejected
+// at load validation. A newline embedded in a scope entry can break out of the
+// injected ScopeFocus block and add arbitrary text to the agent persona prompt.
+func TestRegistryLoad_ScopeEntryWithNewline(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance\nmalicious"]
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "scope")
+}
+
+func TestRegistryLoad_ScopeEntryWithCarriageReturn(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance\rmalicious"]
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "scope")
+}
