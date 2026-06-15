@@ -155,3 +155,32 @@ agents:
 	assert.Equal(t, []string{"performance", "efficiency"}, reg.Agents["bruce"].Scope,
 		"scope entries trimmed at load so downstream comparisons are stable")
 }
+
+// TestRegistryLoad_ScopeAliasing documents that AgentsByRole returns values
+// whose Scope slice aliases the registry's backing memory. Mutating the
+// returned slice corrupts the shared registry. This is the documented contract
+// (see AgentsByRole godoc) — the test anchors it as a regression guard.
+func TestRegistryLoad_ScopeAliasing(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance"]
+`))
+	require.NoError(t, err)
+
+	byRole := reg.AgentsByRole(RoleReviewer)
+	bruceCfg, ok := byRole["bruce"]
+	require.True(t, ok)
+	require.Len(t, bruceCfg.Scope, 1)
+
+	// Mutate the returned Scope — this SHOULD corrupt the registry because
+	// the slice aliases the backing memory (documented contract).
+	bruceCfg.Scope[0] = "MUTATED"
+	assert.Equal(t, "MUTATED", reg.Agents["bruce"].Scope[0],
+		"Scope slice aliases registry backing memory; mutation corrupts shared state")
+}
