@@ -254,7 +254,7 @@ func spreadFromDisagreement(d string) int {
 // rank, so a CRITICAL solo (4) outranks a LOW-vs-MEDIUM split (1×independence).
 func scoreFor(spread, independence, sevRank int) float64 {
 	if spread > 0 {
-		return float64(spread * independence)
+		return float64(spread) * float64(independence)
 	}
 	return float64(sevRank)
 }
