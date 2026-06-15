@@ -653,7 +653,7 @@ func TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings(t *testing.T) {
 // TestLogSkepticFailure_SanitizesNewlines verifies that a newline embedded in
 // detail does not forge a second atcr: verify: log line (log injection).
 func TestLogSkepticFailure_SanitizesNewlines(t *testing.T) {
-	t.Parallel()
+	// Not parallel: modifies the global os.Stderr.
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	orig := os.Stderr
