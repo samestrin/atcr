@@ -18,6 +18,11 @@ import (
 const (
 	DefaultTemperature = 0.7
 	DefaultTimeoutSecs = 600
+	// MaxFindingsCap is the ceiling for per-agent max_findings; consistent with
+	// MaxTimeoutSecs/MaxAgentTurns/MaxToolBudgetBytes which each have documented
+	// upper bounds. nil = unlimited (unset); any explicit value must be within
+	// 1..MaxFindingsCap.
+	MaxFindingsCap = 10000
 )
 
 // envVarName matches valid POSIX environment variable names.
@@ -280,8 +285,8 @@ func (r *Registry) validate() error {
 		if normalized := normalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
 		}
-		if a.MaxFindings != nil && *a.MaxFindings <= 0 {
-			return agentErrf(name, "agent '%s': max_findings must be > 0", name)
+		if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
+			return agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap)
 		}
 		for _, s := range a.Scope {
 			if strings.TrimSpace(s) == "" {
