@@ -1,3 +1,14 @@
+## [3.1.0] - 2026-06-14
+
+### Fixed
+
+- `verification.json` now records the winning skeptic's model in multi-vote runs instead of always the first skeptic's, and names every participant on a tie
+- Tripped budgets are captured in the structured `trippedBudgets` field instead of only being buried in free-text notes
+- Findings skipped on a re-run (already verified) retain their original `model`/`durationMs`/`trippedBudgets` rather than losing them, and no longer inherit metadata from a prior record whose verdict no longer matches
+- `model` is left empty on the no-eligible-skeptic and tool-harness-unavailable paths, attributing a model only to skeptics that actually ran
+
+*Shipped via /execute-epic (epic 3.1)*
+
 ## [3.0.0] - 2026-06-14
 
 ### Added

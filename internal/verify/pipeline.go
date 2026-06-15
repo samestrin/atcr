@@ -212,9 +212,24 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Build the complete verification.json from in-memory findings (no disk
 	// round-trip) so a no-op re-run reproduces the same snapshot rather than an
 	// empty file: every finding that carries a verdict is recorded, using this
-	// run's rich record when available and synthesizing a compact one from the
-	// on-disk block for a finding that was skipped this run (TD-007: a verdict
-	// whose key matched no finding is surfaced below rather than silently dropped).
+	// run's rich record when available and, for a finding skipped this run,
+	// rebuilding from the on-disk findings.json block enriched with the prior
+	// run's audit metadata (TD-007: a verdict whose key matched no finding is
+	// surfaced below rather than silently dropped).
+	// Load the prior verification.json so a finding skipped this run (already
+	// verified, no --fresh) carries its rich audit metadata (Model/DurationMs/
+	// TrippedBudgets) forward instead of being re-synthesized as a lossy compact
+	// record — the findings.json block lacks those fields (AC4). A missing or
+	// unreadable prior degrades to no carry-forward rather than failing the run.
+	priorByKey := map[FindingKey]VerificationResult{}
+	if prior, perr := ReadVerificationResults(reviewDir); perr != nil {
+		fmt.Fprintf(os.Stderr, "atcr: verify: prior verification.json unreadable, skip-path metadata not carried forward: %v\n", perr)
+	} else {
+		for _, r := range prior {
+			priorByKey[FindingKey{File: r.File, Line: r.Line, Problem: r.Problem}] = r
+		}
+	}
+
 	matched := make(map[FindingKey]bool, len(rich))
 	results := make([]VerificationResult, 0, len(findings))
 	for _, f := range findings {
@@ -227,12 +242,26 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			results = append(results, r)
 			continue
 		}
-		results = append(results, VerificationResult{
+		// Skipped this run: keep the authoritative verdict/skeptic/reasoning from the
+		// findings.json block (AC4).
+		rec := VerificationResult{
 			File: f.File, Line: f.Line, Problem: f.Problem,
 			Verdict:   f.Verification.Verdict,
 			Skeptic:   f.Verification.Skeptic,
 			Reasoning: f.Verification.Notes,
-		})
+		}
+		// Carry Model/DurationMs/TrippedBudgets forward from the prior
+		// verification.json — but only when the prior verdict still matches the
+		// current block. A stale or hand-edited prior with a different verdict must
+		// not lend its audit metadata to a now-different outcome (zero values left
+		// if no prior, or a mismatched one, exists).
+		prior := priorByKey[key]
+		if strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
+			rec.Model = prior.Model
+			rec.DurationMs = prior.DurationMs
+			rec.TrippedBudgets = prior.TrippedBudgets
+		}
+		results = append(results, rec)
 	}
 	// TD-007: a verdict computed this run whose key matched no re-emitted finding
 	// indicates a key-construction mismatch; surface it on stderr rather than
@@ -350,38 +379,107 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	if len(skeptics) == 0 {
 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
+		// No skeptic ran, so no model is attributed: Model stays "" by the
+		// "attribute only to what executed" rule (AC3 / epic 3.1 clarification). Set
+		// explicitly so a future change to base's initializer cannot leak a default.
+		base.Model = ""
 		return v, base
 	}
 	if disp == nil {
 		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "tool_harness_unavailable"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
+		// Skeptics were eligible but the tool harness never built, so none executed —
+		// Model stays "" (same rule). Recording the candidate models would misattribute
+		// the record to models that produced nothing (AC3 / epic 3.1 clarification).
+		base.Model = ""
 		return v, base
 	}
 
 	prompt := buildSkepticPrompt(f, nil) // nil entries: the skeptic reads code via the tool loop
 	start := time.Now()
 	perSkeptic := make([]*reconcile.Verification, 0, len(skeptics))
+	perTripped := make([][]string, 0, len(skeptics))
 	for _, sk := range skeptics {
-		v, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
+		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
 			// none can occur here, but never let one drop a finding.
 			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
+			tripped = nil
 		}
 		perSkeptic = append(perSkeptic, v)
+		perTripped = append(perTripped, tripped)
 	}
 	ver := aggregateVerdicts(perSkeptic)
 
 	base.Verdict = ver.Verdict
 	base.Skeptic = ver.Skeptic
 	base.Reasoning = ver.Notes
-	models := make([]string, 0, len(skeptics))
-	for _, sk := range skeptics {
-		models = append(models, sk.Config.Model)
-	}
-	base.Model = strings.Join(models, ", ")
+	// Attribute Model/TrippedBudgets to the winning skeptics only — not all of
+	// skeptics[0..n] — so a multi-vote verdict records the majority's models, not
+	// the losers' (AC2/AC1).
+	base.Model, base.TrippedBudgets = winningAttribution(skeptics, perSkeptic, perTripped, ver.Verdict)
 	base.DurationMs = int(time.Since(start).Milliseconds())
 	return ver, base
+}
+
+// winningAttribution derives the audit Model and TrippedBudgets for a finding
+// from the skeptics that produced the recorded verdict — mirroring how
+// joinSkeptics names contributors, but resolving who "won".
+//
+// perSkeptic[i] and perTripped[i] are the verdict and tripped-budget slice of
+// skeptics[i] (verifyFinding builds the three slices together, so indices align).
+// Models are deduplicated and joined in selection order. Tripped budgets attach
+// only to unverifiable verdicts (a budget trip collapses a skeptic to
+// unverifiable), so a confirmed/refuted winner contributes none.
+//
+// Attribution depends on whether `winner` was decisive or a tie sentinel:
+//   - Decisive (a strict plurality, e.g. 2 confirmed > 1 refuted → confirmed):
+//     record only the skeptics whose verdict equals `winner` (AC2) — the losers'
+//     models are dropped.
+//   - Tie (aggregateVerdicts emits unverifiable with Skeptic naming every voter,
+//     e.g. 1 confirmed + 1 refuted, or 1+1+1): no skeptic "won", so record every
+//     participant's model so Model stays consistent with Skeptic rather than
+//     misattributing the outcome to the lone unverifiable voter.
+func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
+	// A verdict is decisive when no other verdict matches or exceeds its count;
+	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
+	counts := map[string]int{}
+	for _, v := range perSkeptic {
+		if v != nil {
+			counts[v.Verdict]++
+		}
+	}
+	decisive := true
+	for verdict, n := range counts {
+		if verdict != winner && n >= counts[winner] {
+			decisive = false
+			break
+		}
+	}
+
+	var models, budgets []string
+	seenModel := map[string]bool{}
+	seenBudget := map[string]bool{}
+	for i, v := range perSkeptic {
+		if v == nil {
+			continue
+		}
+		if decisive && v.Verdict != winner {
+			continue // decisive vote: skip the losers
+		}
+		if m := skeptics[i].Config.Model; m != "" && !seenModel[m] {
+			seenModel[m] = true
+			models = append(models, m)
+		}
+		for _, b := range perTripped[i] {
+			if !seenBudget[b] {
+				seenBudget[b] = true
+				budgets = append(budgets, b)
+			}
+		}
+	}
+	return strings.Join(models, ", "), budgets
 }
 
 // hasTrustedVerdict reports whether a finding's existing verification block is a

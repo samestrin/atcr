@@ -37,15 +37,20 @@ type Dispatcher interface {
 // tool-enabled fanout.Slot and runs it through a throwaway fanout.Engine wired to
 // the supplied completer and dispatcher. Per-finding budgets (MaxTurns,
 // ToolBudgetBytes, TimeoutSecs) are forwarded from the skeptic's AgentConfig.
-func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, error) {
+//
+// The second return is the tripped-budget slice (e.g. ["max_turns"]): the same
+// budgets failureNotes folds into Notes for humans, surfaced structurally so the
+// caller can populate VerificationResult.TrippedBudgets (AC1). It is non-empty
+// only on a halted run; a clean verdict returns nil.
+func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, []string, error) {
 	if ctx == nil {
-		return nil, errors.New("invokeSkeptic: nil context")
+		return nil, nil, errors.New("invokeSkeptic: nil context")
 	}
 	if cc == nil {
-		return nil, errors.New("invokeSkeptic: nil ChatCompleter")
+		return nil, nil, errors.New("invokeSkeptic: nil ChatCompleter")
 	}
 	if disp == nil {
-		return nil, errors.New("invokeSkeptic: nil dispatcher")
+		return nil, nil, errors.New("invokeSkeptic: nil dispatcher")
 	}
 
 	agent := buildSkepticAgent(skeptic, prompt)
@@ -55,18 +60,19 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// exactly one result. Guard the index anyway: a zero-length return must not
 	// panic (a panic would violate the never-propagate-runtime-error contract).
 	if len(results) == 0 {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil
+		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil, nil
 	}
 	res := results[0]
 
 	// A non-OK status (provider error, timeout) or ANY tripped budget means the
 	// skeptic could not complete a trustworthy investigation — even though the tool
 	// loop returns StatusOK after a budget trip (partial-success final answer), a
-	// trip must not be read as a real verdict. Both collapse to unverifiable.
+	// trip must not be read as a real verdict. Both collapse to unverifiable. The
+	// tripped-budget slice is returned so the caller records it structurally.
 	if res.Status != fanout.StatusOK || len(res.TrippedBudgets) > 0 {
 		notes := failureNotes(res)
 		logSkepticFailure(skeptic.Name, failureClass(res), notes)
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, nil
+		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
 	v, _ := parseVerdict(res.Content)
@@ -74,7 +80,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	if v.Verdict == verdictUnverifiable {
 		logSkepticFailure(skeptic.Name, "malformed_output", v.Notes)
 	}
-	return v, nil
+	return v, nil, nil
 }
 
 // buildSkepticAgent assembles the tool-enabled fanout.Agent for a skeptic. Tools

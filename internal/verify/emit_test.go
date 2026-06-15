@@ -399,3 +399,33 @@ func TestWriteFileAtomic_BadDir(t *testing.T) {
 	err := atomicfs.WriteFileAtomic(filepath.Join(t.TempDir(), "missing-subdir", "f.json"), []byte("data"))
 	require.Error(t, err)
 }
+
+// TestReadVerificationResults covers the verification.json reader's three paths:
+// missing file (nil, nil — a first-ever verify is not an error), a successful
+// round-trip against WriteVerification, and a corrupt file (error).
+func TestReadVerificationResults(t *testing.T) {
+	t.Parallel()
+	// Missing file → (nil, nil), not an error.
+	got, err := ReadVerificationResults(t.TempDir())
+	require.NoError(t, err)
+	assert.Nil(t, got)
+
+	// Round-trip: WriteVerification then read back the same records.
+	dir := t.TempDir()
+	want := []VerificationResult{{
+		File: "a.go", Line: 7, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
+		Model: "m-x", Reasoning: "ok", DurationMs: 99, TrippedBudgets: []string{"timeout_secs"},
+	}}
+	require.NoError(t, WriteVerification(dir, want))
+	got, err = ReadVerificationResults(dir)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, want[0], got[0])
+
+	// Corrupt file → error.
+	bad := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(bad, reconciledSubdir), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bad, reconciledSubdir, "verification.json"), []byte("{not json"), 0o644))
+	_, err = ReadVerificationResults(bad)
+	assert.Error(t, err)
+}

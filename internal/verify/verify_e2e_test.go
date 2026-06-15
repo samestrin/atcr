@@ -69,7 +69,7 @@ func TestVerifyE2E_PlantedFindings(t *testing.T) {
 
 			// Phase 2: invocation with a scripted mock skeptic (no real LLM / network).
 			cc := finalChat(tc.skepticReply)
-			v, err := invokeSkeptic(context.Background(), testSkeptic(), prompt, cc, okDispatcher())
+			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), prompt, cc, okDispatcher())
 			require.NoError(t, err, "runtime failures collapse to unverifiable, never an error")
 			require.NotNil(t, v)
 
