@@ -336,6 +336,41 @@ func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
 	assert.NotContains(t, vf.Findings[0].Model, "m-s3", "losing (refuting) skeptic model must NOT be attributed")
 }
 
+// TestRunVerify_SkipPreservesPriorMetadata locks AC4: a finding skipped on a
+// re-run (already-verified, no --fresh) must carry Model/DurationMs/TrippedBudgets
+// forward from the prior on-disk verification.json rather than re-synthesizing a
+// lossy compact record from the findings.json block (which lacks those fields).
+func TestRunVerify_SkipPreservesPriorMetadata(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+	}})
+	// Seed a prior verification.json carrying rich metadata for that finding.
+	require.NoError(t, WriteVerification(dir, []VerificationResult{{
+		File: "a.go", Line: 1, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
+		Model: "m-prior", Reasoning: "checked the line", DurationMs: 4242, TrippedBudgets: []string{"max_turns"},
+	}}))
+
+	// Without --fresh the finding is skipped: the harness must never build, and the
+	// rewritten verification.json must retain the prior metadata.
+	res, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.FindingsProcessed)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
+	assert.Equal(t, "m-prior", vf.Findings[0].Model, "skip path must carry prior model")
+	assert.Equal(t, 4242, vf.Findings[0].DurationMs, "skip path must carry prior duration")
+	assert.Equal(t, []string{"max_turns"}, vf.Findings[0].TrippedBudgets, "skip path must carry prior tripped budgets")
+}
+
 // TestRunVerify_MissingReconciledFindings: a review with no findings.json returns
 // ErrNoReconciledFindings (the caller renders the reconcile-first guidance).
 func TestRunVerify_MissingReconciledFindings(t *testing.T) {
