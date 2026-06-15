@@ -30,15 +30,23 @@
 - **Relevant:** Establishes the data pipeline that makes `atcr leaderboard` (Story 2/3) and Epic 10.0 public submission possible. Without persisted records, no trending or comparison is possible.
 - **Time-bound:** Implemented and verified within this sprint.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-jsonl-file-creation.md) | JSONL File Creation and Update | Integration |
+| [01-02](../acceptance-criteria/01-02-schema-validation.md) | Versioned Schema Record Shape | Unit |
+| [01-03](../acceptance-criteria/01-03-verification-conditional-fields.md) | Verification-Conditional Fields | Unit |
+| [01-04](../acceptance-criteria/01-04-no-scorecard-flag.md) | --no-scorecard Flag Suppression | Integration |
+| [01-05](../acceptance-criteria/01-05-aggregate-record.md) | Aggregate Run Record | Unit |
+
+## Original Criteria Overview
 
 1. A scorecard JSONL file is created/updated in `~/.config/atcr/scorecard/` after each reconcile run.
 2. Each record matches the versioned schema (`schema_version: 1`) with all required fields populated from reconcile output.
 3. Verification-dependent fields (`findings_verified`, `findings_refuted`, `survived_skeptic_rate`) are omitted when `verification.json` is absent and populated when present.
 4. `--no-scorecard` flag suppresses all scorecard writes for that run.
 5. An aggregate record summarizing the full run is appended alongside per-reviewer records.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/3.3_per_run_scorecard/`_
 
 ## Technical Considerations
 

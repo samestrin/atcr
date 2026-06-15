@@ -32,6 +32,12 @@
 
 ## Acceptance Criteria Overview
 
+| # | Criterion | File |
+|---|-----------|------|
+| 02-01 | Scorecard Command Resolution and Lookup | [02-01-scorecard-command-resolution.md](../acceptance-criteria/02-01-scorecard-command-resolution.md) |
+| 02-02 | Scorecard Table Rendering and Conditional Columns | [02-02-scorecard-table-rendering.md](../acceptance-criteria/02-02-scorecard-table-rendering.md) |
+| 02-03 | Scorecard Error Handling and Edge Case Resilience | [02-03-scorecard-error-handling.md](../acceptance-criteria/02-03-scorecard-error-handling.md) |
+
 1. `atcr scorecard <run-id>` looks up scorecard records by `run_id` in the JSONL store and renders a per-reviewer table.
 2. `atcr scorecard <path>` resolves a reconcile output directory path and renders the scorecard for the matching run.
 3. The table includes columns: reviewer, model, findings raised, corroborated, solo, corroboration rate, cost (USD), latency (ms).
@@ -58,4 +64,4 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 ---
 
 **Created:** June 15, 2026 10:47:26AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Complete

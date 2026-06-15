@@ -40,6 +40,13 @@
 
 ## Acceptance Criteria Overview
 
+| AC | Title | File |
+|----|-------|------|
+| 04-01 | Export Command & Public Submission Schema | [04-01-export-command-public-schema.md](../acceptance-criteria/04-01-export-command-public-schema.md) |
+| 04-02 | Anonymization Pass — PII Stripping | [04-02-anonymization-pii-stripping.md](../acceptance-criteria/04-02-anonymization-pii-stripping.md) |
+| 04-03 | Metric Preservation & Metadata Integrity | [04-03-metric-preservation-metadata.md](../acceptance-criteria/04-03-metric-preservation-metadata.md) |
+| 04-04 | Determinism, Filtering & Error Handling | [04-04-determinism-filtering-errors.md](../acceptance-criteria/04-04-determinism-filtering-errors.md) |
+
 1. `atcr leaderboard --export` produces a valid JSON document conforming to the v1 public submission schema, including `schema_version`, export metadata (generation timestamp, filter summary), and an array of anonymized per-reviewer aggregated records.
 2. The anonymization pass strips all PII: file system paths, provider API keys, hostnames, usernames, repository identifiers, and organization names are removed or replaced with opaque identifiers.
 3. The anonymization pass preserves all numeric metrics: `findings_raised`, `findings_corroborated`, `findings_solo`, `corroboration_rate`, `findings_verified`, `findings_refuted`, `survived_skeptic_rate`, `cost_usd`, `tokens_in`, `tokens_out`, `latency_ms`.
@@ -48,8 +55,6 @@
 6. Filters (`--since`, `--model`, `--persona`) are applied before anonymization, so the exported dataset reflects only the filtered subset.
 7. Export is deterministic: identical input records and filters always produce byte-identical output (stable sort order, no random salts, no timestamps in record data).
 8. Exit code 0 on success; exit code 1 with a clear error message if no records match the filters or if the scorecard store is empty.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/3.3_per_run_scorecard/`_
 
 ## Technical Considerations
 
@@ -108,4 +113,4 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 ---
 
 **Created:** June 15, 2026 10:47:26AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Generated

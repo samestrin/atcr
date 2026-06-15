@@ -4,7 +4,7 @@ Per-Run Scorecard (Plan 3.3) adds a persistence and projection layer over the ex
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/3.3_per_run_scorecard/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/3.3_per_run_scorecard/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/3.3_per_run_scorecard/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/3.3_per_run_scorecard/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/3.3_per_run_scorecard/`
 

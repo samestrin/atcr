@@ -30,15 +30,21 @@
 - **Relevant:** Protects the integrity of the scorecard store. Without suppression, developers will avoid running reconcile for testing purposes — or worse, forget they ran test runs and draw incorrect conclusions from leaderboard data.
 - **Time-bound:** Implemented and verified within this sprint.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | File |
+|----|-------|------|
+| 01 | CLI Flag Registration & Help Text | [05-01-cli-flag-registration.md](../acceptance-criteria/05-01-cli-flag-registration.md) |
+| 02 | Suppression Gate — Zero Records Written | [05-02-suppression-gate.md](../acceptance-criteria/05-02-suppression-gate.md) |
+| 03 | Default Behavior Preserved & No Side Effects | [05-03-no-side-effects.md](../acceptance-criteria/05-03-no-side-effects.md) |
+
+### Overview
 
 1. `atcr reconcile --no-scorecard` completes normally but writes zero scorecard records.
 2. `atcr reconcile` (without the flag) continues to emit scorecard records as defined in Story 1.
 3. The flag appears in `atcr reconcile --help` output with a clear description.
 4. The flag does not affect reconcile's exit code, stdout/stderr output, or summary.json content.
 5. Reconcile summary output does not print any scorecard-related message (success or failure) when `--no-scorecard` is passed — emission is silently skipped.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/3.3_per_run_scorecard/`_
 
 ## Technical Considerations
 
@@ -58,4 +64,4 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 ---
 
 **Created:** June 15, 2026 10:47:26AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** AC Generated

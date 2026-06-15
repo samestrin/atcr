@@ -38,16 +38,24 @@
 
 ## Acceptance Criteria Overview
 
-1. `atcr leaderboard` displays a ranked table of reviewer performance aggregated across all stored scorecard records, sorted by corroboration rate descending.
-2. `--since <duration>` filters records to only those within the specified time window (e.g., `30d`, `7d`, `90d`). Default is 30 days.
-3. `--model <name>` filters to records matching the specified model (e.g., `claude-sonnet-4-6`).
-4. `--persona <name>` filters to records matching the specified reviewer/persona (e.g., `bruce`).
-5. Filters are composable: `atcr leaderboard --since 7d --model claude-sonnet-4-6 --persona bruce` applies all three.
-6. Table columns include: reviewer, model, runs (count), findings raised, findings corroborated, corroboration rate, total cost, cost per corroborated finding, avg latency.
-7. `--export` outputs the aggregated data as versioned JSON suitable for Epic 10.0 public leaderboard submission (anonymized, no provider keys or repo content).
-8. Gracefully handles missing scorecard directory or empty files: prints informative message and exits with code 0.
+| # | Title | AC File |
+|---|-------|----------|
+| 01 | Leaderboard Ranked Table Display | [03-01-leaderboard-table.md](../acceptance-criteria/03-01-leaderboard-table.md) |
+| 02 | Time Range Filter (--since) | [03-02-since-filter.md](../acceptance-criteria/03-02-since-filter.md) |
+| 03 | Model and Persona Filters | [03-03-model-persona-filters.md](../acceptance-criteria/03-03-model-persona-filters.md) |
+| 04 | Export Versioned JSON | [03-04-export-json.md](../acceptance-criteria/03-04-export-json.md) |
+| 05 | Graceful Empty and Missing Data Handling | [03-05-graceful-empty-handling.md](../acceptance-criteria/03-05-graceful-empty-handling.md) |
 
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/3.3_per_run_scorecard/`_
+### Original Criteria Mapping
+
+1. `atcr leaderboard` displays a ranked table of reviewer performance aggregated across all stored scorecard records, sorted by corroboration rate descending. → **[03-01](../acceptance-criteria/03-01-leaderboard-table.md)**
+2. `--since <duration>` filters records to only those within the specified time window (e.g., `30d`, `7d`, `90d`). Default is 30 days. → **[03-02](../acceptance-criteria/03-02-since-filter.md)**
+3. `--model <name>` filters to records matching the specified model (e.g., `claude-sonnet-4-6`). → **[03-03](../acceptance-criteria/03-03-model-persona-filters.md)**
+4. `--persona <name>` filters to records matching the specified reviewer/persona (e.g., `bruce`). → **[03-03](../acceptance-criteria/03-03-model-persona-filters.md)**
+5. Filters are composable: `atcr leaderboard --since 7d --model claude-sonnet-4-6 --persona bruce` applies all three. → **[03-03](../acceptance-criteria/03-03-model-persona-filters.md)**
+6. Table columns include: reviewer, model, runs (count), findings raised, findings corroborated, corroboration rate, total cost, cost per corroborated finding, avg latency. → **[03-01](../acceptance-criteria/03-01-leaderboard-table.md)**
+7. `--export` outputs the aggregated data as versioned JSON suitable for Epic 10.0 public leaderboard submission (anonymized, no provider keys or repo content). → **[03-04](../acceptance-criteria/03-04-export-json.md)**
+8. Gracefully handles missing scorecard directory or empty files: prints informative message and exits with code 0. → **[03-05](../acceptance-criteria/03-05-graceful-empty-handling.md)**
 
 ## Technical Considerations
 
@@ -78,4 +86,4 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 ---
 
 **Created:** June 15, 2026 10:47:26AM
-**Status:** Draft - Awaiting Acceptance Criteria
+**Status:** Acceptance Criteria Generated
