@@ -1,0 +1,4 @@
+MEDIUM|internal/reconcile/disagree.go:174|Inconsistent out-of-scope filtering|Normalize JSONFinding.Category with ToLower/TrimSpace like allOutOfScope|correctness|5|exact match on finding category but normalized match on cluster members|bruce
+MEDIUM|internal/reconcile/disagree.go:288|spreadFromDisagreement accepts invalid severities|Validate both lo and hi exist in severityRank with ok before subtracting|correctness|3|severityRank lookup without ok returns 0 for unknown keys, inflating spread|bruce
+MEDIUM|internal/reconcile/disagree.go:354|Duplicated radar markdown rendering diverges|Extract shared writer or make reconcile use report package's escTrunc|maintainability|10|reconcile writeRadarSection uses esc not escTrunc for problem/detail text|bruce
+LOW|cmd/atcr/report_test.go:70|Incomplete ambiguous-sidecar test|Assert rendered output contains the gray-zone cluster content|maintainability|3|only checks exit code 0, not radar output|bruce

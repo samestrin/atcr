@@ -1,0 +1,4 @@
+MEDIUM|internal/reconcile/disagree.go:118|Inconsistent out-of-scope category check|Use case-insensitive comparison in BuildDisagreements|correctness|5|f.Category == CategoryOutOfScope vs strings.ToLower in allOutOfScope|bruce
+LOW|internal/reconcile/disagree.go:121|Solo finding condition includes zero reviewers|Change <= 1 to == 1 per sprint plan spec|correctness|2|len(f.Reviewers) <= 1 matches 0-reviewer findings|bruce
+LOW|internal/reconcile/disagree.go:165|Unsafe severity rank lookup in spread calculation|Validate severity exists in map before subtraction|correctness|3|severityRank lookup returns 0 for unknown strings|bruce
+LOW|internal/reconcile/disagree.go:350|Duplicated radar section rendering logic|Extract shared writeRadarSection to a common package|maintainability|10|Identical writeRadarSection in reconcile and report packages|bruce

@@ -1,0 +1,649 @@
+diff --git a/docs/registry.md b/docs/registry.md
+index 9fe6c7c..4a45052 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -186,6 +186,41 @@ An out-of-range value (e.g. `max_turns: 0`, a negative `tool_budget_bytes`, an u
+ |-------|------|-----------------|-------------------|--------------|
+ | `role` | string | reviewer | one of `reviewer`, `skeptic`, `judge` | Stage 3/4 |
+ 
++## Review-constraint fields (active in 2.2)
++
++Three optional per-agent guardrails bound what a reviewer contributes to the fan-out. They exist because a weak or mis-prompted model can drift off its role and flood the merged stream with low-value noise — e.g. hundreds of blank-line `LOW` style findings that bury the handful of `HIGH` findings stronger models caught. All three are optional and backward-compatible: an unset field imposes no constraint, so an existing registry keeps loading unchanged.
++
++| Field | Type | Default | Validated at load | Effect |
++|-------|------|---------|-------------------|--------|
++| `scope` | string[] (per agent) | — (all categories) | every entry must be non-empty | **Soft** prompt-injection focus hint. The listed categories are appended to the agent's persona prompt as a "Review Focus" instruction steering it toward those areas. It is *not* a hard filter — out-of-category findings are never dropped, so a genuine cross-cutting issue is preserved. Use it to nudge a specialist (e.g. a performance reviewer) without silencing it. |
++| `min_severity` | string (per agent) | `LOW` (no floor) | one of `CRITICAL`, `HIGH`, `MEDIUM`, `LOW` (case-insensitive; normalized to upper-case) | **Hard** floor enforced in fan-out post-processing: findings below this severity are dropped from the agent's `findings.txt` before reconciliation. A dropped count is logged to stderr. |
++| `max_findings` | int (per agent) | — (unlimited) | must be `> 0` | **Hard** cap enforced in fan-out post-processing: the agent's findings are truncated to this many, keeping the **most severe** first (a severity-sorted cap, so a flood of `LOW` items can never push out a `HIGH` one). A truncated count is logged to stderr. |
++
++`min_severity` and `max_findings` are enforced deterministically in the fan-out per-source path (right after the engine stamps the `REVIEWER` column from the agent key), never in the reconciler — the reconciler stays source-agnostic. `scope` is applied earlier, as soft prompt injection at agent build time.
++
++**Put these fields on a *rostered* agent** (one listed in `agents` or `serial_agents`). A fallback inherits all three from the primary it stands in for — the constraint follows the slot, like the persona prompt — so `scope`/`min_severity`/`max_findings` set on an entry that is *only* reachable as a fallback are ignored: the primary's constraints govern whoever ultimately answers that slot.
++
++```yaml
++agents:
++  bruce:
++    persona: bruce
++    provider: openrouter
++    model: anthropic/claude-3.7-sonnet
++  # A weaker model rostered directly (not as a fallback), constrained so it
++  # contributes a focused, bounded review instead of flooding the stream:
++  # performance-focused, no LOW noise, and a hard volume cap. Because it is a
++  # primary roster entry, its own constraints below actually take effect.
++  nemo:
++    persona: bruce
++    provider: openrouter
++    model: nvidia/nemotron-nano
++    scope: ["performance", "efficiency"]   # soft focus hint injected into the prompt
++    min_severity: MEDIUM                    # drop LOW findings before reconciliation
++    max_findings: 20                        # keep at most the 20 most severe
++```
++
++An out-of-range value (an unknown `min_severity`, a non-positive `max_findings`, or a blank `scope` entry) is a load error, so a misconfiguration is caught at load rather than mid-run.
++
+ ## Verifying the configuration (`atcr doctor`)
+ 
+ `atcr doctor` is the recommended check to run right after `atcr init` and after any registry edit. It resolves the **effective roster** — every agent in `agents` and `serial_agents`, plus every agent reachable through `fallback` chains — deduplicates it to the distinct `(provider, model, base_url)` targets, and invokes each target **once** with a trivial nonce prompt. Success is verified by the marker appearing in the response content, not merely by HTTP 200.
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index 814e8a6..e551a0a 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -129,9 +129,12 @@ func writeFailureSummary(poolDir string, results []Result) {
+ 	}
+ }
+ 
+-// findingsFor parses an agent's raw review content into findings and stamps the
++// findingsFor parses an agent's raw review content into findings, stamps the
+ // REVIEWER as the agent name itself — never trusting any model-supplied column
+-// (TD-016). A failed agent (no content) yields no findings.
++// (TD-016) — then applies the agent's per-source review guardrails (min_severity
++// floor + max_findings cap, Epic 2.2). Enforcement runs after stamping so the
++// reviewer attribution is intact on every kept finding. A failed agent (no
++// content) yields no findings.
+ func findingsFor(r Result) []stream.Finding {
+ 	if r.Content == "" {
+ 		return nil
+@@ -140,7 +143,7 @@ func findingsFor(r Result) []stream.Finding {
+ 	for i := range findings {
+ 		findings[i].Reviewer = r.Agent
+ 	}
+-	return findings
++	return enforceConstraints(findings, r.Agent, r.MinSeverity, r.MaxFindings)
+ }
+ 
+ // agentDirName reduces an agent name to a safe single path segment and rejects
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index 149df38..5114416 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -67,6 +67,14 @@ type Agent struct {
+ 	// from the registry (per-agent, not per-lane). A tools:true agent whose model
+ 	// lacks it degrades to single-shot regardless of the harness being wired.
+ 	SupportsFC bool
++
++	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
++	// AgentConfig by buildAgent and carried onto the Result so findingsFor can
++	// enforce them. Scope is applied earlier (as soft prompt injection) and is
++	// not carried here. A fallback inherits these from its primary (the
++	// constraint follows the slot, like the persona prompt).
++	MinSeverity string
++	MaxFindings *int
+ }
+ 
+ // Slot is one reviewer position in the roster: a primary agent plus its
+@@ -95,6 +103,13 @@ type Result struct {
+ 	PayloadMode  string
+ 	Truncation   payload.Truncation
+ 
++	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
++	// AgentConfig by buildAgent so findingsFor can enforce them per source.
++	// MinSeverity drops findings below the floor; MaxFindings caps the count
++	// (severity-sorted). Both empty/nil mean "no constraint".
++	MinSeverity string
++	MaxFindings *int
++
+ 	// Tool-loop accounting (Epic 2.0). Tools records that this was a tool-enabled
+ 	// agent (so status.json emits explicit zero counters even on the degrade
+ 	// path, while pure single-shot agents keep them absent). Turns/ToolCalls/
+@@ -375,6 +390,8 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
+ 		DurationMS:  time.Since(start).Milliseconds(),
+ 		PayloadMode: a.PayloadMode,
+ 		Truncation:  a.Truncation,
++		MinSeverity: a.MinSeverity,
++		MaxFindings: a.MaxFindings,
+ 		// Preserve the original tool request even on the single-shot path so a
+ 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
+ 		ToolsRequested: a.Tools,
+diff --git a/internal/fanout/loop.go b/internal/fanout/loop.go
+index 5f33c82..f2a0abb 100644
+--- a/internal/fanout/loop.go
++++ b/internal/fanout/loop.go
+@@ -95,7 +95,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter,
+ 		maxTurns:   maxTurns,
+ 		toolDefs:   wireToolDefs(),
+ 		messages:   []llmclient.Message{{Role: "user", Content: &prompt}},
+-		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, Tools: true, ToolsRequested: true},
++		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, MinSeverity: a.MinSeverity, MaxFindings: a.MaxFindings, Tools: true, ToolsRequested: true},
+ 		start:      time.Now(),
+ 		nudgedSigs: map[string]bool{},
+ 		tr:         tr,
+diff --git a/internal/fanout/postprocess.go b/internal/fanout/postprocess.go
+new file mode 100644
+index 0000000..82b8b91
+--- /dev/null
++++ b/internal/fanout/postprocess.go
+@@ -0,0 +1,62 @@
++package fanout
++
++import (
++	"fmt"
++	"os"
++	"sort"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// severityRank orders findings for the min_severity floor and the max_findings
++// severity-sorted truncation. It mirrors the canonical rubric in
++// personas/_base.md (and reconcile's private severityRank); it is kept local so
++// the fan-out post-processing carries no cross-package dependency on the
++// reconciler. An unknown severity ranks 0, sorting below every real level.
++var severityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
++
++// enforceConstraints applies an agent's per-source review guardrails (Epic 2.2)
++// to its parsed findings, in order: (1) min_severity drops every finding below
++// the floor; (2) max_findings keeps only the N most severe (a stable sort by
++// severity descending, so the motivating incident — a flood of LOW findings
++// burying a few HIGH ones — cannot survive a cap). Both steps are no-ops when
++// their field is unset, so an unconstrained agent's findings pass through in
++// emission order. Dropped/truncated counts are logged to stderr (AC4). The agent
++// name is used only for the log line. The input slice may be reordered in place.
++func enforceConstraints(findings []stream.Finding, agent, minSeverity string, maxFindings *int) []stream.Finding {
++	if len(findings) == 0 {
++		return findings
++	}
++
++	// 1. Severity floor.
++	if floor := strings.ToUpper(strings.TrimSpace(minSeverity)); floor != "" {
++		min := severityRank[floor]
++		kept := findings[:0]
++		dropped := 0
++		for _, f := range findings {
++			if severityRank[strings.ToUpper(f.Severity)] >= min {
++				kept = append(kept, f)
++			} else {
++				dropped++
++			}
++		}
++		findings = kept
++		if dropped > 0 {
++			fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: dropped %d finding(s) below min_severity %s\n", agent, dropped, floor)
++		}
++	}
++
++	// 2. Volume cap. Sort only when a truncation will actually happen, so an
++	// uncapped (or under-cap) agent keeps its emission order.
++	if maxFindings != nil && len(findings) > *maxFindings {
++		sort.SliceStable(findings, func(i, j int) bool {
++			return severityRank[strings.ToUpper(findings[i].Severity)] > severityRank[strings.ToUpper(findings[j].Severity)]
++		})
++		truncated := len(findings) - *maxFindings
++		findings = findings[:*maxFindings]
++		fmt.Fprintf(os.Stderr, "atcr: warning: agent %q: truncated %d finding(s) to max_findings %d\n", agent, truncated, *maxFindings)
++	}
++
++	return findings
++}
+diff --git a/internal/fanout/postprocess_test.go b/internal/fanout/postprocess_test.go
+new file mode 100644
+index 0000000..5821e03
+--- /dev/null
++++ b/internal/fanout/postprocess_test.go
+@@ -0,0 +1,118 @@
++package fanout
++
++import (
++	"testing"
++
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++func f(sev string) stream.Finding {
++	return stream.Finding{Severity: sev, File: "a.go", Line: 1, Problem: "p", Category: "c"}
++}
++
++func intp(n int) *int { return &n }
++
++func sevs(fs []stream.Finding) []string {
++	out := make([]string, len(fs))
++	for i, x := range fs {
++		out[i] = x.Severity
++	}
++	return out
++}
++
++func eq(a, b []string) bool {
++	if len(a) != len(b) {
++		return false
++	}
++	for i := range a {
++		if a[i] != b[i] {
++			return false
++		}
++	}
++	return true
++}
++
++func TestEnforceConstraints(t *testing.T) {
++	tests := []struct {
++		name        string
++		in          []stream.Finding
++		minSeverity string
++		maxFindings *int
++		want        []string // expected severities in order
++	}{
++		{
++			name: "no constraints is a no-op preserving order",
++			in:   []stream.Finding{f("LOW"), f("HIGH"), f("MEDIUM")},
++			want: []string{"LOW", "HIGH", "MEDIUM"},
++		},
++		{
++			name:        "min_severity drops findings below the floor",
++			in:          []stream.Finding{f("LOW"), f("MEDIUM"), f("HIGH"), f("LOW")},
++			minSeverity: "MEDIUM",
++			want:        []string{"MEDIUM", "HIGH"},
++		},
++		{
++			name:        "min_severity keeps CRITICAL and HIGH at a HIGH floor",
++			in:          []stream.Finding{f("CRITICAL"), f("HIGH"), f("MEDIUM"), f("LOW")},
++			minSeverity: "HIGH",
++			want:        []string{"CRITICAL", "HIGH"},
++		},
++		{
++			name:        "max_findings truncates keeping the most severe",
++			in:          []stream.Finding{f("LOW"), f("LOW"), f("HIGH"), f("LOW"), f("CRITICAL")},
++			maxFindings: intp(2),
++			want:        []string{"CRITICAL", "HIGH"},
++		},
++		{
++			name:        "max_findings no-op when under the cap (order preserved)",
++			in:          []stream.Finding{f("LOW"), f("HIGH")},
++			maxFindings: intp(5),
++			want:        []string{"LOW", "HIGH"},
++		},
++		{
++			name:        "min_severity then max_findings compose",
++			in:          []stream.Finding{f("LOW"), f("MEDIUM"), f("HIGH"), f("CRITICAL"), f("MEDIUM")},
++			minSeverity: "MEDIUM",
++			maxFindings: intp(2),
++			want:        []string{"CRITICAL", "HIGH"},
++		},
++		{
++			name:        "min_severity accepts lower-case (defensive normalization)",
++			in:          []stream.Finding{f("LOW"), f("HIGH")},
++			minSeverity: "high",
++			want:        []string{"HIGH"},
++		},
++		{
++			name: "empty input is a no-op",
++			in:   nil,
++			want: nil,
++		},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			got := enforceConstraints(tt.in, "bruce-backup", tt.minSeverity, tt.maxFindings)
++			if !eq(sevs(got), tt.want) {
++				t.Fatalf("enforceConstraints severities = %v, want %v", sevs(got), tt.want)
++			}
++		})
++	}
++}
++
++// findingsFor must apply the per-agent constraints after stamping REVIEWER, so a
++// capped agent's per-agent findings.txt and the merged stream both respect it.
++func TestFindingsFor_AppliesConstraints(t *testing.T) {
++	content := "HIGH|a.go:1|bug|fix|correctness|5|ev\n" +
++		"LOW|a.go:2|nit|fix|style|5|ev\n" +
++		"MEDIUM|a.go:3|gap|fix|correctness|5|ev\n"
++	r := Result{Agent: "bruce-backup", Content: content, Status: StatusOK, MinSeverity: "MEDIUM", MaxFindings: intp(1)}
++	got := findingsFor(r)
++	if len(got) != 1 {
++		t.Fatalf("got %d findings, want 1 (LOW dropped, capped to 1)", len(got))
++	}
++	if got[0].Severity != "HIGH" {
++		t.Fatalf("survivor severity = %s, want HIGH (most severe kept)", got[0].Severity)
++	}
++	if got[0].Reviewer != "bruce-backup" {
++		t.Fatalf("reviewer = %q, want bruce-backup (stamped before enforcement)", got[0].Reviewer)
++	}
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 5a9f65c..01ac6cb 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -516,6 +516,11 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
+ 	if err != nil {
+ 		return Agent{}, "", fmt.Errorf("agent %q: %w", name, err)
+ 	}
++	// Soft per-agent scope focus (Epic 2.2): appended after the persona template
++	// renders so it lands in every persona regardless of its template, and feeds
++	// both Agent.Prompt and Invocation.Prompt below (a fallback reuses the
++	// primary's prompt, so it inherits the focus too). No-op when scope is unset.
++	prompt += payload.ScopeFocus(ac.Scope)
+ 	prov, ok := cfg.Registry.Providers[ac.Provider]
+ 	if !ok {
+ 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
+@@ -530,6 +535,8 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
+ 		SupportsFC:      ac.SupportsFC,
+ 		MaxTurns:        derefMaxTurns(ac.MaxTurns),
+ 		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
++		MinSeverity:     ac.MinSeverity,
++		MaxFindings:     ac.MaxFindings,
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     prov.BaseURL,
+ 			APIKeyEnv:   prov.APIKeyEnv,
+@@ -590,6 +597,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
+ 		// NOT the primary's, so the degrade decision is re-evaluated per agent
+ 		// (AC 04-03 EC3 — lane governs Tools, the model governs capability).
+ 		SupportsFC: ac.SupportsFC,
++		// Review constraints follow the slot, not the substitute model (Epic 2.2):
++		// a fallback answers in the primary's place, so the primary's min_severity
++		// and max_findings still govern the output.
++		MinSeverity: primary.MinSeverity,
++		MaxFindings: primary.MaxFindings,
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     prov.BaseURL,
+ 			APIKeyEnv:   prov.APIKeyEnv,
+diff --git a/internal/fanout/scope_inject_test.go b/internal/fanout/scope_inject_test.go
+new file mode 100644
+index 0000000..2ed57ac
+--- /dev/null
++++ b/internal/fanout/scope_inject_test.go
+@@ -0,0 +1,31 @@
++package fanout
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++// buildAgent must inject an agent's scope categories into its persona prompt as
++// a soft focus instruction (Epic 2.2), so a scoped agent sees them and an
++// unscoped agent's prompt is unchanged.
++func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	scoped := cfg.Registry.Agents["greta"]
++	scoped.Scope = []string{"performance", "efficiency"}
++	cfg.Registry.Agents["greta"] = scoped
++
++	payloads := map[string]modePayload{"blocks": {Text: "some diff", FileCount: 1}}
++	rng := ReviewRange{Base: "a", Head: "b"}
++
++	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng)
++	require.NoError(t, err)
++	require.Contains(t, gretaAgent.Prompt, "performance", "scoped agent prompt must mention its scope categories")
++	require.Contains(t, gretaAgent.Prompt, "efficiency")
++	// The invocation prompt the model actually receives must carry it too.
++	require.Contains(t, gretaAgent.Invocation.Prompt, "performance")
++
++	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng)
++	require.NoError(t, err)
++	require.NotContains(t, kaiAgent.Prompt, "Review Focus", "unscoped agent prompt must be unchanged")
++}
+diff --git a/internal/payload/scope.go b/internal/payload/scope.go
+index b5b8530..0a8c004 100644
+--- a/internal/payload/scope.go
++++ b/internal/payload/scope.go
+@@ -1,5 +1,29 @@
+ package payload
+ 
++import "strings"
++
++// ScopeFocus renders an agent's per-agent scope categories (Epic 2.2) as a soft
++// focus instruction appended to its persona prompt. It is a SOFT constraint:
++// it steers the model toward the listed categories but the fan-out never
++// hard-drops out-of-category findings, so a genuine cross-cutting issue is not
++// silently lost. Blank entries are skipped; an empty/nil scope yields "" so an
++// unscoped agent's prompt is unchanged. The leading blank lines separate the
++// block from whatever the persona template rendered before it.
++func ScopeFocus(scope []string) string {
++	cats := make([]string, 0, len(scope))
++	for _, c := range scope {
++		if c = strings.TrimSpace(c); c != "" {
++			cats = append(cats, c)
++		}
++	}
++	if len(cats) == 0 {
++		return ""
++	}
++	return "\n\n## Review Focus\nConcentrate this review on the following categories: " +
++		strings.Join(cats, ", ") + ". Prioritize findings in these areas. This is a focus " +
++		"hint, not a hard limit — still report any genuinely critical issue you find outside them."
++}
++
+ // Per-payload-mode scope rules injected into persona prompts as {{.ScopeRule}}.
+ // diff and blocks constrain findings to the changed regions; files mode widens
+ // visibility to whole files and routes pre-existing issues to the out-of-scope
+diff --git a/internal/payload/scope_focus_test.go b/internal/payload/scope_focus_test.go
+new file mode 100644
+index 0000000..2d79d49
+--- /dev/null
++++ b/internal/payload/scope_focus_test.go
+@@ -0,0 +1,32 @@
++package payload
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestScopeFocus(t *testing.T) {
++	if got := ScopeFocus(nil); got != "" {
++		t.Fatalf("ScopeFocus(nil) = %q, want empty", got)
++	}
++	if got := ScopeFocus([]string{}); got != "" {
++		t.Fatalf("ScopeFocus([]) = %q, want empty", got)
++	}
++
++	single := ScopeFocus([]string{"performance"})
++	if !strings.Contains(single, "performance") {
++		t.Fatalf("ScopeFocus single = %q, want it to mention performance", single)
++	}
++
++	multi := ScopeFocus([]string{"performance", "efficiency"})
++	for _, want := range []string{"performance", "efficiency"} {
++		if !strings.Contains(multi, want) {
++			t.Fatalf("ScopeFocus multi = %q, want it to mention %q", multi, want)
++		}
++	}
++	// Blank entries are skipped, never rendered as an empty category.
++	clean := ScopeFocus([]string{"performance", "", "  "})
++	if strings.Contains(clean, ", ,") || strings.Contains(clean, "  ,") {
++		t.Fatalf("ScopeFocus left a blank category in %q", clean)
++	}
++}
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index cc319a3..a942fef 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -77,8 +77,31 @@ type AgentConfig struct {
+ 	// non-tool-capable unless explicitly declared, and a tools:true agent on an
+ 	// undeclared model degrades safely to single-shot.
+ 	SupportsFC bool `yaml:"supports_function_calling"` // Stage 2 — model function-calling capability
++
++	// Review-constraint guardrails (Epic 2.2). All optional and
++	// backward-compatible: an unset field imposes no constraint, so a 1.x/2.0
++	// config keeps loading unchanged. Scope is a SOFT prompt-injection focus hint
++	// (categories the agent should prioritize) — injected into the persona prompt
++	// by the fan-out, it never hard-drops findings. MinSeverity drops findings
++	// below the floor and MaxFindings truncates (severity-sorted) the agent's
++	// findings to a hard cap; both are enforced deterministically in the fan-out
++	// per-source path (internal/fanout), never in the reconciler. MinSeverity is
++	// normalized to canonical upper-case at load so enforcement comparisons are
++	// stable. MaxFindings is a pointer so an absent cap (nil = unlimited) is
++	// distinguishable from any explicit value.
++	Scope       []string `yaml:"scope,omitempty"`        // soft focus categories injected into the prompt
++	MinSeverity string   `yaml:"min_severity,omitempty"` // drop findings below this floor (CRITICAL|HIGH|MEDIUM|LOW)
++	MaxFindings *int     `yaml:"max_findings,omitempty"` // cap on findings (severity-sorted truncate); nil = unlimited
+ }
+ 
++// reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
++// used to validate min_severity. Kept as a set here so the registry validates
++// without depending on the fan-out or reconcile packages.
++var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
++
++// normalizeSeverity upper-cases and trims a severity token to its canonical form.
++func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
++
+ // roleValid reports whether r is an allowed reserved role. The empty string is
+ // allowed in 1.x (the loader provides no default). Epic 3.0/4.0 contract: when
+ // activating role-based routing, the stage MUST apply the reviewer default for
+@@ -213,6 +236,21 @@ func (r *Registry) validate() error {
+ 		if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
+ 			return agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes)
+ 		}
++		// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
++		// not validated. min_severity is checked case-insensitively against the
++		// rubric, max_findings must be a positive cap, and every scope entry must
++		// be a non-empty category (a blank entry is a YAML typo, not "all").
++		if a.MinSeverity != "" && !reviewSeverities[normalizeSeverity(a.MinSeverity)] {
++			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
++		}
++		if a.MaxFindings != nil && *a.MaxFindings <= 0 {
++			return agentErrf(name, "agent '%s': max_findings must be > 0", name)
++		}
++		for _, s := range a.Scope {
++			if strings.TrimSpace(s) == "" {
++				return agentErrf(name, "agent '%s': scope entries must not be empty", name)
++			}
++		}
+ 	}
+ 	return nil
+ }
+@@ -237,6 +275,11 @@ func (r *Registry) applyDefaults() {
+ 			mt := DefaultMaxTurns
+ 			a.MaxTurns = &mt
+ 		}
++		// Canonicalize min_severity (Epic 2.2) so downstream enforcement compares
++		// against a stable upper-case token regardless of how it was written.
++		if a.MinSeverity != "" {
++			a.MinSeverity = normalizeSeverity(a.MinSeverity)
++		}
+ 		r.Agents[name] = a
+ 	}
+ }
+diff --git a/internal/registry/config_review_constraints_test.go b/internal/registry/config_review_constraints_test.go
+new file mode 100644
+index 0000000..b49fdc1
+--- /dev/null
++++ b/internal/registry/config_review_constraints_test.go
+@@ -0,0 +1,106 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 2.2: scope / min_severity / max_findings are optional per-agent review
++// guardrails. They parse off AgentConfig and are validated at load.
++func TestRegistryLoad_ReviewConstraints(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++  bruce-backup:
++    provider: openai
++    model: gpt-4-mini
++    scope: ["performance", "efficiency"]
++    min_severity: MEDIUM
++    max_findings: 20
++`))
++	require.NoError(t, err)
++
++	bb := reg.Agents["bruce-backup"]
++	assert.Equal(t, []string{"performance", "efficiency"}, bb.Scope)
++	assert.Equal(t, "MEDIUM", bb.MinSeverity)
++	require.NotNil(t, bb.MaxFindings)
++	assert.Equal(t, 20, *bb.MaxFindings)
++
++	// Unset on a plain agent — backward compatible, all zero values.
++	bruce := reg.Agents["bruce"]
++	assert.Nil(t, bruce.Scope, "scope stays nil when unset")
++	assert.Empty(t, bruce.MinSeverity, "min_severity stays empty when unset")
++	assert.Nil(t, bruce.MaxFindings, "max_findings stays nil when unset")
++}
++
++func TestRegistryLoad_InvalidMinSeverity(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++    min_severity: SOMETIMES
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "bruce")
++	assert.Contains(t, err.Error(), "min_severity")
++}
++
++func TestRegistryLoad_InvalidMaxFindings(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++    max_findings: 0
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "bruce")
++	assert.Contains(t, err.Error(), "max_findings")
++}
++
++func TestRegistryLoad_EmptyScopeEntry(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++    scope: ["performance", ""]
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "bruce")
++	assert.Contains(t, err.Error(), "scope")
++}
++
++// min_severity accepts every rubric level, case-insensitively normalized to the
++// canonical upper-case form so enforcement comparisons are stable.
++func TestRegistryLoad_MinSeverityCaseInsensitive(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, `
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  bruce:
++    provider: openai
++    model: gpt-4
++    min_severity: high
++`))
++	require.NoError(t, err)
++	assert.Equal(t, "HIGH", reg.Agents["bruce"].MinSeverity, "min_severity normalized to canonical upper-case")
++}

@@ -1,0 +1,2 @@
+MEDIUM|internal/reconcile/disagree.go:168|Potential panic on empty gray-zone cluster|Add check for len(c.Findings) > 0 before accessing index 0|correctness|10|maxSev = c.Findings[0].Severity called without checking if cluster is empty|otto
+LOW|internal/reconcile/disagree.go:413|Redundant implementation of writeRadarSection|Remove duplicate function from internal/reconcile and use internal/report|maintainability|15|writeRadarSection is defined in both internal/reconcile/disagree.go and internal/report/disagree.go|otto

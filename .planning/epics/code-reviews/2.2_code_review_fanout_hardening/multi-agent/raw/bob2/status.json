@@ -1,0 +1,7 @@
+{
+  "agent_name": "bob2",
+  "model": "bob2-model",
+  "status": "timeout",
+  "duration_ms": 120005,
+  "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded (fallback bob2-backup also failed: no content in stream)"
+}

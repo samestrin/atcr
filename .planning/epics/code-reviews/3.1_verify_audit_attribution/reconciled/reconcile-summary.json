@@ -1,0 +1,15 @@
+{
+  "sources": ["claude", "multi-agent"],
+  "raw_count": 38,
+  "merged_count": 38,
+  "clusters_collapsed": {
+    "raw": 38,
+    "after_dedupe": 30,
+    "after_adjudication": 38,
+    "note": "5 needs_review clusters split back to members; net collapse 0 (8 collapsed by dedupe, 8 re-expanded by adjudication)"
+  },
+  "severity_disagreements": 2,
+  "intent_annotations": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-14T22:00:48Z"
+}

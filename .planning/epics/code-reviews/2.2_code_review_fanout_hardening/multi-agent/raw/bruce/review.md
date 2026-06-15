@@ -1,0 +1,1 @@
+MEDIUM|internal/registry/config.go:243|Whitespace-only min_severity triggers invalid load error|Check normalized value instead of raw string|correctness|5|YAML "min_severity: '  '" fails validation instead of being treated as unset|bruce

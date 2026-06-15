@@ -1,0 +1,6 @@
+MEDIUM|internal/reconcile/disagree.go:430|Missing import for html/template|Add "html/template" to imports|correctness|5|template.HTMLEscapeString used but package not imported|bruce
+MEDIUM|internal/report/disagree.go:47|Undefined function esc|Define esc function or import from reconcile|correctness|5|esc used but not defined|bruce
+MEDIUM|internal/report/disagree.go:55|Undefined function joinReviewers|Define joinReviewers function|correctness|5|joinReviewers used but not defined|bruce
+MEDIUM|internal/report/disagree.go:58|Undefined function escTrunc|Define escTrunc function|correctness|5|escTrunc used but not defined|bruce
+MEDIUM|internal/report/disagree.go:74|Missing return statement in formatScore|Add return statement for the false case|correctness|5|formatScore missing return|bruce
+MEDIUM|internal/report/disagree.go:77|Unreachable code in formatScore|Remove the unreachable return statement|correctness|5|formatScore has unreachable code|bruce

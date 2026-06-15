@@ -1,0 +1,3 @@
+MEDIUM|internal/verify/pipeline.go:386|Missing TrippedBudgets initialization|Set base.TrippedBudgets = []string{} after base.Model assignment|correctness|2|base.Model set but TrippedBudgets not initialized|reviewer
+MEDIUM|internal/verify/pipeline.go:395|Missing TrippedBudgets initialization|Set base.TrippedBudgets = []string{} after base.Model assignment|correctness|2|base.Model set but TrippedBudgets not initialized|reviewer
+MEDIUM|internal/verify/pipeline.go:243|TrippedBudgets may be nil (leading to null in JSON)|Add nil check and set to empty slice after the if block|correctness|3|rec.TrippedBudgets = prior.TrippedBudgets (could be nil)|reviewer

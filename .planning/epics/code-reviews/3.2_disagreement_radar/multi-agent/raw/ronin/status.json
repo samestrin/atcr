@@ -1,0 +1,7 @@
+{
+  "agent_name": "ronin",
+  "model": "nemotron-3-nano",
+  "status": "failed",
+  "duration_ms": 97022,
+  "error": "no content in stream"
+}

@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/postprocess.go:38|Potential slice memory leak|Use a new slice instead of slicing the original when dropping findings|performance|15|`kept := findings[:0]` keeps the original underlying array alive even if many findings are dropped|otto
