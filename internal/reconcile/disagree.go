@@ -304,6 +304,11 @@ func verificationItem(f JSONFinding) DisagreementItem {
 	// a high-spread split.
 	spread := spreadFromDisagreement(f.Disagreement)
 	indep := atLeastOne(len(f.Reviewers))
+	var skeptic, notes string
+	if f.Verification != nil {
+		skeptic = f.Verification.Skeptic
+		notes = f.Verification.Notes
+	}
 	return DisagreementItem{
 		Kind:         KindVerificationDisagreement,
 		File:         f.File,
@@ -315,8 +320,8 @@ func verificationItem(f JSONFinding) DisagreementItem {
 		Independence: indep,
 		Reviewers:    f.Reviewers,
 		Disagreement: f.Disagreement,
-		Skeptics:     f.Verification.Skeptic,
-		Detail:       f.Verification.Notes,
+		Skeptics:     skeptic,
+		Detail:       notes,
 	}
 }
 
