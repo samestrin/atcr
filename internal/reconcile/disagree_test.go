@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,4 +277,27 @@ func TestBuildDisagreements_SchemaMetadata(t *testing.T) {
 	assert.Equal(t, DisagreementsSchemaVersion, df.SchemaVersion)
 	assert.Equal(t, IndependenceModelReviewerCount, df.IndependenceModel)
 	assert.Empty(t, df.Items)
+}
+
+// TestDisagreementsSchema_StableContract pins the literal schema version and the
+// JSON field names Epic 6.0 (Cross-Examination) consumes. A rename or version
+// bump here is a breaking change to a downstream contract — update Epic 6.0 and
+// docs/disagreement-radar.md before changing this test.
+func TestDisagreementsSchema_StableContract(t *testing.T) {
+	assert.Equal(t, "1.0", DisagreementsSchemaVersion, "Epic 6.0 contract version")
+	assert.Equal(t, "distinct-reviewer-count", IndependenceModelReviewerCount)
+
+	df := BuildDisagreements([]JSONFinding{
+		jf("CRITICAL", "a.go", 1, "p", []string{"greta", "kai"}, "LOW vs CRITICAL"),
+	}, nil)
+	data, err := json.MarshalIndent(df, "", "  ")
+	require.NoError(t, err)
+	out := string(data)
+	for _, key := range []string{
+		`"schemaVersion"`, `"independenceModel"`, `"items"`,
+		`"kind"`, `"file"`, `"line"`, `"severity"`, `"problem"`,
+		`"score"`, `"spread"`, `"independence"`, `"reviewers"`, `"disagreement"`,
+	} {
+		assert.Contains(t, out, key, "handoff schema must expose %s", key)
+	}
 }
