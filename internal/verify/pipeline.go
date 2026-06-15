@@ -273,7 +273,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// verification.json — but only when the prior verdict still matches the
 		// current block. A stale or hand-edited prior with a different verdict must
 		// not lend its audit metadata to a now-different outcome (zero values left
-		// if no prior, or a mismatched one, exists).
+		// if no prior, or a mismatched one, exists). The EqualFold comparison is
+		// intentional: parseVerdict normalizes verdicts to lowercase on write, so
+		// EqualFold is harmless for the normal path and protective for hand-edited
+		// verification.json files where a human might write "Confirmed" or "CONFIRMED".
 		pk := loadPrior()
 		var prior VerificationResult
 		if pk != nil {
