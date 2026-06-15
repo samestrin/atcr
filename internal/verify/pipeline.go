@@ -212,9 +212,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Build the complete verification.json from in-memory findings (no disk
 	// round-trip) so a no-op re-run reproduces the same snapshot rather than an
 	// empty file: every finding that carries a verdict is recorded, using this
-	// run's rich record when available and synthesizing a compact one from the
-	// on-disk block for a finding that was skipped this run (TD-007: a verdict
-	// whose key matched no finding is surfaced below rather than silently dropped).
+	// run's rich record when available and, for a finding skipped this run,
+	// rebuilding from the on-disk findings.json block enriched with the prior
+	// run's audit metadata (TD-007: a verdict whose key matched no finding is
+	// surfaced below rather than silently dropped).
 	// Load the prior verification.json so a finding skipped this run (already
 	// verified, no --fresh) carries its rich audit metadata (Model/DurationMs/
 	// TrippedBudgets) forward instead of being re-synthesized as a lossy compact
