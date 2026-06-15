@@ -63,6 +63,12 @@ type DisagreementItem struct {
 
 // DisagreementsFile is the reconciled/disagreements.json document — the stable
 // Epic 6.0 cross-exam handoff queue. Items are ranked highest-tension first.
+//
+// The file is written at reconcile time, so it carries the reconcile-time tension
+// classes (severity splits, solo findings, gray-zone clusters). The
+// verification_disagreement class exists only after the verify stage runs and is
+// surfaced by the live radar (atcr report), not by this snapshot file. See
+// docs/disagreement-radar.md (Snapshot semantics).
 type DisagreementsFile struct {
 	SchemaVersion     string             `json:"schemaVersion"`
 	IndependenceModel string             `json:"independenceModel"`
@@ -168,11 +174,17 @@ func isRefutedJSON(f JSONFinding) bool {
 	return f.Verification != nil && canonVerdict(f.Verification.Verdict) == VerdictRefuted
 }
 
-// isVerificationTie reports whether v is an unverifiable verdict produced by a
-// skeptic-vote tie — the radar's verification-disagreement signal. The verify
+// isVerificationTie reports whether v is an unverifiable verdict reached with
+// multiple skeptics — the radar's verification-disagreement signal. The verify
 // stage records every voter in Skeptic (comma-joined) and yields unverifiable on
 // a tie; a single-skeptic unverifiable (could-not-verify) or the empty-verdict
 // "no_skeptic_verdicts" case is not a disagreement.
+//
+// v1 heuristic limitation: the persisted verdict block does not carry per-skeptic
+// verdicts, so a genuine confirmed-vs-refuted tie cannot be distinguished from a
+// unanimous "unverifiable" (both collapse to verdict=unverifiable with all voters
+// named). This therefore over-includes the unanimous-unverifiable case; precise
+// tie detection needs per-verdict counts from the verify stage (tracked as TD).
 func isVerificationTie(v *Verification) bool {
 	if v == nil || canonVerdict(v.Verdict) != VerdictUnverifiable {
 		return false

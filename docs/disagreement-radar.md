@@ -17,7 +17,14 @@ or merge behavior.
 | `severity_split` | a merged finding with a `disagreement` annotation (`reconciled/findings.json`) | reviewers assigned different severities to the same location |
 | `solo_finding` | a finding raised by a single reviewer (MEDIUM confidence) | a spot only one reviewer flagged — others may have missed it |
 | `gray_zone` | a pair in `reconciled/ambiguous.json` | similarity fell in the gray zone `[0.4, 0.7)`; the reconciler left it unmerged |
-| `verification_disagreement` | a `verdict: unverifiable` produced by a skeptic-vote **tie** (`reconciled/verification.json`, Epic 3.0) | skeptics could not agree whether the finding is real |
+| `verification_disagreement` | a `verdict: unverifiable` reached with **2+ skeptics** (`reconciled/verification.json`, Epic 3.0) | skeptics could not resolve whether the finding is real |
+
+> **v1 heuristic.** The persisted verdict block does not record per-skeptic
+> verdicts, so a genuine confirmed-vs-refuted tie cannot be distinguished from a
+> unanimous "unverifiable". The radar therefore surfaces any multi-skeptic
+> `unverifiable`, which over-includes the unanimous case. Precise tie detection
+> requires the verify stage to record per-verdict counts (tracked as technical
+> debt).
 
 Out-of-scope findings (pre-existing issues outside the reviewed change) and
 refuted findings never enter the radar.
