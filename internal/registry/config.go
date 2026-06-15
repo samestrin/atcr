@@ -322,6 +322,11 @@ func (r *Registry) applyDefaults() {
 		if a.MinSeverity != "" {
 			a.MinSeverity = normalizeSeverity(a.MinSeverity)
 		}
+		// Canonicalize scope entries (Epic 2.2): trim whitespace so downstream
+		// comparisons (ScopeFocus rendering, prompt injection) use stable tokens.
+		for i, s := range a.Scope {
+			a.Scope[i] = strings.TrimSpace(s)
+		}
 		r.Agents[name] = a
 	}
 	// Verification defaults (Epic 3.0): an unset min_severity resolves to MEDIUM,
