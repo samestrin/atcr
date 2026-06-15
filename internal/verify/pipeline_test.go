@@ -649,3 +649,55 @@ func TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings(t *testing.T) {
 	assert.NotContains(t, stderrOutput, "prior verification.json unreadable",
 		"corrupt prior must not warn when no findings are skipped")
 }
+
+// TestLogSkepticFailure_SanitizesNewlines verifies that a newline embedded in
+// detail does not forge a second atcr: verify: log line (log injection).
+func TestLogSkepticFailure_SanitizesNewlines(t *testing.T) {
+	t.Parallel()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stderr
+	os.Stderr = w
+
+	logSkepticFailure("sk", "class", "line1\natcr: verify: injected")
+
+	_ = w.Close()
+	os.Stderr = orig
+
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	require.Len(t, lines, 1, "newline in detail must not forge a second log line")
+	assert.Contains(t, lines[0], "sk")
+}
+
+// TestRunVerify_CancelledContextSkipsCompleter verifies that a pre-cancelled
+// context causes all findings to record unverifiable/context_cancelled without
+// ever invoking the chat completer.
+func TestRunVerify_CancelledContextSkipsCompleter(t *testing.T) {
+	t.Parallel()
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel before runVerify
+
+	_, err := runVerify(ctx, dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return cc, okDispatcher(), nil, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, cc.chatCalls, "pre-cancelled context must not invoke completer")
+}
+
+// TestVerifyFinding_TrippedBudgetsNeverNil verifies that TrippedBudgets is
+// always initialized to an empty slice (not nil) so JSON serialization emits
+// [] rather than null for findings with no tripped budgets.
+func TestVerifyFinding_TrippedBudgetsNeverNil(t *testing.T) {
+	t.Parallel()
+	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
+	_, vr := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()},
+		finalChat(`{"verdict":"confirmed"}`), okDispatcher())
+	assert.NotNil(t, vr.TrippedBudgets, "TrippedBudgets must be [] not nil")
+}
