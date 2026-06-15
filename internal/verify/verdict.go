@@ -37,21 +37,44 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 		Verdict   string `json:"verdict"`
 		Reasoning string `json:"reasoning"`
 	}
-	obj := extractJSONObject(response)
-	if obj == "" || json.Unmarshal([]byte(obj), &parsed) != nil {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
+
+	// Iterate candidate balanced JSON objects. Skip candidates that fail to
+	// unmarshal or lack the "verdict" key — a decoy brace pair (Go struct{},
+	// ${VAR}, example snippet) before the real verdict envelope should not
+	// degrade the verdict to unverifiable. On extractJSONObject returning ""
+	// (unbalanced leading brace), advance past the first '{' and retry.
+	rest := response
+	for {
+		obj := extractJSONObject(rest)
+		if obj == "" {
+			next := strings.IndexByte(rest, '{')
+			if next < 0 {
+				break
+			}
+			rest = rest[next+1:]
+			continue
+		}
+		var keys map[string]json.RawMessage
+		if json.Unmarshal([]byte(obj), &keys) == nil {
+			if _, ok := keys["verdict"]; ok {
+				json.Unmarshal([]byte(obj), &parsed) //nolint:errcheck // already validated above
+				normVerdict := strings.ToLower(strings.TrimSpace(parsed.Verdict))
+				switch normVerdict {
+				case verdictConfirmed, verdictRefuted, verdictUnverifiable:
+					return &reconcile.Verification{Verdict: normVerdict, Notes: parsed.Reasoning}, nil
+				default:
+					return &reconcile.Verification{
+						Verdict: verdictUnverifiable,
+						Notes:   "invalid_verdict: " + truncateForNotes(parsed.Verdict) + " (raw: " + truncateForNotes(response) + ")",
+					}, nil
+				}
+			}
+		}
+		idx := strings.Index(rest, obj)
+		rest = rest[idx+len(obj):]
 	}
 
-	normVerdict := strings.ToLower(strings.TrimSpace(parsed.Verdict))
-	switch normVerdict {
-	case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-		return &reconcile.Verification{Verdict: normVerdict, Notes: parsed.Reasoning}, nil
-	default:
-		return &reconcile.Verification{
-			Verdict: verdictUnverifiable,
-			Notes:   "invalid_verdict: " + truncateForNotes(parsed.Verdict) + " (raw: " + truncateForNotes(response) + ")",
-		}, nil
-	}
+	return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
