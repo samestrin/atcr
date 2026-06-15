@@ -101,18 +101,17 @@ func Emit(reconciledDir string, r Result) error {
 	if err := os.MkdirAll(reconciledDir, 0o755); err != nil {
 		return fmt.Errorf("creating reconciled dir: %w", err)
 	}
+	df := BuildDisagreements(r.JSONFindings(), r.Ambiguous)
 	writers := []struct {
 		name   string
 		render func(io.Writer) error
 	}{
 		{FindingsTxt, func(w io.Writer) error { return RenderText(w, r) }},
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
-		{ReportMD, func(w io.Writer) error { return RenderMarkdown(w, r) }},
+		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r, df) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
 		{AmbiguousJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Ambiguous) }},
-		{DisagreementsJSON, func(w io.Writer) error {
-			return renderIndentedJSON(w, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
-		}},
+		{DisagreementsJSON, func(w io.Writer) error { return renderIndentedJSON(w, df) }},
 	}
 	// Render every artifact first so a render error aborts before any file is
 	// published — the published set is then never partially from this run.
@@ -223,14 +222,17 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 	return df, nil
 }
 
-// RenderMarkdown writes the human report.md: an executive summary (counts by
-// severity x confidence) followed by findings grouped by severity. Findings
-// annotated out-of-scope are listed in their own section (AC 06-04) — they do
-// not gate, so mixing them into the main list (or the summary table) would
-// misread as gate-relevant. Free text is HTML-escaped and file paths are
-// rendered in backtick code spans so neither raw HTML nor markdown injection
-// survives (AC 01-06 Security).
+// RenderMarkdown writes the human report.md. It builds the disagreements radar
+// and delegates to renderMarkdown; Emit passes a pre-built radar to avoid the
+// redundant BuildDisagreements call on the reconcile path.
 func RenderMarkdown(w io.Writer, r Result) error {
+	return renderMarkdown(w, r, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
+}
+
+// renderMarkdown is the internal implementation. It accepts a pre-built
+// DisagreementsFile so Emit can build the radar once and share it between
+// report.md and disagreements.json without a second O(n log n) sort pass.
+func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
 	inScope := make([]Merged, 0, len(r.Findings))
 	var outOfScope []Merged
 	for _, m := range r.Findings {
@@ -261,7 +263,7 @@ func RenderMarkdown(w io.Writer, r Result) error {
 	// Disagreement radar above the consensus findings (Epic 3.2). Nothing is
 	// written when there is no tension, so report.md is byte-identical to the
 	// pre-3.2 output for a review with no disagreements.
-	writeRadarSection(&b, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
+	writeRadarSection(&b, df)
 
 	if len(r.Findings) == 0 {
 		b.WriteString("\nNo findings.\n")
