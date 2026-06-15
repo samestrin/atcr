@@ -211,7 +211,7 @@ func (r *Registry) validate() error {
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
-	if r.Verify.MinSeverity != "" && !reviewSeverities[normalizeSeverity(r.Verify.MinSeverity)] {
+	if normalized := normalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		return fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity)
 	}
 	if r.Verify.Votes < 0 {
