@@ -42,11 +42,11 @@ func ParseSeverity(s string) (string, error) {
 // every finding pass an unrecognized gate (a fail-all footgun for an
 // unvalidated caller), an unknown threshold returns false.
 func AtOrAbove(severity, threshold string) bool {
-	tr, ok := severityRank[threshold]
+	tr, ok := SeverityRank[threshold]
 	if !ok {
 		return false
 	}
-	return severityRank[severity] >= tr
+	return SeverityRank[severity] >= tr
 }
 
 // CountAtOrAbove returns how many findings have severity at or above threshold.

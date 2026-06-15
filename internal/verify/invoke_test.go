@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,17 +26,20 @@ func testSkeptic() Skeptic {
 
 // TestInvokeSkeptic_DegradesWhenNotFC verifies SupportsFC is forwarded: a skeptic
 // whose model lacks function calling degrades to single-shot rather than being
-// forced into the tool loop. The fake's single-shot Complete returns empty, so the
-// verdict is unverifiable (empty_response) — but no error and a populated Skeptic.
+// forced into the tool loop. The fake's Complete returns a real verdict so the
+// single-shot path produces a confirmed outcome — proving the degrade happened
+// and the tool loop was skipped (dispatcher call count == 0).
 func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
 	t.Parallel()
 	sk := testSkeptic()
 	sk.Config.SupportsFC = false
-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), okDispatcher())
+	disp := okDispatcher()
+	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), disp)
 	require.NoError(t, err)
 	require.NotNil(t, v)
-	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Equal(t, "confirmed", v.Verdict, "degrade path should return the single-shot verdict, not unverifiable")
 	assert.Equal(t, "skeptic-1", v.Skeptic)
+	assert.Equal(t, 0, disp.count(), "tool loop must not be entered on degrade — dispatcher never called")
 }
 
 // TestBuildSkepticAgent_ForwardsProviderAndBudgets locks the provider routing and
@@ -150,10 +154,22 @@ func TestInvokeSkeptic_BudgetTripToolBytes(t *testing.T) {
 	sk.Config.ToolBudgetBytes = int64Ptr(10)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file")}}
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "this content is definitely more than ten bytes", OriginalBytes: 46}}
-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "tool_budget_bytes")
+	assert.Contains(t, tripped, "tool_budget_bytes", "tripped budgets must be surfaced separately from Notes")
+}
+
+func TestInvokeSkeptic_BudgetTripTimeout(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.TimeoutSecs = intPtr(1)
+	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), {delay: 2 * time.Second, content: `{"verdict":"confirmed"}`}}}
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
+	require.NoError(t, err)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Contains(t, tripped, "timeout_secs", "timeout budget trip must be surfaced structurally")
 }
 
 // TestInvokeSkeptic_SurfacesTrippedBudgets locks AC1: a budget trip is returned

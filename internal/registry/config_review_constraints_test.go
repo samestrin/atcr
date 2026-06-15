@@ -72,6 +72,22 @@ agents:
 	assert.Contains(t, err.Error(), "max_findings")
 }
 
+func TestRegistryLoad_MaxFindingsExceedsCap(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    max_findings: 99999
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "max_findings")
+}
+
 func TestRegistryLoad_EmptyScopeEntry(t *testing.T) {
 	_, err := LoadRegistry(writeRegistry(t, `
 providers:
@@ -82,6 +98,25 @@ agents:
     provider: openai
     model: gpt-4
     scope: ["performance", ""]
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "scope")
+}
+
+// Whitespace-only scope entries exercise the strings.TrimSpace branch in
+// validation; without this case, the TrimSpace call could be removed and only
+// the "" case would catch the regression.
+func TestRegistryLoad_WhitespaceOnlyScopeEntry(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance", "   "]
 `))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bruce")
@@ -103,4 +138,103 @@ agents:
 `))
 	require.NoError(t, err)
 	assert.Equal(t, "HIGH", reg.Agents["bruce"].MinSeverity, "min_severity normalized to canonical upper-case")
+}
+
+// Whitespace-only min_severity should be treated as unset rather than producing
+// a confusing "must be one of CRITICAL, HIGH, MEDIUM, LOW" validation error.
+func TestRegistryLoad_MinSeverityWhitespaceOnly(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    min_severity: "   "
+`))
+	require.NoError(t, err, "whitespace-only min_severity should be treated as unset, not a validation error")
+	assert.Empty(t, reg.Agents["bruce"].MinSeverity, "whitespace-only min_severity normalized to empty")
+}
+
+// Scope entries should be trimmed at load (mirroring MinSeverity canonicalization)
+// so that " performance " survives into ScopeFocus as "performance".
+func TestRegistryLoad_ScopeEntriesTrimmed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: [" performance ", "  efficiency"]
+`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"performance", "efficiency"}, reg.Agents["bruce"].Scope,
+		"scope entries trimmed at load so downstream comparisons are stable")
+}
+
+// TestRegistryLoad_ScopeAliasing documents that AgentsByRole returns values
+// whose Scope slice aliases the registry's backing memory. Mutating the
+// returned slice corrupts the shared registry. This is the documented contract
+// (see AgentsByRole godoc) — the test anchors it as a regression guard.
+func TestRegistryLoad_ScopeAliasing(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance"]
+`))
+	require.NoError(t, err)
+
+	byRole := reg.AgentsByRole(RoleReviewer)
+	bruceCfg, ok := byRole["bruce"]
+	require.True(t, ok)
+	require.Len(t, bruceCfg.Scope, 1)
+
+	// Mutate the returned Scope — this SHOULD corrupt the registry because
+	// the slice aliases the backing memory (documented contract).
+	bruceCfg.Scope[0] = "MUTATED"
+	assert.Equal(t, "MUTATED", reg.Agents["bruce"].Scope[0],
+		"Scope slice aliases registry backing memory; mutation corrupts shared state")
+}
+
+// Scope entries containing control characters (\n, \r, etc.) must be rejected
+// at load validation. A newline embedded in a scope entry can break out of the
+// injected ScopeFocus block and add arbitrary text to the agent persona prompt.
+func TestRegistryLoad_ScopeEntryWithNewline(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance\nmalicious"]
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "scope")
+}
+
+func TestRegistryLoad_ScopeEntryWithCarriageReturn(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    scope: ["performance\rmalicious"]
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "scope")
 }

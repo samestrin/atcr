@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,6 +11,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRenderDisagreementsJSON_RoundTripAndTrailingNewline(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "p",
+			Reviewers: []string{"a"}, Confidence: "MEDIUM"},
+	}
+	df := reconcile.BuildDisagreements(findings, nil)
+
+	var buf bytes.Buffer
+	require.NoError(t, RenderDisagreementsJSON(&buf, df))
+	out := buf.String()
+
+	require.True(t, strings.HasSuffix(out, "\n"), "JSON output must end with a trailing newline")
+
+	var roundTrip reconcile.DisagreementsFile
+	require.NoError(t, json.Unmarshal([]byte(out), &roundTrip))
+	assert.Equal(t, df.SchemaVersion, roundTrip.SchemaVersion)
+	assert.Len(t, roundTrip.Items, len(df.Items))
+}
 
 func TestRenderDisagreements_EmptyIsExplicit(t *testing.T) {
 	var buf bytes.Buffer
@@ -111,4 +131,55 @@ func TestRenderDisagreements_EscapesFreeText(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, RenderDisagreements(&buf, df))
 	assert.NotContains(t, buf.String(), "<script>", "free text must be HTML-escaped")
+}
+
+func TestRenderDisagreements_EscapesBackticksInFreeText(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "x.go", Line: 1, Problem: "problem",
+			Reviewers: []string{"reviewer`name"}, Confidence: "MEDIUM", Disagreement: "a`b"},
+	}
+	df := reconcile.BuildDisagreements(findings, nil)
+	var buf bytes.Buffer
+	require.NoError(t, RenderDisagreements(&buf, df))
+	out := buf.String()
+	// Backticks in reviewer-controlled free text must be escaped so they cannot
+	// open an inline code span; file-path code spans still use literal backticks.
+	assert.Contains(t, out, "&#96;", "backtick must be HTML-escaped")
+	assert.NotContains(t, out, "reviewer`name", "literal backtick must not appear in free text")
+	assert.NotContains(t, out, "a`b", "literal backtick must not appear in free text")
+}
+
+func TestRenderDisagreements_GrayZoneEscapesAndTruncates(t *testing.T) {
+	longProblem := strings.Repeat("A", 600)
+	clusters := []reconcile.AmbiguousCluster{{
+		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
+		Findings: []stream.Finding{
+			{Severity: "HIGH", File: "g.go", Line: 7, Problem: "<script>alert(1)</script>buffer overrun risk", Reviewer: "gre`ta"},
+			{Severity: "LOW", File: "g.go", Line: 8, Problem: "minor bounds note", Reviewer: "kai"},
+		},
+	}}
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "s.go", Line: 2, Problem: longProblem,
+			Reviewers: []string{"a"}, Confidence: "MEDIUM", Disagreement: "a`b",
+			Verification: &reconcile.Verification{
+				Verdict: reconcile.VerdictUnverifiable, Skeptic: "skep`tic", Notes: "disagreed"}},
+	}
+	df := reconcile.BuildDisagreements(findings, clusters)
+
+	var buf bytes.Buffer
+	require.NoError(t, RenderDisagreements(&buf, df))
+	out := buf.String()
+
+	// Injection defense: script tags and backticks must not render literally in
+	// free-text fields (file-path code spans legitimately contain backticks).
+	assert.NotContains(t, out, "<script>", "free text must be HTML-escaped")
+	assert.NotContains(t, out, "gre`ta", "literal backtick must not appear in free text")
+	assert.NotContains(t, out, "skep`tic", "literal backtick must not appear in free text")
+	assert.NotContains(t, out, "a`b", "literal backtick must not appear in free text")
+
+	// escTrunc caps long fields.
+	assert.Contains(t, out, "...", "long problem must be truncated")
+
+	// Structural pairing: each position line pairs reviewer, severity, and problem.
+	assert.Contains(t, out, "gre&#96;ta — HIGH:", "reviewer must be paired with severity on one line")
 }

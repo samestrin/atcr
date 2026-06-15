@@ -23,8 +23,10 @@ type chatTurn struct {
 
 // fakeChatCompleter implements fanout.ChatCompleter (Complete + Chat). Each Chat
 // call pops the next scripted turn; calls past the end return a default final
-// message so a tripped loop's final-answer request always resolves. Safe for
-// concurrent use.
+// message so a tripped loop's final-answer request always resolves. Complete
+// returns the first turn's content (or empty if no turns) so the single-shot
+// degrade path returns a real verdict — tests can assert the outcome, not just
+// "unverifiable". Safe for concurrent use.
 type fakeChatCompleter struct {
 	mu        sync.Mutex
 	turns     []chatTurn
@@ -33,6 +35,11 @@ type fakeChatCompleter struct {
 }
 
 func (f *fakeChatCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.turns) > 0 {
+		return f.turns[0].content, nil
+	}
 	return "", nil
 }
 
