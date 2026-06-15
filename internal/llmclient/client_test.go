@@ -424,3 +424,97 @@ func TestComplete_MaxTokensOmittedWhenNil(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+// --- Epic 3.3 Phase 1: provider usage decoding + cost computation ---
+
+// usageResponse writes a chat-completions response that includes a provider
+// `usage` block, as a raw JSON map so the test does not depend on the internal
+// response struct carrying a Usage field.
+func usageResponse(w http.ResponseWriter, content string, promptTokens, completionTokens int) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"choices": []any{
+			map[string]any{"message": map[string]any{"role": "assistant", "content": content}},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+		},
+	})
+}
+
+// usageChatResponse writes a tool-capable chat response including a usage block.
+func usageChatResponse(w http.ResponseWriter, content string, promptTokens, completionTokens int) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"choices": []any{
+			map[string]any{
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": content},
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+		},
+	})
+}
+
+func TestCompleteWithUsage_TokensFromUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		usageResponse(w, "findings here", 14200, 4000)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "findings here", out)
+	assert.Equal(t, 14200, usage.PromptTokens)
+	assert.Equal(t, 4000, usage.CompletionTokens)
+}
+
+func TestCompleteWithUsage_AbsentUsageIsZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// No usage block at all — provider omitted it entirely.
+		okResponse(w, "no usage here")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "no usage here", out)
+	assert.Equal(t, 0, usage.PromptTokens)
+	assert.Equal(t, 0, usage.CompletionTokens)
+}
+
+func TestChat_TokensFromUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		usageChatResponse(w, "reviewed", 8000, 1500)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	content := "review"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	}, []Message{{Role: "user", Content: &content}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 8000, resp.Usage.PromptTokens)
+	assert.Equal(t, 1500, resp.Usage.CompletionTokens)
+}
+
+func TestComputeCostUSD_KnownModel(t *testing.T) {
+	// claude-sonnet-4-6 is a known model in the rate table ($3/M in, $15/M out).
+	// 1M input + 1M output tokens => 3.00 + 15.00 = 18.00 USD.
+	cost := ComputeCostUSD("claude-sonnet-4-6", 1_000_000, 1_000_000)
+	assert.InDelta(t, 18.0, cost, 1e-9)
+}
+
+func TestComputeCostUSD_UnknownModel(t *testing.T) {
+	// Unknown model must yield zero cost, never panic.
+	assert.Equal(t, 0.0, ComputeCostUSD("totally-unknown-model-xyz", 1000, 1000))
+}

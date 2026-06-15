@@ -86,6 +86,10 @@ type ChatResponse struct {
 	Message      Message
 	FinishReason string
 	Truncated    bool
+	// Usage carries the provider-reported token counts for this turn. Zero
+	// when the provider omits the `usage` block (additive field; existing
+	// callers that ignore it are unaffected).
+	Usage UsageData
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
@@ -106,6 +110,7 @@ type chatToolResponse struct {
 		FinishReason string  `json:"finish_reason"`
 		Message      Message `json:"message"`
 	} `json:"choices"`
+	Usage UsageData `json:"usage"`
 }
 
 // Chat performs one multi-turn chat-completions exchange: it serializes the
@@ -154,7 +159,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return nil, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason}
+	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

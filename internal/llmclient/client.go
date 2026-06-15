@@ -118,20 +118,38 @@ type chatRequest struct {
 	MaxTokens   *int      `json:"max_tokens,omitempty"`
 }
 
+// UsageData carries the provider-reported token counts for one call. A zero
+// value means the provider omitted the `usage` block entirely (graceful
+// degradation, not an error) and is always safe to pass to ComputeCostUSD.
+type UsageData struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message message `json:"message"`
 	} `json:"choices"`
+	Usage UsageData `json:"usage"`
 }
 
 // Complete invokes the provider and returns the assistant message content.
 // Retries on 429/5xx and transport-level errors with tuned backoff; other
 // non-2xx statuses and parse failures fail immediately. The API key value
-// never appears in any error.
+// never appears in any error. Existing callers that do not need token usage
+// keep this two-value signature; CompleteWithUsage exposes the usage block.
 func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
+	content, _, err := c.CompleteWithUsage(ctx, inv)
+	return content, err
+}
+
+// CompleteWithUsage is Complete plus the provider's token usage. Usage is the
+// zero value when the provider omits the `usage` block. All error paths return
+// an empty UsageData, never partial counts.
+func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, error) {
 	key, err := resolveKey(inv)
 	if err != nil {
-		return "", err
+		return "", UsageData{}, err
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:       inv.Model,
@@ -140,20 +158,20 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 		MaxTokens:   inv.MaxTokens,
 	})
 	if err != nil {
-		return "", fmt.Errorf("encoding request: %w", err)
+		return "", UsageData{}, fmt.Errorf("encoding request: %w", err)
 	}
 	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
 	if err != nil {
-		return "", err
+		return "", UsageData{}, err
 	}
 	var parsed chatResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+		return "", UsageData{}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("failed to parse response: no choices returned")
+		return "", UsageData{}, fmt.Errorf("failed to parse response: no choices returned")
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, parsed.Usage, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.
