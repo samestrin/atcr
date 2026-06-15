@@ -48,6 +48,10 @@ type Skeptic struct {
 // (non-nil) result is the caller's signal to record
 // Verification{Verdict: "unverifiable", Notes: "no_eligible_skeptic"} on the
 // finding — the selection layer itself never fabricates a verdict.
+//
+// Read-only contract: callers must not mutate fields of the returned Skeptic
+// values. Slice and pointer fields alias the registry's backing memory; mutating
+// them corrupts the shared registry for all subsequent calls in this process.
 func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int) []Skeptic {
 	out := []Skeptic{}
 	if reg == nil || n <= 0 {

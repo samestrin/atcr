@@ -340,6 +340,10 @@ func (r *Registry) applyDefaults() {
 // distinction (option-a decision, see roleValid). The result is always a
 // non-nil map — empty when nothing matches, the registry is empty, or the
 // receiver is nil. An unknown role simply matches nothing.
+//
+// Read-only contract: callers must not mutate the returned AgentConfig values.
+// Reference fields (Scope, pointer fields) alias the registry's backing memory;
+// mutating them corrupts the shared registry for the lifetime of the process.
 func (r *Registry) AgentsByRole(role string) map[string]AgentConfig {
 	out := make(map[string]AgentConfig)
 	if r == nil {
