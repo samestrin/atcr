@@ -338,6 +338,19 @@ func TestReadDisagreements_MalformedIsError(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestReadDisagreements_IncompatibleMajorVersionIsError(t *testing.T) {
+	// A disagreements.json written by a future 2.x writer is incompatible with
+	// the 1.x reader — ReadDisagreements must error rather than silently
+	// returning a partially-populated struct with missing fields.
+	reviewDir := t.TempDir()
+	reconDir := filepath.Join(reviewDir, "reconciled")
+	require.NoError(t, os.MkdirAll(reconDir, 0o755))
+	payload := `{"schemaVersion":"2.0","independenceModel":"x","items":[]}`
+	require.NoError(t, os.WriteFile(filepath.Join(reconDir, DisagreementsJSON), []byte(payload), 0o644))
+	_, err := ReadDisagreements(reviewDir)
+	require.Error(t, err, "schema version 2.0 must be rejected by a 1.x reader")
+}
+
 func TestBuildDisagreements_SchemaMetadata(t *testing.T) {
 	df := BuildDisagreements(nil, nil)
 	assert.Equal(t, DisagreementsSchemaVersion, df.SchemaVersion)
