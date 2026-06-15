@@ -292,6 +292,9 @@ func (r *Registry) validate() error {
 			if strings.TrimSpace(s) == "" {
 				return agentErrf(name, "agent '%s': scope entries must not be empty", name)
 			}
+			if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
+				return agentErrf(name, "agent '%s': scope entries must not contain control characters", name)
+			}
 		}
 	}
 	return nil
