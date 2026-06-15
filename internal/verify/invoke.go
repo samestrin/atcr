@@ -42,6 +42,10 @@ type Dispatcher interface {
 // budgets failureNotes folds into Notes for humans, surfaced structurally so the
 // caller can populate VerificationResult.TrippedBudgets (AC1). It is non-empty
 // only on a halted run; a clean verdict returns nil.
+//
+// Read-only contract: callers must not mutate the returned tripped-budget slice.
+// It aliases the fanout.Result's backing memory; mutating it corrupts the engine
+// result for any subsequent inspection.
 func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, []string, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("invokeSkeptic: nil context")
