@@ -4,3 +4,8 @@
 created: []
 
 referenced: []
+
+clarifications:
+  - mem-2026-06-14-59b48c  # Q1: provider-conformance test matrix scope → Epic 14.0
+  - mem-2026-06-14-019cbf  # Q2: AgentConfig shallow-copy aliasing — read-only in current callers
+  - mem-2026-06-14-c2f385  # Q3: block-level XML delimiter insufficient for per-field injection
