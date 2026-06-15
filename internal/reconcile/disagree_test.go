@@ -3,6 +3,7 @@ package reconcile
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -383,4 +384,16 @@ func TestBuildDisagreements_GrayZoneAllUnknownSeverityStillScoresAboveZero(t *te
 	gray := itemsByKind(df, KindGrayZone)
 	require.Len(t, gray, 1)
 	assert.Greater(t, gray[0].Score, 0.0, "unknown-severity cluster must still score above zero")
+}
+
+func TestScoreFor_LargeInputsNoIntOverflow(t *testing.T) {
+	// scoreFor multiplies spread × independence. Both are int, and independence
+	// is derived from len(f.Reviewers) — unbounded external input. When the int
+	// product overflows, the float64 conversion yields a wrong score. The fix
+	// converts operands to float64 before multiplying.
+	big := int(math.MaxInt64)
+	score := scoreFor(big, big, 0)
+	// int64 overflow: MaxInt64*MaxInt64 wraps to 1 → float64(1) = 1.0 (wrong).
+	// float64 first: float64(MaxInt64)*float64(MaxInt64) ≈ 8.5e37 (correct).
+	assert.Greater(t, score, 1e30, "scoreFor must widen to float64 before multiplying to avoid int overflow")
 }
