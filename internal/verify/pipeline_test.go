@@ -261,6 +261,33 @@ func TestRunVerify_ThoroughUsesThreeSkeptics(t *testing.T) {
 	assert.Equal(t, VerdictCounts{Confirmed: 1}, res.VerdictCounts)
 }
 
+// TestRunVerify_ThoroughMultiSkepticRecordsAllModels: in a --thorough run with
+// multiple eligible skeptics, the verification.json model field must name every
+// participating skeptic's model, not just the lead (skeptics[0]) model.
+func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
+	reg := skepticRegistry()
+	// skep=m-skep is already in skepticRegistry; add s2=m-s2. Alphabetically
+	// SelectEligibleSkeptics returns ["s2","skep"], so skeptics[0].Config.Model
+	// is "m-s2". The test asserts "m-skep" also appears — which fails today.
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return alwaysChat{content: `{"verdict":"confirmed","reasoning":"ok"}`}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, readErr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, readErr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Contains(t, vf.Findings[0].Model, "m-s2", "lead skeptic model must be recorded")
+	assert.Contains(t, vf.Findings[0].Model, "m-skep", "all participating skeptic models must be recorded")
+}
+
 // TestRunVerify_MissingReconciledFindings: a review with no findings.json returns
 // ErrNoReconciledFindings (the caller renders the reconcile-first guidance).
 func TestRunVerify_MissingReconciledFindings(t *testing.T) {
