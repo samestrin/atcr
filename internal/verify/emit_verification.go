@@ -22,6 +22,13 @@ const reconciledSubdir = "reconciled"
 // back into findings.json: this record additionally carries the skeptic's model
 // (the different-model rule's evidence), the full reasoning, and the cost/outcome
 // metadata (duration, tripped budgets) a human needs to judge a verdict.
+//
+// Skeptic names every participating voter; Model names only the skeptics whose
+// verdict produced the recorded outcome — a winners-only subset on a decisive vote,
+// all participants on a tie, and "" when no skeptic executed. So for a multi-vote
+// run Model may list fewer entries than Skeptic by design (see winningAttribution).
+// DurationMs is the wall-clock of the run that produced the verdict; for a finding
+// skipped on a later re-run it is carried forward unchanged, not recomputed.
 type VerificationResult struct {
 	File           string   `json:"file"`
 	Line           int      `json:"line"`

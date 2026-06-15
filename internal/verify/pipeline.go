@@ -243,18 +243,25 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 			continue
 		}
 		// Skipped this run: keep the authoritative verdict/skeptic/reasoning from the
-		// findings.json block, but carry Model/DurationMs/TrippedBudgets forward from
-		// the prior verification.json record (zero values if no prior exists) (AC4).
-		prior := priorByKey[key]
-		results = append(results, VerificationResult{
+		// findings.json block (AC4).
+		rec := VerificationResult{
 			File: f.File, Line: f.Line, Problem: f.Problem,
-			Verdict:        f.Verification.Verdict,
-			Skeptic:        f.Verification.Skeptic,
-			Reasoning:      f.Verification.Notes,
-			Model:          prior.Model,
-			DurationMs:     prior.DurationMs,
-			TrippedBudgets: prior.TrippedBudgets,
-		})
+			Verdict:   f.Verification.Verdict,
+			Skeptic:   f.Verification.Skeptic,
+			Reasoning: f.Verification.Notes,
+		}
+		// Carry Model/DurationMs/TrippedBudgets forward from the prior
+		// verification.json — but only when the prior verdict still matches the
+		// current block. A stale or hand-edited prior with a different verdict must
+		// not lend its audit metadata to a now-different outcome (zero values left
+		// if no prior, or a mismatched one, exists).
+		prior := priorByKey[key]
+		if strings.EqualFold(strings.TrimSpace(prior.Verdict), strings.TrimSpace(f.Verification.Verdict)) {
+			rec.Model = prior.Model
+			rec.DurationMs = prior.DurationMs
+			rec.TrippedBudgets = prior.TrippedBudgets
+		}
+		results = append(results, rec)
 	}
 	// TD-007: a verdict computed this run whose key matched no re-emitted finding
 	// indicates a key-construction mismatch; surface it on stderr rather than
@@ -417,8 +424,8 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 }
 
 // winningAttribution derives the audit Model and TrippedBudgets for a finding
-// from the skeptics whose verdict matched the aggregated (winning) verdict —
-// mirroring how joinSkeptics names contributors, but for the winners only.
+// from the skeptics that produced the recorded verdict — mirroring how
+// joinSkeptics names contributors, but resolving who "won".
 //
 // perSkeptic[i] and perTripped[i] are the verdict and tripped-budget slice of
 // skeptics[i] (verifyFinding builds the three slices together, so indices align).
@@ -426,17 +433,40 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 // only to unverifiable verdicts (a budget trip collapses a skeptic to
 // unverifiable), so a confirmed/refuted winner contributes none.
 //
-// When no per-skeptic verdict matches the aggregate — only possible on a tie that
-// aggregates to unverifiable with no unverifiable voter (e.g. 1 confirmed + 1
-// refuted) — every candidate model is recorded so a run that actually executed
-// never reports an empty Model.
+// Attribution depends on whether `winner` was decisive or a tie sentinel:
+//   - Decisive (a strict plurality, e.g. 2 confirmed > 1 refuted → confirmed):
+//     record only the skeptics whose verdict equals `winner` (AC2) — the losers'
+//     models are dropped.
+//   - Tie (aggregateVerdicts emits unverifiable with Skeptic naming every voter,
+//     e.g. 1 confirmed + 1 refuted, or 1+1+1): no skeptic "won", so record every
+//     participant's model so Model stays consistent with Skeptic rather than
+//     misattributing the outcome to the lone unverifiable voter.
 func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
+	// A verdict is decisive when no other verdict matches or exceeds its count;
+	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
+	counts := map[string]int{}
+	for _, v := range perSkeptic {
+		if v != nil {
+			counts[v.Verdict]++
+		}
+	}
+	decisive := true
+	for verdict, n := range counts {
+		if verdict != winner && n >= counts[winner] {
+			decisive = false
+			break
+		}
+	}
+
 	var models, budgets []string
 	seenModel := map[string]bool{}
 	seenBudget := map[string]bool{}
 	for i, v := range perSkeptic {
-		if v == nil || v.Verdict != winner {
+		if v == nil {
 			continue
+		}
+		if decisive && v.Verdict != winner {
+			continue // decisive vote: skip the losers
 		}
 		if m := skeptics[i].Config.Model; m != "" && !seenModel[m] {
 			seenModel[m] = true
@@ -446,14 +476,6 @@ func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification
 			if !seenBudget[b] {
 				seenBudget[b] = true
 				budgets = append(budgets, b)
-			}
-		}
-	}
-	if len(models) == 0 {
-		for _, sk := range skeptics {
-			if m := sk.Config.Model; m != "" && !seenModel[m] {
-				seenModel[m] = true
-				models = append(models, m)
 			}
 		}
 	}

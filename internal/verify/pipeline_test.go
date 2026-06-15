@@ -357,6 +357,72 @@ func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
 	assert.NotContains(t, vf.Findings[0].Model, "m-s3", "losing (refuting) skeptic model must NOT be attributed")
 }
 
+// TestRunVerify_ThreeWayTieRecordsAllParticipantModels locks the tie branch of
+// winningAttribution: when three skeptics split 1 confirmed / 1 refuted / 1
+// unverifiable, the aggregate is a tie → unverifiable, and Model must name every
+// participant — not just the lone unverifiable voter (independent-review MED).
+func TestRunVerify_ThreeWayTieRecordsAllParticipantModels(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	// Selection s2(m-s2), s3(m-s3), skep(m-skep): confirmed / refuted / unverifiable.
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
+			"m-skep": `{"verdict":"unverifiable","reasoning":"dunno"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "a 1/1/1 split is a tie → unverifiable")
+	for _, m := range []string{"m-s2", "m-s3", "m-skep"} {
+		assert.Contains(t, vf.Findings[0].Model, m, "tie must record every participant's model")
+	}
+}
+
+// TestRunVerify_SkipDropsMismatchedPriorMetadata locks the carry-forward guard: a
+// prior verification.json whose verdict no longer matches the current findings.json
+// block must NOT lend its Model/DurationMs/TrippedBudgets to the now-different
+// outcome (independent-review LOW).
+func TestRunVerify_SkipDropsMismatchedPriorMetadata(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+	}})
+	// Prior verdict is "refuted" — a stale/hand-edited mismatch against the current
+	// "confirmed" block; its rich metadata must be dropped, not carried.
+	require.NoError(t, WriteVerification(dir, []VerificationResult{{
+		File: "a.go", Line: 1, Problem: "boom", Verdict: "refuted", Skeptic: "s1",
+		Model: "m-stale", DurationMs: 9999, TrippedBudgets: []string{"timeout_secs"},
+	}}))
+
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
+	assert.Empty(t, vf.Findings[0].Model, "mismatched prior verdict must not carry its model")
+	assert.Zero(t, vf.Findings[0].DurationMs, "mismatched prior verdict must not carry its duration")
+	assert.Empty(t, vf.Findings[0].TrippedBudgets, "mismatched prior verdict must not carry its tripped budgets")
+}
+
 // TestRunVerify_SkipPreservesPriorMetadata locks AC4: a finding skipped on a
 // re-run (already-verified, no --fresh) must carry Model/DurationMs/TrippedBudgets
 // forward from the prior on-disk verification.json rather than re-synthesizing a
