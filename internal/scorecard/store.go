@@ -16,11 +16,17 @@ const maxLineBytes = 1 << 20
 
 // Append writes one record as a single JSONL line to the month file derived from
 // rec.RunID, under dir (created lazily with 0700 on first write). The line is
-// marshaled to one []byte (record + '\n') and emitted in a single O_APPEND Write
-// syscall: each record is well under PIPE_BUF, so concurrent same-file appends
-// are atomic and non-interleaved. No bufio.Writer is shared across records —
-// batching could merge writes past PIPE_BUF and tear lines under concurrency
-// (sprint-design "Concurrent reconcile runs" risk). The file is 0600.
+// marshaled to one []byte (record + '\n') and emitted in a single Write to a
+// file opened O_APPEND. On Linux/macOS a write() to a regular file opened
+// O_APPEND atomically seeks to end-of-file and writes contiguously, so two
+// processes appending concurrently never interleave or lose a record — the
+// guarantee is the per-write() atomic append for regular files, independent of
+// record size (it is NOT the PIPE_BUF bound, which governs pipes/FIFOs). No
+// bufio.Writer is shared across records — batching multiple records through one
+// buffered flush would coalesce them into a single larger write whose atomicity
+// is not guaranteed, tearing lines under concurrency (sprint-design "Concurrent
+// reconcile runs" risk). One Write per record preserves the guarantee. The file
+// is 0600. (Portability caveat for non-POSIX append semantics: TD-004.)
 func Append(dir string, rec Record) error {
 	month, err := monthFromRunID(rec.RunID)
 	if err != nil {

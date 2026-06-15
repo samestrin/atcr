@@ -80,7 +80,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// Emit the per-run scorecard (Epic 3.3). Best-effort: a scorecard failure is
 	// logged but never fails the reconcile (AC 01-01). The --no-scorecard flag
 	// (Story 5) is wired in Phase 4.
-	emitScorecard(cmd, reviewDir, res)
+	emitScorecard(reviewDir, res)
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if requireVerified {
@@ -99,7 +99,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 // verification.json when present. It is fully best-effort — every failure path
 // degrades to a logged warning and an emitted (possibly partial) record set,
 // never a reconcile failure. opts.NoScorecard wiring arrives in Phase 4.
-func emitScorecard(cmd *cobra.Command, reviewDir string, res reconcile.Result) {
+func emitScorecard(reviewDir string, res reconcile.Result) {
 	reviewers := map[string]scorecard.ReviewerMeta{}
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {
@@ -122,6 +122,11 @@ func emitScorecard(cmd *cobra.Command, reviewDir string, res reconcile.Result) {
 			Reviewers: m.Reviewers,
 		})
 		for _, rev := range m.Reviewers {
+			// Skip a blank reviewer column so a malformed finding cannot emit a
+			// junk record keyed on the empty name.
+			if rev == "" {
+				continue
+			}
 			if _, ok := reviewers[rev]; !ok {
 				reviewers[rev] = scorecard.ReviewerMeta{}
 			}
@@ -130,14 +135,14 @@ func emitScorecard(cmd *cobra.Command, reviewDir string, res reconcile.Result) {
 
 	runID := res.Summary.ReconciledAt + "-" + filepath.Base(reviewDir)
 	verPath := filepath.Join(reviewDir, "reconciled", "verification.json")
-	if err := scorecard.Emit(scorecard.EmitInput{
+	// Emit is best-effort and logs its own failures to stderr; ignore the return
+	// so reconcile never fails on a scorecard write and the failure is logged once.
+	_ = scorecard.Emit(scorecard.EmitInput{
 		RunID:            runID,
 		Findings:         findings,
 		Reviewers:        reviewers,
 		VerificationPath: verPath,
-	}, scorecard.EmitOpts{}); err != nil {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "atcr: warning: scorecard emission failed:", err)
-	}
+	}, scorecard.EmitOpts{})
 }
 
 // gateFlagValue reads the --fail-on flag and trims it, so both threshold

@@ -113,13 +113,46 @@ func TestStore_ConcurrentAppend_SameMonthFile(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			rec := sampleRecord(runID, "rev")
-			rec.FindingsRaised = i
+			rec.FindingsRaised = i // unique sentinel per record
 			_ = Append(dir, rec)
 		}(i)
 	}
 	wg.Wait()
 
-	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"))
+	// Parse every raw line independently: each must be a complete, valid record
+	// (no torn/interleaved lines) and the set of sentinels must be exactly 0..n-1
+	// (no lost or duplicated writes).
+	raw, err := os.ReadFile(filepath.Join(dir, "2026-06.jsonl"))
 	require.NoError(t, err)
-	assert.Len(t, recs, n, "every concurrent append must land as an intact line (no torn/lost lines)")
+	lines := splitNonEmptyLines(raw)
+	require.Len(t, lines, n, "every concurrent append must land as exactly one line (no lost/merged lines)")
+
+	seen := make(map[int]bool, n)
+	for _, line := range lines {
+		var r Record
+		require.NoError(t, json.Unmarshal(line, &r), "each line must be an intact, parseable record (no torn lines): %q", string(line))
+		assert.False(t, seen[r.FindingsRaised], "sentinel %d appeared twice", r.FindingsRaised)
+		seen[r.FindingsRaised] = true
+	}
+	for i := 0; i < n; i++ {
+		assert.True(t, seen[i], "sentinel %d was lost", i)
+	}
+}
+
+// splitNonEmptyLines splits raw JSONL bytes into trimmed non-empty lines so a
+// torn line (missing newline / merged with another) is observable as a parse
+// failure or a wrong line count, not silently absorbed.
+func splitNonEmptyLines(raw []byte) [][]byte {
+	var out [][]byte
+	start := 0
+	for i := 0; i <= len(raw); i++ {
+		if i == len(raw) || raw[i] == '\n' {
+			line := raw[start:i]
+			if len(line) > 0 {
+				out = append(out, line)
+			}
+			start = i + 1
+		}
+	}
+	return out
 }
