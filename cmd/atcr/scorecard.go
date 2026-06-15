@@ -54,8 +54,10 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 
 	recs, err := scorecard.FindByRunID(dir, runID)
 	if err != nil {
-		// A malformed run_id derived here is a usage error (exit 2).
-		return usageError(fmt.Errorf("invalid run_id %q: %w", runID, err))
+		// The run_id is already validated upstream (resolveScorecardRunID), so an
+		// error here is a real store read failure (e.g. an unreadable month file),
+		// not a usage error — surface it as a failure (exit 1).
+		return fmt.Errorf("failed to read scorecard store: %w", err)
 	}
 
 	reviewers := make([]scorecard.Record, 0, len(recs))

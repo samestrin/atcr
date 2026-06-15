@@ -124,19 +124,19 @@ func TestAggregateWithSinceFilter(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./...` clean
-- [ ] `go build ./...` succeeds
-- [ ] Test coverage >= 90% on `ParseSinceDuration` and time filter logic
+- [x] `go test ./internal/scorecard/...` passes
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./...` clean
+- [x] `go build ./...` succeeds
+- [x] Test coverage >= 90% on `ParseSinceDuration` and time filter logic
 
 **Story-Specific:**
-- [ ] `--since` flag is defined with default value `30d`
-- [ ] Supports `Nd`, `Nw`, `Nm` duration formats
-- [ ] Invalid formats produce clear error messages with usage hints
-- [ ] Time filter is applied before aggregation; only matching records contribute to leaderboard
-- [ ] Default behavior (no `--since`) uses 30-day window
-- [ ] Empty result set after filtering prints informative message and exits 0
+- [x] `--since` flag is defined with default value `30d`
+- [x] Supports `Nd`, `Nw`, `Nm` duration formats
+- [x] Invalid formats produce clear error messages with usage hints
+- [x] Time filter is applied before aggregation; only matching records contribute to leaderboard
+- [x] Default behavior (no `--since`) uses 30-day window
+- [x] Empty result set after filtering prints informative message and exits 0
 
 **Manual Review:**
 - [ ] Code reviewed and approved

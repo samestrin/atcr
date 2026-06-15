@@ -145,19 +145,19 @@ func TestLeaderboardFilters(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./...` clean
-- [ ] `go build ./...` succeeds
-- [ ] Test coverage >= 90% on filter functions
+- [x] `go test ./internal/scorecard/...` passes
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./...` clean
+- [x] `go build ./...` succeeds
+- [x] Test coverage >= 90% on filter functions
 
 **Story-Specific:**
-- [ ] `--model <name>` filters records to exact model match
-- [ ] `--persona <name>` filters records to exact reviewer match
-- [ ] Filters compose with AND semantics — all specified filters must match
-- [ ] Filters compose with `--since` — time filter and identity filters work together
-- [ ] Omitted filters default to "match all" (no restriction)
-- [ ] Empty result after filtering prints informative message and exits 0
+- [x] `--model <name>` filters records to exact model match
+- [x] `--persona <name>` filters records to exact reviewer match
+- [x] Filters compose with AND semantics — all specified filters must match
+- [x] Filters compose with `--since` — time filter and identity filters work together
+- [x] Omitted filters default to "match all" (no restriction)
+- [x] Empty result after filtering prints informative message and exits 0
 
 **Manual Review:**
 - [ ] Code reviewed and approved

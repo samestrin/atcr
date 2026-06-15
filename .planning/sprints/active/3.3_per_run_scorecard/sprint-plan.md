@@ -513,7 +513,7 @@ Use the Agent tool:
 
 ---
 
-### 3.1 [ ] **[View Single-Run Scorecard — RED](plan/user-stories/02-view-single-run-scorecard.md)**
+### 3.1 [x] **[View Single-Run Scorecard — RED](plan/user-stories/02-view-single-run-scorecard.md)**
 
 **Mode:** Moderate | **AC:** 02-01, 02-02, 02-03
 
@@ -534,7 +534,7 @@ Use the Agent tool:
 
 ---
 
-### 3.2 [ ] **[View Single-Run Scorecard — GREEN](plan/user-stories/02-view-single-run-scorecard.md)**
+### 3.2 [x] **[View Single-Run Scorecard — GREEN](plan/user-stories/02-view-single-run-scorecard.md)**
 
 1. Add `FindByRunID(runID string) ([]ScorecardRecord, error)` to `internal/scorecard/store.go`:
    - Derive month from run_id timestamp prefix (`2026-06-14T10:00:00Z-abc123` → `2026-06.jsonl`)
@@ -554,7 +554,7 @@ Use the Agent tool:
 
 ---
 
-### 3.2.A [ ] **[View Single-Run Scorecard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-view-single-run-scorecard.md)**
+### 3.2.A [x] **[View Single-Run Scorecard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-view-single-run-scorecard.md)**
 
 **Changed Files:** `cmd/atcr/scorecard.go`, `internal/scorecard/store.go`, `cmd/atcr/scorecard_test.go`, `internal/scorecard/store_test.go`, `cmd/atcr/main.go`
 
@@ -573,11 +573,17 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| HIGH (fixed in 3.3) | store.go FindByRunID | Returned the first month file with any match and never merged across months; a run split across a month boundary (the exact clock-skew case the fallback exists for) silently dropped the records in the non-winning months. | Rewrote FindByRunID to union matches across boundary-adjacent months; added TestStore_FindByRunID_UnionAcrossMonths. Also resolves the LOW perf concern (boundary-gated, no mid-month rescan). |
+| MEDIUM (fixed in 3.3) | paths.go IsRunID | A bare 7-char month prefix ("2026-06") passed IsRunID (only runID[:7] validated) and resolved to exit-1 "no records" instead of exit-2 "bad argument". | Tightened IsRunID to also require the RFC3339 'T' time component; added TestScorecardCmd_BareMonthPrefixIsUsageError. |
+| MEDIUM (fixed in 3.3) | paths.go monthRe | `^\d{4}-\d{2}$` accepted impossible months (2026-99/2026-00). | Constrained monthRe to 01-12; added TestStore_FindByRunID_RejectsInvalidMonth. |
+| MEDIUM (deferred → TD-007) | store.go / scorecard.go | Diagnostics go to process-global os.Stderr, not cmd.ErrOrStderr(), so a redirected error stream can't capture them. | Package-wide convention (matches Emit/ReadRecords); threading a writer is cross-cutting. Deferred. |
+| LOW (fixed in 3.3) | scorecard.go renderScorecard | Final stdout `w.Write` error was discarded (broken pipe → exit 0). | renderScorecard now returns the write error; runScorecard propagates it. |
+| LOW (no action) | scorecard.go COST/LATENCY columns | Unbounded numeric fields from JSONL could widen columns. | Reviewer/Model (the injection vector) already sanitized via sanitizeCell; numbers are trusted-local. No change. |
+
+**Verdict:** No CRITICAL. One HIGH (cross-month data loss) fixed in 3.3 with a regression test; two cheap MEDIUM correctness items (loose run_id / invalid-month acceptance) and one LOW (swallowed write error) fixed inline; one MEDIUM (stderr writer) captured as TD-007; one LOW no-action. All tests green, lint 0 issues.
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
@@ -586,7 +592,7 @@ Use the Agent tool:
 
 ---
 
-### 3.3 [ ] **[View Single-Run Scorecard — REFACTOR](plan/user-stories/02-view-single-run-scorecard.md)**
+### 3.3 [x] **[View Single-Run Scorecard — REFACTOR](plan/user-stories/02-view-single-run-scorecard.md)**
 
 1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
 2. Validate path argument at parse time (no traversal; reject anything not under `~/.config/atcr/scorecard/` or an explicit JSONL path)
@@ -599,7 +605,7 @@ Use the Agent tool:
 
 ---
 
-### 3.4 [ ] **[View Aggregated Leaderboard — RED](plan/user-stories/03-view-aggregated-leaderboard.md)**
+### 3.4 [x] **[View Aggregated Leaderboard — RED](plan/user-stories/03-view-aggregated-leaderboard.md)**
 
 **Mode:** Moderate | **AC:** 03-01, 03-02, 03-03, 03-05
 
@@ -624,7 +630,7 @@ Use the Agent tool:
 
 ---
 
-### 3.5 [ ] **[View Aggregated Leaderboard — GREEN](plan/user-stories/03-view-aggregated-leaderboard.md)**
+### 3.5 [x] **[View Aggregated Leaderboard — GREEN](plan/user-stories/03-view-aggregated-leaderboard.md)**
 
 1. Implement `internal/scorecard/aggregate.go`:
    - `FilterOpts` struct: `Since string`, `Model string`, `Persona string`
@@ -646,7 +652,7 @@ Use the Agent tool:
 
 ---
 
-### 3.5.A [ ] **[View Aggregated Leaderboard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-view-aggregated-leaderboard.md)**
+### 3.5.A [x] **[View Aggregated Leaderboard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-view-aggregated-leaderboard.md)**
 
 **Changed Files:** `internal/scorecard/aggregate.go`, `cmd/atcr/leaderboard.go`, `internal/scorecard/aggregate_test.go`, `cmd/atcr/leaderboard_test.go`, `cmd/atcr/main.go`
 
@@ -665,11 +671,16 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM (fixed in 3.6) | aggregate.go runIDTime | Timestamp end was located via the first 'Z', so a run_id with a numeric offset (`+00:00`) returned ok=false and — because the default 30d window is always active — was silently excluded from every view. | Replaced the 'Z'-scan with an RFC3339 prefix regex tolerating both Z and offset forms; added TestApplyFilters_ParsesOffsetTimestamp. |
+| MEDIUM (fixed in 3.6) | leaderboard.go no-match path | The always-active default `--since 30d` could hide all historical data behind the generic "no records match filters" message, indistinguishable from a bad --model/--persona. | No-match message now names the active window ("window: last 30d") and suggests a wider --since; added TestLeaderboardCmd_AllRecordsOlderThanDefaultWindow. |
+| LOW (fixed in 3.6) | scorecard.go sanitizeCell | Stripped C0+DEL (blocking ESC/ANSI) but not C1 controls (0x80-0x9f) or U+2028/U+2029 line separators that can fracture table rows. | Extended sanitizeCell to also strip C1 and U+2028/U+2029. |
+| LOW (fixed in 3.6) | aggregate.go Aggregate sort | Tie-break compared the stored float rate with `!=`; two groups equal-by-value but summed in different orders could differ sub-ULP and bypass the (reviewer, model) tie-break. | Rate comparison now uses exact int64 cross-multiplication; added TestAggregate_RankStableOnEqualRate. |
+| LOW (no action) | aggregate.go ParseSince | Accepts `+7d` (harmless) and rejects uppercase units via the default case. | Documented grammar is lowercase Nd/Nw/Nm; behavior left as-is. |
+
+**Verdict:** No CRITICAL/HIGH. Two MEDIUM (offset-timestamp silent drop, ambiguous no-match window) and two LOW (sanitization gap, float tie-break determinism) all fixed inline in 3.6 with regression tests; one LOW no-action. All tests green, lint 0 issues.
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 3.6, do NOT proceed until fixed
@@ -678,7 +689,7 @@ Use the Agent tool:
 
 ---
 
-### 3.6 [ ] **[View Aggregated Leaderboard — REFACTOR](plan/user-stories/03-view-aggregated-leaderboard.md)**
+### 3.6 [x] **[View Aggregated Leaderboard — REFACTOR](plan/user-stories/03-view-aggregated-leaderboard.md)**
 
 1. Fix CRITICAL/HIGH issues from 3.5.A (if any)
 2. Validate `--since` format at flag parse time; reject with clear error for unknown suffixes
@@ -691,30 +702,32 @@ Use the Agent tool:
 
 ---
 
-### 3.7 [ ] **Phase 3 DoD Verification**
+### 3.7 [x] **Phase 3 DoD Verification**
 
 ```
 Stories-2-3 DoD Complete
-Auto: {X}/5 | Story-Specific: 7/7 ACs
-Manual Review: [ ] Code reviewed
+Auto: 5/5 | Story-Specific: 7/7 ACs
+Manual Review: [x] Code reviewed (adversarial 3.2.A + 3.5.A, REFACTOR 3.3 + 3.6)
 ```
 
-- [ ] T3: `go test ./internal/scorecard/... ./cmd/atcr/...` — all passing
-- [ ] Coverage ≥ 80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 02-01: `atcr scorecard` resolves by run_id and directory path ✓
-- [ ] AC 02-02: Table renders all columns; conditional verification columns shown only when present ✓
-- [ ] AC 02-03: Error handling for no records and corrupted JSONL lines ✓
-- [ ] AC 03-01: Leaderboard ranked by corroboration_rate descending ✓
-- [ ] AC 03-02: `--since` filter applies time window correctly ✓
-- [ ] AC 03-03: `--model` and `--persona` filters composable ✓
-- [ ] AC 03-05: Graceful handling of empty store (exit 0) and no-match filters (exit 1) ✓
+- [x] T3: `go test ./internal/scorecard/... ./cmd/atcr/...` — all passing
+- [x] Coverage ≥ 80% (scorecard 89.4%, cmd/atcr 82.9%; aggregate.go 97.3%, ParseSince 100%)
+- [x] `golangci-lint run` — no errors (0 issues)
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 02-01: `atcr scorecard` resolves by run_id and directory path ✓ (TestScorecardCmd_ResolveByRunID, _ResolveByPath)
+- [x] AC 02-02: Table renders all columns; conditional verification columns shown only when present ✓ (TestScorecardCmd_TableRendering, _VerificationColumns, _NoVerificationColumnsWhenAbsent)
+- [x] AC 02-03: Error handling for no records and corrupted JSONL lines ✓ (TestScorecardCmd_NoRecordsFound, _CorruptedJSONL, _NoArgs, _InvalidRunID)
+- [x] AC 03-01: Leaderboard ranked by corroboration_rate descending ✓ (TestAggregate_RankedTable, _RankStableOnEqualRate)
+- [x] AC 03-02: `--since` filter applies time window correctly ✓ (TestParseSince, TestApplyFilters_Since*)
+- [x] AC 03-03: `--model` and `--persona` filters composable ✓ (TestApplyFilters_Model, _Persona, _Composed)
+- [x] AC 03-05: Graceful handling of empty store (exit 0) and no-match filters (exit 1) ✓ (TestLeaderboardCmd_EmptyStoreExit0, _NoFilterMatchExit1, _AllRecordsOlderThanDefaultWindow)
+
+> Note: sprint-plan distinguishes empty store (exit 0) from filters-match-nothing (exit 1); this intentionally refines the AC 03-02/03-03/03-05 prose (which described exit 0 for no-match) per the executable DoD contract.
 
 ---
 
-### 3.8 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+### 3.8 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 3 (integration-level, not TDD cadence)
 
@@ -734,11 +747,14 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW (fixed inline) | scorecard.go:55-59 | FindByRunID error was wrapped as usageError (exit 2, "invalid run_id"), but the run_id is already validated upstream, so the only error here is a real store read failure (permissions) — mislabeled as usage. | Now returns a plain "failed to read scorecard store" error (exit 1); comment corrected. |
+| LOW (no action) | leaderboard.go Long/flags | Phase-3 leaderboard help/flags do not mention `--export`/`--no-scorecard` — correct (those are Phase 4). Noted as a Phase-4 touchpoint. | Phase 4 extends Long + flags here. |
+| LOW (no action) | aggregate.go ApplyFilters | ApplyFilters drops aggregate records (per-reviewer leaderboard semantics, intentional). If Phase-4 export ever needs aggregate rows, add a RecordType-preserving variant rather than relaxing ApplyFilters. | None now; Phase-4 note. |
+
+**Verdict:** **PASS** — no CRITICAL/HIGH. Reviewer verified build/vet/lint/full-suite green, both commands registered, monthRe tightening does not regress the emit path (run_id is always UTC `YYYY-MM…Z`), Phase 1-2 emitter/MCP bridge/`--no-scorecard` intact, and Phase 4 can reuse `ReadAll`/`ReadRecords`/`ApplyFilters` without rework. One LOW fixed inline; two LOW are Phase-4 forward notes (no debt). **Phase gate passed.**
 
 **Action Required:**
 - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.

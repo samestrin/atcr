@@ -147,18 +147,18 @@ The `atcr scorecard` command handles missing records, corrupted JSONL lines, inv
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All unit tests passing (`go test ./cmd/atcr/... ./internal/scorecard/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] `go vet` passes with no warnings
+- [x] All unit tests passing (`go test ./cmd/atcr/... ./internal/scorecard/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
+- [x] `go vet` passes with no warnings
 
 **Story-Specific:**
-- [ ] Unparseable JSONL lines skipped with stderr warning (not hard failure)
-- [ ] No scorecard records → exit 1 with message: `"no scorecard records found for run <id>: run 'atcr reconcile' to generate data"`
-- [ ] Invalid arguments → exit 2 (usage error)
-- [ ] On error, no partial table written to stdout
-- [ ] Line-length limit prevents memory exhaustion from malformed JSONL
-- [ ] Error messages do not leak internal paths beyond user input
+- [x] Unparseable JSONL lines skipped with stderr warning (not hard failure)
+- [x] No scorecard records → exit 1 with message: `"no scorecard records found for run <id>: run 'atcr reconcile' to generate data"`
+- [x] Invalid arguments → exit 2 (usage error)
+- [x] On error, no partial table written to stdout
+- [x] Line-length limit prevents memory exhaustion from malformed JSONL
+- [x] Error messages do not leak internal paths beyond user input
 
 **Manual Review:**
 - [ ] Code reviewed and approved

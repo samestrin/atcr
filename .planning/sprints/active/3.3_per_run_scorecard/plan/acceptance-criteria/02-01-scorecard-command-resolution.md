@@ -126,15 +126,15 @@ Running `atcr scorecard [id-or-path]` resolves the argument to a `run_id`, reads
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All unit tests passing (`go test ./cmd/atcr/... ./internal/scorecard/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All unit tests passing (`go test ./cmd/atcr/... ./internal/scorecard/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr scorecard <run_id>` resolves records from correct monthly JSONL file
-- [ ] `atcr scorecard <path>` extracts `run_id` from `summary.json` and renders results
-- [ ] Argument discrimination (path vs id) matches `anchorDir` pattern
-- [ ] run_id validated with `ValidateReviewID` — no path traversal possible
+- [x] `atcr scorecard <run_id>` resolves records from correct monthly JSONL file
+- [x] `atcr scorecard <path>` extracts `run_id` from `summary.json` and renders results
+- [x] Argument discrimination (path vs id) matches `anchorDir` pattern
+- [x] run_id validated with `ValidateReviewID` — no path traversal possible
 
 **Manual Review:**
 - [ ] Code reviewed and approved

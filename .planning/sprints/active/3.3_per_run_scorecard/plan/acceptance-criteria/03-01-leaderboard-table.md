@@ -125,19 +125,19 @@ func TestLeaderboardTable(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./...` clean
-- [ ] `go build ./...` succeeds
-- [ ] Test coverage >= 90% on `aggregate.go`
+- [x] `go test ./internal/scorecard/...` passes
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./...` clean
+- [x] `go build ./...` succeeds
+- [x] Test coverage >= 90% on `aggregate.go`
 
 **Story-Specific:**
-- [ ] `atcr leaderboard` displays a table with all required columns: reviewer, model, runs, findings raised, findings corroborated, corroboration rate, total cost, cost per corroborated finding, avg latency
-- [ ] Table is sorted by corroboration rate descending
-- [ ] Records are grouped by (reviewer, model) key
-- [ ] Aggregate records (role=`aggregate`) are excluded
-- [ ] Cost per corroborated finding shows `—` when zero corroborated
-- [ ] Table renders via `text/tabwriter` with aligned columns
+- [x] `atcr leaderboard` displays a table with all required columns: reviewer, model, runs, findings raised, findings corroborated, corroboration rate, total cost, cost per corroborated finding, avg latency
+- [x] Table is sorted by corroboration rate descending
+- [x] Records are grouped by (reviewer, model) key
+- [x] Aggregate records (role=`aggregate`) are excluded
+- [x] Cost per corroborated finding shows `—` when zero corroborated
+- [x] Table renders via `text/tabwriter` with aligned columns
 
 **Manual Review:**
 - [ ] Code reviewed and approved

@@ -146,21 +146,21 @@ func TestLeaderboardGracefulHandling(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./...` clean
-- [ ] `go build ./...` succeeds
-- [ ] Test coverage >= 90% on error handling paths in `store.go` and `leaderboard.go`
+- [x] `go test ./internal/scorecard/...` passes
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./...` clean
+- [x] `go build ./...` succeeds
+- [x] Test coverage >= 90% on error handling paths in `store.go` and `leaderboard.go`
 
 **Story-Specific:**
-- [ ] Missing scorecard directory prints informative message and exits 0
-- [ ] Empty scorecard directory prints informative message and exits 0
-- [ ] Empty JSONL files are handled gracefully (no crash, informative message)
-- [ ] Malformed JSONL lines are skipped with per-line warnings to stderr
-- [ ] Non-JSONL files in the directory are ignored (only `*.jsonl` read)
-- [ ] Blank trailing lines in JSONL files are silently skipped
-- [ ] Unsupported `schema_version` records are skipped with warning
-- [ ] Partial/truncated writes from crashes are handled without crashing
+- [x] Missing scorecard directory prints informative message and exits 0
+- [x] Empty scorecard directory prints informative message and exits 0
+- [x] Empty JSONL files are handled gracefully (no crash, informative message)
+- [x] Malformed JSONL lines are skipped with per-line warnings to stderr
+- [x] Non-JSONL files in the directory are ignored (only `*.jsonl` read)
+- [x] Blank trailing lines in JSONL files are silently skipped
+- [x] Unsupported `schema_version` records are skipped with warning
+- [x] Partial/truncated writes from crashes are handled without crashing
 
 **Manual Review:**
 - [ ] Code reviewed and approved

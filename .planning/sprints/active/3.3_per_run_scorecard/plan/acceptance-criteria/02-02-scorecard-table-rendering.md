@@ -127,18 +127,18 @@ The `atcr scorecard` command renders per-reviewer records as an aligned table us
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All unit tests passing (`go test ./cmd/atcr/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
-- [ ] Golden file tests match expected output exactly
+- [x] All unit tests passing (`go test ./cmd/atcr/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
+- [x] Golden file tests match expected output exactly
 
 **Story-Specific:**
-- [ ] Standard table includes: reviewer, model, raised, corroborated, solo, corr%, cost, latency
-- [ ] Verification columns (verified, refuted, surv%) appear ONLY when data is present
-- [ ] Corroboration rate = `corroborated / raised` displayed as integer percentage
-- [ ] Cost formatted as `$X.XXXX` (4 decimal places)
-- [ ] Output fits within 80 columns when verification columns are absent
-- [ ] `text/tabwriter` used with consistent config (0, 2, 2, ' ', 0)
+- [x] Standard table includes: reviewer, model, raised, corroborated, solo, corr%, cost, latency
+- [x] Verification columns (verified, refuted, surv%) appear ONLY when data is present
+- [x] Corroboration rate = `corroborated / raised` displayed as integer percentage
+- [x] Cost formatted as `$X.XXXX` (4 decimal places)
+- [x] Output fits within 80 columns when verification columns are absent
+- [x] `text/tabwriter` used with consistent config (0, 2, 2, ' ', 0)
 
 **Manual Review:**
 - [ ] Code reviewed and approved
