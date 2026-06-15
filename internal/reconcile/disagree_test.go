@@ -324,3 +324,19 @@ func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *tes
 		"gray-zone member must be excluded even when JSONFinding.Problem differs from cluster member's problem")
 	assert.Len(t, itemsByKind(df, KindGrayZone), 1)
 }
+
+func TestBuildDisagreements_GrayZoneAllUnknownSeverityStillScoresAboveZero(t *testing.T) {
+	// A gray-zone cluster whose members all carry unknown/blank severities must
+	// not score 0 — otherwise a real tension cluster sorts below every solo LOW
+	// finding. The cluster has two distinct reviewers and real ambiguity; it
+	// deserves a floor score above a LOW solo (rank 1).
+	clusterFindings := []stream.Finding{
+		mf("", "u.go", 1, "unknown sev A", "f", "misc", 5, "e", "greta"),
+		mf("", "u.go", 2, "unknown sev B", "f", "misc", 5, "e", "kai"),
+	}
+	clusters := []AmbiguousCluster{{ID: "amb-u", File: "u.go", Line: 1, Similarity: 0.5, Findings: clusterFindings}}
+	df := BuildDisagreements(nil, clusters)
+	gray := itemsByKind(df, KindGrayZone)
+	require.Len(t, gray, 1)
+	assert.Greater(t, gray[0].Score, 0.0, "unknown-severity cluster must still score above zero")
+}
