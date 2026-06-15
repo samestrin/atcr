@@ -332,13 +332,21 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
+	score := scoreFor(spread, indep, severityRank[maxSev])
+	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
+	// never sort below a LOW solo (rank 1). When all members carry unknown or
+	// blank severities, severityRank[maxSev] is 0 and spread is 0, so scoreFor
+	// returns 0 — the cluster would sort dead last despite being real tension.
+	if score == 0 && len(c.Findings) > 0 {
+		score = 1
+	}
 	return DisagreementItem{
 		Kind:         KindGrayZone,
 		File:         c.File,
 		Line:         c.Line,
 		Severity:     maxSev,
 		Problem:      longestProblem(c.Findings),
-		Score:        scoreFor(spread, indep, severityRank[maxSev]),
+		Score:        score,
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    reviewers,
