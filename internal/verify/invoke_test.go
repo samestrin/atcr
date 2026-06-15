@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -153,10 +154,22 @@ func TestInvokeSkeptic_BudgetTripToolBytes(t *testing.T) {
 	sk.Config.ToolBudgetBytes = int64Ptr(10)
 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file")}}
 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "this content is definitely more than ten bytes", OriginalBytes: 46}}
-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
 	require.NoError(t, err)
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Contains(t, v.Notes, "tool_budget_bytes")
+	assert.Contains(t, tripped, "tool_budget_bytes", "tripped budgets must be surfaced separately from Notes")
+}
+
+func TestInvokeSkeptic_BudgetTripTimeout(t *testing.T) {
+	t.Parallel()
+	sk := testSkeptic()
+	sk.Config.TimeoutSecs = intPtr(1)
+	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), {delay: 2 * time.Second, content: `{"verdict":"confirmed"}`}}}
+	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
+	require.NoError(t, err)
+	assert.Equal(t, verdictUnverifiable, v.Verdict)
+	assert.Contains(t, tripped, "timeout_secs", "timeout budget trip must be surfaced structurally")
 }
 
 // TestInvokeSkeptic_SurfacesTrippedBudgets locks AC1: a budget trip is returned
