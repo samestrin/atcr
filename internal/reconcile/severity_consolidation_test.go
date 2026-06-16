@@ -38,6 +38,24 @@ func TestGrayZoneItem_NormalizesMixedCaseSeverity(t *testing.T) {
 	}
 }
 
+// TestSoloItem_LowercaseSeverityScoresCorrectly guards the finding-level
+// SeverityRank lookup in soloItem: a lowercase "high" solo must score 3 (HIGH
+// rank), not 0 from a map miss on the raw key.
+func TestSoloItem_LowercaseSeverityScoresCorrectly(t *testing.T) {
+	findings := []JSONFinding{
+		{Severity: "high", File: "a.go", Line: 1, Problem: "solo",
+			Reviewers: []string{"greta"}, Confidence: ConfMedium},
+	}
+	df := BuildDisagreements(findings, nil)
+	solos := itemsByKind(df, KindSoloFinding)
+	if len(solos) != 1 {
+		t.Fatalf("expected 1 solo, got %d", len(solos))
+	}
+	if solos[0].Score != 3.0 {
+		t.Fatalf("soloItem Score = %v, want 3.0 (HIGH rank); raw 'high' key misses map, scores 0", solos[0].Score)
+	}
+}
+
 // TestMerge_MixedCaseDuplicateIsNotADisagreement guards the adversarial fix: a
 // group whose only severities are casing variants of one level must merge to a
 // single canonical severity with no disagreement annotation. Before the seen-set
