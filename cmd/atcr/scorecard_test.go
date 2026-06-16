@@ -154,3 +154,31 @@ func TestScorecardCmd_BareMonthPrefixIsUsageError(t *testing.T) {
 	code, _ := execCmdCapture(t, "scorecard", "2026-06")
 	require.Equal(t, 2, code, "a bare YYYY-MM with no timestamp is a malformed run_id, not an empty run")
 }
+
+func TestScorecardCmd_SummaryUnreadableNoPathLeak(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses file permission checks")
+	}
+	isolate(t)
+	reviewDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(reviewDir, "reconciled"), 0o755))
+	summaryPath := filepath.Join(reviewDir, "reconciled", "summary.json")
+	require.NoError(t, os.WriteFile(summaryPath, []byte(`{"reconciled_at":"2026-06-14T10:00:00Z"}`), 0o644))
+	require.NoError(t, os.Chmod(summaryPath, 0o000))
+	defer os.Chmod(summaryPath, 0o644) // restore for t.TempDir cleanup
+
+	code, out := execCmdCapture(t, "scorecard", reviewDir)
+	require.Equal(t, 1, code, "unreadable summary.json is a real failure, not a usage error")
+	require.NotContains(t, out, summaryPath, "resolved absolute path of summary.json must not appear in error message")
+}
+
+func TestFormatPercent_ClampsOutOfRange(t *testing.T) {
+	// A corrupt record may carry a rate outside [0,1]; formatPercent must clamp to
+	// match the export path's clampRate rather than rendering nonsense like 500% or
+	// a negative percentage.
+	require.Equal(t, "100%", formatPercent(5.0), "above-range rate clamps to 100%")
+	require.Equal(t, "0%", formatPercent(-0.5), "below-range rate clamps to 0%")
+	require.Equal(t, "100%", formatPercent(1.0), "upper boundary unchanged")
+	require.Equal(t, "0%", formatPercent(0.0), "lower boundary unchanged")
+	require.Equal(t, "58%", formatPercent(0.58), "in-range rate rounds normally")
+}
