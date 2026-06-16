@@ -113,11 +113,7 @@ func failOnThreshold(cmd *cobra.Command) (string, error) {
 	if v == "" {
 		return "", nil
 	}
-	t, err := reconcile.ParseSeverity(v)
-	if err != nil {
-		return "", usageError(err)
-	}
-	return t, nil
+	return validateGate(v)
 }
 
 // resolveGateThreshold resolves the reconcile gate severity via the shared
