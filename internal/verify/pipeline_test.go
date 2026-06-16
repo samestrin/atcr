@@ -765,3 +765,39 @@ func TestVerifyFinding_ProgrammingFaultLogged(t *testing.T) {
 	assert.Contains(t, out, "class=programming_fault",
 		"a programming fault must emit a structured stderr log line")
 }
+
+// TestRunVerify_MultiSkepticNonFCDegradeParticipates exercises the single-shot
+// Complete (degrade) path under multi-vote aggregation: an eligible skeptic with
+// SupportsFC=false answers via Complete rather than the Chat tool loop, and its
+// verdict must still participate in the fold. Here the non-FC skeptic confirms
+// while the FC skeptic refutes → a 1/1 tie → unverifiable (not the FC skeptic's
+// lone refuted), and both participants' models are attributed.
+func TestRunVerify_MultiSkepticNonFCDegradeParticipates(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep, SupportsFC=true → Chat path
+	// s2=m-s2 with SupportsFC=false → engine degrades it to the single-shot
+	// Complete path instead of the Chat tool loop.
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	// byModelChat answers Complete (non-FC s2) and Chat (FC skep) by model: s2
+	// confirms via Complete, skep refutes via Chat → 1 confirmed + 1 refuted tie.
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"degrade path ran"}`,
+			"m-skep": `{"verdict":"refuted","reasoning":"chat path ran"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict,
+		"non-FC skeptic's confirmed vote must participate: 1 confirmed + 1 refuted is a tie")
+	assert.Contains(t, vf.Findings[0].Model, "m-s2", "degraded non-FC skeptic's model must be attributed")
+	assert.Contains(t, vf.Findings[0].Model, "m-skep", "FC skeptic's model must be attributed")
+}
