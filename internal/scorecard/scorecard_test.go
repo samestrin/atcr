@@ -173,6 +173,40 @@ func TestEmit_ConditionalFields_WithVerification(t *testing.T) {
 	assert.InDelta(t, 0.5, *bruce.SurvivedSkepticRate, 1e-9) // 1/(1+1)
 }
 
+// TestEmit_VerdictCreditsAllReviewersOfDuplicateLocation pins that when two
+// findings share the same (file, line, problem) key but carry different
+// reviewers, a verdict on that location credits BOTH reviewers — the second
+// finding must not overwrite the first's reviewers in the lookup map.
+func TestEmit_VerdictCreditsAllReviewersOfDuplicateLocation(t *testing.T) {
+	dir := t.TempDir()
+	verPath := writeVerification(t, dir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p","verdict":"confirmed"}
+	]}`)
+	in := EmitInput{
+		RunID: testRunID,
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"bruce"}},
+			{File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}},
+		},
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "claude-sonnet-4-6"},
+			"greta": {Model: "claude-haiku-4-5"},
+		},
+		VerificationPath: verPath,
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	recs := readJSONL(t, dir)
+	bruce := findReviewer(recs, "bruce")
+	greta := findReviewer(recs, "greta")
+	require.NotNil(t, bruce)
+	require.NotNil(t, greta)
+	require.NotNil(t, bruce.FindingsVerified)
+	require.NotNil(t, greta.FindingsVerified)
+	assert.Equal(t, 1, *bruce.FindingsVerified, "first finding's reviewer must still be credited")
+	assert.Equal(t, 1, *greta.FindingsVerified, "second finding at same key must not overwrite the first")
+}
+
 func TestEmit_ConditionalFields_NoVerification(t *testing.T) {
 	dir := t.TempDir()
 	in := threeReviewerInput()
