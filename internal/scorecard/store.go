@@ -54,7 +54,7 @@ func diagWriter(w io.Writer) io.Writer {
 // "never panic in a diagnostics path" contract.
 func isNilPointer(w io.Writer) bool {
 	rv := reflect.ValueOf(w)
-	return rv.Kind() == reflect.Ptr && rv.IsNil()
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
 }
 
 // Append writes one record as a single JSONL line to the month file derived from
