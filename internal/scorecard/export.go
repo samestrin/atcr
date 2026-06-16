@@ -200,10 +200,13 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 	env := ExportEnvelope{
 		SchemaVersion: SchemaVersion,
 		ExportedAt:    exportedAt.UTC().Format(time.RFC3339),
-		// Direct conversion (staticcheck S1016): ExportFilters mirrors FilterOpts
-		// field-for-field. A field added to one but not the other breaks this at
-		// compile time — the intended forcing function.
-		Filters: ExportFilters(opts),
+		// Explicit field assignment, not a struct conversion ExportFilters(opts): a
+		// conversion compiles only while the two structs stay field-for-field
+		// identical, but it would silently misalign if FilterOpts' fields were
+		// reordered (same types, new order → wrong since/model/persona echo in the
+		// public envelope, with no compile error). Naming each field is immune to
+		// reordering and equally terse.
+		Filters: ExportFilters{Since: opts.Since, Model: opts.Model, Persona: opts.Persona},
 		Records: rows,
 	}
 	return json.MarshalIndent(env, "", "  ")
