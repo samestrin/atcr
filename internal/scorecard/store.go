@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,34 +71,74 @@ func ReadRecords(path string) ([]Record, error) {
 	defer func() { _ = f.Close() }()
 
 	var recs []Record
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
-		if len(line) == 0 {
+	// A bufio.Reader (not bufio.Scanner) is used so a single over-long line can be
+	// drained and skipped rather than terminating the read: bufio.Scanner's
+	// ErrTooLong is terminal and cannot resume, so one oversized line in one month
+	// file would abort the whole leaderboard (ReadAll across every month). The
+	// buffer is sized to maxLineBytes so ReadSlice flags only a line past that cap.
+	br := bufio.NewReaderSize(f, maxLineBytes)
+	for {
+		frag, err := br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			// Line exceeds maxLineBytes: discard the buffered prefix, drain the rest
+			// without buffering it, warn, and continue with the next line.
+			fmt.Fprintf(os.Stderr, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
+			if derr := drainLine(br); derr != nil {
+				if derr == io.EOF {
+					break
+				}
+				return recs, fmt.Errorf("reading scorecard file: %w", derr)
+			}
 			continue
 		}
-		var r Record
-		if err := json.Unmarshal(line, &r); err != nil {
-			fmt.Fprintf(os.Stderr, "scorecard: skipping malformed record in %s: %v\n", path, err)
-			continue
+		if line := bytes.TrimSpace(frag); len(line) > 0 {
+			if r, ok := decodeRecord(line, path); ok {
+				recs = append(recs, r)
+			}
 		}
-		// Schema-version negotiation: a record from a newer, forward-incompatible
-		// schema must not be unmarshaled into this struct and aggregated as if it
-		// were the current version — a field rename/semantic change would silently
-		// corrupt totals. Warn and skip rather than pollute aggregates. (Older
-		// versions remain readable: v1 is the first schema, so there is nothing to
-		// migrate yet; an explicit migration shim slots in here when one appears.)
-		if r.SchemaVersion > SchemaVersion {
-			fmt.Fprintf(os.Stderr, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
-			continue
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return recs, fmt.Errorf("reading scorecard file: %w", err)
 		}
-		recs = append(recs, r)
-	}
-	if err := sc.Err(); err != nil {
-		return recs, fmt.Errorf("reading scorecard file: %w", err)
 	}
 	return recs, nil
+}
+
+// decodeRecord parses one trimmed JSONL line into a Record, applying the
+// malformed-skip and schema-version-skip rules. ok is false (with a stderr
+// warning already emitted) when the line must be skipped.
+func decodeRecord(line []byte, path string) (Record, bool) {
+	var r Record
+	if err := json.Unmarshal(line, &r); err != nil {
+		fmt.Fprintf(os.Stderr, "scorecard: skipping malformed record in %s: %v\n", path, err)
+		return Record{}, false
+	}
+	// Schema-version negotiation: a record from a newer, forward-incompatible
+	// schema must not be unmarshaled into this struct and aggregated as if it were
+	// the current version — a field rename/semantic change would silently corrupt
+	// totals. Warn and skip rather than pollute aggregates. (Older versions remain
+	// readable: v1 is the first schema, so there is nothing to migrate yet; an
+	// explicit migration shim slots in here when one appears.)
+	if r.SchemaVersion > SchemaVersion {
+		fmt.Fprintf(os.Stderr, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
+		return Record{}, false
+	}
+	return r, true
+}
+
+// drainLine discards bytes from br up to and including the next '\n' (or EOF)
+// without buffering them, used to skip the remainder of an over-long line. It
+// returns nil when a newline was consumed, or io.EOF / a read error otherwise.
+func drainLine(br *bufio.Reader) error {
+	for {
+		_, err := br.ReadSlice('\n')
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return err
+	}
 }
 
 // FindByRunID returns every record in dir carrying the given run_id, unioned
