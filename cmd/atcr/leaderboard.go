@@ -123,6 +123,9 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 // success-path `--export | jq` never sees non-JSON on stdout. time.Now().UTC()
 // is the envelope timestamp and the --since anchor.
 func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string) error {
+	if len(records) == 0 {
+		return fmt.Errorf("no scorecard data yet; run 'atcr reconcile' to generate records")
+	}
 	data, err := scorecard.Export(records, filters, time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, scorecard.ErrNoExportRecords) {

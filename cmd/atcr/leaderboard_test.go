@@ -193,10 +193,11 @@ func TestLeaderboardCmd_ExportNoFilterMatchExit1(t *testing.T) {
 
 func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
 	isolate(t)
-	// leaderboard --export on an empty store must emit exactly one error message.
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6") // record exists; filter will exclude it
+	// leaderboard --export with no matching filter must emit exactly one error message.
 	// Before the fix, the Fprintln in runLeaderboardExport AND err.Error() appended
-	// by the test harness produce two separate lines, causing this to fail.
-	code, out := execCmdCapture(t, "leaderboard", "--export")
+	// by the test harness produced two separate lines, causing this to fail.
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--model", "nonexistent")
 	require.Equal(t, 1, code)
 	require.NotContains(t, out, "Try widening --since", "duplicate Fprintln must be removed")
 	require.Contains(t, out, "no records match the export filters")
