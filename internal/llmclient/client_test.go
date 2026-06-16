@@ -53,6 +53,48 @@ func TestComplete_Success(t *testing.T) {
 	assert.Equal(t, "findings here", out)
 }
 
+func TestComplete_FallsBackToReasoningWhenContentEmpty(t *testing.T) {
+	// A reasoning model that exhausts its output budget mid-thought returns an
+	// empty content with the chain-of-thought in reasoning_content. The reviewer
+	// must salvage the reasoning (its draft findings are recoverable downstream)
+	// rather than contribute an empty review.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message message `json:"message"`
+		}{Message: message{Role: "assistant", Content: "", ReasoningContent: "HIGH|a.go:1|bug|fix|correctness|5|evidence|greta"}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "HIGH|a.go:1|bug")
+}
+
+func TestComplete_ContentWinsOverReasoning(t *testing.T) {
+	// When both arrive, visible content is authoritative and the reasoning
+	// chain-of-thought must not leak into the returned review.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message message `json:"message"`
+		}{Message: message{Role: "assistant", Content: "CLEAN REVIEW", ReasoningContent: "private thoughts"}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "CLEAN REVIEW", out)
+}
+
 func TestComplete_RetryOn503ThenSuccess(t *testing.T) {
 	var calls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

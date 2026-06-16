@@ -483,6 +483,18 @@ func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRa
 	return slots, perAgentMode, nil
 }
 
+// defaultMaxTokens is the output-token cap applied to every reviewer call.
+// Generous on purpose: reasoning/thinking models spend output budget on
+// chain-of-thought before emitting visible content, so a tight cap makes them
+// finish mid-reasoning and return an empty review (the doctor self-test warns of
+// exactly this). The empty-content case is still caught by the reasoning_content
+// fallback in llmclient; this headroom lets the clean Content path win first.
+const defaultMaxTokens = 8192
+
+// maxTokensPtr returns a fresh pointer to defaultMaxTokens for an Invocation
+// (MaxTokens is a pointer so an explicit value always serializes).
+func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
+
 // buildAgent resolves an agent's persona, renders its prompt against the payload
 // it sees, and assembles the invocation. It returns the agent and its mode.
 func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange) (Agent, string, error) {
@@ -542,6 +554,7 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
+			MaxTokens:   maxTokensPtr(),
 			Prompt:      prompt,
 		},
 	}, mode, nil
@@ -614,6 +627,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 			APIKeyEnv:   prov.APIKeyEnv,
 			Model:       ac.Model,
 			Temperature: ac.Temperature,
+			MaxTokens:   maxTokensPtr(),
 			Prompt:      primary.Prompt,
 		},
 	}, nil

@@ -111,6 +111,13 @@ type Invocation struct {
 type message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// ReasoningContent carries a reasoning/thinking model's chain-of-thought
+	// (litellm returns it on a separate channel from Content). It is the
+	// fallback when a reasoning model exhausts its output-token budget before
+	// emitting any Content: the chain-of-thought still holds the draft review,
+	// which the severity-prefix extraction recovers downstream. omitempty keeps
+	// it out of request bodies, where this struct is also used.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type chatRequest struct {
@@ -211,7 +218,15 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 	if len(parsed.Choices) == 0 {
 		return "", UsageData{}, fmt.Errorf("failed to parse response: no choices returned")
 	}
-	return parsed.Choices[0].Message.Content, parsed.Usage, nil
+	msg := parsed.Choices[0].Message
+	content := msg.Content
+	if content == "" {
+		// Reasoning model that ran out of output budget mid-thought: salvage the
+		// chain-of-thought so the reviewer still contributes instead of returning
+		// an empty review.
+		content = msg.ReasoningContent
+	}
+	return content, parsed.Usage, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.
