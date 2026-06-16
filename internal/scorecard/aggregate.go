@@ -55,6 +55,13 @@ func ParseSince(s string) (time.Duration, error) {
 	case 'w':
 		per = 7 * 24 * time.Hour
 	case 'm':
+		// "Nm" is a fixed 30-day month, independent of the calendar. This is a
+		// deliberate approximation: --since defines a rolling time window, so a
+		// "1m" window is always exactly 30 days. It intentionally does NOT match
+		// the on-disk month-file rotation (monthFromRunID / monthsToScan), which
+		// uses real calendar months (28-31 days); the two "month" notions can
+		// therefore disagree by a few days at a month edge. Window semantics and
+		// storage rotation are independent concerns and are not unified here.
 		per = 30 * 24 * time.Hour
 	default:
 		return 0, invalidSinceErr(s)
