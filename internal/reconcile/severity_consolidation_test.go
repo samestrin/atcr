@@ -37,3 +37,22 @@ func TestGrayZoneItem_NormalizesMixedCaseSeverity(t *testing.T) {
 		t.Fatalf("grayZoneItem score = %v, want 4 (rank of CRITICAL); a raw lookup collapses it to the floor", got.Score)
 	}
 }
+
+// TestMerge_MixedCaseDuplicateIsNotADisagreement guards the adversarial fix: a
+// group whose only severities are casing variants of one level must merge to a
+// single canonical severity with no disagreement annotation. Before the seen-set
+// was keyed by the normalized form, "critical" + "CRITICAL" produced a spurious
+// "critical vs CRITICAL" disagreement.
+func TestMerge_MixedCaseDuplicateIsNotADisagreement(t *testing.T) {
+	group := []stream.Finding{
+		{Severity: "critical", File: "a.go", Line: 1, Reviewer: "r1"},
+		{Severity: "CRITICAL", File: "a.go", Line: 1, Reviewer: "r2"},
+	}
+	got := Merge(group)
+	if got.Disagreement != "" {
+		t.Fatalf("Disagreement = %q, want empty (mixed-case duplicate is one severity)", got.Disagreement)
+	}
+	if got.Severity != "CRITICAL" {
+		t.Fatalf("Severity = %q, want canonical CRITICAL", got.Severity)
+	}
+}
