@@ -97,6 +97,7 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	w := diagWriter(opts.Writer)
 
 	var recs []Record
 	// A bufio.Reader (not bufio.Scanner) is used so a single over-long line can be
@@ -110,7 +111,7 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 		if err == bufio.ErrBufferFull {
 			// Line exceeds maxLineBytes: discard the buffered prefix, drain the rest
 			// without buffering it, warn, and continue with the next line.
-			fmt.Fprintf(os.Stderr, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
+			fmt.Fprintf(w, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
@@ -120,7 +121,7 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 			continue
 		}
 		if line := bytes.TrimSpace(frag); len(line) > 0 {
-			if r, ok := decodeRecord(line, path); ok {
+			if r, ok := decodeRecord(line, path, w); ok {
 				recs = append(recs, r)
 			}
 		}
@@ -137,10 +138,10 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 // decodeRecord parses one trimmed JSONL line into a Record, applying the
 // malformed-skip and schema-version-skip rules. ok is false (with a stderr
 // warning already emitted) when the line must be skipped.
-func decodeRecord(line []byte, path string) (Record, bool) {
+func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
 	var r Record
 	if err := json.Unmarshal(line, &r); err != nil {
-		fmt.Fprintf(os.Stderr, "scorecard: skipping malformed record in %s: %v\n", path, err)
+		fmt.Fprintf(w, "scorecard: skipping malformed record in %s: %v\n", path, err)
 		return Record{}, false
 	}
 	// Schema-version negotiation: a record from a newer, forward-incompatible
@@ -150,7 +151,7 @@ func decodeRecord(line []byte, path string) (Record, bool) {
 	// readable: v1 is the first schema, so there is nothing to migrate yet; an
 	// explicit migration shim slots in here when one appears.)
 	if r.SchemaVersion > SchemaVersion {
-		fmt.Fprintf(os.Stderr, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
+		fmt.Fprintf(w, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
 		return Record{}, false
 	}
 	return r, true
@@ -205,7 +206,7 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 		}
 	}
 	if fromNeighbour {
-		fmt.Fprintf(os.Stderr, "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+		fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
 	}
 	return matches, nil
 }
