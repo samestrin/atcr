@@ -50,7 +50,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 
 	arg := ""
 	if len(args) == 1 {
-		arg = args[0]
+		// Trim for parity with runScorecard (scorecard.go): a trailing-whitespace
+		// or quoted-blank arg becomes the empty default-anchor path rather than a
+		// raw value. anchorDir trims too, so this is belt-and-suspenders that keeps
+		// the two command handlers visibly consistent.
+		arg = strings.TrimSpace(args[0])
 	}
 	reviewDir, err := resolveReviewDir(arg)
 	if err != nil {
