@@ -1,3 +1,4 @@
+// Package stream tests the canonical severity-rank rubric and normalization helper.
 package stream
 
 import "testing"
@@ -32,6 +33,7 @@ func TestNormalizeSeverity(t *testing.T) {
 		"MEDIUM":   "MEDIUM",
 		" low":     "LOW",
 		"":         "",
+		"   ":      "",
 	}
 	for in, want := range cases {
 		if got := NormalizeSeverity(in); got != want {
