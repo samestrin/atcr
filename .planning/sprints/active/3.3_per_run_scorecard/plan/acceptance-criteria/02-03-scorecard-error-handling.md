@@ -161,6 +161,6 @@ The `atcr scorecard` command handles missing records, corrupted JSONL lines, inv
 - [x] Error messages do not leak internal paths beyond user input
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Error messages tested manually in terminal for clarity and actionability
-- [ ] Verified behavior when `~/.config/atcr/scorecard/` does not exist (fresh install)
+- [x] Code reviewed and approved
+- [x] Error messages tested manually in terminal for clarity and actionability
+- [x] Verified behavior when `~/.config/atcr/scorecard/` does not exist (fresh install)

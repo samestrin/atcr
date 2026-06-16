@@ -74,15 +74,15 @@ For every reconcile run, an aggregate record summarizing the full run is appende
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Aggregate record is last line in each run's emission batch
-- [ ] `record_type` field distinguishes `"reviewer"` from `"aggregate"`
-- [ ] Sums and totals verified against manual calculation
-- [ ] Corroboration rate computed from totals, not averaged
+- [x] Aggregate record is last line in each run's emission batch
+- [x] `record_type` field distinguishes `"reviewer"` from `"aggregate"`
+- [x] Sums and totals verified against manual calculation
+- [x] Corroboration rate computed from totals, not averaged
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

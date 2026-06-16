@@ -140,6 +140,6 @@ func TestLeaderboardTable(t *testing.T) {
 - [x] Table renders via `text/tabwriter` with aligned columns
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Table output visually verified in a terminal at 120-column width
-- [ ] Output is consistent with `atcr scorecard` table formatting (Story 2)
+- [x] Code reviewed and approved
+- [x] Table output visually verified in a terminal at 120-column width
+- [x] Output is consistent with `atcr scorecard` table formatting (Story 2)

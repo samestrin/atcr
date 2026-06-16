@@ -98,18 +98,18 @@ The export anonymization pass transforms each internal scorecard record into a `
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes, including PII sweep tests
-- [ ] `go vet ./internal/scorecard/...` clean
-- [ ] Test assertion: marshaled export JSON contains zero matches for path, API key, hostname, and email regex patterns
+- [x] `go test ./internal/scorecard/...` passes, including PII sweep tests
+- [x] `go vet ./internal/scorecard/...` clean
+- [x] Test assertion: marshaled export JSON contains zero matches for path, API key, hostname, and email regex patterns
 
 **Story-Specific:**
-- [ ] `AnonymizeRecord` function exists in `internal/scorecard/export.go`
-- [ ] `PublicRecord` struct defines only v1 schema fields (allowlist)
-- [ ] `run_id` is stripped from public output; replaced with sequential `index`
-- [ ] Fields `repo`, `path`, `organization`, `hostname`, `user` are absent from `PublicRecord`
-- [ ] Unknown/internal fields are not copied to `PublicRecord`
+- [x] `AnonymizeRecord` function exists in `internal/scorecard/export.go`
+- [x] `PublicRecord` struct defines only v1 schema fields (allowlist)
+- [x] `run_id` is stripped from public output; replaced with sequential `index`
+- [x] Fields `repo`, `path`, `organization`, `hostname`, `user` are absent from `PublicRecord`
+- [x] Unknown/internal fields are not copied to `PublicRecord`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Allowlist approach confirmed (not denylist)
-- [ ] PII regex patterns in tests cover common secrets formats
+- [x] Code reviewed and approved
+- [x] Allowlist approach confirmed (not denylist)
+- [x] PII regex patterns in tests cover common secrets formats

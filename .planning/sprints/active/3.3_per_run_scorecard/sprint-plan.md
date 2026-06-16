@@ -1014,7 +1014,7 @@ Use the Agent tool:
 
 ---
 
-### 5.1 [ ] **[Document Scorecard — RED](plan/user-stories/06-document-scorecard.md)**
+### 5.1 [x] **[Document Scorecard — RED](plan/user-stories/06-document-scorecard.md)**
 
 **Mode:** Moderate | **AC:** 06-01
 
@@ -1030,7 +1030,7 @@ Use the Agent tool:
 
 ---
 
-### 5.2 [ ] **[Document Scorecard — GREEN](plan/user-stories/06-document-scorecard.md)**
+### 5.2 [x] **[Document Scorecard — GREEN](plan/user-stories/06-document-scorecard.md)**
 
 1. Create `docs/scorecard.md` covering:
    - **Schema (v1):** Full field table — name, type, required/conditional, description; `schema_version` purpose and value
@@ -1056,7 +1056,7 @@ Use the Agent tool:
 
 ---
 
-### 5.2.A [ ] **[Documentation + Integration Tests — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-document-scorecard.md)**
+### 5.2.A [x] **[Documentation + Integration Tests — ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-document-scorecard.md)**
 
 **Changed Files:** `docs/scorecard.md`, `internal/scorecard/integration_test.go`, `internal/scorecard/docs_test.go`
 
@@ -1075,11 +1075,15 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM (fixed in 5.3) | docs/scorecard.md leaderboard Behavior | The `leaderboard` Behavior list omitted the bare-`--output`-without-`--export` path, which `leaderboard.go:51-53` makes a usage error (exit 2). | Added a Behavior bullet documenting `--output` without `--export` → usage error (exit 2). |
+| MEDIUM (fixed in 5.3) | docs/scorecard.md scorecard Behavior | The `scorecard` Behavior list omitted the path-resolution branch in `scorecard.go:104-123`: missing `reconciled/summary.json` → exit 2 ("run reconcile first"); present-but-corrupt/unreadable summary.json → exit 1 (real failure). | Added Behavior bullets covering both path-resolution exit codes. |
+| LOW (fixed in 5.3) | docs/scorecard.md per-reviewer example | Example showed `corroboration_rate: 0.58` for 7/12 = 0.5833…, misrepresenting the float's precision. | Changed the example to clean-dividing counts (corroborated 6 / raised 12 = exact 0.5). |
+| LOW (fixed in 5.3) | internal/scorecard/integration_test.go | Integration suite covered the conditional-field omission path (no verification → nil) but not the emission path (verification present → populated). | Added `TestIntegration_ReconcileEmitRead_WithVerification` supplying a valid VerificationPath and asserting the three conditional fields with expected tallies. |
+
+**Verdict:** No CRITICAL/HIGH. Reviewer confirmed the privacy/allowlist doc matches `export.go` `PublicRecord`+`scrubField` exactly (every preserved field maps to a struct field, every stripped category to a scrub regex, `run_id` correctly off the allowlist, reviewer/persona correctly preserved), exit codes match the CLI source, all tests use `t.TempDir()`, and `docs_test.go` locates the repo root correctly. Two MEDIUM (doc exit-code completeness) and two LOW (example precision, verification-path coverage) all fixed inline in 5.3 with no deferral.
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 5.3, do NOT proceed until fixed
@@ -1088,7 +1092,7 @@ Use the Agent tool:
 
 ---
 
-### 5.3 [ ] **[Documentation + Integration Tests — REFACTOR](plan/user-stories/06-document-scorecard.md)**
+### 5.3 [x] **[Documentation + Integration Tests — REFACTOR](plan/user-stories/06-document-scorecard.md)**
 
 1. Fix CRITICAL/HIGH issues from 5.2.A (if any)
 2. Verify docs/scorecard.md section headers are clear and consistent (Schema, Storage, CLI Usage, Privacy Model)
@@ -1100,26 +1104,26 @@ Use the Agent tool:
 
 ---
 
-### 5.4 [ ] **Phase 5 DoD Verification**
+### 5.4 [x] **Phase 5 DoD Verification**
 
 ```
 Story-6 DoD Complete
-Auto: {X}/5 | Story-Specific: 1/1 ACs
-Manual Review: [ ] Code reviewed [ ] Docs reviewed
+Auto: 5/5 | Story-Specific: 1/1 ACs
+Manual Review: [x] Code reviewed (adversarial 5.2.A + REFACTOR 5.3) [x] Docs reviewed
 ```
 
-- [ ] T3: `go test ./...` — all passing
-- [ ] Integration: `go test -tags=integration ./...` — all passing
-- [ ] Coverage ≥ 80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 06-01: `docs/scorecard.md` exists; schema, storage, CLI usage, and privacy model documented ✓
-- [ ] Manual: docs/scorecard.md reviewed for accuracy against current implementation
+- [x] T3: `go test ./...` — all passing
+- [x] Integration: `go test -tags=integration ./...` — all passing (4 scorecard integration tests)
+- [x] Coverage ≥ 80% (module total 88.3%)
+- [x] `golangci-lint run` — no errors (0 issues)
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 06-01: `docs/scorecard.md` exists; schema, storage, CLI usage, and privacy model documented ✓ (TestDocs_ScorecardMdExists)
+- [x] Manual: docs/scorecard.md reviewed for accuracy against current implementation (privacy model verified field-for-field against export.go in 5.2.A)
 
 ---
 
-### 5.5 [ ] **Phase 5 — GATE: Integration & Exit Review (subagent)**
+### 5.5 [x] **Phase 5 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 5 (integration-level, not TDD cadence)
 
@@ -1139,11 +1143,12 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| _(none)_ | | No CRITICAL/HIGH/MEDIUM/LOW findings. | — |
+
+**Verdict:** **PASS** — gate reviewer confirmed full repo build/vet/unit/integration (`-tags=integration`)/golangci-lint all green (with and without the integration tag); no symbol collisions (`integRunID`/`integMonthFile`/`repoRoot` unique vs the existing `testRunID`); integration tests use real assertions with correct `t.TempDir()` + `EmitOpts.Dir` isolation (no real-store leakage); and `docs/scorecard.md` flags/exit codes match the cmd/atcr source. The final validation phase can run all gates and verify all 21 ACs without additional setup. **Phase gate passed.** Nothing deferred to TD.
 
 **Action Required:**
 - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
@@ -1157,38 +1162,38 @@ Use the Agent tool:
 
 ### Validation Checklist
 
-- [ ] All unit tests passing: `go test ./...`
-- [ ] Integration tests passing: `go test -tags=integration ./...`
-- [ ] Coverage ≥ 80%: `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out`
-- [ ] Lint clean: `golangci-lint run`
-- [ ] Vet clean: `go vet ./...`
-- [ ] Build succeeds: `go build ./...`
+- [x] All unit tests passing: `go test ./...`
+- [x] Integration tests passing: `go test -tags=integration ./...`
+- [x] Coverage ≥ 80%: `go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out` (88.3% module total)
+- [x] Lint clean: `golangci-lint run` (0 issues)
+- [x] Vet clean: `go vet ./...`
+- [x] Build succeeds: `go build ./...`
 
 ### AC Verification (all 21)
 
 | AC | Description | Status |
 |----|-------------|--------|
-| 01-01 | JSONL file created at `~/.config/atcr/scorecard/YYYY-MM.jsonl` | [ ] |
-| 01-02 | All required schema fields present in emitted records | [ ] |
-| 01-03 | Verification fields conditional on verification.json presence | [ ] |
-| 01-04 | `--no-scorecard` suppresses all writes | [ ] |
-| 01-05 | Aggregate record appended per run alongside per-reviewer records | [ ] |
-| 02-01 | `atcr scorecard` resolves by run_id and directory path | [ ] |
-| 02-02 | Table renders all columns; conditional verification columns | [ ] |
-| 02-03 | Error handling: no records (exit 0), corrupted JSONL (skip+warn) | [ ] |
-| 03-01 | Leaderboard ranked by corroboration_rate descending | [ ] |
-| 03-02 | `--since` filter applies time window correctly | [ ] |
-| 03-03 | `--model` and `--persona` filters composable | [ ] |
-| 03-04 | `--export` flag produces JSON output | [ ] |
-| 03-05 | Graceful handling of empty store (exit 0) and no-match (exit 1) | [ ] |
-| 04-01 | Public schema v1 conformance (schema_version field) | [ ] |
-| 04-02 | Anonymization strips run_id, paths, API keys | [ ] |
-| 04-03 | All metrics and model/persona/role preserved in export | [ ] |
-| 04-04 | Deterministic output; filters before anonymization; exit 1 on no match | [ ] |
-| 05-01 | `--no-scorecard` appears in `atcr reconcile --help` | [ ] |
-| 05-02 | Zero records written with `--no-scorecard` | [ ] |
-| 05-03 | No side effects on exit code or stdout/stderr with `--no-scorecard` | [ ] |
-| 06-01 | `docs/scorecard.md` with schema, storage, CLI usage, privacy model | [ ] |
+| 01-01 | JSONL file created at `~/.config/atcr/scorecard/YYYY-MM.jsonl` | [x] |
+| 01-02 | All required schema fields present in emitted records | [x] |
+| 01-03 | Verification fields conditional on verification.json presence | [x] |
+| 01-04 | `--no-scorecard` suppresses all writes | [x] |
+| 01-05 | Aggregate record appended per run alongside per-reviewer records | [x] |
+| 02-01 | `atcr scorecard` resolves by run_id and directory path | [x] |
+| 02-02 | Table renders all columns; conditional verification columns | [x] |
+| 02-03 | Error handling: no records (exit 0), corrupted JSONL (skip+warn) | [x] |
+| 03-01 | Leaderboard ranked by corroboration_rate descending | [x] |
+| 03-02 | `--since` filter applies time window correctly | [x] |
+| 03-03 | `--model` and `--persona` filters composable | [x] |
+| 03-04 | `--export` flag produces JSON output | [x] |
+| 03-05 | Graceful handling of empty store (exit 0) and no-match (exit 1) | [x] |
+| 04-01 | Public schema v1 conformance (schema_version field) | [x] |
+| 04-02 | Anonymization strips run_id, paths, API keys | [x] |
+| 04-03 | All metrics and model/persona/role preserved in export | [x] |
+| 04-04 | Deterministic output; filters before anonymization; exit 1 on no match | [x] |
+| 05-01 | `--no-scorecard` appears in `atcr reconcile --help` | [x] |
+| 05-02 | Zero records written with `--no-scorecard` | [x] |
+| 05-03 | No side effects on exit code or stdout/stderr with `--no-scorecard` | [x] |
+| 06-01 | `docs/scorecard.md` with schema, storage, CLI usage, privacy model | [x] |
 
 ### Optional: Targeted Mutation Testing
 
@@ -1198,13 +1203,13 @@ Mutation testing is UNAVAILABLE in this environment. Skip this step.
 
 Compare final implementation against [original-requirements.md](plan/original-requirements.md):
 
-- [ ] All 8 original ACs from epic addressed
-- [ ] No scope added beyond the original request
-- [ ] Hard prerequisite (llmclient usage parsing) resolved in Phase 1
-- [ ] Schema versioning (`schema_version: 1`) implemented and documented
-- [ ] Storage at `~/.config/atcr/scorecard/` (never committed to git) — documented
-- [ ] Public export format documented as experimental until Epic 10.0 stabilizes
-- [ ] Out-of-scope items NOT implemented: public leaderboard site, team-shared storage, real-time dashboard, persona quality scoring beyond standard metrics
+- [x] All 8 original ACs from epic addressed
+- [x] No scope added beyond the original request
+- [x] Hard prerequisite (llmclient usage parsing) resolved in Phase 1
+- [x] Schema versioning (`schema_version: 1`) implemented and documented
+- [x] Storage at `~/.config/atcr/scorecard/` (never committed to git) — documented
+- [x] Public export format documented as experimental until Epic 10.0 stabilizes
+- [x] Out-of-scope items NOT implemented: public leaderboard site, team-shared storage, real-time dashboard, persona quality scoring beyond standard metrics
 
 ---
 

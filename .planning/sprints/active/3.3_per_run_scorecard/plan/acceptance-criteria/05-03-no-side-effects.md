@@ -91,15 +91,15 @@ Passing `--no-scorecard` does not alter reconcile analysis, corroboration, summa
 ## Definition of Done
 
 ### Automated Tests
-- [ ] Integration test: stdout output is byte-identical with/without `--no-scorecard`
-- [ ] Integration test: `summary.json` content is identical with/without the flag
-- [ ] Integration test: exit code is identical with/without the flag (both success and failure cases)
-- [ ] Integration test: no scorecard-related text appears in stdout/stderr when `--no-scorecard` is passed
+- [x] Integration test: stdout output is byte-identical with/without `--no-scorecard`
+- [x] Integration test: `summary.json` content is identical with/without the flag
+- [x] Integration test: exit code is identical with/without the flag (both success and failure cases)
+- [x] Integration test: no scorecard-related text appears in stdout/stderr when `--no-scorecard` is passed
 
 ### Story-Specific
-- [ ] `--no-scorecard` has no effect on any reconcile logic outside the scorecard emission hook
-- [ ] The flag is not persisted in any form (config, summary.json, scorecard records)
-- [ ] Error paths do not reference scorecard status
+- [x] `--no-scorecard` has no effect on any reconcile logic outside the scorecard emission hook
+- [x] The flag is not persisted in any form (config, summary.json, scorecard records)
+- [x] Error paths do not reference scorecard status
 
 ### Manual Verification
-- [ ] Run `atcr reconcile` and `atcr reconcile --no-scorecard` side-by-side; diff the output to confirm only the JSONL store differs
+- [x] Run `atcr reconcile` and `atcr reconcile --no-scorecard` side-by-side; diff the output to confirm only the JSONL store differs

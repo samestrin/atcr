@@ -71,14 +71,14 @@ The `--no-scorecard` boolean flag is registered on the `atcr reconcile` command,
 ## Definition of Done
 
 ### Automated Tests
-- [ ] Unit test verifies `--no-scorecard` flag is registered on `reconcileCmd`
-- [ ] Unit test verifies flag default value is `false`
-- [ ] Unit test verifies help text contains `--no-scorecard` with a clear description
-- [ ] Unit test verifies `--no-scorecards` (typo) is rejected with exit code 1
+- [x] Unit test verifies `--no-scorecard` flag is registered on `reconcileCmd`
+- [x] Unit test verifies flag default value is `false`
+- [x] Unit test verifies help text contains `--no-scorecard` with a clear description
+- [x] Unit test verifies `--no-scorecards` (typo) is rejected with exit code 1
 
 ### Story-Specific
-- [ ] Flag description is discoverable and unambiguous in `--help` output
-- [ ] Flag is a pure boolean — no string value parsing required
+- [x] Flag description is discoverable and unambiguous in `--help` output
+- [x] Flag is a pure boolean — no string value parsing required
 
 ### Manual Verification
-- [ ] `atcr reconcile --help` output reviewed for clarity and consistency with other flags
+- [x] `atcr reconcile --help` output reviewed for clarity and consistency with other flags

@@ -79,28 +79,28 @@
 **Test Type:** MANUAL
 
 **Manual Review Checklist:**
-- [ ] `docs/scorecard.md` exists and renders as valid Markdown (no broken links or syntax errors)
-- [ ] All v1 internal record fields are documented with type and description
-- [ ] Verification-conditional fields are marked as optional
-- [ ] Storage location and rotation behavior are documented
-- [ ] Each new CLI command/flag has a usage example
-- [ ] Privacy model lists preserved and stripped fields explicitly
-- [ ] All relative links to user stories and acceptance criteria resolve
+- [x] `docs/scorecard.md` exists and renders as valid Markdown (no broken links or syntax errors)
+- [x] All v1 internal record fields are documented with type and description
+- [x] Verification-conditional fields are marked as optional
+- [x] Storage location and rotation behavior are documented
+- [x] Each new CLI command/flag has a usage example
+- [x] Privacy model lists preserved and stripped fields explicitly
+- [x] All relative links to user stories and acceptance criteria resolve
 
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `docs/scorecard.md` is present in the repository
-- [ ] Markdown link checker (if available) reports no broken relative links
+- [x] `docs/scorecard.md` is present in the repository (TestDocs_ScorecardMdExists)
+- [x] Markdown link checker (if available) reports no broken relative links (links to verification.md, findings-format.md resolve)
 
 **Story-Specific:**
-- [ ] Schema v1 is documented with a complete JSON example
-- [ ] Storage location and monthly rotation are documented
-- [ ] `atcr scorecard`, `atcr leaderboard`, and `--export` usage examples are present
-- [ ] `--no-scorecard` suppression is documented
-- [ ] Privacy model / anonymization rules are documented
-- [ ] Epic 10.0 submission context is mentioned
+- [x] Schema v1 is documented with a complete JSON example
+- [x] Storage location and monthly rotation are documented
+- [x] `atcr scorecard`, `atcr leaderboard`, and `--export` usage examples are present
+- [x] `--no-scorecard` suppression is documented
+- [x] Privacy model / anonymization rules are documented
+- [x] Epic 10.0 submission context is mentioned
 
 **Manual Review:**
-- [ ] Documentation reviewed for technical accuracy against implemented behavior
-- [ ] Privacy section reviewed for completeness and safety
+- [x] Documentation reviewed for technical accuracy against implemented behavior (5.2.A adversarial review verified docs vs source)
+- [x] Privacy section reviewed for completeness and safety (allowlist verified field-for-field against export.go)

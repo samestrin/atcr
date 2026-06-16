@@ -141,5 +141,5 @@ The `atcr scorecard` command renders per-reviewer records as an aligned table us
 - [x] `text/tabwriter` used with consistent config (0, 2, 2, ' ', 0)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Table output visually inspected in a terminal for alignment
+- [x] Code reviewed and approved
+- [x] Table output visually inspected in a terminal for alignment

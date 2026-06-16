@@ -163,6 +163,6 @@ func TestLeaderboardGracefulHandling(t *testing.T) {
 - [x] Partial/truncated writes from crashes are handled without crashing
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Error messages are clear and actionable for the end user
-- [ ] Warning format is consistent with other atcr commands
+- [x] Code reviewed and approved
+- [x] Error messages are clear and actionable for the end user
+- [x] Warning format is consistent with other atcr commands

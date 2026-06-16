@@ -94,19 +94,19 @@ The `atcr leaderboard --export` command produces a versioned JSON document confo
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/... ./cmd/atcr/...` passes
-- [ ] `go vet ./internal/scorecard/... ./cmd/atcr/...` clean
-- [ ] `go build ./cmd/atcr/...` succeeds
-- [ ] `atcr leaderboard --help` lists `--export` and `--output` flags
+- [x] `go test ./internal/scorecard/... ./cmd/atcr/...` passes
+- [x] `go vet ./internal/scorecard/... ./cmd/atcr/...` clean
+- [x] `go build ./cmd/atcr/...` succeeds
+- [x] `atcr leaderboard --help` lists `--export` and `--output` flags
 
 **Story-Specific:**
-- [ ] `Export()` function in `internal/scorecard/export.go` returns valid v1 schema JSON
-- [ ] `schema_version` field is integer `1` in all output
-- [ ] `exported_at` field is RFC 3339 timestamp
-- [ ] `filters` object reflects the active `--since`, `--model`, `--persona` values
-- [ ] `--output <path>` writes to file; without it, JSON goes to stdout
-- [ ] Exit code 0 on success; exit code 1 on output path errors
+- [x] `Export()` function in `internal/scorecard/export.go` returns valid v1 schema JSON
+- [x] `schema_version` field is integer `1` in all output
+- [x] `exported_at` field is RFC 3339 timestamp
+- [x] `filters` object reflects the active `--since`, `--model`, `--persona` values
+- [x] `--output <path>` writes to file; without it, JSON goes to stdout
+- [x] Exit code 0 on success; exit code 1 on output path errors
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Export function follows existing patterns in `internal/scorecard/` package
+- [x] Code reviewed and approved
+- [x] Export function follows existing patterns in `internal/scorecard/` package

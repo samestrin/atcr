@@ -67,15 +67,15 @@ Scorecard records include `findings_verified`, `findings_refuted`, and `survived
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Fields omitted from JSON when verification.json absent
-- [ ] Fields populated when verification.json present
-- [ ] Malformed verification.json handled gracefully (fields omitted, warning logged)
-- [ ] survived_skeptic_rate handles zero-division
+- [x] Fields omitted from JSON when verification.json absent
+- [x] Fields populated when verification.json present
+- [x] Malformed verification.json handled gracefully (fields omitted, warning logged)
+- [x] survived_skeptic_rate handles zero-division
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

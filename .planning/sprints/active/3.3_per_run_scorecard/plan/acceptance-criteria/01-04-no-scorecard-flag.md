@@ -62,15 +62,15 @@ When the `--no-scorecard` flag is passed to `atcr reconcile`, scorecard emission
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `--no-scorecard` flag registered on reconcile command
-- [ ] Zero records written when flag is set (verified by test)
-- [ ] Normal emission when flag is absent (verified by test)
-- [ ] Existing JSONL file unmodified when flag is set
+- [x] `--no-scorecard` flag registered on reconcile command
+- [x] Zero records written when flag is set (verified by test)
+- [x] Normal emission when flag is absent (verified by test)
+- [x] Existing JSONL file unmodified when flag is set
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

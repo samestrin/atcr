@@ -160,6 +160,6 @@ func TestLeaderboardFilters(t *testing.T) {
 - [x] Empty result after filtering prints informative message and exits 0
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Flag names are consistent with existing CLI conventions (no aliases needed)
-- [ ] Help text for each flag is clear and includes examples
+- [x] Code reviewed and approved
+- [x] Flag names are consistent with existing CLI conventions (no aliases needed)
+- [x] Help text for each flag is clear and includes examples

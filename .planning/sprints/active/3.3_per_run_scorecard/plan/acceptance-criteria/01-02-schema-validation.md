@@ -71,15 +71,15 @@ Every scorecard record conforms to schema version `1` and includes all required 
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Record struct has all 14+ required fields with JSON tags
-- [ ] `schema_version` is integer constant `1`
-- [ ] Corroboration rate handles zero-division safely
-- [ ] Round-trip test: build record → marshal → unmarshal → assert field equality
+- [x] Record struct has all 14+ required fields with JSON tags
+- [x] `schema_version` is integer constant `1`
+- [x] Corroboration rate handles zero-division safely
+- [x] Round-trip test: build record → marshal → unmarshal → assert field equality
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

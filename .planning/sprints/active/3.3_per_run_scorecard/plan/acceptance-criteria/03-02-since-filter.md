@@ -139,6 +139,6 @@ func TestAggregateWithSinceFilter(t *testing.T) {
 - [x] Empty result set after filtering prints informative message and exits 0
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Duration parsing handles all documented formats
-- [ ] Error messages are actionable and match the format in the error scenarios
+- [x] Code reviewed and approved
+- [x] Duration parsing handles all documented formats
+- [x] Error messages are actionable and match the format in the error scenarios

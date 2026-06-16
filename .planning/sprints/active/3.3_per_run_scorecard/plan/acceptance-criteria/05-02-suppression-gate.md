@@ -89,15 +89,15 @@ When `--no-scorecard` is set, the scorecard emission path returns before any fil
 ## Definition of Done
 
 ### Automated Tests
-- [ ] Unit test: `Emit()` with `suppress=true` returns immediately without file I/O
-- [ ] Integration test: `atcr reconcile --no-scorecard` produces zero new JSONL lines
-- [ ] Regression test: `atcr reconcile` (without flag) produces > 0 new JSONL lines
-- [ ] Integration test: `--no-scorecard` run produces no scorecard text in stdout/stderr
+- [x] Unit test: `Emit()` with `suppress=true` returns immediately without file I/O
+- [x] Integration test: `atcr reconcile --no-scorecard` produces zero new JSONL lines
+- [x] Regression test: `atcr reconcile` (without flag) produces > 0 new JSONL lines
+- [x] Integration test: `--no-scorecard` run produces no scorecard text in stdout/stderr
 
 ### Story-Specific
-- [ ] Suppression gate is the FIRST condition checked in `Emit()` — before any file path resolution
-- [ ] No directory creation occurs during suppressed runs
-- [ ] No partial writes are possible (early return before file handle open)
+- [x] Suppression gate is the FIRST condition checked in `Emit()` — before any file path resolution
+- [x] No directory creation occurs during suppressed runs
+- [x] No partial writes are possible (early return before file handle open)
 
 ### Manual Verification
-- [ ] Run `atcr reconcile --no-scorecard` manually and confirm no artifacts appear in `~/.config/atcr/scorecard/`
+- [x] Run `atcr reconcile --no-scorecard` manually and confirm no artifacts appear in `~/.config/atcr/scorecard/`

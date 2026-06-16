@@ -123,21 +123,21 @@ Export output is deterministic for identical inputs and filters, records are sor
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/... ./cmd/atcr/...` passes
-- [ ] `go vet ./internal/scorecard/... ./cmd/atcr/...` clean
-- [ ] Determinism test: two consecutive `Export()` calls produce byte-identical output
-- [ ] Sort test: output records are in `(model, reviewer, role)` ascending order
+- [x] `go test ./internal/scorecard/... ./cmd/atcr/...` passes
+- [x] `go vet ./internal/scorecard/... ./cmd/atcr/...` clean
+- [x] Determinism test: two consecutive `Export()` calls produce byte-identical output
+- [x] Sort test: output records are in `(model, reviewer, role)` ascending order
 
 **Story-Specific:**
-- [ ] Records sorted by `(model, reviewer, role)` before serialization
-- [ ] `--since`, `--model`, `--persona` filters applied before anonymization
-- [ ] `filters` object in output JSON reflects active filter values
-- [ ] `exported_at` is RFC 3339 UTC timestamp
-- [ ] JSON formatted with 2-space indent (`json.MarshalIndent`)
-- [ ] No matching records → exit code 1 with message: `"No records match the specified filters. Try widening --since or removing filters."`
-- [ ] Empty store / missing store directory → same exit code 1 message (no internal path leakage)
+- [x] Records sorted by `(model, reviewer, role)` before serialization
+- [x] `--since`, `--model`, `--persona` filters applied before anonymization
+- [x] `filters` object in output JSON reflects active filter values
+- [x] `exported_at` is RFC 3339 UTC timestamp
+- [x] JSON formatted with 2-space indent (`json.MarshalIndent`)
+- [x] No matching records → exit code 1 with message: `"No records match the specified filters. Try widening --since or removing filters."`
+- [x] Empty store / missing store directory → same exit code 1 message (no internal path leakage)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Sort order is stable and documented in code comments
-- [ ] Error messages reviewed for information leakage
+- [x] Code reviewed and approved
+- [x] Sort order is stable and documented in code comments
+- [x] Error messages reviewed for information leakage

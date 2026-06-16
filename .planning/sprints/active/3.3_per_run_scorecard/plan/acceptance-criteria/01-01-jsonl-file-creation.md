@@ -46,6 +46,12 @@ When `atcr reconcile` completes successfully, the scorecard store creates the co
 - **When** records are appended
 - **Then** file contains valid JSONL (no leading newline artifacts)
 
+**Edge Case 3: Concurrent appends to the same month file**
+- **Given** two `atcr reconcile` runs execute concurrently and both append to `~/.config/atcr/scorecard/2026-06.jsonl`
+- **When** each run writes its per-reviewer and aggregate records
+- **Then** every record lands as an intact, individually JSON-parseable line with no interleaved/torn lines — relying on a single `O_APPEND` `write` syscall per record (each record < `PIPE_BUF`, no `bufio.Writer` shared across records)
+- **And** the total line count equals the sum of records from both runs (no lost writes)
+
 ## Error Conditions
 **Error Scenario 1: Permission denied on config directory**
 - Error message: logged warning `scorecard: write failed: permission denied`; reconcile run continues without failure
@@ -68,15 +74,16 @@ When `atcr reconcile` completes successfully, the scorecard store creates the co
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Directory auto-created on first write
-- [ ] Monthly file naming correct (YYYY-MM.jsonl)
-- [ ] Append mode preserves existing records
-- [ ] Write failure logs warning but does not fail reconcile
+- [x] Directory auto-created on first write
+- [x] Monthly file naming correct (YYYY-MM.jsonl)
+- [x] Append mode preserves existing records
+- [x] Concurrent appends to the same month file produce intact, non-interleaved lines (atomic single-write per record)
+- [x] Write failure logs warning but does not fail reconcile
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -108,19 +108,19 @@ The public submission JSON preserves model identifiers, persona names, role, and
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes, including metric preservation tests
-- [ ] `go vet ./internal/scorecard/...` clean
-- [ ] Test assertion: every required field in v1 schema is present in marshaled JSON (no `omitempty` on numeric fields)
-- [ ] Test assertion: numeric values in JSON match source values exactly
+- [x] `go test ./internal/scorecard/...` passes, including metric preservation tests
+- [x] `go vet ./internal/scorecard/...` clean
+- [x] Test assertion: every required field in v1 schema is present in marshaled JSON (no `omitempty` on numeric fields)
+- [x] Test assertion: numeric values in JSON match source values exactly
 
 **Story-Specific:**
-- [ ] All 11 numeric metric fields are preserved: `findings_raised`, `findings_corroborated`, `findings_solo`, `corroboration_rate`, `findings_verified`, `findings_refuted`, `survived_skeptic_rate`, `cost_usd`, `tokens_in`, `tokens_out`, `latency_ms_avg`
-- [ ] `model`, `reviewer`, `role` are preserved as-is (not anonymized)
-- [ ] `schema_version` is integer `1`
-- [ ] Zero-value metrics are included in output (not omitted)
-- [ ] `runs` field (count of aggregated runs per reviewer) is included
+- [x] All 11 numeric metric fields are preserved: `findings_raised`, `findings_corroborated`, `findings_solo`, `corroboration_rate`, `findings_verified`, `findings_refuted`, `survived_skeptic_rate`, `cost_usd`, `tokens_in`, `tokens_out`, `latency_ms_avg`
+- [x] `model`, `reviewer`, `role` are preserved as-is (not anonymized)
+- [x] `schema_version` is integer `1`
+- [x] Zero-value metrics are included in output (not omitted)
+- [x] `runs` field (count of aggregated runs per reviewer) is included
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Field types in `PublicRecord` match v1 schema spec (integers for counts, floats for rates/costs)
-- [ ] No `omitempty` tags on any fields in `PublicRecord` struct
+- [x] Code reviewed and approved
+- [x] Field types in `PublicRecord` match v1 schema spec (integers for counts, floats for rates/costs)
+- [x] No `omitempty` tags on any fields in `PublicRecord` struct

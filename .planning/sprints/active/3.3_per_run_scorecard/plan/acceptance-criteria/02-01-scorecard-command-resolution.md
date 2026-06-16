@@ -137,5 +137,5 @@ Running `atcr scorecard [id-or-path]` resolves the argument to a `run_id`, reads
 - [x] run_id validated with `ValidateReviewID` — no path traversal possible
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Error messages are actionable and match documented strings
+- [x] Code reviewed and approved
+- [x] Error messages are actionable and match documented strings

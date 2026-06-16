@@ -122,23 +122,23 @@ func TestExportAnonymization(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] `go test ./internal/scorecard/...` passes
-- [ ] `go test ./cmd/atcr/...` passes
-- [ ] `go vet ./...` clean
-- [ ] `go build ./...` succeeds
-- [ ] Test coverage >= 90% on `export.go`
-- [ ] JSON output passes schema validation in tests
+- [x] `go test ./internal/scorecard/...` passes
+- [x] `go test ./cmd/atcr/...` passes
+- [x] `go vet ./...` clean
+- [x] `go build ./...` succeeds
+- [x] Test coverage >= 90% on `export.go`
+- [x] JSON output passes schema validation in tests
 
 **Story-Specific:**
-- [ ] `--export` flag produces valid JSON output to stdout
-- [ ] JSON includes `schema_version: 1`
-- [ ] JSON includes `generated_at`, `date_range`, `filters` metadata
-- [ ] JSON `entries` array contains aggregated leaderboard rows
-- [ ] Export is anonymized: no provider keys, repo paths, file content, or PII
-- [ ] Export respects all active filters (`--since`, `--model`, `--persona`)
-- [ ] Aggregate records (role=`aggregate`) are excluded from export
+- [x] `--export` flag produces valid JSON output to stdout
+- [x] JSON includes `schema_version: 1`
+- [x] JSON includes `generated_at`, `date_range`, `filters` metadata
+- [x] JSON `entries` array contains aggregated leaderboard rows
+- [x] Export is anonymized: no provider keys, repo paths, file content, or PII
+- [x] Export respects all active filters (`--since`, `--model`, `--persona`)
+- [x] Aggregate records (role=`aggregate`) are excluded from export
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Export schema reviewed against Epic 10.0 public leaderboard submission requirements
-- [ ] JSON output manually inspected for correctness and completeness
+- [x] Code reviewed and approved
+- [x] Export schema reviewed against Epic 10.0 public leaderboard submission requirements
+- [x] JSON output manually inspected for correctness and completeness
