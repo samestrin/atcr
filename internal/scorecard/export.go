@@ -225,6 +225,7 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 func scrubField(s string) string {
 	s = scrubWinPath.ReplaceAllString(s, "")
 	s = scrubHome.ReplaceAllString(s, "")
+	s = scrubEmbeddedPath.ReplaceAllString(s, "")
 	s = scrubAbsPath.ReplaceAllString(s, "$1")
 	s = scrubEmail.ReplaceAllString(s, "")
 	s = scrubKey.ReplaceAllString(s, "")
@@ -234,6 +235,13 @@ func scrubField(s string) string {
 var (
 	scrubWinPath = regexp.MustCompile(`[A-Za-z]:\\\S*`)
 	scrubHome    = regexp.MustCompile(`~\S*`)
+	// scrubEmbeddedPath removes a whole whitespace-delimited token that embeds a
+	// known absolute-path root, even when the '/' is glued to a preceding
+	// alphanumeric (e.g. "host/etc/passwd"). scrubAbsPath below deliberately keeps
+	// an alnum-preceded '/' so provider-prefixed model ids like "anthropic/claude-3"
+	// survive — but that allowance would otherwise leak an embedded system path. A
+	// real path root never appears in a model id, so dropping the token is safe.
+	scrubEmbeddedPath = regexp.MustCompile(`\S*(?:/etc/|/Users/|/home/|/var/|/tmp/)\S*`)
 	// Leading capture preserves the non-path byte before the stripped '/'-run.
 	scrubAbsPath = regexp.MustCompile(`(^|[^A-Za-z0-9])/\S*`)
 	scrubEmail   = regexp.MustCompile(`[\w.+-]+@[\w.-]+\.\w+`)
