@@ -58,8 +58,11 @@ func Append(dir string, rec Record) error {
 
 // ReadRecords stream-parses a month JSONL file line-by-line. A malformed line is
 // logged and skipped (a corrupt line never aborts the read), so a partially
-// damaged file still yields its valid records. A missing file surfaces as the
-// raw os error so callers can phrase their own "no records" guidance.
+// damaged file still yields its valid records. A record whose schema_version is
+// newer than the current SchemaVersion is also logged and skipped, so a
+// forward-incompatible record cannot be misread as the current version and
+// silently pollute aggregates. A missing file surfaces as the raw os error so
+// callers can phrase their own "no records" guidance.
 func ReadRecords(path string) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -78,6 +81,16 @@ func ReadRecords(path string) ([]Record, error) {
 		var r Record
 		if err := json.Unmarshal(line, &r); err != nil {
 			fmt.Fprintf(os.Stderr, "scorecard: skipping malformed record in %s: %v\n", path, err)
+			continue
+		}
+		// Schema-version negotiation: a record from a newer, forward-incompatible
+		// schema must not be unmarshaled into this struct and aggregated as if it
+		// were the current version — a field rename/semantic change would silently
+		// corrupt totals. Warn and skip rather than pollute aggregates. (Older
+		// versions remain readable: v1 is the first schema, so there is nothing to
+		// migrate yet; an explicit migration shim slots in here when one appears.)
+		if r.SchemaVersion > SchemaVersion {
+			fmt.Fprintf(os.Stderr, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
 			continue
 		}
 		recs = append(recs, r)
