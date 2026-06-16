@@ -249,6 +249,25 @@ func TestStore_ReadAll_MissingDir(t *testing.T) {
 	assert.Empty(t, recs)
 }
 
+// TestStore_monthsToScan_InvalidDayNoBoundaryScan locks the fix: the day that
+// drives boundary scanning must come from a real parsed timestamp, not fixed
+// offset slicing. An impossible calendar day (Feb 30) must not be read off as a
+// boundary day and trigger a spurious adjacent-month scan.
+func TestStore_monthsToScan_InvalidDayNoBoundaryScan(t *testing.T) {
+	got := monthsToScan("2026-02-30T10:00:00Z-x", "2026-02")
+	require.Len(t, got, 1, "an impossible calendar day must not trigger adjacent-month scanning")
+	assert.Equal(t, "2026-02", got[0])
+}
+
+// TestStore_monthsToScan_ValidBoundaryStillScans is the regression guard: real
+// boundary days (1st, 28th-31st) still pull in the neighbouring month, and a
+// mid-month day stays a single-file read.
+func TestStore_monthsToScan_ValidBoundaryStillScans(t *testing.T) {
+	require.Len(t, monthsToScan("2026-06-30T23:59:59Z-x", "2026-06"), 2, "last-day run scans next month")
+	require.Len(t, monthsToScan("2026-06-01T00:00:00Z-x", "2026-06"), 2, "first-day run scans prev month")
+	require.Len(t, monthsToScan("2026-06-15T12:00:00Z-x", "2026-06"), 1, "mid-month run stays single-file")
+}
+
 // splitNonEmptyLines splits raw JSONL bytes into trimmed non-empty lines so a
 // torn line (missing newline / merged with another) is observable as a parse
 // failure or a wrong line count, not silently absorbed.
