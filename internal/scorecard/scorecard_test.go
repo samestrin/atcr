@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -285,4 +286,27 @@ func findReviewer(recs []Record, name string) *Record {
 		}
 	}
 	return nil
+}
+
+// TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter locks Epic 3.4 AC1: the
+// orphan-verdict warning (a verification finding with no matching raised finding)
+// must be written to the injected EmitOpts.Diag, not the process-global os.Stderr,
+// so it can be captured and asserted by text.
+func TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(t.TempDir(), "verification.json")
+	// A verdict whose (file,line,problem) matches no raised finding is an orphan.
+	verJSON := `{"findings":[{"file":"ghost.go","line":99,"problem":"none","verdict":"confirmed"}]}`
+	require.NoError(t, os.WriteFile(verPath, []byte(verJSON), 0o600))
+
+	var buf bytes.Buffer
+	in := EmitInput{
+		RunID:            testRunID,
+		Findings:         []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
+		Reviewers:        map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
+		VerificationPath: verPath,
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir, Diag: &buf}))
+	assert.Contains(t, buf.String(), "has no matching raised finding",
+		"orphan-verdict diagnostic must route to the injected EmitOpts.Diag")
 }

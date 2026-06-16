@@ -10,6 +10,7 @@ package scorecard
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 
@@ -84,10 +85,13 @@ type ReviewerMeta struct {
 // EmitOpts controls emission side-effects. NoScorecard suppresses all I/O (the
 // --no-scorecard gate; checked first, before any directory creation). Dir
 // overrides the store root (tests pin a temp dir); empty means the default user
-// config dir.
+// config dir. Diag is the sink for operational diagnostics (write failures,
+// verification read/parse failures, orphan verdicts); a nil Diag defaults to
+// os.Stderr so existing callers keep their prior behavior (Epic 3.4).
 type EmitOpts struct {
 	NoScorecard bool
 	Dir         string
+	Diag        io.Writer
 }
 
 // EmitInput bundles everything Emit needs for one run. Reviewers is keyed by
