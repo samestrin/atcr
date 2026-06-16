@@ -86,9 +86,19 @@ type ChatResponse struct {
 	Message      Message
 	FinishReason string
 	Truncated    bool
-	// Usage carries the provider-reported token counts for this turn. Zero
+	// Usage carries the provider-reported token counts for THIS turn only. Zero
 	// when the provider omits the `usage` block (additive field; existing
 	// callers that ignore it are unaffected).
+	//
+	// CONTRACT (per-turn-incremental): each Chat() decodes exactly one turn's
+	// usage and never accumulates across turns — summing is the caller's job
+	// (the fanout loop adds resp.Usage after every turn and the final-answer
+	// call). This is correct ONLY for providers that report per-turn-incremental
+	// usage. A gateway that reports CUMULATIVE usage on every turn (some
+	// Anthropic-via-gateway shims) would be N-counted across a multi-turn loop.
+	// If such a gateway comes into scope, detect monotonic-increasing usage and
+	// diff successive turns instead of summing; until then the assumption is a
+	// documented hard contract, pinned by TestChat_UsageIsPerTurnNotCumulative.
 	Usage UsageData
 }
 
