@@ -722,3 +722,33 @@ func TestWinningAttribution_MismatchedSlicesNoPanic(t *testing.T) {
 		"confirmed",
 	)
 }
+
+// TestVerifyFinding_ProgrammingFaultLogged verifies that when invokeSkeptic
+// returns a programming-fault error (here: a nil ChatCompleter), verifyFinding
+// emits a structured stderr log line so the impossible nil-ctx/cc/disp case is
+// visible if it ever fires, rather than silently becoming an ordinary
+// unverifiable record indistinguishable from a real budget trip.
+func TestVerifyFinding_ProgrammingFaultLogged(t *testing.T) {
+	// Not parallel: swaps the global os.Stderr.
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stderr
+	os.Stderr = w
+
+	// cc=nil with a non-nil dispatcher and an eligible skeptic drives invokeSkeptic
+	// into its nil-ChatCompleter programming-fault return inside the vote loop.
+	_, vr := verifyFinding(context.Background(),
+		reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"},
+		[]Skeptic{testSkeptic()}, nil, okDispatcher())
+
+	_ = w.Close()
+	os.Stderr = orig
+
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	out := buf.String()
+
+	assert.Equal(t, "unverifiable", vr.Verdict, "a programming fault still yields an unverifiable verdict")
+	assert.Contains(t, out, "class=programming_fault",
+		"a programming fault must emit a structured stderr log line")
+}
