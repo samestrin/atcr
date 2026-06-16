@@ -99,6 +99,29 @@ func TestStore_ReadRecords_SkipsMalformedLines(t *testing.T) {
 	assert.Len(t, recs, 2, "malformed line skipped, valid lines retained")
 }
 
+// TestStore_ReadRecords_SkipsFutureSchemaVersion locks the schema-negotiation
+// gate: a record from a future, forward-incompatible schema must be skipped with
+// a warning, NOT unmarshaled into the v1 struct and silently aggregated as v1
+// (which would corrupt leaderboard totals after a field rename/semantic change).
+func TestStore_ReadRecords_SkipsFutureSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	v1, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-abc123", "bruce"))
+	require.NoError(t, err)
+	future := sampleRecord("2026-06-14T10:00:00Z-abc123", "greta")
+	future.SchemaVersion = SchemaVersion + 1
+	v2, err := json.Marshal(future)
+	require.NoError(t, err)
+	content := string(v1) + "\n" + string(v2) + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	recs, err := ReadRecords(path)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "a record with schema_version > current must be skipped, not read as v1")
+	assert.Equal(t, "bruce", recs[0].Reviewer)
+	assert.Equal(t, SchemaVersion, recs[0].SchemaVersion)
+}
+
 // TestStore_ConcurrentAppend_SameMonthFile covers the sprint-design atomic-append
 // risk: N goroutines appending to the same month file must produce intact,
 // individually parseable lines with no interleaving and no lost writes.
