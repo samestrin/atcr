@@ -1,3 +1,8 @@
+// merge.go holds the finding-merge rules: collapse a group of duplicate findings
+// into one reconciled record (max severity with disagreement annotation, modal
+// category, longest problem/fix, evidence concatenation, confidence) plus the
+// package-local SeverityRank copy. The package doc lives in disagree.go.
+
 package reconcile
 
 import (
