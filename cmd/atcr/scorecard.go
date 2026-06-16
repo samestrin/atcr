@@ -81,7 +81,16 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 // empty table.
 func resolveScorecardRunID(arg string) (string, error) {
 	if looksLikePath(arg) {
-		return runIDFromReviewDir(arg)
+		runID, err := runIDFromReviewDir(arg)
+		// A slash-bearing arg that is also a well-formed run_id is ambiguous:
+		// looksLikePath sent it down the review-dir branch, but if that resolution
+		// fails, retry it as a run_id rather than surfacing the confusing "no
+		// reconciled/summary.json" error. A real review-dir path is never run_id
+		// shaped, so this never masks a genuine path-resolution failure.
+		if err != nil && scorecard.IsRunID(arg) {
+			return arg, nil
+		}
+		return runID, err
 	}
 	if !scorecard.IsRunID(arg) {
 		return "", usageError(fmt.Errorf("invalid run_id %q: expected a timestamp-prefixed id like 2026-06-14T10:00:00Z-abc123, or a review directory path", arg))
