@@ -9,11 +9,11 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 3 | 0 | 0 |
 | MEDIUM | 6 | 13 | 0 |
-| LOW | 50 | 9 | 9 |
+| LOW | 43 | 9 | 16 |
 | SEVERITY | 1 | 0 | 0 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 60 | **Deferred Items:** 22 | **Resolved Items:** 9 | **Total Items:** 91
+**Last Modified:** 2026-06-16 | **Open Items:** 53 | **Deferred Items:** 22 | **Resolved Items:** 16 | **Total Items:** 91
 
 ## Directory Structure
 
@@ -90,15 +90,15 @@ technical-debt/
 | 5 | [ ] | LOW | internal/report/render_test.go:286 | Comparison lacks braces for single-line if | Add braces for consistency | maintainancy | 2 | code-review | Reviewer | MEDIUM |
 | 5 | [ ] | LOW | internal/report/render_test.go:290 | Comparison lacks braces for single-line if | Add test for mixed-case severity input | maintainancy | 5 | code-review | Reviewer | MEDIUM |
 | 5 | [ ] | LOW | internal/report/render_test.go:302 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 6 | [ ] | LOW | internal/stream/severity.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
+| 6 | [x] | LOW | internal/stream/severity.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 6 | [ ] | LOW | internal/stream/severity.go:5 | Unnecessary blank line after package declaration | Add comment about read-only after init | maintainancy | 2 | code-review | Reviewer | MEDIUM |
-| 6 | [ ] | LOW | internal/stream/severity.go:14 | Map initialization lacks trailing comma | Add trailing comma after last element | maintainancy | 1 | code-review | Reviewer | MEDIUM |
+| 6 | [x] | LOW | internal/stream/severity.go:14 | Map initialization lacks trailing comma | Add trailing comma after last element | maintainancy | 1 | code-review | Reviewer | MEDIUM |
 | 6 | [ ] | LOW | internal/stream/severity.go:22 | The NormalizeSeverity doc-comment claims "Every consumer normalizes through this single helper so their lookups stay identical and the fan-out/reconcile casing asymmetry cannot reappear." That invariant is not held: disagree.go (248 282 298 322 463) reconcile.go (108) and gate.go (45 49) still do raw un-normalized SeverityRank lookups. A misleading comment is worse than none - a future reader will trust the guarantee and skip defensive normalization. | Either make the claim true by normalizing the remaining raw lookup sites or soften the wording to "consumers SHOULD normalize." Verify by grepping SeverityRank[ for any key not wrapped in NormalizeSeverity. Prefer making it true (bundle with the disagree.go and reconcile/gate items). | maintainancy | 15 | code-review | greta, claude, Reviewer | HIGH |
-| 6 | [ ] | LOW | internal/stream/severity_test.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
+| 6 | [x] | LOW | internal/stream/severity_test.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 6 | [ ] | LOW | internal/stream/severity_test.go:5 | Unnecessary blank line after package declaration | Remove blank line | maintainancy | 1 | code-review | Reviewer | MEDIUM |
 | 6 | [ ] | LOW | internal/stream/severity_test.go:11 | Comparison lacks braces for single-line if | Add trailing comma after last element | maintainancy | 2 | code-review | Reviewer | MEDIUM |
 | 6 | [ ] | LOW | internal/stream/severity_test.go:22 | Test lacks edge case for whitespace-only input | Add trailing comma after last element | maintainancy | 5 | code-review | Reviewer | MEDIUM |
-| 6 | [ ] | LOW | internal/stream/severity_test.go:43 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
+| 6 | [x] | LOW | internal/stream/severity_test.go:43 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
 | 7 | [x] | LOW | internal/verify/severity.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 7 | [ ] | LOW | internal/verify/severity.go:5 | Unnecessary blank line after function declaration | Add debug log when minSeverity is unknown | maintainancy | 5 | code-review | Reviewer | MEDIUM |
 | 7 | [x] | LOW | internal/verify/severity.go:17 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
@@ -108,9 +108,9 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/reconcile/merge.go:23 | reconcile.SeverityRank is a map-header alias of stream.SeverityRank so both names share one backing map; a mutation through either package would corrupt the other, relying on a read-only invariant that is documented but not enforced. | Add a test asserting the canonical map is never mutated, or expose rank via a getter to remove the shared mutable surface. | REGRESSION_RISK | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/reconcile/disagree.go:248 | spreadFromDisagreement does a raw non-normalized SeverityRank lookup on the parsed "<lo> vs <hi>" string; mergeSeverity now embeds canonical severities so mixed-case disagreements compute a real nonzero spread (intended behavior, but unpinned by a test). | Add a test pinning that a mixed-case severity split yields the canonical spread so the new behavior is locked. | REGRESSION_RISK | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/reconcile/merge.go:120 | When no group member has a known severity, mergeSeverity falls back to raw group[0].Severity verbatim while every known path now returns the normalized form, so merged Severity casing is inconsistent between the known and all-unknown cases. | Normalize the fallback too (max = stream.NormalizeSeverity(group[0].Severity)) or document that the all-unknown fallback is deliberately verbatim. | EDGE_CASES | 10 | execute-epic-independent |
+| 1 | [x] | LOW | internal/reconcile/merge.go:23 | reconcile.SeverityRank is a map-header alias of stream.SeverityRank so both names share one backing map; a mutation through either package would corrupt the other, relying on a read-only invariant that is documented but not enforced. | Add a test asserting the canonical map is never mutated, or expose rank via a getter to remove the shared mutable surface. | REGRESSION_RISK | 15 | execute-epic-independent |
+| 1 | [x] | LOW | internal/reconcile/disagree.go:248 | spreadFromDisagreement does a raw non-normalized SeverityRank lookup on the parsed "<lo> vs <hi>" string; mergeSeverity now embeds canonical severities so mixed-case disagreements compute a real nonzero spread (intended behavior, but unpinned by a test). | Add a test pinning that a mixed-case severity split yields the canonical spread so the new behavior is locked. | REGRESSION_RISK | 15 | execute-epic-independent |
+| 1 | [x] | LOW | internal/reconcile/merge.go:120 | When no group member has a known severity, mergeSeverity falls back to raw group[0].Severity verbatim while every known path now returns the normalized form, so merged Severity casing is inconsistent between the known and all-unknown cases. | Normalize the fallback too (max = stream.NormalizeSeverity(group[0].Severity)) or document that the all-unknown fallback is deliberately verbatim. | EDGE_CASES | 10 | execute-epic-independent |
 | U | [ ] | LOW | internal/registry/config.go:128 | registry.normalizeSeverity is a 4th identical upper+trim copy of the canonical stream.NormalizeSeverity helper added by epic 3.5; the registry was scoped out of the consolidation because reviewSeverities is a presence-set, but the normalizer itself could still consume the shared helper. | Have registry import and call stream.NormalizeSeverity in place of its local normalizeSeverity (stream has zero internal deps, so registry->stream introduces no cycle); leave reviewSeverities as-is. | CROSS_CUTTING | 15 | execute-epic-cumulative |
 | U | [ ] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
 
