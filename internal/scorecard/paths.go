@@ -38,9 +38,11 @@ func resolveDir(override string) (string, error) {
 }
 
 // IsRunID reports whether s has the shape of a run_id: a YYYY-MM month prefix
-// AND an RFC3339 time component (the 'T' separator). The time component is
-// required so a bare month typo like "2026-06" is rejected as a malformed
-// argument (usage error) rather than accepted and resolved to an empty run.
+// (validated by monthFromRunID) AND an RFC3339 time component (the 'T' separator).
+// The time component is required so a bare month typo like "2026-06" is rejected
+// as a malformed argument (usage error) rather than accepted and resolved to an
+// empty run. Note: the actual path-traversal guard lives in monthFromRunID's
+// prefix validation, not here — IsRunID only checks shape, not filesystem safety.
 func IsRunID(s string) bool {
 	if _, err := monthFromRunID(s); err != nil {
 		return false
