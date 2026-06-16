@@ -282,7 +282,7 @@ func severitySplitItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(f.Severity)]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -298,7 +298,7 @@ func soloItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(0, indep, SeverityRank[f.Severity]),
+		Score:        scoreFor(0, indep, SeverityRank[stream.NormalizeSeverity(f.Severity)]),
 		Spread:       0,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -322,7 +322,7 @@ func verificationItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(f.Severity)]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -463,7 +463,7 @@ func sortDisagreements(items []DisagreementItem) {
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
-		if ra, rb := SeverityRank[a.Severity], SeverityRank[b.Severity]; ra != rb {
+		if ra, rb := SeverityRank[stream.NormalizeSeverity(a.Severity)], SeverityRank[stream.NormalizeSeverity(b.Severity)]; ra != rb {
 			return ra > rb
 		}
 		if a.File != b.File {
