@@ -87,7 +87,9 @@ type ReviewerMeta struct {
 // overrides the store root (tests pin a temp dir); empty means the default user
 // config dir. Diag is the sink for operational diagnostics (write failures,
 // verification read/parse failures, orphan verdicts); a nil Diag defaults to
-// os.Stderr so existing callers keep their prior behavior (Epic 3.4).
+// os.Stderr so existing callers keep their prior behavior (Epic 3.4). Diag must
+// be safe for the caller's concurrency model; the package does not synchronize
+// writes to it.
 type EmitOpts struct {
 	NoScorecard bool
 	Dir         string

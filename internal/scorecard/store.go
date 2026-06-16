@@ -20,7 +20,8 @@ const maxLineBytes = 1 << 20
 // ReadOpts carries read-path options for the scorecard store. Writer is the sink
 // for operational diagnostics emitted while reading (malformed records, over-long
 // lines, adjacent-month spans); a nil Writer defaults to os.Stderr so existing
-// callers keep their prior behavior (Epic 3.4).
+// callers keep their prior behavior (Epic 3.4). Writer must be safe for the
+// caller's concurrency model; the package does not synchronize writes to it.
 type ReadOpts struct {
 	Writer io.Writer
 }
