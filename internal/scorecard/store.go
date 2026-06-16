@@ -205,10 +205,16 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 	}
 	months := monthsToScan(runID, month)
 
+	// Resolve the diagnostics sink once for the whole call (the typed-nil guard in
+	// diagWriter is applied here) and reuse it for both the inner reads and the
+	// adjacent-month warning, instead of re-resolving diagWriter on each path.
+	w := diagWriter(opts.Writer)
+	readOpts := ReadOpts{Writer: w}
+
 	var matches []Record
 	var fromNeighbour bool
 	for i, m := range months {
-		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), opts)
+		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), readOpts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -225,7 +231,7 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 		}
 	}
 	if fromNeighbour {
-		_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+		_, _ = fmt.Fprintf(w, "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
 	}
 	return matches, nil
 }
