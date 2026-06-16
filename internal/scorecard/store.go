@@ -23,6 +23,11 @@ const maxLineBytes = 1 << 20
 // lines, adjacent-month spans); a nil Writer defaults to os.Stderr so existing
 // callers keep their prior behavior (Epic 3.4). Writer must be safe for the
 // caller's concurrency model; the package does not synchronize writes to it.
+// SECURITY: diagnostics may embed absolute store paths (which can contain a
+// username via ~/.config/atcr/...) and raw %v error strings, so the sink is
+// assumed local and trusted. Before routing Writer to any non-local sink (a
+// leaderboard submission or a remote-facing MCP response), scrub absolute paths
+// (use base names) and avoid echoing raw error strings.
 type ReadOpts struct {
 	Writer io.Writer
 }
