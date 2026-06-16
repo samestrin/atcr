@@ -19,7 +19,12 @@ import "strings"
 // Read-only after init: the map is written once at package load and only read
 // thereafter. Concurrent fan-out agents share this map, so a write would race —
 // if mutation is ever needed, copy it locally first.
-var SeverityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+var SeverityRank = map[string]int{
+	"CRITICAL": 4,
+	"HIGH":     3,
+	"MEDIUM":   2,
+	"LOW":      1,
+}
 
 // NormalizeSeverity upper-cases and trims a severity token to its canonical form
 // so a SeverityRank lookup is case- and whitespace-insensitive. Every consumer
