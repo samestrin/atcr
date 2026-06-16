@@ -75,5 +75,10 @@ func ComputeCostUSD(model string, tokensIn, tokensOut int) float64 {
 	if tokensOut < 0 {
 		tokensOut = 0
 	}
-	return float64(tokensIn)/1_000_000*rate.input + float64(tokensOut)/1_000_000*rate.output
+	// One trailing division (not one per term): dividing each token count by 1e6
+	// before multiplying rounds each term first, and summing those rounded terms
+	// accumulates IEEE-754 error into the least-significant digit. Multiplying
+	// first and dividing once keeps the result the correctly-rounded value, which
+	// keeps the per-reviewer scorecard summation deterministic.
+	return (float64(tokensIn)*rate.input + float64(tokensOut)*rate.output) / 1_000_000
 }
