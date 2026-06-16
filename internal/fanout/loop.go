@@ -95,7 +95,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		maxTurns:   maxTurns,
 		toolDefs:   wireToolDefs(),
 		messages:   []llmclient.Message{{Role: "user", Content: &prompt}},
-		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, MinSeverity: a.MinSeverity, MaxFindings: a.MaxFindings, Tools: true, ToolsRequested: true},
+		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, MinSeverity: a.MinSeverity, MaxFindings: a.MaxFindings, Tools: true, ToolsRequested: true, Model: a.Invocation.Model},
 		start:      time.Now(),
 		nudgedSigs: map[string]bool{},
 		tr:         tr,
@@ -125,6 +125,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 			return l.finalize(status, err)
 		}
 		l.res.Turns++
+		l.res.addUsage(resp.Usage)
 		l.messages = append(l.messages, resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.
@@ -278,6 +279,9 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 		}
 		return l.finalize(status, err)
 	}
+	// The final-answer call is unbudgeted as a turn, but its tokens are real and
+	// must count toward the agent's usage total.
+	l.res.addUsage(resp.Usage)
 	l.res.Content = derefContent(resp.Message.Content)
 	l.tr.RecordFinal(l.res.Turns, l.res.Content)
 	return l.finalize(StatusOK, nil)

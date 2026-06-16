@@ -85,26 +85,32 @@ func toolMockProvider(t *testing.T) *httptest.Server {
 		if !hasToolResult {
 			// Turn 1: request two tools — read a file outside the payload and grep
 			// for callers. Arguments are JSON-encoded strings (OpenAI/litellm style).
-			resp := map[string]any{"choices": []map[string]any{{
-				"finish_reason": "tool_calls",
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": nil,
-					"tool_calls": []map[string]any{
-						{"id": "call_1", "type": "function", "function": map[string]any{"name": "read_file", "arguments": `{"path":"helper.go"}`}},
-						{"id": "call_2", "type": "function", "function": map[string]any{"name": "grep", "arguments": `{"pattern":"func b"}`}},
+			// A usage block per turn proves the tool loop accumulates tokens across
+			// every Chat() round-trip (loop.go addUsage), not just the final answer.
+			resp := map[string]any{
+				"usage": map[string]any{"prompt_tokens": 1000, "completion_tokens": 200},
+				"choices": []map[string]any{{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": nil,
+						"tool_calls": []map[string]any{
+							{"id": "call_1", "type": "function", "function": map[string]any{"name": "read_file", "arguments": `{"path":"helper.go"}`}},
+							{"id": "call_2", "type": "function", "function": map[string]any{"name": "grep", "arguments": `{"pattern":"func b"}`}},
+						},
 					},
-				},
-			}}}
+				}}}
 			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 		// Turn 2: final findings, citing the evidence actually read.
 		content := "HIGH|auth.go:3|b() is unguarded and helper.go documents no precondition|Add a guard before calling b|correctness|10|read helper.go (outside payload) and grepped func b"
-		resp := map[string]any{"choices": []map[string]any{{
-			"finish_reason": "stop",
-			"message":       map[string]any{"role": "assistant", "content": content},
-		}}}
+		resp := map[string]any{
+			"usage": map[string]any{"prompt_tokens": 1500, "completion_tokens": 300},
+			"choices": []map[string]any{{
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": content},
+			}}}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(srv.Close)
@@ -164,6 +170,14 @@ func TestExecuteReview_ToolAgentEndToEnd(t *testing.T) {
 	assert.Equal(t, 2, *st.ToolCalls, "read_file + grep")
 	require.NotNil(t, st.ToolBytes)
 	assert.Greater(t, *st.ToolBytes, int64(0), "tool results delivered bytes")
+
+	// Per-agent usage (Epic 3.3) accumulates across BOTH the tool turn and the
+	// final turn — the tool-loop analogue of TestSingleShot_CapturesModelAndUsage.
+	// The mock reports 1000+200 on turn 1 and 1500+300 on turn 2; status.json
+	// must persist the summed totals and the model that priced them.
+	assert.Equal(t, "m-greta", st.Model, "tool agent records its configured model")
+	assert.Equal(t, 2500, st.TokensIn, "prompt tokens summed across both turns (1000+1500)")
+	assert.Equal(t, 500, st.TokensOut, "completion tokens summed across both turns (200+300)")
 
 	// The transcript replays the full session: one tool_calls event, two
 	// tool_result events, then the final message.

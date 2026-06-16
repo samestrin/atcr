@@ -10,6 +10,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +27,7 @@ func newReconcileCmd() *cobra.Command {
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
+	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	return cmd
 }
 
@@ -48,7 +50,11 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 
 	arg := ""
 	if len(args) == 1 {
-		arg = args[0]
+		// Trim for parity with runScorecard (scorecard.go): a trailing-whitespace
+		// or quoted-blank arg becomes the empty default-anchor path rather than a
+		// raw value. anchorDir trims too, so this is belt-and-suspenders that keeps
+		// the two command handlers visibly consistent.
+		arg = strings.TrimSpace(args[0])
 	}
 	reviewDir, err := resolveReviewDir(arg)
 	if err != nil {
@@ -76,6 +82,14 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 		res.Summary.TotalFindings, len(res.Summary.SourcesScanned),
 		filepath.Join(reviewDir, "reconciled"))
 
+	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
+	// entry points call (CLI here, MCP atcr_reconcile handler), so the two never
+	// diverge. Best-effort: a scorecard failure is logged but never fails the
+	// reconcile (AC 01-01). --no-scorecard suppresses emission for this run
+	// (Story 5); Emit gates on it before any I/O.
+	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
+	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard})
+
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if requireVerified {
 		if verr := reconcile.ValidateRequireVerified(reviewDir); verr != nil {
@@ -96,18 +110,14 @@ func gateFlagValue(cmd *cobra.Command) string {
 
 // failOnThreshold reads and validates the --fail-on flag, returning the
 // canonical threshold ("" when the flag is unset). An invalid value is a usage
-// error (exit 2). Used by the one-shot review path, where the flag presence is
-// itself the trigger.
+// error (exit 2). Delegates validation to validateGate to share one code path
+// with resolveGateThreshold and prevent semantic drift.
 func failOnThreshold(cmd *cobra.Command) (string, error) {
 	v := gateFlagValue(cmd)
 	if v == "" {
 		return "", nil
 	}
-	t, err := reconcile.ParseSeverity(v)
-	if err != nil {
-		return "", usageError(err)
-	}
-	return t, nil
+	return validateGate(v)
 }
 
 // resolveGateThreshold resolves the reconcile gate severity via the shared

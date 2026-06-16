@@ -431,9 +431,12 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
-			// none can occur here, but never let one drop a finding.
+			// none can occur here, but log it so the impossible case is visible if it
+			// ever fires, then synthesize an unverifiable verdict rather than dropping
+			// the finding.
+			logSkepticFailure(sk.Name, "programming_fault", ierr.Error())
 			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
-			tripped = nil
+			tripped = []string{}
 		}
 		perSkeptic = append(perSkeptic, v)
 		perTripped = append(perTripped, tripped)
@@ -443,9 +446,9 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	base.Verdict = ver.Verdict
 	base.Skeptic = ver.Skeptic
 	base.Reasoning = ver.Notes
-	// Attribute Model/TrippedBudgets to the winning skeptics only — not all of
-	// skeptics[0..n] — so a multi-vote verdict records the majority's models, not
-	// the losers' (AC2/AC1).
+	// Attribute Model/TrippedBudgets to the skeptics that produced the recorded
+	// verdict: on a decisive vote, only the winners; on a tie (unverifiable), every
+	// participant — never a blind skeptics[0..n] (see winningAttribution) (AC2/AC1).
 	base.Model, base.TrippedBudgets = winningAttribution(skeptics, perSkeptic, perTripped, ver.Verdict)
 	if base.TrippedBudgets == nil {
 		base.TrippedBudgets = []string{}
@@ -475,6 +478,10 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
 	// A verdict is decisive when no other verdict matches or exceeds its count;
 	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
+	// Precondition: every perSkeptic verdict is already canonical — parseVerdict
+	// maps unknown verdicts to unverifiable and the error/early exits hardcode
+	// canonical verdicts — so counting them directly stays consistent with
+	// aggregateVerdicts' canonical-only fold; no separate filter is needed here.
 	counts := map[string]int{}
 	for _, v := range perSkeptic {
 		if v != nil {

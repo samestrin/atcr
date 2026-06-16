@@ -210,6 +210,7 @@ func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
 }
 
 func TestReconcileHandler_FailOnGate(t *testing.T) {
+	isolateUserConfig(t) // a successful reconcile now emits a scorecard; keep it out of real ~/.config
 	root := t.TempDir()
 	reviewFixture(t, root)
 	cs := connectTest(t, root, fakeCompleter{})

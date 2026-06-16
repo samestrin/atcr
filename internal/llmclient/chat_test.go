@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -334,6 +335,37 @@ func TestChat_LengthFinishReasonWithToolCallsSetsTruncated(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Message.ToolCalls, 1)
 	assert.True(t, resp.Truncated, "length finish_reason with tool_calls must set Truncated")
+}
+
+// TestChat_UsageIsPerTurnNotCumulative pins the per-turn-incremental contract
+// documented on ChatResponse.Usage: each Chat() returns ONLY its own turn's
+// usage and never accumulates across calls. The fanout loop relies on this to
+// sum per-turn deltas correctly; if a future change made Chat accumulate, the
+// loop would double-count, so this guard locks the decode-site semantics.
+func TestChat_UsageIsPerTurnNotCumulative(t *testing.T) {
+	var turn int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := atomic.AddInt32(&turn, 1)
+		// Each turn reports a distinct, non-cumulative usage (100/10, then 200/20).
+		usageChatResponse(w, "ok", int(n)*100, int(n)*10)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := fastRetry(srv.Client())
+	inv := Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"}
+
+	r1, err := c.Chat(context.Background(), inv, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 100, r1.Usage.PromptTokens)
+	assert.Equal(t, 10, r1.Usage.CompletionTokens)
+
+	r2, err := c.Chat(context.Background(), inv, nil, nil)
+	require.NoError(t, err)
+	// Second call returns turn 2's usage only (200/20), NOT the running total
+	// (300/30) — Chat does not accumulate; the caller sums.
+	assert.Equal(t, 200, r2.Usage.PromptTokens)
+	assert.Equal(t, 20, r2.Usage.CompletionTokens)
 }
 
 // Backward-compat sanity: Complete still works after the shared-send refactor.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -283,6 +284,43 @@ func TestComplete_ErrorBodySnippetNeverEchoesKey(t *testing.T) {
 	assert.NotContains(t, err.Error(), testKey)
 }
 
+func TestComplete_ErrorBodyRedactsForeignBearerAndSKTokens(t *testing.T) {
+	// A provider that echoes a DIFFERENT bearer/sk- shaped token (not the
+	// configured key) must still have it scrubbed; exact-match alone would leak
+	// it into HTTPStatusError.Snippet.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream rejected Bearer sk-OTHER-leaked-99"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sk-OTHER-leaked-99")
+	assert.Contains(t, err.Error(), "[redacted]")
+}
+
+func TestComplete_ErrorBodyRedactsURLEncodedKey(t *testing.T) {
+	// A key echoed URL-encoded will not match the literal-substring scrub; the
+	// encoded form must be scrubbed too.
+	const specialKey = "tok-secret/with+special=chars"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"echo `+url.QueryEscape(specialKey)+`"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("SPECIAL_KEY", specialKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "SPECIAL_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), url.QueryEscape(specialKey))
+}
+
 func TestComplete_ErrorBodySnippetBounded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -423,4 +461,242 @@ func TestComplete_MaxTokensOmittedWhenNil(t *testing.T) {
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
 	})
 	require.NoError(t, err)
+}
+
+// --- Epic 3.3 Phase 1: provider usage decoding + cost computation ---
+
+// usageResponse writes a chat-completions response that includes a provider
+// `usage` block, as a raw JSON map so the test does not depend on the internal
+// response struct carrying a Usage field.
+func usageResponse(w http.ResponseWriter, content string, promptTokens, completionTokens int) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"choices": []any{
+			map[string]any{"message": map[string]any{"role": "assistant", "content": content}},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+		},
+	})
+}
+
+// usageChatResponse writes a tool-capable chat response including a usage block.
+func usageChatResponse(w http.ResponseWriter, content string, promptTokens, completionTokens int) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"choices": []any{
+			map[string]any{
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": content},
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+		},
+	})
+}
+
+func TestCompleteWithUsage_TokensFromUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		usageResponse(w, "findings here", 14200, 4000)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "findings here", out)
+	assert.Equal(t, 14200, usage.PromptTokens)
+	assert.Equal(t, 4000, usage.CompletionTokens)
+}
+
+func TestCompleteWithUsage_AbsentUsageIsZero(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// No usage block at all — provider omitted it entirely.
+		okResponse(w, "no usage here")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "no usage here", out)
+	assert.Equal(t, 0, usage.PromptTokens)
+	assert.Equal(t, 0, usage.CompletionTokens)
+}
+
+func TestChat_TokensFromUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		usageChatResponse(w, "reviewed", 8000, 1500)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	content := "review"
+	resp, err := fastRetry(srv.Client()).Chat(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	}, []Message{{Role: "user", Content: &content}}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 8000, resp.Usage.PromptTokens)
+	assert.Equal(t, 1500, resp.Usage.CompletionTokens)
+}
+
+func TestClampNonNegative_OverflowReturnsZero(t *testing.T) {
+	// 1e20 is a valid finite float64 but exceeds math.MaxInt; int(v) without
+	// a cap overflows to implementation-defined garbage (typically MinInt64).
+	assert.Equal(t, 0, clampNonNegative(json.Number("1e20")))
+}
+
+func TestClampNonNegative_InfReturnsZero(t *testing.T) {
+	// strconv.ParseFloat("Inf") returns (+Inf, nil) so the v<0 guard alone
+	// does not protect int(v) from implementation-defined behaviour.
+	assert.Equal(t, 0, clampNonNegative(json.Number("Inf")))
+}
+
+func TestClampNonNegative_NaNReturnsZero(t *testing.T) {
+	// strconv.ParseFloat("NaN") returns (NaN, nil); all NaN comparisons are
+	// false so v<0 does not catch it.
+	assert.Equal(t, 0, clampNonNegative(json.Number("NaN")))
+}
+
+func TestComputeCostUSD_KnownModel(t *testing.T) {
+	// claude-sonnet-4-6 is a known model in the rate table ($3/M in, $15/M out).
+	// 1M input + 1M output tokens => 3.00 + 15.00 = 18.00 USD.
+	cost := ComputeCostUSD("claude-sonnet-4-6", 1_000_000, 1_000_000)
+	assert.InDelta(t, 18.0, cost, 1e-9)
+}
+
+func TestComputeCostUSD_NormalizesVariantSuffix(t *testing.T) {
+	// A trailing [...] variant marker (e.g. the 1M-context tag) decorates the
+	// same priced model; it must normalize to the bare key, not miss the table.
+	got := ComputeCostUSD("claude-opus-4-8[1m]", 1_000_000, 1_000_000)
+	want := ComputeCostUSD("claude-opus-4-8", 1_000_000, 1_000_000)
+	assert.InDelta(t, want, got, 1e-9)
+	assert.Greater(t, got, 0.0)
+}
+
+func TestComputeCostUSD_NormalizesProviderPrefix(t *testing.T) {
+	// OpenRouter-style provider prefix: anthropic/claude-sonnet-4-6 prices as
+	// claude-sonnet-4-6 ($3/M in).
+	got := ComputeCostUSD("anthropic/claude-sonnet-4-6", 1_000_000, 0)
+	assert.InDelta(t, 3.0, got, 1e-9)
+}
+
+func TestComputeCostUSD_NormalizesBedrockPrefix(t *testing.T) {
+	// Bedrock-style region.provider prefix: us.anthropic.claude-sonnet-4-6.
+	got := ComputeCostUSD("us.anthropic.claude-sonnet-4-6", 1_000_000, 0)
+	assert.InDelta(t, 3.0, got, 1e-9)
+}
+
+func TestComputeCostUSD_NormalizationDoesNotInventPrices(t *testing.T) {
+	// Normalization must not turn a genuinely unknown model into a priced one.
+	assert.Equal(t, 0.0, ComputeCostUSD("anthropic/totally-unknown-xyz", 1000, 1000))
+	assert.Equal(t, 0.0, ComputeCostUSD("claude-not-real-9-9[1m]", 1000, 1000))
+}
+
+func TestComputeCostUSD_UnknownModel(t *testing.T) {
+	// Unknown model must yield zero cost, never panic.
+	assert.Equal(t, 0.0, ComputeCostUSD("totally-unknown-model-xyz", 1000, 1000))
+}
+
+func TestComputeCostUSD_EmptyModel(t *testing.T) {
+	// Empty model string must behave as unknown: zero, no panic.
+	assert.Equal(t, 0.0, ComputeCostUSD("", 1000, 1000))
+}
+
+func TestComputeCostUSD_NegativeTokensClamped(t *testing.T) {
+	// Negative token counts (malformed provider response) clamp to zero, so cost
+	// is never negative.
+	assert.Equal(t, 0.0, ComputeCostUSD("claude-sonnet-4-6", -100, -200))
+}
+
+func TestUsageData_CostUSD(t *testing.T) {
+	// The convenience method maps prompt/completion to in/out exactly once, so
+	// callers cannot transpose the two arguments.
+	u := UsageData{PromptTokens: 1_000_000, CompletionTokens: 1_000_000}
+	assert.InDelta(t, 18.0, u.CostUSD("claude-sonnet-4-6"), 1e-9)
+	assert.Equal(t, 0.0, UsageData{}.CostUSD("claude-sonnet-4-6"))
+}
+
+func TestUsageData_NegativeCountsClampedAtDecode(t *testing.T) {
+	// A negative provider count is clamped to zero at the data boundary, so every
+	// consumer of UsageData (not just ComputeCostUSD) sees non-negative counts.
+	var u UsageData
+	err := json.Unmarshal([]byte(`{"prompt_tokens":-5,"completion_tokens":10}`), &u)
+	require.NoError(t, err)
+	assert.Equal(t, 0, u.PromptTokens)
+	assert.Equal(t, 10, u.CompletionTokens)
+}
+
+func TestCompleteWithUsage_PartialUsage(t *testing.T) {
+	// Provider sends only prompt_tokens; completion_tokens defaults to zero.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{
+				map[string]any{"message": map[string]any{"role": "assistant", "content": "x"}},
+			},
+			"usage": map[string]any{"prompt_tokens": 500},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 500, usage.PromptTokens)
+	assert.Equal(t, 0, usage.CompletionTokens)
+}
+
+func TestCompleteWithUsage_FloatUsageDoesNotFailDecode(t *testing.T) {
+	// Some gateways emit token counts as JSON floats (e.g. 14200.0). The usage
+	// block is non-load-bearing metadata; a float must NOT fail the whole
+	// response decode and discard the assistant content.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"findings"}}],"usage":{"prompt_tokens":14200.0,"completion_tokens":4000.0}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "findings", out)
+	assert.Equal(t, 14200, usage.PromptTokens)
+	assert.Equal(t, 4000, usage.CompletionTokens)
+}
+
+func TestUsageData_PartialMalformedIndependentDecode(t *testing.T) {
+	// When prompt_tokens is valid but completion_tokens is malformed, the valid
+	// field should survive — only the bad one degrades to zero. The current
+	// atomic struct unmarshal drops BOTH; independent field decoding fixes this.
+	var u UsageData
+	err := json.Unmarshal([]byte(`{"prompt_tokens":500,"completion_tokens":"oops"}`), &u)
+	require.NoError(t, err)
+	assert.Equal(t, 500, u.PromptTokens, "valid prompt_tokens should survive malformed completion_tokens")
+	assert.Equal(t, 0, u.CompletionTokens, "malformed completion_tokens degrades to zero")
+}
+
+func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
+	// A structurally wrong usage block (string instead of number) must not kill
+	// the call; usage degrades to zero and the content still returns.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":"oops"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", out)
+	assert.Equal(t, 0, usage.PromptTokens)
+	assert.Equal(t, 0, usage.CompletionTokens)
 }

@@ -68,7 +68,17 @@ func TestReportCmd_DisagreementsModeReadsAmbiguousSidecar(t *testing.T) {
 		`{"severity":"LOW","file":"g.go","line":8,"problem":"bounds","reviewer":"kai"}]}]`
 	fixtureReconciledWithAmbiguous(t, "2026-06-10_g", oneFinding, ambiguous)
 
-	require.Equal(t, 0, execCmd(t, "report", "--disagreements", "2026-06-10_g"))
+	code, out := execCmdCapture(t, "report", "--disagreements", "2026-06-10_g")
+	require.Equal(t, 0, code)
+	// The ambiguous sidecar must surface as a gray-zone cluster in the rendered
+	// radar — not merely parse without error. Assert the cluster's kind, location,
+	// representative problem, and both reviewers' side-by-side positions reach the
+	// output, so a regression that silently dropped gray-zone rendering would fail.
+	require.Contains(t, out, "gray_zone")
+	require.Contains(t, out, "`g.go:7`")
+	require.Contains(t, out, "overrun")
+	require.Contains(t, out, "bounds")
+	require.Contains(t, out, "kai")
 }
 
 func TestReportCmd_DisagreementsModeEmptyIsClean(t *testing.T) {

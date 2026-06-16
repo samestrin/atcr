@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -214,6 +215,15 @@ func TestRunVerify_ToolHarnessUnavailable_RedactsDetail(t *testing.T) {
 	require.NoError(t, err)
 	os.Stderr = w
 
+	// Drain the read end concurrently so a larger-than-pipe-buffer (~64KB) stderr
+	// write cannot block runVerify and deadlock the test.
+	done := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
 	_, err = runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		return nil, nil, nil, errors.New("snapshot failed: /secret/repo/path")
 	})
@@ -221,9 +231,7 @@ func TestRunVerify_ToolHarnessUnavailable_RedactsDetail(t *testing.T) {
 	os.Stderr = oldStderr
 	require.NoError(t, err)
 
-	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
-	output := buf.String()
+	output := <-done
 	assert.Contains(t, output, "tool harness unavailable")
 	assert.NotContains(t, output, "/secret/repo/path")
 }
@@ -281,8 +289,8 @@ func TestRunVerify_ThoroughUsesThreeSkeptics(t *testing.T) {
 func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
 	reg := skepticRegistry()
 	// skep=m-skep is already in skepticRegistry; add s2=m-s2. Alphabetically
-	// SelectEligibleSkeptics returns ["s2","skep"], so skeptics[0].Config.Model
-	// is "m-s2". The test asserts "m-skep" also appears — which fails today.
+	// SelectEligibleSkeptics returns ["s2","skep"], so the joined Model string is
+	// the two winners in selection order: "m-s2, m-skep".
 	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
 	dir := pipelineReview(t, []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
@@ -298,8 +306,10 @@ func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
 	var vf VerificationFile
 	require.NoError(t, json.Unmarshal(data, &vf))
 	require.Len(t, vf.Findings, 1)
-	assert.Contains(t, vf.Findings[0].Model, "m-s2", "lead skeptic model must be recorded")
-	assert.Contains(t, vf.Findings[0].Model, "m-skep", "all participating skeptic models must be recorded")
+	// Exact equality (not substring Contains) pins the full joined value: it locks
+	// selection-order, proves dedup, and catches a stray or duplicated model.
+	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model,
+		"every winning skeptic model, joined in selection order and deduped")
 }
 
 // TestVerifyFinding_EarlyReturnsRecordEmptyModel locks AC3: neither early-return
@@ -352,9 +362,12 @@ func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &vf))
 	require.Len(t, vf.Findings, 1)
 	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
-	assert.Contains(t, vf.Findings[0].Model, "m-s2", "winning skeptic model must be recorded")
-	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning skeptic model must be recorded")
-	assert.NotContains(t, vf.Findings[0].Model, "m-s3", "losing (refuting) skeptic model must NOT be attributed")
+	// Exact equality (not substring Contains/NotContains) is robust to model-name
+	// overlaps (e.g. m-s vs m-s3), locks selection-order dedup, and still proves the
+	// refuting skeptic (m-s3) is excluded — it is absent from the pinned full value.
+	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model)
+	// Skeptic names the winning voters in selection order (joinSkeptics over winners).
+	assert.Equal(t, "s2, skep", vf.Findings[0].Skeptic)
 }
 
 // TestRunVerify_ThreeWayTieRecordsAllParticipantModels locks the tie branch of
@@ -388,6 +401,8 @@ func TestRunVerify_ThreeWayTieRecordsAllParticipantModels(t *testing.T) {
 	for _, m := range []string{"m-s2", "m-s3", "m-skep"} {
 		assert.Contains(t, vf.Findings[0].Model, m, "tie must record every participant's model")
 	}
+	// A tie's Skeptic field names every participant in selection order (joinSkeptics).
+	assert.Equal(t, "s2, s3, skep", vf.Findings[0].Skeptic)
 }
 
 // TestRunVerify_SkipDropsMismatchedPriorMetadata locks the carry-forward guard: a
@@ -566,6 +581,28 @@ func TestRunVerify_ManifestUpdateErrorPropagates(t *testing.T) {
 // the missing-head and missing-manifest error paths.
 // TestRunVerify_WorkerPoolPreservesOrder verifies that a MaxParallel>1 run
 // produces the same per-finding verdict ordering as a serial run.
+// byProblemChat answers each skeptic by matching the finding's Problem text in the
+// prompt, so a multi-finding pipeline run gets a distinct verdict per finding —
+// unlike alwaysChat, which answers identically and so cannot detect a pool that
+// mis-routes a result to the wrong finding key.
+type byProblemChat struct{ byProblem map[string]string }
+
+func (b byProblemChat) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "", nil
+}
+
+func (b byProblemChat) Chat(_ context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	verdict := `{"verdict":"unverifiable","reasoning":"no matching problem"}`
+	for needle, v := range b.byProblem {
+		if strings.Contains(inv.Prompt, needle) {
+			verdict = v
+			break
+		}
+	}
+	c := verdict
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+}
+
 func TestRunVerify_WorkerPoolPreservesOrder(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
@@ -575,18 +612,30 @@ func TestRunVerify_WorkerPoolPreservesOrder(t *testing.T) {
 	reg := skepticRegistry()
 	reg.Verify.MaxParallel = 2 // exercise the bounded pool path
 	dir := pipelineReview(t, findings)
+	// Distinct per-finding verdicts keyed on the finding's Problem text in the prompt:
+	// a pool bug that swapped result indices would land a verdict on the wrong file.
 	handle := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
-		return alwaysChat{`{"verdict":"confirmed","reasoning":"ok"}`}, okDispatcher(), nil, nil
+		return byProblemChat{byProblem: map[string]string{
+			"boom": `{"verdict":"confirmed","reasoning":"ok"}`,
+			"leak": `{"verdict":"refuted","reasoning":"no"}`,
+			"race": `{"verdict":"unverifiable","reasoning":"dunno"}`,
+		}}, okDispatcher(), nil, nil
 	}
 	res, err := runVerify(context.Background(), dir, reg, Options{}, handle)
 	require.NoError(t, err)
 	assert.Equal(t, 3, res.FindingsProcessed)
 	updated := readFindings(t, dir)
 	require.Len(t, updated, 3)
+	byFile := map[string]string{}
 	for _, f := range updated {
-		assert.Equal(t, "VERIFIED", f.Confidence, "each finding confirmed → VERIFIED")
-		assert.Equal(t, "confirmed", f.Verification.Verdict)
+		require.NotNil(t, f.Verification, "every finding must carry a verdict")
+		byFile[f.File] = f.Verification.Verdict
 	}
+	// Each distinct verdict must land on its own finding key — only distinguishable
+	// results can catch a mis-ordered pool.
+	assert.Equal(t, "confirmed", byFile["a.go"], "a.go's confirmed verdict must land on a.go")
+	assert.Equal(t, "refuted", byFile["b.go"], "b.go's refuted verdict must land on b.go")
+	assert.Equal(t, "unverifiable", byFile["c.go"], "c.go's unverifiable verdict must land on c.go")
 }
 
 func TestBuildDispatcher(t *testing.T) {
@@ -629,22 +678,28 @@ func TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings(t *testing.T) {
 	recon := filepath.Join(dir, reconciledSubdir)
 	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
 
-	// Capture stderr.
+	// Capture stderr. Drain the read end concurrently so a larger-than-pipe-buffer
+	// (~64KB) write cannot block runVerify and deadlock the test.
 	oldStderr := os.Stderr
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	os.Stderr = w
 	t.Cleanup(func() { os.Stderr = oldStderr })
 
+	done := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
 	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{},
 		scriptedHarness(`{"verdict":"confirmed","reasoning":"checked"}`))
 	require.NoError(t, runErr)
 
 	_ = w.Close()
-	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
 	os.Stderr = oldStderr
-	stderrOutput := buf.String()
+	stderrOutput := <-done
 
 	assert.NotContains(t, stderrOutput, "prior verification.json unreadable",
 		"corrupt prior must not warn when no findings are skipped")
@@ -721,4 +776,304 @@ func TestWinningAttribution_MismatchedSlicesNoPanic(t *testing.T) {
 		[][]string{nil, nil},
 		"confirmed",
 	)
+}
+
+// TestVerifyFinding_ProgrammingFaultLogged verifies that when invokeSkeptic
+// returns a programming-fault error (here: a nil ChatCompleter), verifyFinding
+// emits a structured stderr log line so the impossible nil-ctx/cc/disp case is
+// visible if it ever fires, rather than silently becoming an ordinary
+// unverifiable record indistinguishable from a real budget trip.
+func TestVerifyFinding_ProgrammingFaultLogged(t *testing.T) {
+	// Not parallel: swaps the global os.Stderr.
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	orig := os.Stderr
+	os.Stderr = w
+
+	// cc=nil with a non-nil dispatcher and an eligible skeptic drives invokeSkeptic
+	// into its nil-ChatCompleter programming-fault return inside the vote loop.
+	_, vr := verifyFinding(context.Background(),
+		reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"},
+		[]Skeptic{testSkeptic()}, nil, okDispatcher())
+
+	_ = w.Close()
+	os.Stderr = orig
+
+	var buf strings.Builder
+	_, _ = io.Copy(&buf, r)
+	out := buf.String()
+
+	assert.Equal(t, "unverifiable", vr.Verdict, "a programming fault still yields an unverifiable verdict")
+	assert.Contains(t, out, "class=programming_fault",
+		"a programming fault must emit a structured stderr log line")
+}
+
+// TestRunVerify_MultiSkepticNonFCDegradeParticipates exercises the single-shot
+// Complete (degrade) path under multi-vote aggregation: an eligible skeptic with
+// SupportsFC=false answers via Complete rather than the Chat tool loop, and its
+// verdict must still participate in the fold. Here the non-FC skeptic confirms
+// while the FC skeptic refutes → a 1/1 tie → unverifiable (not the FC skeptic's
+// lone refuted), and both participants' models are attributed.
+func TestRunVerify_MultiSkepticNonFCDegradeParticipates(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep, SupportsFC=true → Chat path
+	// s2=m-s2 with SupportsFC=false → engine degrades it to the single-shot
+	// Complete path instead of the Chat tool loop.
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	// byModelChat answers Complete (non-FC s2) and Chat (FC skep) by model: s2
+	// confirms via Complete, skep refutes via Chat → 1 confirmed + 1 refuted tie.
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"degrade path ran"}`,
+			"m-skep": `{"verdict":"refuted","reasoning":"chat path ran"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict,
+		"non-FC skeptic's confirmed vote must participate: 1 confirmed + 1 refuted is a tie")
+	assert.Contains(t, vf.Findings[0].Model, "m-s2", "degraded non-FC skeptic's model must be attributed")
+	assert.Contains(t, vf.Findings[0].Model, "m-skep", "FC skeptic's model must be attributed")
+}
+
+// TestRunVerify_WinningModelAttribution_TwoRefuteOneConfirm locks the opposite
+// polarity of AC2 from TwoConfirmOneRefute: two refute and one confirms → the
+// verdict is refuted and Model names only the two refuters, excluding the
+// confirmer. The confirmer here is skeptics[0] (s2, selected first), so this
+// also proves attribution never defaults to skeptics[0].
+func TestRunVerify_WinningModelAttribution_TwoRefuteOneConfirm(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	// Alphabetical selection: s2(m-s2), s3(m-s3), skep(m-skep). s2 (skeptics[0])
+	// confirms and loses; s3 and skep refute → winner=refuted, winners={m-s3, m-skep}.
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
+			"m-skep": `{"verdict":"refuted","reasoning":"no"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "refuted", vf.Findings[0].Verdict)
+	assert.Contains(t, vf.Findings[0].Model, "m-s3", "winning (refuting) skeptic model must be recorded")
+	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning (refuting) skeptic model must be recorded")
+	assert.NotContains(t, vf.Findings[0].Model, "m-s2", "losing (confirming) skeptics[0] model must NOT be attributed")
+	// Skeptic names the winning refuters in selection order (joinSkeptics over winners).
+	assert.Equal(t, "s3, skep", vf.Findings[0].Skeptic)
+}
+
+// budgetTripChat drives the skeptic whose model == tripModel into an endless
+// tool-call loop, so it trips its MaxTurns budget (→ unverifiable with a tripped
+// budget), while every other model gets its scripted final verdict. It lets a
+// pipeline test place exactly one budget-tripped voter into a multi-skeptic fold.
+type budgetTripChat struct {
+	tripModel string
+	verdicts  map[string]string
+}
+
+func (b budgetTripChat) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	return b.verdicts[inv.Model], nil
+}
+
+func (b budgetTripChat) Chat(_ context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	if inv.Model == b.tripModel {
+		// Always request another tool call — the loop never concludes, so the
+		// skeptic exhausts its MaxTurns budget.
+		return &llmclient.ChatResponse{
+			Message: llmclient.Message{Role: "assistant", ToolCalls: []llmclient.ToolCall{{
+				ID: "call_1", Type: "function",
+				Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{}`)},
+			}}},
+			FinishReason: "tool_calls",
+		}, nil
+	}
+	c := b.verdicts[inv.Model]
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+}
+
+// TestRunVerify_TieRecordsTrippedBudgetFromUnverifiableVoter locks the pipeline
+// rule that a tripped budget is surfaced in verification.json when its voter's
+// unverifiable verdict is part of the recorded outcome. s2 trips max_turns
+// (→ unverifiable), s3 refutes, skep confirms → 1/1/1 tie → unverifiable, and a
+// tie attributes every participant, so TrippedBudgets carries s2's max_turns.
+func TestRunVerify_TieRecordsTrippedBudgetFromUnverifiableVoter(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true, MaxTurns: intPtr(2)}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return budgetTripChat{tripModel: "m-s2", verdicts: map[string]string{
+			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
+			"m-skep": `{"verdict":"confirmed","reasoning":"yes"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "1 tripped + 1 refuted + 1 confirmed is a tie")
+	assert.Contains(t, vf.Findings[0].TrippedBudgets, "max_turns",
+		"a tie surfaces the tripped budget of its unverifiable voter")
+}
+
+// TestRunVerify_ConfirmedWinnerDropsLoserTrippedBudget locks the converse: when
+// the decisive winner is confirmed, a LOSING skeptic's tripped budget is not
+// attributed. s2 trips max_turns (→ unverifiable, a loser); s3 and skep confirm
+// → confirmed wins, so TrippedBudgets is empty (only winners are credited).
+func TestRunVerify_ConfirmedWinnerDropsLoserTrippedBudget(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true, MaxTurns: intPtr(2)}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return budgetTripChat{tripModel: "m-s2", verdicts: map[string]string{
+			"m-s3":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-skep": `{"verdict":"confirmed","reasoning":"yes"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict, "2 confirmed beats 1 tripped-unverifiable")
+	assert.Empty(t, vf.Findings[0].TrippedBudgets,
+		"a confirmed winner drops a losing skeptic's tripped budget")
+}
+
+// TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns covers the carry-forward
+// guard's priorLoadFailed branch: an already-verified finding (skipped, no --fresh)
+// whose prior verification.json is corrupt must keep its verdict but drop all rich
+// audit metadata (empty Model / zero DurationMs / empty TrippedBudgets) rather than
+// carrying garbage, and the prior-unreadable warning MUST fire — the opposite branch
+// of TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings (where nothing skips).
+func TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+	}})
+	// Corrupt prior verification.json: the finding is skipped, so loadPrior fires and
+	// fails — exercising the priorLoadFailed guard rather than a verdict mismatch.
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+	done := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+	_ = w.Close()
+	os.Stderr = oldStderr
+	stderrOutput := <-done
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict, "a skipped finding keeps its verdict")
+	assert.Empty(t, vf.Findings[0].Model, "a corrupt prior must not lend a model")
+	assert.Zero(t, vf.Findings[0].DurationMs, "a corrupt prior must not lend a duration")
+	assert.Empty(t, vf.Findings[0].TrippedBudgets, "a corrupt prior must not lend tripped budgets")
+	assert.Contains(t, stderrOutput, "class=prior_unreadable",
+		"a corrupt prior on the skip path must fire the prior-unreadable warning")
+}
+
+// TestRunVerify_LivePathRecordsPositiveDuration locks live duration attribution:
+// the live (non-skip) verify path must record a strictly positive DurationMs in
+// verification.json. Scripted completers normally return sub-millisecond, so a
+// regression hardcoding DurationMs=0 on the live path would pass every other test;
+// a deliberate completer delay makes the measured wall-clock provably non-zero.
+func TestRunVerify_LivePathRecordsPositiveDuration(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	// A 5ms completer delay guarantees the skeptic call (and thus verifyFinding's
+	// measured wall-clock) takes at least 5ms, so DurationMs is reliably >= 5.
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return &fakeChatCompleter{turns: []chatTurn{{delay: 5 * time.Millisecond, content: `{"verdict":"confirmed","reasoning":"ok"}`}}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
+	assert.Positive(t, vf.Findings[0].DurationMs, "the live verify path must record a non-zero wall-clock duration")
+}
+
+// TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants covers the 1+1 tie
+// (1 confirmed + 1 refuted) — the simplest disagreement — which collapses to
+// unverifiable. Both Model and Skeptic must name every participant (joinSkeptics
+// over all voters on a tie), locking the docstring contract that a tie records
+// the full disagreement rather than a lone voter.
+func TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	// Selection s2(m-s2), skep(m-skep): one confirms, one refutes → 1/1 tie.
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-skep": `{"verdict":"refuted","reasoning":"no"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "a 1 confirmed + 1 refuted split is a tie")
+	assert.Equal(t, "s2, skep", vf.Findings[0].Skeptic, "a tie names every participant in selection order")
+	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model, "a tie attributes every participant's model")
 }

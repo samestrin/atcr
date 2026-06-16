@@ -19,6 +19,13 @@ func ScopeFocus(scope []string) string {
 	if len(cats) == 0 {
 		return ""
 	}
+	// Trust boundary: scope is operator-controlled registry config, validated at
+	// load (registry.Load rejects blank/whitespace and control-character entries),
+	// so each category is concatenated verbatim with no per-entry escaping. There
+	// is intentionally no length bound here — scope is trusted operator input, not
+	// attacker-controlled, so a pathological multi-KB entry would only bloat the
+	// operator's own prompt. Add a length cap at config.go scope validation if
+	// accidental prompt bloat becomes a concern.
 	return "\n\n## Review Focus\nConcentrate this review on the following categories: " +
 		strings.Join(cats, ", ") + ". Prioritize findings in these areas. This is a focus " +
 		"hint, not a hard limit — still report any genuinely critical issue you find outside them."

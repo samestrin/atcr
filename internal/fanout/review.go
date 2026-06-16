@@ -579,6 +579,13 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 	if !ok {
 		return Agent{}, fmt.Errorf("fallback agent %q references unknown provider %q", name, ac.Provider)
 	}
+	// A fallback answers in the primary's place, so the primary's review
+	// constraints (min_severity, max_findings, scope) govern — the fallback's
+	// own are intentionally ignored (Epic 2.2). Surface that override so an
+	// operator who set these on a fallback-only agent is not silently ignored.
+	if ac.MinSeverity != "" || ac.MaxFindings != nil || len(ac.Scope) > 0 {
+		fmt.Fprintf(os.Stderr, "warn: fallback agent %q sets its own min_severity/max_findings/scope; these are ignored — the primary lane's constraints govern\n", name)
+	}
 	return Agent{
 		Name:        name,
 		Prompt:      primary.Prompt,

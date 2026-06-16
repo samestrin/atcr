@@ -5,13 +5,43 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/scorecard"
 )
+
+// countScorecardLines totals the JSONL record lines in the isolated per-user
+// scorecard store, so a test can assert how many records a reconcile run wrote
+// (or that --no-scorecard wrote none). A missing store directory counts as zero.
+func countScorecardLines(t *testing.T) int {
+	t.Helper()
+	dir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	require.NoError(t, err)
+	total := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		require.NoError(t, err)
+		for _, ln := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if strings.TrimSpace(ln) != "" {
+				total++
+			}
+		}
+	}
+	return total
+}
 
 // isolate chdirs into a fresh temp working dir AND points HOME/XDG at another
 // temp dir, so resolveGateThreshold's registry probe (~/.config/atcr) cannot
@@ -152,6 +182,55 @@ func TestReconcileCmd_MissingReviewIsUsageError(t *testing.T) {
 	// No review at all → exit 2 (run atcr review first).
 	require.Equal(t, 2, execCmd(t, "reconcile"))
 	require.Equal(t, 2, execCmd(t, "reconcile", "nonexistent-id"))
+}
+
+func TestReconcileCmd_NoScorecardFlagInHelp(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "reconcile", "--help")
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "--no-scorecard", "reconcile --help must list the suppression flag")
+}
+
+func TestReconcileCmd_NoScorecardSuppressesWrite(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "--no-scorecard", "r"))
+	require.Equal(t, 0, countScorecardLines(t), "--no-scorecard writes zero records")
+}
+
+func TestReconcileCmd_DefaultWritesScorecard(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	require.Equal(t, 0, execCmd(t, "reconcile", "r"))
+	require.Greater(t, countScorecardLines(t), 0,
+		"a default reconcile (no flag) still writes scorecard records (regression guard)")
+}
+
+func TestReconcileCmd_NoScorecardExitCodeUnchanged(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	// Success exit code is unchanged...
+	require.Equal(t, 0, execCmd(t, "reconcile", "--no-scorecard", "r"))
+	// ...and the gate's exit 1 still fires with suppression on (the flag has no
+	// effect on reconcile's own exit semantics).
+	require.Equal(t, 1, execCmd(t, "reconcile", "--no-scorecard", "--fail-on", "HIGH", "r"))
+}
+
+func TestReconcileCmd_NoScorecardNoSideEffects(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "HIGH|a.go:1|boom|fix|security|10|ev|host\n",
+	})
+	_, out := execCmdCapture(t, "reconcile", "--no-scorecard", "r")
+	// Suppression is silent: no scorecard-related text leaks into output.
+	require.NotContains(t, strings.ToLower(out), "scorecard",
+		"--no-scorecard must not print any scorecard-related message")
 }
 
 func TestReconcileCmd_TraversalIdRejected(t *testing.T) {

@@ -21,6 +21,15 @@ type Completer interface {
 	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
 }
 
+// UsageCompleter is the optional usage-reporting extension of Completer: it
+// returns the same content plus the provider's token usage for the call. The
+// single-shot path type-asserts for it (the same pattern as ChatCompleter) so a
+// completer that does not implement it degrades to the plain Complete path with
+// zero usage. *llmclient.Client satisfies it via CompleteWithUsage.
+type UsageCompleter interface {
+	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, error)
+}
+
 // ChatCompleter is the multi-turn extension of Completer: it carries a message
 // history plus tool definitions and returns the assistant turn (which may
 // request tool_calls). The engine selects it via a type assertion only when an
@@ -125,6 +134,18 @@ type Result struct {
 	ToolsDegraded  bool
 	ToolsRequested bool
 	TrippedBudgets []string
+
+	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
+	// model id; TokensIn/TokensOut are the provider-reported token counts,
+	// accumulated across every Chat() turn on the tool-loop path and taken from
+	// the single CompleteWithUsage() call on the single-shot path. They are
+	// persisted into status.json (AgentStatus) so the reconcile-time scorecard
+	// emitter — which runs in a separate process from the review — can source
+	// per-reviewer model/tokens and derive cost. Zero when the completer does not
+	// report usage (graceful degradation, never an error).
+	Model     string
+	TokensIn  int
+	TokensOut int
 }
 
 // Engine fans a review out to a roster across a parallel lane (default) and a
@@ -388,7 +409,19 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 // other error → StatusFailed). This is the unchanged 1.x path.
 func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	start := time.Now()
-	content, err := e.completer.Complete(ctx, a.Invocation)
+	// Capture usage when the completer reports it (CompleteWithUsage); otherwise
+	// take the plain content-only path with zero usage. Same optional-interface
+	// pattern as the tool-loop ChatCompleter.
+	var (
+		content string
+		usage   llmclient.UsageData
+		err     error
+	)
+	if uc, ok := e.completer.(UsageCompleter); ok {
+		content, usage, err = uc.CompleteWithUsage(ctx, a.Invocation)
+	} else {
+		content, err = e.completer.Complete(ctx, a.Invocation)
+	}
 	r := Result{
 		Agent:       a.Name,
 		DurationMS:  time.Since(start).Milliseconds(),
@@ -399,6 +432,9 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		// Preserve the original tool request even on the single-shot path so a
 		// degraded tool agent (invokeDegraded reuses this) reports tools_requested.
 		ToolsRequested: a.Tools,
+		Model:          a.Invocation.Model,
+		TokensIn:       usage.PromptTokens,
+		TokensOut:      usage.CompletionTokens,
 	}
 	if err != nil {
 		r.Err = err
@@ -419,6 +455,16 @@ func (e *Engine) invokeDegraded(ctx context.Context, a Agent) Result {
 	r.Tools = true
 	r.ToolsDegraded = true
 	return r
+}
+
+// addUsage accumulates one turn's provider-reported token usage onto the result.
+// The tool-loop path calls it after every Chat() (each turn plus the final-answer
+// call) so a multi-turn agent's tokens are the sum across turns, not just the
+// last turn's (TD-002). Negative counts are already clamped to zero at the
+// llmclient decode boundary, so the sum is always non-negative.
+func (r *Result) addUsage(u llmclient.UsageData) {
+	r.TokensIn += u.PromptTokens
+	r.TokensOut += u.CompletionTokens
 }
 
 // addTripped records a tripped budget name on the result, de-duplicating so a
