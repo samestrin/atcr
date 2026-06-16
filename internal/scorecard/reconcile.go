@@ -23,6 +23,13 @@ import (
 // Emit logs its own write failures, so scorecard emission never fails the
 // caller's reconcile.
 func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
+	// Honor suppression before any work: a --no-scorecard run must do truly zero
+	// I/O, so gate here — ahead of the pool-summary read below — not only at
+	// Emit's store gate. Emit keeps its own first-line gate for direct callers.
+	if opts.NoScorecard {
+		return
+	}
+
 	reviewers := map[string]ReviewerMeta{}
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {

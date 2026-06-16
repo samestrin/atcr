@@ -109,6 +109,8 @@ type EmitInput struct {
 // the first check — when set, Emit returns immediately with zero I/O (no directory
 // creation, no file open).
 func Emit(in EmitInput, opts EmitOpts) error {
+	// Suppression gate — intentionally the FIRST statement, before resolveDir or
+	// any file I/O, so --no-scorecard creates no directory and opens no file.
 	if opts.NoScorecard {
 		return nil
 	}
