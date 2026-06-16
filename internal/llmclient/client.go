@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -313,6 +314,33 @@ func httpStatusError(status int, snippet string) error {
 	return &HTTPStatusError{Status: status, Snippet: snippet}
 }
 
+// bearerTokenPattern and skKeyPattern match secret-shaped tokens that a provider
+// might echo into an error body even when they are not the literal configured
+// key (a foreign token, or the key in a transformed form). They back the
+// defense-in-depth scrub in redactErrorSnippet. readErrorSnippet collapses
+// whitespace first, so `Bearer <token>` is single-spaced when these run.
+var (
+	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
+	skKeyPattern       = regexp.MustCompile(`sk-\S+`)
+)
+
+// redactErrorSnippet scrubs secrets from a provider error snippet. It removes
+// the configured key in both literal and URL-encoded form (an exact-match scrub
+// alone misses a key the provider echoes re-encoded), then redacts any
+// Bearer-prefixed or sk- shaped token generically so a foreign or transformed
+// secret cannot leak into HTTPStatusError.Snippet.
+func redactErrorSnippet(snippet, key string) string {
+	if key != "" {
+		snippet = strings.ReplaceAll(snippet, key, "[redacted]")
+		if enc := url.QueryEscape(key); enc != key {
+			snippet = strings.ReplaceAll(snippet, enc, "[redacted]")
+		}
+	}
+	snippet = bearerTokenPattern.ReplaceAllString(snippet, "Bearer [redacted]")
+	snippet = skKeyPattern.ReplaceAllString(snippet, "[redacted]")
+	return snippet
+}
+
 // readErrorSnippet reads a bounded prefix of a non-200 response body and
 // collapses it to a single whitespace-normalized line. The remainder of the
 // body is drained so the connection can be reused.
@@ -344,7 +372,7 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 		// Capture a bounded snippet for error reporting; the provider's JSON
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
-		snippet := strings.ReplaceAll(readErrorSnippet(resp.Body), key, "[redacted]")
+		snippet := redactErrorSnippet(readErrorSnippet(resp.Body), key)
 		return []byte(snippet), resp.StatusCode, nil
 	}
 
