@@ -172,6 +172,20 @@ func TestScorecardCmd_SummaryUnreadableNoPathLeak(t *testing.T) {
 	require.NotContains(t, out, summaryPath, "resolved absolute path of summary.json must not appear in error message")
 }
 
+func TestScorecardCmd_SlashBearingRunIDFallsBackToRunID(t *testing.T) {
+	isolate(t)
+	// A run_id-shaped arg that also contains a slash trips looksLikePath, sending
+	// it down the review-dir path; that lookup finds no reconciled/summary.json. It
+	// must then fall back to treating the arg as a run_id (it satisfies IsRunID)
+	// rather than failing with a confusing "no reconciled/summary.json" usage error.
+	runID := "2026-06-14T10:00:00Z-a/b"
+	storeRecord(t, reviewerRec(runID, "bruce", "claude-sonnet-4-6", 12, 7))
+
+	code, out := execCmdCapture(t, "scorecard", runID)
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "bruce")
+}
+
 func TestFormatPercent_ClampsOutOfRange(t *testing.T) {
 	// A corrupt record may carry a rate outside [0,1]; formatPercent must clamp to
 	// match the export path's clampRate rather than rendering nonsense like 500% or
