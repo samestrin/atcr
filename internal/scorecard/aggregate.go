@@ -148,6 +148,12 @@ func Aggregate(records []Record) []LeaderboardRow {
 		row := groups[k]
 		row.CorroborationRate = ratio(row.FindingsCorroborated, row.FindingsRaised)
 		if row.FindingsCorroborated > 0 {
+			// CostPerCorroborated is, by definition, total cost / corroborated
+			// findings ("cost per corroborated finding") — the formula matches the
+			// metric name. It is distinct from a hypothetical "cost per verified
+			// finding" (cost / (corroborated + refuted)), which is new scope: it
+			// would require tracking FindingsRefuted on LeaderboardRow and summing
+			// it in Aggregate, not a change to this formula.
 			row.CostPerCorroborated = row.TotalCostUSD / float64(row.FindingsCorroborated)
 			row.HasCostPerCorroborated = true
 		}
