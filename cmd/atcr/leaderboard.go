@@ -126,7 +126,6 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 	data, err := scorecard.Export(records, filters, time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, scorecard.ErrNoExportRecords) {
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "No records match the specified filters. Try widening --since or removing filters.")
 			return err
 		}
 		// A bad --since (or another runtime error) carries its own actionable text.

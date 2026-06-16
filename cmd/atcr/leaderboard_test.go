@@ -177,7 +177,7 @@ func TestLeaderboardCmd_ExportEmptyStoreExit1(t *testing.T) {
 	// records as a failure (exit 1) with the canonical no-match message.
 	code, out := execCmdCapture(t, "leaderboard", "--export")
 	require.Equal(t, 1, code)
-	require.Contains(t, out, "No records match the specified filters. Try widening --since or removing filters.")
+	require.Contains(t, out, "no records match the export filters")
 }
 
 func TestLeaderboardCmd_ExportNoFilterMatchExit1(t *testing.T) {
@@ -186,7 +186,7 @@ func TestLeaderboardCmd_ExportNoFilterMatchExit1(t *testing.T) {
 
 	code, out := execCmdCapture(t, "leaderboard", "--export", "--model", "nonexistent-model")
 	require.Equal(t, 1, code)
-	require.Contains(t, out, "No records match the specified filters. Try widening --since or removing filters.")
+	require.Contains(t, out, "no records match the export filters")
 }
 
 func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
