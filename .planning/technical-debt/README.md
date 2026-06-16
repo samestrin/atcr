@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 22 |
 | MEDIUM | 0 | 3 | 30 |
-| LOW | 0 | 7 | 57 |
+| LOW | 3 | 7 | 57 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 0 | **Deferred Items:** 10 | **Resolved Items:** 109 | **Total Items:** 119
+**Last Modified:** 2026-06-16 | **Open Items:** 3 | **Deferred Items:** 10 | **Resolved Items:** 109 | **Total Items:** 122
 
 ## Directory Structure
 
@@ -33,6 +33,14 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-16] From Sprint: epic-3.4
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/scorecard/store.go:21 | ReadOpts.Writer and EmitOpts.Diag name the same diagnostics-sink concept with two different field names, so a reader must learn both | Unify on one field name (e.g. Diag) across both option structs, or add a cross-referencing doc note marking the divergence intentional | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| U | [ ] | LOW | .planning/.active_sprint:1 | The transient /execute-epic session file .planning/.active_sprint is tracked and can be committed into PRs as a process artifact | Add .planning/.active_sprint to .gitignore so the session marker is never committed | ROLLBACK | 5 | execute-epic-independent |
+| U | [ ] | LOW | internal/scorecard/store.go:194 | diagWriter is re-resolved on the FindByRunID path (once per inner ReadRecords call plus once for the adjacent-month warning) instead of resolved once | Resolve the writer once at the top of FindByRunID and pass it down | OVER_ENGINEERING | 10 | execute-epic-independent |
 
 ### [2026-06-15] From Sprint: 3.3_per_run_scorecard
 
