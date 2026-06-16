@@ -155,6 +155,13 @@ func Aggregate(records []Record) []LeaderboardRow {
 		// all non-negative) rather than the stored float: two groups that are
 		// equal-by-value but summed in a different order can differ by a sub-ULP
 		// as floats and break the intended (reviewer, model) tie-break.
+		//
+		// Exactness here assumes the products fit int64. Finding counts are summed
+		// across runs but stay far below 2^31 in practice, so each operand is
+		// << 2^31 and the product << 2^62 — safely inside int64. Counts large
+		// enough to overflow (corroborated AND raised each summing to ≈2^31) are
+		// not reachable in realistic operation; should that ever change, fall back
+		// to comparing the stored float CorroborationRate when a product overflows.
 		li := int64(rows[i].FindingsCorroborated) * int64(rows[j].FindingsRaised)
 		lj := int64(rows[j].FindingsCorroborated) * int64(rows[i].FindingsRaised)
 		if li != lj {
