@@ -9,11 +9,11 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 3 | 0 | 0 |
 | MEDIUM | 6 | 13 | 0 |
-| LOW | 43 | 9 | 16 |
+| LOW | 36 | 9 | 23 |
 | SEVERITY | 1 | 0 | 0 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 53 | **Deferred Items:** 22 | **Resolved Items:** 16 | **Total Items:** 91
+**Last Modified:** 2026-06-16 | **Open Items:** 46 | **Deferred Items:** 22 | **Resolved Items:** 23 | **Total Items:** 91
 
 ## Directory Structure
 
@@ -79,16 +79,16 @@ technical-debt/
 | 4 | [ ] | LOW | internal/reconcile/severity_consolidation_test.go:34 | Comparison lacks braces for single-line if | Add trailing comma after last element | maintainancy | 2 | code-review | Reviewer | MEDIUM |
 | 4 | [ ] | LOW | internal/reconcile/severity_consolidation_test.go:42 | Test name too long | Shorten to TestMergeNoDisagreementOnCase | maintainancy | 2 | code-review | Reviewer | MEDIUM |
 | 4 | [ ] | LOW | internal/reconcile/severity_consolidation_test.go:58 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
+| 5 | [x] | LOW | internal/report/render.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 5 | [ ] | LOW | internal/report/render.go:5 | Unnecessary blank line after package declaration | Remove blank line | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render.go:122 | severityRankOf now calls stream.NormalizeSeverity (ToUpper+TrimSpace allocating a new string) invoked inside sort.SliceStable comparator on both operands per comparison O(n log n) times. The pre-3.5 version did a bare reconcile.SeverityRank[s] lookup with no allocation so the consolidation introduced a minor per-compare allocation regression in the render hot path. | Decorate-sort: precompute rank := severityRankOf(f.Severity) once per finding into a parallel slice before sorting then compare cached ints in the closure. Verify existing render tests still pass; optional micro-benchmark on a few-hundred-finding slice. Low priority - only matters at high finding counts. | performance | 15 | code-review | claude | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render.go:204 | writeSummaryGrid buckets findings with counts[f.Severity] using raw severity against a map keyed by canonical reconcile.SevCritical/SevHigh/... constants. A mixed-case "high" from hand-edited findings.json misses its bucket and falls into OTHER row even though severityRankOf ranks it correctly as HIGH. The summary grid and findings list disagree on what counts as a known severity - the consolidation touched severityRankOf for exactly this casing reason but left its sibling counter un-normalized. | Normalize the bucket key: c ok := counts[canonicalize(f.Severity)] - a canonicalize helper already exists at render.go:411 and matches NormalizeSeverity. Add a render test with a lowercase severity asserting it lands in its canonical bucket not OTHER. | correctness | 15 | code-review | claude | MEDIUM |
+| 5 | [x] | LOW | internal/report/render.go:122 | severityRankOf now calls stream.NormalizeSeverity (ToUpper+TrimSpace allocating a new string) invoked inside sort.SliceStable comparator on both operands per comparison O(n log n) times. The pre-3.5 version did a bare reconcile.SeverityRank[s] lookup with no allocation so the consolidation introduced a minor per-compare allocation regression in the render hot path. | Decorate-sort: precompute rank := severityRankOf(f.Severity) once per finding into a parallel slice before sorting then compare cached ints in the closure. Verify existing render tests still pass; optional micro-benchmark on a few-hundred-finding slice. Low priority - only matters at high finding counts. | performance | 15 | code-review | claude | MEDIUM |
+| 5 | [x] | LOW | internal/report/render.go:204 | writeSummaryGrid buckets findings with counts[f.Severity] using raw severity against a map keyed by canonical reconcile.SevCritical/SevHigh/... constants. A mixed-case "high" from hand-edited findings.json misses its bucket and falls into OTHER row even though severityRankOf ranks it correctly as HIGH. The summary grid and findings list disagree on what counts as a known severity - the consolidation touched severityRankOf for exactly this casing reason but left its sibling counter un-normalized. | Normalize the bucket key: c ok := counts[canonicalize(f.Severity)] - a canonicalize helper already exists at render.go:411 and matches NormalizeSeverity. Add a render test with a lowercase severity asserting it lands in its canonical bucket not OTHER. | correctness | 15 | code-review | claude | MEDIUM |
 | 5 | [ ] | LOW | internal/report/render.go:415 | Unnecessary blank line after function declaration | Add braces for consistency | maintainancy | 2 | code-review | Reviewer | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render.go:424 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render_test.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
+| 5 | [x] | LOW | internal/report/render.go:424 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
+| 5 | [x] | LOW | internal/report/render_test.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 5 | [ ] | LOW | internal/report/render_test.go:5 | Unnecessary blank line after package declaration | Remove blank line | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render_test.go:286 | Comparison lacks braces for single-line if | Add braces for consistency | maintainancy | 2 | code-review | Reviewer | MEDIUM |
-| 5 | [ ] | LOW | internal/report/render_test.go:290 | Comparison lacks braces for single-line if | Add test for mixed-case severity input | maintainancy | 5 | code-review | Reviewer | MEDIUM |
+| 5 | [x] | LOW | internal/report/render_test.go:286 | Comparison lacks braces for single-line if | Add braces for consistency | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+| 5 | [x] | LOW | internal/report/render_test.go:290 | Comparison lacks braces for single-line if | Add test for mixed-case severity input | maintainancy | 5 | code-review | Reviewer | MEDIUM |
 | 5 | [ ] | LOW | internal/report/render_test.go:302 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
 | 6 | [x] | LOW | internal/stream/severity.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 6 | [ ] | LOW | internal/stream/severity.go:5 | Unnecessary blank line after package declaration | Add comment about read-only after init | maintainancy | 2 | code-review | Reviewer | MEDIUM |
