@@ -1,3 +1,4 @@
+// Package report provides tests for the report rendering layer.
 package report
 
 import (
