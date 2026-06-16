@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -150,7 +151,7 @@ func (u *UsageData) UnmarshalJSON(data []byte) error {
 // ComputeCostUSD — sees a non-negative count. A non-numeric value yields zero.
 func clampNonNegative(n json.Number) int {
 	v, err := n.Float64()
-	if err != nil || v < 0 {
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) || v > 1e15 {
 		return 0
 	}
 	return int(v)
