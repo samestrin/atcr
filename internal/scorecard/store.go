@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -30,10 +31,20 @@ type ReadOpts struct {
 // os.Stderr when nil. It centralizes the "default to os.Stderr when unset" rule
 // shared by the read and emit paths (Epic 3.4 AC5).
 func diagWriter(w io.Writer) io.Writer {
-	if w == nil {
+	if w == nil || isNilPointer(w) {
 		return os.Stderr
 	}
 	return w
+}
+
+// isNilPointer reports whether w is a non-nil interface wrapping a nil pointer
+// (a typed nil, e.g. (*bytes.Buffer)(nil) handed in as io.Writer). `w == nil` is
+// false for such a value, yet the first Write on it panics — so diagWriter
+// treats it as unset and falls back to os.Stderr, preserving the best-effort
+// "never panic in a diagnostics path" contract.
+func isNilPointer(w io.Writer) bool {
+	rv := reflect.ValueOf(w)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
 // Append writes one record as a single JSONL line to the month file derived from
