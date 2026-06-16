@@ -1,3 +1,5 @@
+// Package stream defines the canonical severity-rank rubric and normalization
+// helper used by all atcr pipeline stages.
 package stream
 
 import "strings"

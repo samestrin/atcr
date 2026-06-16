@@ -245,8 +245,8 @@ func spreadFromDisagreement(d string) int {
 	if len(parts) != 2 {
 		return 0
 	}
-	lo := SeverityRank[strings.TrimSpace(parts[0])]
-	hi := SeverityRank[strings.TrimSpace(parts[1])]
+	lo := SeverityRank[stream.NormalizeSeverity(parts[0])]
+	hi := SeverityRank[stream.NormalizeSeverity(parts[1])]
 	if hi < lo {
 		return 0
 	}

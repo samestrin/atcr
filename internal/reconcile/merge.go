@@ -20,7 +20,13 @@ const (
 // both the reconcile radar and the report view; unknown severities sort last
 // (rank 0). Kept as an exported alias so reconcile's internal lookups read it
 // unqualified and external callers keep a stable symbol.
-var SeverityRank = stream.SeverityRank
+var SeverityRank = func() map[string]int {
+	m := make(map[string]int, len(stream.SeverityRank))
+	for k, v := range stream.SeverityRank {
+		m[k] = v
+	}
+	return m
+}()
 
 // Confidence values. HIGH = 2+ distinct reviewers, MEDIUM = single reviewer,
 // LOW = reserved for untrusted sources (unused in v1).
@@ -120,8 +126,9 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 		}
 	}
 	if max == "" {
-		// No known severity in the group: fall back to the first value verbatim.
-		max = group[0].Severity
+		// No known severity in the group: fall back to the first value normalized
+		// so casing is consistent with every known-severity path.
+		max = stream.NormalizeSeverity(group[0].Severity)
 	}
 	if len(seen) > 1 {
 		disagreement = minSev + " vs " + max
