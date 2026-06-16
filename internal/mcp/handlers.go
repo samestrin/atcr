@@ -276,6 +276,13 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// The markdown report carries the disagreement radar above its findings
 		// (Epic 3.2). A corrupt ambiguous.json degrades to a findings-only radar
 		// rather than failing the report.
+		//
+		// MCP/CLI parity: this embedded markdown radar is identical to the CLI's —
+		// both call report.RenderMarkdownWithDisagreements (cmd/atcr/report.go). The
+		// CLI's standalone --disagreements ranked view (RenderDisagreements /
+		// RenderDisagreementsJSON) is intentionally NOT exposed over MCP; MCP clients
+		// receive the radar markdown-embedded only. Any renderer-dedup work belongs
+		// to Epic 15.0 (radar-renderer-consolidation), not this surface.
 		df := reconcile.LoadDisagreements(dir, findings)
 		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
 			return nil, ReportResult{}, err
