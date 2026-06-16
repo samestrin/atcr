@@ -1,3 +1,6 @@
+// Package reconcile merges findings from multiple code-review sources, ranks
+// disagreements between reviewers into a radar, and emits the reconciled
+// report, JSON findings, and cross-examination handoff documents.
 package reconcile
 
 import (
