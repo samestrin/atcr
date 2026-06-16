@@ -773,7 +773,7 @@ Use the Agent tool:
 
 ---
 
-### 4.1 [ ] **[Export Public Leaderboard — RED](plan/user-stories/04-export-public-leaderboard.md)**
+### 4.1 [x] **[Export Public Leaderboard — RED](plan/user-stories/04-export-public-leaderboard.md)**
 
 **Mode:** Moderate | **AC:** 03-04, 04-01, 04-02, 04-03, 04-04
 
@@ -797,7 +797,7 @@ Use the Agent tool:
 
 ---
 
-### 4.2 [ ] **[Export Public Leaderboard — GREEN](plan/user-stories/04-export-public-leaderboard.md)**
+### 4.2 [x] **[Export Public Leaderboard — GREEN](plan/user-stories/04-export-public-leaderboard.md)**
 
 1. Implement `internal/scorecard/export.go`:
    - `PublicRecord` struct — allowlist only: schema_version, model, role, runs, findings_raised, findings_corroborated, corroboration_rate, cost_usd, tokens_in, tokens_out, latency_ms (NO run_id, no reviewer name, no path-like fields)
@@ -818,7 +818,7 @@ Use the Agent tool:
 
 ---
 
-### 4.2.A [ ] **[Export Public Leaderboard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-export-public-leaderboard.md)**
+### 4.2.A [x] **[Export Public Leaderboard — ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-export-public-leaderboard.md)**
 
 **Changed Files:** `internal/scorecard/export.go`, `cmd/atcr/leaderboard.go`, `internal/scorecard/export_test.go`, `cmd/atcr/leaderboard_test.go`
 
@@ -837,11 +837,18 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| HIGH (fixed in 4.3) | export.go scrubPath | Path scrub anchored `(^|\s)` only — a path glued to a non-space byte (`host=/etc/passwd`, `cfg:/Users/sam/.ssh/id_rsa`) leaked into public JSON. | Rewrote scrub to strip any `/`-run NOT preceded by an alphanumeric (so absolute paths and `=/...`/`:/...` forms are stripped while provider-prefixed `anthropic/claude-3` is preserved); `~`-runs stripped anywhere. Added negative fixtures (TestExport_AnonymizationStripsPathLike extended + glued-path case). |
+| HIGH (fixed in 4.3) | export.go scrubField | Emails never scrubbed; a reviewer/model carrying `user@host` leaked PII (and would fail export_test.go's own `@` invariant on real data). | Added email pattern to the scrub set. |
+| MEDIUM (fixed in 4.3) | export.go scrubKey | Secret-prefix denylist narrow (missed AWS `AKIA`, `glpat-`, `xoxp-`/`xapp-`, `github_pat_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, and `key=`/`token=`/`Authorization:` assignment forms). | Broadened the key denylist and added credential-assignment forms; documented that the allowlist (not the denylist) is the primary guarantee. |
+| MEDIUM (fixed in 4.3) | export.go AnonymizeRecord | Negative metric in a corrupt-but-parseable source record flowed into sums and `ratio()`, yielding negative/>1 public rates. | Clamp ingested counts to ≥0 in AnonymizeRecord (defense-in-depth for the public format). |
+| LOW (fixed in 4.3) | export_test.go | PII tests only fed space-separated happy-path fixtures — the scrub gaps were untested. | Added negative fixtures (glued path, email, AWS/GitLab key prefixes) asserting absence in output. |
+| LOW (no action) | export.go SurvivedSkepticRate | A no-verification group emits 0.0, indistinguishable from a verified-0% group. | By design per AC 04-03 Scenario 8 (zero, not omitted/null, when absent). Documented. |
+| LOW (no action) | leaderboard.go writeExportFile | `os.Stat` directory pre-check is TOCTOU. | Pre-stat is only for a friendlier message; the rename/create fails safely regardless. No correctness impact. |
+
+**Verdict:** No CRITICAL. Two HIGH (mid-token path leak, unscrubbed emails) and three MEDIUM/LOW hardening items fixed inline in 4.3 with negative-fixture regression tests; two LOW are by-design/no-impact. All cheap — nothing deferred to TD.
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
@@ -850,7 +857,7 @@ Use the Agent tool:
 
 ---
 
-### 4.3 [ ] **[Export Public Leaderboard — REFACTOR](plan/user-stories/04-export-public-leaderboard.md)**
+### 4.3 [x] **[Export Public Leaderboard — REFACTOR](plan/user-stories/04-export-public-leaderboard.md)**
 
 1. Fix CRITICAL/HIGH issues from 4.2.A (if any)
 2. Review `PublicRecord` allowlist — add sanitization for model/role fields (strip any path-like substring)
@@ -863,7 +870,7 @@ Use the Agent tool:
 
 ---
 
-### 4.4 [ ] **[Suppress Emission — RED](plan/user-stories/05-suppress-emission.md)**
+### 4.4 [x] **[Suppress Emission — RED](plan/user-stories/05-suppress-emission.md)**
 
 **Mode:** Moderate | **AC:** 05-01, 05-02, 05-03
 
@@ -880,7 +887,7 @@ Use the Agent tool:
 
 ---
 
-### 4.5 [ ] **[Suppress Emission — GREEN](plan/user-stories/05-suppress-emission.md)**
+### 4.5 [x] **[Suppress Emission — GREEN](plan/user-stories/05-suppress-emission.md)**
 
 1. Add `--no-scorecard` bool flag to `cmd/atcr/reconcile.go` via cobra: `cmd.Flags().Bool("no-scorecard", false, "suppress scorecard emission for this run")`
 2. Pass flag value to `scorecard.Emit()` via `EmitOpts{NoScorecard: noScorecard}`
@@ -892,7 +899,7 @@ Use the Agent tool:
 
 ---
 
-### 4.5.A [ ] **[Suppress Emission — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-suppress-emission.md)**
+### 4.5.A [x] **[Suppress Emission — ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-suppress-emission.md)**
 
 **Changed Files:** `cmd/atcr/reconcile.go`, `internal/scorecard/scorecard.go`, `cmd/atcr/reconcile_test.go`
 
@@ -911,11 +918,13 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| MEDIUM (fixed in 4.6) | internal/scorecard/reconcile.go:23 | The "zero I/O when suppressed" intent was defeated at the bridge: `EmitForReconcile` read `fanout.ReadPoolSummary(reviewDir)` and assembled findings BEFORE `Emit`'s `NoScorecard` gate ran (`Emit` is the bridge's last call). The store gate still prevented all scorecard-store writes, but the suppressed path still did the upstream pool-summary read. | Added an `opts.NoScorecard` early-return at the TOP of `EmitForReconcile`, before any read, so a suppressed run does truly zero I/O. `Emit`'s own first-line gate is retained as defense-in-depth for direct callers. |
+| LOW (no action) | internal/scorecard/scorecard.go:111 | `Emit` returns `error` but the bridge discards it (best-effort, logs internally). | Not dead — `scorecard_test.go` exercises the return (nil on suppression, error on write failure). Deliberate best-effort contract; left as-is. |
+
+**Verdict:** No CRITICAL/HIGH. One MEDIUM (bridge-level pool-summary read on the suppressed path) fixed inline in 4.6; one LOW is a deliberate, test-exercised contract (no action). Emit's gate confirmed first-statement; flag defaults to false; MCP path still emits; exit-code semantics unchanged. Nothing deferred to TD.
 
 **Action Required:**
 - CRITICAL/HIGH found → List issues for 4.6, do NOT proceed until fixed
@@ -924,7 +933,7 @@ Use the Agent tool:
 
 ---
 
-### 4.6 [ ] **[Suppress Emission — REFACTOR](plan/user-stories/05-suppress-emission.md)**
+### 4.6 [x] **[Suppress Emission — REFACTOR](plan/user-stories/05-suppress-emission.md)**
 
 1. Fix CRITICAL/HIGH issues from 4.5.A (if any)
 2. Confirm suppression gate is the absolute first check in `Emit()` — add comment noting this is intentional
@@ -936,31 +945,31 @@ Use the Agent tool:
 
 ---
 
-### 4.7 [ ] **Phase 4 DoD Verification**
+### 4.7 [x] **Phase 4 DoD Verification**
 
 ```
 Stories-4-5 DoD Complete
-Auto: {X}/5 | Story-Specific: 8/8 ACs
-Manual Review: [ ] Code reviewed
+Auto: 5/5 | Story-Specific: 8/8 ACs
+Manual Review: [x] Code reviewed (adversarial 4.2.A + 4.5.A, REFACTOR 4.3 + 4.6)
 ```
 
-- [ ] T3: `go test ./...` — all passing
-- [ ] Coverage ≥ 80%
-- [ ] `golangci-lint run` — no errors
-- [ ] `go vet ./...` — clean
-- [ ] Build: `go build ./...` — succeeds
-- [ ] AC 03-04: `atcr leaderboard --export` produces JSON output ✓
-- [ ] AC 04-01: Public schema v1 conformance (schema_version field, correct structure) ✓
-- [ ] AC 04-02: Anonymization strips run_id, path-like strings, API key patterns ✓
-- [ ] AC 04-03: All metrics and model/persona/role preserved in export ✓
-- [ ] AC 04-04: Deterministic output; filters applied before anonymization; exit 1 with message on no match ✓
-- [ ] AC 05-01: `--no-scorecard` appears in `atcr reconcile --help` ✓
-- [ ] AC 05-02: Zero records written when `--no-scorecard` passed ✓
-- [ ] AC 05-03: No side effects on exit code or stdout/stderr with `--no-scorecard` ✓
+- [x] T3: `go test ./...` — all passing
+- [x] Coverage ≥ 80% (module total 88.3%; scorecard+cmd/atcr 85.2%; export.go 95.7%, AnonymizeRecord/scrubField 100%)
+- [x] `golangci-lint run` — no errors (0 issues)
+- [x] `go vet ./...` — clean
+- [x] Build: `go build ./...` — succeeds
+- [x] AC 03-04: `atcr leaderboard --export` produces JSON output ✓ (TestLeaderboardCmd_ExportFlag, TestExport_ValidJSON)
+- [x] AC 04-01: Public schema v1 conformance (schema_version, exported_at, filters, records); --output to file/stdout; dir-target error ✓ (TestExport_ValidJSON, TestLeaderboardCmd_OutputFlag, _OutputToDirectoryExit1)
+- [x] AC 04-02: Anonymization strips run_id, path-like (incl. glued/Windows), email, and API-key patterns ✓ (TestExport_Anonymization*, TestExport_PreservesProviderPrefixedModel)
+- [x] AC 04-03: All 11 metrics + model/persona/role preserved; verification fields zero-not-null; runs included ✓ (TestExport_MetricsPreserved, _VerificationZeroWhenAbsent, TestAnonymizeRecord_StripsRunIDPreservesMetrics)
+- [x] AC 04-04: Deterministic (byte-identical); sorted (model, reviewer, role); filters before anonymization; exit 1 + exact message on no match ✓ (TestExport_Determinism, _SortedByModelReviewerRole, _FiltersApplied, _NoMatchError, TestLeaderboardCmd_Export{Empty,NoFilterMatch}Exit1)
+- [x] AC 05-01: `--no-scorecard` appears in `atcr reconcile --help` ✓ (TestReconcileCmd_NoScorecardFlagInHelp)
+- [x] AC 05-02: Zero records written when `--no-scorecard` passed; store dir not created ✓ (TestReconcileCmd_NoScorecardSuppressesWrite, TestEmitForReconcile_NoScorecardSuppresses)
+- [x] AC 05-03: No side effects on exit code or stdout/stderr with `--no-scorecard` ✓ (TestReconcileCmd_NoScorecardExitCodeUnchanged, _NoScorecardNoSideEffects, _DefaultWritesScorecard regression)
 
 ---
 
-### 4.8 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+### 4.8 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
 
 **Scope:** All files changed during Phase 4 (integration-level, not TDD cadence)
 
@@ -980,11 +989,14 @@ Use the Agent tool:
   - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
   - Required output: ONLY the findings table below (markdown), no prose
 
-**Paste the subagent's findings table here (delete rows if none):**
+**Subagent findings table:**
 | Severity | File:Line | Issue | Fix |
 |----------|-----------|-------|-----|
-| CRITICAL | | | |
-| HIGH | | | |
+| LOW (fixed inline) | leaderboard.go runLeaderboard | `--output` without `--export` silently rendered the table and ignored `--output`, leaving the user's expected file unwritten with no signal. | `--output` without `--export` is now a usage error (exit 2, "--output requires --export"); added TestLeaderboardCmd_OutputWithoutExportIsUsageError. |
+| LOW (fixed inline) | export.go:203 | `ExportFilters(opts)` struct conversion (required by staticcheck S1016) invisibly couples the two structs' field layout. | Added a comment documenting that the two structs mirror field-for-field and a divergence breaks compilation by design (the forcing function). |
+| LOW (no action) | export.go survived_skeptic_rate | A no-verification group emits 0 for verification metrics, indistinguishable from a verified-0% group. | By design per AC 04-03 Scenario 8 (always-present, zero-included). Reviewer concurred no code change required for Phase 4 correctness. |
+
+**Verdict:** **PASS** — no CRITICAL/HIGH. Reviewer confirmed: Export reuses ApplyFilters with filters-before-anonymization; ErrNoExportRecords handled consistently (stderr + exit 1, never non-JSON on stdout); PublicRecord allowlist + scrubField backstop prevent internal-field leak; (model, reviewer, role) sort deterministic; EmitForReconcile signature change preserves CLI↔MCP parity (both emit; only CLI suppresses, double-gated); Phases 1-3 regression-free (default emit fires, table path intact, scorecard cmd untouched, exit codes unchanged); Phase 5 can exercise emit→store→read→aggregate→export end-to-end without rework. Two cheap LOW items fixed inline; one LOW is by-design. Nothing deferred to TD. **Phase gate passed.**
 
 **Action Required:**
 - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.

@@ -200,8 +200,11 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 	env := ExportEnvelope{
 		SchemaVersion: SchemaVersion,
 		ExportedAt:    exportedAt.UTC().Format(time.RFC3339),
-		Filters:       ExportFilters(opts),
-		Records:       rows,
+		// Direct conversion (staticcheck S1016): ExportFilters mirrors FilterOpts
+		// field-for-field. A field added to one but not the other breaks this at
+		// compile time — the intended forcing function.
+		Filters: ExportFilters(opts),
+		Records: rows,
 	}
 	return json.MarshalIndent(env, "", "  ")
 }

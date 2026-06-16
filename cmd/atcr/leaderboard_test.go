@@ -148,6 +148,17 @@ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "output file must be 0600")
 }
 
+func TestLeaderboardCmd_OutputWithoutExportIsUsageError(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+
+	// --output is meaningless for the table view; a bare --output must fail loudly
+	// (exit 2) rather than silently leave the expected file unwritten.
+	code, out := execCmdCapture(t, "leaderboard", "--output", filepath.Join(t.TempDir(), "x.json"))
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--output requires --export")
+}
+
 func TestLeaderboardCmd_OutputToDirectoryExit1(t *testing.T) {
 	isolate(t)
 	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")

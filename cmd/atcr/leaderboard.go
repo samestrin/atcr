@@ -45,6 +45,13 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	export, _ := cmd.Flags().GetBool("export")
 	output, _ := cmd.Flags().GetString("output")
 
+	// --output only routes the export document; without --export the table view
+	// has nothing to write, so a bare --output is a usage error (exit 2) rather
+	// than a silent no-op that leaves the user's expected file unwritten.
+	if output != "" && !export {
+		return usageError(errors.New("--output requires --export"))
+	}
+
 	dir, err := scorecard.DefaultDir()
 	if err != nil {
 		return fmt.Errorf("cannot determine scorecard store path: %w", err)
