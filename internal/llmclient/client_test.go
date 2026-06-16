@@ -606,6 +606,17 @@ func TestCompleteWithUsage_FloatUsageDoesNotFailDecode(t *testing.T) {
 	assert.Equal(t, 4000, usage.CompletionTokens)
 }
 
+func TestUsageData_PartialMalformedIndependentDecode(t *testing.T) {
+	// When prompt_tokens is valid but completion_tokens is malformed, the valid
+	// field should survive — only the bad one degrades to zero. The current
+	// atomic struct unmarshal drops BOTH; independent field decoding fixes this.
+	var u UsageData
+	err := json.Unmarshal([]byte(`{"prompt_tokens":500,"completion_tokens":"oops"}`), &u)
+	require.NoError(t, err)
+	assert.Equal(t, 500, u.PromptTokens, "valid prompt_tokens should survive malformed completion_tokens")
+	assert.Equal(t, 0, u.CompletionTokens, "malformed completion_tokens degrades to zero")
+}
+
 func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	// A structurally wrong usage block (string instead of number) must not kill
 	// the call; usage degrades to zero and the content still returns.
