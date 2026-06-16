@@ -15,11 +15,12 @@ const (
 	SevLow      = "LOW"
 )
 
-// SeverityRank is a re-export of the canonical rank map owned by internal/stream
-// (the single source of truth). Higher rank wins a merge and sorts earlier in
-// both the reconcile radar and the report view; unknown severities sort last
-// (rank 0). Kept as an exported alias so reconcile's internal lookups read it
-// unqualified and external callers keep a stable symbol.
+// SeverityRank is an independent copy of the canonical rank map from
+// internal/stream (the single source of truth). Higher rank wins a merge and
+// sorts earlier in both the reconcile radar and the report view; unknown
+// severities sort last (rank 0). Copied at package init so mutations to one
+// package's map cannot corrupt the other; internal lookups read it unqualified
+// and external callers keep a stable symbol.
 var SeverityRank = func() map[string]int {
 	m := make(map[string]int, len(stream.SeverityRank))
 	for k, v := range stream.SeverityRank {
