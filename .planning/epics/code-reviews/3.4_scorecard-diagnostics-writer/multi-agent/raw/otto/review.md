@@ -1,0 +1,1 @@
+LOW|internal/scorecard/store.go:194|Redundant call to diagWriter|Remove diagWriter call and use opts.Writer directly since ReadRecords already resolves it|performance|2|`fmt.Fprintf(diagWriter(opts.Writer), ...)` called after `w := diagWriter(opts.Writer)` is already available in the call chain|otto

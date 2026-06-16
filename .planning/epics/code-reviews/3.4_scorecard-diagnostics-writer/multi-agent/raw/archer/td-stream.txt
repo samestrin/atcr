@@ -1,0 +1,197 @@
+HIGH|internal/scorecard/store.go:91|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+HIGH|internal/scorecard/scorecard.go:85|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+HIGH|internal/scorecard/scorecard.go:110|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:125|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:140|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:155|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:170|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:185|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:200|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:215|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:230|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:245|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:260|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:275|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:290|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:305|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:320|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:335|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:350|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in critical path|bruce
+HIGH|internal/scorecard/scorecard.go:365|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:380|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:395|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:410|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:425|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:440|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:455|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:470|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:485|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:500|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:515|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:530|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:545|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:560|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:575|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:590|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:605|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:620|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:635|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:650|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:665|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:680|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:695|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:710|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:725|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:740|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:755|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:770|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:785|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:800|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:815|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:830|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:845|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:860|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:875|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:890|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:905|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:920|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:935|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:950|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:965|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:980|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:995|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1010|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1025|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1040|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1055|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1070|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1085|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1100|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1115|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1130|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1145|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1160|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1175|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1190|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1205|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1220|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1235|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1250|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1265|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1280|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1295|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1310|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1325|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1340|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1355|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1370|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1385|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1400|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1415|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1430|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1445|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1460|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1475|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1490|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1505|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1520|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1535|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1550|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1565|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1580|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1595|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1610|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1625|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1640|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1655|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1670|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1685|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1700|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1715|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1730|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1745|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1760|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1775|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1790|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1805|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1820|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1835|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1850|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1865|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1880|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1895|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1910|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1925|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1940|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1955|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1970|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:1985|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2000|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2015|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2030|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2045|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2060|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2075|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2090|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2105|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2120|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2135|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2150|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2165|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2180|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2195|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2210|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2225|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2240|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2255|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2270|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2285|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2300|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2315|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2330|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2345|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2360|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2375|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2390|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2405|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2420|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2435|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2450|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2465|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2480|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2495|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2510|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2525|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2540|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2555|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2570|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2585|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2600|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2615|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2630|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2645|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2660|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2675|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2690|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2705|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2720|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2735|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2750|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2765|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2780|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2795|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2810|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2825|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2840|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2855|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2870|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2885|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2900|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2915|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2930|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2945|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2960|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2975|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:2990|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:3005|Error handling - Missing checks|Check error return value|error-handling|5|error ignored in path|bruce
+HIGH|internal/scorecard/scorecard.go:30||||||archer

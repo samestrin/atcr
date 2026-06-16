@@ -1,0 +1,17 @@
+{
+  "sources": ["claude", "multi-agent"],
+  "raw_count": 17,
+  "merged_count": 17,
+  "clusters_collapsed": "17 reconciled findings -> 17 merged (2 same-line clusters split back as distinct concerns; no true cross-reviewer duplicates)",
+  "severity_disagreements": 0,
+  "intent_annotations": 1,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-16T15:42:38Z",
+  "excluded": {
+    "reviewer": "archer",
+    "model": "mellum2",
+    "count": 197,
+    "reason": "Malfunctioning reviewer emitted templated, content-free findings (\"Error handling - Missing checks\") citing nonexistent lines (up to scorecard.go:3005 in a 359-line file). Excluded by user decision before reconcile. Note: a stream-merge bug mislabeled archer's rows as reviewer 'bruce' in multi-agent/td-stream.txt.",
+    "legit_multi_agent_reviewers": ["dax", "greta", "otto", "bob"]
+  }
+}

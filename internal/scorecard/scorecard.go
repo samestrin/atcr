@@ -87,7 +87,18 @@ type ReviewerMeta struct {
 // overrides the store root (tests pin a temp dir); empty means the default user
 // config dir. Diag is the sink for operational diagnostics (write failures,
 // verification read/parse failures, orphan verdicts); a nil Diag defaults to
-// os.Stderr so existing callers keep their prior behavior (Epic 3.4).
+// os.Stderr so existing callers keep their prior behavior (Epic 3.4). Diag must
+// be safe for the caller's concurrency model; the package does not synchronize
+// writes to it. SECURITY: diagnostics may embed absolute store paths (which can
+// contain a username via ~/.config/atcr/...) and raw %v error strings, so the
+// sink is assumed local and trusted. Before routing Diag to any non-local sink
+// (a leaderboard submission or a remote-facing MCP response), scrub absolute
+// paths (use base names) and avoid echoing raw error strings.
+//
+// NAMING: the read-path equivalent of this sink is ReadOpts.Writer (store.go).
+// The divergent field names — emit-path Diag vs read-path Writer — are
+// intentional and retained for caller-API stability; both denote the same
+// "operational diagnostics sink, default os.Stderr" concept.
 type EmitOpts struct {
 	NoScorecard bool
 	Dir         string

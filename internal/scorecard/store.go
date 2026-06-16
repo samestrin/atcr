@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -20,7 +21,18 @@ const maxLineBytes = 1 << 20
 // ReadOpts carries read-path options for the scorecard store. Writer is the sink
 // for operational diagnostics emitted while reading (malformed records, over-long
 // lines, adjacent-month spans); a nil Writer defaults to os.Stderr so existing
-// callers keep their prior behavior (Epic 3.4).
+// callers keep their prior behavior (Epic 3.4). Writer must be safe for the
+// caller's concurrency model; the package does not synchronize writes to it.
+// SECURITY: diagnostics may embed absolute store paths (which can contain a
+// username via ~/.config/atcr/...) and raw %v error strings, so the sink is
+// assumed local and trusted. Before routing Writer to any non-local sink (a
+// leaderboard submission or a remote-facing MCP response), scrub absolute paths
+// (use base names) and avoid echoing raw error strings.
+//
+// NAMING: the emit-path equivalent of this sink is EmitOpts.Diag (scorecard.go).
+// The divergent field names — read-path Writer vs emit-path Diag — are
+// intentional and retained for caller-API stability; both denote the same
+// "operational diagnostics sink, default os.Stderr" concept.
 type ReadOpts struct {
 	Writer io.Writer
 }
@@ -29,10 +41,20 @@ type ReadOpts struct {
 // os.Stderr when nil. It centralizes the "default to os.Stderr when unset" rule
 // shared by the read and emit paths (Epic 3.4 AC5).
 func diagWriter(w io.Writer) io.Writer {
-	if w == nil {
+	if w == nil || isNilPointer(w) {
 		return os.Stderr
 	}
 	return w
+}
+
+// isNilPointer reports whether w is a non-nil interface wrapping a nil pointer
+// (a typed nil, e.g. (*bytes.Buffer)(nil) handed in as io.Writer). `w == nil` is
+// false for such a value, yet the first Write on it panics — so diagWriter
+// treats it as unset and falls back to os.Stderr, preserving the best-effort
+// "never panic in a diagnostics path" contract.
+func isNilPointer(w io.Writer) bool {
+	rv := reflect.ValueOf(w)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
 }
 
 // Append writes one record as a single JSONL line to the month file derived from
@@ -188,10 +210,16 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 	}
 	months := monthsToScan(runID, month)
 
+	// Resolve the diagnostics sink once for the whole call (the typed-nil guard in
+	// diagWriter is applied here) and reuse it for both the inner reads and the
+	// adjacent-month warning, instead of re-resolving diagWriter on each path.
+	w := diagWriter(opts.Writer)
+	readOpts := ReadOpts{Writer: w}
+
 	var matches []Record
 	var fromNeighbour bool
 	for i, m := range months {
-		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), opts)
+		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), readOpts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -208,7 +236,7 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 		}
 	}
 	if fromNeighbour {
-		_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+		_, _ = fmt.Fprintf(w, "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
 	}
 	return matches, nil
 }
