@@ -340,7 +340,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	for _, f := range c.Findings {
 		if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {
 			if r > maxRank {
-				maxRank, maxSev = r, f.Severity
+				maxRank, maxSev = r, stream.NormalizeSeverity(f.Severity)
 			}
 			if r < minRank {
 				minRank = r
@@ -356,7 +356,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 		spread = maxRank - minRank
 	}
 	if maxSev == "" && len(c.Findings) > 0 {
-		maxSev = c.Findings[0].Severity
+		maxSev = stream.NormalizeSeverity(c.Findings[0].Severity)
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
