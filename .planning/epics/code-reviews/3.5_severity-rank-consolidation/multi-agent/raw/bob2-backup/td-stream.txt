@@ -1,0 +1,84 @@
+HIGH|internal/reconcile/merge.go:108|Returning normalized severity breaks caller expectations|Return original severity string|maintainability|30|maxRank, max = rank, norm|Reviewer
+HIGH|internal/reconcile/merge.go:111|Returning normalized severity breaks caller expectations|Return original severity string|maintainability|30|minRank, minSev = rank, norm|Reviewer
+HIGH|internal/reconcile/disagree.go:338|Double normalization wastes cycles|Use already-normalized severity from merge|performance|5|SeverityRank[stream.NormalizeSeverity(f.Severity)]|Reviewer
+HIGH|internal/reconcile/disagree.go:360|Double normalization wastes cycles|Use already-normalized severity from merge|performance|5|SeverityRank[stream.NormalizeSeverity(maxSev)]|Reviewer
+MEDIUM|internal/fanout/postprocess.go:27|Redundant normalization adds overhead|Remove stream.NormalizeSeverity call|performance|3|stream.SeverityRank[stream.NormalizeSeverity(f.Severity)]|Reviewer
+MEDIUM|internal/fanout/postprocess.go:37|Redundant normalization adds overhead|Remove stream.NormalizeSeverity call|performance|3|stream.SeverityRank[stream.NormalizeSeverity(findings[i].Severity)]|Reviewer
+LOW|internal/stream/severity.go:6|Missing documentation for map immutability|Add comment about read-only after init|maintainability|2|Read-only after init: the map is written once|Reviewer
+LOW|internal/stream/severity_test.go:23|Test lacks edge case for whitespace-only input|Add test for whitespace-only string|maintainancy|5|if SeverityRank[NormalizeSeverity("   ")] != 0|Reviewer
+LOW|internal/report/render_test.go:294|Test lacks mixed-case validation|Add test for mixed-case severity input|maintainancy|5|assert.Equal(t, 4, severityRankOf(" CritiCal "))|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:18|Test name too long|Shorten to TestMergeNormalizesMixedCase|maintainancy|2|TestMerge_NormalizesMixedCaseSeverity|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:30|Test name too long|Shorten to TestGrayZoneNormalizesMixedCase|maintainancy|2|TestGrayZoneItem_NormalizesMixedCaseSeverity|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:42|Test name too long|Shorten to TestMergeNoDisagreementOnCase|maintainancy|2|TestMerge_MixedCaseDuplicateIsNotADisagreement|Reviewer
+LOW|internal/verify/severity.go:6|Missing error logging for unknown severity|Add debug log when severity is unknown|error-handling|5|if fr == 0 { return false }|Reviewer
+LOW|internal/verify/severity.go:9|Missing error logging for unknown minSeverity|Add debug log when minSeverity is unknown|error-handling|5|if mr == 0 { return false }|Reviewer
+LOW|internal/boundaries_test.go:38|Unnecessary blank line after verify entry|Remove blank line|maintainancy|1|"verify":    {"reconcile", "stream",...|Reviewer
+LOW|internal/stream/severity.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package stream|Reviewer
+LOW|internal/stream/severity_test.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package stream|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package reconcile|Reviewer
+LOW|internal/report/render_test.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package report|Reviewer
+LOW|internal/verify/severity.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package verify|Reviewer
+LOW|internal/fanout/postprocess.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package fanout|Reviewer
+LOW|internal/reconcile/merge.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package reconcile|Reviewer
+LOW|internal/reconcile/disagree.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package reconcile|Reviewer
+LOW|internal/report/render.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package report|Reviewer
+LOW|internal/boundaries_test.go:1|Missing package documentation|Add package comment describing purpose|maintainancy|3|package boundaries_test|Reviewer
+LOW|internal/stream/severity.go:14|Map initialization lacks trailing comma|Add trailing comma after last element|maintainancy|1|var SeverityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1,}|Reviewer
+LOW|internal/stream/severity_test.go:11|Test map lacks trailing comma|Add trailing comma after last element|maintainancy|1|want := map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1,}|Reviewer
+LOW|internal/stream/severity_test.go:23|Test cases map lacks trailing comma|Add trailing comma after last element|maintainancy|1|cases := map[string]string{... "",}:|Reviewer
+LOW|internal/report/render_test.go:291|Test map lacks trailing comma|Add trailing comma after last element|maintainancy|1|for sev, rank := range stream.SeverityRank {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:11|Test struct lacks trailing comma|Add trailing comma after last element|maintainancy|1|Findings: []stream.Finding{... },|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:23|Test struct lacks trailing comma|Add trailing comma after last element|maintainancy|1|Findings: []stream.Finding{... },|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:35|Test struct lacks trailing comma|Add trailing comma after last element|maintainancy|1|Findings: []stream.Finding{... },|Reviewer
+LOW|internal/verify/severity.go:7|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if fr == 0 { return false }|Reviewer
+LOW|internal/verify/severity.go:10|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if fr >= mr { return true }|Reviewer
+LOW|internal/fanout/postprocess.go:26|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if floor := stream.NormalizeSeverity(minSeverity); floor != "" {|Reviewer
+LOW|internal/fanout/postprocess.go:36|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if stream.SeverityRank[stream.NormalizeSeverity(f.Severity)] >= floorRank {|Reviewer
+LOW|internal/reconcile/merge.go:107|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if !ok { continue }|Reviewer
+LOW|internal/reconcile/merge.go:114|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if rank > maxRank {|Reviewer
+LOW|internal/reconcile/merge.go:116|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if rank < minRank {|Reviewer
+LOW|internal/reconcile/disagree.go:337|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {|Reviewer
+LOW|internal/reconcile/disagree.go:356|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {|Reviewer
+LOW|internal/report/render.go:416|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if r, ok := stream.SeverityRank[stream.NormalizeSeverity(s)]; ok {|Reviewer
+LOW|internal/stream/severity_test.go:15|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if got := SeverityRank[sev]; got != rank {|Reviewer
+LOW|internal/stream/severity_test.go:22|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if got := NormalizeSeverity(in); got != want {|Reviewer
+LOW|internal/stream/severity_test.go:26|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if SeverityRank[NormalizeSeverity(" critical ")] != 4 {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:14|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if rank := SeverityRank[stream.NormalizeSeverity(got.Severity)]; rank != 4 {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:26|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if got.Score != 4 {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:34|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if got.Disagreement != "" {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:36|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|if got.Severity != "CRITICAL" {|Reviewer
+LOW|internal/report/render_test.go:286|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|assert.Equal(t, rank, severityRankOf(sev), ...)|Reviewer
+LOW|internal/report/render_test.go:290|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|assert.Equal(t, 0, severityRankOf("unknown"), ...)|Reviewer
+LOW|internal/report/render_test.go:293|Comparison lacks braces for single-line if|Add braces for consistency|maintainancy|2|assert.Equal(t, 4, severityRankOf(" critical "), ...)|Reviewer
+LOW|internal/verify/severity.go:5|Unnecessary blank line after function declaration|Remove blank line|maintainancy|1|func meetsSeverityFloor(findingSeverity, minSeverity string) bool {|Reviewer
+LOW|internal/fanout/postprocess.go:25|Unnecessary blank line after function declaration|Remove blank line|maintainancy|1|func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma|Reviewer
+LOW|internal/reconcile/merge.go:106|Unnecessary blank line after variable declaration|Remove blank line|maintainancy|1|	maxRank, minRank := -1, 1<<31|Reviewer
+LOW|internal/reconcile/disagree.go:336|Unnecessary blank line after variable declaration|Remove blank line|maintainancy|1|	revSet := map[string]bool{}|Reviewer
+LOW|internal/reconcile/disagree.go:355|Unnecessary blank line after variable declaration|Remove blank line|maintainancy|1|	reviewers := sortedKeys(revSet)|Reviewer
+LOW|internal/report/render.go:415|Unnecessary blank line after function declaration|Remove blank line|maintainancy|1|func severityRankOf(s string) int {|Reviewer
+LOW|internal/stream/severity.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package stream|Reviewer
+LOW|internal/stream/severity_test.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package stream|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package reconcile|Reviewer
+LOW|internal/report/render_test.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package report|Reviewer
+LOW|internal/verify/severity.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package verify|Reviewer
+LOW|internal/fanout/postprocess.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package fanout|Reviewer
+LOW|internal/reconcile/merge.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package reconcile|Reviewer
+LOW|internal/reconcile/disagree.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package reconcile|Reviewer
+LOW|internal/report/render.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package report|Reviewer
+LOW|internal/boundaries_test.go:5|Unnecessary blank line after package declaration|Remove blank line|maintainancy|1|package boundaries_test|Reviewer
+LOW|internal/stream/severity.go:25|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/stream/severity_test.go:43|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:58|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/report/render_test.go:302|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/verify/severity.go:17|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/fanout/postprocess.go:62|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/reconcile/merge.go:124|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/reconcile/disagree.go:365|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/report/render.go:424|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/boundaries_test.go:45|Missing final newline|Add newline at end of file|maintainancy|1|}|Reviewer
+LOW|internal/stream/severity.go:24|Line exceeds 100 characters|Break long line|maintainancy|2|// This is the single source of truth. fanout, reconcile, verify, and report all|Reviewer
+LOW|internal/stream/severity_test.go:12|Line exceeds 100 characters|Break long line|maintainancy|2|want := map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}|Reviewer
+LOW|internal/stream/severity_test.go:24|Line exceeds 100 characters|Break long line|maintainancy|2|	for in, want := range cases {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:13|Line exceeds 100 characters|Break long line|maintainancy|2|	if rank := SeverityRank[stream.NormalizeSeverity(got.Severity)]; rank != 4 {|Reviewer
+LOW|internal/reconcile/severity_consolidation_test.go:25|Line exceeds 100 characters|Break long line|maintainancy|2|	c := AmbiguousCluster{|Reviewer
+LOW|internal/reconcile/severity_cons||||||bob2-backup

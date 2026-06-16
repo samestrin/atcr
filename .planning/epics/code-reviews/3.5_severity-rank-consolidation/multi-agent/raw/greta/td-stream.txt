@@ -1,0 +1,2 @@
+MEDIUM|internal/reconcile/disagree.go:338|maxSev stores raw f.Severity instead of normalized form|Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go|security|5|maxRank, maxSev = r, f.Severity stores raw; merge.go stores norm|greta
+LOW|internal/stream/severity.go:22|Canonical SeverityRank map is mutable var; any importer can silently corrupt rankings|Expose via read-only accessor function returning a copy|security|15|var SeverityRank = map[string]int{...} is writable by any importer|greta

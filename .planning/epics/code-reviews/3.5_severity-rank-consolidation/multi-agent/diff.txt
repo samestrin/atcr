@@ -1,0 +1,396 @@
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 2d8d5e1..f3f9eac 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -35,7 +35,7 @@ var allowedInternalImports = map[string][]string{
+ 	"reconcile": {"stream", "atomicfs"},
+ 	"scorecard": {"llmclient", "reconcile", "fanout"},
+ 	"report":    {"stream", "reconcile"},
+-	"verify":    {"reconcile", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
++	"verify":    {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
+ 	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard"},
+ }
+ 
+diff --git a/internal/fanout/postprocess.go b/internal/fanout/postprocess.go
+index af954b7..22a9d64 100644
+--- a/internal/fanout/postprocess.go
++++ b/internal/fanout/postprocess.go
+@@ -4,22 +4,10 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"sort"
+-	"strings"
+ 
+ 	"github.com/samestrin/atcr/internal/stream"
+ )
+ 
+-// severityRank orders findings for the min_severity floor and the max_findings
+-// severity-sorted truncation. It mirrors the canonical rubric in
+-// personas/_base.md (and reconcile's private severityRank); it is kept local so
+-// the fan-out post-processing carries no cross-package dependency on the
+-// reconciler. An unknown severity ranks 0, sorting below every real level.
+-//
+-// Read-only after init: the map is written once at package load and only read
+-// thereafter. If mutation is ever needed, use a sync.Map or initialize a local
+-// copy — concurrent fan-out agents share this map, so a write would race.
+-var severityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+-
+ // enforceConstraints applies an agent's per-source review guardrails (Epic 2.2)
+ // to its parsed findings, in order: (1) min_severity drops every finding below
+ // the floor; (2) max_findings keeps only the N most severe (a stable sort by
+@@ -36,8 +24,8 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
+ 	var dropped, truncated int
+ 
+ 	// 1. Severity floor.
+-	if floor := strings.ToUpper(strings.TrimSpace(minSeverity)); floor != "" {
+-		floorRank, known := severityRank[floor]
++	if floor := stream.NormalizeSeverity(minSeverity); floor != "" {
++		floorRank, known := stream.SeverityRank[floor]
+ 		if !known {
+ 			// Unknown min_severity: fail open (no findings dropped) but warn, so a
+ 			// misconfigured level does not silently pass through unobserved. The
+@@ -47,7 +35,7 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
+ 		} else {
+ 			kept := make([]stream.Finding, 0, len(findings))
+ 			for _, f := range findings {
+-				if severityRank[strings.ToUpper(strings.TrimSpace(f.Severity))] >= floorRank {
++				if stream.SeverityRank[stream.NormalizeSeverity(f.Severity)] >= floorRank {
+ 					kept = append(kept, f)
+ 				} else {
+ 					dropped++
+@@ -67,7 +55,7 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
+ 	// finding while the log claims a legitimate truncation.
+ 	if maxFindings != nil && *maxFindings > 0 && len(findings) > *maxFindings {
+ 		sort.SliceStable(findings, func(i, j int) bool {
+-			return severityRank[strings.ToUpper(strings.TrimSpace(findings[i].Severity))] > severityRank[strings.ToUpper(strings.TrimSpace(findings[j].Severity))]
++			return stream.SeverityRank[stream.NormalizeSeverity(findings[i].Severity)] > stream.SeverityRank[stream.NormalizeSeverity(findings[j].Severity)]
+ 		})
+ 		truncated = len(findings) - *maxFindings
+ 		findings = findings[:*maxFindings]
+diff --git a/internal/reconcile/disagree.go b/internal/reconcile/disagree.go
+index 59d4d6c..8cb3155 100644
+--- a/internal/reconcile/disagree.go
++++ b/internal/reconcile/disagree.go
+@@ -335,7 +335,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
+ 	revSet := map[string]bool{}
+ 	positions := make([]Position, 0, len(c.Findings))
+ 	for _, f := range c.Findings {
+-		if r, ok := SeverityRank[f.Severity]; ok {
++		if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {
+ 			if r > maxRank {
+ 				maxRank, maxSev = r, f.Severity
+ 			}
+@@ -357,7 +357,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
+ 	}
+ 	reviewers := sortedKeys(revSet)
+ 	indep := atLeastOne(len(reviewers))
+-	score := scoreFor(spread, indep, SeverityRank[maxSev])
++	score := scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(maxSev)])
+ 	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
+ 	// never sort below a LOW solo (rank 1). When all members carry unknown or
+ 	// blank severities, SeverityRank[maxSev] is 0 and spread is 0, so scoreFor
+diff --git a/internal/reconcile/merge.go b/internal/reconcile/merge.go
+index 98a2a84..6e33794 100644
+--- a/internal/reconcile/merge.go
++++ b/internal/reconcile/merge.go
+@@ -15,10 +15,12 @@ const (
+ 	SevLow      = "LOW"
+ )
+ 
+-// SeverityRank maps canonical severities to their display ordering. Higher rank
+-// wins a merge and sorts earlier in both the reconcile radar and the report
+-// view. Unknown severities sort last (rank 0).
+-var SeverityRank = map[string]int{SevCritical: 4, SevHigh: 3, SevMedium: 2, SevLow: 1}
++// SeverityRank is a re-export of the canonical rank map owned by internal/stream
++// (the single source of truth). Higher rank wins a merge and sorts earlier in
++// both the reconcile radar and the report view; unknown severities sort last
++// (rank 0). Kept as an exported alias so reconcile's internal lookups read it
++// unqualified and external callers keep a stable symbol.
++var SeverityRank = stream.SeverityRank
+ 
+ // Confidence values. HIGH = 2+ distinct reviewers, MEDIUM = single reviewer,
+ // LOW = reserved for untrusted sources (unused in v1).
+@@ -101,16 +103,20 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
+ 	maxRank, minRank := -1, 1<<31
+ 	var minSev string
+ 	for _, f := range group {
+-		rank, ok := SeverityRank[f.Severity]
++		norm := stream.NormalizeSeverity(f.Severity)
++		rank, ok := SeverityRank[norm]
+ 		if !ok {
+ 			continue // unknown severity ignored for max/min
+ 		}
+-		seen[f.Severity] = true
++		// Track the normalized form so a mixed-case duplicate (e.g. "critical"
++		// and "CRITICAL") counts as one severity, not a spurious disagreement,
++		// and the returned max/min are canonical.
++		seen[norm] = true
+ 		if rank > maxRank {
+-			maxRank, max = rank, f.Severity
++			maxRank, max = rank, norm
+ 		}
+ 		if rank < minRank {
+-			minRank, minSev = rank, f.Severity
++			minRank, minSev = rank, norm
+ 		}
+ 	}
+ 	if max == "" {
+diff --git a/internal/reconcile/severity_consolidation_test.go b/internal/reconcile/severity_consolidation_test.go
+new file mode 100644
+index 0000000..f080e60
+--- /dev/null
++++ b/internal/reconcile/severity_consolidation_test.go
+@@ -0,0 +1,58 @@
++package reconcile
++
++import (
++	"testing"
++
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// TestMerge_NormalizesMixedCaseSeverity proves the merge.go:104 boundary lookup
++// normalizes casing: a lower-cased "critical" from raw reviewer output still
++// outranks a canonical "LOW" instead of being silently dropped as unknown.
++func TestMerge_NormalizesMixedCaseSeverity(t *testing.T) {
++	group := []stream.Finding{
++		{Severity: "critical", File: "a.go", Line: 1, Reviewer: "r1"},
++		{Severity: "LOW", File: "a.go", Line: 1, Reviewer: "r2"},
++	}
++	got := Merge(group)
++	if rank := SeverityRank[stream.NormalizeSeverity(got.Severity)]; rank != 4 {
++		t.Fatalf("Merge severity = %q (rank %d), want a CRITICAL-rank (4) winner", got.Severity, rank)
++	}
++}
++
++// TestGrayZoneItem_NormalizesMixedCaseSeverity proves the disagree.go:338/360
++// boundary lookups normalize casing: a gray-zone cluster of mixed-case CRITICAL
++// findings scores by rank 4 (scoreFor with spread 0 returns the severity rank),
++// not collapsed to the unknown-severity floor of 1.
++func TestGrayZoneItem_NormalizesMixedCaseSeverity(t *testing.T) {
++	c := AmbiguousCluster{
++		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
++		Findings: []stream.Finding{
++			{Severity: "critical", File: "g.go", Line: 7, Reviewer: "r1"},
++			{Severity: "Critical", File: "g.go", Line: 7, Reviewer: "r2"},
++		},
++	}
++	got := grayZoneItem(c)
++	if got.Score != 4 {
++		t.Fatalf("grayZoneItem score = %v, want 4 (rank of CRITICAL); a raw lookup collapses it to the floor", got.Score)
++	}
++}
++
++// TestMerge_MixedCaseDuplicateIsNotADisagreement guards the adversarial fix: a
++// group whose only severities are casing variants of one level must merge to a
++// single canonical severity with no disagreement annotation. Before the seen-set
++// was keyed by the normalized form, "critical" + "CRITICAL" produced a spurious
++// "critical vs CRITICAL" disagreement.
++func TestMerge_MixedCaseDuplicateIsNotADisagreement(t *testing.T) {
++	group := []stream.Finding{
++		{Severity: "critical", File: "a.go", Line: 1, Reviewer: "r1"},
++		{Severity: "CRITICAL", File: "a.go", Line: 1, Reviewer: "r2"},
++	}
++	got := Merge(group)
++	if got.Disagreement != "" {
++		t.Fatalf("Disagreement = %q, want empty (mixed-case duplicate is one severity)", got.Disagreement)
++	}
++	if got.Severity != "CRITICAL" {
++		t.Fatalf("Severity = %q, want canonical CRITICAL", got.Severity)
++	}
++}
+diff --git a/internal/report/render.go b/internal/report/render.go
+index 5aa9ed3..36c51aa 100644
+--- a/internal/report/render.go
++++ b/internal/report/render.go
+@@ -16,6 +16,7 @@ import (
+ 	"unicode/utf8"
+ 
+ 	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/stream"
+ )
+ 
+ // Supported output formats.
+@@ -412,10 +413,10 @@ func canonicalize(s string) string {
+ }
+ 
+ // severityRankOf returns the display rank for a severity string using the
+-// canonical rank exported by the reconcile package so the report view and the
+-// radar sort never drift.
++// canonical rank owned by internal/stream (NormalizeSeverity-keyed) so the
++// report view and the radar sort never drift, even on mixed-case input.
+ func severityRankOf(s string) int {
+-	if r, ok := reconcile.SeverityRank[s]; ok {
++	if r, ok := stream.SeverityRank[stream.NormalizeSeverity(s)]; ok {
+ 		return r
+ 	}
+ 	return 0
+diff --git a/internal/report/render_test.go b/internal/report/render_test.go
+index 809db85..e643819 100644
+--- a/internal/report/render_test.go
++++ b/internal/report/render_test.go
+@@ -9,6 +9,7 @@ import (
+ 	"testing"
+ 
+ 	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/stream"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ )
+@@ -282,13 +283,20 @@ func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
+ 	})
+ }
+ 
+-// TestSeverityRankOf_MatchesReconcile — the report view and the reconcile radar
+-// must agree on severity ordering. After unifying on reconcile.SeverityRank, a
+-// finding ranks identically whether it is sorted by BuildDisagreements or
+-// grouped by Render.
+-func TestSeverityRankOf_MatchesReconcile(t *testing.T) {
+-	for sev, rank := range reconcile.SeverityRank {
++// TestSeverityRankOf_MatchesCanonical — the report view and the reconcile radar
++// must agree on severity ordering. After unifying on stream.SeverityRank (the
++// single source of truth), a finding ranks identically whether it is sorted by
++// BuildDisagreements or grouped by Render.
++func TestSeverityRankOf_MatchesCanonical(t *testing.T) {
++	for sev, rank := range stream.SeverityRank {
+ 		assert.Equal(t, rank, severityRankOf(sev), "severity %s must rank identically in report and reconcile", sev)
+ 	}
+ 	assert.Equal(t, 0, severityRankOf("unknown"), "unknown severity must rank 0 in report view")
+ }
++
++// TestSeverityRankOf_NormalizesCasing proves the report view ranks a mixed-case
++// or whitespace-padded severity by its canonical rank rather than dropping it to
++// 0, so the report sort agrees with reconcile and fanout on non-canonical input.
++func TestSeverityRankOf_NormalizesCasing(t *testing.T) {
++	assert.Equal(t, 4, severityRankOf(" critical "), "mixed-case/padded severity must rank by its canonical value")
++}
+diff --git a/internal/stream/severity.go b/internal/stream/severity.go
+new file mode 100644
+index 0000000..9675844
+--- /dev/null
++++ b/internal/stream/severity.go
+@@ -0,0 +1,26 @@
++package stream
++
++import "strings"
++
++// SeverityRank is the canonical severity ordinal rubric for the atcr-findings/v1
++// stream. Higher rank is more severe: it wins a merge, clears a higher
++// min_severity floor, and sorts earlier in the reconcile radar and the report
++// view. An unrecognized or empty token is absent from the map (rank 0) and
++// therefore always ranks/sorts below every real level.
++//
++// This is the single source of truth. fanout, reconcile, verify, and report all
++// consume it (via NormalizeSeverity-keyed lookups) so a severity rename or a
++// non-canonical casing can never desync fan-out truncation from reconcile
++// merging. stream owns it because stream has zero internal dependencies and is
++// already imported by both fanout and reconcile, so no import cycle is possible.
++//
++// Read-only after init: the map is written once at package load and only read
++// thereafter. Concurrent fan-out agents share this map, so a write would race —
++// if mutation is ever needed, copy it locally first.
++var SeverityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
++
++// NormalizeSeverity upper-cases and trims a severity token to its canonical form
++// so a SeverityRank lookup is case- and whitespace-insensitive. Every consumer
++// normalizes through this single helper so their lookups stay identical and the
++// fan-out/reconcile casing asymmetry cannot reappear.
++func NormalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
+diff --git a/internal/stream/severity_test.go b/internal/stream/severity_test.go
+new file mode 100644
+index 0000000..1859dc9
+--- /dev/null
++++ b/internal/stream/severity_test.go
+@@ -0,0 +1,44 @@
++package stream
++
++import "testing"
++
++// TestSeverityRank_CanonicalOrdering pins the canonical rubric values and the
++// strictly-descending ordering that every consumer relies on. Unknown tokens
++// must be absent (rank 0).
++func TestSeverityRank_CanonicalOrdering(t *testing.T) {
++	want := map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
++	for sev, rank := range want {
++		if got := SeverityRank[sev]; got != rank {
++			t.Errorf("SeverityRank[%q] = %d, want %d", sev, got, rank)
++		}
++	}
++	if SeverityRank["CRITICAL"] <= SeverityRank["HIGH"] ||
++		SeverityRank["HIGH"] <= SeverityRank["MEDIUM"] ||
++		SeverityRank["MEDIUM"] <= SeverityRank["LOW"] ||
++		SeverityRank["LOW"] <= 0 {
++		t.Errorf("ordering not strictly descending CRITICAL>HIGH>MEDIUM>LOW>0")
++	}
++	if _, ok := SeverityRank["unknown"]; ok {
++		t.Errorf("unknown severity must be absent from the rank map (rank 0)")
++	}
++}
++
++// TestNormalizeSeverity proves the canonical normalizer upper-cases and trims so
++// a mixed-case or padded token resolves identically through the rank map.
++func TestNormalizeSeverity(t *testing.T) {
++	cases := map[string]string{
++		"critical": "CRITICAL",
++		"  High  ": "HIGH",
++		"MEDIUM":   "MEDIUM",
++		" low":     "LOW",
++		"":         "",
++	}
++	for in, want := range cases {
++		if got := NormalizeSeverity(in); got != want {
++			t.Errorf("NormalizeSeverity(%q) = %q, want %q", in, got, want)
++		}
++	}
++	if SeverityRank[NormalizeSeverity(" critical ")] != 4 {
++		t.Errorf("normalized mixed-case severity must resolve to its canonical rank")
++	}
++}
+diff --git a/internal/verify/severity.go b/internal/verify/severity.go
+index 5e7c5f0..98d30a1 100644
+--- a/internal/verify/severity.go
++++ b/internal/verify/severity.go
+@@ -1,36 +1,18 @@
+ package verify
+ 
+-import (
+-	"strings"
+-
+-	"github.com/samestrin/atcr/internal/reconcile"
+-)
+-
+-// severityRank orders the review severities so the verify stage can compare a
+-// finding against the configured floor. Higher is more severe. An unrecognized or
+-// empty token is absent from the map (rank 0) and therefore always below any real
+-// floor — the defensive "skip on unknown severity" behavior (AC 02-07 EC3).
+-var severityRank = map[string]int{
+-	reconcile.SevCritical: 4,
+-	reconcile.SevHigh:     3,
+-	reconcile.SevMedium:   2,
+-	reconcile.SevLow:      1,
+-}
++import "github.com/samestrin/atcr/internal/stream"
+ 
+ // meetsSeverityFloor reports whether a finding at findingSeverity is at or above
+ // the minSeverity floor and therefore should be verified. Comparison is
+-// case-insensitive. A finding with an empty or unknown severity is treated as
+-// below the floor (skipped) so an unexpected value never crashes or sneaks a
+-// finding past the floor.
++// case-insensitive via stream.NormalizeSeverity, the canonical normalizer shared
++// by every severity consumer. A finding with an empty or unknown severity is
++// treated as below the floor (skipped) so an unexpected value never crashes or
++// sneaks a finding past the floor (AC 02-07 EC3).
+ func meetsSeverityFloor(findingSeverity, minSeverity string) bool {
+-	fr := severityRank[normalizeSeverity(findingSeverity)]
+-	mr := severityRank[normalizeSeverity(minSeverity)]
++	fr := stream.SeverityRank[stream.NormalizeSeverity(findingSeverity)]
++	mr := stream.SeverityRank[stream.NormalizeSeverity(minSeverity)]
+ 	if fr == 0 {
+ 		return false
+ 	}
+ 	return fr >= mr
+ }
+-
+-// normalizeSeverity upper-cases and trims a severity token to its canonical form,
+-// matching the registry's normalization so floor comparisons are stable.
+-func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }

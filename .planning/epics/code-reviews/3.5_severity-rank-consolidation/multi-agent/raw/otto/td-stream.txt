@@ -1,0 +1,1 @@
+MEDIUM|internal/reconcile/disagree.go:360|Potential rank lookup failure for maxSev|Use stream.NormalizeSeverity(maxSev) consistently|correctness|10|score := scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(maxSev)])|otto
