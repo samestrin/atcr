@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -282,13 +283,20 @@ func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
 	})
 }
 
-// TestSeverityRankOf_MatchesReconcile — the report view and the reconcile radar
-// must agree on severity ordering. After unifying on reconcile.SeverityRank, a
-// finding ranks identically whether it is sorted by BuildDisagreements or
-// grouped by Render.
-func TestSeverityRankOf_MatchesReconcile(t *testing.T) {
-	for sev, rank := range reconcile.SeverityRank {
+// TestSeverityRankOf_MatchesCanonical — the report view and the reconcile radar
+// must agree on severity ordering. After unifying on stream.SeverityRank (the
+// single source of truth), a finding ranks identically whether it is sorted by
+// BuildDisagreements or grouped by Render.
+func TestSeverityRankOf_MatchesCanonical(t *testing.T) {
+	for sev, rank := range stream.SeverityRank {
 		assert.Equal(t, rank, severityRankOf(sev), "severity %s must rank identically in report and reconcile", sev)
 	}
 	assert.Equal(t, 0, severityRankOf("unknown"), "unknown severity must rank 0 in report view")
+}
+
+// TestSeverityRankOf_NormalizesCasing proves the report view ranks a mixed-case
+// or whitespace-padded severity by its canonical rank rather than dropping it to
+// 0, so the report sort agrees with reconcile and fanout on non-canonical input.
+func TestSeverityRankOf_NormalizesCasing(t *testing.T) {
+	assert.Equal(t, 4, severityRankOf(" critical "), "mixed-case/padded severity must rank by its canonical value")
 }

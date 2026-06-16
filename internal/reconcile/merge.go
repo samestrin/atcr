@@ -15,10 +15,12 @@ const (
 	SevLow      = "LOW"
 )
 
-// SeverityRank maps canonical severities to their display ordering. Higher rank
-// wins a merge and sorts earlier in both the reconcile radar and the report
-// view. Unknown severities sort last (rank 0).
-var SeverityRank = map[string]int{SevCritical: 4, SevHigh: 3, SevMedium: 2, SevLow: 1}
+// SeverityRank is a re-export of the canonical rank map owned by internal/stream
+// (the single source of truth). Higher rank wins a merge and sorts earlier in
+// both the reconcile radar and the report view; unknown severities sort last
+// (rank 0). Kept as an exported alias so reconcile's internal lookups read it
+// unqualified and external callers keep a stable symbol.
+var SeverityRank = stream.SeverityRank
 
 // Confidence values. HIGH = 2+ distinct reviewers, MEDIUM = single reviewer,
 // LOW = reserved for untrusted sources (unused in v1).
@@ -101,16 +103,20 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 	maxRank, minRank := -1, 1<<31
 	var minSev string
 	for _, f := range group {
-		rank, ok := SeverityRank[f.Severity]
+		norm := stream.NormalizeSeverity(f.Severity)
+		rank, ok := SeverityRank[norm]
 		if !ok {
 			continue // unknown severity ignored for max/min
 		}
-		seen[f.Severity] = true
+		// Track the normalized form so a mixed-case duplicate (e.g. "critical"
+		// and "CRITICAL") counts as one severity, not a spurious disagreement,
+		// and the returned max/min are canonical.
+		seen[norm] = true
 		if rank > maxRank {
-			maxRank, max = rank, f.Severity
+			maxRank, max = rank, norm
 		}
 		if rank < minRank {
-			minRank, minSev = rank, f.Severity
+			minRank, minSev = rank, norm
 		}
 	}
 	if max == "" {
