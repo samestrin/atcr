@@ -213,8 +213,9 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 
 	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
 	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical
-	// scorecard records (TD-005 — no entry-point divergence). Best-effort.
-	scorecard.EmitForReconcile(dir, res)
+	// scorecard records (TD-005 — no entry-point divergence). The MCP path has no
+	// suppression flag, so it always emits (zero EmitOpts). Best-effort.
+	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{})
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if in.RequireVerified {

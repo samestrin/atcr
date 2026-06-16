@@ -27,6 +27,7 @@ func newReconcileCmd() *cobra.Command {
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().StringSlice("sources", nil, "restrict reconcile to these source directories (default: all)")
+	cmd.Flags().Bool("no-scorecard", false, "skip writing scorecard records to the local store")
 	return cmd
 }
 
@@ -80,8 +81,10 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// Emit the per-run scorecard (Epic 3.3) via the shared bridge both reconcile
 	// entry points call (CLI here, MCP atcr_reconcile handler), so the two never
 	// diverge. Best-effort: a scorecard failure is logged but never fails the
-	// reconcile (AC 01-01). The --no-scorecard flag (Story 5) is wired in Phase 4.
-	scorecard.EmitForReconcile(reviewDir, res)
+	// reconcile (AC 01-01). --no-scorecard suppresses emission for this run
+	// (Story 5); Emit gates on it before any I/O.
+	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
+	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard})
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if requireVerified {

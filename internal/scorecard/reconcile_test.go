@@ -40,7 +40,7 @@ func TestEmitForReconcile_BridgesPoolSummaryAndFindings(t *testing.T) {
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}
 
-	EmitForReconcile(reviewDir, res)
+	EmitForReconcile(reviewDir, res, EmitOpts{})
 
 	cfg, err := os.UserConfigDir()
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestEmitForReconcile_NoPoolSummaryDegrades(t *testing.T) {
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}
 
-	EmitForReconcile(reviewDir, res) // must not panic despite missing pool summary
+	EmitForReconcile(reviewDir, res, EmitOpts{}) // must not panic despite missing pool summary
 
 	cfg, err := os.UserConfigDir()
 	require.NoError(t, err)
@@ -85,4 +85,28 @@ func TestEmitForReconcile_NoPoolSummaryDegrades(t *testing.T) {
 	require.NotNil(t, bruce)
 	assert.Equal(t, 1, bruce.FindingsRaised)
 	assert.Empty(t, bruce.Model, "no usage metadata without pool summary")
+}
+
+// TestEmitForReconcile_NoScorecardSuppresses verifies the --no-scorecard flag,
+// threaded through the shared bridge as EmitOpts.NoScorecard, prevents any
+// record — and the store directory itself — from being written.
+func TestEmitForReconcile_NoScorecardSuppresses(t *testing.T) {
+	reviewDir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	res := reconcile.Result{
+		Findings: []reconcile.Merged{
+			{Finding: stream.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}}},
+		},
+		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
+	}
+
+	EmitForReconcile(reviewDir, res, EmitOpts{NoScorecard: true})
+
+	dir, err := DefaultDir()
+	require.NoError(t, err)
+	_, statErr := os.Stat(dir)
+	require.True(t, os.IsNotExist(statErr), "suppressed run must not create the store directory")
 }

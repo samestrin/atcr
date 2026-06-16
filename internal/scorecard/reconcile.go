@@ -15,10 +15,14 @@ import (
 // fan-out's persisted pool summary.json; finding counts come from res; the
 // conditional skeptic fields come from reconciled/verification.json when present.
 //
-// It is fully best-effort: a missing pool summary degrades to finding-only
-// records (reviewers recovered from the findings), and Emit logs its own write
-// failures, so scorecard emission never fails the caller's reconcile.
-func EmitForReconcile(reviewDir string, res reconcile.Result) {
+// opts threads emission control through unchanged: the CLI passes the
+// --no-scorecard flag here (Story 5), which Emit honors as its first gate
+// (returning before any I/O); the MCP handler passes a zero EmitOpts so the
+// agentic path keeps emitting. It is fully best-effort: a missing pool summary
+// degrades to finding-only records (reviewers recovered from the findings), and
+// Emit logs its own write failures, so scorecard emission never fails the
+// caller's reconcile.
+func EmitForReconcile(reviewDir string, res reconcile.Result, opts EmitOpts) {
 	reviewers := map[string]ReviewerMeta{}
 	if ps, err := fanout.ReadPoolSummary(reviewDir); err == nil {
 		for _, a := range ps.Agents {
@@ -61,5 +65,5 @@ func EmitForReconcile(reviewDir string, res reconcile.Result) {
 		Findings:         findings,
 		Reviewers:        reviewers,
 		VerificationPath: verPath,
-	}, EmitOpts{})
+	}, opts)
 }
