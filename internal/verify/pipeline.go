@@ -446,9 +446,9 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	base.Verdict = ver.Verdict
 	base.Skeptic = ver.Skeptic
 	base.Reasoning = ver.Notes
-	// Attribute Model/TrippedBudgets to the winning skeptics only — not all of
-	// skeptics[0..n] — so a multi-vote verdict records the majority's models, not
-	// the losers' (AC2/AC1).
+	// Attribute Model/TrippedBudgets to the skeptics that produced the recorded
+	// verdict: on a decisive vote, only the winners; on a tie (unverifiable), every
+	// participant — never a blind skeptics[0..n] (see winningAttribution) (AC2/AC1).
 	base.Model, base.TrippedBudgets = winningAttribution(skeptics, perSkeptic, perTripped, ver.Verdict)
 	if base.TrippedBudgets == nil {
 		base.TrippedBudgets = []string{}
