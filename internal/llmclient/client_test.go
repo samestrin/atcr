@@ -507,6 +507,24 @@ func TestChat_TokensFromUsage(t *testing.T) {
 	assert.Equal(t, 1500, resp.Usage.CompletionTokens)
 }
 
+func TestClampNonNegative_OverflowReturnsZero(t *testing.T) {
+	// 1e20 is a valid finite float64 but exceeds math.MaxInt; int(v) without
+	// a cap overflows to implementation-defined garbage (typically MinInt64).
+	assert.Equal(t, 0, clampNonNegative(json.Number("1e20")))
+}
+
+func TestClampNonNegative_InfReturnsZero(t *testing.T) {
+	// strconv.ParseFloat("Inf") returns (+Inf, nil) so the v<0 guard alone
+	// does not protect int(v) from implementation-defined behaviour.
+	assert.Equal(t, 0, clampNonNegative(json.Number("Inf")))
+}
+
+func TestClampNonNegative_NaNReturnsZero(t *testing.T) {
+	// strconv.ParseFloat("NaN") returns (NaN, nil); all NaN comparisons are
+	// false so v<0 does not catch it.
+	assert.Equal(t, 0, clampNonNegative(json.Number("NaN")))
+}
+
 func TestComputeCostUSD_KnownModel(t *testing.T) {
 	// claude-sonnet-4-6 is a known model in the rate table ($3/M in, $15/M out).
 	// 1M input + 1M output tokens => 3.00 + 15.00 = 18.00 USD.
