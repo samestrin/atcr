@@ -581,6 +581,28 @@ func TestRunVerify_ManifestUpdateErrorPropagates(t *testing.T) {
 // the missing-head and missing-manifest error paths.
 // TestRunVerify_WorkerPoolPreservesOrder verifies that a MaxParallel>1 run
 // produces the same per-finding verdict ordering as a serial run.
+// byProblemChat answers each skeptic by matching the finding's Problem text in the
+// prompt, so a multi-finding pipeline run gets a distinct verdict per finding —
+// unlike alwaysChat, which answers identically and so cannot detect a pool that
+// mis-routes a result to the wrong finding key.
+type byProblemChat struct{ byProblem map[string]string }
+
+func (b byProblemChat) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "", nil
+}
+
+func (b byProblemChat) Chat(_ context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	verdict := `{"verdict":"unverifiable","reasoning":"no matching problem"}`
+	for needle, v := range b.byProblem {
+		if strings.Contains(inv.Prompt, needle) {
+			verdict = v
+			break
+		}
+	}
+	c := verdict
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+}
+
 func TestRunVerify_WorkerPoolPreservesOrder(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
@@ -590,18 +612,30 @@ func TestRunVerify_WorkerPoolPreservesOrder(t *testing.T) {
 	reg := skepticRegistry()
 	reg.Verify.MaxParallel = 2 // exercise the bounded pool path
 	dir := pipelineReview(t, findings)
+	// Distinct per-finding verdicts keyed on the finding's Problem text in the prompt:
+	// a pool bug that swapped result indices would land a verdict on the wrong file.
 	handle := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
-		return alwaysChat{`{"verdict":"confirmed","reasoning":"ok"}`}, okDispatcher(), nil, nil
+		return byProblemChat{byProblem: map[string]string{
+			"boom": `{"verdict":"confirmed","reasoning":"ok"}`,
+			"leak": `{"verdict":"refuted","reasoning":"no"}`,
+			"race": `{"verdict":"unverifiable","reasoning":"dunno"}`,
+		}}, okDispatcher(), nil, nil
 	}
 	res, err := runVerify(context.Background(), dir, reg, Options{}, handle)
 	require.NoError(t, err)
 	assert.Equal(t, 3, res.FindingsProcessed)
 	updated := readFindings(t, dir)
 	require.Len(t, updated, 3)
+	byFile := map[string]string{}
 	for _, f := range updated {
-		assert.Equal(t, "VERIFIED", f.Confidence, "each finding confirmed → VERIFIED")
-		assert.Equal(t, "confirmed", f.Verification.Verdict)
+		require.NotNil(t, f.Verification, "every finding must carry a verdict")
+		byFile[f.File] = f.Verification.Verdict
 	}
+	// Each distinct verdict must land on its own finding key — only distinguishable
+	// results can catch a mis-ordered pool.
+	assert.Equal(t, "confirmed", byFile["a.go"], "a.go's confirmed verdict must land on a.go")
+	assert.Equal(t, "refuted", byFile["b.go"], "b.go's refuted verdict must land on b.go")
+	assert.Equal(t, "unverifiable", byFile["c.go"], "c.go's unverifiable verdict must land on c.go")
 }
 
 func TestBuildDispatcher(t *testing.T) {
