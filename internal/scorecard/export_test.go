@@ -113,6 +113,21 @@ func TestExport_AnonymizationStripsEmailAndMoreKeys(t *testing.T) {
 	}
 }
 
+func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
+	// A path root glued directly to an alphanumeric byte (host/etc/passwd, no
+	// separator) must still be stripped. scrubAbsPath deliberately PRESERVES an
+	// alnum-preceded '/' so provider-prefixed model ids like "anthropic/claude-3"
+	// survive; that allowance leaks an embedded absolute path unless an
+	// embedded-path-root scrub also runs. Regression guard for the export.go:238 TD.
+	rec := exportRec("bruce", "host/etc/passwd node/var/log/secret", 1)
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	s := string(data)
+	for _, p := range []string{"/etc/passwd", "/etc/", "/var/log", "/var/"} {
+		assert.NotContains(t, s, p, "must strip alnum-glued absolute path %q", p)
+	}
+}
+
 func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
 	// A provider-prefixed model id carries an internal '/', which is NOT an
 	// absolute path and must survive scrubbing.
