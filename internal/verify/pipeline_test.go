@@ -936,6 +936,56 @@ func TestRunVerify_ConfirmedWinnerDropsLoserTrippedBudget(t *testing.T) {
 		"a confirmed winner drops a losing skeptic's tripped budget")
 }
 
+// TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns covers the carry-forward
+// guard's priorLoadFailed branch: an already-verified finding (skipped, no --fresh)
+// whose prior verification.json is corrupt must keep its verdict but drop all rich
+// audit metadata (empty Model / zero DurationMs / empty TrippedBudgets) rather than
+// carrying garbage, and the prior-unreadable warning MUST fire — the opposite branch
+// of TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings (where nothing skips).
+func TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+	}})
+	// Corrupt prior verification.json: the finding is skipped, so loadPrior fires and
+	// fails — exercising the priorLoadFailed guard rather than a verdict mismatch.
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+	done := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, runErr)
+	_ = w.Close()
+	os.Stderr = oldStderr
+	stderrOutput := <-done
+
+	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict, "a skipped finding keeps its verdict")
+	assert.Empty(t, vf.Findings[0].Model, "a corrupt prior must not lend a model")
+	assert.Zero(t, vf.Findings[0].DurationMs, "a corrupt prior must not lend a duration")
+	assert.Empty(t, vf.Findings[0].TrippedBudgets, "a corrupt prior must not lend tripped budgets")
+	assert.Contains(t, stderrOutput, "class=prior_unreadable",
+		"a corrupt prior on the skip path must fire the prior-unreadable warning")
+}
+
 // TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants covers the 1+1 tie
 // (1 confirmed + 1 refuted) — the simplest disagreement — which collapses to
 // unverifiable. Both Model and Skeptic must name every participant (joinSkeptics
