@@ -1,3 +1,15 @@
+## [3.3.0] - 2026-06-16
+
+### Added
+
+- Per-run scorecard warns on orphan verification verdicts to surface potentially missed reviews
+
+### Fixed
+
+- Surfaced ignored fallback review constraints and enforced primary-wins precedence in review fanout
+- Union all reviewers per finding key in verdict tallies, correctly crediting all reviewers of duplicate finding locations
+- Explicit field assignment for `ExportFilters` to harden against `FilterOpts` field reorder
+
 ## [Technical Debt] - 2026-06-15
 
 ### Fixed

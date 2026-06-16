@@ -105,3 +105,27 @@ func TestBuildAgent_PropagatesSupportsFC(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, a.SupportsFC, "greta declares supports_function_calling=true")
 }
+
+// Epic 2.2 / TD: a fallback answers in the primary's place, so the primary's
+// review constraints (min_severity, max_findings) govern the built Agent — the
+// fallback's own declared constraints are intentionally ignored. Locks the
+// silent-override behavior that buildFallbackAgent now surfaces with a
+// load-time warning, so a future change cannot let a fallback's own
+// min_severity/max_findings leak into the lane unnoticed.
+func TestBuildFallbackAgent_PrimaryReviewConstraintsWin(t *testing.T) {
+	cfg := toolCfg()
+	// Give the fallback (kai) its own constraints that differ from the primary's.
+	kai := cfg.Registry.Agents["kai"]
+	kai.MinSeverity = "LOW"
+	kai.MaxFindings = ptrInt(99)
+	kai.Scope = []string{"performance"}
+	cfg.Registry.Agents["kai"] = kai
+
+	primary := Agent{Prompt: "p", PayloadMode: "blocks", MinSeverity: "HIGH", MaxFindings: ptrInt(3)}
+
+	fb, err := buildFallbackAgent(cfg, primary, "kai")
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", fb.MinSeverity, "primary min_severity governs, not the fallback's own LOW")
+	require.NotNil(t, fb.MaxFindings)
+	assert.Equal(t, 3, *fb.MaxFindings, "primary max_findings governs, not the fallback's own 99")
+}

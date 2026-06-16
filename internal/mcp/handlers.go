@@ -19,6 +19,7 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/report"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/verify"
 )
 
@@ -210,6 +211,12 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, err
 	}
 
+	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
+	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical
+	// scorecard records (TD-005 — no entry-point divergence). The MCP path has no
+	// suppression flag, so it always emits (zero EmitOpts). Best-effort.
+	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{})
+
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if in.RequireVerified {
 		if verr := reconcile.ValidateRequireVerified(dir); verr != nil {
@@ -269,6 +276,13 @@ func (e *engine) handleReport(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// The markdown report carries the disagreement radar above its findings
 		// (Epic 3.2). A corrupt ambiguous.json degrades to a findings-only radar
 		// rather than failing the report.
+		//
+		// MCP/CLI parity: this embedded markdown radar is identical to the CLI's —
+		// both call report.RenderMarkdownWithDisagreements (cmd/atcr/report.go). The
+		// CLI's standalone --disagreements ranked view (RenderDisagreements /
+		// RenderDisagreementsJSON) is intentionally NOT exposed over MCP; MCP clients
+		// receive the radar markdown-embedded only. Any renderer-dedup work belongs
+		// to Epic 15.0 (radar-renderer-consolidation), not this surface.
 		df := reconcile.LoadDisagreements(dir, findings)
 		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
 			return nil, ReportResult{}, err
