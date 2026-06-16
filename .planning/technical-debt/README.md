@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 0 |
 | MEDIUM | 0 | 13 | 0 |
-| LOW | 0 | 9 | 0 |
+| LOW | 5 | 9 | 0 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 0 | **Deferred Items:** 22 | **Resolved Items:** 0 | **Total Items:** 22
+**Last Modified:** 2026-06-16 | **Open Items:** 5 | **Deferred Items:** 22 | **Resolved Items:** 0 | **Total Items:** 27
 
 ## Directory Structure
 
@@ -33,6 +33,16 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-16] From Sprint: epic-3.5
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/reconcile/merge.go:23 | reconcile.SeverityRank is a map-header alias of stream.SeverityRank so both names share one backing map; a mutation through either package would corrupt the other, relying on a read-only invariant that is documented but not enforced. | Add a test asserting the canonical map is never mutated, or expose rank via a getter to remove the shared mutable surface. | REGRESSION_RISK | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/reconcile/disagree.go:248 | spreadFromDisagreement does a raw non-normalized SeverityRank lookup on the parsed "<lo> vs <hi>" string; mergeSeverity now embeds canonical severities so mixed-case disagreements compute a real nonzero spread (intended behavior, but unpinned by a test). | Add a test pinning that a mixed-case severity split yields the canonical spread so the new behavior is locked. | REGRESSION_RISK | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/reconcile/merge.go:120 | When no group member has a known severity, mergeSeverity falls back to raw group[0].Severity verbatim while every known path now returns the normalized form, so merged Severity casing is inconsistent between the known and all-unknown cases. | Normalize the fallback too (max = stream.NormalizeSeverity(group[0].Severity)) or document that the all-unknown fallback is deliberately verbatim. | EDGE_CASES | 10 | execute-epic-independent |
+| U | [ ] | LOW | internal/registry/config.go:128 | registry.normalizeSeverity is a 4th identical upper+trim copy of the canonical stream.NormalizeSeverity helper added by epic 3.5; the registry was scoped out of the consolidation because reviewSeverities is a presence-set, but the normalizer itself could still consume the shared helper. | Have registry import and call stream.NormalizeSeverity in place of its local normalizeSeverity (stream has zero internal deps, so registry->stream introduces no cycle); leave reviewSeverities as-is. | CROSS_CUTTING | 15 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/stream/severity.go:20 | The canonical SeverityRank map carries a read-only-after-init invariant in a comment only, with no test guard preventing a future caller from mutating the shared map (which would race across concurrent fan-out agents). | Add a stream test that snapshots the map and asserts it is unchanged after consumers run, or wrap it behind a Rank(sev) accessor. | OBSERVABILITY | 20 | execute-epic-independent |
 
 ### [2026-06-16] From Sprint: 3.4_scorecard-diagnostics-writer
 
