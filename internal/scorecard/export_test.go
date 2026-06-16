@@ -263,6 +263,21 @@ func TestExport_FiltersApplied(t *testing.T) {
 	assert.Equal(t, "bruce", env.Records[0].Reviewer)
 }
 
+// TestExport_AllFiltersEchoedDistinctly pins the FilterOpts -> ExportFilters
+// mapping with a distinct value per field (Persona was previously unasserted).
+// Distinct values make a misaligned field mapping (e.g. a future reorder of the
+// struct fields) surface as a wrong-field echo instead of a silent pass.
+func TestExport_AllFiltersEchoedDistinctly(t *testing.T) {
+	recs := []Record{exportRec("bruce", "claude-sonnet-4-6", 1)}
+	opts := FilterOpts{Since: "7d", Model: "claude-sonnet-4-6", Persona: "bruce"}
+	data, err := Export(recs, opts, fixedExportNow)
+	require.NoError(t, err)
+	env := parseEnvelope(t, data)
+	assert.Equal(t, "7d", env.Filters.Since)
+	assert.Equal(t, "claude-sonnet-4-6", env.Filters.Model)
+	assert.Equal(t, "bruce", env.Filters.Persona)
+}
+
 func TestExport_NoMatchError(t *testing.T) {
 	recs := []Record{exportRec("bruce", "claude-sonnet-4-6", 1)}
 	_, err := Export(recs, FilterOpts{Since: "30d", Model: "nonexistent"}, fixedExportNow)
