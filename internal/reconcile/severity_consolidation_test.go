@@ -56,6 +56,22 @@ func TestSoloItem_LowercaseSeverityScoresCorrectly(t *testing.T) {
 	}
 }
 
+// TestGrayZoneItem_NormalizesSeverityField guards that maxSev is stored in
+// normalized form so the returned Severity field is canonical and the
+// sortDisagreements tiebreak ranks it correctly.
+func TestGrayZoneItem_NormalizesSeverityField(t *testing.T) {
+	c := AmbiguousCluster{
+		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
+		Findings: []stream.Finding{
+			{Severity: "critical", File: "g.go", Line: 7, Reviewer: "r1"},
+		},
+	}
+	got := grayZoneItem(c)
+	if got.Severity != "CRITICAL" {
+		t.Fatalf("grayZoneItem Severity = %q, want normalized CRITICAL; raw maxSev corrupts sort tiebreak", got.Severity)
+	}
+}
+
 // TestMerge_MixedCaseDuplicateIsNotADisagreement guards the adversarial fix: a
 // group whose only severities are casing variants of one level must merge to a
 // single canonical severity with no disagreement annotation. Before the seen-set
