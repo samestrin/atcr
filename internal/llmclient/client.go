@@ -131,18 +131,26 @@ type UsageData struct {
 // non-load-bearing metadata, so a provider that emits counts as JSON floats
 // (e.g. 14200.0, which some gateways do) or otherwise malforms the block must
 // NOT fail the parent response decode and discard the assistant content — it
-// degrades to zero counts instead. Counts are truncated toward zero.
+// degrades to zero counts instead. Each field is decoded independently so a
+// single bad field does not discard the other. Counts are truncated toward zero.
 func (u *UsageData) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		PromptTokens     json.Number `json:"prompt_tokens"`
-		CompletionTokens json.Number `json:"completion_tokens"`
-	}
+	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		// Structurally malformed usage block: degrade to zero, never error.
 		return nil
 	}
-	u.PromptTokens = clampNonNegative(raw.PromptTokens)
-	u.CompletionTokens = clampNonNegative(raw.CompletionTokens)
+	if pt, ok := raw["prompt_tokens"]; ok {
+		var n json.Number
+		if err := json.Unmarshal(pt, &n); err == nil {
+			u.PromptTokens = clampNonNegative(n)
+		}
+	}
+	if ct, ok := raw["completion_tokens"]; ok {
+		var n json.Number
+		if err := json.Unmarshal(ct, &n); err == nil {
+			u.CompletionTokens = clampNonNegative(n)
+		}
+	}
 	return nil
 }
 
