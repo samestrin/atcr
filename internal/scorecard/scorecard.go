@@ -118,14 +118,15 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	if opts.NoScorecard {
 		return nil
 	}
+	w := diagWriter(opts.Diag)
 
 	dir, err := resolveDir(opts.Dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "scorecard: write failed: %v\n", err)
+		fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
 		return err
 	}
 
-	verified, refuted, hasVerification := verdictTallies(in)
+	verified, refuted, hasVerification := verdictTallies(in, w)
 
 	// Deterministic reviewer order so the JSONL line order is stable.
 	names := make([]string, 0, len(in.Reviewers))
@@ -198,7 +199,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	var firstErr error
 	for _, rec := range records {
 		if err := Append(dir, rec); err != nil {
-			fmt.Fprintf(os.Stderr, "scorecard: write failed: %v\n", err)
+			fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -231,20 +232,20 @@ func reviewerCounts(name string, findings []Finding) (raised, corroborated int) 
 // against in.Findings). It returns per-reviewer confirmed/refuted counts and
 // whether a valid verification.json was present. An absent, unreadable, or
 // malformed file degrades to no verification (fields omitted), per AC 01-03.
-func verdictTallies(in EmitInput) (verified, refuted map[string]int, present bool) {
+func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int, present bool) {
 	if in.VerificationPath == "" {
 		return nil, nil, false
 	}
 	data, err := os.ReadFile(in.VerificationPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "scorecard: verification read failed: %v\n", err)
+			fmt.Fprintf(w, "scorecard: verification read failed: %v\n", err)
 		}
 		return nil, nil, false
 	}
 	var vf verificationFile
 	if err := json.Unmarshal(data, &vf); err != nil {
-		fmt.Fprintf(os.Stderr, "scorecard: verification parse failed: %v\n", err)
+		fmt.Fprintf(w, "scorecard: verification parse failed: %v\n", err)
 		return nil, nil, false
 	}
 
@@ -272,7 +273,7 @@ func verdictTallies(in EmitInput) (verified, refuted map[string]int, present boo
 			// (findings.json and verification.json derive from the same reconciled
 			// objects), so a miss means real under-counting — warn rather than drop it
 			// silently (mirrors verify's orphan_verdict diagnostic).
-			fmt.Fprintf(os.Stderr, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
+			fmt.Fprintf(w, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
 			continue
 		}
 		switch normalizeVerdict(vfind.Verdict) {
