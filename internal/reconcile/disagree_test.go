@@ -574,3 +574,25 @@ func TestVerificationItem_NilVerificationDoesNotPanic(t *testing.T) {
 		assert.Empty(t, item.Detail, "nil Verification yields empty Detail")
 	})
 }
+
+// TestSpreadFromDisagreement_MixedCase locks the normalization in
+// spreadFromDisagreement: a non-canonical lowercase severity token must produce
+// the same spread as its canonical uppercase counterpart, not an inflated one
+// caused by a zero-floor unknown-map miss.
+func TestSpreadFromDisagreement_MixedCase(t *testing.T) {
+	cases := []struct {
+		input string
+		want  int
+	}{
+		{"LOW vs CRITICAL", 3}, // canonical — baseline
+		{"low vs CRITICAL", 3}, // non-canonical lo
+		{"LOW vs critical", 3}, // non-canonical hi
+		{"low vs critical", 3}, // both non-canonical
+		{"Medium vs High", 1},  // title-case
+	}
+	for _, tc := range cases {
+		if got := spreadFromDisagreement(tc.input); got != tc.want {
+			t.Errorf("spreadFromDisagreement(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}

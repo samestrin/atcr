@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // DefaultTemperature fills an agent's temperature when unset (applied at
@@ -124,9 +126,6 @@ type AgentConfig struct {
 // without depending on the fan-out or reconcile packages.
 var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM": true, "LOW": true}
 
-// normalizeSeverity upper-cases and trims a severity token to its canonical form.
-func normalizeSeverity(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
-
 // roleValid reports whether r is an allowed reserved role. The empty string is
 // allowed in 1.x (the loader provides no default). Epic 3.0/4.0 contract: when
 // activating role-based routing, the stage MUST apply the reviewer default for
@@ -216,7 +215,7 @@ func (r *Registry) validate() error {
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
-	if normalized := normalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+	if normalized := stream.NormalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		return fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity)
 	}
 	if r.Verify.Votes < 0 {
@@ -282,7 +281,7 @@ func (r *Registry) validate() error {
 		// not validated. min_severity is checked case-insensitively against the
 		// rubric, max_findings must be a positive cap, and every scope entry must
 		// be a non-empty category (a blank entry is a YAML typo, not "all").
-		if normalized := normalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+		if normalized := stream.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
 		}
 		if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
@@ -323,7 +322,7 @@ func (r *Registry) applyDefaults() {
 		// Canonicalize min_severity (Epic 2.2) so downstream enforcement compares
 		// against a stable upper-case token regardless of how it was written.
 		if a.MinSeverity != "" {
-			a.MinSeverity = normalizeSeverity(a.MinSeverity)
+			a.MinSeverity = stream.NormalizeSeverity(a.MinSeverity)
 		}
 		// Canonicalize scope entries (Epic 2.2): trim whitespace so downstream
 		// comparisons (ScopeFocus rendering, prompt injection) use stable tokens.
@@ -335,11 +334,11 @@ func (r *Registry) applyDefaults() {
 	// Verification defaults (Epic 3.0): an unset min_severity resolves to MEDIUM,
 	// an unset (or zero) votes to 1; a set min_severity is canonicalized so the
 	// verify stage compares a stable upper-case token. Validation already rejected
-	// any non-canonical value, so normalizeSeverity here only fixes casing.
+	// any non-canonical value, so stream.NormalizeSeverity here only fixes casing.
 	if r.Verify.MinSeverity == "" {
 		r.Verify.MinSeverity = DefaultVerifyMinSeverity
 	} else {
-		r.Verify.MinSeverity = normalizeSeverity(r.Verify.MinSeverity)
+		r.Verify.MinSeverity = stream.NormalizeSeverity(r.Verify.MinSeverity)
 	}
 	if r.Verify.Votes == 0 {
 		r.Verify.Votes = DefaultVerifyVotes

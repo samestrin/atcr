@@ -3,6 +3,8 @@ package reconcile
 import (
 	"sort"
 	"time"
+
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // Options parameterizes a reconcile run. ReconciledAt stamps summary.json;
@@ -105,7 +107,7 @@ func Reconcile(sources []Source, opts Options) Result {
 // line — a total order for deterministic emission.
 func sortMerged(m []Merged) {
 	sort.SliceStable(m, func(i, j int) bool {
-		ri, rj := SeverityRank[m[i].Severity], SeverityRank[m[j].Severity]
+		ri, rj := SeverityRank[stream.NormalizeSeverity(m[i].Severity)], SeverityRank[stream.NormalizeSeverity(m[j].Severity)]
 		if ri != rj {
 			return ri > rj
 		}

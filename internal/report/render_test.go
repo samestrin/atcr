@@ -1,3 +1,4 @@
+// Package report provides tests for the report rendering layer.
 package report
 
 import (
@@ -299,4 +300,16 @@ func TestSeverityRankOf_MatchesCanonical(t *testing.T) {
 // 0, so the report sort agrees with reconcile and fanout on non-canonical input.
 func TestSeverityRankOf_NormalizesCasing(t *testing.T) {
 	assert.Equal(t, 4, severityRankOf(" critical "), "mixed-case/padded severity must rank by its canonical value")
+}
+
+// TestRender_MixedCaseSeverityGridBucketing — a finding with a lowercase severity
+// string must land in its canonical summary-grid bucket, not in the OTHER row.
+func TestRender_MixedCaseSeverityGridBucketing(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "high", File: "a.go", Line: 1, Problem: "p", Confidence: "MEDIUM"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.NotContains(t, out, "| OTHER |", "lowercase 'high' must bucket into HIGH, not OTHER")
 }

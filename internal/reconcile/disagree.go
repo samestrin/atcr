@@ -1,3 +1,6 @@
+// Package reconcile merges findings from multiple code-review sources, ranks
+// disagreements between reviewers into a radar, and emits the reconciled
+// report, JSON findings, and cross-examination handoff documents.
 package reconcile
 
 import (
@@ -245,8 +248,8 @@ func spreadFromDisagreement(d string) int {
 	if len(parts) != 2 {
 		return 0
 	}
-	lo := SeverityRank[strings.TrimSpace(parts[0])]
-	hi := SeverityRank[strings.TrimSpace(parts[1])]
+	lo := SeverityRank[stream.NormalizeSeverity(parts[0])]
+	hi := SeverityRank[stream.NormalizeSeverity(parts[1])]
 	if hi < lo {
 		return 0
 	}
@@ -279,7 +282,7 @@ func severitySplitItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(f.Severity)]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -295,7 +298,7 @@ func soloItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(0, indep, SeverityRank[f.Severity]),
+		Score:        scoreFor(0, indep, SeverityRank[stream.NormalizeSeverity(f.Severity)]),
 		Spread:       0,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -319,7 +322,7 @@ func verificationItem(f JSONFinding) DisagreementItem {
 		Line:         f.Line,
 		Severity:     f.Severity,
 		Problem:      f.Problem,
-		Score:        scoreFor(spread, indep, SeverityRank[f.Severity]),
+		Score:        scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(f.Severity)]),
 		Spread:       spread,
 		Independence: indep,
 		Reviewers:    f.Reviewers,
@@ -335,9 +338,10 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	revSet := map[string]bool{}
 	positions := make([]Position, 0, len(c.Findings))
 	for _, f := range c.Findings {
-		if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {
+		norm := stream.NormalizeSeverity(f.Severity)
+		if r, ok := SeverityRank[norm]; ok {
 			if r > maxRank {
-				maxRank, maxSev = r, f.Severity
+				maxRank, maxSev = r, norm
 			}
 			if r < minRank {
 				minRank = r
@@ -353,11 +357,11 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 		spread = maxRank - minRank
 	}
 	if maxSev == "" && len(c.Findings) > 0 {
-		maxSev = c.Findings[0].Severity
+		maxSev = stream.NormalizeSeverity(c.Findings[0].Severity)
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
-	score := scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(maxSev)])
+	score := scoreFor(spread, indep, SeverityRank[maxSev])
 	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
 	// never sort below a LOW solo (rank 1). When all members carry unknown or
 	// blank severities, SeverityRank[maxSev] is 0 and spread is 0, so scoreFor
@@ -460,7 +464,7 @@ func sortDisagreements(items []DisagreementItem) {
 		if a.Score != b.Score {
 			return a.Score > b.Score
 		}
-		if ra, rb := SeverityRank[a.Severity], SeverityRank[b.Severity]; ra != rb {
+		if ra, rb := SeverityRank[stream.NormalizeSeverity(a.Severity)], SeverityRank[stream.NormalizeSeverity(b.Severity)]; ra != rb {
 			return ra > rb
 		}
 		if a.File != b.File {

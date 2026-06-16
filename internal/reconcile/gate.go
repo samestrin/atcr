@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // sourcesSubdir / reconciledSubdir are the review-dir children the reconcile
@@ -42,11 +44,11 @@ func ParseSeverity(s string) (string, error) {
 // every finding pass an unrecognized gate (a fail-all footgun for an
 // unvalidated caller), an unknown threshold returns false.
 func AtOrAbove(severity, threshold string) bool {
-	tr, ok := SeverityRank[threshold]
+	tr, ok := SeverityRank[stream.NormalizeSeverity(threshold)]
 	if !ok {
 		return false
 	}
-	return SeverityRank[severity] >= tr
+	return SeverityRank[stream.NormalizeSeverity(severity)] >= tr
 }
 
 // CountAtOrAbove returns how many findings have severity at or above threshold.

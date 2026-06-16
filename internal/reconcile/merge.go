@@ -1,3 +1,8 @@
+// merge.go holds the finding-merge rules: collapse a group of duplicate findings
+// into one reconciled record (max severity with disagreement annotation, modal
+// category, longest problem/fix, evidence concatenation, confidence) plus the
+// package-local SeverityRank copy. The package doc lives in disagree.go.
+
 package reconcile
 
 import (
@@ -15,12 +20,19 @@ const (
 	SevLow      = "LOW"
 )
 
-// SeverityRank is a re-export of the canonical rank map owned by internal/stream
-// (the single source of truth). Higher rank wins a merge and sorts earlier in
-// both the reconcile radar and the report view; unknown severities sort last
-// (rank 0). Kept as an exported alias so reconcile's internal lookups read it
-// unqualified and external callers keep a stable symbol.
-var SeverityRank = stream.SeverityRank
+// SeverityRank is an independent copy of the canonical rank map from
+// internal/stream (the single source of truth). Higher rank wins a merge and
+// sorts earlier in both the reconcile radar and the report view; unknown
+// severities sort last (rank 0). Copied at package init so mutations to one
+// package's map cannot corrupt the other; internal lookups read it unqualified
+// and external callers keep a stable symbol.
+var SeverityRank = func() map[string]int {
+	m := make(map[string]int, len(stream.SeverityRank))
+	for k, v := range stream.SeverityRank {
+		m[k] = v
+	}
+	return m
+}()
 
 // Confidence values. HIGH = 2+ distinct reviewers, MEDIUM = single reviewer,
 // LOW = reserved for untrusted sources (unused in v1).
@@ -120,8 +132,9 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 		}
 	}
 	if max == "" {
-		// No known severity in the group: fall back to the first value verbatim.
-		max = group[0].Severity
+		// No known severity in the group: fall back to the first value normalized
+		// so casing is consistent with every known-severity path.
+		max = stream.NormalizeSeverity(group[0].Severity)
 	}
 	if len(seen) > 1 {
 		disagreement = minSev + " vs " + max

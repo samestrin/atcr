@@ -1,3 +1,16 @@
+## [Technical Debt] - 2026-06-16
+
+### Fixed
+
+- Routed the registry's severity normalizer through the canonical `stream.NormalizeSeverity`, removing the fourth duplicate upper-and-trim copy so every package shares one definition
+- Made each reconcile severity-rank lookup self-defending by normalizing at the lookup site (`sortMerged`, `AtOrAbove`, `spreadFromDisagreement`, `soloItem`, `severitySplitItem`, `verificationItem`, `grayZoneItem`, and the disagreement sort tiebreak), so a mixed-case or non-canonical severity can no longer score rank 0 and sort or gate incorrectly
+- Normalized the `writeSummaryGrid` bucket key in report rendering so a mixed-case severity lands in its canonical bucket instead of the OTHER row
+- Precomputed per-finding severity ranks before the report sort comparator, removing a per-comparison string allocation in the render path
+- Copied the shared `SeverityRank` map locally and normalized the all-unknown merge fallback so merged severity casing stays consistent
+- Added whitespace-only input coverage to the `NormalizeSeverity` test, plus package docs and formatting cleanups (final newlines, trailing commas, blank-line removals) across the severity-consumer files
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [3.5.0] - 2026-06-16
 
 ### Changed

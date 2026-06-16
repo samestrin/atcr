@@ -26,7 +26,7 @@ var allowedInternalImports = map[string][]string{
 	"atomicfs":  {},
 	"stream":    {},
 	"gitrange":  {},
-	"registry":  {},
+	"registry":  {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
 	"tools":     {},
 	"payload":   {"gitrange", "atomicfs"},
 	"llmclient": {"registry"},

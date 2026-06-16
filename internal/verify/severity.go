@@ -1,3 +1,6 @@
+// Package verify runs code-review findings through configurable pipeline
+// stages (severity floor, confidence threshold, skeptic pass, voting) and
+// emits scored verification results.
 package verify
 
 import "github.com/samestrin/atcr/internal/stream"
