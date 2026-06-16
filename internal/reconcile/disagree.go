@@ -338,9 +338,10 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	revSet := map[string]bool{}
 	positions := make([]Position, 0, len(c.Findings))
 	for _, f := range c.Findings {
-		if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {
+		norm := stream.NormalizeSeverity(f.Severity)
+		if r, ok := SeverityRank[norm]; ok {
 			if r > maxRank {
-				maxRank, maxSev = r, stream.NormalizeSeverity(f.Severity)
+				maxRank, maxSev = r, norm
 			}
 			if r < minRank {
 				minRank = r
