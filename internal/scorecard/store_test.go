@@ -397,3 +397,17 @@ func TestStore_ReadRecords_NilWriterDefaultsToStderr(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, recs, 1)
 }
+
+// TestStore_DiagWriter_TypedNilFallsBackToStderr guards the best-effort
+// diagnostics contract against a typed-nil io.Writer — a non-nil interface
+// wrapping a nil pointer (e.g. a (*bytes.Buffer)(nil) handed in as io.Writer).
+// `w == nil` is false for such a value, so without an explicit typed-nil guard
+// diagWriter returns the nil pointer and the first Fprintf panics, crashing the
+// caller's reconcile (violating "scorecard emission never fails the caller's
+// reconcile").
+func TestStore_DiagWriter_TypedNilFallsBackToStderr(t *testing.T) {
+	var typedNil *bytes.Buffer // nil pointer, but a non-nil io.Writer interface
+	if got := diagWriter(typedNil); got != os.Stderr {
+		t.Fatalf("typed-nil writer must fall back to os.Stderr, got %T", got)
+	}
+}

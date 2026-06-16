@@ -1,3 +1,15 @@
+## [Technical Debt] - 2026-06-16
+
+### Fixed
+
+- Guarded the scorecard diagnostics writer against a typed-nil `io.Writer` (a non-nil interface wrapping a nil pointer), so such a value falls back to `os.Stderr` instead of panicking on first write
+- Resolved the diagnostics writer once at the top of `FindByRunID` and reused it for the inner reads and the adjacent-month warning, instead of re-resolving it on each path
+- Added cross-referencing doc notes between `ReadOpts.Writer` and `EmitOpts.Diag` marking the divergent field names as intentional, and documented their concurrency contract and local/trusted-sink assumption
+- Corrected a stale `EmitForReconcile` doc comment to reflect the MCP handler passing `EmitOpts{Diag: os.Stderr}`
+- Added the transient `.planning/.active_sprint` session marker to `.gitignore` so it can no longer be committed as a process artifact
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [3.4.0] - 2026-06-16
 
 ### Changed

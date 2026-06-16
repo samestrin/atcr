@@ -57,6 +57,7 @@ Thumbs.db
 .planning/**/code-review.md
 .planning/.locks/
 .planning/.config/.active_sprint
+.planning/.active_sprint
 
 # Code review session outputs (verification/ tracked; logs are committed)
 .planning/**/code-review/claude/
