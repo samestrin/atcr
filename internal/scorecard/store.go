@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -149,13 +148,18 @@ func FindByRunID(dir, runID string) ([]Record, error) {
 func monthsToScan(runID, month string) []string {
 	months := []string{month}
 	prev, next, ok := adjacentMonths(month)
-	if !ok || len(runID) < 10 {
+	if !ok {
 		return months
 	}
-	day, err := strconv.Atoi(runID[8:10])
-	if err != nil {
+	// Derive the day from the real parsed RFC3339 timestamp (shared runIDTime)
+	// rather than fixed-offset slicing runID[8:10], so an impossible calendar day
+	// (e.g. Feb 30) is rejected instead of read off positionally and triggering a
+	// spurious adjacent-month scan.
+	ts, tok := runIDTime(runID)
+	if !tok {
 		return months
 	}
+	day := ts.Day()
 	if day <= 1 {
 		months = append(months, prev)
 	}
