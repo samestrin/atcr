@@ -242,9 +242,17 @@ func verdictTallies(in EmitInput) (verified, refuted map[string]int, present boo
 	}
 
 	// Map finding location -> reviewers so a verdict credits the right reviewers.
+	// Two findings can share one (file,line,problem) key with different reviewers;
+	// union (deduped) rather than overwrite so a verdict on that location credits
+	// every reviewer that raised it, not just the last one seen.
 	reviewersByKey := make(map[string][]string, len(in.Findings))
 	for _, f := range in.Findings {
-		reviewersByKey[findingKey(f.File, f.Line, f.Problem)] = f.Reviewers
+		k := findingKey(f.File, f.Line, f.Problem)
+		for _, rev := range f.Reviewers {
+			if !contains(reviewersByKey[k], rev) {
+				reviewersByKey[k] = append(reviewersByKey[k], rev)
+			}
+		}
 	}
 
 	verified = map[string]int{}
@@ -291,7 +299,8 @@ func normalizeVerdict(v string) string {
 		case r >= 'A' && r <= 'Z':
 			out = append(out, r+('a'-'A'))
 		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
-			// trim surrounding whitespace by skipping it
+			// drop ALL whitespace (internal included, not just surrounding), so a
+			// reformatted verdict like " Con firmed " still normalizes to "confirmed"
 		default:
 			out = append(out, r)
 		}
