@@ -118,8 +118,15 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.
 	// or produced by an external source (TD item: main-list severity ordering).
 	sorted := make([]reconcile.JSONFinding, len(main))
 	copy(sorted, main)
+	// Precompute rank per unique severity to avoid per-comparison string allocations in the sort closure.
+	rankCache := make(map[string]int, 4)
+	for _, f := range sorted {
+		if _, ok := rankCache[f.Severity]; !ok {
+			rankCache[f.Severity] = severityRankOf(f.Severity)
+		}
+	}
 	sort.SliceStable(sorted, func(i, j int) bool {
-		return severityRankOf(sorted[i].Severity) > severityRankOf(sorted[j].Severity)
+		return rankCache[sorted[i].Severity] > rankCache[sorted[j].Severity]
 	})
 	main = sorted
 
@@ -201,7 +208,7 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 		if verified && isRefuted(f) {
 			refutedCount++
 		}
-		c, ok := counts[f.Severity]
+		c, ok := counts[canonicalize(f.Severity)]
 		if !ok {
 			c = otherSev
 		}

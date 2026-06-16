@@ -1,0 +1,9 @@
+{
+  "agent_name": "bob2-backup",
+  "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+  "status": "ok",
+  "duration_ms": 73770,
+  "fallback_used": true,
+  "fallback_from": "bob2",
+  "original_error": "no content in stream"
+}

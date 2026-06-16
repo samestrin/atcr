@@ -142,3 +142,30 @@ func TestMerge_ModalCategoryCanonicalizesAllCategories(t *testing.T) {
 	assert.Equal(t, "security", m.Category,
 		"non-canonical category casing normalized to canonical lowercase")
 }
+
+// TestSeverityRank_NotSharedWithStream proves reconcile.SeverityRank is an
+// independent copy of stream.SeverityRank; a mutation to one must not corrupt
+// the other (the shared-map invariant is enforced, not merely documented).
+func TestSeverityRank_NotSharedWithStream(t *testing.T) {
+	original := SeverityRank["CRITICAL"]
+	SeverityRank["CRITICAL"] = 999
+	defer func() { SeverityRank["CRITICAL"] = original }()
+	if stream.SeverityRank["CRITICAL"] == 999 {
+		t.Fatal("SeverityRank and stream.SeverityRank share the same backing map; mutation to one corrupted the other")
+	}
+}
+
+// TestMerge_AllUnknownSeverityFallbackIsNormalized proves the all-unknown-severity
+// fallback in mergeSeverity returns a normalized form, consistent with every
+// known-severity path that also returns canonical uppercase.
+func TestMerge_AllUnknownSeverityFallbackIsNormalized(t *testing.T) {
+	group := []stream.Finding{
+		{Severity: "xyzzy", File: "a.go", Line: 1, Reviewer: "r1"},
+		{Severity: "also-unknown", File: "a.go", Line: 1, Reviewer: "r2"},
+	}
+	got := Merge(group)
+	want := stream.NormalizeSeverity(group[0].Severity) // "XYZZY"
+	if got.Severity != want {
+		t.Fatalf("Merge all-unknown severity = %q, want normalized %q", got.Severity, want)
+	}
+}
