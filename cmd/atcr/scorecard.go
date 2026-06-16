@@ -109,7 +109,11 @@ func looksLikePath(arg string) bool {
 // matching scorecard.EmitForReconcile. A missing summary.json is a usage error
 // (exit 2, "run reconcile first"); a present-but-unreadable/corrupt one is a real
 // failure (exit 1). Error messages echo the user-provided path, not the resolved
-// absolute path, so no internal path leaks.
+// absolute path, so no internal path leaks. An arbitrary review-dir path is
+// accepted by design — this is a local, read-only CLI running with the user's own
+// permissions (mirroring anchorDir's verbatim-path contract), so there is no
+// trusted root to confine the read to and reaching any user-readable file grants
+// no escalation; no bounds check is enforced.
 func runIDFromReviewDir(arg string) (string, error) {
 	clean := filepath.Clean(arg)
 	summaryPath := filepath.Join(clean, "reconciled", "summary.json")

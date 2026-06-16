@@ -30,16 +30,22 @@ func newLeaderboardCmd() *cobra.Command {
 		Args: usageArgs(cobra.NoArgs),
 		RunE: runLeaderboard,
 	}
-	cmd.Flags().String("since", "30d", "time window: Nd (days), Nw (weeks), Nm (months)")
+	cmd.Flags().String("since", "30d", `time window: Nd (days), Nw (weeks), Nm (months); "all" disables the window`)
 	cmd.Flags().String("model", "", "filter to an exact model id")
 	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
 	cmd.Flags().Bool("export", false, "emit anonymized public submission JSON instead of the table")
-	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout")
+	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (follows symlinks)")
 	return cmd
 }
 
 func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	since, _ := cmd.Flags().GetString("since")
+	// Map the no-window sentinels to an empty string before building FilterOpts.
+	// scorecard.ApplyFilters already treats empty Since as "no window"; this mapping
+	// keeps ParseSince's strict contract untouched (it lives in internal/scorecard).
+	if since == "all" || since == "0" {
+		since = ""
+	}
 	model, _ := cmd.Flags().GetString("model")
 	persona, _ := cmd.Flags().GetString("persona")
 	export, _ := cmd.Flags().GetBool("export")
@@ -88,7 +94,11 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 		// show" outcome (exit 1), distinct from the empty-store state above. The
 		// active window is named so data hidden purely by the default 30d --since
 		// is not mistaken for a bad --model/--persona.
-		return fmt.Errorf("no records match filters (window: last %s). Try a wider --since or removing --model/--persona", since)
+		windowClause := "last " + since
+		if since == "" {
+			windowClause = "all time"
+		}
+		return fmt.Errorf("no records match filters (window: %s). Try a wider --since or removing --model/--persona", windowClause)
 	}
 
 	return renderLeaderboard(out, scorecard.Aggregate(filtered))
@@ -112,7 +122,9 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 			r.FindingsRaised, r.FindingsCorroborated, formatPercent(r.CorroborationRate),
 			r.TotalCostUSD, costPerCorr, r.AvgLatencyMS)
 	}
-	_ = tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
 	_, err := w.Write(buf.Bytes())
 	return err
 }
@@ -145,6 +157,10 @@ func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filter
 // directories, writes a sibling temp file (0600), then renames it over the
 // target, so a crash never leaves a partial file and an existing file is
 // replaced whole. A directory target is rejected up front with a clear message.
+// A symlink at the target is followed by the rename: accepted by design for a
+// local CLI writing to a user-chosen path with the user's own permissions (same
+// posture as the read path), so the blast radius is the user's own files; the
+// --output help notes this so the behavior is not a surprise.
 func writeExportFile(path string, data []byte) error {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return fmt.Errorf("--output path %s is a directory, not a file", path)
