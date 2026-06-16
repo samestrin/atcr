@@ -478,6 +478,10 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
 	// A verdict is decisive when no other verdict matches or exceeds its count;
 	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
+	// Precondition: every perSkeptic verdict is already canonical — parseVerdict
+	// maps unknown verdicts to unverifiable and the error/early exits hardcode
+	// canonical verdicts — so counting them directly stays consistent with
+	// aggregateVerdicts' canonical-only fold; no separate filter is needed here.
 	counts := map[string]int{}
 	for _, v := range perSkeptic {
 		if v != nil {
