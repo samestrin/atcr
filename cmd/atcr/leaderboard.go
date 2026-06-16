@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,7 +61,7 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	// store or a no-match filter as a failure (exit 1) — unlike the table view,
 	// where an empty store is a graceful exit-0 state.
 	if export {
-		return runLeaderboardExport(out, records, filters, output)
+		return runLeaderboardExport(cmd, records, filters, output)
 	}
 
 	if len(records) == 0 {
@@ -110,18 +111,22 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 }
 
 // runLeaderboardExport builds the anonymized v1 submission JSON and routes it to
-// stdout or, when output is set, to a file. A no-match/empty result surfaces the
-// canonical message (exit 1) and writes nothing. time.Now().UTC() is the
+// stdout or, when output is set, to a file. A no-match/empty result prints the
+// canonical guidance to stderr (so a success-path `--export | jq` never sees
+// non-JSON on stdout) and exits 1, writing no document. time.Now().UTC() is the
 // envelope timestamp and the --since anchor.
-func runLeaderboardExport(out io.Writer, records []scorecard.Record, filters scorecard.FilterOpts, output string) error {
+func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string) error {
 	data, err := scorecard.Export(records, filters, time.Now().UTC())
 	if err != nil {
-		// ErrNoExportRecords already carries the exact user-facing message; a bad
-		// --since carries its own actionable text. Both are exit-1 runtime errors.
+		if errors.Is(err, scorecard.ErrNoExportRecords) {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "No records match the specified filters. Try widening --since or removing filters.")
+			return err
+		}
+		// A bad --since (or another runtime error) carries its own actionable text.
 		return err
 	}
 	if output == "" {
-		_, werr := out.Write(append(data, '\n'))
+		_, werr := cmd.OutOrStdout().Write(append(data, '\n'))
 		return werr
 	}
 	return writeExportFile(output, data)

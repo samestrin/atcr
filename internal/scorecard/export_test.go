@@ -91,6 +91,56 @@ func TestExport_AnonymizationStripsAPIKeys(t *testing.T) {
 	}
 }
 
+func TestExport_AnonymizationStripsGluedPathAndWinPath(t *testing.T) {
+	// A path glued to a non-space byte (host=/etc/passwd) and a Windows path must
+	// both be stripped — the scrub is not anchored to whitespace.
+	rec := exportRec("bruce", `host=/etc/passwd C:\Users\sam\id_rsa`, 1)
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	s := string(data)
+	for _, p := range []string{"/etc/passwd", `C:\`, `\Users\`, "id_rsa"} {
+		assert.NotContains(t, s, p, "must strip glued/windows path %q", p)
+	}
+}
+
+func TestExport_AnonymizationStripsEmailAndMoreKeys(t *testing.T) {
+	rec := exportRec("bruce", "claude user@host.com AKIAIOSFODNN7EXAMPLE glpat-abcDEF123", 1)
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	s := string(data)
+	for _, k := range []string{"@host.com", "AKIA", "glpat-"} {
+		assert.NotContains(t, s, k, "must strip secret/email pattern %q", k)
+	}
+}
+
+func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
+	// A provider-prefixed model id carries an internal '/', which is NOT an
+	// absolute path and must survive scrubbing.
+	data, err := Export([]Record{exportRec("bruce", "anthropic/claude-3", 1)},
+		FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	assert.Equal(t, "anthropic/claude-3", parseEnvelope(t, data).Records[0].Model)
+}
+
+func TestExport_ClampsNegativeMetrics(t *testing.T) {
+	// A corrupt-but-parseable record with negative counts must not produce a
+	// negative or out-of-range metric in the public submission.
+	rec := exportRec("bruce", "m", 1)
+	rec.FindingsRaised = -5
+	rec.FindingsCorroborated = -2
+	rec.TokensIn = -100
+	rec.CostUSD = -1.0
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Records[0]
+	assert.GreaterOrEqual(t, r.FindingsRaised, 0)
+	assert.GreaterOrEqual(t, r.FindingsCorroborated, 0)
+	assert.GreaterOrEqual(t, r.TokensIn, 0)
+	assert.GreaterOrEqual(t, r.CostUSD, 0.0)
+	assert.GreaterOrEqual(t, r.CorroborationRate, 0.0)
+	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
+}
+
 func TestExport_MetricsPreserved(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)

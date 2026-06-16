@@ -10,9 +10,9 @@ import (
 )
 
 // ErrNoExportRecords is returned by Export when no record survives the filters
-// (or the store is empty). Its text is the exact user-facing message the CLI
-// surfaces (AC 04-04): callers map it to exit 1 without writing any output.
-var ErrNoExportRecords = errors.New("No records match the specified filters. Try widening --since or removing filters.")
+// (or the store is empty). The CLI maps it to exit 1 and prints the canonical
+// user-facing guidance (AC 04-04); callers write no output on this path.
+var ErrNoExportRecords = errors.New("no records match the export filters")
 
 // PublicRecord is one aggregated row of the v1 public submission schema. It is an
 // allowlist: only these fields are ever emitted, so a field that is not here
@@ -68,25 +68,61 @@ func AnonymizeRecord(raw Record) PublicRecord {
 		Model:                scrubField(raw.Model),
 		Role:                 scrubField(raw.Role),
 		Runs:                 1,
-		FindingsRaised:       raw.FindingsRaised,
-		FindingsCorroborated: raw.FindingsCorroborated,
-		FindingsSolo:         raw.FindingsSolo,
-		CorroborationRate:    raw.CorroborationRate,
-		CostUSD:              raw.CostUSD,
-		TokensIn:             raw.TokensIn,
-		TokensOut:            raw.TokensOut,
-		LatencyMSAvg:         raw.LatencyMS,
+		FindingsRaised:       clampNonNeg(raw.FindingsRaised),
+		FindingsCorroborated: clampNonNeg(raw.FindingsCorroborated),
+		FindingsSolo:         clampNonNeg(raw.FindingsSolo),
+		CorroborationRate:    clampRate(raw.CorroborationRate),
+		CostUSD:              clampNonNegF(raw.CostUSD),
+		TokensIn:             clampNonNeg(raw.TokensIn),
+		TokensOut:            clampNonNeg(raw.TokensOut),
+		LatencyMSAvg:         clampNonNeg64(raw.LatencyMS),
 	}
 	if raw.FindingsVerified != nil {
-		pr.FindingsVerified = *raw.FindingsVerified
+		pr.FindingsVerified = clampNonNeg(*raw.FindingsVerified)
 	}
 	if raw.FindingsRefuted != nil {
-		pr.FindingsRefuted = *raw.FindingsRefuted
+		pr.FindingsRefuted = clampNonNeg(*raw.FindingsRefuted)
 	}
 	if raw.SurvivedSkepticRate != nil {
-		pr.SurvivedSkepticRate = *raw.SurvivedSkepticRate
+		pr.SurvivedSkepticRate = clampRate(*raw.SurvivedSkepticRate)
 	}
 	return pr
+}
+
+// clampNonNeg* / clampRate guard the public submission against a corrupt-but-
+// parseable source record: a negative count or an out-of-[0,1] rate in a public
+// leaderboard is worse than a dropped value, so ingested metrics are bounded
+// before they reach aggregation or serialization.
+func clampNonNeg(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func clampNonNeg64(n int64) int64 {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+func clampNonNegF(f float64) float64 {
+	if f < 0 {
+		return 0
+	}
+	return f
+}
+
+func clampRate(f float64) float64 {
+	switch {
+	case f < 0:
+		return 0
+	case f > 1:
+		return 1
+	default:
+		return f
+	}
 }
 
 // Export filters, anonymizes, aggregates, and serializes the scorecard records
@@ -164,26 +200,39 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 	env := ExportEnvelope{
 		SchemaVersion: SchemaVersion,
 		ExportedAt:    exportedAt.UTC().Format(time.RFC3339),
-		Filters:       ExportFilters{Since: opts.Since, Model: opts.Model, Persona: opts.Persona},
+		Filters:       ExportFilters(opts),
 		Records:       rows,
 	}
 	return json.MarshalIndent(env, "", "  ")
 }
 
-// scrubField removes path-like and credential-like substrings from an identity
-// string. Absolute paths are anchored to start-of-token (after whitespace or at
-// the string start) so a provider-prefixed model id like "anthropic/claude-3"
-// (an internal '/', not an absolute path) is preserved, while "/Users/sam/x" is
-// stripped. Whitespace is then collapsed.
+// scrubField is defense-in-depth over the allowlist: reviewer/model/role are the
+// only string fields the public schema carries, and they are controlled internal
+// identities, but a crafted or corrupt source record could embed PII in them, so
+// path-like, email, and credential-like substrings are stripped before emission.
+// The allowlist (PublicRecord) is the primary guarantee — this is the backstop.
+//
+// An absolute path is a '/'-run whose '/' is NOT immediately preceded by an
+// alphanumeric: that strips "/Users/sam", "=/etc/passwd", and "x:/tmp" while
+// preserving a provider-prefixed model id like "anthropic/claude-3" (the '/' sits
+// after an alnum). Windows paths and '~'-runs are stripped anywhere; the
+// credential denylist covers common token/key shapes (it is necessarily
+// incomplete — hence the allowlist as the real boundary). Whitespace is then
+// collapsed.
 func scrubField(s string) string {
-	s = scrubPath.ReplaceAllString(s, "$1")
 	s = scrubWinPath.ReplaceAllString(s, "")
+	s = scrubHome.ReplaceAllString(s, "")
+	s = scrubAbsPath.ReplaceAllString(s, "$1")
+	s = scrubEmail.ReplaceAllString(s, "")
 	s = scrubKey.ReplaceAllString(s, "")
 	return strings.Join(strings.Fields(s), " ")
 }
 
 var (
-	scrubPath    = regexp.MustCompile(`(^|\s)(~|/)\S*`)
 	scrubWinPath = regexp.MustCompile(`[A-Za-z]:\\\S*`)
-	scrubKey     = regexp.MustCompile(`sk-\S+|ghp_\S+|xoxb-\S+|Bearer\s+\S+`)
+	scrubHome    = regexp.MustCompile(`~\S*`)
+	// Leading capture preserves the non-path byte before the stripped '/'-run.
+	scrubAbsPath = regexp.MustCompile(`(^|[^A-Za-z0-9])/\S*`)
+	scrubEmail   = regexp.MustCompile(`[\w.+-]+@[\w.-]+\.\w+`)
+	scrubKey     = regexp.MustCompile(`(?i)\b(sk-[a-z0-9-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
 )
