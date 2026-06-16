@@ -52,7 +52,7 @@ func runScorecard(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot determine scorecard store path: %w", err)
 	}
 
-	recs, err := scorecard.FindByRunID(dir, runID)
+	recs, err := scorecard.FindByRunID(dir, runID, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		// The run_id is already validated upstream (resolveScorecardRunID), so an
 		// error here is a real store read failure (e.g. an unreadable month file),

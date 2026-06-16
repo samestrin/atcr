@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-15-d04868
-question: "Should run_id parsing be centralized into a single parseRunID function in internal/scorecard, or should the three existing strategies (runIDTime in aggregate.go, monthFromRunID in paths.go, monthsToScan day-slicing in store.go) stay as-is?"
-created: 2026-06-15
+id: mem-2026-06-16-11015b
+question: "What parameter mechanism should be used to thread an io.Writer through ReadRecords, FindByRunID, and ReadAll in the scorecard package?"
+created: 2026-06-16
 last_retrieved: ""
-sprints: [3.3_per_run_scorecard]
-files: [internal/scorecard/aggregate.go, internal/scorecard/paths.go, internal/scorecard/store.go]
-tags: [clarifications, sprint-3.3_per_run_scorecard, architecture, refactoring, scorecard, run_id]
+sprints: []
+files: [/Users/samestrin/Documents/GitHub/atcr/internal/scorecard/store.go, /Users/samestrin/Documents/GitHub/atcr/internal/scorecard/scorecard.go, /Users/samestrin/Documents/GitHub/atcr/internal/scorecard/aggregate.go, /Users/samestrin/Documents/GitHub/atcr/.planning/epics/active/3.4_scorecard-diagnostics-writer.md]
+tags: [clarifications, epic-3.3_per_run_scorecard, architecture, API design, scorecard, io.Writer, options struct, ReadOpts]
 retrievals: 0
 status: active
-type: clarifications skill, sprint 3.3_per_run_scorecard, 2026-06-15
+type: clarifications
 ---
 
-# Should run_id parsing be centralized into a single parseRunI
+# What parameter mechanism should be used to thread an io.Writ
 
 ## Decision
 
-Keep the three strategies as-is. The three functions solve distinct sub-problems at different layers and are not duplicates: runIDTime (aggregate.go:173-183) extracts a full time.Time via RFC3339 regex for --since window comparisons; monthFromRunID (paths.go:57-63) extracts only the YYYY-MM 7-char prefix via simple slice + monthRe for filename routing; monthsToScan (store.go:151-168) additionally slices runID[8:10] for the day digit for JSONL file boundary detection. Changing monthFromRunID's error-returning signature would break Append (store.go:33), FindByRunID (store.go:106), IsRunID (paths.go:43), and their tests for zero functional gain. If future consolidation into a shared parseRunID is desired, scope it as a dedicated TD cleanup sprint only after adding IsRunID coverage at paths.go:40-46 (currently 0.0%).
+Use an explicit ReadOpts{Writer io.Writer} struct (option b). The 3.4 epic plan's Risks table mandates "Prefer an options struct carrying the writer over positional params." Every existing Opts type in the scorecard package (EmitOpts at internal/scorecard/scorecard.go:88, FilterOpts at internal/scorecard/aggregate.go:14) uses the struct pattern; there are zero ...io.Writer variadic usages anywhere in the codebase. Zero-value ReadOpts{} → nil Writer → fallback to os.Stderr satisfies AC5. Variadic ...io.Writer is idiomatic only when the element is truly optional config — a single behavioral override belongs in a named struct field.
 
 ## Rationale
 
@@ -27,6 +27,7 @@ Keep the three strategies as-is. The three functions solve distinct sub-problems
 
 ## Code Reference
 
-- internal/scorecard/aggregate.go
-- internal/scorecard/paths.go
-- internal/scorecard/store.go
+- /Users/samestrin/Documents/GitHub/atcr/internal/scorecard/store.go
+- /Users/samestrin/Documents/GitHub/atcr/internal/scorecard/scorecard.go
+- /Users/samestrin/Documents/GitHub/atcr/internal/scorecard/aggregate.go
+- /Users/samestrin/Documents/GitHub/atcr/.planning/epics/active/3.4_scorecard-diagnostics-writer.md

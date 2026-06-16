@@ -33,7 +33,7 @@ func threeReviewerInput() EmitInput {
 
 func readJSONL(t *testing.T, dir string) []Record {
 	t.Helper()
-	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"))
+	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"), ReadOpts{})
 	require.NoError(t, err)
 	return recs
 }

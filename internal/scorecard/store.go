@@ -17,6 +17,24 @@ import (
 // unbounded scanner buffer.
 const maxLineBytes = 1 << 20
 
+// ReadOpts carries read-path options for the scorecard store. Writer is the sink
+// for operational diagnostics emitted while reading (malformed records, over-long
+// lines, adjacent-month spans); a nil Writer defaults to os.Stderr so existing
+// callers keep their prior behavior (Epic 3.4).
+type ReadOpts struct {
+	Writer io.Writer
+}
+
+// diagWriter resolves a diagnostics sink: the caller-supplied writer, or
+// os.Stderr when nil. It centralizes the "default to os.Stderr when unset" rule
+// shared by the read and emit paths (Epic 3.4 AC5).
+func diagWriter(w io.Writer) io.Writer {
+	if w == nil {
+		return os.Stderr
+	}
+	return w
+}
+
 // Append writes one record as a single JSONL line to the month file derived from
 // rec.RunID, under dir (created lazily with 0700 on first write). The line is
 // marshaled to one []byte (record + '\n') and emitted in a single Write to a
@@ -73,7 +91,7 @@ func Append(dir string, rec Record) error {
 // scope absent real data-volume pressure — it changes this read API and every
 // caller (ReadAll, FindByRunID, Aggregate, export) and would need explicit
 // sign-off.
-func ReadRecords(path string) ([]Record, error) {
+func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -160,7 +178,7 @@ func drainLine(br *bufio.Reader) error {
 // EC1) — returning only one file's records would silently drop the rest. A hit
 // in a neighbouring file is logged to stderr. A missing month file is "no
 // records" for that month (skipped), not an error.
-func FindByRunID(dir, runID string) ([]Record, error) {
+func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 	month, err := monthFromRunID(runID)
 	if err != nil {
 		return nil, err
@@ -170,7 +188,7 @@ func FindByRunID(dir, runID string) ([]Record, error) {
 	var matches []Record
 	var fromNeighbour bool
 	for i, m := range months {
-		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"))
+		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), opts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -224,7 +242,7 @@ func monthsToScan(runID, month string) []string {
 // records (malformed lines skipped per-file by ReadRecords). A missing directory
 // is empty (nil, nil), not an error — the leaderboard's "no data yet" state.
 // Non-.jsonl files are ignored.
-func ReadAll(dir string) ([]Record, error) {
+func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -237,7 +255,7 @@ func ReadAll(dir string) ([]Record, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		recs, err := ReadRecords(filepath.Join(dir, e.Name()))
+		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
