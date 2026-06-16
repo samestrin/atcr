@@ -8,12 +8,12 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 3 | 0 | 0 |
-| MEDIUM | 6 | 13 | 0 |
-| LOW | 36 | 9 | 23 |
+| MEDIUM | 3 | 13 | 3 |
+| LOW | 31 | 9 | 28 |
 | SEVERITY | 1 | 0 | 0 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 46 | **Deferred Items:** 22 | **Resolved Items:** 23 | **Total Items:** 91
+**Last Modified:** 2026-06-16 | **Open Items:** 38 | **Deferred Items:** 22 | **Resolved Items:** 31 | **Total Items:** 91
 
 ## Directory Structure
 
@@ -51,16 +51,16 @@ technical-debt/
 | 3 | [ ] | LOW | internal/fanout/postprocess.go:36 | Comparison lacks braces for single-line if | Remove stream.NormalizeSeverity call | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/fanout/postprocess.go:36 | Redundant normalization adds overhead (disagreement: LOW vs MEDIUM) | Remove stream.NormalizeSeverity call | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 3 | [x] | LOW | internal/fanout/postprocess.go:62 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | LOW | internal/reconcile/disagree.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | LOW | internal/reconcile/disagree.go:5 | Unnecessary blank line after package declaration | Remove blank line | maintainancy | 1 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | MEDIUM | internal/reconcile/disagree.go:282 | Epic 3.5 normalized severity lookups only at the scoped boundary sites (merge.go:104 grayZoneItem disagree.go:338/360) but left disagree.go sibling finding-level lookups raw: spreadFromDisagreement (248-249) severitySplitItem (282) soloItem (298) verificationItem (322) sortDisagreements tiebreak (463) - severity is never normalized at parse time (parser.go:193 stores f[0] verbatim). On mixed-case input a real HIGH solo scores rank 0 and sorts dead-last and the radar-JSON ordering diverges from the normalized report-view ordering. Latent desync on the exact non-canonical-casing surface the epic set out to eliminate. | Wrap each raw SeverityRank lookup in disagree.go in stream.NormalizeSeverity: lines 248-249 (replace strings.TrimSpace with stream.NormalizeSeverity which trims and upper-cases) 282 298 322 and 463. Add a radar test feeding a lowercase-severity JSONFinding and asserting a non-zero solo score plus an ordering that matches render.go. Either normalize all reconcile lookup sites or none - do not leave the file half-migrated. | correctness | 30 | code-review | claude | MEDIUM |
-| 4 | [ ] | LOW | internal/reconcile/disagree.go:336 | Unnecessary blank line after variable declaration | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | LOW | internal/reconcile/disagree.go:336 | Comparison lacks braces for single-line if | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | MEDIUM | internal/reconcile/disagree.go:336 | maxSev stores raw f.Severity instead of normalized form | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | greta | MEDIUM |
+| 4 | [x] | LOW | internal/reconcile/disagree.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
+| 4 | [x] | LOW | internal/reconcile/disagree.go:5 | Unnecessary blank line after package declaration | Remove blank line | maintainancy | 1 | code-review | Reviewer | MEDIUM |
+| 4 | [x] | MEDIUM | internal/reconcile/disagree.go:282 | Epic 3.5 normalized severity lookups only at the scoped boundary sites (merge.go:104 grayZoneItem disagree.go:338/360) but left disagree.go sibling finding-level lookups raw: spreadFromDisagreement (248-249) severitySplitItem (282) soloItem (298) verificationItem (322) sortDisagreements tiebreak (463) - severity is never normalized at parse time (parser.go:193 stores f[0] verbatim). On mixed-case input a real HIGH solo scores rank 0 and sorts dead-last and the radar-JSON ordering diverges from the normalized report-view ordering. Latent desync on the exact non-canonical-casing surface the epic set out to eliminate. | Wrap each raw SeverityRank lookup in disagree.go in stream.NormalizeSeverity: lines 248-249 (replace strings.TrimSpace with stream.NormalizeSeverity which trims and upper-cases) 282 298 322 and 463. Add a radar test feeding a lowercase-severity JSONFinding and asserting a non-zero solo score plus an ordering that matches render.go. Either normalize all reconcile lookup sites or none - do not leave the file half-migrated. | correctness | 30 | code-review | claude | MEDIUM |
+| 4 | [x] | LOW | internal/reconcile/disagree.go:336 | Unnecessary blank line after variable declaration | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | Reviewer | MEDIUM |
+| 4 | [x] | LOW | internal/reconcile/disagree.go:336 | Comparison lacks braces for single-line if | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | Reviewer | MEDIUM |
+| 4 | [x] | MEDIUM | internal/reconcile/disagree.go:336 | maxSev stores raw f.Severity instead of normalized form | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | greta | MEDIUM |
 | 4 | [ ] | HIGH | internal/reconcile/disagree.go:336 | Double normalization wastes cycles (disagreement: LOW vs HIGH) | Assign stream.NormalizeSeverity(f.Severity) to maxSev for consistency with merge.go | maintainancy | 5 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | LOW | internal/reconcile/disagree.go:355 | Unnecessary blank line after variable declaration | Add braces for consistency | maintainancy | 2 | code-review | Reviewer | MEDIUM |
+| 4 | [x] | LOW | internal/reconcile/disagree.go:355 | Unnecessary blank line after variable declaration | Add braces for consistency | maintainancy | 2 | code-review | Reviewer | MEDIUM |
 | 4 | [ ] | HIGH | internal/reconcile/disagree.go:360 | Double normalization wastes cycles (disagreement: MEDIUM vs HIGH) | Use stream.NormalizeSeverity(maxSev) consistently | performance | 10 | code-review | Reviewer | MEDIUM |
-| 4 | [ ] | MEDIUM | internal/reconcile/disagree.go:360 | Potential rank lookup failure for maxSev | Use stream.NormalizeSeverity(maxSev) consistently | performance | 10 | code-review | otto | MEDIUM |
+| 4 | [x] | MEDIUM | internal/reconcile/disagree.go:360 | Potential rank lookup failure for maxSev | Use stream.NormalizeSeverity(maxSev) consistently | performance | 10 | code-review | otto | MEDIUM |
 | 4 | [ ] | LOW | internal/reconcile/disagree.go:365 | Missing final newline | Add newline at end of file | maintainancy | 1 | code-review | Reviewer | MEDIUM |
 | 4 | [ ] | LOW | internal/reconcile/merge.go:1 | Missing package documentation | Add package comment describing purpose | maintainancy | 3 | code-review | Reviewer | MEDIUM |
 | 4 | [ ] | LOW | internal/reconcile/merge.go:5 | Unnecessary blank line after package declaration | Remove blank line | maintainancy | 1 | code-review | Reviewer | MEDIUM |
