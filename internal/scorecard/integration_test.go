@@ -35,7 +35,7 @@ func TestIntegration_ReconcileEmitRead(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 
-	recs, err := FindByRunID(dir, integRunID)
+	recs, err := FindByRunID(dir, integRunID, ReadOpts{})
 	if err != nil {
 		t.Fatalf("FindByRunID: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestIntegration_ReconcileEmitRead_WithVerification(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 
-	recs, err := FindByRunID(dir, integRunID)
+	recs, err := FindByRunID(dir, integRunID, ReadOpts{})
 	if err != nil {
 		t.Fatalf("FindByRunID: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestIntegration_ReconcileEmitAggregate(t *testing.T) {
 		t.Fatalf("Emit: %v", err)
 	}
 
-	all, err := ReadAll(dir)
+	all, err := ReadAll(dir, ReadOpts{})
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestIntegration_NoScorecardSuppresses(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, integMonthFile)); !os.IsNotExist(err) {
 		t.Errorf("month file should not exist when suppressed; stat err = %v", err)
 	}
-	recs, err := ReadAll(dir)
+	recs, err := ReadAll(dir, ReadOpts{})
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}

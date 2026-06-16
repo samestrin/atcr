@@ -17,6 +17,24 @@ import (
 // unbounded scanner buffer.
 const maxLineBytes = 1 << 20
 
+// ReadOpts carries read-path options for the scorecard store. Writer is the sink
+// for operational diagnostics emitted while reading (malformed records, over-long
+// lines, adjacent-month spans); a nil Writer defaults to os.Stderr so existing
+// callers keep their prior behavior (Epic 3.4).
+type ReadOpts struct {
+	Writer io.Writer
+}
+
+// diagWriter resolves a diagnostics sink: the caller-supplied writer, or
+// os.Stderr when nil. It centralizes the "default to os.Stderr when unset" rule
+// shared by the read and emit paths (Epic 3.4 AC5).
+func diagWriter(w io.Writer) io.Writer {
+	if w == nil {
+		return os.Stderr
+	}
+	return w
+}
+
 // Append writes one record as a single JSONL line to the month file derived from
 // rec.RunID, under dir (created lazily with 0700 on first write). The line is
 // marshaled to one []byte (record + '\n') and emitted in a single Write to a
@@ -73,12 +91,13 @@ func Append(dir string, rec Record) error {
 // scope absent real data-volume pressure — it changes this read API and every
 // caller (ReadAll, FindByRunID, Aggregate, export) and would need explicit
 // sign-off.
-func ReadRecords(path string) ([]Record, error) {
+func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	w := diagWriter(opts.Writer)
 
 	var recs []Record
 	// A bufio.Reader (not bufio.Scanner) is used so a single over-long line can be
@@ -92,7 +111,7 @@ func ReadRecords(path string) ([]Record, error) {
 		if err == bufio.ErrBufferFull {
 			// Line exceeds maxLineBytes: discard the buffered prefix, drain the rest
 			// without buffering it, warn, and continue with the next line.
-			fmt.Fprintf(os.Stderr, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
+			_, _ = fmt.Fprintf(w, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
@@ -102,7 +121,7 @@ func ReadRecords(path string) ([]Record, error) {
 			continue
 		}
 		if line := bytes.TrimSpace(frag); len(line) > 0 {
-			if r, ok := decodeRecord(line, path); ok {
+			if r, ok := decodeRecord(line, path, w); ok {
 				recs = append(recs, r)
 			}
 		}
@@ -117,12 +136,13 @@ func ReadRecords(path string) ([]Record, error) {
 }
 
 // decodeRecord parses one trimmed JSONL line into a Record, applying the
-// malformed-skip and schema-version-skip rules. ok is false (with a stderr
-// warning already emitted) when the line must be skipped.
-func decodeRecord(line []byte, path string) (Record, bool) {
+// malformed-skip and schema-version-skip rules. ok is false (with a warning
+// already emitted to w, the resolved diagnostics writer) when the line must be
+// skipped.
+func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
 	var r Record
 	if err := json.Unmarshal(line, &r); err != nil {
-		fmt.Fprintf(os.Stderr, "scorecard: skipping malformed record in %s: %v\n", path, err)
+		_, _ = fmt.Fprintf(w, "scorecard: skipping malformed record in %s: %v\n", path, err)
 		return Record{}, false
 	}
 	// Schema-version negotiation: a record from a newer, forward-incompatible
@@ -132,7 +152,7 @@ func decodeRecord(line []byte, path string) (Record, bool) {
 	// readable: v1 is the first schema, so there is nothing to migrate yet; an
 	// explicit migration shim slots in here when one appears.)
 	if r.SchemaVersion > SchemaVersion {
-		fmt.Fprintf(os.Stderr, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
+		_, _ = fmt.Fprintf(w, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
 		return Record{}, false
 	}
 	return r, true
@@ -158,9 +178,10 @@ func drainLine(br *bufio.Reader) error {
 // the neighbouring month file is also scanned and merged, because a clock-skewed
 // or late write can split one run's records across two month files (AC 02-01
 // EC1) — returning only one file's records would silently drop the rest. A hit
-// in a neighbouring file is logged to stderr. A missing month file is "no
-// records" for that month (skipped), not an error.
-func FindByRunID(dir, runID string) ([]Record, error) {
+// in a neighbouring file is logged to the diagnostics writer (ReadOpts.Writer,
+// default os.Stderr). A missing month file is "no records" for that month
+// (skipped), not an error.
+func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 	month, err := monthFromRunID(runID)
 	if err != nil {
 		return nil, err
@@ -170,7 +191,7 @@ func FindByRunID(dir, runID string) ([]Record, error) {
 	var matches []Record
 	var fromNeighbour bool
 	for i, m := range months {
-		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"))
+		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), opts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -187,7 +208,7 @@ func FindByRunID(dir, runID string) ([]Record, error) {
 		}
 	}
 	if fromNeighbour {
-		fmt.Fprintf(os.Stderr, "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+		_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
 	}
 	return matches, nil
 }
@@ -224,7 +245,7 @@ func monthsToScan(runID, month string) []string {
 // records (malformed lines skipped per-file by ReadRecords). A missing directory
 // is empty (nil, nil), not an error — the leaderboard's "no data yet" state.
 // Non-.jsonl files are ignored.
-func ReadAll(dir string) ([]Record, error) {
+func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -237,7 +258,7 @@ func ReadAll(dir string) ([]Record, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		recs, err := ReadRecords(filepath.Join(dir, e.Name()))
+		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue

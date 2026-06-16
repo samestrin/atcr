@@ -44,7 +44,7 @@ func TestEmitForReconcile_BridgesPoolSummaryAndFindings(t *testing.T) {
 
 	cfg, err := os.UserConfigDir()
 	require.NoError(t, err)
-	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"))
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 3, "2 reviewer records + 1 aggregate")
 
@@ -78,7 +78,7 @@ func TestEmitForReconcile_NoPoolSummaryDegrades(t *testing.T) {
 
 	cfg, err := os.UserConfigDir()
 	require.NoError(t, err)
-	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"))
+	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 2, "1 reviewer + 1 aggregate even without pool summary")
 	bruce := findReviewer(recs, "bruce")
