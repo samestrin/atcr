@@ -122,7 +122,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 
 	dir, err := resolveDir(opts.Dir)
 	if err != nil {
-		fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
+		_, _ = fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
 		return err
 	}
 
@@ -199,7 +199,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	var firstErr error
 	for _, rec := range records {
 		if err := Append(dir, rec); err != nil {
-			fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
+			_, _ = fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -239,13 +239,13 @@ func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int
 	data, err := os.ReadFile(in.VerificationPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(w, "scorecard: verification read failed: %v\n", err)
+			_, _ = fmt.Fprintf(w, "scorecard: verification read failed: %v\n", err)
 		}
 		return nil, nil, false
 	}
 	var vf verificationFile
 	if err := json.Unmarshal(data, &vf); err != nil {
-		fmt.Fprintf(w, "scorecard: verification parse failed: %v\n", err)
+		_, _ = fmt.Fprintf(w, "scorecard: verification parse failed: %v\n", err)
 		return nil, nil, false
 	}
 
@@ -273,7 +273,7 @@ func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int
 			// (findings.json and verification.json derive from the same reconciled
 			// objects), so a miss means real under-counting — warn rather than drop it
 			// silently (mirrors verify's orphan_verdict diagnostic).
-			fmt.Fprintf(w, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
+			_, _ = fmt.Fprintf(w, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
 			continue
 		}
 		switch normalizeVerdict(vfind.Verdict) {

@@ -111,7 +111,7 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 		if err == bufio.ErrBufferFull {
 			// Line exceeds maxLineBytes: discard the buffered prefix, drain the rest
 			// without buffering it, warn, and continue with the next line.
-			fmt.Fprintf(w, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
+			_, _ = fmt.Fprintf(w, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
 			if derr := drainLine(br); derr != nil {
 				if derr == io.EOF {
 					break
@@ -136,12 +136,13 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 }
 
 // decodeRecord parses one trimmed JSONL line into a Record, applying the
-// malformed-skip and schema-version-skip rules. ok is false (with a stderr
-// warning already emitted) when the line must be skipped.
+// malformed-skip and schema-version-skip rules. ok is false (with a warning
+// already emitted to w, the resolved diagnostics writer) when the line must be
+// skipped.
 func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
 	var r Record
 	if err := json.Unmarshal(line, &r); err != nil {
-		fmt.Fprintf(w, "scorecard: skipping malformed record in %s: %v\n", path, err)
+		_, _ = fmt.Fprintf(w, "scorecard: skipping malformed record in %s: %v\n", path, err)
 		return Record{}, false
 	}
 	// Schema-version negotiation: a record from a newer, forward-incompatible
@@ -151,7 +152,7 @@ func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
 	// readable: v1 is the first schema, so there is nothing to migrate yet; an
 	// explicit migration shim slots in here when one appears.)
 	if r.SchemaVersion > SchemaVersion {
-		fmt.Fprintf(w, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
+		_, _ = fmt.Fprintf(w, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
 		return Record{}, false
 	}
 	return r, true
@@ -177,8 +178,9 @@ func drainLine(br *bufio.Reader) error {
 // the neighbouring month file is also scanned and merged, because a clock-skewed
 // or late write can split one run's records across two month files (AC 02-01
 // EC1) — returning only one file's records would silently drop the rest. A hit
-// in a neighbouring file is logged to stderr. A missing month file is "no
-// records" for that month (skipped), not an error.
+// in a neighbouring file is logged to the diagnostics writer (ReadOpts.Writer,
+// default os.Stderr). A missing month file is "no records" for that month
+// (skipped), not an error.
 func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 	month, err := monthFromRunID(runID)
 	if err != nil {
@@ -206,7 +208,7 @@ func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
 		}
 	}
 	if fromNeighbour {
-		fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+		_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
 	}
 	return matches, nil
 }
