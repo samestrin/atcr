@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -189,6 +191,56 @@ func TestLeaderboardCmd_ExportNoFilterMatchExit1(t *testing.T) {
 	code, out := execCmdCapture(t, "leaderboard", "--export", "--model", "nonexistent-model")
 	require.Equal(t, 1, code)
 	require.Contains(t, out, "no records match the export filters")
+}
+
+// errWriter is an io.Writer that always fails with a fixed error.
+type errWriter struct{ err error }
+
+func (e *errWriter) Write([]byte) (int, error) { return 0, e.err }
+
+// TestRenderLeaderboard_WriteErrorPropagated verifies that renderLeaderboard returns
+// the underlying writer's error. The tw.Flush() error path (tabwriter to bytes.Buffer)
+// cannot be triggered in isolation because bytes.Buffer never returns an error;
+// this test covers the final w.Write path and ensures errors are not discarded.
+func TestLeaderboardCmd_SinceAllShowsOldRecords(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 45, "oldreviewer", "m") // older than the default 30d window
+
+	code, out := execCmdCapture(t, "leaderboard", "--since", "all")
+	require.Equal(t, 0, code, "--since all must disable the window and show all records: %s", out)
+	require.Contains(t, out, "oldreviewer", "record older than 30d must appear with --since all")
+}
+
+func TestLeaderboardCmd_SinceAllExportIncludesOldRecords(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 45, "oldreviewer", "m")
+
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--since", "all")
+	require.Equal(t, 0, code, "--export --since all must include old records: %s", out)
+	var env struct {
+		Records []struct {
+			Reviewer string `json:"reviewer"`
+		} `json:"records"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &env), "export must be valid JSON: %s", out)
+	require.NotEmpty(t, env.Records, "old records must appear in export with --since all")
+}
+
+func TestRenderLeaderboard_WriteErrorPropagated(t *testing.T) {
+	rows := []scorecard.LeaderboardRow{
+		{Reviewer: "alice", Model: "m", Runs: 1, FindingsRaised: 5, FindingsCorroborated: 3, CorroborationRate: 0.6},
+	}
+	ew := &errWriter{err: errors.New("disk full")}
+	err := renderLeaderboard(ew, rows)
+	require.Error(t, err)
+	require.Equal(t, "disk full", err.Error())
+}
+
+func TestRenderLeaderboard_NoErrorOnSuccess(t *testing.T) {
+	rows := []scorecard.LeaderboardRow{
+		{Reviewer: "alice", Model: "m", Runs: 1, FindingsRaised: 5, FindingsCorroborated: 3, CorroborationRate: 0.6},
+	}
+	require.NoError(t, renderLeaderboard(io.Discard, rows))
 }
 
 func TestLeaderboardCmd_ExportNoMatchSingleErrorLine(t *testing.T) {
