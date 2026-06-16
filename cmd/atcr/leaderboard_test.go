@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -100,4 +103,65 @@ func TestLeaderboardCmd_InvalidSinceExit1(t *testing.T) {
 	code, out := execCmdCapture(t, "leaderboard", "--since", "abc")
 	require.Equal(t, 1, code, "an invalid --since value is a runtime error (exit 1)")
 	require.Contains(t, out, "since")
+}
+
+func TestLeaderboardCmd_ExportFlag(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+	storeLeaderboardRec(t, 2, "diana", "gpt-4o")
+
+	code, out := execCmdCapture(t, "leaderboard", "--export")
+	require.Equal(t, 0, code, out)
+	// --export emits JSON, not the table: the table header must be absent.
+	require.NotContains(t, out, "REVIEWER\t")
+	var env struct {
+		SchemaVersion int `json:"schema_version"`
+		Records       []struct {
+			Reviewer string `json:"reviewer"`
+		} `json:"records"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &env), "export stdout must be valid JSON: %s", out)
+	require.Equal(t, 1, env.SchemaVersion)
+	require.Len(t, env.Records, 2)
+}
+
+func TestLeaderboardCmd_OutputFlag(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+
+	dest := filepath.Join(t.TempDir(), "nested", "deep", "submission.json")
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--output", dest)
+	require.Equal(t, 0, code, out)
+	// --output routes JSON to the file (creating parents), not stdout.
+	require.NotContains(t, out, "schema_version")
+
+	data, err := os.ReadFile(dest)
+	require.NoError(t, err, "output file must be created")
+	var env struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	require.NoError(t, json.Unmarshal(data, &env))
+	require.Equal(t, 1, env.SchemaVersion)
+
+	info, err := os.Stat(dest)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "output file must be 0600")
+}
+
+func TestLeaderboardCmd_ExportEmptyStoreExit1(t *testing.T) {
+	isolate(t)
+	// Unlike the table view (exit 0 on empty store), --export treats no matching
+	// records as a failure (exit 1) with the canonical no-match message.
+	code, out := execCmdCapture(t, "leaderboard", "--export")
+	require.Equal(t, 1, code)
+	require.Contains(t, out, "No records match the specified filters. Try widening --since or removing filters.")
+}
+
+func TestLeaderboardCmd_ExportNoFilterMatchExit1(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--model", "nonexistent-model")
+	require.Equal(t, 1, code)
+	require.Contains(t, out, "No records match the specified filters. Try widening --since or removing filters.")
 }
