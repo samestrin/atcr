@@ -361,9 +361,10 @@ func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &vf))
 	require.Len(t, vf.Findings, 1)
 	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
-	assert.Contains(t, vf.Findings[0].Model, "m-s2", "winning skeptic model must be recorded")
-	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning skeptic model must be recorded")
-	assert.NotContains(t, vf.Findings[0].Model, "m-s3", "losing (refuting) skeptic model must NOT be attributed")
+	// Exact equality (not substring Contains/NotContains) is robust to model-name
+	// overlaps (e.g. m-s vs m-s3), locks selection-order dedup, and still proves the
+	// refuting skeptic (m-s3) is excluded — it is absent from the pinned full value.
+	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model)
 }
 
 // TestRunVerify_ThreeWayTieRecordsAllParticipantModels locks the tie branch of
