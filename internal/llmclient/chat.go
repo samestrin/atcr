@@ -158,6 +158,14 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
+		// KNOWN LIMITATION (accepted): a provider may return an error-shaped 200
+		// with no choices yet still bill for the call and report `usage`. This
+		// early return discards parsed.Usage, so cost is understated on
+		// billed-but-empty turns. Capturing it would require returning a non-nil
+		// ChatResponse alongside this error and teaching the fanout loop to read
+		// usage off an errored turn — a cross-package contract change in
+		// internal/fanout. Billed-but-empty turns are rare, so the understatement
+		// is accepted rather than complicating the error contract.
 		return nil, fmt.Errorf("failed to parse response: no choices returned")
 	}
 	ch := parsed.Choices[0]
