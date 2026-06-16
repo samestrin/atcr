@@ -365,6 +365,8 @@ func TestRunVerify_WinningModelAttribution_TwoConfirmOneRefute(t *testing.T) {
 	// overlaps (e.g. m-s vs m-s3), locks selection-order dedup, and still proves the
 	// refuting skeptic (m-s3) is excluded — it is absent from the pinned full value.
 	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model)
+	// Skeptic names the winning voters in selection order (joinSkeptics over winners).
+	assert.Equal(t, "s2, skep", vf.Findings[0].Skeptic)
 }
 
 // TestRunVerify_ThreeWayTieRecordsAllParticipantModels locks the tie branch of
@@ -398,6 +400,8 @@ func TestRunVerify_ThreeWayTieRecordsAllParticipantModels(t *testing.T) {
 	for _, m := range []string{"m-s2", "m-s3", "m-skep"} {
 		assert.Contains(t, vf.Findings[0].Model, m, "tie must record every participant's model")
 	}
+	// A tie's Skeptic field names every participant in selection order (joinSkeptics).
+	assert.Equal(t, "s2, s3, skep", vf.Findings[0].Skeptic)
 }
 
 // TestRunVerify_SkipDropsMismatchedPriorMetadata locks the carry-forward guard: a
@@ -838,4 +842,37 @@ func TestRunVerify_WinningModelAttribution_TwoRefuteOneConfirm(t *testing.T) {
 	assert.Contains(t, vf.Findings[0].Model, "m-s3", "winning (refuting) skeptic model must be recorded")
 	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning (refuting) skeptic model must be recorded")
 	assert.NotContains(t, vf.Findings[0].Model, "m-s2", "losing (confirming) skeptics[0] model must NOT be attributed")
+	// Skeptic names the winning refuters in selection order (joinSkeptics over winners).
+	assert.Equal(t, "s3, skep", vf.Findings[0].Skeptic)
+}
+
+// TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants covers the 1+1 tie
+// (1 confirmed + 1 refuted) — the simplest disagreement — which collapses to
+// unverifiable. Both Model and Skeptic must name every participant (joinSkeptics
+// over all voters on a tie), locking the docstring contract that a tie records
+// the full disagreement rather than a lone voter.
+func TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	// Selection s2(m-s2), skep(m-skep): one confirms, one refutes → 1/1 tie.
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-skep": `{"verdict":"refuted","reasoning":"no"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "a 1 confirmed + 1 refuted split is a tie")
+	assert.Equal(t, "s2, skep", vf.Findings[0].Skeptic, "a tie names every participant in selection order")
+	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model, "a tie attributes every participant's model")
 }
