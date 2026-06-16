@@ -62,7 +62,7 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot determine scorecard store path: %w", err)
 	}
-	records, err := scorecard.ReadAll(dir)
+	records, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})
 	if err != nil {
 		return fmt.Errorf("failed to read scorecard store: %w", err)
 	}

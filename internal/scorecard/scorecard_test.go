@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -33,7 +34,7 @@ func threeReviewerInput() EmitInput {
 
 func readJSONL(t *testing.T, dir string) []Record {
 	t.Helper()
-	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"))
+	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"), ReadOpts{})
 	require.NoError(t, err)
 	return recs
 }
@@ -285,4 +286,61 @@ func findReviewer(recs []Record, name string) *Record {
 		}
 	}
 	return nil
+}
+
+// TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter locks Epic 3.4 AC1: the
+// orphan-verdict warning (a verification finding with no matching raised finding)
+// must be written to the injected EmitOpts.Diag, not the process-global os.Stderr,
+// so it can be captured and asserted by text.
+func TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter(t *testing.T) {
+	dir := t.TempDir()
+	verPath := filepath.Join(t.TempDir(), "verification.json")
+	// A verdict whose (file,line,problem) matches no raised finding is an orphan.
+	verJSON := `{"findings":[{"file":"ghost.go","line":99,"problem":"none","verdict":"confirmed"}]}`
+	require.NoError(t, os.WriteFile(verPath, []byte(verJSON), 0o600))
+
+	var buf bytes.Buffer
+	in := EmitInput{
+		RunID:            testRunID,
+		Findings:         []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
+		Reviewers:        map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
+		VerificationPath: verPath,
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir, Diag: &buf}))
+	assert.Contains(t, buf.String(), "has no matching raised finding",
+		"orphan-verdict diagnostic must route to the injected EmitOpts.Diag")
+}
+
+// TestEmit_WriteFailureDiagnosticRoutesToDiagWriter locks Epic 3.4 AC1/AC2 for the
+// "write failed" diagnostic: pointing the store under a regular file makes Append's
+// MkdirAll fail, and the resulting warning must reach the injected EmitOpts.Diag.
+func TestEmit_WriteFailureDiagnosticRoutesToDiagWriter(t *testing.T) {
+	base := t.TempDir()
+	blocker := filepath.Join(base, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+	storeDir := filepath.Join(blocker, "scorecard") // under a regular file → MkdirAll fails
+
+	var buf bytes.Buffer
+	in := EmitInput{
+		RunID:     testRunID,
+		Findings:  []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
+		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
+	}
+	err := Emit(in, EmitOpts{Dir: storeDir, Diag: &buf})
+	require.Error(t, err, "a store path under a regular file must fail to write")
+	assert.Contains(t, buf.String(), "write failed",
+		"write-failure diagnostic must route to the injected EmitOpts.Diag")
+}
+
+// TestEmit_NilDiagDefaultsToStderr locks Epic 3.4 AC5: a zero EmitOpts (nil Diag)
+// preserves prior behavior — emission succeeds and diagnostics fall back to
+// os.Stderr without panicking.
+func TestEmit_NilDiagDefaultsToStderr(t *testing.T) {
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     testRunID,
+		Findings:  []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
+		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir})) // nil Diag → os.Stderr, must not panic
 }

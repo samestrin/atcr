@@ -36,7 +36,7 @@ func TestStore_AppendAndRead(t *testing.T) {
 	require.NoError(t, Append(dir, sampleRecord(runID, "greta")))
 
 	path := filepath.Join(dir, "2026-06.jsonl")
-	recs, err := ReadRecords(path)
+	recs, err := ReadRecords(path, ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 2)
 	assert.Equal(t, "bruce", recs[0].Reviewer)
@@ -95,7 +95,7 @@ func TestStore_ReadRecords_SkipsMalformedLines(t *testing.T) {
 	content := string(good) + "\n" + "{not valid json\n" + string(good) + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
-	recs, err := ReadRecords(path)
+	recs, err := ReadRecords(path, ReadOpts{})
 	require.NoError(t, err)
 	assert.Len(t, recs, 2, "malformed line skipped, valid lines retained")
 }
@@ -116,7 +116,7 @@ func TestStore_ReadRecords_SkipsFutureSchemaVersion(t *testing.T) {
 	content := string(v1) + "\n" + string(v2) + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 
-	recs, err := ReadRecords(path)
+	recs, err := ReadRecords(path, ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "a record with schema_version > current must be skipped, not read as v1")
 	assert.Equal(t, "bruce", recs[0].Reviewer)
@@ -171,7 +171,7 @@ func TestStore_FindByRunID(t *testing.T) {
 	// A different run in the same month file must NOT match.
 	require.NoError(t, Append(dir, sampleRecord("2026-06-13T08:00:00Z-xyz789", "diana")))
 
-	recs, err := FindByRunID(dir, runID)
+	recs, err := FindByRunID(dir, runID, ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 2, "only the two records for the requested run_id")
 	for _, r := range recs {
@@ -181,13 +181,13 @@ func TestStore_FindByRunID(t *testing.T) {
 
 func TestStore_FindByRunID_InvalidFormat(t *testing.T) {
 	dir := t.TempDir()
-	_, err := FindByRunID(dir, "not-a-valid-run-id")
+	_, err := FindByRunID(dir, "not-a-valid-run-id", ReadOpts{})
 	require.Error(t, err, "a run_id without a YYYY-MM prefix is a clear error, not empty")
 }
 
 func TestStore_FindByRunID_MissingFileNoMatch(t *testing.T) {
 	dir := t.TempDir()
-	recs, err := FindByRunID(dir, "2026-06-14T10:00:00Z-abc123")
+	recs, err := FindByRunID(dir, "2026-06-14T10:00:00Z-abc123", ReadOpts{})
 	require.NoError(t, err, "a missing month file is 'no records', not an error")
 	assert.Empty(t, recs)
 }
@@ -204,7 +204,7 @@ func TestStore_FindByRunID_AdjacentMonthFallback(t *testing.T) {
 	// Write the June run_id's record directly into the July file.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), append(line, '\n'), 0o600))
 
-	recs, err := FindByRunID(dir, runID)
+	recs, err := FindByRunID(dir, runID, ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "record found in adjacent month via fallback scan")
 	assert.Equal(t, runID, recs[0].RunID)
@@ -221,14 +221,14 @@ func TestStore_FindByRunID_UnionAcrossMonths(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), append(line, '\n'), 0o600))
 
-	recs, err := FindByRunID(dir, runID)
+	recs, err := FindByRunID(dir, runID, ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 2, "records split across month files must all be returned")
 }
 
 func TestStore_FindByRunID_RejectsInvalidMonth(t *testing.T) {
 	dir := t.TempDir()
-	_, err := FindByRunID(dir, "2026-13-01T00:00:00Z-x")
+	_, err := FindByRunID(dir, "2026-13-01T00:00:00Z-x", ReadOpts{})
 	require.Error(t, err, "an impossible month (13) is a clear error, not an empty result")
 }
 
@@ -239,13 +239,13 @@ func TestStore_ReadAll(t *testing.T) {
 	// A non-JSONL file in the directory must be ignored.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me\n"), 0o600))
 
-	recs, err := ReadAll(dir)
+	recs, err := ReadAll(dir, ReadOpts{})
 	require.NoError(t, err)
 	require.Len(t, recs, 2, "records from every monthly JSONL file, txt ignored")
 }
 
 func TestStore_ReadAll_MissingDir(t *testing.T) {
-	recs, err := ReadAll(filepath.Join(t.TempDir(), "does-not-exist"))
+	recs, err := ReadAll(filepath.Join(t.TempDir(), "does-not-exist"), ReadOpts{})
 	require.NoError(t, err, "a missing store directory is empty, not an error")
 	assert.Empty(t, recs)
 }
@@ -292,7 +292,7 @@ func TestStore_ReadRecords_SkipsOverLongLine(t *testing.T) {
 	content = append(content, '\n')
 	require.NoError(t, os.WriteFile(path, content, 0o600))
 
-	recs, err := ReadRecords(path)
+	recs, err := ReadRecords(path, ReadOpts{})
 	require.NoError(t, err, "an over-long line must be skipped, not abort the read")
 	require.Len(t, recs, 2, "valid records before AND after the over-long line are retained")
 	assert.Equal(t, "bruce", recs[0].Reviewer)
@@ -317,9 +317,34 @@ func TestStore_ReadAll_OverLongLineDoesNotAbortAllMonths(t *testing.T) {
 	jul = append(jul, '\n')
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), jul, 0o600))
 
-	recs, err := ReadAll(dir)
+	recs, err := ReadAll(dir, ReadOpts{})
 	require.NoError(t, err, "one oversized line in one month must not abort aggregation across all months")
 	require.Len(t, recs, 2, "healthy June record + valid July record after the skipped over-long line")
+}
+
+// TestStore_ReadRecords_DiagnosticsRouteToInjectedWriter locks Epic 3.4 AC1/AC2
+// for the read path: a read diagnostic (here the over-long-line warning) must be
+// written to the ReadOpts.Writer the caller injects, not the process-global
+// os.Stderr — so it can be captured and asserted by text.
+func TestStore_ReadRecords_DiagnosticsRouteToInjectedWriter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
+	require.NoError(t, err)
+	huge := bytes.Repeat([]byte("x"), maxLineBytes+1024) // one line over the cap
+	var content []byte
+	content = append(content, huge...)
+	content = append(content, '\n')
+	content = append(content, good...)
+	content = append(content, '\n')
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	var buf bytes.Buffer
+	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "valid record after the over-long line is still read")
+	assert.Contains(t, buf.String(), "skipping over-long line",
+		"read diagnostic must route to the injected ReadOpts.Writer, not os.Stderr")
 }
 
 // splitNonEmptyLines splits raw JSONL bytes into trimmed non-empty lines so a
@@ -338,4 +363,37 @@ func splitNonEmptyLines(raw []byte) [][]byte {
 		}
 	}
 	return out
+}
+
+// TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter locks Epic 3.4
+// for the malformed-record warning the epic explicitly names: it must reach the
+// injected ReadOpts.Writer, not os.Stderr.
+func TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(string(good)+"\n{not valid json\n"), 0o600))
+
+	var buf bytes.Buffer
+	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "valid record retained, malformed skipped")
+	assert.Contains(t, buf.String(), "skipping malformed record",
+		"malformed-record diagnostic must route to ReadOpts.Writer")
+}
+
+// TestStore_ReadRecords_NilWriterDefaultsToStderr locks Epic 3.4 AC5: a zero
+// ReadOpts (nil Writer) preserves prior behavior — the read still succeeds (the
+// diagnostic falls back to os.Stderr) and does not panic.
+func TestStore_ReadRecords_NilWriterDefaultsToStderr(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(string(good)+"\n{bad\n"), 0o600))
+
+	recs, err := ReadRecords(path, ReadOpts{}) // nil Writer → os.Stderr, must not panic
+	require.NoError(t, err)
+	assert.Len(t, recs, 1)
 }

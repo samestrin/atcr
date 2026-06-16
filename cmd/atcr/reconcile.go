@@ -88,7 +88,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	// reconcile (AC 01-01). --no-scorecard suppresses emission for this run
 	// (Story 5); Emit gates on it before any I/O.
 	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
-	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard})
+	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard, Diag: cmd.ErrOrStderr()})
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if requireVerified {
