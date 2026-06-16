@@ -118,10 +118,10 @@ func renderLeaderboard(w io.Writer, rows []scorecard.LeaderboardRow) error {
 }
 
 // runLeaderboardExport builds the anonymized v1 submission JSON and routes it to
-// stdout or, when output is set, to a file. A no-match/empty result returns
-// ErrNoExportRecords (exit 1), which main() prints to stderr — so a
-// success-path `--export | jq` never sees non-JSON on stdout. time.Now().UTC()
-// is the envelope timestamp and the --since anchor.
+// stdout or, when output is set, to a file. An empty store returns a "run reconcile"
+// error (exit 1) distinct from the filter-no-match error. Both propagate through
+// main() to stderr so a success-path `--export | jq` never sees non-JSON on
+// stdout. time.Now().UTC() is the envelope timestamp and the --since anchor.
 func runLeaderboardExport(cmd *cobra.Command, records []scorecard.Record, filters scorecard.FilterOpts, output string) error {
 	if len(records) == 0 {
 		return fmt.Errorf("no scorecard data yet; run 'atcr reconcile' to generate records")
