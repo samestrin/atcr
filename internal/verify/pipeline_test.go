@@ -846,6 +846,96 @@ func TestRunVerify_WinningModelAttribution_TwoRefuteOneConfirm(t *testing.T) {
 	assert.Equal(t, "s3, skep", vf.Findings[0].Skeptic)
 }
 
+// budgetTripChat drives the skeptic whose model == tripModel into an endless
+// tool-call loop, so it trips its MaxTurns budget (→ unverifiable with a tripped
+// budget), while every other model gets its scripted final verdict. It lets a
+// pipeline test place exactly one budget-tripped voter into a multi-skeptic fold.
+type budgetTripChat struct {
+	tripModel string
+	verdicts  map[string]string
+}
+
+func (b budgetTripChat) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
+	return b.verdicts[inv.Model], nil
+}
+
+func (b budgetTripChat) Chat(_ context.Context, inv llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	if inv.Model == b.tripModel {
+		// Always request another tool call — the loop never concludes, so the
+		// skeptic exhausts its MaxTurns budget.
+		return &llmclient.ChatResponse{
+			Message: llmclient.Message{Role: "assistant", ToolCalls: []llmclient.ToolCall{{
+				ID: "call_1", Type: "function",
+				Function: llmclient.FunctionCall{Name: "read_file", Arguments: json.RawMessage(`{}`)},
+			}}},
+			FinishReason: "tool_calls",
+		}, nil
+	}
+	c := b.verdicts[inv.Model]
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &c}, FinishReason: "stop"}, nil
+}
+
+// TestRunVerify_TieRecordsTrippedBudgetFromUnverifiableVoter locks the pipeline
+// rule that a tripped budget is surfaced in verification.json when its voter's
+// unverifiable verdict is part of the recorded outcome. s2 trips max_turns
+// (→ unverifiable), s3 refutes, skep confirms → 1/1/1 tie → unverifiable, and a
+// tie attributes every participant, so TrippedBudgets carries s2's max_turns.
+func TestRunVerify_TieRecordsTrippedBudgetFromUnverifiableVoter(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true, MaxTurns: intPtr(2)}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return budgetTripChat{tripModel: "m-s2", verdicts: map[string]string{
+			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
+			"m-skep": `{"verdict":"confirmed","reasoning":"yes"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "unverifiable", vf.Findings[0].Verdict, "1 tripped + 1 refuted + 1 confirmed is a tie")
+	assert.Contains(t, vf.Findings[0].TrippedBudgets, "max_turns",
+		"a tie surfaces the tripped budget of its unverifiable voter")
+}
+
+// TestRunVerify_ConfirmedWinnerDropsLoserTrippedBudget locks the converse: when
+// the decisive winner is confirmed, a LOSING skeptic's tripped budget is not
+// attributed. s2 trips max_turns (→ unverifiable, a loser); s3 and skep confirm
+// → confirmed wins, so TrippedBudgets is empty (only winners are credited).
+func TestRunVerify_ConfirmedWinnerDropsLoserTrippedBudget(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true, MaxTurns: intPtr(2)}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return budgetTripChat{tripModel: "m-s2", verdicts: map[string]string{
+			"m-s3":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-skep": `{"verdict":"confirmed","reasoning":"yes"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict, "2 confirmed beats 1 tripped-unverifiable")
+	assert.Empty(t, vf.Findings[0].TrippedBudgets,
+		"a confirmed winner drops a losing skeptic's tripped budget")
+}
+
 // TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants covers the 1+1 tie
 // (1 confirmed + 1 refuted) — the simplest disagreement — which collapses to
 // unverifiable. Both Model and Skeptic must name every participant (joinSkeptics
