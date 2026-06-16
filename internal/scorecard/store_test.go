@@ -1,6 +1,7 @@
 package scorecard
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -266,6 +267,59 @@ func TestStore_monthsToScan_ValidBoundaryStillScans(t *testing.T) {
 	require.Len(t, monthsToScan("2026-06-30T23:59:59Z-x", "2026-06"), 2, "last-day run scans next month")
 	require.Len(t, monthsToScan("2026-06-01T00:00:00Z-x", "2026-06"), 2, "first-day run scans prev month")
 	require.Len(t, monthsToScan("2026-06-15T12:00:00Z-x", "2026-06"), 1, "mid-month run stays single-file")
+}
+
+// TestStore_ReadRecords_SkipsOverLongLine locks the fix: a single line exceeding
+// maxLineBytes must be logged and skipped, and reading must continue — the valid
+// records both BEFORE and AFTER the oversized line are returned and no error is
+// propagated. (bufio.Scanner's ErrTooLong is terminal and would drop everything
+// after the big line; bufio.Reader can drain and resume.)
+func TestStore_ReadRecords_SkipsOverLongLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good1, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
+	require.NoError(t, err)
+	good2, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-b", "greta"))
+	require.NoError(t, err)
+	huge := bytes.Repeat([]byte("x"), maxLineBytes+1024) // one line over the cap
+
+	var content []byte
+	content = append(content, good1...)
+	content = append(content, '\n')
+	content = append(content, huge...)
+	content = append(content, '\n')
+	content = append(content, good2...)
+	content = append(content, '\n')
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	recs, err := ReadRecords(path)
+	require.NoError(t, err, "an over-long line must be skipped, not abort the read")
+	require.Len(t, recs, 2, "valid records before AND after the over-long line are retained")
+	assert.Equal(t, "bruce", recs[0].Reviewer)
+	assert.Equal(t, "greta", recs[1].Reviewer)
+}
+
+// TestStore_ReadAll_OverLongLineDoesNotAbortAllMonths locks the leaderboard-level
+// guarantee: one oversized line in one month file must not abort aggregation
+// across every month — healthy months and the valid records after the skipped
+// line in the damaged month are all returned.
+func TestStore_ReadAll_OverLongLineDoesNotAbortAllMonths(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, Append(dir, sampleRecord("2026-06-14T10:00:00Z-a", "bruce")))
+
+	good, err := json.Marshal(sampleRecord("2026-07-02T10:00:00Z-b", "greta"))
+	require.NoError(t, err)
+	huge := bytes.Repeat([]byte("x"), maxLineBytes+1024)
+	var jul []byte
+	jul = append(jul, huge...)
+	jul = append(jul, '\n')
+	jul = append(jul, good...)
+	jul = append(jul, '\n')
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), jul, 0o600))
+
+	recs, err := ReadAll(dir)
+	require.NoError(t, err, "one oversized line in one month must not abort aggregation across all months")
+	require.Len(t, recs, 2, "healthy June record + valid July record after the skipped over-long line")
 }
 
 // splitNonEmptyLines splits raw JSONL bytes into trimmed non-empty lines so a
