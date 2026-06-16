@@ -148,6 +148,18 @@ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "output file must be 0600")
 }
 
+func TestLeaderboardCmd_OutputToDirectoryExit1(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+
+	// --output pointing at an existing directory is a usable-path error (exit 1),
+	// not a silent overwrite (AC 04-01 Error Scenario 2).
+	dir := t.TempDir()
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--output", dir)
+	require.Equal(t, 1, code)
+	require.Contains(t, out, "directory")
+}
+
 func TestLeaderboardCmd_ExportEmptyStoreExit1(t *testing.T) {
 	isolate(t)
 	// Unlike the table view (exit 0 on empty store), --export treats no matching
