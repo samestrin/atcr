@@ -94,6 +94,11 @@ type ReviewerMeta struct {
 // sink is assumed local and trusted. Before routing Diag to any non-local sink
 // (a leaderboard submission or a remote-facing MCP response), scrub absolute
 // paths (use base names) and avoid echoing raw error strings.
+//
+// NAMING: the read-path equivalent of this sink is ReadOpts.Writer (store.go).
+// The divergent field names — emit-path Diag vs read-path Writer — are
+// intentional and retained for caller-API stability; both denote the same
+// "operational diagnostics sink, default os.Stderr" concept.
 type EmitOpts struct {
 	NoScorecard bool
 	Dir         string

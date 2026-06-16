@@ -28,6 +28,11 @@ const maxLineBytes = 1 << 20
 // assumed local and trusted. Before routing Writer to any non-local sink (a
 // leaderboard submission or a remote-facing MCP response), scrub absolute paths
 // (use base names) and avoid echoing raw error strings.
+//
+// NAMING: the emit-path equivalent of this sink is EmitOpts.Diag (scorecard.go).
+// The divergent field names — read-path Writer vs emit-path Diag — are
+// intentional and retained for caller-API stability; both denote the same
+// "operational diagnostics sink, default os.Stderr" concept.
 type ReadOpts struct {
 	Writer io.Writer
 }
