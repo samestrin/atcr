@@ -431,7 +431,10 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
-			// none can occur here, but never let one drop a finding.
+			// none can occur here, but log it so the impossible case is visible if it
+			// ever fires, then synthesize an unverifiable verdict rather than dropping
+			// the finding.
+			logSkepticFailure(sk.Name, "programming_fault", ierr.Error())
 			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
 			tripped = []string{}
 		}
