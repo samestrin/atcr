@@ -532,6 +532,34 @@ func TestComputeCostUSD_KnownModel(t *testing.T) {
 	assert.InDelta(t, 18.0, cost, 1e-9)
 }
 
+func TestComputeCostUSD_NormalizesVariantSuffix(t *testing.T) {
+	// A trailing [...] variant marker (e.g. the 1M-context tag) decorates the
+	// same priced model; it must normalize to the bare key, not miss the table.
+	got := ComputeCostUSD("claude-opus-4-8[1m]", 1_000_000, 1_000_000)
+	want := ComputeCostUSD("claude-opus-4-8", 1_000_000, 1_000_000)
+	assert.InDelta(t, want, got, 1e-9)
+	assert.Greater(t, got, 0.0)
+}
+
+func TestComputeCostUSD_NormalizesProviderPrefix(t *testing.T) {
+	// OpenRouter-style provider prefix: anthropic/claude-sonnet-4-6 prices as
+	// claude-sonnet-4-6 ($3/M in).
+	got := ComputeCostUSD("anthropic/claude-sonnet-4-6", 1_000_000, 0)
+	assert.InDelta(t, 3.0, got, 1e-9)
+}
+
+func TestComputeCostUSD_NormalizesBedrockPrefix(t *testing.T) {
+	// Bedrock-style region.provider prefix: us.anthropic.claude-sonnet-4-6.
+	got := ComputeCostUSD("us.anthropic.claude-sonnet-4-6", 1_000_000, 0)
+	assert.InDelta(t, 3.0, got, 1e-9)
+}
+
+func TestComputeCostUSD_NormalizationDoesNotInventPrices(t *testing.T) {
+	// Normalization must not turn a genuinely unknown model into a priced one.
+	assert.Equal(t, 0.0, ComputeCostUSD("anthropic/totally-unknown-xyz", 1000, 1000))
+	assert.Equal(t, 0.0, ComputeCostUSD("claude-not-real-9-9[1m]", 1000, 1000))
+}
+
 func TestComputeCostUSD_UnknownModel(t *testing.T) {
 	// Unknown model must yield zero cost, never panic.
 	assert.Equal(t, 0.0, ComputeCostUSD("totally-unknown-model-xyz", 1000, 1000))
