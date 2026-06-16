@@ -1,3 +1,15 @@
+## [3.5.0] - 2026-06-16
+
+### Changed
+
+- Consolidated the severity-rank rubric (`{CRITICAL, HIGH, MEDIUM, LOW}`) and the `NormalizeSeverity` helper into a single canonical owner (`internal/stream`); reconcile, fan-out post-processing, verify, and report now consume that one definition instead of independently redefined rank maps and normalizers
+
+### Fixed
+
+- Fixed a severity casing asymmetry where reconcile compared raw severity values while fan-out normalized them, so a non-canonical or mixed-case severity could desync fan-out truncation from reconcile merging; all consumers now normalize identically before ranking
+
+*Shipped via /execute-epic (epic 3.5)*
+
 ## [Technical Debt] - 2026-06-16
 
 ### Fixed
