@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -207,6 +209,33 @@ func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
 	out := callOK[ReconcileResult](t, cs, ToolReconcile, map[string]any{})
 	assert.True(t, out.Pass, "no fail_on threshold means pass")
 	assert.Equal(t, 1, out.TotalFindings, "the two CRITICAL findings merge into one")
+}
+
+// TestReconcileHandler_ScorecardDiagnosticRoutesToInjectedDiag locks Epic 3.4
+// AC4: handleReconcile must pass the engine's diagnostics sink (engine.diag) into
+// EmitOpts.Diag, not the process-global os.Stderr. Forcing a scorecard
+// write-failure — the resolved store path is a regular file, so Append's
+// MkdirAll(dir) fails with ENOTDIR — makes Emit write its "scorecard: write
+// failed" diagnostic; with the writer wired, that diagnostic lands in the
+// injected buffer. A regression passing os.Stderr (or nil) routes it to the real
+// stderr and fails this test. The scorecard failure is best-effort, so it must
+// NOT fail the reconcile.
+func TestReconcileHandler_ScorecardDiagnosticRoutesToInjectedDiag(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	reviewFixture(t, root)
+
+	storeDir, err := scorecard.DefaultDir()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(storeDir), 0o755))
+	require.NoError(t, os.WriteFile(storeDir, []byte("x"), 0o600))
+
+	var buf bytes.Buffer
+	e := &engine{root: root, diag: &buf}
+	_, _, err = e.handleReconcile(context.Background(), nil, ReconcileArgs{})
+	require.NoError(t, err, "a best-effort scorecard failure must not fail the reconcile")
+	require.Contains(t, buf.String(), "scorecard: write failed",
+		"handleReconcile must wire engine.diag into EmitOpts.Diag")
 }
 
 func TestReconcileHandler_FailOnGate(t *testing.T) {
