@@ -1,3 +1,11 @@
+## [3.4.0] - 2026-06-16
+
+### Changed
+
+- Scorecard read and emit operational diagnostics now write to a caller-injectable writer (`ReadOpts.Writer` / `EmitOpts.Diag`, defaulting to `os.Stderr`) instead of the process-global `os.Stderr`; the CLI reconcile and leaderboard paths route them through `cmd.ErrOrStderr()` and the MCP reconcile path supplies `os.Stderr`, so diagnostics are now redirectable and assertable in tests
+
+*Shipped via /execute-epic (epic 3.4)*
+
 ## [3.3.0] - 2026-06-16
 
 ### Added
