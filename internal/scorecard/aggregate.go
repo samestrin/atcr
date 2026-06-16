@@ -2,7 +2,6 @@ package scorecard
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,17 +168,13 @@ func Aggregate(records []Record) []LeaderboardRow {
 	return rows
 }
 
-// rfc3339Prefix matches the leading RFC3339 timestamp of a run_id
-// (<timestamp>-<base>), tolerating both the UTC 'Z' form the emitter writes and a
-// numeric offset, so a record is never silently dropped from a --since window
-// just because its timestamp carries an offset.
-var rfc3339Prefix = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
-
-// runIDTime extracts the RFC3339 timestamp prefix from a run_id; ok is false for
-// a run_id without a parseable prefix.
+// runIDTime extracts and parses the RFC3339 timestamp prefix from a run_id for
+// --since window comparison; ok is false for a run_id without a parseable prefix.
+// The prefix shape-check is shared (rfc3339Prefix, in paths.go); this function
+// owns only the parse-to-time.Time step the window comparison needs.
 func runIDTime(runID string) (time.Time, bool) {
-	m := rfc3339Prefix.FindString(runID)
-	if m == "" {
+	m, ok := rfc3339Prefix(runID)
+	if !ok {
 		return time.Time{}, false
 	}
 	ts, err := time.Parse(time.RFC3339, m)

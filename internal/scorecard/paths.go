@@ -61,3 +61,20 @@ func monthFromRunID(runID string) (string, error) {
 	}
 	return runID[:7], nil
 }
+
+// rfc3339PrefixRe matches the leading RFC3339 timestamp of a run_id
+// (<timestamp>-<base>), tolerating both the UTC 'Z' form the emitter writes and
+// a numeric offset, so a record is never silently dropped from a --since window
+// just because its timestamp carries an offset.
+var rfc3339PrefixRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
+
+// rfc3339Prefix returns the leading RFC3339 timestamp substring of a run_id and
+// whether one is present. It is the single shared shape-check for a run_id's
+// timestamp prefix: runIDTime parses the returned string for --since window
+// comparison, while month and day derivation stay positional per their own
+// contracts (monthFromRunID / monthsToScan). Keeping the shape-check here, beside
+// monthRe and IsRunID, puts all run_id-format knowledge in one file.
+func rfc3339Prefix(runID string) (string, bool) {
+	m := rfc3339PrefixRe.FindString(runID)
+	return m, m != ""
+}
