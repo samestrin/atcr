@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -281,6 +282,43 @@ func TestComplete_ErrorBodySnippetNeverEchoesKey(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bad token")
 	assert.NotContains(t, err.Error(), testKey)
+}
+
+func TestComplete_ErrorBodyRedactsForeignBearerAndSKTokens(t *testing.T) {
+	// A provider that echoes a DIFFERENT bearer/sk- shaped token (not the
+	// configured key) must still have it scrubbed; exact-match alone would leak
+	// it into HTTPStatusError.Snippet.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream rejected Bearer sk-OTHER-leaked-99"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "sk-OTHER-leaked-99")
+	assert.Contains(t, err.Error(), "[redacted]")
+}
+
+func TestComplete_ErrorBodyRedactsURLEncodedKey(t *testing.T) {
+	// A key echoed URL-encoded will not match the literal-substring scrub; the
+	// encoded form must be scrubbed too.
+	const specialKey = "tok-secret/with+special=chars"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"echo `+url.QueryEscape(specialKey)+`"}`)
+	}))
+	defer srv.Close()
+	t.Setenv("SPECIAL_KEY", specialKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "SPECIAL_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), url.QueryEscape(specialKey))
 }
 
 func TestComplete_ErrorBodySnippetBounded(t *testing.T) {
