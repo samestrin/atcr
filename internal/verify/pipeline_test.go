@@ -803,3 +803,38 @@ func TestRunVerify_MultiSkepticNonFCDegradeParticipates(t *testing.T) {
 	assert.Contains(t, vf.Findings[0].Model, "m-s2", "degraded non-FC skeptic's model must be attributed")
 	assert.Contains(t, vf.Findings[0].Model, "m-skep", "FC skeptic's model must be attributed")
 }
+
+// TestRunVerify_WinningModelAttribution_TwoRefuteOneConfirm locks the opposite
+// polarity of AC2 from TwoConfirmOneRefute: two refute and one confirms → the
+// verdict is refuted and Model names only the two refuters, excluding the
+// confirmer. The confirmer here is skeptics[0] (s2, selected first), so this
+// also proves attribution never defaults to skeptics[0].
+func TestRunVerify_WinningModelAttribution_TwoRefuteOneConfirm(t *testing.T) {
+	reg := skepticRegistry() // skep=m-skep
+	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
+	reg.Agents["s3"] = registry.AgentConfig{Provider: "p", Model: "m-s3", Role: registry.RoleSkeptic, SupportsFC: true}
+	// Alphabetical selection: s2(m-s2), s3(m-s3), skep(m-skep). s2 (skeptics[0])
+	// confirms and loses; s3 and skep refute → winner=refuted, winners={m-s3, m-skep}.
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return byModelChat{byModel: map[string]string{
+			"m-s2":   `{"verdict":"confirmed","reasoning":"yes"}`,
+			"m-s3":   `{"verdict":"refuted","reasoning":"no"}`,
+			"m-skep": `{"verdict":"refuted","reasoning":"no"}`,
+		}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{Thorough: true}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "refuted", vf.Findings[0].Verdict)
+	assert.Contains(t, vf.Findings[0].Model, "m-s3", "winning (refuting) skeptic model must be recorded")
+	assert.Contains(t, vf.Findings[0].Model, "m-skep", "winning (refuting) skeptic model must be recorded")
+	assert.NotContains(t, vf.Findings[0].Model, "m-s2", "losing (confirming) skeptics[0] model must NOT be attributed")
+}
