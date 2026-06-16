@@ -1,3 +1,4 @@
+// Package stream tests the canonical severity-rank rubric and normalization helper.
 package stream
 
 import "testing"
