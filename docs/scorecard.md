@@ -33,9 +33,9 @@ increments it and leaves old records readable (see [Schema versioning](#schema-v
   "model": "claude-sonnet-4-6",
   "role": "reviewer",
   "findings_raised": 12,
-  "findings_corroborated": 7,
-  "findings_solo": 5,
-  "corroboration_rate": 0.58,
+  "findings_corroborated": 6,
+  "findings_solo": 6,
+  "corroboration_rate": 0.5,
   "cost_usd": 0.04,
   "tokens_in": 14200,
   "tokens_out": 4000,
@@ -144,6 +144,10 @@ Behavior:
 - No records for the run → message + exit `1`.
 - Malformed JSONL lines → skipped with a stderr warning; valid records still render.
 - A bare argument that is neither a valid run_id nor a path → usage error (exit `2`).
+- A path argument with no `reconciled/summary.json` → usage error (exit `2`,
+  "run reconcile first").
+- A path whose `reconciled/summary.json` is present but unreadable or corrupt →
+  failure (exit `1`).
 
 ### `atcr leaderboard`
 
@@ -176,6 +180,8 @@ Behavior:
 - Data exists but nothing matches the filters → message naming the active window,
   exit `1`.
 - Invalid `--since` value → actionable error, exit `1`.
+- `--output` without `--export` → usage error (exit `2`, "--output requires
+  --export"); `--output` only routes the export document.
 
 ### `atcr leaderboard --export [--output path]`
 

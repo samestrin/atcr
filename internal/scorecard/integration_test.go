@@ -90,6 +90,63 @@ func TestIntegration_ReconcileEmitRead(t *testing.T) {
 	}
 }
 
+// TestIntegration_ReconcileEmitRead_WithVerification drives emit with a valid
+// verification.json and asserts the conditional skeptic fields are populated
+// (the emission path complementing the omission path above).
+func TestIntegration_ReconcileEmitRead_WithVerification(t *testing.T) {
+	dir := t.TempDir()
+
+	verificationJSON := `{"findings":[
+		{"file":"a.go","line":1,"problem":"x","verdict":"confirmed"},
+		{"file":"b.go","line":2,"problem":"y","verdict":"refuted"}
+	]}`
+	verPath := filepath.Join(t.TempDir(), "verification.json")
+	if err := os.WriteFile(verPath, []byte(verificationJSON), 0o600); err != nil {
+		t.Fatalf("write verification.json: %v", err)
+	}
+
+	in := EmitInput{
+		RunID: integRunID,
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce", "alice"}}, // confirmed
+			{File: "b.go", Line: 2, Problem: "y", Reviewers: []string{"bruce"}},          // refuted
+		},
+		Reviewers: map[string]ReviewerMeta{
+			"bruce": {Model: "claude-sonnet-4-6", TokensIn: 100, TokensOut: 50, LatencyMS: 1000},
+		},
+		VerificationPath: verPath,
+	}
+	if err := Emit(in, EmitOpts{Dir: dir}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+
+	recs, err := FindByRunID(dir, integRunID)
+	if err != nil {
+		t.Fatalf("FindByRunID: %v", err)
+	}
+	var bruce *Record
+	for i := range recs {
+		if recs[i].RecordType == RecordTypeReviewer && recs[i].Reviewer == "bruce" {
+			bruce = &recs[i]
+		}
+	}
+	if bruce == nil {
+		t.Fatalf("no reviewer record for bruce in %d records", len(recs))
+	}
+	if bruce.FindingsVerified == nil || bruce.FindingsRefuted == nil || bruce.SurvivedSkepticRate == nil {
+		t.Fatalf("verification fields must be populated when verification.json is present")
+	}
+	if *bruce.FindingsVerified != 1 {
+		t.Errorf("findings_verified = %d, want 1", *bruce.FindingsVerified)
+	}
+	if *bruce.FindingsRefuted != 1 {
+		t.Errorf("findings_refuted = %d, want 1", *bruce.FindingsRefuted)
+	}
+	if *bruce.SurvivedSkepticRate != 0.5 {
+		t.Errorf("survived_skeptic_rate = %v, want 0.5", *bruce.SurvivedSkepticRate)
+	}
+}
+
 // TestIntegration_ReconcileEmitAggregate drives emit (multiple reviewers) ->
 // Aggregate and asserts the ranked-by-corroboration-rate ordering.
 func TestIntegration_ReconcileEmitAggregate(t *testing.T) {
