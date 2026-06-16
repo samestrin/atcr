@@ -90,3 +90,30 @@ func TestMerge_MixedCaseDuplicateIsNotADisagreement(t *testing.T) {
 		t.Fatalf("Severity = %q, want canonical CRITICAL", got.Severity)
 	}
 }
+
+// TestAtOrAbove_NormalizesMixedCaseSeverity guards the gate.go:45/49 lookups:
+// AtOrAbove must canonicalize a non-canonical severity or threshold itself, so a
+// lower-cased input does not silently miss SeverityRank and flip a gate decision.
+func TestAtOrAbove_NormalizesMixedCaseSeverity(t *testing.T) {
+	if !AtOrAbove("high", "HIGH") {
+		t.Fatalf("AtOrAbove(\"high\", \"HIGH\") = false, want true; a raw lookup misses the lowercase severity key")
+	}
+	if !AtOrAbove("HIGH", "high") {
+		t.Fatalf("AtOrAbove(\"HIGH\", \"high\") = false, want true; a raw lookup misses the lowercase threshold key")
+	}
+}
+
+// TestSortMerged_NormalizesMixedCaseSeverity guards the reconcile.go:108 sort
+// lookup: sortMerged must rank by normalized severity so a lower-cased "high"
+// outranks a "low" instead of both collapsing to the unknown-key floor (rank 0)
+// and falling through to the file tiebreak.
+func TestSortMerged_NormalizesMixedCaseSeverity(t *testing.T) {
+	m := []Merged{
+		{Finding: stream.Finding{Severity: "low", File: "a.go", Line: 1}},
+		{Finding: stream.Finding{Severity: "high", File: "b.go", Line: 1}},
+	}
+	sortMerged(m)
+	if stream.NormalizeSeverity(m[0].Severity) != "HIGH" {
+		t.Fatalf("sortMerged first = %q, want a HIGH winner; raw lookup collapses both to rank 0 and sorts by file", m[0].Severity)
+	}
+}
