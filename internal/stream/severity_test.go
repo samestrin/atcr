@@ -12,10 +12,10 @@ func TestSeverityRank_CanonicalOrdering(t *testing.T) {
 			t.Errorf("SeverityRank[%q] = %d, want %d", sev, got, rank)
 		}
 	}
-	if !(SeverityRank["CRITICAL"] > SeverityRank["HIGH"] &&
-		SeverityRank["HIGH"] > SeverityRank["MEDIUM"] &&
-		SeverityRank["MEDIUM"] > SeverityRank["LOW"] &&
-		SeverityRank["LOW"] > 0) {
+	if SeverityRank["CRITICAL"] <= SeverityRank["HIGH"] ||
+		SeverityRank["HIGH"] <= SeverityRank["MEDIUM"] ||
+		SeverityRank["MEDIUM"] <= SeverityRank["LOW"] ||
+		SeverityRank["LOW"] <= 0 {
 		t.Errorf("ordering not strictly descending CRITICAL>HIGH>MEDIUM>LOW>0")
 	}
 	if _, ok := SeverityRank["unknown"]; ok {
