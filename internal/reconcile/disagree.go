@@ -335,7 +335,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	revSet := map[string]bool{}
 	positions := make([]Position, 0, len(c.Findings))
 	for _, f := range c.Findings {
-		if r, ok := SeverityRank[f.Severity]; ok {
+		if r, ok := SeverityRank[stream.NormalizeSeverity(f.Severity)]; ok {
 			if r > maxRank {
 				maxRank, maxSev = r, f.Severity
 			}
@@ -357,7 +357,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	}
 	reviewers := sortedKeys(revSet)
 	indep := atLeastOne(len(reviewers))
-	score := scoreFor(spread, indep, SeverityRank[maxSev])
+	score := scoreFor(spread, indep, SeverityRank[stream.NormalizeSeverity(maxSev)])
 	// Floor: a real gray-zone cluster (2+ findings, distinct reviewers) must
 	// never sort below a LOW solo (rank 1). When all members carry unknown or
 	// blank severities, SeverityRank[maxSev] is 0 and spread is 0, so scoreFor

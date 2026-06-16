@@ -35,7 +35,7 @@ var allowedInternalImports = map[string][]string{
 	"reconcile": {"stream", "atomicfs"},
 	"scorecard": {"llmclient", "reconcile", "fanout"},
 	"report":    {"stream", "reconcile"},
-	"verify":    {"reconcile", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
+	"verify":    {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
 	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard"},
 }
 

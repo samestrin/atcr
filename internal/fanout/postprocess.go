@@ -4,21 +4,9 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
-
-// severityRank orders findings for the min_severity floor and the max_findings
-// severity-sorted truncation. It mirrors the canonical rubric in
-// personas/_base.md (and reconcile's private severityRank); it is kept local so
-// the fan-out post-processing carries no cross-package dependency on the
-// reconciler. An unknown severity ranks 0, sorting below every real level.
-//
-// Read-only after init: the map is written once at package load and only read
-// thereafter. If mutation is ever needed, use a sync.Map or initialize a local
-// copy — concurrent fan-out agents share this map, so a write would race.
-var severityRank = map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 
 // enforceConstraints applies an agent's per-source review guardrails (Epic 2.2)
 // to its parsed findings, in order: (1) min_severity drops every finding below
@@ -36,8 +24,8 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 	var dropped, truncated int
 
 	// 1. Severity floor.
-	if floor := strings.ToUpper(strings.TrimSpace(minSeverity)); floor != "" {
-		floorRank, known := severityRank[floor]
+	if floor := stream.NormalizeSeverity(minSeverity); floor != "" {
+		floorRank, known := stream.SeverityRank[floor]
 		if !known {
 			// Unknown min_severity: fail open (no findings dropped) but warn, so a
 			// misconfigured level does not silently pass through unobserved. The
@@ -47,7 +35,7 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 		} else {
 			kept := make([]stream.Finding, 0, len(findings))
 			for _, f := range findings {
-				if severityRank[strings.ToUpper(strings.TrimSpace(f.Severity))] >= floorRank {
+				if stream.SeverityRank[stream.NormalizeSeverity(f.Severity)] >= floorRank {
 					kept = append(kept, f)
 				} else {
 					dropped++
@@ -67,7 +55,7 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 	// finding while the log claims a legitimate truncation.
 	if maxFindings != nil && *maxFindings > 0 && len(findings) > *maxFindings {
 		sort.SliceStable(findings, func(i, j int) bool {
-			return severityRank[strings.ToUpper(strings.TrimSpace(findings[i].Severity))] > severityRank[strings.ToUpper(strings.TrimSpace(findings[j].Severity))]
+			return stream.SeverityRank[stream.NormalizeSeverity(findings[i].Severity)] > stream.SeverityRank[stream.NormalizeSeverity(findings[j].Severity)]
 		})
 		truncated = len(findings) - *maxFindings
 		findings = findings[:*maxFindings]
