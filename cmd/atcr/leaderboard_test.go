@@ -174,10 +174,12 @@ func TestLeaderboardCmd_OutputToDirectoryExit1(t *testing.T) {
 func TestLeaderboardCmd_ExportEmptyStoreExit1(t *testing.T) {
 	isolate(t)
 	// Unlike the table view (exit 0 on empty store), --export treats no matching
-	// records as a failure (exit 1) with the canonical no-match message.
+	// records as a failure (exit 1) with a distinct "no data yet" message (not the
+	// filter-no-match guidance that advises widening --since).
 	code, out := execCmdCapture(t, "leaderboard", "--export")
 	require.Equal(t, 1, code)
-	require.Contains(t, out, "no records match the export filters")
+	require.Contains(t, out, "reconcile", "empty store must guide user toward reconcile")
+	require.NotContains(t, out, "no records match the export filters", "empty store must not show filter-no-match message")
 }
 
 func TestLeaderboardCmd_ExportNoFilterMatchExit1(t *testing.T) {
