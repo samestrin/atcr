@@ -165,7 +165,7 @@ func TestScorecardCmd_SummaryUnreadableNoPathLeak(t *testing.T) {
 	summaryPath := filepath.Join(reviewDir, "reconciled", "summary.json")
 	require.NoError(t, os.WriteFile(summaryPath, []byte(`{"reconciled_at":"2026-06-14T10:00:00Z"}`), 0o644))
 	require.NoError(t, os.Chmod(summaryPath, 0o000))
-	defer os.Chmod(summaryPath, 0o644) // restore for t.TempDir cleanup
+	defer func() { _ = os.Chmod(summaryPath, 0o644) }() // restore for t.TempDir cleanup
 
 	code, out := execCmdCapture(t, "scorecard", reviewDir)
 	require.Equal(t, 1, code, "unreadable summary.json is a real failure, not a usage error")
