@@ -323,6 +323,33 @@ func TestEmit_WritesDisagreementsJSON(t *testing.T) {
 	assert.Equal(t, "LOW vs CRITICAL", df.Items[0].Disagreement)
 }
 
+func TestEmit_DisagreementsJSONExcludesVerificationTier(t *testing.T) {
+	// Pipeline-ordering invariant: reconcile.Emit is the SOLE writer of
+	// disagreements.json and runs strictly before the verify stage, so findings
+	// carry no Verification block at Emit time. The snapshot therefore never
+	// carries the verification_disagreement tier — even though BuildDisagreements
+	// can emit it for the live `atcr report` radar, which reads post-verify
+	// findings. This pins the ordering guarantee, NOT a structural strip in Emit
+	// (isVerificationTie must stay in BuildDisagreements for the live radar).
+	reviewDir := t.TempDir()
+	reconDir := filepath.Join(reviewDir, "reconciled")
+	sources := []Source{
+		{Name: "pool", Findings: []stream.Finding{mf("CRITICAL", "a.go", 1, "boom", "f", "security", 10, "e", "greta")}},
+		{Name: "host", Findings: []stream.Finding{mf("LOW", "a.go", 1, "boom", "f", "security", 10, "e", "host")}},
+	}
+	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
+	require.NoError(t, Emit(reconDir, res))
+
+	df, err := ReadDisagreements(reviewDir)
+	require.NoError(t, err)
+	// Non-empty so the exclusion is meaningful, not vacuous: the severity split
+	// surfaces, proving the snapshot carries tension items yet none of the
+	// verification tier.
+	require.NotEmpty(t, df.Items)
+	assert.Empty(t, itemsByKind(df, KindVerificationDisagreement),
+		"the reconcile-time snapshot must never carry the verification tier (verify runs later)")
+}
+
 func TestReadDisagreements_MissingReturnsEmpty(t *testing.T) {
 	df, err := ReadDisagreements(t.TempDir())
 	require.NoError(t, err)

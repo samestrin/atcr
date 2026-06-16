@@ -1,0 +1,27 @@
+# Sprint Knowledge Manifest
+# Tracks knowledge entries created during and referenced by this sprint
+
+created:
+  - mem-2026-06-15-8c0fe5  # fanout usage threading pattern (Q1 clarification)
+  - mem-2026-06-15-ba5179  # cost_usd compute-at-emit vs persist (Q2 clarification)
+  - mem-2026-06-15-99ae20  # TD-005: MCP atcr_reconcile must emit scorecards (CLI/MCP parity decision)
+  - mem-2026-06-15-030b7a  # run_id parsing: keep three strategies separate, do not unify into parseRunID (clarification)
+
+referenced: []
+
+clarifications:
+  - mem-2026-06-15-d04868  # run_id parsing: three strategies are by-design distinct; no parseRunID centralization mid-sprint (Q1 2026-06-15)
+  - mem-2026-06-15-5bc458  # scorecard.go:104 path traversal: accept-and-document, no bound (local read-only CLI, mirrors anchorDir) (resolve-td 2026-06-15)
+  - mem-2026-06-15-372177  # leaderboard.go:147 --output symlink/TOCTOU: document "follows symlinks", accepted risk (resolve-td 2026-06-15)
+  - mem-2026-06-15-cc591b  # store.go:70 streaming fold not needed: bufio line-stream already meets plan intent; slice OK at ~500KB scale (resolve-td 2026-06-15)
+  - mem-2026-06-15-d1ef91  # aggregate.go:151 CostPerCorroborated = cost/corroborated is correct by definition; cost-per-verified is new scope (resolve-td 2026-06-15)
+  - mem-2026-06-15-062c4c  # pipeline.go:472 winningAttribution canonical-verdict divergence is defensive-only/unreachable; no functional change, only comment (resolve-td 2026-06-15)
+  - mem-2026-06-15-75bc0c  # winning-model attribution follows winning verdict, never skeptics[0]; locked by exact-equality + TwoRefuteOneConfirm tests (resolve-td 2026-06-15)
+  - mem-2026-06-15-1d8641  # SchemaVersion stays 1: verification fields are v1-design additive omitempty optionals, not a schema change (resolve-td 2026-06-15)
+  - mem-2026-06-15-4f8e4b  # SurvivedSkepticRate 0.0 ambiguity: document-only; -1 sentinel blocked by clampRate, has_verification is new scope (resolve-td 2026-06-15)
+  - mem-2026-06-15-6c7d55  # verdictTallies join key: reuse canonical (file,line,problem) FindingKey; add only soft no-match warning, not file+line or normalized snippet (resolve-td 2026-06-15)
+  - mem-2026-06-15-c370bd  # scorecard diagnostics os.Stderr → injectable io.Writer: package-wide change, MCP path has no cobra cmd; defer to Epic 3.4 (resolve-td 2026-06-15)
+  - mem-2026-06-16-b3d56e  # artifacts.go:226 zero-token run: do NOT record Model; $0 prices to $0 regardless of model, byte-identical status.json contract intentional (resolve-td 2026-06-16)
+  - mem-2026-06-16-19e9c2  # store.go:42 JSONL batching rejected (won't-fix): per-write O_APPEND atomicity is per-record; batching tears lines under concurrent reconcile (resolve-td 2026-06-16)
+  - mem-2026-06-16-619dd9  # disagree_test.go:240 disagreements.json verification-free by pipeline ordering not structure; pin test, keep tier in BuildDisagreements for live radar (resolve-td 2026-06-16)
+  - mem-2026-06-16-2c9ea4  # postprocess.go:14 severity-rank: reconcile.SeverityRank is de facto owner; consolidate into internal/stream (not new pkg, not reconcile); deferred to plan 3.5 (resolve-td 2026-06-16)

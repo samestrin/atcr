@@ -86,6 +86,20 @@ type ChatResponse struct {
 	Message      Message
 	FinishReason string
 	Truncated    bool
+	// Usage carries the provider-reported token counts for THIS turn only. Zero
+	// when the provider omits the `usage` block (additive field; existing
+	// callers that ignore it are unaffected).
+	//
+	// CONTRACT (per-turn-incremental): each Chat() decodes exactly one turn's
+	// usage and never accumulates across turns — summing is the caller's job
+	// (the fanout loop adds resp.Usage after every turn and the final-answer
+	// call). This is correct ONLY for providers that report per-turn-incremental
+	// usage. A gateway that reports CUMULATIVE usage on every turn (some
+	// Anthropic-via-gateway shims) would be N-counted across a multi-turn loop.
+	// If such a gateway comes into scope, detect monotonic-increasing usage and
+	// diff successive turns instead of summing; until then the assumption is a
+	// documented hard contract, pinned by TestChat_UsageIsPerTurnNotCumulative.
+	Usage UsageData
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
@@ -106,6 +120,7 @@ type chatToolResponse struct {
 		FinishReason string  `json:"finish_reason"`
 		Message      Message `json:"message"`
 	} `json:"choices"`
+	Usage UsageData `json:"usage"`
 }
 
 // Chat performs one multi-turn chat-completions exchange: it serializes the
@@ -143,6 +158,14 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
+		// KNOWN LIMITATION (accepted): a provider may return an error-shaped 200
+		// with no choices yet still bill for the call and report `usage`. This
+		// early return discards parsed.Usage, so cost is understated on
+		// billed-but-empty turns. Capturing it would require returning a non-nil
+		// ChatResponse alongside this error and teaching the fanout loop to read
+		// usage off an errored turn — a cross-package contract change in
+		// internal/fanout. Billed-but-empty turns are rare, so the understatement
+		// is accepted rather than complicating the error contract.
 		return nil, fmt.Errorf("failed to parse response: no choices returned")
 	}
 	ch := parsed.Choices[0]
@@ -154,7 +177,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return nil, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason}
+	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

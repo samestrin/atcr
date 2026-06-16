@@ -1,0 +1,565 @@
+{
+  "generated": "2026-06-15",
+  "refined": "2026-06-15",
+  "discovery_method": "semantic",
+  "queries": [
+    "reconcile output findings summary",
+    "CLI cobra command subcommand",
+    "usage tokens cost llmclient",
+    "verification survived skeptic",
+    "JSONL append storage config",
+    "tabwriter table rendering",
+    "per-agent status latency model",
+    "agent config model role registry"
+  ],
+  "match_count": 15,
+  "build_from": {
+    "primary_file": "internal/reconcile/reconcile.go",
+    "reason": "Result struct (Findings []Merged, Summary) is the input data for scorecard computation. The Reconcile function produces everything needed: per-reviewer attribution, corroboration counts (via len(group) >= 2), and verification verdicts.",
+    "suggested_approach": "Add internal/scorecard/ package that reads reconcile.Result + reconciled/findings.json + reconciled/verification.json, computes per-reviewer metrics, and writes JSONL to ~/.config/atcr/scorecard/YYYY-MM.jsonl. Hook into cmd/atcr/reconcile.go after reconcile.RunReconcile returns successfully."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/reconcile/reconcile.go",
+      "symbol": "Reconcile",
+      "type": "function",
+      "line": 55,
+      "score": 0.95,
+      "query": "reconcile output findings summary",
+      "relevance": "Core pipeline producing Result{Findings, Summary} — primary input for scorecard computation"
+    },
+    {
+      "file": "internal/reconcile/merge.go",
+      "symbol": "Merged",
+      "type": "struct",
+      "line": 40,
+      "score": 0.92,
+      "query": "reconcile output findings summary",
+      "relevance": "Merged struct embeds stream.Finding with Reviewers []string — source of per-reviewer attribution and corroboration counts"
+    },
+    {
+      "file": "internal/reconcile/emit.go",
+      "symbol": "Verification",
+      "type": "struct",
+      "line": 40,
+      "score": 0.89,
+      "query": "verification survived skeptic",
+      "relevance": "Verification struct with Verdict enum (confirmed/refuted/unverifiable) — source of survived_skeptic_rate"
+    },
+    {
+      "file": "cmd/atcr/reconcile.go",
+      "symbol": "runReconcile",
+      "type": "function",
+      "line": 32,
+      "score": 0.88,
+      "query": "CLI cobra command subcommand",
+      "relevance": "Hook point for scorecard emission — after reconcile.RunReconcile returns, before gateFindings"
+    },
+    {
+      "file": "internal/tools/transcript.go",
+      "symbol": "OpenTranscript",
+      "type": "function",
+      "line": 98,
+      "score": 0.87,
+      "query": "JSONL append storage config",
+      "relevance": "Existing JSONL append-only pattern using os.O_CREATE|os.O_WRONLY|os.O_APPEND — reuse for scorecard JSONL storage"
+    },
+    {
+      "file": "internal/llmclient/client.go",
+      "symbol": "chatResponse",
+      "type": "struct",
+      "line": 121,
+      "score": 0.85,
+      "query": "usage tokens cost llmclient",
+      "relevance": "chatResponse drops usage field — hard prerequisite for cost_usd/tokens_in/tokens_out columns"
+    },
+    {
+      "file": "internal/stream/parser.go",
+      "symbol": "Finding",
+      "type": "struct",
+      "line": 46,
+      "score": 0.83,
+      "query": "reconcile output findings summary",
+      "relevance": "Finding struct has Reviewer (single source) and Reviewers ([]string reconciled) — per-reviewer attribution source"
+    },
+    {
+      "file": "internal/fanout/engine.go",
+      "symbol": "Result",
+      "type": "struct",
+      "line": 95,
+      "score": 0.80,
+      "query": "per-agent status latency model",
+      "relevance": "fanout.Result carries DurationMS per agent and is the natural seam to carry usage/cost back from the LLM call"
+    },
+    {
+      "file": "internal/fanout/status.go",
+      "symbol": "AgentStatus",
+      "type": "struct",
+      "line": 272,
+      "score": 0.78,
+      "query": "per-agent status latency model",
+      "relevance": "Per-agent status.json record carries DurationMS but currently no Model or usage fields; scorecard needs model mapping from registry"
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "AgentConfig",
+      "type": "struct",
+      "line": 81,
+      "score": 0.77,
+      "query": "agent config model role registry",
+      "relevance": "AgentConfig binds reviewer name to Model and Role — needed for scorecard reviewer→model mapping"
+    },
+    {
+      "file": "internal/fanout/reviewdir.go",
+      "symbol": "ReviewID",
+      "type": "function",
+      "line": 42,
+      "score": 0.78,
+      "query": "reconcile output findings summary",
+      "relevance": "ReviewID derives the run_id for scorecard records"
+    },
+    {
+      "file": "internal/doctor/render.go",
+      "symbol": "RenderTable",
+      "type": "function",
+      "line": 45,
+      "score": 0.75,
+      "query": "tabwriter table rendering",
+      "relevance": "Existing text/tabwriter table pattern — follow for atcr scorecard/leaderboard CLI tables"
+    },
+    {
+      "file": "internal/llmclient/chat.go",
+      "symbol": "chatToolResponse",
+      "type": "struct",
+      "line": 104,
+      "score": 0.74,
+      "query": "usage tokens cost llmclient",
+      "relevance": "chatToolResponse also drops usage field — same prerequisite for tool-loop reviewers"
+    },
+    {
+      "file": "internal/fanout/artifacts.go",
+      "symbol": "statusFor",
+      "type": "function",
+      "line": 186,
+      "score": 0.72,
+      "query": "per-agent status latency model",
+      "relevance": "Builds AgentStatus from Result; must be extended to include usage/cost and model if scorecard reads status.json"
+    },
+    {
+      "file": "cmd/atcr/anchor.go",
+      "symbol": "resolveReviewDir",
+      "type": "function",
+      "line": 45,
+      "score": 0.70,
+      "query": "CLI cobra command subcommand",
+      "relevance": "Review directory resolution shared by scorecard/leaderboard commands"
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Cobra Command Pattern",
+      "description": "Each subcommand in its own file under cmd/atcr/ with newXxxCmd() *cobra.Command returning a command with Use, Short, Args (via usageArgs wrapper), RunE. Flags registered via cmd.Flags(). Commands are registered in cmd/atcr/main.go root.AddCommand().",
+      "files": ["cmd/atcr/reconcile.go", "cmd/atcr/verify.go", "cmd/atcr/report.go", "cmd/atcr/main.go"],
+      "follow_for": "New scorecard and leaderboard subcommands"
+    },
+    {
+      "name": "JSONL Append-Only Storage",
+      "description": "OpenTranscript uses os.OpenFile with O_CREATE|O_WRONLY|O_APPEND, wraps in bufio.Writer, returns disabled no-op on error. Sticky error via failed bool prevents log flooding. Tests in internal/tools/transcript_test.go cover append-only behavior and file modes.",
+      "files": ["internal/tools/transcript.go", "internal/tools/transcript_test.go"],
+      "follow_for": "Scorecard JSONL monthly file writes"
+    },
+    {
+      "name": "Reconcile Result Pipeline",
+      "description": "reconcile.RunReconcile returns Result{Findings []Merged, Summary}. Merged embeds stream.Finding with Reviewers []string, Verification *Verification. CLI reads via resolveReviewDir then calls RunReconcile. ReadReconciledFindings loads reconciled/findings.json.",
+      "files": ["internal/reconcile/reconcile.go", "internal/reconcile/merge.go", "internal/reconcile/emit.go", "cmd/atcr/reconcile.go"],
+      "follow_for": "Scorecard computation reads Result + reconciled/findings.json"
+    },
+    {
+      "name": "Review Directory Resolution",
+      "description": "anchorDir/resolveReviewDir in cmd/atcr/anchor.go resolves bare review ID or path to absolute review directory. fanout.EnsureReviewComplete guards against mid-run reconcile.",
+      "files": ["cmd/atcr/anchor.go", "internal/fanout/reviewdir.go"],
+      "follow_for": "Scorecard and leaderboard commands need same review-dir resolution"
+    },
+    {
+      "name": "Tabwriter Table Pattern",
+      "description": "internal/doctor/render.go uses text/tabwriter.NewWriter with tab-separated header and rows, then Flush. Best practice: return/ignore flush error, use '-' placeholder for missing values.",
+      "files": ["internal/doctor/render.go"],
+      "follow_for": "atcr scorecard and atcr leaderboard table output"
+    },
+    {
+      "name": "Per-Agent Status Record",
+      "description": "internal/fanout/status.go defines AgentStatus (agent, status, findings_count, duration_ms, etc.) written to sources/pool/raw/agent/<name>/status.json by internal/fanout/artifacts.go:statusFor. Currently omits Model and usage/cost fields.",
+      "files": ["internal/fanout/status.go", "internal/fanout/artifacts.go"],
+      "follow_for": "Latency_ms source; possible seam for model/usage fields if scorecard reads status.json"
+    },
+    {
+      "name": "Agent Config Model + Role",
+      "description": "internal/registry/config.go defines AgentConfig with Provider, Model, Role (reviewer/skeptic/judge), and constraint fields. Registry.Agents maps agent name to config. This is the source of truth for reviewer→model mapping.",
+      "files": ["internal/registry/config.go"],
+      "follow_for": "Scorecard record model and role fields"
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/reconcile/reconcile.go",
+      "relevance": "high",
+      "purpose": "Reconcile pipeline producing Result{Findings, Summary}",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/reconcile/emit.go",
+      "relevance": "high",
+      "purpose": "JSONFinding schema, Verification struct, ReadReconciledFindings loader",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/reconcile.go",
+      "relevance": "high",
+      "purpose": "Hook point for scorecard emission after RunReconcile; add --no-scorecard flag",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "relevance": "high",
+      "purpose": "Root cobra command registering all subcommands",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "relevance": "high",
+      "purpose": "chatResponse drops usage field — hard prerequisite for cost/token columns; Complete signature must surface usage",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/llmclient/chat.go",
+      "relevance": "high",
+      "purpose": "chatToolResponse drops usage field — same prerequisite; Chat signature must surface usage",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "relevance": "high",
+      "purpose": "Completer/ChatCompleter interface and Result struct; usage must flow from llmclient through invokeSingleShot/invokeToolLoop into Result",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/loop.go",
+      "relevance": "high",
+      "purpose": "Tool loop calls Chat and accumulates Result; must aggregate per-turn usage/cost",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/artifacts.go",
+      "relevance": "high",
+      "purpose": "statusFor builds AgentStatus from Result; may need Model/usage fields if scorecard reads status.json",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/status.go",
+      "relevance": "high",
+      "purpose": "AgentStatus struct and ReadReviewStatus/EnsureReviewComplete; extend status.json schema for scorecard inputs if needed",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "relevance": "high",
+      "purpose": "AgentConfig.Model/Role mapping; scorecard needs registry to map reviewer name → model",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/anchor.go",
+      "relevance": "medium",
+      "purpose": "resolveReviewDir/anchorDir reused by scorecard/leaderboard commands",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/verify/emit_verification.go",
+      "relevance": "medium",
+      "purpose": "VerificationFile schema and ReadVerificationResults loader for findings_verified/refuted/survived_skeptic_rate",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/tools/transcript.go",
+      "relevance": "medium",
+      "purpose": "JSONL append-only pattern to follow",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/doctor/render.go",
+      "relevance": "medium",
+      "purpose": "text/tabwriter table rendering pattern for CLI views",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/report/render.go",
+      "relevance": "low",
+      "purpose": "Markdown table rendering pattern (less relevant; scorecard uses tabwriter)",
+      "likely_modification": "reference-only"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "cmd/atcr/reconcile.go:runReconcile",
+      "type": "hook",
+      "description": "After reconcile.RunReconcile succeeds and before gateFindings, call scorecard.Emit(reviewDir, res, opts) — best-effort, errors logged not returned. Add --no-scorecard flag to skip emission."
+    },
+    {
+      "location": "cmd/atcr/main.go",
+      "type": "entry-point",
+      "description": "Register newScorecardCmd() and newLeaderboardCmd() alongside existing subcommands"
+    },
+    {
+      "location": "internal/llmclient/client.go:Complete",
+      "type": "hook",
+      "description": "Add Usage field to chatResponse; return usage metadata alongside content so callers (engine, doctor) can record tokens_in/tokens_out"
+    },
+    {
+      "location": "internal/llmclient/chat.go:Chat",
+      "type": "hook",
+      "description": "Add Usage field to chatToolResponse; return aggregated usage metadata across the multi-turn exchange"
+    },
+    {
+      "location": "internal/fanout/engine.go:invokeSingleShot",
+      "type": "hook",
+      "description": "Capture usage returned by Complete and store it in Result so status.json can persist tokens/cost per reviewer"
+    },
+    {
+      "location": "internal/fanout/loop.go:run",
+      "type": "hook",
+      "description": "Aggregate per-turn Chat usage across tool loop and store it in Result for status.json and scorecard"
+    },
+    {
+      "location": "internal/fanout/artifacts.go:statusFor",
+      "type": "hook",
+      "description": "Optionally extend AgentStatus with Model and usage/cost fields so scorecard can read them directly from status.json; otherwise scorecard must load registry + manifest to map reviewer→model"
+    },
+    {
+      "location": "internal/scorecard/scorecard.go",
+      "type": "new-component",
+      "description": "Record schema + Emit function: compute per-reviewer metrics, resolve reviewer→model via registry or manifest, append JSONL records"
+    },
+    {
+      "location": "internal/scorecard/store.go",
+      "type": "new-component",
+      "description": "Read/query monthly JSONL files under ~/.config/atcr/scorecard/ for scorecard and leaderboard commands"
+    },
+    {
+      "location": "internal/scorecard/aggregate.go",
+      "type": "new-component",
+      "description": "Aggregation logic for leaderboard: rank by corroboration rate, cost-per-corroborated-finding, filters (--since/--model/--persona)"
+    },
+    {
+      "location": "internal/scorecard/export.go",
+      "type": "new-component",
+      "description": "Versioned public submission JSON format (schema v1) with anonymization pass"
+    },
+    {
+      "location": "cmd/atcr/scorecard.go",
+      "type": "new-component",
+      "description": "atcr scorecard [id-or-path] — read reconciled findings + optional status.json and display single-run table"
+    },
+    {
+      "location": "cmd/atcr/leaderboard.go",
+      "type": "new-component",
+      "description": "atcr leaderboard [--since, --model, --persona, --export] — aggregate across monthly JSONL and render ranked table"
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Per-agent usage/cost flow",
+      "description": "llmclient currently discards provider usage blocks. Before cost_usd/tokens_in/tokens_out can be populated, Complete()/Chat() must decode usage, engine/loop must carry it through Result, and scorecard must receive it. This is the epic's hard prerequisite.",
+      "suggested_fix": "Extend chatResponse/chatToolResponse with Usage{PromptTokens, CompletionTokens}; change Complete to return (string, *Usage, error) and Chat to return (*ChatResponse, *Usage, error); thread usage into fanout.Result and AgentStatus. Update all callers: internal/fanout/engine.go, internal/fanout/loop.go, internal/doctor/run.go, and tests."
+    },
+    {
+      "gap": "Reviewer→model mapping",
+      "description": "AgentStatus does not include Model, and findings.json only lists reviewer names. The scorecard record requires model and role. The registry is the source of truth, but the scorecard emitter may not have registry loaded at reconcile time.",
+      "suggested_fix": "Option A: extend AgentStatus with Model/Role (written by statusFor from Agent.Invocation.Model and registry Role) so scorecard reads status.json. Option B: scorecard loads ~/.config/atcr/registry.yaml and maps reviewer names to AgentConfig.Model/Role. Option A is cleaner but changes status.json schema."
+    },
+    {
+      "gap": "Cost USD computation",
+      "description": "No per-model pricing table exists in the codebase. cost_usd cannot be computed from token counts without a rate map.",
+      "suggested_fix": "Add an internal/scorecard/pricing.go (or internal/llmclient/pricing.go) with a hard-coded or registry-configurable per-model token rate table. Keep it minimal and versioned; omit cost_usd when a model is unknown."
+    },
+    {
+      "gap": "Scorecard store path resolution",
+      "description": "The local store path (~/.config/atcr/scorecard/) is referenced in planning but no shared utility resolves the ATCR config directory.",
+      "suggested_fix": "Add internal/scorecard/paths.go (or extend registry/config.go) with ScorecardDir() using os.UserHomeDir + filepath.Join(home, '.config', 'atcr', 'scorecard'), matching registry.DefaultRegistryPath's layout."
+    },
+    {
+      "gap": "Run ID stability",
+      "description": "The scorecard run_id is described as a timestamp+hash, but reconcile currently derives no such identifier. ReviewID lives in fanout, not reconcile.",
+      "suggested_fix": "Use the review directory name (from fanout.ReviewID or the resolved reviewDir base) plus Summary.ReconciledAt as run_id, or generate a deterministic run_id in scorecard.Emit from reviewDir + ReconciledAt. Document the chosen format in docs/scorecard.md."
+    },
+    {
+      "gap": "Aggregate per-run record",
+      "description": "Requirements say one aggregate record per run is appended in addition to per-reviewer records. The aggregate fields (e.g., total_findings, total_reviewers) are not fully specified.",
+      "suggested_fix": "Define an aggregate row with reviewer='__aggregate__' or a separate AggregateRecord struct, including totals and averages. Keep schema_version consistent."
+    },
+    {
+      "gap": "Anonymization rules for --export",
+      "description": "The export format must strip PII, repo content, and provider keys, but the exact allow/deny list is not codified.",
+      "suggested_fix": "In export.go, implement an anonymizeRecord function that copies only schema_version, run_id, reviewer hash/anonymous_id, model, role, and numeric metrics; drops file/line/problem/evidence, provider names, and any path strings."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "resolveReviewDir",
+      "path": "cmd/atcr/anchor.go",
+      "can_extend": false,
+      "usage_example": "Shared by reconcile, report, verify — scorecard and leaderboard commands reuse for [id-or-path] arg resolution"
+    },
+    {
+      "name": "ReadReconciledFindings",
+      "path": "internal/reconcile/emit.go",
+      "can_extend": false,
+      "usage_example": "Loader for reconciled/findings.json — scorecard uses to count per-reviewer findings and verification status"
+    },
+    {
+      "name": "ReadVerificationResults",
+      "path": "internal/verify/emit_verification.go",
+      "can_extend": false,
+      "usage_example": "Loader for reconciled/verification.json — scorecard uses when computing findings_verified/refuted/survived_skeptic_rate"
+    },
+    {
+      "name": "OpenTranscript pattern",
+      "path": "internal/tools/transcript.go",
+      "can_extend": true,
+      "usage_example": "os.OpenFile with O_APPEND, bufio.Writer, disabled no-op on error — replicate for scorecard JSONL writer"
+    },
+    {
+      "name": "AgentConfig.Model/Role",
+      "path": "internal/registry/config.go",
+      "can_extend": false,
+      "usage_example": "Map reviewer name to model and role by loading registry and looking up Agents[name]"
+    },
+    {
+      "name": "RenderTable",
+      "path": "internal/doctor/render.go",
+      "can_extend": false,
+      "usage_example": "text/tabwriter table with tab-separated columns and Flush — follow for scorecard/leaderboard CLI output"
+    }
+  ],
+  "architecture_notes": [
+    "Scorecard emission should be best-effort (log-and-continue on error), not a hard failure — reconcile must succeed even if scorecard write fails",
+    "The llmclient usage parsing is a hard prerequisite for cost/token columns; without it those columns are always empty. Track as the first task.",
+    "Per-reviewer metrics derive from reconciled/findings.json Reviewers []string — count findings where reviewer appears, count where len(Reviewers) >= 2 for corroboration",
+    "verification.json presence is optional; when absent, omit findings_verified/findings_refuted/survived_skeptic_rate from the record (omitempty)",
+    "Monthly JSONL rotation: file per calendar month (YYYY-MM.jsonl) under ~/.config/atcr/scorecard/",
+    "Use text/tabwriter (not markdown) for scorecard/leaderboard tables to align numeric columns",
+    "Consider extending AgentStatus with Model/Role/Usage so scorecard can read a single status.json per agent instead of re-loading registry",
+    "Keep the scorecard package decoupled from the fan-out engine: it consumes reconcile.Result + reviewDir artifacts, not engine internals"
+  ],
+  "files_to_modify": [
+    {
+      "path": "cmd/atcr/reconcile.go",
+      "reason": "Hook scorecard.Emit after RunReconcile; add --no-scorecard flag",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "reason": "Register newScorecardCmd() and newLeaderboardCmd()",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "reason": "Add Usage field to chatResponse struct and surface usage from Complete(); callers must be updated",
+      "scope": "major"
+    },
+    {
+      "path": "internal/llmclient/chat.go",
+      "reason": "Add Usage field to chatToolResponse struct and surface aggregated usage from Chat(); callers must be updated",
+      "scope": "major"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "reason": "Update Completer interface and Result to carry usage; capture usage in invokeSingleShot",
+      "scope": "major"
+    },
+    {
+      "path": "internal/fanout/loop.go",
+      "reason": "Aggregate per-turn Chat usage across tool loop and store in Result",
+      "scope": "major"
+    },
+    {
+      "path": "internal/fanout/artifacts.go",
+      "reason": "statusFor must persist model/usage fields on AgentStatus if scorecard reads status.json; otherwise reference-only",
+      "scope": "medium"
+    },
+    {
+      "path": "internal/doctor/run.go",
+      "reason": "Update Complete() caller to handle new usage return value (or discard with _)",
+      "scope": "minor"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/scorecard/scorecard.go",
+      "purpose": "Scorecard record schema, Emit function (compute per-reviewer metrics, write JSONL)",
+      "based_on": "internal/tools/transcript.go (JSONL append pattern)"
+    },
+    {
+      "path": "internal/scorecard/store.go",
+      "purpose": "Store interface for reading/querying scorecard records (monthly JSONL files)",
+      "based_on": null
+    },
+    {
+      "path": "internal/scorecard/aggregate.go",
+      "purpose": "Aggregation logic for leaderboard: rank by corroboration rate, cost-per-corroborated-finding, filters",
+      "based_on": null
+    },
+    {
+      "path": "internal/scorecard/export.go",
+      "purpose": "Versioned public submission JSON format (schema v1) with anonymization",
+      "based_on": null
+    },
+    {
+      "path": "internal/scorecard/paths.go",
+      "purpose": "Resolve ~/.config/atcr/scorecard/ directory and monthly JSONL file paths",
+      "based_on": "internal/registry/config.go DefaultRegistryPath"
+    },
+    {
+      "path": "internal/scorecard/pricing.go",
+      "purpose": "Per-model token-rate table for computing cost_usd",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/scorecard.go",
+      "purpose": "atcr scorecard [id-or-path] — display single run scorecard table",
+      "based_on": "cmd/atcr/report.go (similar single-run view pattern) + internal/doctor/render.go (tabwriter)"
+    },
+    {
+      "path": "cmd/atcr/leaderboard.go",
+      "purpose": "atcr leaderboard [--since, --model, --persona, --export] — aggregated view",
+      "based_on": "cmd/atcr/report.go (flag + table rendering pattern) + internal/doctor/render.go (tabwriter)"
+    },
+    {
+      "path": "docs/scorecard.md",
+      "purpose": "Documentation: schema, storage location, CLI usage, privacy model",
+      "based_on": null
+    },
+    {
+      "path": "internal/scorecard/scorecard_test.go",
+      "purpose": "Unit tests for emitter: field computation, JSONL write, verification integration",
+      "based_on": "internal/reconcile/merge_test.go (testify pattern)"
+    },
+    {
+      "path": "internal/scorecard/aggregate_test.go",
+      "purpose": "Unit tests for aggregation: ranking, filters, date ranges",
+      "based_on": null
+    },
+    {
+      "path": "internal/scorecard/store_test.go",
+      "purpose": "Unit tests for JSONL read/query: monthly rotation, filtering, empty store",
+      "based_on": "internal/tools/transcript_test.go (JSONL append test pattern)"
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "internal/scorecard/",
+    "naming_convention": "*_test.go",
+    "example_tests": [
+      "internal/reconcile/merge_test.go",
+      "internal/tools/transcript_test.go"
+    ]
+  }
+}

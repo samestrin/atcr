@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -118,20 +120,76 @@ type chatRequest struct {
 	MaxTokens   *int      `json:"max_tokens,omitempty"`
 }
 
+// UsageData carries the provider-reported token counts for one call. A zero
+// value means the provider omitted the `usage` block entirely (graceful
+// degradation, not an error) and is always safe to pass to ComputeCostUSD.
+type UsageData struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+}
+
+// UnmarshalJSON tolerates malformed or non-integer usage blocks. Token usage is
+// non-load-bearing metadata, so a provider that emits counts as JSON floats
+// (e.g. 14200.0, which some gateways do) or otherwise malforms the block must
+// NOT fail the parent response decode and discard the assistant content — it
+// degrades to zero counts instead. Each field is decoded independently so a
+// single bad field does not discard the other. Counts are truncated toward zero.
+func (u *UsageData) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// Structurally malformed usage block: degrade to zero, never error.
+		return nil
+	}
+	if pt, ok := raw["prompt_tokens"]; ok {
+		var n json.Number
+		if err := json.Unmarshal(pt, &n); err == nil {
+			u.PromptTokens = clampNonNegative(n)
+		}
+	}
+	if ct, ok := raw["completion_tokens"]; ok {
+		var n json.Number
+		if err := json.Unmarshal(ct, &n); err == nil {
+			u.CompletionTokens = clampNonNegative(n)
+		}
+	}
+	return nil
+}
+
+// clampNonNegative truncates a usage count toward zero and clamps negatives to
+// zero at the data boundary, so every consumer of UsageData — not just
+// ComputeCostUSD — sees a non-negative count. A non-numeric value yields zero.
+func clampNonNegative(n json.Number) int {
+	v, err := n.Float64()
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) || v > 1e15 {
+		return 0
+	}
+	return int(v)
+}
+
 type chatResponse struct {
 	Choices []struct {
 		Message message `json:"message"`
 	} `json:"choices"`
+	Usage UsageData `json:"usage"`
 }
 
 // Complete invokes the provider and returns the assistant message content.
 // Retries on 429/5xx and transport-level errors with tuned backoff; other
 // non-2xx statuses and parse failures fail immediately. The API key value
-// never appears in any error.
+// never appears in any error. Existing callers that do not need token usage
+// keep this two-value signature; CompleteWithUsage exposes the usage block.
 func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
+	content, _, err := c.CompleteWithUsage(ctx, inv)
+	return content, err
+}
+
+// CompleteWithUsage is Complete plus the provider's token usage. Usage is the
+// zero value when the provider omits the `usage` block. All error paths return
+// an empty UsageData, never partial counts.
+func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, error) {
 	key, err := resolveKey(inv)
 	if err != nil {
-		return "", err
+		return "", UsageData{}, err
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:       inv.Model,
@@ -140,20 +198,20 @@ func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
 		MaxTokens:   inv.MaxTokens,
 	})
 	if err != nil {
-		return "", fmt.Errorf("encoding request: %w", err)
+		return "", UsageData{}, fmt.Errorf("encoding request: %w", err)
 	}
 	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
 	if err != nil {
-		return "", err
+		return "", UsageData{}, err
 	}
 	var parsed chatResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
+		return "", UsageData{}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("failed to parse response: no choices returned")
+		return "", UsageData{}, fmt.Errorf("failed to parse response: no choices returned")
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, parsed.Usage, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.
@@ -256,6 +314,33 @@ func httpStatusError(status int, snippet string) error {
 	return &HTTPStatusError{Status: status, Snippet: snippet}
 }
 
+// bearerTokenPattern and skKeyPattern match secret-shaped tokens that a provider
+// might echo into an error body even when they are not the literal configured
+// key (a foreign token, or the key in a transformed form). They back the
+// defense-in-depth scrub in redactErrorSnippet. readErrorSnippet collapses
+// whitespace first, so `Bearer <token>` is single-spaced when these run.
+var (
+	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
+	skKeyPattern       = regexp.MustCompile(`sk-\S+`)
+)
+
+// redactErrorSnippet scrubs secrets from a provider error snippet. It removes
+// the configured key in both literal and URL-encoded form (an exact-match scrub
+// alone misses a key the provider echoes re-encoded), then redacts any
+// Bearer-prefixed or sk- shaped token generically so a foreign or transformed
+// secret cannot leak into HTTPStatusError.Snippet.
+func redactErrorSnippet(snippet, key string) string {
+	if key != "" {
+		snippet = strings.ReplaceAll(snippet, key, "[redacted]")
+		if enc := url.QueryEscape(key); enc != key {
+			snippet = strings.ReplaceAll(snippet, enc, "[redacted]")
+		}
+	}
+	snippet = bearerTokenPattern.ReplaceAllString(snippet, "Bearer [redacted]")
+	snippet = skKeyPattern.ReplaceAllString(snippet, "[redacted]")
+	return snippet
+}
+
 // readErrorSnippet reads a bounded prefix of a non-200 response body and
 // collapses it to a single whitespace-normalized line. The remainder of the
 // body is drained so the connection can be reused.
@@ -287,7 +372,7 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 		// Capture a bounded snippet for error reporting; the provider's JSON
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
-		snippet := strings.ReplaceAll(readErrorSnippet(resp.Body), key, "[redacted]")
+		snippet := redactErrorSnippet(readErrorSnippet(resp.Body), key)
 		return []byte(snippet), resp.StatusCode, nil
 	}
 

@@ -107,6 +107,24 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 	return sum, nil
 }
 
+// ReadPoolSummary loads <reviewDir>/sources/pool/summary.json — the run record
+// carrying every agent's AgentStatus (model, token usage, latency). The
+// reconcile-time scorecard emitter reads it to source per-reviewer metadata. A
+// missing file returns the raw os error (callers degrade to no usage data); a
+// present-but-unparseable file is a parse error.
+func ReadPoolSummary(reviewDir string) (PoolSummary, error) {
+	path := filepath.Join(reviewDir, "sources", "pool", summaryFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return PoolSummary{}, err
+	}
+	var ps PoolSummary
+	if err := json.Unmarshal(data, &ps); err != nil {
+		return PoolSummary{}, fmt.Errorf("parsing %s: %w", summaryFile, err)
+	}
+	return ps, nil
+}
+
 // writeFailureSummary writes a best-effort summary.json from the real fan-out
 // results so a post-fan-out persistence failure (a WritePool error in
 // ExecuteReview) surfaces accurate tallies through the existing summary-derived
@@ -199,6 +217,16 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 	}
 	if r.Err != nil {
 		st.Error = r.Err.Error()
+	}
+	// Persist usage only when the provider reported token counts (Epic 3.3). A
+	// zero-usage result (a failed agent, or a completer that reports no usage)
+	// leaves the omitempty fields absent, so status.json stays byte-identical to
+	// the pre-3.3 shape for those runs. The model is recorded alongside the
+	// tokens it priced so a $0 cost remains auditable.
+	if r.TokensIn > 0 || r.TokensOut > 0 {
+		st.Model = r.Model
+		st.TokensIn = r.TokensIn
+		st.TokensOut = r.TokensOut
 	}
 	// Tool-loop accounting: emit the counters (as explicit, possibly-zero
 	// pointers) only for tool-enabled agents, so a pure 1.x single-shot agent's

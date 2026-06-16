@@ -105,6 +105,8 @@ func newRootCmd() *cobra.Command {
 		newServeCmd(),
 		newDoctorCmd(),
 		newTrustCmd(),
+		newScorecardCmd(),
+		newLeaderboardCmd(),
 	)
 	return root
 }
