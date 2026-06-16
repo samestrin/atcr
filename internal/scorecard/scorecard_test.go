@@ -310,3 +310,37 @@ func TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter(t *testing.T) {
 	assert.Contains(t, buf.String(), "has no matching raised finding",
 		"orphan-verdict diagnostic must route to the injected EmitOpts.Diag")
 }
+
+// TestEmit_WriteFailureDiagnosticRoutesToDiagWriter locks Epic 3.4 AC1/AC2 for the
+// "write failed" diagnostic: pointing the store under a regular file makes Append's
+// MkdirAll fail, and the resulting warning must reach the injected EmitOpts.Diag.
+func TestEmit_WriteFailureDiagnosticRoutesToDiagWriter(t *testing.T) {
+	base := t.TempDir()
+	blocker := filepath.Join(base, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+	storeDir := filepath.Join(blocker, "scorecard") // under a regular file → MkdirAll fails
+
+	var buf bytes.Buffer
+	in := EmitInput{
+		RunID:     testRunID,
+		Findings:  []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
+		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
+	}
+	err := Emit(in, EmitOpts{Dir: storeDir, Diag: &buf})
+	require.Error(t, err, "a store path under a regular file must fail to write")
+	assert.Contains(t, buf.String(), "write failed",
+		"write-failure diagnostic must route to the injected EmitOpts.Diag")
+}
+
+// TestEmit_NilDiagDefaultsToStderr locks Epic 3.4 AC5: a zero EmitOpts (nil Diag)
+// preserves prior behavior — emission succeeds and diagnostics fall back to
+// os.Stderr without panicking.
+func TestEmit_NilDiagDefaultsToStderr(t *testing.T) {
+	dir := t.TempDir()
+	in := EmitInput{
+		RunID:     testRunID,
+		Findings:  []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
+		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir})) // nil Diag → os.Stderr, must not panic
+}

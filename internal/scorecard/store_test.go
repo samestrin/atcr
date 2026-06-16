@@ -364,3 +364,36 @@ func splitNonEmptyLines(raw []byte) [][]byte {
 	}
 	return out
 }
+
+// TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter locks Epic 3.4
+// for the malformed-record warning the epic explicitly names: it must reach the
+// injected ReadOpts.Writer, not os.Stderr.
+func TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(string(good)+"\n{not valid json\n"), 0o600))
+
+	var buf bytes.Buffer
+	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "valid record retained, malformed skipped")
+	assert.Contains(t, buf.String(), "skipping malformed record",
+		"malformed-record diagnostic must route to ReadOpts.Writer")
+}
+
+// TestStore_ReadRecords_NilWriterDefaultsToStderr locks Epic 3.4 AC5: a zero
+// ReadOpts (nil Writer) preserves prior behavior — the read still succeeds (the
+// diagnostic falls back to os.Stderr) and does not panic.
+func TestStore_ReadRecords_NilWriterDefaultsToStderr(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "2026-06.jsonl")
+	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, []byte(string(good)+"\n{bad\n"), 0o600))
+
+	recs, err := ReadRecords(path, ReadOpts{}) // nil Writer → os.Stderr, must not panic
+	require.NoError(t, err)
+	assert.Len(t, recs, 1)
+}
