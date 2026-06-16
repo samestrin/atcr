@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 0 | 0 |
 | MEDIUM | 0 | 13 | 0 |
-| LOW | 0 | 13 | 0 |
+| LOW | 3 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 0 | **Deferred Items:** 26 | **Resolved Items:** 0 | **Total Items:** 26
+**Last Modified:** 2026-06-16 | **Open Items:** 3 | **Deferred Items:** 26 | **Resolved Items:** 0 | **Total Items:** 29
 
 ## Directory Structure
 
@@ -33,6 +33,14 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-16] From Sprint: epic-3.6
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | cmd/atcr/scorecard_wiring_test.go:77 | seedMalformedStore slices runID[:7] directly which panics for a runID shorter than 7 chars rather than reusing monthFromRunID despite the comment claiming it mirrors it (guard is only positional) | Call scorecard.monthFromRunID or guard len(runID)>=7 so a malformed short runID fails the test cleanly instead of panicking | EDGE_CASES | 5 | execute-epic-independent |
+| U | [ ] | LOW | internal/mcp/handlers.go:42 | engine.diagWriter only checks e.diag==nil and does not apply the typed-nil isNilPointer guard the scorecard package documents; it is saved only because scorecard.diagWriter re-applies the guard downstream | Document that the typed-nil guard is delegated to scorecard.diagWriter, or mirror the isNilPointer check for defense in depth | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/scorecard_wiring_test.go:96 | The reconcile/MCP write-failure mechanism depends on ENOTDIR from MkdirAll over a regular file, which is POSIX-specific and would not reproduce on Windows, making these wiring tests non-portable | Add a build constraint or document the POSIX-only assumption consistent with store.go TD-004 so a future Windows CI does not silently mis-pass | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
 
