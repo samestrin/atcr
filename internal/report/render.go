@@ -208,7 +208,7 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 		if verified && isRefuted(f) {
 			refutedCount++
 		}
-		c, ok := counts[f.Severity]
+		c, ok := counts[canonicalize(f.Severity)]
 		if !ok {
 			c = otherSev
 		}
