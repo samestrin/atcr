@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -34,7 +35,19 @@ type engine struct {
 	root      string
 	completer fanout.Completer
 	log       *slog.Logger
+	diag      io.Writer
 	bg        sync.WaitGroup
+}
+
+// diagWriter resolves the engine's scorecard-diagnostics sink: the injected
+// writer, or os.Stderr when unset. It mirrors scorecard's own default-to-stderr
+// rule at the MCP construction site so a nil diag never reaches EmitOpts as a
+// surprise (Epic 3.4 AC4).
+func (e *engine) diagWriter() io.Writer {
+	if e.diag == nil {
+		return os.Stderr
+	}
+	return e.diag
 }
 
 // drain waits up to timeout for in-flight background reviews to finish, so a
@@ -214,10 +227,11 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
 	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical
 	// scorecard records (TD-005 — no entry-point divergence). The MCP path has no
-	// suppression flag, so it always emits. Scorecard diagnostics route to
-	// os.Stderr — the documented default for the MCP path, which has no cobra cmd
-	// to source a writer from (Epic 3.4 AC4). Best-effort.
-	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{Diag: os.Stderr})
+	// suppression flag, so it always emits. Scorecard diagnostics route to the
+	// engine's diag sink — os.Stderr by default (the documented MCP default,
+	// which has no cobra cmd to source a writer from), or an injected writer in
+	// tests so the wiring is assertable (Epic 3.4 AC4). Best-effort.
+	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{Diag: e.diagWriter()})
 
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if in.RequireVerified {

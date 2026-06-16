@@ -1,3 +1,15 @@
+## [3.6.0] - 2026-06-16
+
+### Added
+
+- Regression tests that lock the scorecard diagnostics writer-wiring at the real call sites: the `leaderboard`, `scorecard`, and `reconcile` CLI commands route store diagnostics to `cmd.ErrOrStderr()`, and the MCP `reconcile` handler routes them to the engine's injected sink — a future refactor that drops the wired writer now fails a test
+
+### Changed
+
+- The MCP engine sources scorecard diagnostics from an injectable writer (defaulting to `os.Stderr`), so the diagnostics wiring is assertable in tests without changing serve-mode behavior
+
+*Shipped via /execute-epic (epic 3.6)*
+
 ## [Technical Debt] - 2026-06-16
 
 ### Fixed
