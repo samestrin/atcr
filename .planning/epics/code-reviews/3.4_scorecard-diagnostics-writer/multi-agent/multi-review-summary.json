@@ -1,0 +1,95 @@
+{
+  "reviewers": [
+    {
+      "agent": "greta",
+      "model": "glm-5.1",
+      "status": "ok",
+      "durationMs": 27993,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 10368,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 37092,
+      "tdLineCount": 9
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 132854,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "archer",
+      "model": "mellum2",
+      "status": "ok",
+      "durationMs": 38418,
+      "tdLineCount": 197
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "ok",
+      "durationMs": 228178,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob2-backup",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 64965,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 267425,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "brad",
+      "model": "poolside-laguna",
+      "status": "timeout",
+      "durationMs": 120002,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 33043,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 226895,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bruce",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 269726,
+      "tdLineCount": 0
+    }
+  ],
+  "totalFindings": 209,
+  "partial": true,
+  "totalDurationMs": 537154,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-16T08:24:31-07:00"
+}

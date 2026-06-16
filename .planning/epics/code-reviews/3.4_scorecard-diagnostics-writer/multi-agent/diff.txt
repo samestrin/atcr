@@ -1,0 +1,608 @@
+diff --git a/cmd/atcr/leaderboard.go b/cmd/atcr/leaderboard.go
+index 56f4914..e214603 100644
+--- a/cmd/atcr/leaderboard.go
++++ b/cmd/atcr/leaderboard.go
+@@ -62,7 +62,7 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
+ 	if err != nil {
+ 		return fmt.Errorf("cannot determine scorecard store path: %w", err)
+ 	}
+-	records, err := scorecard.ReadAll(dir)
++	records, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})
+ 	if err != nil {
+ 		return fmt.Errorf("failed to read scorecard store: %w", err)
+ 	}
+diff --git a/cmd/atcr/reconcile.go b/cmd/atcr/reconcile.go
+index dd23893..fe85eb8 100644
+--- a/cmd/atcr/reconcile.go
++++ b/cmd/atcr/reconcile.go
+@@ -88,7 +88,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
+ 	// reconcile (AC 01-01). --no-scorecard suppresses emission for this run
+ 	// (Story 5); Emit gates on it before any I/O.
+ 	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
+-	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard})
++	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard, Diag: cmd.ErrOrStderr()})
+ 
+ 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+ 	if requireVerified {
+diff --git a/cmd/atcr/scorecard.go b/cmd/atcr/scorecard.go
+index 2075a01..15a7e61 100644
+--- a/cmd/atcr/scorecard.go
++++ b/cmd/atcr/scorecard.go
+@@ -52,7 +52,7 @@ func runScorecard(cmd *cobra.Command, args []string) error {
+ 		return fmt.Errorf("cannot determine scorecard store path: %w", err)
+ 	}
+ 
+-	recs, err := scorecard.FindByRunID(dir, runID)
++	recs, err := scorecard.FindByRunID(dir, runID, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})
+ 	if err != nil {
+ 		// The run_id is already validated upstream (resolveScorecardRunID), so an
+ 		// error here is a real store read failure (e.g. an unreadable month file),
+diff --git a/internal/mcp/handlers.go b/internal/mcp/handlers.go
+index 6260ba0..5442422 100644
+--- a/internal/mcp/handlers.go
++++ b/internal/mcp/handlers.go
+@@ -214,8 +214,10 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
+ 	// Emit the per-run scorecard (Epic 3.3) via the same shared bridge the CLI
+ 	// reconcile uses, so MCP-driven and CLI-driven reconciles produce identical
+ 	// scorecard records (TD-005 — no entry-point divergence). The MCP path has no
+-	// suppression flag, so it always emits (zero EmitOpts). Best-effort.
+-	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{})
++	// suppression flag, so it always emits. Scorecard diagnostics route to
++	// os.Stderr — the documented default for the MCP path, which has no cobra cmd
++	// to source a writer from (Epic 3.4 AC4). Best-effort.
++	scorecard.EmitForReconcile(dir, res, scorecard.EmitOpts{Diag: os.Stderr})
+ 
+ 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+ 	if in.RequireVerified {
+diff --git a/internal/scorecard/integration_test.go b/internal/scorecard/integration_test.go
+index 76ca5e2..5187023 100644
+--- a/internal/scorecard/integration_test.go
++++ b/internal/scorecard/integration_test.go
+@@ -35,7 +35,7 @@ func TestIntegration_ReconcileEmitRead(t *testing.T) {
+ 		t.Fatalf("Emit: %v", err)
+ 	}
+ 
+-	recs, err := FindByRunID(dir, integRunID)
++	recs, err := FindByRunID(dir, integRunID, ReadOpts{})
+ 	if err != nil {
+ 		t.Fatalf("FindByRunID: %v", err)
+ 	}
+@@ -120,7 +120,7 @@ func TestIntegration_ReconcileEmitRead_WithVerification(t *testing.T) {
+ 		t.Fatalf("Emit: %v", err)
+ 	}
+ 
+-	recs, err := FindByRunID(dir, integRunID)
++	recs, err := FindByRunID(dir, integRunID, ReadOpts{})
+ 	if err != nil {
+ 		t.Fatalf("FindByRunID: %v", err)
+ 	}
+@@ -171,7 +171,7 @@ func TestIntegration_ReconcileEmitAggregate(t *testing.T) {
+ 		t.Fatalf("Emit: %v", err)
+ 	}
+ 
+-	all, err := ReadAll(dir)
++	all, err := ReadAll(dir, ReadOpts{})
+ 	if err != nil {
+ 		t.Fatalf("ReadAll: %v", err)
+ 	}
+@@ -204,7 +204,7 @@ func TestIntegration_NoScorecardSuppresses(t *testing.T) {
+ 	if _, err := os.Stat(filepath.Join(dir, integMonthFile)); !os.IsNotExist(err) {
+ 		t.Errorf("month file should not exist when suppressed; stat err = %v", err)
+ 	}
+-	recs, err := ReadAll(dir)
++	recs, err := ReadAll(dir, ReadOpts{})
+ 	if err != nil {
+ 		t.Fatalf("ReadAll: %v", err)
+ 	}
+diff --git a/internal/scorecard/reconcile_test.go b/internal/scorecard/reconcile_test.go
+index 3c18973..8f02373 100644
+--- a/internal/scorecard/reconcile_test.go
++++ b/internal/scorecard/reconcile_test.go
+@@ -44,7 +44,7 @@ func TestEmitForReconcile_BridgesPoolSummaryAndFindings(t *testing.T) {
+ 
+ 	cfg, err := os.UserConfigDir()
+ 	require.NoError(t, err)
+-	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"))
++	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 3, "2 reviewer records + 1 aggregate")
+ 
+@@ -78,7 +78,7 @@ func TestEmitForReconcile_NoPoolSummaryDegrades(t *testing.T) {
+ 
+ 	cfg, err := os.UserConfigDir()
+ 	require.NoError(t, err)
+-	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"))
++	recs, err := ReadRecords(filepath.Join(cfg, "atcr", "scorecard", "2026-06.jsonl"), ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 2, "1 reviewer + 1 aggregate even without pool summary")
+ 	bruce := findReviewer(recs, "bruce")
+diff --git a/internal/scorecard/scorecard.go b/internal/scorecard/scorecard.go
+index a846a9e..1549f13 100644
+--- a/internal/scorecard/scorecard.go
++++ b/internal/scorecard/scorecard.go
+@@ -10,6 +10,7 @@ package scorecard
+ import (
+ 	"encoding/json"
+ 	"fmt"
++	"io"
+ 	"os"
+ 	"sort"
+ 
+@@ -84,10 +85,13 @@ type ReviewerMeta struct {
+ // EmitOpts controls emission side-effects. NoScorecard suppresses all I/O (the
+ // --no-scorecard gate; checked first, before any directory creation). Dir
+ // overrides the store root (tests pin a temp dir); empty means the default user
+-// config dir.
++// config dir. Diag is the sink for operational diagnostics (write failures,
++// verification read/parse failures, orphan verdicts); a nil Diag defaults to
++// os.Stderr so existing callers keep their prior behavior (Epic 3.4).
+ type EmitOpts struct {
+ 	NoScorecard bool
+ 	Dir         string
++	Diag        io.Writer
+ }
+ 
+ // EmitInput bundles everything Emit needs for one run. Reviewers is keyed by
+@@ -114,14 +118,15 @@ func Emit(in EmitInput, opts EmitOpts) error {
+ 	if opts.NoScorecard {
+ 		return nil
+ 	}
++	w := diagWriter(opts.Diag)
+ 
+ 	dir, err := resolveDir(opts.Dir)
+ 	if err != nil {
+-		fmt.Fprintf(os.Stderr, "scorecard: write failed: %v\n", err)
++		_, _ = fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
+ 		return err
+ 	}
+ 
+-	verified, refuted, hasVerification := verdictTallies(in)
++	verified, refuted, hasVerification := verdictTallies(in, w)
+ 
+ 	// Deterministic reviewer order so the JSONL line order is stable.
+ 	names := make([]string, 0, len(in.Reviewers))
+@@ -194,7 +199,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
+ 	var firstErr error
+ 	for _, rec := range records {
+ 		if err := Append(dir, rec); err != nil {
+-			fmt.Fprintf(os.Stderr, "scorecard: write failed: %v\n", err)
++			_, _ = fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
+ 			if firstErr == nil {
+ 				firstErr = err
+ 			}
+@@ -227,20 +232,20 @@ func reviewerCounts(name string, findings []Finding) (raised, corroborated int)
+ // against in.Findings). It returns per-reviewer confirmed/refuted counts and
+ // whether a valid verification.json was present. An absent, unreadable, or
+ // malformed file degrades to no verification (fields omitted), per AC 01-03.
+-func verdictTallies(in EmitInput) (verified, refuted map[string]int, present bool) {
++func verdictTallies(in EmitInput, w io.Writer) (verified, refuted map[string]int, present bool) {
+ 	if in.VerificationPath == "" {
+ 		return nil, nil, false
+ 	}
+ 	data, err := os.ReadFile(in.VerificationPath)
+ 	if err != nil {
+ 		if !os.IsNotExist(err) {
+-			fmt.Fprintf(os.Stderr, "scorecard: verification read failed: %v\n", err)
++			_, _ = fmt.Fprintf(w, "scorecard: verification read failed: %v\n", err)
+ 		}
+ 		return nil, nil, false
+ 	}
+ 	var vf verificationFile
+ 	if err := json.Unmarshal(data, &vf); err != nil {
+-		fmt.Fprintf(os.Stderr, "scorecard: verification parse failed: %v\n", err)
++		_, _ = fmt.Fprintf(w, "scorecard: verification parse failed: %v\n", err)
+ 		return nil, nil, false
+ 	}
+ 
+@@ -268,7 +273,7 @@ func verdictTallies(in EmitInput) (verified, refuted map[string]int, present boo
+ 			// (findings.json and verification.json derive from the same reconciled
+ 			// objects), so a miss means real under-counting — warn rather than drop it
+ 			// silently (mirrors verify's orphan_verdict diagnostic).
+-			fmt.Fprintf(os.Stderr, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
++			_, _ = fmt.Fprintf(w, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
+ 			continue
+ 		}
+ 		switch normalizeVerdict(vfind.Verdict) {
+diff --git a/internal/scorecard/scorecard_test.go b/internal/scorecard/scorecard_test.go
+index b0076d3..20283de 100644
+--- a/internal/scorecard/scorecard_test.go
++++ b/internal/scorecard/scorecard_test.go
+@@ -1,6 +1,7 @@
+ package scorecard
+ 
+ import (
++	"bytes"
+ 	"encoding/json"
+ 	"os"
+ 	"path/filepath"
+@@ -33,7 +34,7 @@ func threeReviewerInput() EmitInput {
+ 
+ func readJSONL(t *testing.T, dir string) []Record {
+ 	t.Helper()
+-	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"))
++	recs, err := ReadRecords(filepath.Join(dir, "2026-06.jsonl"), ReadOpts{})
+ 	require.NoError(t, err)
+ 	return recs
+ }
+@@ -286,3 +287,60 @@ func findReviewer(recs []Record, name string) *Record {
+ 	}
+ 	return nil
+ }
++
++// TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter locks Epic 3.4 AC1: the
++// orphan-verdict warning (a verification finding with no matching raised finding)
++// must be written to the injected EmitOpts.Diag, not the process-global os.Stderr,
++// so it can be captured and asserted by text.
++func TestEmit_OrphanVerdictDiagnosticRoutesToDiagWriter(t *testing.T) {
++	dir := t.TempDir()
++	verPath := filepath.Join(t.TempDir(), "verification.json")
++	// A verdict whose (file,line,problem) matches no raised finding is an orphan.
++	verJSON := `{"findings":[{"file":"ghost.go","line":99,"problem":"none","verdict":"confirmed"}]}`
++	require.NoError(t, os.WriteFile(verPath, []byte(verJSON), 0o600))
++
++	var buf bytes.Buffer
++	in := EmitInput{
++		RunID:            testRunID,
++		Findings:         []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
++		Reviewers:        map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
++		VerificationPath: verPath,
++	}
++	require.NoError(t, Emit(in, EmitOpts{Dir: dir, Diag: &buf}))
++	assert.Contains(t, buf.String(), "has no matching raised finding",
++		"orphan-verdict diagnostic must route to the injected EmitOpts.Diag")
++}
++
++// TestEmit_WriteFailureDiagnosticRoutesToDiagWriter locks Epic 3.4 AC1/AC2 for the
++// "write failed" diagnostic: pointing the store under a regular file makes Append's
++// MkdirAll fail, and the resulting warning must reach the injected EmitOpts.Diag.
++func TestEmit_WriteFailureDiagnosticRoutesToDiagWriter(t *testing.T) {
++	base := t.TempDir()
++	blocker := filepath.Join(base, "blocker")
++	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
++	storeDir := filepath.Join(blocker, "scorecard") // under a regular file → MkdirAll fails
++
++	var buf bytes.Buffer
++	in := EmitInput{
++		RunID:     testRunID,
++		Findings:  []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
++		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
++	}
++	err := Emit(in, EmitOpts{Dir: storeDir, Diag: &buf})
++	require.Error(t, err, "a store path under a regular file must fail to write")
++	assert.Contains(t, buf.String(), "write failed",
++		"write-failure diagnostic must route to the injected EmitOpts.Diag")
++}
++
++// TestEmit_NilDiagDefaultsToStderr locks Epic 3.4 AC5: a zero EmitOpts (nil Diag)
++// preserves prior behavior — emission succeeds and diagnostics fall back to
++// os.Stderr without panicking.
++func TestEmit_NilDiagDefaultsToStderr(t *testing.T) {
++	dir := t.TempDir()
++	in := EmitInput{
++		RunID:     testRunID,
++		Findings:  []Finding{{File: "a.go", Line: 1, Problem: "x", Reviewers: []string{"bruce"}}},
++		Reviewers: map[string]ReviewerMeta{"bruce": {Model: "model-a"}},
++	}
++	require.NoError(t, Emit(in, EmitOpts{Dir: dir})) // nil Diag → os.Stderr, must not panic
++}
+diff --git a/internal/scorecard/store.go b/internal/scorecard/store.go
+index d8db127..24b30c0 100644
+--- a/internal/scorecard/store.go
++++ b/internal/scorecard/store.go
+@@ -17,6 +17,24 @@ import (
+ // unbounded scanner buffer.
+ const maxLineBytes = 1 << 20
+ 
++// ReadOpts carries read-path options for the scorecard store. Writer is the sink
++// for operational diagnostics emitted while reading (malformed records, over-long
++// lines, adjacent-month spans); a nil Writer defaults to os.Stderr so existing
++// callers keep their prior behavior (Epic 3.4).
++type ReadOpts struct {
++	Writer io.Writer
++}
++
++// diagWriter resolves a diagnostics sink: the caller-supplied writer, or
++// os.Stderr when nil. It centralizes the "default to os.Stderr when unset" rule
++// shared by the read and emit paths (Epic 3.4 AC5).
++func diagWriter(w io.Writer) io.Writer {
++	if w == nil {
++		return os.Stderr
++	}
++	return w
++}
++
+ // Append writes one record as a single JSONL line to the month file derived from
+ // rec.RunID, under dir (created lazily with 0700 on first write). The line is
+ // marshaled to one []byte (record + '\n') and emitted in a single Write to a
+@@ -73,12 +91,13 @@ func Append(dir string, rec Record) error {
+ // scope absent real data-volume pressure — it changes this read API and every
+ // caller (ReadAll, FindByRunID, Aggregate, export) and would need explicit
+ // sign-off.
+-func ReadRecords(path string) ([]Record, error) {
++func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
+ 	f, err := os.Open(path)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	defer func() { _ = f.Close() }()
++	w := diagWriter(opts.Writer)
+ 
+ 	var recs []Record
+ 	// A bufio.Reader (not bufio.Scanner) is used so a single over-long line can be
+@@ -92,7 +111,7 @@ func ReadRecords(path string) ([]Record, error) {
+ 		if err == bufio.ErrBufferFull {
+ 			// Line exceeds maxLineBytes: discard the buffered prefix, drain the rest
+ 			// without buffering it, warn, and continue with the next line.
+-			fmt.Fprintf(os.Stderr, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
++			_, _ = fmt.Fprintf(w, "scorecard: skipping over-long line (> %d bytes) in %s\n", maxLineBytes, path)
+ 			if derr := drainLine(br); derr != nil {
+ 				if derr == io.EOF {
+ 					break
+@@ -102,7 +121,7 @@ func ReadRecords(path string) ([]Record, error) {
+ 			continue
+ 		}
+ 		if line := bytes.TrimSpace(frag); len(line) > 0 {
+-			if r, ok := decodeRecord(line, path); ok {
++			if r, ok := decodeRecord(line, path, w); ok {
+ 				recs = append(recs, r)
+ 			}
+ 		}
+@@ -117,12 +136,13 @@ func ReadRecords(path string) ([]Record, error) {
+ }
+ 
+ // decodeRecord parses one trimmed JSONL line into a Record, applying the
+-// malformed-skip and schema-version-skip rules. ok is false (with a stderr
+-// warning already emitted) when the line must be skipped.
+-func decodeRecord(line []byte, path string) (Record, bool) {
++// malformed-skip and schema-version-skip rules. ok is false (with a warning
++// already emitted to w, the resolved diagnostics writer) when the line must be
++// skipped.
++func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
+ 	var r Record
+ 	if err := json.Unmarshal(line, &r); err != nil {
+-		fmt.Fprintf(os.Stderr, "scorecard: skipping malformed record in %s: %v\n", path, err)
++		_, _ = fmt.Fprintf(w, "scorecard: skipping malformed record in %s: %v\n", path, err)
+ 		return Record{}, false
+ 	}
+ 	// Schema-version negotiation: a record from a newer, forward-incompatible
+@@ -132,7 +152,7 @@ func decodeRecord(line []byte, path string) (Record, bool) {
+ 	// readable: v1 is the first schema, so there is nothing to migrate yet; an
+ 	// explicit migration shim slots in here when one appears.)
+ 	if r.SchemaVersion > SchemaVersion {
+-		fmt.Fprintf(os.Stderr, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
++		_, _ = fmt.Fprintf(w, "scorecard: skipping record with unsupported schema_version %d (> %d) in %s\n", r.SchemaVersion, SchemaVersion, path)
+ 		return Record{}, false
+ 	}
+ 	return r, true
+@@ -158,9 +178,10 @@ func drainLine(br *bufio.Reader) error {
+ // the neighbouring month file is also scanned and merged, because a clock-skewed
+ // or late write can split one run's records across two month files (AC 02-01
+ // EC1) — returning only one file's records would silently drop the rest. A hit
+-// in a neighbouring file is logged to stderr. A missing month file is "no
+-// records" for that month (skipped), not an error.
+-func FindByRunID(dir, runID string) ([]Record, error) {
++// in a neighbouring file is logged to the diagnostics writer (ReadOpts.Writer,
++// default os.Stderr). A missing month file is "no records" for that month
++// (skipped), not an error.
++func FindByRunID(dir, runID string, opts ReadOpts) ([]Record, error) {
+ 	month, err := monthFromRunID(runID)
+ 	if err != nil {
+ 		return nil, err
+@@ -170,7 +191,7 @@ func FindByRunID(dir, runID string) ([]Record, error) {
+ 	var matches []Record
+ 	var fromNeighbour bool
+ 	for i, m := range months {
+-		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"))
++		recs, err := ReadRecords(filepath.Join(dir, m+".jsonl"), opts)
+ 		if err != nil {
+ 			if os.IsNotExist(err) {
+ 				continue
+@@ -187,7 +208,7 @@ func FindByRunID(dir, runID string) ([]Record, error) {
+ 		}
+ 	}
+ 	if fromNeighbour {
+-		fmt.Fprintf(os.Stderr, "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
++		_, _ = fmt.Fprintf(diagWriter(opts.Writer), "scorecard: run %s spans adjacent month files (clock skew or late write)\n", runID)
+ 	}
+ 	return matches, nil
+ }
+@@ -224,7 +245,7 @@ func monthsToScan(runID, month string) []string {
+ // records (malformed lines skipped per-file by ReadRecords). A missing directory
+ // is empty (nil, nil), not an error — the leaderboard's "no data yet" state.
+ // Non-.jsonl files are ignored.
+-func ReadAll(dir string) ([]Record, error) {
++func ReadAll(dir string, opts ReadOpts) ([]Record, error) {
+ 	entries, err := os.ReadDir(dir)
+ 	if err != nil {
+ 		if os.IsNotExist(err) {
+@@ -237,7 +258,7 @@ func ReadAll(dir string) ([]Record, error) {
+ 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+ 			continue
+ 		}
+-		recs, err := ReadRecords(filepath.Join(dir, e.Name()))
++		recs, err := ReadRecords(filepath.Join(dir, e.Name()), opts)
+ 		if err != nil {
+ 			if os.IsNotExist(err) {
+ 				continue
+diff --git a/internal/scorecard/store_test.go b/internal/scorecard/store_test.go
+index 38e0675..9e5dfb6 100644
+--- a/internal/scorecard/store_test.go
++++ b/internal/scorecard/store_test.go
+@@ -36,7 +36,7 @@ func TestStore_AppendAndRead(t *testing.T) {
+ 	require.NoError(t, Append(dir, sampleRecord(runID, "greta")))
+ 
+ 	path := filepath.Join(dir, "2026-06.jsonl")
+-	recs, err := ReadRecords(path)
++	recs, err := ReadRecords(path, ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 2)
+ 	assert.Equal(t, "bruce", recs[0].Reviewer)
+@@ -95,7 +95,7 @@ func TestStore_ReadRecords_SkipsMalformedLines(t *testing.T) {
+ 	content := string(good) + "\n" + "{not valid json\n" + string(good) + "\n"
+ 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+ 
+-	recs, err := ReadRecords(path)
++	recs, err := ReadRecords(path, ReadOpts{})
+ 	require.NoError(t, err)
+ 	assert.Len(t, recs, 2, "malformed line skipped, valid lines retained")
+ }
+@@ -116,7 +116,7 @@ func TestStore_ReadRecords_SkipsFutureSchemaVersion(t *testing.T) {
+ 	content := string(v1) + "\n" + string(v2) + "\n"
+ 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+ 
+-	recs, err := ReadRecords(path)
++	recs, err := ReadRecords(path, ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 1, "a record with schema_version > current must be skipped, not read as v1")
+ 	assert.Equal(t, "bruce", recs[0].Reviewer)
+@@ -171,7 +171,7 @@ func TestStore_FindByRunID(t *testing.T) {
+ 	// A different run in the same month file must NOT match.
+ 	require.NoError(t, Append(dir, sampleRecord("2026-06-13T08:00:00Z-xyz789", "diana")))
+ 
+-	recs, err := FindByRunID(dir, runID)
++	recs, err := FindByRunID(dir, runID, ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 2, "only the two records for the requested run_id")
+ 	for _, r := range recs {
+@@ -181,13 +181,13 @@ func TestStore_FindByRunID(t *testing.T) {
+ 
+ func TestStore_FindByRunID_InvalidFormat(t *testing.T) {
+ 	dir := t.TempDir()
+-	_, err := FindByRunID(dir, "not-a-valid-run-id")
++	_, err := FindByRunID(dir, "not-a-valid-run-id", ReadOpts{})
+ 	require.Error(t, err, "a run_id without a YYYY-MM prefix is a clear error, not empty")
+ }
+ 
+ func TestStore_FindByRunID_MissingFileNoMatch(t *testing.T) {
+ 	dir := t.TempDir()
+-	recs, err := FindByRunID(dir, "2026-06-14T10:00:00Z-abc123")
++	recs, err := FindByRunID(dir, "2026-06-14T10:00:00Z-abc123", ReadOpts{})
+ 	require.NoError(t, err, "a missing month file is 'no records', not an error")
+ 	assert.Empty(t, recs)
+ }
+@@ -204,7 +204,7 @@ func TestStore_FindByRunID_AdjacentMonthFallback(t *testing.T) {
+ 	// Write the June run_id's record directly into the July file.
+ 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), append(line, '\n'), 0o600))
+ 
+-	recs, err := FindByRunID(dir, runID)
++	recs, err := FindByRunID(dir, runID, ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 1, "record found in adjacent month via fallback scan")
+ 	assert.Equal(t, runID, recs[0].RunID)
+@@ -221,14 +221,14 @@ func TestStore_FindByRunID_UnionAcrossMonths(t *testing.T) {
+ 	require.NoError(t, err)
+ 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), append(line, '\n'), 0o600))
+ 
+-	recs, err := FindByRunID(dir, runID)
++	recs, err := FindByRunID(dir, runID, ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 2, "records split across month files must all be returned")
+ }
+ 
+ func TestStore_FindByRunID_RejectsInvalidMonth(t *testing.T) {
+ 	dir := t.TempDir()
+-	_, err := FindByRunID(dir, "2026-13-01T00:00:00Z-x")
++	_, err := FindByRunID(dir, "2026-13-01T00:00:00Z-x", ReadOpts{})
+ 	require.Error(t, err, "an impossible month (13) is a clear error, not an empty result")
+ }
+ 
+@@ -239,13 +239,13 @@ func TestStore_ReadAll(t *testing.T) {
+ 	// A non-JSONL file in the directory must be ignored.
+ 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("ignore me\n"), 0o600))
+ 
+-	recs, err := ReadAll(dir)
++	recs, err := ReadAll(dir, ReadOpts{})
+ 	require.NoError(t, err)
+ 	require.Len(t, recs, 2, "records from every monthly JSONL file, txt ignored")
+ }
+ 
+ func TestStore_ReadAll_MissingDir(t *testing.T) {
+-	recs, err := ReadAll(filepath.Join(t.TempDir(), "does-not-exist"))
++	recs, err := ReadAll(filepath.Join(t.TempDir(), "does-not-exist"), ReadOpts{})
+ 	require.NoError(t, err, "a missing store directory is empty, not an error")
+ 	assert.Empty(t, recs)
+ }
+@@ -292,7 +292,7 @@ func TestStore_ReadRecords_SkipsOverLongLine(t *testing.T) {
+ 	content = append(content, '\n')
+ 	require.NoError(t, os.WriteFile(path, content, 0o600))
+ 
+-	recs, err := ReadRecords(path)
++	recs, err := ReadRecords(path, ReadOpts{})
+ 	require.NoError(t, err, "an over-long line must be skipped, not abort the read")
+ 	require.Len(t, recs, 2, "valid records before AND after the over-long line are retained")
+ 	assert.Equal(t, "bruce", recs[0].Reviewer)
+@@ -317,11 +317,36 @@ func TestStore_ReadAll_OverLongLineDoesNotAbortAllMonths(t *testing.T) {
+ 	jul = append(jul, '\n')
+ 	require.NoError(t, os.WriteFile(filepath.Join(dir, "2026-07.jsonl"), jul, 0o600))
+ 
+-	recs, err := ReadAll(dir)
++	recs, err := ReadAll(dir, ReadOpts{})
+ 	require.NoError(t, err, "one oversized line in one month must not abort aggregation across all months")
+ 	require.Len(t, recs, 2, "healthy June record + valid July record after the skipped over-long line")
+ }
+ 
++// TestStore_ReadRecords_DiagnosticsRouteToInjectedWriter locks Epic 3.4 AC1/AC2
++// for the read path: a read diagnostic (here the over-long-line warning) must be
++// written to the ReadOpts.Writer the caller injects, not the process-global
++// os.Stderr — so it can be captured and asserted by text.
++func TestStore_ReadRecords_DiagnosticsRouteToInjectedWriter(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "2026-06.jsonl")
++	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
++	require.NoError(t, err)
++	huge := bytes.Repeat([]byte("x"), maxLineBytes+1024) // one line over the cap
++	var content []byte
++	content = append(content, huge...)
++	content = append(content, '\n')
++	content = append(content, good...)
++	content = append(content, '\n')
++	require.NoError(t, os.WriteFile(path, content, 0o600))
++
++	var buf bytes.Buffer
++	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
++	require.NoError(t, err)
++	require.Len(t, recs, 1, "valid record after the over-long line is still read")
++	assert.Contains(t, buf.String(), "skipping over-long line",
++		"read diagnostic must route to the injected ReadOpts.Writer, not os.Stderr")
++}
++
+ // splitNonEmptyLines splits raw JSONL bytes into trimmed non-empty lines so a
+ // torn line (missing newline / merged with another) is observable as a parse
+ // failure or a wrong line count, not silently absorbed.
+@@ -339,3 +364,36 @@ func splitNonEmptyLines(raw []byte) [][]byte {
+ 	}
+ 	return out
+ }
++
++// TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter locks Epic 3.4
++// for the malformed-record warning the epic explicitly names: it must reach the
++// injected ReadOpts.Writer, not os.Stderr.
++func TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "2026-06.jsonl")
++	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(path, []byte(string(good)+"\n{not valid json\n"), 0o600))
++
++	var buf bytes.Buffer
++	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
++	require.NoError(t, err)
++	require.Len(t, recs, 1, "valid record retained, malformed skipped")
++	assert.Contains(t, buf.String(), "skipping malformed record",
++		"malformed-record diagnostic must route to ReadOpts.Writer")
++}
++
++// TestStore_ReadRecords_NilWriterDefaultsToStderr locks Epic 3.4 AC5: a zero
++// ReadOpts (nil Writer) preserves prior behavior — the read still succeeds (the
++// diagnostic falls back to os.Stderr) and does not panic.
++func TestStore_ReadRecords_NilWriterDefaultsToStderr(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "2026-06.jsonl")
++	good, err := json.Marshal(sampleRecord("2026-06-14T10:00:00Z-a", "bruce"))
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(path, []byte(string(good)+"\n{bad\n"), 0o600))
++
++	recs, err := ReadRecords(path, ReadOpts{}) // nil Writer → os.Stderr, must not panic
++	require.NoError(t, err)
++	assert.Len(t, recs, 1)
++}

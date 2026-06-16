@@ -1,0 +1,1 @@
+LOW|internal/scorecard/store.go:208|Inconsistent writer resolution in FindByRunID|Use the already-resolved `w` variable instead of calling `diagWriter(opts.Writer)` again|maintainability|5|`diagWriter(opts.Writer)` called again despite `w := diagWriter(opts.Writer)` at line 191|bruce

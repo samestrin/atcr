@@ -1,0 +1,1 @@
+HIGH|internal/scorecard/store.go:30|diagWriter misses typed-nil io.Writer (non-nil interface wrapping nil pointer)|Use reflect.ValueOf(w).IsNil() check or recover wrapper|correctness|15|var buf *bytes.Buffer; diagWriter(io.Writer(buf)) != nil → panic on Write|greta
