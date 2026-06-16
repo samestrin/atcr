@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -984,6 +985,32 @@ func TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns(t *testing.T) {
 	assert.Empty(t, vf.Findings[0].TrippedBudgets, "a corrupt prior must not lend tripped budgets")
 	assert.Contains(t, stderrOutput, "class=prior_unreadable",
 		"a corrupt prior on the skip path must fire the prior-unreadable warning")
+}
+
+// TestRunVerify_LivePathRecordsPositiveDuration locks live duration attribution:
+// the live (non-skip) verify path must record a strictly positive DurationMs in
+// verification.json. Scripted completers normally return sub-millisecond, so a
+// regression hardcoding DurationMs=0 on the live path would pass every other test;
+// a deliberate completer delay makes the measured wall-clock provably non-zero.
+func TestRunVerify_LivePathRecordsPositiveDuration(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	// A 5ms completer delay guarantees the skeptic call (and thus verifyFinding's
+	// measured wall-clock) takes at least 5ms, so DurationMs is reliably >= 5.
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return &fakeChatCompleter{turns: []chatTurn{{delay: 5 * time.Millisecond, content: `{"verdict":"confirmed","reasoning":"ok"}`}}}, okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, harness)
+	require.NoError(t, err)
+
+	data, rerr := os.ReadFile(filepath.Join(dir, reconciledSubdir, "verification.json"))
+	require.NoError(t, rerr)
+	var vf VerificationFile
+	require.NoError(t, json.Unmarshal(data, &vf))
+	require.Len(t, vf.Findings, 1)
+	assert.Equal(t, "confirmed", vf.Findings[0].Verdict)
+	assert.Positive(t, vf.Findings[0].DurationMs, "the live verify path must record a non-zero wall-clock duration")
 }
 
 // TestRunVerify_OneConfirmOneRefuteTieNamesBothParticipants covers the 1+1 tie
