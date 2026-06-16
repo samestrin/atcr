@@ -31,11 +31,17 @@ type PublicRecord struct {
 	CorroborationRate    float64 `json:"corroboration_rate"`
 	FindingsVerified     int     `json:"findings_verified"`
 	FindingsRefuted      int     `json:"findings_refuted"`
-	SurvivedSkepticRate  float64 `json:"survived_skeptic_rate"`
-	CostUSD              float64 `json:"cost_usd"`
-	TokensIn             int     `json:"tokens_in"`
-	TokensOut            int     `json:"tokens_out"`
-	LatencyMSAvg         int64   `json:"latency_ms_avg"`
+	// SurvivedSkepticRate is verified/(verified+refuted), or 0.0 when that
+	// denominator is zero. 0.0 is therefore ambiguous: it means BOTH "no
+	// verification ran for this group" and "every finding was refuted/unverifiable".
+	// The field is always present (no omitempty, per the allowlist contract above)
+	// and a sentinel is impossible because clampRate pins it to [0,1]; a consumer
+	// disambiguates via findings_verified+findings_refuted > 0 (zero => no verification).
+	SurvivedSkepticRate float64 `json:"survived_skeptic_rate"`
+	CostUSD             float64 `json:"cost_usd"`
+	TokensIn            int     `json:"tokens_in"`
+	TokensOut           int     `json:"tokens_out"`
+	LatencyMSAvg        int64   `json:"latency_ms_avg"`
 }
 
 // ExportFilters echoes the active filter values back in the envelope so a
