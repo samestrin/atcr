@@ -288,8 +288,8 @@ func TestRunVerify_ThoroughUsesThreeSkeptics(t *testing.T) {
 func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
 	reg := skepticRegistry()
 	// skep=m-skep is already in skepticRegistry; add s2=m-s2. Alphabetically
-	// SelectEligibleSkeptics returns ["s2","skep"], so skeptics[0].Config.Model
-	// is "m-s2". The test asserts "m-skep" also appears — which fails today.
+	// SelectEligibleSkeptics returns ["s2","skep"], so the joined Model string is
+	// the two winners in selection order: "m-s2, m-skep".
 	reg.Agents["s2"] = registry.AgentConfig{Provider: "p", Model: "m-s2", Role: registry.RoleSkeptic, SupportsFC: true}
 	dir := pipelineReview(t, []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
@@ -305,8 +305,10 @@ func TestRunVerify_ThoroughMultiSkepticRecordsAllModels(t *testing.T) {
 	var vf VerificationFile
 	require.NoError(t, json.Unmarshal(data, &vf))
 	require.Len(t, vf.Findings, 1)
-	assert.Contains(t, vf.Findings[0].Model, "m-s2", "lead skeptic model must be recorded")
-	assert.Contains(t, vf.Findings[0].Model, "m-skep", "all participating skeptic models must be recorded")
+	// Exact equality (not substring Contains) pins the full joined value: it locks
+	// selection-order, proves dedup, and catches a stray or duplicated model.
+	assert.Equal(t, "m-s2, m-skep", vf.Findings[0].Model,
+		"every winning skeptic model, joined in selection order and deduped")
 }
 
 // TestVerifyFinding_EarlyReturnsRecordEmptyModel locks AC3: neither early-return
