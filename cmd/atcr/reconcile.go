@@ -106,8 +106,8 @@ func gateFlagValue(cmd *cobra.Command) string {
 
 // failOnThreshold reads and validates the --fail-on flag, returning the
 // canonical threshold ("" when the flag is unset). An invalid value is a usage
-// error (exit 2). Used by the one-shot review path, where the flag presence is
-// itself the trigger.
+// error (exit 2). Delegates validation to validateGate to share one code path
+// with resolveGateThreshold and prevent semantic drift.
 func failOnThreshold(cmd *cobra.Command) (string, error) {
 	v := gateFlagValue(cmd)
 	if v == "" {
