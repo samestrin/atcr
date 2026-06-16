@@ -63,6 +63,16 @@ func Append(dir string, rec Record) error {
 // forward-incompatible record cannot be misread as the current version and
 // silently pollute aggregates. A missing file surfaces as the raw os error so
 // callers can phrase their own "no records" guidance.
+//
+// The read is single-pass line-streaming (a bufio.Reader, never the whole file
+// in one buffer), satisfying the plan's "no load-entire-file-into-memory"
+// intent. Parsed records ARE materialized into a returned slice; at the
+// documented scale (~500 bytes/record, ~500 KB per 1000 runs/month) that is
+// trivially cheap and intentional. An O(groups) streaming-fold variant
+// (ReadRecordsFunc, or folding aggregation into the scan) is deliberately out of
+// scope absent real data-volume pressure — it changes this read API and every
+// caller (ReadAll, FindByRunID, Aggregate, export) and would need explicit
+// sign-off.
 func ReadRecords(path string) ([]Record, error) {
 	f, err := os.Open(path)
 	if err != nil {
