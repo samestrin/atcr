@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // Supported output formats.
@@ -412,10 +413,10 @@ func canonicalize(s string) string {
 }
 
 // severityRankOf returns the display rank for a severity string using the
-// canonical rank exported by the reconcile package so the report view and the
-// radar sort never drift.
+// canonical rank owned by internal/stream (NormalizeSeverity-keyed) so the
+// report view and the radar sort never drift, even on mixed-case input.
 func severityRankOf(s string) int {
-	if r, ok := reconcile.SeverityRank[s]; ok {
+	if r, ok := stream.SeverityRank[stream.NormalizeSeverity(s)]; ok {
 		return r
 	}
 	return 0
