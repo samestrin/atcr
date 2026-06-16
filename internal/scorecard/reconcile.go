@@ -17,7 +17,8 @@ import (
 //
 // opts threads emission control through unchanged: the CLI passes the
 // --no-scorecard flag here (Story 5), which Emit honors as its first gate
-// (returning before any I/O); the MCP handler passes a zero EmitOpts so the
+// (returning before any I/O); the MCP handler passes EmitOpts{Diag: os.Stderr}
+// (explicit stderr, the documented default for the cmd-less path) so the
 // agentic path keeps emitting. It is fully best-effort: a missing pool summary
 // degrades to finding-only records (reviewers recovered from the findings), and
 // Emit logs its own write failures, so scorecard emission never fails the
