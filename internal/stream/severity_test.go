@@ -33,6 +33,7 @@ func TestNormalizeSeverity(t *testing.T) {
 		"MEDIUM":   "MEDIUM",
 		" low":     "LOW",
 		"":         "",
+		"   ":      "",
 	}
 	for in, want := range cases {
 		if got := NormalizeSeverity(in); got != want {
