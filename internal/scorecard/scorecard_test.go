@@ -207,6 +207,30 @@ func TestEmit_VerdictCreditsAllReviewersOfDuplicateLocation(t *testing.T) {
 	assert.Equal(t, 1, *greta.FindingsVerified, "second finding at same key must not overwrite the first")
 }
 
+// TestEmit_OrphanVerdictIgnored verifies a verification finding with no matching
+// raised finding is skipped (credits no reviewer) while a matching verdict in the
+// same file is still attributed — the no-match path must not panic or miscount.
+func TestEmit_OrphanVerdictIgnored(t *testing.T) {
+	dir := t.TempDir()
+	verPath := writeVerification(t, dir, `{"findings":[
+		{"file":"a.go","line":1,"problem":"p1","verdict":"confirmed"},
+		{"file":"ghost.go","line":9,"problem":"unmatched","verdict":"confirmed"}
+	]}`)
+	in := EmitInput{
+		RunID:            testRunID,
+		Findings:         []Finding{{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}}},
+		Reviewers:        map[string]ReviewerMeta{"bruce": {Model: "claude-sonnet-4-6"}},
+		VerificationPath: verPath,
+	}
+	require.NoError(t, Emit(in, EmitOpts{Dir: dir}))
+
+	recs := readJSONL(t, dir)
+	bruce := findReviewer(recs, "bruce")
+	require.NotNil(t, bruce)
+	require.NotNil(t, bruce.FindingsVerified)
+	assert.Equal(t, 1, *bruce.FindingsVerified, "matched verdict credited; orphan ghost.go verdict credited nobody")
+}
+
 func TestEmit_ConditionalFields_NoVerification(t *testing.T) {
 	dir := t.TempDir()
 	in := threeReviewerInput()

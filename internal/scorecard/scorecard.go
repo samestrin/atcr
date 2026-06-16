@@ -205,7 +205,10 @@ func Emit(in EmitInput, opts EmitOpts) error {
 
 // reviewerCounts returns how many findings name raised and how many of those were
 // corroborated (the finding carried 2+ distinct reviewers). Solo is the
-// difference, computed by the caller.
+// difference, computed by the caller. The O(reviewers x findings) scan (one pass
+// per reviewer, recomputing distinctCount per match) is intentional: emission is
+// a once-per-reconcile, best-effort path over a handful of reviewers and a
+// diff-bounded finding set, so a single-pass precompute buys no observable speed.
 func reviewerCounts(name string, findings []Finding) (raised, corroborated int) {
 	for _, f := range findings {
 		if !contains(f.Reviewers, name) {
@@ -258,7 +261,16 @@ func verdictTallies(in EmitInput) (verified, refuted map[string]int, present boo
 	verified = map[string]int{}
 	refuted = map[string]int{}
 	for _, vfind := range vf.Findings {
-		revs := reviewersByKey[findingKey(vfind.File, vfind.Line, vfind.Problem)]
+		revs, ok := reviewersByKey[findingKey(vfind.File, vfind.Line, vfind.Problem)]
+		if !ok {
+			// Orphan verdict: a verification finding with no matching raised finding.
+			// The exact (file,line,problem) key is canonical across the pipeline
+			// (findings.json and verification.json derive from the same reconciled
+			// objects), so a miss means real under-counting — warn rather than drop it
+			// silently (mirrors verify's orphan_verdict diagnostic).
+			fmt.Fprintf(os.Stderr, "scorecard: verification finding %s:%d has no matching raised finding; verdict attribution skipped\n", vfind.File, vfind.Line)
+			continue
+		}
 		switch normalizeVerdict(vfind.Verdict) {
 		case verdictConfirmed:
 			for _, r := range revs {
