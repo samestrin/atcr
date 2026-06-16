@@ -109,7 +109,13 @@ func runIDFromReviewDir(arg string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", usageError(fmt.Errorf("no reconciled/summary.json in %s: run 'atcr reconcile' first", arg))
 		}
-		return "", fmt.Errorf("failed to read summary.json in %s: %w", arg, err)
+		// Strip the PathError wrapper (which carries the resolved absolute path)
+		// so only the OS reason is exposed to the user.
+		sanitized := err
+		if inner := errors.Unwrap(err); inner != nil {
+			sanitized = inner
+		}
+		return "", fmt.Errorf("failed to read summary.json in %s: %s", arg, sanitized)
 	}
 	var s struct {
 		ReconciledAt string `json:"reconciled_at"`
@@ -179,13 +185,23 @@ func renderScorecard(w io.Writer, recs []scorecard.Record) error {
 		}
 		_, _ = fmt.Fprintln(tw, row)
 	}
-	_ = tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
 	_, err := w.Write(buf.Bytes())
 	return err
 }
 
-// formatPercent renders a 0..1 rate as a rounded integer percentage ("58%").
+// formatPercent renders a 0..1 rate as a rounded integer percentage ("58%"). The
+// rate is clamped to [0,1] first so a corrupt stored value outside that range
+// renders a sane bound rather than nonsense (e.g. 500%) or a negative percent,
+// matching the export path's clampRate (internal/scorecard/export.go).
 func formatPercent(rate float64) string {
+	if rate < 0 {
+		rate = 0
+	} else if rate > 1 {
+		rate = 1
+	}
 	return fmt.Sprintf("%d%%", int(rate*100+0.5))
 }
 
