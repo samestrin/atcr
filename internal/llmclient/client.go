@@ -61,8 +61,24 @@ type Client struct {
 // Option configures a Client.
 type Option func(*Client)
 
-// WithHTTPClient injects a custom *http.Client (tests point it at httptest).
-func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.httpClient = h } }
+// WithHTTPClient injects a custom *http.Client (tests point it at httptest). The
+// no-redirect guard is re-applied onto the injected client so the
+// Authorization-not-forwarded-on-redirect invariant cannot be bypassed by
+// dependency injection.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			h.CheckRedirect = noRedirect
+		}
+		c.httpClient = h
+	}
+}
+
+// noRedirect blocks redirect following so the Authorization: Bearer header is
+// never forwarded to a redirect target: a 3xx is a hard failure (only 200
+// succeeds). Shared by New() and WithHTTPClient so the invariant holds for both
+// the default and any injected client.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // WithRetry overrides the retry budget and backoff (tests use a tiny base so
 // they do not sleep for real).
@@ -88,9 +104,7 @@ func New(opts ...Option) *Client {
 			// Do not follow redirects: a 3xx is a hard failure (only 200
 			// succeeds), and auto-following would forward the Bearer header to
 			// the redirect target.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			CheckRedirect: noRedirect,
 		},
 		maxRetries:     defaultMaxRetries,
 		initialBackoff: defaultInitialBackoff,
