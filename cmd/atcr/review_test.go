@@ -41,6 +41,26 @@ func TestResolveRedactRoot_LogsWarnOnAbsError(t *testing.T) {
 	require.Contains(t, buf.String(), "path redaction may be incomplete", "a warning must make the silent failure observable")
 }
 
+// TestReviewIDSurvivesRedaction locks the AC9-vs-AC5/6 contract: binding
+// review_id BEFORE the redactor (review.go:162 then :172) stores it in the inner
+// handler, so a correlation key that itself looks secret-shaped (sk-...) is NOT
+// scrubbed and stays greppable by review_id. Guards against a future reorder that
+// would bind review_id on top of the redactor and silently redact it.
+func TestReviewIDSurvivesRedaction(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := log.New("info", "json", &buf)
+	require.NoError(t, err)
+
+	reviewID := "2026-06-17_sk-feature-branch" // a correlation key with an sk--shaped substring
+	logger := log.WithReviewID(base, reviewID)
+	logger = log.WithRedactor(logger, log.NewRedactor("/tmp/repo"))
+
+	logger.Info("review started")
+
+	require.Contains(t, buf.String(), reviewID,
+		"review_id must survive redaction so logs stay greppable by review_id (AC9)")
+}
+
 // slotWithKeys builds a one-slot chain whose agents read the given env vars.
 func slotWithKeys(envs ...string) fanout.Slot {
 	s := fanout.Slot{Primary: fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: envs[0]}}}
