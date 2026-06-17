@@ -870,6 +870,25 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestWithRetry_NegativeMaxRetriesClampedToSingleAttempt(t *testing.T) {
+	// A negative WithRetry budget must not produce a zero-attempt loop that
+	// falls through to "exhausted retries" wrapping a nil cause; it clamps to a
+	// single attempt.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		okResponse(w, "ok")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := New(WithHTTPClient(srv.Client()), WithRetry(-1, time.Millisecond, 1.5))
+	out, err := c.Complete(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", out)
+	assert.Equal(t, int32(1), calls.Load(), "negative maxRetries must clamp to a single attempt")
+}
+
 func TestClampBackoff_BoundsGrowth(t *testing.T) {
 	assert.Equal(t, maxBackoff, clampBackoff(maxBackoff+time.Hour))
 	assert.Equal(t, 5*time.Second, clampBackoff(5*time.Second))
