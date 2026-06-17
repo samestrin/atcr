@@ -43,6 +43,13 @@ type engine struct {
 // writer, or os.Stderr when unset. It mirrors scorecard's own default-to-stderr
 // rule at the MCP construction site so a nil diag never reaches EmitOpts as a
 // surprise (Epic 3.4 AC4).
+//
+// This guard intentionally covers only the plain e.diag==nil case. The typed-nil
+// guard — a non-nil io.Writer wrapping a nil pointer, e.g. (*bytes.Buffer)(nil) —
+// is delegated to scorecard.diagWriter, which re-applies its isNilPointer check
+// downstream before any write. The typed-nil normalization lives in one place
+// (the scorecard package that owns the diagnostics contract) rather than being
+// duplicated at every call site.
 func (e *engine) diagWriter() io.Writer {
 	if e.diag == nil {
 		return os.Stderr
