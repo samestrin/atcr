@@ -870,6 +870,34 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestWithHTTPClient_PreservesNoRedirectGuard(t *testing.T) {
+	// A client injected via WithHTTPClient must still refuse to follow redirects,
+	// so the Authorization: Bearer header is never forwarded to a redirect target.
+	var gotAuthAtTarget atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/target", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			gotAuthAtTarget.Store(true)
+		}
+		okResponse(w, "leaked")
+	})
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/target", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	// srv.Client() follows redirects by default; WithHTTPClient must re-apply the
+	// no-redirect guard onto it.
+	c := New(WithHTTPClient(srv.Client()), WithRetry(0, time.Millisecond, 1.5))
+	_, err := c.Complete(context.Background(), Invocation{
+		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err, "a 302 must be a hard failure, not a followed redirect")
+	assert.False(t, gotAuthAtTarget.Load(), "Authorization must not be forwarded to redirect target")
+}
+
 func TestCompleteWithUsage_EmptyCompletionReturnsError(t *testing.T) {
 	// When both content and reasoning_content are empty, the call must fail
 	// loudly so callers do not propagate an empty review as success.
