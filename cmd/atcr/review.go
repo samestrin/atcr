@@ -245,6 +245,10 @@ var absFn = filepath.Abs
 func resolveRedactRoot(ctx context.Context, root string) string {
 	abs, err := absFn(root)
 	if err != nil {
+		// Fail open (keep redacting with the relative root) but make the silent
+		// loss of path relativization observable instead of swallowing the error.
+		log.FromContext(ctx).Warn("path redaction may be incomplete: could not resolve absolute repo root",
+			"root", root, "error", err)
 		return root
 	}
 	return abs
