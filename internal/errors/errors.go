@@ -26,16 +26,31 @@ const (
 // ClassifiedError wraps an error with a classification and a retryability flag.
 // It implements Error and Unwrap so errors.Is and errors.As reach through the
 // wrapper to the underlying error.
+//
+// Classification contract: an error is classified exactly once, at the point it
+// is first recognized (e.g. the llmclient maps an HTTP status to Transient or
+// Permanent). Constructors are not meant to re-wrap an already-classified
+// error; IsRetryable resolves the OUTERMOST classification (see IsRetryable),
+// so the most recent, most-informed classifier decides. Callers must not
+// escalate an inner Permanent failure by re-wrapping it as Transient.
 type ClassifiedError struct {
 	Err            error
 	Classification Classification
 	Retryable      bool
 }
 
-// Error delegates to the underlying error's message.
-func (e *ClassifiedError) Error() string { return e.Err.Error() }
+// Error delegates to the underlying error's message. It tolerates a nil Err
+// (possible only via direct struct construction, not the constructors) by
+// falling back to the classification label instead of panicking.
+func (e *ClassifiedError) Error() string {
+	if e.Err == nil {
+		return string(e.Classification)
+	}
+	return e.Err.Error()
+}
 
 // Unwrap returns the underlying error so errors.Is / errors.As can traverse it.
+// A nil Err simply terminates the chain.
 func (e *ClassifiedError) Unwrap() error { return e.Err }
 
 // NewTransient wraps err as a transient, retryable error. It returns nil when
@@ -73,8 +88,11 @@ func NewSystemError(err error) error {
 }
 
 // IsRetryable reports whether err carries a transient classification. It finds
-// the outermost *ClassifiedError in the chain via errors.As and returns its
-// Retryable field; it returns false when no ClassifiedError is present.
+// the OUTERMOST *ClassifiedError in the chain via errors.As and returns its
+// Retryable field; it returns false when no ClassifiedError is present. The
+// outermost wrapper wins by design: each error is classified once, and the
+// most recent classifier is the most informed (see ClassifiedError). Do not
+// re-wrap a Permanent error as Transient — that would forge retryability.
 func IsRetryable(err error) bool {
 	var ce *ClassifiedError
 	if errors.As(err, &ce) {
