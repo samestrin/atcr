@@ -53,6 +53,16 @@ func TestRedact_SKKey(t *testing.T) {
 	}
 }
 
+func TestRedact_SKKeyCaseInsensitive(t *testing.T) {
+	r := NewRedactor("")
+	for _, in := range []string{"SK-ABCdef123456", "Sk-mixedCase789"} {
+		out := r.Redact("token " + in + " here")
+		if strings.Contains(out, in) {
+			t.Fatalf("case-variant sk key leaked: %q", out)
+		}
+	}
+}
+
 // Mirrors TestComplete_ErrorBodyRedactsForeignBearerAndSKTokens in llmclient:
 // a foreign bearer token and an sk- key in the same message are both scrubbed
 // even when neither is the configured secret.

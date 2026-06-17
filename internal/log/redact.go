@@ -14,7 +14,7 @@ import (
 // safe; never recompiled per Redact call).
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
-	skKeyPattern       = regexp.MustCompile(`sk-\S+`)
+	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
 )
 
 // Redactor scrubs secrets and absolute paths from log messages before they are
@@ -76,5 +76,5 @@ func relativizePaths(s, root string) string {
 	if clean == "" || clean == "." || clean == string(filepath.Separator) {
 		return s
 	}
-	return strings.ReplaceAll(s, clean+"/", "")
+	return strings.ReplaceAll(s, clean+string(filepath.Separator), "")
 }
