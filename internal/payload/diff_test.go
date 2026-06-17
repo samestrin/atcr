@@ -3,6 +3,7 @@ package payload
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -148,4 +149,17 @@ func TestGitRunner_NilLogger_NoPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		logger.Info("nil-logger fallback", "file", "x.go")
 	}, "discard fallback must not panic")
+}
+
+// TestGitRunner_NilLogger_NoAlloc verifies the discard fallback returns the
+// shared singleton with zero allocations, rather than constructing a fresh
+// discard logger on every call (which log() is invoked per-file in blocks mode).
+func TestGitRunner_NilLogger_NoAlloc(t *testing.T) {
+	g := &gitRunner{ctx: context.Background(), dir: t.TempDir()}
+	var sink *slog.Logger
+	allocs := testing.AllocsPerRun(100, func() {
+		sink = g.log()
+	})
+	_ = sink
+	assert.Zero(t, allocs, "log() must not allocate on the discard path")
 }

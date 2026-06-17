@@ -115,6 +115,20 @@ func TestEngine_NilLogger_ReturnsDiscard(t *testing.T) {
 	assert.NotPanics(t, func() { got.Info("no logger injected") }, "discard fallback must not panic")
 }
 
+// TestEngine_NilLogger_NoAlloc verifies the discard fallback returns the shared
+// singleton with zero allocations, rather than constructing a fresh discard
+// logger on every call (logger() is invoked once per agent in invokeAgent).
+func TestEngine_NilLogger_NoAlloc(t *testing.T) {
+	// No t.Parallel(): testing.AllocsPerRun panics if called during a parallel test.
+	e := NewEngine(newFake())
+	var sink *slog.Logger
+	allocs := testing.AllocsPerRun(100, func() {
+		sink = e.logger()
+	})
+	_ = sink
+	assert.Zero(t, allocs, "logger() must not allocate on the discard path")
+}
+
 // TestInvokeAgent_AttachesAgentName verifies AC10: every log line emitted while
 // an agent runs carries agent_name. The per-agent logger is scoped via
 // log.WithAgent before the invocation and threaded through ctx.
