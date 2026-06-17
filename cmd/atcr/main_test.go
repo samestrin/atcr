@@ -157,6 +157,23 @@ func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
 	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
 }
 
+// TestSetupLogger_RedactsSecrets verifies the root logger constructed in
+// setupLogger scrubs secret-shaped tokens (AC5) at the single construction point,
+// so EVERY command (CLI, serve, MCP) inherits one already-redacted logger.
+func TestSetupLogger_RedactsSecrets(t *testing.T) {
+	var buf bytes.Buffer
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	root.SetErr(&buf)
+	require.NoError(t, setupLogger(root))
+
+	log.FromContext(root.Context()).Info("token leak", "key", "sk-secret123")
+
+	out := buf.String()
+	require.NotContains(t, out, "sk-secret123", "secret-shaped token must be scrubbed at the root logger (AC5)")
+	require.Contains(t, out, "[redacted]")
+}
+
 // TestPersistentPreRunE_ValidLevelAndFormat verifies setupLogger constructs a
 // logger and stores it in the command context (replacing the discard fallback).
 func TestPersistentPreRunE_ValidLevelAndFormat(t *testing.T) {
