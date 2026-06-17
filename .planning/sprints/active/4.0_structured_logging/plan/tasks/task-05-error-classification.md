@@ -66,17 +66,17 @@ Create `internal/errors/errors.go` — a standalone package providing a `Classif
 
 ## Success Criteria
 
-- [ ] `ClassifiedError` implements `Error()` and `Unwrap()`
-- [ ] `NewTransient`, `NewPermanent`, `NewUserError`, `NewSystemError` constructors exist
-- [ ] `IsRetryable` returns `true` for `Transient`, `false` for `Permanent`/`UserError`/`SystemError`
-- [ ] `errors.As` and `errors.Is` reach through `ClassifiedError` to underlying error
-- [ ] Classification constants have correct string values (`"transient"`, `"permanent"`, `"user_error"`, `"system_error"`)
-- [ ] Constructors return `nil` when passed a `nil` error
-- [ ] All tests pass (`go test ./internal/errors/...`)
+- [x] `ClassifiedError` implements `Error()` and `Unwrap()`
+- [x] `NewTransient`, `NewPermanent`, `NewUserError`, `NewSystemError` constructors exist
+- [x] `IsRetryable` returns `true` for `Transient`, `false` for `Permanent`/`UserError`/`SystemError`
+- [x] `errors.As` and `errors.Is` reach through `ClassifiedError` to underlying error
+- [x] Classification constants have correct string values (`"transient"`, `"permanent"`, `"user_error"`, `"system_error"`)
+- [x] Constructors return `nil` when passed a `nil` error
+- [x] All tests pass (`go test ./internal/errors/...`)
 
 ## Manual Code Review
 
-- [ ] Codebase has been reviewed
+- [x] Codebase has been reviewed
 
 ## Test Strategy
 
@@ -113,9 +113,9 @@ Create `internal/errors/errors.go` — a standalone package providing a `Classif
 
 ## Definition of Done
 
-- [ ] `internal/errors/errors.go` exists with `Classification` type, four constants, `ClassifiedError` struct, four constructors, `IsRetryable` function
-- [ ] `internal/errors/errors_test.go` exists with full coverage of all success criteria
-- [ ] All tests pass: `go test ./internal/errors/...`
-- [ ] `go vet ./internal/errors/...` passes with no warnings
-- [ ] No imports of other `internal/` packages (standalone)
-- [ ] Code compiles with no unused imports or variables
+- [x] `internal/errors/errors.go` exists with `Classification` type, four constants, `ClassifiedError` struct, four constructors, `IsRetryable` function
+- [x] `internal/errors/errors_test.go` exists with full coverage of all success criteria
+- [x] All tests pass: `go test ./internal/errors/...`
+- [x] `go vet ./internal/errors/...` passes with no warnings
+- [x] No imports of other `internal/` packages (standalone)
+- [x] Code compiles with no unused imports or variables
