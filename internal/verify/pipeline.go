@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,11 +26,18 @@ import (
 // aggregateVerdicts applies (Epic 3.0 / AC 04-01 Scenario 3).
 const thoroughVotes = 3
 
-// logPipelineWarning emits a single structured stderr line for pipeline-level
-// warnings (prior load failures, key mismatches). Mirrors logSkepticFailure's
-// pattern so all verify-stage logs follow a consistent format.
-func logPipelineWarning(class, detail string) {
-	fmt.Fprintf(os.Stderr, "atcr: verify: class=%s: %s\n", class, detail)
+// logPipelineWarning emits a pipeline-level warning (prior load failures, key
+// mismatches) through the context logger, so verify-stage diagnostics share the
+// single internal/log sink and honor LOG_LEVEL/--log-format instead of writing
+// raw to os.Stderr. The class goes to Warn (visible at the default level); the
+// detail can carry path-bearing context (e.g. a finding's File:Line) and is held
+// to Debug so it does not leak at the default level — mirroring logSkepticFailure's
+// path-at-debug discipline. Newlines in detail are flattened so a crafted value
+// cannot forge an extra log line.
+func logPipelineWarning(logger *slog.Logger, class, detail string) {
+	detail = strings.ReplaceAll(detail, "\n", " ")
+	logger.Warn("pipeline warning", "class", class)
+	logger.Debug("pipeline warning detail", "class", class, "detail", detail)
 }
 
 // Options are the verify-stage run controls, set from CLI flags or MCP args.
@@ -158,7 +166,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if needTool {
 		c, d, cleanup, herr := newHarness()
 		if herr != nil {
-			fmt.Fprintln(os.Stderr, "atcr: verify: tool harness unavailable; skeptics degrade to unverifiable")
+			log.FromContext(ctx).Warn("tool harness unavailable; skeptics degrade to unverifiable")
 		} else {
 			cc = c
 			disp = d
@@ -244,7 +252,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		prior, perr := ReadVerificationResults(reviewDir)
 		if perr != nil {
 			priorLoadFailed = true
-			logPipelineWarning("prior_unreadable", fmt.Sprintf("skip-path metadata not carried forward: %v", perr))
+			logPipelineWarning(log.FromContext(ctx), "prior_unreadable", fmt.Sprintf("skip-path metadata not carried forward: %v", perr))
 			return nil
 		}
 		priorByKey = make(map[FindingKey]VerificationResult, len(prior))
@@ -304,7 +312,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// should never fire — but a future merge-text change would make it visible.
 	for key := range rich {
 		if !matched[key] {
-			logPipelineWarning("orphan_verdict", fmt.Sprintf("%s:%d matched no finding (dropped)", key.File, key.Line))
+			logPipelineWarning(log.FromContext(ctx), "orphan_verdict", fmt.Sprintf("%s:%d matched no finding (dropped)", key.File, key.Line))
 		}
 	}
 
