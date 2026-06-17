@@ -1,14 +1,17 @@
 package verify
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -105,6 +108,27 @@ func TestInvokeSkeptic_ProviderError(t *testing.T) {
 	assert.Equal(t, verdictUnverifiable, v.Verdict)
 	assert.Equal(t, "skeptic-1", v.Skeptic)
 	assert.Contains(t, v.Notes, "rate limit exceeded")
+}
+
+// TestInvokeSkeptic_UsesLogger verifies invokeSkeptic routes a skeptic failure
+// through the injected context logger (not os.Stderr): the failure summary is
+// emitted at Warn with the skeptic name and class, observable in the buffer.
+func TestInvokeSkeptic_UsesLogger(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
+	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
+	require.NoError(t, err)
+	require.Equal(t, verdictUnverifiable, v.Verdict)
+
+	out := buf.String()
+	assert.Contains(t, out, "skeptic failed",
+		"a skeptic failure must be logged through the injected context logger")
+	assert.Contains(t, out, "skeptic=skeptic-1")
+	assert.Contains(t, out, "class=provider_error")
 }
 
 func TestInvokeSkeptic_ContextCancelled(t *testing.T) {

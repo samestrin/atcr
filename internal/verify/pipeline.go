@@ -13,6 +13,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -434,7 +435,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 			// none can occur here, but log it so the impossible case is visible if it
 			// ever fires, then synthesize an unverifiable verdict rather than dropping
 			// the finding.
-			logSkepticFailure(sk.Name, "programming_fault", ierr.Error())
+			logSkepticFailure(log.FromContext(ctx), sk.Name, "programming_fault", ierr.Error())
 			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
 			tripped = []string{}
 		}

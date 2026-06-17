@@ -1,10 +1,12 @@
 package verify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -706,25 +709,21 @@ func TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings(t *testing.T) {
 }
 
 // TestLogSkepticFailure_SanitizesNewlines verifies that a newline embedded in
-// detail does not forge a second atcr: verify: log line (log injection).
+// detail does not forge an extra log line (log injection). With the migration to
+// the injected logger, the Warn summary and the Debug detail are the only two
+// records emitted at debug level; the sanitized detail must not produce a third.
 func TestLogSkepticFailure_SanitizesNewlines(t *testing.T) {
-	// Not parallel: modifies the global os.Stderr.
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	orig := os.Stderr
-	os.Stderr = w
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	logSkepticFailure("sk", "class", "line1\natcr: verify: injected")
-
-	_ = w.Close()
-	os.Stderr = orig
-
-	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
+	logSkepticFailure(logger, "sk", "class", "line1\natcr: verify: injected")
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	require.Len(t, lines, 1, "newline in detail must not forge a second log line")
-	assert.Contains(t, lines[0], "sk")
+	require.Len(t, lines, 2, "newline in detail must not forge extra log lines (warn + debug only)")
+	for _, ln := range lines {
+		assert.Contains(t, ln, "skeptic=sk")
+	}
 }
 
 // TestRunVerify_CancelledContextSkipsCompleter verifies that a pre-cancelled
@@ -780,32 +779,26 @@ func TestWinningAttribution_MismatchedSlicesNoPanic(t *testing.T) {
 
 // TestVerifyFinding_ProgrammingFaultLogged verifies that when invokeSkeptic
 // returns a programming-fault error (here: a nil ChatCompleter), verifyFinding
-// emits a structured stderr log line so the impossible nil-ctx/cc/disp case is
-// visible if it ever fires, rather than silently becoming an ordinary
-// unverifiable record indistinguishable from a real budget trip.
+// emits a structured log line through the injected context logger so the
+// impossible nil-ctx/cc/disp case is visible if it ever fires, rather than
+// silently becoming an ordinary unverifiable record indistinguishable from a
+// real budget trip.
 func TestVerifyFinding_ProgrammingFaultLogged(t *testing.T) {
-	// Not parallel: swaps the global os.Stderr.
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	orig := os.Stderr
-	os.Stderr = w
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
 
 	// cc=nil with a non-nil dispatcher and an eligible skeptic drives invokeSkeptic
 	// into its nil-ChatCompleter programming-fault return inside the vote loop.
-	_, vr := verifyFinding(context.Background(),
+	_, vr := verifyFinding(ctx,
 		reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"},
 		[]Skeptic{testSkeptic()}, nil, okDispatcher())
 
-	_ = w.Close()
-	os.Stderr = orig
-
-	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
 	out := buf.String()
-
 	assert.Equal(t, "unverifiable", vr.Verdict, "a programming fault still yields an unverifiable verdict")
 	assert.Contains(t, out, "class=programming_fault",
-		"a programming fault must emit a structured stderr log line")
+		"a programming fault must emit a structured log line")
 }
 
 // TestRunVerify_MultiSkepticNonFCDegradeParticipates exercises the single-shot

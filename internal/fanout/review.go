@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
@@ -286,7 +287,10 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// unless a snapshot actually runs and succeeds below; stamped onto the review
 	// stage after fan-out.
 	var snapMode, snapHeadSHA, snapWorktreePath string
-	opts := []EngineOption{WithMaxParallel(p.MaxParallel)}
+	// Seed the engine with the review_id-correlated context logger so every agent
+	// log line is greppable by review (AC9 + AC10 together once invokeAgent adds
+	// agent_name). FromContext returns a never-nil discard logger if none is set.
+	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
 			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
