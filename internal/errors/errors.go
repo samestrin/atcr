@@ -5,6 +5,10 @@
 // a Classification label and a Retryable flag while preserving the errors.Is /
 // errors.As chain via Unwrap, so callers and tests that match the underlying
 // error keep working. The package depends only on the standard library.
+//
+// All New* constructors return a true nil interface for nil input (never a
+// non-nil interface wrapping a nil concrete value), so callers can pass a
+// possibly-nil error through them without tripping the Go nil-interface trap.
 package errors
 
 import "errors"
