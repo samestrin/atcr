@@ -77,7 +77,7 @@ Required environment variables for running/testing:
 |----------|-------------|----------|
 | `GEMINI_API_KEY` | Gemini API Key for running Agent reviews | Yes |
 | `GITHUB_TOKEN` | GitHub Token for pull request integration | Optional |
-| `LOG_LEVEL` | Log verbosity (debug, info, warn, error) | Optional |
+| `LOG_LEVEL` | Log verbosity (debug, info, warn, error; default info). Implemented — see `docs/logging.md`. | Optional |
 
 ---
 

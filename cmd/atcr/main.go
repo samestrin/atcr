@@ -74,9 +74,16 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // errors bubble up to main() for centralized exit-code mapping.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "atcr",
-		Short:         "Agent Team Code Review — a review panel, not a reviewer",
-		Long:          "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\nthen deterministically reconciles their findings into a single deduplicated,\nconfidence-scored deliverable.",
+		Use:   "atcr",
+		Short: "Agent Team Code Review — a review panel, not a reviewer",
+		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
+			"then deterministically reconciles their findings into a single deduplicated,\n" +
+			"confidence-scored deliverable.\n\n" +
+			"Logging:\n" +
+			"  LOG_LEVEL      environment variable: debug, info, warn, error (default info).\n" +
+			"                 Set LOG_LEVEL=debug to diagnose a failing review.\n" +
+			"  --log-format   log output format: text or json (default text).\n" +
+			"                 Use json for machine-readable, newline-delimited logs in CI.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// An unknown subcommand is a usage error (exit 2), not the generic
