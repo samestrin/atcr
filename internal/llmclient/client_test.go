@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -714,10 +715,19 @@ func TestChat_TokensFromUsage(t *testing.T) {
 	assert.Equal(t, 1500, resp.Usage.CompletionTokens)
 }
 
-func TestClampNonNegative_OverflowReturnsZero(t *testing.T) {
+func TestClampNonNegative_OverflowClampsToMaxInt(t *testing.T) {
 	// 1e20 is a valid finite float64 but exceeds math.MaxInt; int(v) without
 	// a cap overflows to implementation-defined garbage (typically MinInt64).
-	assert.Equal(t, 0, clampNonNegative(json.Number("1e20")))
+	// A genuinely large but valid count must clamp to the ceiling, not collapse
+	// to 0 (which would mask a real request as free).
+	assert.Equal(t, math.MaxInt, clampNonNegative(json.Number("1e20")))
+}
+
+func TestClampNonNegative_LargeValidCountPreserved(t *testing.T) {
+	// 1e16 is above the old >1e15 guard yet well within int64 range; it must pass
+	// through, not be discarded. The previous guard returned 0 for in-range counts,
+	// reporting a real token count as zero (a free request) instead of preserving it.
+	assert.Equal(t, 10_000_000_000_000_000, clampNonNegative(json.Number("1e16")))
 }
 
 func TestClampNonNegative_InfReturnsZero(t *testing.T) {
