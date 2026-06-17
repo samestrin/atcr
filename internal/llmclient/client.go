@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -268,7 +269,7 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 			delay = time.Duration(float64(delay) * c.backoffFactor)
 		}
 
-		payload, status, err := c.attempt(ctx, endpoint, key, body)
+		payload, status, retryAfter, err := c.attempt(ctx, endpoint, key, body)
 		switch {
 		case status == 0:
 			// Context cancellation/deadline must return immediately so timeout
@@ -294,6 +295,11 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 		case retryableStatus[status]:
 			lastErr = httpStatusError(status, string(payload))
 			if attempt < c.maxRetries {
+				// Honor a server-advertised cooldown (Retry-After) over the fixed
+				// backoff when present; otherwise keep the exponential schedule.
+				if retryAfter > 0 {
+					delay = retryAfter
+				}
 				continue
 			}
 			// Last attempt still retryable (429/5xx): report the exhausted budget as
@@ -377,19 +383,21 @@ func readErrorSnippet(r io.Reader) string {
 
 // attempt performs a single request. On 200 it returns the raw (bounded)
 // response body for the caller to decode; on non-200 it returns a sanitized
-// error-body snippet (as bytes). status is 0 on a transport error. A 200 whose
-// body exceeds the size cap returns the size error with status 200.
-func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, error) {
+// error-body snippet (as bytes). status is 0 on a transport error. The returned
+// duration is the server-advertised Retry-After cooldown for a retryable
+// status (0 when absent/malformed). A 200 whose body exceeds the size cap
+// returns the size error with status 200.
+func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, 0, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("request failed: %w", err)
+		return nil, 0, 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -398,7 +406,7 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
 		snippet := redactErrorSnippet(readErrorSnippet(resp.Body), key)
-		return []byte(snippet), resp.StatusCode, nil
+		return []byte(snippet), resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), nil
 	}
 
 	// N is cap+1 so crossing the cap is distinguishable from a body that is
@@ -407,12 +415,35 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 	limited := &io.LimitedReader{R: resp.Body, N: maxResponseBodyBytes + 1}
 	raw, rerr := io.ReadAll(limited)
 	if rerr != nil {
-		return nil, resp.StatusCode, fmt.Errorf("reading response: %w", rerr)
+		return nil, resp.StatusCode, 0, fmt.Errorf("reading response: %w", rerr)
 	}
 	if limited.N <= 0 {
-		return nil, resp.StatusCode, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
+		return nil, resp.StatusCode, 0, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
 	}
-	return raw, resp.StatusCode, nil
+	return raw, resp.StatusCode, 0, nil
+}
+
+// parseRetryAfter interprets a Retry-After header value per RFC 7231: either
+// delta-seconds (a non-negative integer) or an HTTP-date. It returns the
+// indicated delay, or 0 when the header is absent, malformed, non-positive, or
+// in the past — in which case the caller falls back to its own backoff.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // sleepCtx waits for d or until ctx is cancelled, whichever comes first.

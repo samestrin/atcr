@@ -870,6 +870,37 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestParseRetryAfter(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{"delta-seconds", "5", 5 * time.Second},
+		{"zero", "0", 0},
+		{"negative", "-3", 0},
+		{"empty", "", 0},
+		{"garbage", "soon", 0},
+		{"whitespace-padded", "  2 ", 2 * time.Second},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, parseRetryAfter(c.value))
+		})
+	}
+}
+
+func TestParseRetryAfter_HTTPDate(t *testing.T) {
+	// An HTTP-date in the future yields a positive delay; a past date yields 0.
+	future := time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)
+	got := parseRetryAfter(future)
+	assert.Greater(t, got, time.Duration(0))
+	assert.LessOrEqual(t, got, 30*time.Second)
+
+	past := time.Now().Add(-30 * time.Second).UTC().Format(http.TimeFormat)
+	assert.Equal(t, time.Duration(0), parseRetryAfter(past))
+}
+
 func TestComplete_HonorsRetryAfterHeader(t *testing.T) {
 	// A 429 advertising Retry-After must override the (tiny) fixed backoff: the
 	// client must wait at least the advertised cooldown before retrying.
