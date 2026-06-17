@@ -58,6 +58,20 @@ func TestLevelFromString_InvalidReturnsError(t *testing.T) {
 	}
 }
 
+// TestLevelFromString_InvalidErrorBoundsEchoedInput verifies an oversized
+// (externally influenceable) LOG_LEVEL is not echoed verbatim into the error:
+// the message bounds the echoed input so a hostile value cannot flood stderr.
+func TestLevelFromString_InvalidErrorBoundsEchoedInput(t *testing.T) {
+	long := strings.Repeat("x", 500)
+	_, err := LevelFromString(long)
+	if err == nil {
+		t.Fatal("LevelFromString(long) expected error, got nil")
+	}
+	if strings.Contains(err.Error(), long) {
+		t.Fatalf("error echoed the full unbounded input (len %d); want it bounded: %q", len(long), err.Error())
+	}
+}
+
 func TestNew_TextFormat(t *testing.T) {
 	var buf bytes.Buffer
 	logger, err := New("info", "text", &buf)
