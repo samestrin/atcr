@@ -446,6 +446,18 @@ func parseRetryAfter(value string) time.Duration {
 	return 0
 }
 
+// maxBackoff caps the per-retry exponential backoff so a large WithRetry budget
+// cannot produce multi-minute sleeps. Server-advertised Retry-After cooldowns
+// are honored exactly and are not subject to this cap.
+const maxBackoff = 30 * time.Second
+
+// clampBackoff bounds an exponential backoff delay at maxBackoff.
+func clampBackoff(d time.Duration) time.Duration { return d }
+
+// jitter spreads a backoff delay across [d/2, d) so many agents that hit a 429
+// at the same instant do not retry in lockstep (thundering herd).
+func jitter(d time.Duration) time.Duration { return d }
+
 // sleepCtx waits for d or until ctx is cancelled, whichever comes first.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)

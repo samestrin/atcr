@@ -870,6 +870,20 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestClampBackoff_BoundsGrowth(t *testing.T) {
+	assert.Equal(t, maxBackoff, clampBackoff(maxBackoff+time.Hour))
+	assert.Equal(t, 5*time.Second, clampBackoff(5*time.Second))
+}
+
+func TestJitter_BoundedBelowFull(t *testing.T) {
+	d := 100 * time.Millisecond
+	for i := 0; i < 200; i++ {
+		j := jitter(d)
+		assert.GreaterOrEqual(t, j, d/2)
+		assert.Less(t, j, d)
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	cases := []struct {
 		name  string
