@@ -13,7 +13,7 @@ import (
 // redaction sites stay consistent. Compiled once at package level (concurrent
 // safe; never recompiled per Redact call).
 var (
-	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
+	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer(?:\s+|%20)\S+`)
 	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
 )
 
