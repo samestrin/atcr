@@ -36,8 +36,8 @@ func TestServeCmd_Registered(t *testing.T) {
 func TestServeCmd_UsesContextLogger(t *testing.T) {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
-	defer r.Close()
-	defer w.Close()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
 	oldStdin := os.Stdin
 	os.Stdin = r
 	defer func() { os.Stdin = oldStdin }()
