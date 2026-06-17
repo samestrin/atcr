@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -83,6 +84,40 @@ func TestNew_InvalidFormatBoundsEchoedInput(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), long) {
 		t.Fatalf("error echoed the full unbounded format (len %d); want it bounded: %q", len(long), err.Error())
+	}
+}
+
+// TestLevelFromString_InvalidIsErrInvalidLevel verifies callers can branch on
+// the error programmatically via errors.Is, distinguishing an invalid level from
+// an invalid format.
+func TestLevelFromString_InvalidIsErrInvalidLevel(t *testing.T) {
+	_, err := LevelFromString("verbose")
+	if !errors.Is(err, ErrInvalidLevel) {
+		t.Fatalf("invalid level should wrap ErrInvalidLevel, got: %v", err)
+	}
+	if errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("invalid level must not match ErrInvalidFormat: %v", err)
+	}
+}
+
+// TestNew_InvalidFormatIsErrInvalidFormat verifies New's invalid-format error
+// wraps the ErrInvalidFormat sentinel for programmatic branching.
+func TestNew_InvalidFormatIsErrInvalidFormat(t *testing.T) {
+	_, err := New("info", "xml", io.Discard)
+	if !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("invalid format should wrap ErrInvalidFormat, got: %v", err)
+	}
+	if errors.Is(err, ErrInvalidLevel) {
+		t.Fatalf("invalid format must not match ErrInvalidLevel: %v", err)
+	}
+}
+
+// TestNew_InvalidLevelPropagatesErrInvalidLevel verifies New surfaces the
+// underlying ErrInvalidLevel when the level (not the format) is the bad input.
+func TestNew_InvalidLevelPropagatesErrInvalidLevel(t *testing.T) {
+	_, err := New("loud", "text", io.Discard)
+	if !errors.Is(err, ErrInvalidLevel) {
+		t.Fatalf("New with invalid level should wrap ErrInvalidLevel, got: %v", err)
 	}
 }
 

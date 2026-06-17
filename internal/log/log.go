@@ -7,10 +7,19 @@ package log
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
+)
+
+// ErrInvalidLevel and ErrInvalidFormat are sentinels wrapped by the errors that
+// LevelFromString and New return on bad input, so callers can branch on the
+// failure cause via errors.Is rather than matching on message strings.
+var (
+	ErrInvalidLevel  = errors.New("log: invalid level")
+	ErrInvalidFormat = errors.New("log: invalid format")
 )
 
 // discardLogger is a shared no-op logger returned whenever no logger is
