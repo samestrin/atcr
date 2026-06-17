@@ -72,6 +72,20 @@ func TestLevelFromString_InvalidErrorBoundsEchoedInput(t *testing.T) {
 	}
 }
 
+// TestNew_InvalidFormatBoundsEchoedInput verifies an oversized --log-format
+// value is not echoed verbatim into the error (parity with the LOG_LEVEL cap):
+// a hostile value cannot flood stderr.
+func TestNew_InvalidFormatBoundsEchoedInput(t *testing.T) {
+	long := strings.Repeat("y", 500)
+	_, err := New("info", long, io.Discard)
+	if err == nil {
+		t.Fatal("New with oversized invalid format expected error, got nil")
+	}
+	if strings.Contains(err.Error(), long) {
+		t.Fatalf("error echoed the full unbounded format (len %d); want it bounded: %q", len(long), err.Error())
+	}
+}
+
 func TestNew_TextFormat(t *testing.T) {
 	var buf bytes.Buffer
 	logger, err := New("info", "text", &buf)
