@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	atcrerrors "github.com/samestrin/atcr/internal/errors"
 )
 
 // Default retry/backoff tuning. The base delay and 1.5x factor are chosen so
@@ -280,7 +282,9 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 			if attempt < c.maxRetries {
 				continue
 			}
-			return nil, fmt.Errorf("exhausted retries: %w", lastErr)
+			// Transport-level exhaustion (connection reset, EOF, DNS) is transient:
+			// the same class as a 5xx, so callers can retry at a higher layer (AC11).
+			return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 		case status == http.StatusOK:
 			// A 200 with an unreadable/oversized body is a hard failure, not a retry.
 			if err != nil {
@@ -292,16 +296,22 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 			if attempt < c.maxRetries {
 				continue
 			}
-			// Last attempt still retryable: report the exhausted budget.
-			return nil, fmt.Errorf("exhausted retries: %w", lastErr)
+			// Last attempt still retryable (429/5xx): report the exhausted budget as
+			// transient. The wrapped *HTTPStatusError stays errors.As-reachable
+			// through ClassifiedError.Unwrap → the exhausted-retries wrapper (AC11).
+			return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 		default:
 			if err != nil {
 				return nil, err
 			}
-			return nil, httpStatusError(status, string(payload))
+			// Non-retryable status (401/403/404/...): a permanent failure. Wrapping
+			// preserves errors.As reachability to *HTTPStatusError (AC11, AC12).
+			return nil, atcrerrors.NewPermanent(httpStatusError(status, string(payload)))
 		}
 	}
-	return nil, fmt.Errorf("exhausted retries: %w", lastErr)
+	// Defensive loop-exit fallback (the switch always returns or continues): the
+	// budget is exhausted, so classify transient like the other exhaustion paths.
+	return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 }
 
 // HTTPStatusError is a non-2xx provider response surfaced to callers so they

@@ -15,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	atcrerrors "github.com/samestrin/atcr/internal/errors"
 )
 
 const testKey = "sk-secret-value-123"
@@ -472,6 +474,131 @@ func TestComplete_HTTPStatusErrorSurfacedThroughExhaustedRetries(t *testing.T) {
 	var se *HTTPStatusError
 	require.True(t, errors.As(err, &se), "errors.As must unwrap through the exhausted-retries wrapper")
 	assert.Equal(t, http.StatusServiceUnavailable, se.Status)
+}
+
+// --- Epic 4.0 Phase 4.3: ClassifiedError taxonomy (AC11, AC12) ---
+
+// TestComplete_TransientError_IsRetryable verifies a 503 exhausted through the
+// retry budget is classified Transient so IsRetryable returns true (AC11, AC12).
+func TestComplete_TransientError_IsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream down"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.True(t, atcrerrors.IsRetryable(err), "exhausted 503 must classify as retryable transient")
+}
+
+// TestComplete_PermanentError_NotRetryable verifies a 404 is classified
+// Permanent so IsRetryable returns false (AC11, AC12).
+func TestComplete_PermanentError_NotRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.False(t, atcrerrors.IsRetryable(err), "404 permanent must not be retryable")
+}
+
+// TestComplete_TransientError_ErrorsAsHTTPStatusError verifies the ClassifiedError
+// transient wrapper does not break errors.As reachability to *HTTPStatusError
+// through the exhausted-retries wrapper (AC11).
+func TestComplete_TransientError_ErrorsAsHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream down"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+
+	var se *HTTPStatusError
+	require.True(t, errors.As(err, &se), "errors.As must reach *HTTPStatusError through the ClassifiedError wrapper")
+	assert.Equal(t, http.StatusServiceUnavailable, se.Status)
+}
+
+// TestComplete_PermanentError_ErrorsAsHTTPStatusError verifies the ClassifiedError
+// permanent wrapper keeps *HTTPStatusError errors.As-reachable (AC11, AC12).
+func TestComplete_PermanentError_ErrorsAsHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+
+	var se *HTTPStatusError
+	require.True(t, errors.As(err, &se), "errors.As must reach *HTTPStatusError through the ClassifiedError wrapper")
+	assert.Equal(t, http.StatusNotFound, se.Status)
+}
+
+// TestComplete_TransportError_IsRetryable verifies a transport-level failure
+// (connection dropped on every attempt) exhausts the budget and classifies as
+// transient (AC11, AC12).
+func TestComplete_TransportError_IsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Drop the connection mid-exchange on every attempt so the client only
+		// ever sees a transport-level error, never an HTTP status.
+		hj, ok := w.(http.Hijacker)
+		require.True(t, ok, "test server must support hijacking")
+		conn, _, err := hj.Hijack()
+		require.NoError(t, err)
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	assert.True(t, atcrerrors.IsRetryable(err), "exhausted transport failure must classify as retryable transient")
+}
+
+// TestComplete_ContextDeadline_NotWrapped verifies a context deadline is its own
+// sentinel: it is NOT wrapped in ClassifiedError (so errors.Is still reaches
+// context.DeadlineExceeded and IsRetryable does not misclassify it as transient).
+func TestComplete_ContextDeadline_NotWrapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		okResponse(w, "too slow")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := fastRetry(srv.Client()).Complete(ctx, Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "deadline sentinel must remain reachable")
+
+	var ce *atcrerrors.ClassifiedError
+	assert.False(t, errors.As(err, &ce), "context deadline must not be wrapped in ClassifiedError")
+	assert.False(t, atcrerrors.IsRetryable(err), "an unwrapped deadline is not a transient classification")
 }
 
 func TestComplete_MaxTokensIncludedWhenSet(t *testing.T) {
