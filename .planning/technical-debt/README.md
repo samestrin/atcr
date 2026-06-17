@@ -7,12 +7,12 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 0 | 0 |
+| HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 13 | 0 |
 | LOW | 0 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-16 | **Open Items:** 0 | **Deferred Items:** 26 | **Resolved Items:** 0 | **Total Items:** 26
+**Last Modified:** 2026-06-17 | **Open Items:** 0 | **Deferred Items:** 27 | **Resolved Items:** 0 | **Total Items:** 27
 
 ## Directory Structure
 
@@ -33,6 +33,12 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-17] From Sprint: 4.0_structured_logging
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 1 | [/] | HIGH | cmd/atcr/review.go:172 | Both review entry points call `NewRedactor(root)` with ZERO configured secrets — cmd/atcr/review.go:172 and internal/mcp/handlers.go:87 pass only the path root, never the registry API keys. The exact-value secret-scrubbing loop in Redact is therefore dead in production; redaction relies entirely on the `sk-`/`Bearer` regexes, which miss raw provider keys that lack those prefixes (Google `AIzaSy...`, Azure `api-key`, JWTs `eyJ...`). The AC5 "no API key in log output" guarantee holds only for sk-/Bearer-shaped keys; the passing integration test likely uses an sk- key, masking the gap. (Deferred: Epic Plan 4.9 secret-value-redaction) | Thread resolved registry API key values into `NewRedactor(root, keys...)` at both review.go:172 and handlers.go:87 (keys are discoverable from prep.Slots / cfg.Registry). Add an integration test using a non-sk-shaped key (e.g. `AIzaSy...`) asserting it is redacted. | security | 120 | code-review | claude | MEDIUM |
 
 ### [2026-06-16] From Sprint: 3.5_severity-rank-consolidation
 

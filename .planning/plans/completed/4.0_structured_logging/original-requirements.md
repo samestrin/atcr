@@ -1,0 +1,261 @@
+# Original Requirements
+
+**Date:** 2026-06-16
+**Arguments:** @.planning/epics/active/4.0_structured_logging.md
+**Target:** .planning/epics/active/4.0_structured_logging.md
+**Purpose:** This file preserves the original request for reference throughout the planning process.
+
+---
+
+# Epic 4.0: Structured Logging, Error Taxonomy, and Request Correlation
+
+**Status:** Draft  
+**Created:** 2026-06-14  
+**Priority:** High (operational correctness, debugging foundation)
+
+## Problem
+
+ATCR currently has no consistent logging strategy. Diagnostic output is emitted ad hoc across the CLI and engine, creating three concrete problems:
+
+1. **No level control.** `.planning/.config/sprint-config.md` documents `LOG_LEVEL`, but the setting is not honored anywhere. Operators cannot enable debug output for a failing review without rebuilding or editing code.
+
+2. **Inconsistent sinks.** The MCP server path uses `log/slog` and writes to stderr, while the CLI and most internal packages appear to write diagnostics directly to `os.Stderr`. This makes it impossible to capture, filter, or test log output uniformly.
+
+3. **No error classification.** Errors are wrapped with `%w` in some places (llmclient) but not consistently. There's no taxonomy distinguishing transient failures (retryable) from permanent failures (user error, config issue) from system failures (panic, bug). Every error site reinvents severity.
+
+4. **No request correlation.** When debugging a specific review run, there's no way to correlate log lines across agents. A review spawns N agents, each with their own goroutine, but no shared identifier threads through the logs.
+
+5. **Security risk.** Several completed reviews and active TD items flag that errors can leak absolute repo paths, git internals, and provider details into stderr/CI logs. Without a single redaction point, every new error site has to be audited independently.
+
+## Root Cause
+
+There is no shared logging package, no error classification system, and no correlation ID mechanism. Each component chooses its own output mechanism and error format:
+
+- `cmd/atcr/serve.go` builds a local `slog.Logger` only for MCP mode.
+- `internal/mcp/server.go` accepts a logger but most engine code does not.
+- `internal/payload/diff.go` falls back to `slog.Default()`.
+- The rest of the codebase writes to stderr through `fmt` or direct `os` calls.
+- Errors are returned raw or wrapped ad-hoc with no consistent structure.
+- No review ID or correlation ID is threaded through agent invocations.
+
+`LOG_LEVEL` was documented before the corresponding implementation was planned.
+
+## Solution
+
+Introduce a small `internal/log` package that wraps `log/slog` and becomes the single way ATCR emits diagnostics. Wire it through `cmd/atcr` so every subcommand and the MCP server share the same logger instance. Add error classification and correlation IDs as first-class concepts.
+
+### Core Design
+
+```go
+// internal/log/log.go
+package log
+
+func New(level string, format string, w io.Writer) (*slog.Logger, error)
+func LevelFromString(s string) (slog.Level, error)
+
+// WithReviewID returns a logger that includes the review ID in every log line.
+func WithReviewID(logger *slog.Logger, reviewID string) *slog.Logger
+
+// WithAgent returns a logger that includes the agent name in every log line.
+func WithAgent(logger *slog.Logger, agentName string) *slog.Logger
+```
+
+- **Levels**: debug, info, warn, error (default: info).
+- **Formats**: text (default) or JSON.
+- **Sink**: writes to the supplied `io.Writer`.
+- **Global default**: `cmd/atcr` creates one logger and passes it down; packages never call `slog.Default()` in production.
+- **Correlation**: `WithReviewID` and `WithAgent` attach structured context that appears in every log line.
+
+### Error Taxonomy
+
+```go
+// internal/errors/errors.go
+package errors
+
+// Classification categories
+type Classification string
+
+const (
+    Transient   Classification = "transient"   // retryable (network, 429, 5xx)
+    Permanent   Classification = "permanent"   // not retryable (401, 403, 404)
+    UserError   Classification = "user_error"  // bad input, config issue
+    SystemError Classification = "system_error" // bug, panic, unexpected
+)
+
+// ClassifiedError wraps an error with a classification.
+type ClassifiedError struct {
+    Err            error
+    Classification Classification
+    Retryable      bool
+}
+
+func (e *ClassifiedError) Error() string { return e.Err.Error() }
+func (e *ClassifiedError) Unwrap() error { return e.Err }
+
+// NewTransient wraps err as a transient, retryable error.
+func NewTransient(err error) error
+
+// NewPermanent wraps err as a permanent, non-retryable error.
+func NewPermanent(err error) error
+
+// NewUserError wraps err as a user/config error.
+func NewUserError(err error) error
+
+// NewSystemError wraps err as a system/bug error.
+func NewSystemError(err error) error
+
+// IsRetryable returns true if err is classified as transient.
+func IsRetryable(err error) bool
+```
+
+**Integration**: The llmclient already classifies HTTP errors (429/5xx = retryable, others = permanent). Wrap those in `ClassifiedError`. Other packages migrate incrementally.
+
+### Redaction and Security
+
+- Secrets (registry API keys, tokens) are redacted at the sink level by matching known key names.
+- Absolute repo paths are rendered relative to the review root when logged.
+- Provider-specific error bodies are logged at debug level only.
+
+### Integration Points
+
+1. `cmd/atcr/main.go:newRootCmd` reads `LOG_LEVEL` and `--log-format`, creates the logger, and stores it in context.
+2. `cmd/atcr/review.go` calls `log.WithReviewID` after the review ID is resolved, threading it through the context.
+3. `internal/fanout/engine.go` calls `log.WithAgent` before invoking each agent, so every log line inside the agent includes the agent name.
+4. `cmd/atcr/serve.go` reuses the root logger instead of creating a local one.
+5. `internal/mcp/server.go` continues to accept `*slog.Logger`, now passed from root.
+6. `internal/payload/diff.go` removes the `slog.Default()` fallback and requires an injected logger.
+7. `internal/llmclient/client.go` wraps HTTP errors in `errors.ClassifiedError`.
+8. Other packages migrate direct `os.Stderr` writes to the injected logger incrementally.
+
+## Scope
+
+### In Scope
+
+- `internal/log` package with level parsing, format selection, redaction helpers, and correlation ID attachment.
+- `internal/errors` package with error classification and retryability checks.
+- `LOG_LEVEL` and `--log-format` support in the CLI root.
+- Shared logger instance passed to MCP server, payload runner, and fanout engine.
+- Review ID and agent name threaded through context and attached to every log line.
+- Redaction of API keys, tokens, and absolute paths from log output.
+- `internal/llmclient` wraps errors in `ClassifiedError`.
+- Unit tests for level parsing, format output, redaction rules, error classification, and correlation ID attachment.
+- Update `.planning/.config/sprint-config.md` to remove the "optional" ambiguity once implemented.
+
+### Out of Scope
+
+- Metrics or telemetry (distinct concern; Epic 4.3).
+- Log rotation or file-based log shipping.
+- Audit trail (`audit.log.jsonl` in Epic 13.0) — that is an immutable run record, not operational logging.
+- Rewriting every legacy `fmt.Fprintf` site in one pass; migration can be incremental per package.
+- Circuit breaker logic (Epic 4.4) — this epic classifies errors; 4.4 acts on them.
+
+## Acceptance Criteria
+
+- [ ] AC1: `LOG_LEVEL=debug` enables debug output; `LOG_LEVEL=error` suppresses info/warn output.
+- [ ] AC2: `--log-format=json` emits newline-delimited JSON logs; default emits human-readable text.
+- [ ] AC3: The MCP server reuses the root logger instead of constructing its own.
+- [ ] AC4: `internal/payload/diff.go` no longer falls back to `slog.Default()` in production.
+- [ ] AC5: A known API key value does not appear in log output at any level.
+- [ ] AC6: Absolute repo paths in log output are rendered relative to the review root.
+- [ ] AC7: Tests capture log output deterministically without relying on `slog.Default()`.
+- [ ] AC8: `go test ./internal/log/...` passes with 100% coverage of level parsing, redaction, and sink wiring.
+- [ ] AC9: Every log line emitted during a review includes the review ID (when available).
+- [ ] AC10: Every log line emitted during an agent invocation includes the agent name.
+- [ ] AC11: `internal/llmclient` wraps HTTP errors in `errors.ClassifiedError` with correct classification.
+- [ ] AC12: `errors.IsRetryable(err)` returns true for transient errors, false for permanent/user/system errors.
+- [ ] AC13: `go test ./internal/errors/...` passes with 100% coverage of classification and retryability logic.
+
+## Success Criteria
+
+- [ ] All production diagnostics flow through `internal/log`.
+- [ ] No secrets or absolute paths leak in default-level logs.
+- [ ] Operators can debug a failing review by setting `LOG_LEVEL=debug`.
+- [ ] Tests can assert on log output without global state.
+- [ ] Every error returned by `internal/llmclient` is classified.
+- [ ] A reviewer can `grep` logs by review ID and see all agent activity for that run.
+
+## Implementation Plan
+
+### Phase 1: Core Logging Package (2 days)
+
+1. Create `internal/log/log.go` with `New`, level parsing, and format selection.
+2. Add `internal/log/redact.go` with key-name and path-redaction helpers.
+3. Add `internal/log/correlation.go` with `WithReviewID` and `WithAgent`.
+4. Add `internal/log/log_test.go` covering levels, formats, redaction, and correlation.
+
+### Phase 2: Error Taxonomy (1 day)
+
+1. Create `internal/errors/errors.go` with `ClassifiedError` and classification constructors.
+2. Add `internal/errors/errors_test.go` covering classification and `IsRetryable`.
+3. Update `internal/llmclient/client.go` to wrap HTTP errors in `ClassifiedError`.
+
+### Phase 3: CLI Wiring (1 day)
+
+1. Add `LOG_LEVEL` and `--log-format` flags to `cmd/atcr/main.go:newRootCmd`.
+2. Create the logger and store it in the command context.
+3. Update `cmd/atcr/serve.go` to use the context logger.
+4. Update `cmd/atcr/review.go` to call `log.WithReviewID` after review ID resolution.
+
+### Phase 4: Engine Wiring (2 days)
+
+1. Update `internal/mcp/server.go` to use the passed logger consistently.
+2. Replace `slog.Default()` fallback in `internal/payload/diff.go`.
+3. Update `internal/fanout/engine.go` to call `log.WithAgent` before each agent invocation.
+4. Identify and migrate the highest-risk direct-stderr writes (fanout errors, provider retries).
+
+### Phase 5: Documentation (1 day)
+
+1. Update CLI help and `docs/` to document `LOG_LEVEL` and `--log-format`.
+2. Update `.planning/.config/sprint-config.md` to reflect that `LOG_LEVEL` is implemented.
+3. Document error classification in `internal/errors/README.md`.
+
+## Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| `slog.Default()` fallback removal breaks tests | Medium | Low | Update tests to inject `slog.New(slog.NewTextHandler(io.Discard, nil))` |
+| Redaction rules miss a new secret shape | Medium | High | Add CI check that scans test logs for API-key-shaped strings; review at code-review time |
+| Performance cost of redaction | Low | Low | Redaction runs only on emitted records, not hot paths; benchmark if concerned |
+| stdout/stderr ownership regressions in MCP mode | Low | High | MCP tests already verify protocol output; run them after wiring |
+| Error classification breaks existing error-matching tests | Medium | Medium | Run full test suite after llmclient migration; update tests to use `errors.Is` |
+
+## Relationship to Other Epics
+
+- **Epic 1.7 (Real review run verification)**: established stdout/stderr ownership rules and the initial MCP logger pattern.
+- **Epic 2.2 (Fanout hardening)**: retry and provider-error paths are high-value targets for structured logging and error classification.
+- **Epic 4.3 (Metrics & Observability)**: builds on the logging foundation; metrics are a separate concern but share the correlation ID.
+- **Epic 4.5 (Circuit Breaker / Provider Health)**: consumes `errors.ClassifiedError` to decide when a provider is failing.
+- **Epic 13.0 (Team edition validation)**: owns the immutable `audit.log.jsonl`; this epic owns operational diagnostics. The two must stay separate.
+- **Epic 5.0 (File path validation)**: path warnings and hallucination diagnostics should use the shared logger.
+- **Epic 7.0 (Executor model fix generation)**: fix-generation debug output should flow through the shared logger.
+
+## Open Questions
+
+1. **Should `--log-format` default to text or JSON?**
+   - Option A: text (human-friendly for local runs).
+   - Option B: JSON (machine-friendly for CI).
+   - Recommendation: Option A; CI users can opt into JSON explicitly.
+
+2. **Should debug logs include full provider response bodies?**
+   - Option A: yes (useful for provider debugging).
+   - Option B: no, only metadata (avoids accidental secret leakage).
+   - Recommendation: Option B; full bodies can be dumped to review artifacts if needed.
+
+3. **Should logs be written to a file in addition to stderr?**
+   - Option A: yes, via `--log-file`.
+   - Option B: no; rely on shell redirection.
+   - Recommendation: Option B for the initial scope; file logging can be added later without breaking changes.
+
+4. **Should error classification be exhaustive or opt-in?**
+   - Option A: exhaustive — every error in the codebase must be classified.
+   - Option B: opt-in — only errors in llmclient and fanout are classified initially; other packages migrate incrementally.
+   - Recommendation: Option B; exhaustive classification is a large migration and can happen per-package.
+
+## References
+
+- `cmd/atcr/serve.go` — current MCP logger construction
+- `internal/mcp/server.go` — logger injection point
+- `internal/payload/diff.go` — `slog.Default()` fallback to remove
+- `internal/llmclient/client.go` — HTTP error handling to classify
+- `.planning/.config/sprint-config.md:80` — documented `LOG_LEVEL`
+- TD item: "Surface a generic 'tool harness unavailable' line to stderr and log the path-bearing detail at debug level only"

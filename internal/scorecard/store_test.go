@@ -28,6 +28,24 @@ func sampleRecord(runID, reviewer string) Record {
 	}
 }
 
+// TestAppend_ErrorDoesNotLeakAbsoluteStorePath verifies a store-write failure is
+// reported with the file base name only — the username-bearing absolute
+// ~/.config/atcr path must never be embedded in an error that reaches the
+// unredacted scorecard Diag sink.
+func TestAppend_ErrorDoesNotLeakAbsoluteStorePath(t *testing.T) {
+	tmp := t.TempDir()
+	blocker := filepath.Join(tmp, "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+	// A store dir UNDER a regular file makes MkdirAll fail with a *PathError whose
+	// Path is the absolute store path.
+	storeDir := filepath.Join(blocker, "atcr", "scorecard")
+
+	err := Append(storeDir, sampleRecord("2026-06-run", "rev"))
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), tmp, "error must not embed an absolute (username-bearing) store path")
+	require.Contains(t, err.Error(), "scorecard dir", "the operational context is preserved")
+}
+
 func TestStore_AppendAndRead(t *testing.T) {
 	dir := t.TempDir()
 	runID := "2026-06-14T10:00:00Z-abc123"

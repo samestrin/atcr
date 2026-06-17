@@ -1,0 +1,18 @@
+# Sprint Knowledge Manifest
+# Tracks knowledge entries created during and referenced by this sprint
+
+created: []
+
+referenced: []
+
+clarifications:
+  - mem-2026-06-17-de124c  # Q4: diff-smell test_only false positive on test-file errcheck fixes
+  - mem-2026-06-17-1782f0  # Q1: exact-value secret-scrub loop is dead; sk-/Bearer regex covers leaks; defer to Epic 4.9
+  - mem-2026-06-17-bb30be  # Q2: scorecard ~/.config/atcr paths leak past redactor; base-name stopgap
+  - mem-2026-06-17-c5d706  # Q3: apply secret redaction once at root-logger construction (preserves require.Same + AC3)
+  - mem-2026-06-17-3c4ed9  # Q4: clamp user inputs echoed into errors; --log-format echo at log.go:81 unbounded
+  - mem-2026-06-17-d7bc8a  # Q6: bare `_`-ignore on cobra GetString/GetBool is the repo convention
+  - mem-2026-06-17-c0dfad  # Q1 (TD): IsRetryable outermost-classification-wins is intentional; no "Permanent poisons the chain" guard until a double-classification path exists
+  - mem-2026-06-17-f687d8  # Q2 (TD): errors.go:75 is return nil; Error() delegates to underlying by-design — "wrap with context" is a false positive
+  - mem-2026-06-17-ad7897  # Q1 (TD): document single-wrap correlation contract; no handler dedup guard (deferred TD-006)
+  - mem-2026-06-17-589ed3  # Q2 (TD): relativizePaths covers review root only; EvalSymlinks fix, no home/$TMPDIR/scorecard roots
