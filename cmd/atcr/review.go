@@ -239,6 +239,10 @@ func runReview(cmd *cobra.Command, _ []string) error {
 // a relative path, which cannot be forced in-process (mirrors the serveFn seam).
 var absFn = filepath.Abs
 
+// evalSymlinksFn resolves symlinks in a path. It is a package var so a test can
+// stub it to exercise the fail-open branch.
+var evalSymlinksFn = filepath.EvalSymlinks
+
 // resolveRedactRoot returns root in absolute form for AC6 path relativization
 // (relativizePaths no-ops on the CLI default "."). When absolute resolution
 // fails it returns root unchanged.

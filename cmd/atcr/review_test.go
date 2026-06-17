@@ -41,6 +41,32 @@ func TestResolveRedactRoot_LogsWarnOnAbsError(t *testing.T) {
 	require.Contains(t, buf.String(), "path redaction may be incomplete", "a warning must make the silent failure observable")
 }
 
+// TestResolveRedactRoot_ResolvesSymlinks verifies the review root is symlink-
+// resolved so a path logged in its real form (e.g. macOS resolves /tmp ->
+// /private/var/...) still matches the review-root prefix for AC6 relativization.
+func TestResolveRedactRoot_ResolvesSymlinks(t *testing.T) {
+	realResolved, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(realResolved, link))
+
+	got := resolveRedactRoot(context.Background(), link)
+	require.Equal(t, realResolved, got, "resolveRedactRoot should resolve the symlinked root to its real path")
+}
+
+// TestResolveRedactRoot_FailsOpenOnEvalSymlinksError verifies that when symlink
+// resolution fails (e.g. the root is not yet on disk) the absolute form is used,
+// so relativization of the un-resolved path still works.
+func TestResolveRedactRoot_FailsOpenOnEvalSymlinksError(t *testing.T) {
+	orig := evalSymlinksFn
+	evalSymlinksFn = func(string) (string, error) { return "", errors.New("boom") }
+	defer func() { evalSymlinksFn = orig }()
+
+	got := resolveRedactRoot(context.Background(), ".")
+	require.True(t, filepath.IsAbs(got), "on EvalSymlinks failure the absolute root is returned, got %q", got)
+}
+
 // TestReviewIDSurvivesRedaction locks the AC9-vs-AC5/6 contract: binding
 // review_id BEFORE the redactor (review.go:162 then :172) stores it in the inner
 // handler, so a correlation key that itself looks secret-shaped (sk-...) is NOT
