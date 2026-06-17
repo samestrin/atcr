@@ -346,7 +346,7 @@ func httpStatusError(status int, snippet string) error {
 // whitespace first, so `Bearer <token>` is single-spaced when these run.
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
-	skKeyPattern       = regexp.MustCompile(`sk-\S+`)
+	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
 )
 
 // redactErrorSnippet scrubs secrets from a provider error snippet. It removes
