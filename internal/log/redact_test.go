@@ -96,6 +96,33 @@ func TestRedact_SKKey(t *testing.T) {
 	}
 }
 
+// TestRedact_SKKeyNoOverRedactInJSON verifies the sk- pattern stops at the token
+// boundary instead of greedily consuming following JSON punctuation and adjacent
+// fields. A greedy \S+ would swallow `","user":"alice"}` and mangle the line.
+func TestRedact_SKKeyNoOverRedactInJSON(t *testing.T) {
+	r := NewRedactor("")
+	out := r.Redact(`{"auth":"sk-abc123DEF","user":"alice"}`)
+	if strings.Contains(out, "sk-abc123DEF") {
+		t.Fatalf("sk key not redacted: %q", out)
+	}
+	if !strings.Contains(out, `"user":"alice"`) {
+		t.Fatalf("adjacent JSON field over-redacted: %q", out)
+	}
+}
+
+// TestRedact_BearerNoOverRedactInJSON verifies the bearer pattern likewise stops
+// at the token charset boundary.
+func TestRedact_BearerNoOverRedactInJSON(t *testing.T) {
+	r := NewRedactor("")
+	out := r.Redact(`{"hdr":"Bearer abc.def-123","next":"keepme"}`)
+	if strings.Contains(out, "abc.def-123") {
+		t.Fatalf("bearer token not redacted: %q", out)
+	}
+	if !strings.Contains(out, `"next":"keepme"`) {
+		t.Fatalf("adjacent JSON field over-redacted: %q", out)
+	}
+}
+
 func TestRedact_SKKeyCaseInsensitive(t *testing.T) {
 	r := NewRedactor("")
 	for _, in := range []string{"SK-ABCdef123456", "Sk-mixedCase789"} {
