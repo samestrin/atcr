@@ -75,7 +75,11 @@ func (e *engine) logger() *slog.Logger {
 // correlateReviewID) for the MCP entry point; Phase 4 fan-out reads the logger
 // back via log.FromContext.
 func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Context {
-	return log.NewContext(context.WithoutCancel(ctx), log.WithReviewID(e.logger(), reviewID))
+	// Seed review_id and enforce sink-level redaction (secret-shaped tokens →
+	// AC5, absolute paths under the repo root → AC6) so the serve-mode fan-out
+	// matches the CLI path's single-sink redaction contract (TD-007).
+	logger := log.WithRedactor(log.WithReviewID(e.logger(), reviewID), log.NewRedactor(e.root))
+	return log.NewContext(context.WithoutCancel(ctx), logger)
 }
 
 // drain waits up to timeout for in-flight background reviews to finish, so a
