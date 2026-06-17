@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -261,12 +262,20 @@ func resolveEndpoint(baseURL string) string {
 func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
 	var lastErr error
 	delay := c.initialBackoff
+	// honorExact is set when the next sleep is a server-advertised Retry-After
+	// cooldown, which must be slept verbatim (neither jittered down nor clamped).
+	honorExact := false
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
-			if err := sleepCtx(ctx, delay); err != nil {
+			sleepFor := delay
+			if !honorExact {
+				sleepFor = jitter(delay)
+			}
+			if err := sleepCtx(ctx, sleepFor); err != nil {
 				return nil, err
 			}
-			delay = time.Duration(float64(delay) * c.backoffFactor)
+			honorExact = false
+			delay = clampBackoff(time.Duration(float64(delay) * c.backoffFactor))
 		}
 
 		payload, status, retryAfter, err := c.attempt(ctx, endpoint, key, body)
@@ -299,6 +308,7 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 				// backoff when present; otherwise keep the exponential schedule.
 				if retryAfter > 0 {
 					delay = retryAfter
+					honorExact = true
 				}
 				continue
 			}
@@ -452,11 +462,23 @@ func parseRetryAfter(value string) time.Duration {
 const maxBackoff = 30 * time.Second
 
 // clampBackoff bounds an exponential backoff delay at maxBackoff.
-func clampBackoff(d time.Duration) time.Duration { return d }
+func clampBackoff(d time.Duration) time.Duration {
+	if d > maxBackoff {
+		return maxBackoff
+	}
+	return d
+}
 
 // jitter spreads a backoff delay across [d/2, d) so many agents that hit a 429
-// at the same instant do not retry in lockstep (thundering herd).
-func jitter(d time.Duration) time.Duration { return d }
+// at the same instant do not retry in lockstep (thundering herd). A delay too
+// small to halve is returned unchanged.
+func jitter(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(rand.Int63n(int64(half)))
+}
 
 // sleepCtx waits for d or until ctx is cancelled, whichever comes first.
 func sleepCtx(ctx context.Context, d time.Duration) error {
