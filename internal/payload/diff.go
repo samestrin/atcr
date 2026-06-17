@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // changeKind classifies a file's change between base and head.
@@ -203,7 +204,7 @@ func (g *gitRunner) log() *slog.Logger {
 	if g.logger != nil {
 		return g.logger
 	}
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return log.Discard()
 }
 
 // forRange reconciles the cached state against base..head and returns a

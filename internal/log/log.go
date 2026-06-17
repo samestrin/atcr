@@ -18,6 +18,12 @@ import (
 // FromContext miss path allocates nothing.
 var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+// Discard returns the package's shared no-op logger. Callers that need a
+// nil-safe fallback (e.g. a struct's logger() accessor invoked on a hot path)
+// should return this singleton instead of constructing a fresh discard logger
+// per call, which allocates.
+func Discard() *slog.Logger { return discardLogger }
+
 // contextKey is an unexported type used as the context value key. Using a
 // dedicated struct type (rather than a string) guarantees no collision with
 // keys set by other packages.

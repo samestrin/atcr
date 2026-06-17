@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -221,7 +220,7 @@ func WithLogger(l *slog.Logger) EngineOption {
 // slog default.
 func (e *Engine) logger() *slog.Logger {
 	if e.log == nil {
-		return slog.New(slog.NewTextHandler(io.Discard, nil))
+		return log.Discard()
 	}
 	return e.log
 }
