@@ -519,3 +519,10 @@ func TestLoadVerifyRegistry_CanonicalContainment(t *testing.T) {
 		})
 	}
 }
+
+// TestEngine_LoggerNilSafe verifies logger() returns a usable logger when
+// engine.log is nil, matching the nil-guard buildServer provides at construction.
+func TestEngine_LoggerNilSafe(t *testing.T) {
+	e := &engine{}
+	require.NotPanics(t, func() { e.logger().Info("nil-log probe") })
+}
