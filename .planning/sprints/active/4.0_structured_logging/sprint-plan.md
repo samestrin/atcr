@@ -640,7 +640,7 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
 
 ---
 
-### 4.1 [ ] 🔧 **Remove Payload slog.Default() Fallback (AC4)**
+### 4.1 [x] 🔧 **Remove Payload slog.Default() Fallback (AC4)**
    **Task:** Replace `slog.Default()` fallback in `internal/payload/diff.go:gitRunner.log()` with nil-safe discard logger. Inject context logger in `BuildEntries` and `ChangedFileCount`.
    **Priority:** P1 | **Effort:** S
    1. Understand: Run `grep -n 'slog\.Default' internal/payload/` to find all sites; review `internal/mcp/handlers.go:logger()` nil-safe pattern; run `grep -n 'gitRunner{' internal/payload/` to find all test construction sites that need updating
@@ -652,7 +652,7 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
    **Success Criteria:** `slog.Default()` removed; `gitRunner.log()` returns discard when nil (no panic); `BuildEntries`/`ChangedFileCount` inject context logger; all payload tests pass (AC4)
    **Files:** `internal/payload/diff.go`, `internal/payload/builder.go` (modify); `internal/payload/diff_test.go`, `internal/payload/builder_test.go`, `internal/payload/pipeline_test.go` (modify) | **Duration:** 0.5 days
 
-### 4.1.A [ ] **4.1 — ADVERSARIAL REVIEW (subagent)**
+### 4.1.A [x] **4.1 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `internal/payload/diff.go`, `internal/payload/builder.go`, `internal/payload/diff_test.go`, `internal/payload/builder_test.go`, `internal/payload/pipeline_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.1 — this is intentional. Do NOT review inline.
@@ -674,20 +674,19 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (0 CRITICAL/HIGH; 1 MEDIUM = dup of TD-007, 1 LOW no-fix):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | MEDIUM | internal/log/log.go:New (via builder.go:165) | Injected context logger is a plain slog handler — `log.New` installs no `ReplaceAttr`/redacting wrapper, so `g.log()` output is NOT routed through `Redactor`. No leak today (sole call site logs a repo-relative `f.path`, not git stdout), but the sink-level redaction guarantee is structurally absent. | DUPLICATE of existing **TD-007** (redaction not enforced at log sink; fix-in Phase 3/4 before the 5.2 integration test). No new entry. |
+   | LOW | internal/payload/builder.go:89,121 | `log.FromContext(ctx)` called exactly once per `BuildEntries`/`ChangedFileCount` — no redundant calls; shared-by-pointer logger into mutable gitRunner is benign (no logger mutation). | No fix required — confirms acceptable. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before 4.2, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Verified clean (checklist):** discard fallback in `gitRunner.log()` activates only for direct test construction (`log.FromContext` is never-nil in production, so the field is non-nil); `gitRunner` is not embedded elsewhere; cancelled context does not confuse logger validity (`output` checks `g.ctx.Err()` separately); `ChangedFileCount` never logs.
+
+   **Action Taken:** No CRITICAL/HIGH — adversarial review passed, no inline fixes. MEDIUM is a duplicate of TD-007 (already drives the Phase 5 redaction-enforcement decision); LOW needs no entry. Proceeding to 4.2.
 
 ---
 
-### 4.2 [ ] 🔧 **Fanout Engine Logger Wiring (AC10)**
+### 4.2 [x] 🔧 **Fanout Engine Logger Wiring (AC10)**
    **Task:** Add `*slog.Logger` field and `WithLogger` option to `internal/fanout/engine.go`. Call `log.WithAgent(e.logger(), a.Name)` before each agent invocation. Wire logger in `ExecuteReview` and `invokeSkeptic`. Migrate highest-risk direct stderr writes.
    **Priority:** P1 | **Effort:** M
    1. Understand: Review `internal/fanout/engine.go:Agent` struct (has `Name` field used for `WithAgent`), `invokeAgent`, `ExecuteReview`, `internal/verify/invoke.go:invokeSkeptic`, `logSkepticFailure`, and the existing `WithDispatcher` option pattern to model `WithLogger` after
@@ -699,7 +698,7 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
    **Success Criteria:** `Engine` has logger field and `WithLogger` option; nil-safe `logger()` method; `WithAgent` called before each agent invocation; `logSkepticFailure` routes through logger; path details at debug level; all fanout and verify tests pass (AC10)
    **Files:** `internal/fanout/engine.go`, `internal/fanout/review.go`, `internal/verify/invoke.go` (modify); `internal/fanout/engine_test.go`, `internal/fanout/review_test.go` (modify) | **Duration:** 1 day
 
-### 4.2.A [ ] **4.2 — ADVERSARIAL REVIEW (subagent)**
+### 4.2.A [x] **4.2 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `internal/fanout/engine.go`, `internal/fanout/review.go`, `internal/verify/invoke.go`, `internal/fanout/engine_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.2 — this is intentional. Do NOT review inline.
@@ -721,20 +720,19 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (0 CRITICAL/HIGH; 2 LOW, both no-action):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | internal/log/correlation.go:WithAgent (via fanout/engine.go invokeAgent) | An `Agent` with `Name == ""` (direct construction only) yields a `agent_name=""` attribute rather than omitting the key. | NO CHANGE — empty-string-attaches is the **frozen Phase 1 contract** (task 1.3 mandates "empty string still attaches attribute"; finding 1.3.A already REJECTED this exact concern). Production `buildAgent`/`buildSkepticAgent` always set Name, so impact is nil. Changing `WithAgent` here would break the Phase 1 spec + its test. |
+   | LOW | internal/fanout/engine.go:invokeAgent | `log.WithAgent` allocates a fresh `slog.Logger` per `invokeAgent` call; a Debug record is built even when discarded. | NO ACTION — reviewer: "None required." Per-invocation (not per-turn) allocation is the correct AC10 scoping cost; negligible for N=3-10 fanout. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Verified clean (checklist):** `agentLogger` is a local, immutable, per-invocation logger threaded into a per-invocation ctx copy — `logger.With` never mutates the receiver, so no scope leaks to sibling pool goroutines (SECURITY); no path-bearing skeptic detail reaches `os.Stderr` after the migration (`logSkepticFailure` routes `detail` to `logger.Debug` only; remaining review.go `os.Stderr` writes are pre-existing harness/config warnings, out of scope); the verdict is still returned after the `logger.Warn`/`Debug` calls — the never-propagate-runtime-error contract is unchanged (ERROR HANDLING); no-logger context resolves to the never-nil discard logger; `WithLogger` twice is last-value-wins (EDGE CASES).
+
+   **Action Taken:** No CRITICAL/HIGH — adversarial review passed, no inline fixes. Both LOW are no-action (one intentional per the frozen Phase 1 contract, one negligible perf). No new TD. Proceeding to 4.3.
 
 ---
 
-### 4.3 [ ] 🔧 **llmclient Error Classification Migration (AC11, AC12)**
+### 4.3 [x] 🔧 **llmclient Error Classification Migration (AC11, AC12)**
    **Task:** Wrap HTTP and transport errors in `internal/llmclient/client.go:send` with `internal/errors.ClassifiedError`. Preserve `errors.As` reachability to `*HTTPStatusError` through the wrapper.
    **Priority:** P1 | **Effort:** S
    1. Understand: Read `internal/llmclient/client.go:253-305` (`send` function with retry loop), `retryableStatus` map (line 37, 429/500/502/503/504), and `TestComplete_HTTPStatusErrorSurfacedForClassification` (line 437) to understand the contract that must not break
@@ -746,7 +744,7 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
    **Success Criteria:** 429/5xx/transport → `NewTransient`; non-retryable 4xx → `NewPermanent`; `errors.As` reaches `*HTTPStatusError` through wrapper; `errors.Is` still works for `context.DeadlineExceeded`; existing tests pass unchanged (AC11, AC12)
    **Files:** `internal/llmclient/client.go` (modify), `internal/llmclient/client_test.go` (modify) | **Duration:** 0.5 days
 
-### 4.3.A [ ] **4.3 — ADVERSARIAL REVIEW (subagent)**
+### 4.3.A [x] **4.3 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `internal/llmclient/client.go`, `internal/llmclient/client_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 4.3 — this is intentional. Do NOT review inline.
@@ -767,37 +765,37 @@ Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (0 CRITICAL/HIGH; 2 LOW):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | client.go:262-267 | 429/503 retry backoff ignores a provider `Retry-After` header — fixed exponential backoff can retry before the advertised cooldown. Attempt count is correctly bounded (no retry storm); pacing-only. | Pre-existing backoff (not introduced by 4.3, which only classifies). Captured → **TD-011** (fix in Epic 4.5 provider health). |
+   | LOW | client.go:303-309 | 408 (Request Timeout) is not in `retryableStatus`, so it classifies `NewPermanent` (non-retryable). | NO TD — **by design**: original-requirements fixes the contract as "429/5xx = retryable, others = permanent." 408→permanent is intentional, not a defect. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before 4.4, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Verified clean (checklist):** SECURITY — 401 is absent from `retryableStatus`, hits `default`, wraps `NewPermanent` (Retryable=false): no retry storm on a bad key; 429 attempts are bounded by `attempt <= maxRetries`. ERROR HANDLING — `send` is iterative (no recursion), every error path wraps at most once; `ctx.Err()` and raw IO errors (200 oversized body, body-read on non-retryable) return unwrapped; `ClassifiedError.Unwrap()` reaches `*HTTPStatusError` through the `exhausted retries: %w` wrapper (contract tests pass). EDGE CASES — all `send` return paths updated; `context.DeadlineExceeded`/`Canceled` unwrapped on both the status==0 path and the backoff-sleep (`sleepCtx`) path. PERFORMANCE — `errors.As` runs once per `Complete` (not in the retry loop), depth ~3.
+
+   **Action Taken:** No CRITICAL/HIGH — adversarial review passed, no inline fixes. One LOW captured → TD-011 (Epic 4.5); one LOW is by-design (no TD). Proceeding to 4.4 DoD.
 
 ---
 
-### 4.4 [ ] Phase 4 — Definition of Done
+### 4.4 [x] Phase 4 — Definition of Done
 
-- [ ] `go test ./internal/payload/... ./internal/fanout/... ./internal/verify/... ./internal/llmclient/...` — all passing
-- [ ] `go test -race ./internal/...` — no data races
-- [ ] `go vet ./internal/...` — clean
-- [ ] `grep -r 'slog\.Default()' internal/` — returns no matches (AC4)
-- [ ] `grep -r 'fmt\.Fprintf(os\.Stderr' internal/fanout/ internal/verify/` — highest-risk sites migrated
-- [ ] `errors.IsRetryable` returns true for 429/5xx/transport errors, false for 4xx permanent (AC11, AC12)
-- [ ] `TestComplete_HTTPStatusErrorSurfacedForClassification` and `TestComplete_HTTPStatusErrorSurfacedThroughExhaustedRetries` pass unchanged
-- [ ] All adversarial reviews completed: 4.1.A, 4.2.A, 4.3.A
+- [x] `go test ./internal/payload/... ./internal/fanout/... ./internal/verify/... ./internal/llmclient/...` — all passing
+- [x] `go test -race ./internal/...` — no data races (16 packages OK)
+- [x] `go vet ./internal/...` — clean
+- [x] `grep -r 'slog\.Default()' internal/` — returns no matches (AC4)
+- [x] `grep -r 'fmt\.Fprintf(os\.Stderr' internal/fanout/ internal/verify/` — highest-risk site migrated (`logSkepticFailure`); remaining 13 are pre-existing one-time harness/config warnings, out of scope per original-requirements (incremental per-package migration)
+- [x] `errors.IsRetryable` returns true for 429/5xx/transport errors, false for 4xx permanent (AC11, AC12)
+- [x] `TestComplete_HTTPStatusErrorSurfacedForClassification` and `TestComplete_HTTPStatusErrorSurfacedThroughExhaustedRetries` pass unchanged
+- [x] All adversarial reviews completed: 4.1.A, 4.2.A, 4.3.A
+- [x] Boundary allowlist updated for new edges (payload/fanout/verify→log, llmclient→errors); `TestInternalPackages_*` pass (acyclic — log/errors are leaves)
 
 ```
 Phase-4 DoD Complete
-Auto: {X}/5 | Task-Specific: {Y}/8
-Manual Review: [ ] Code reviewed
+Auto: 5/5 | Task-Specific: 9/9
+Manual Review: [x] Code reviewed (adversarial 4.1.A/4.2.A/4.3.A + Phase 4 gate)
 ```
 
-### 4.5 [ ] **Phase 4 — GATE: Integration & Exit Review (subagent)**
+### 4.5 [x] **Phase 4 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of Phase 4 implementation — this is intentional. Do NOT review inline.
@@ -822,16 +820,26 @@ Manual Review: [ ] Code reviewed
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings — FIRST PASS (1 HIGH fixed inline, 2 LOW deferred):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | HIGH | internal/log/log.go:New (whole sink) | Redaction NOT enforced at the log sink — `Redactor.Redact` had no non-test callers; path/secret-bearing call sites (payload `file`, skeptic-failure `detail`, agent Debug lines) emitted through a plain handler. Raised from the recorded MEDIUM (TD-007) because at phase-exit it blocks AC5/AC6 from being met by construction, violating the "Phase 5 is doc+test only" contract. | FIXED inline before the boundary: implemented TD-007 option (a) — `internal/log/handler.go` `redactingHandler` + non-breaking `WithRedactor`, wired at CLI `runReview` and MCP `reviewContext`. 100% internal/log coverage retained. TD-007 marked **Resolved**. Committed `508536c`. |
+   | LOW | internal/fanout/review.go:296,310,314,321 | 4 `fmt.Fprintf(os.Stderr,...)` harness/snapshot warnings in `ExecuteReview` not migrated (logger in scope). | Captured → **TD-012**. Out of Phase 4 scope (task 4.2 scoped stderr migration to `logSkepticFailure`; original-requirements defers full migration). |
+   | LOW | internal/fanout/review.go:604 | `buildFallbackAgent` stderr warning (no logger in scope, pre-correlation). | Captured → **TD-012**. |
+
+   **Gate findings — RE-REVIEW after HIGH fix (1 MEDIUM fixed inline):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | MEDIUM | cmd/atcr/review.go (redactor root = `prep.Repo` = ".") | TD-007 sink enforcement confirmed closed and AC5 holds by construction, BUT AC6 (path relativization) did not hold on the CLI path: the wired root was `"."` and `relativizePaths` no-ops on ".", so absolute paths under the real repo root would emit verbatim. MCP wired `e.root` (also "." in serve mode). | FIXED inline: resolve the root via `filepath.Abs` before `NewRedactor` at both correlation points; added `TestReviewContext_RedactsSecretsAndPaths` proving AC5+AC6 with root ".". Committed `9a69516`. |
+
+   **Gate findings — FINAL RE-REVIEW (0 findings):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | — | — | — | — |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Verified clean (fresh-context re-review):** correlation chain end-to-end — `correlateReviewID(prep.ID)` → same ctx to `ExecuteReview` → `WithLogger(log.FromContext(ctx))` → `invokeAgent` `WithAgent` → every agent line carries both `review_id` and `agent_name`; redaction enforced at the sink on BOTH entry points (CLI + MCP) so AC5/AC6 hold by construction; `redactingHandler` preserves level filtering (Enabled delegates), correlation attrs (WithAttrs/WithGroup re-wrap), and passes bool/int/time through; no base-logger bypass; `internal/errors` and `internal/log` import without cycles; contract tests (`TestComplete_HTTPStatusErrorSurfacedForClassification`, `...ThroughExhaustedRetries`, `...ErrorBodyRedactsForeignBearerAndSKTokens`) pass with `-race`; full `go test -race ./...` green (19 packages).
+
+   **Action Taken:** Phase gate PASSED on final re-review (0 CRITICAL/HIGH). One HIGH (TD-007) and one follow-on MEDIUM (AC6 on ".") fixed inline before the boundary; 2 LOW deferred → TD-012; one LOW from 4.3.A → TD-011; one LOW by-design (408→permanent). Proceeding to the gated phase stop.
    **Duration:** 15-30 min
 
 ---
