@@ -120,6 +120,51 @@ func TestReadReviewStatus_CompletedNeverStale(t *testing.T) {
 	assert.Equal(t, RunCompleted, st.Status)
 }
 
+// An interrupted review (manifest.interrupted=true) with at least one successful
+// agent reports "interrupted", NOT "completed": the run was cut short by a signal,
+// so the partial result set must be distinguishable from a clean completion
+// (epic 4.1 AC4). Interrupted takes precedence over the succeeded/failed tally.
+func TestReadReviewStatus_InterruptedWithPartialSuccess(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta","stevie"],"started_at":"2026-06-17T12:00:00Z","timeout_secs":600,"interrupted":true,"partial":true}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
+		[]byte(`{"total":2,"succeeded":1,"failed":1,"partial":true,"total_findings":3}`), 0o644))
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInterrupted, st.Status, "AC4: a signal-interrupted run reports interrupted, not completed")
+	assert.True(t, st.Partial, "an interrupted partial run is still partial")
+	assert.Equal(t, 2, st.AgentsDone, "both agents were processed (1 ok + 1 failed)")
+	assert.Equal(t, 0, st.AgentsPending)
+}
+
+// An interrupted review where every agent failed still reports "interrupted"
+// (the user cut it short) rather than "failed": the run never got a fair chance
+// to complete, so the cause-of-incompleteness is the interrupt, not failure.
+func TestReadReviewStatus_InterruptedOverridesFailed(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-17T12:00:00Z","timeout_secs":600,"interrupted":true,"partial":false}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
+		[]byte(`{"total":1,"succeeded":0,"failed":1,"partial":false,"total_findings":0}`), 0o644))
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunInterrupted, st.Status, "interrupted overrides failed when the run was signal-cancelled")
+}
+
+// A normal completed review (no interrupted flag) is unaffected — interrupted is
+// off by default and an absent flag never reclassifies a clean completion.
+func TestReadReviewStatus_NotInterruptedByDefault(t *testing.T) {
+	dir := t.TempDir()
+	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-17T12:00:00Z","timeout_secs":600,"partial":false}`)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
+		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
+	st, err := ReadReviewStatus(dir, "x")
+	require.NoError(t, err)
+	assert.Equal(t, RunCompleted, st.Status, "a manifest without interrupted reports completed as before")
+}
+
 // A stale (dead) review has no completion signal, so EnsureReviewComplete must
 // reject it like an in-progress one — reconciling a dead, possibly partial agent
 // set would emit a complete-looking verdict from incomplete data. Unlike

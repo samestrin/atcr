@@ -1,3 +1,19 @@
+## [4.1.0] - 2026-06-17
+
+Graceful shutdown and signal handling: Ctrl-C during a review no longer loses completed work.
+
+### Added
+
+- SIGINT/SIGTERM handling: an interrupt cancels the root context so the reviewer fan-out drains cooperatively — no new agents start, and the results of agents that already finished are preserved on disk
+- New `interrupted` review state reported by `atcr review`, `atcr status`, and the MCP `atcr_status` tool, distinguishing a signal-cancelled run from a clean completion, an all-agents failure, or a timeout
+- A 10-second grace period after the first interrupt, after which the process force-exits with code 1 to guard against a hang
+
+### Changed
+
+- A signal-interrupted `atcr review` now prints how many agents completed and where the partial results were saved (`atcr status <id>` to inspect), then exits 1 — instead of dying immediately and discarding the partial run
+
+*Shipped via /execute-epic (epic 4.1)*
+
 ## [Technical Debt] - 2026-06-17
 
 ### Fixed

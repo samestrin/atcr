@@ -145,6 +145,47 @@ func TestRunReview_NoLocalLogger(t *testing.T) {
 	assert.Contains(t, out, "review_id=rev-2", "must also attach the review id")
 }
 
+// --- Graceful-shutdown interrupt notice (epic 4.1) ------------------------
+
+// TestInterruptMessage_NilResultFallsBackToPrep verifies the warning is rendered
+// from the PreparedReview when ExecuteReview returned no result (interrupted
+// before producing one), reports 0/0, references only commands that exist, and
+// never mentions the out-of-scope --resume flag (AC5/AC6).
+func TestInterruptMessage_NilResultFallsBackToPrep(t *testing.T) {
+	prep := &fanout.PreparedReview{ID: "2026-06-17_feat", Dir: "/x/.atcr/reviews/2026-06-17_feat"}
+	msg := interruptMessage(nil, prep)
+	assert.Contains(t, msg, "Review interrupted", "AC5: clear interrupt notice")
+	assert.Contains(t, msg, "0/0 agents completed", "nil result falls back to a zero tally")
+	assert.Contains(t, msg, "/x/.atcr/reviews/2026-06-17_feat", "AC6: prints the review directory")
+	assert.Contains(t, msg, "atcr status 2026-06-17_feat", "AC6: points at a command that exists")
+	assert.NotContains(t, msg, "--resume", "must not reference the out-of-scope --resume flag")
+}
+
+// TestInterruptMessage_UsesResultCounts verifies that when a partial result is
+// present the warning reports its succeeded/total tally and its on-disk dir.
+func TestInterruptMessage_UsesResultCounts(t *testing.T) {
+	prep := &fanout.PreparedReview{ID: "rev", Dir: "/fallback"}
+	result := &fanout.ReviewResult{ID: "rev", Dir: "/real/dir", Summary: fanout.Summary{Total: 5, Succeeded: 2, Failed: 1, Partial: true}}
+	msg := interruptMessage(result, prep)
+	assert.Contains(t, msg, "2/5 agents completed", "reports the partial tally")
+	assert.Contains(t, msg, "/real/dir", "uses the result's dir when present")
+}
+
+// TestInterruptedBeforeFanout_ExitOneWithNotice verifies an interrupt that lands
+// before the fan-out starts exits 1 with a graceful notice — not the misleading
+// exit-2 "review failed" usage error (independent-review MED).
+func TestInterruptedBeforeFanout_ExitOneWithNotice(t *testing.T) {
+	cmd := newReviewCmd()
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+
+	err := interruptedBeforeFanout(cmd)
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err), "interrupt before fan-out exits 1, not the exit-2 usage error")
+	assert.Contains(t, buf.String(), "Review interrupted before it started")
+	assert.NotContains(t, err.Error(), "review failed", "must not surface as a range/usage failure")
+}
+
 func TestCLIOverrides_MaxParallelSet(t *testing.T) {
 	cmd := newReviewCmd()
 	require.NoError(t, cmd.ParseFlags([]string{"--max-parallel", "3"}))

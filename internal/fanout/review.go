@@ -327,6 +327,15 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	}
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
+
+	// Detect an external interrupt (SIGINT/SIGTERM cancelled the root context) so
+	// the manifest can record it. The check is on the PARENT ctx, not runCtx: a
+	// review timeout cancels only the child runCtx (DeadlineExceeded), while a
+	// signal cancels the parent (Canceled). The engine has already collapsed both
+	// into StatusTimeout per-agent, so the parent ctx is the only signal that still
+	// distinguishes a user interrupt from an exhausted time budget.
+	interrupted := errors.Is(ctx.Err(), context.Canceled)
+
 	sum, err := WritePool(poolDir, results)
 	if err != nil {
 		// Persistence failed after the fan-out ran. Write a best-effort failure
@@ -341,6 +350,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		// Nil guard: PreparedReview may be constructed directly in tests without a manifest.
 		if p.manifest != nil {
 			p.manifest.CompletedAt = time.Now().UTC()
+			p.manifest.Interrupted = interrupted
 			_ = WriteManifest(p.Dir, p.manifest) // best-effort; if this also fails, stale inference covers it
 		}
 		return nil, err
@@ -352,6 +362,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	m := *p.manifest
 	m.Partial = sum.Partial
 	m.CompletedAt = time.Now().UTC()
+	m.Interrupted = interrupted
 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
 	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
 	// unchanged.

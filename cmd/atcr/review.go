@@ -114,6 +114,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
+		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+		// here; route it to the graceful interrupt path (exit 1 + notice) rather
+		// than a confusing "review failed: context canceled" usage error (exit 2).
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return interruptedBeforeFanout(cmd)
+		}
 		// A range failure aborts the pipeline before any agent runs — a usage
 		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
 		return usageError(fmt.Errorf("review failed: %w", err))
@@ -152,6 +158,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// plain exit 1 with artifacts preserved on disk.
 	prep, err := fanout.PrepareReview(ctx, cfg, req)
 	if err != nil {
+		// An interrupt during payload build / scaffolding cancels the context; no
+		// review directory exists yet, so route to the graceful no-results path
+		// instead of a usage error.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return interruptedBeforeFanout(cmd)
+		}
 		return usageError(err)
 	}
 
@@ -173,6 +185,19 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	}
 
 	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
+
+	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
+	// agents are already persisted by WritePool and the manifest is marked
+	// interrupted, so report what was saved and stop — running reconcile/verify on
+	// a cancelled context would only fail. The check is on the parent ctx, the one
+	// signal that survives the engine's per-agent timeout classification. Exit 1
+	// (consistent with the 10s force-exit path); skips the normal success line so
+	// an interrupted run is never reported as "succeeded".
+	if errors.Is(ctx.Err(), context.Canceled) {
+		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
+		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
+	}
+
 	if result != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
@@ -232,6 +257,33 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return gateFindings(rec, threshold, false)
 	}
 	return nil
+}
+
+// interruptedBeforeFanout handles a SIGINT/SIGTERM that arrived before the
+// fan-out started (during range resolution, config load, or scaffolding). No
+// review directory exists yet, so there are no partial results to preserve — the
+// notice just confirms the interrupt and exits 1, consistent with the post-fan-out
+// interrupt path (and never the misleading exit-2 "review failed" usage error).
+func interruptedBeforeFanout(cmd *cobra.Command) error {
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\n⚠️ Review interrupted before it started; no partial results to save.")
+	return &codedError{code: exitFailure, err: errors.New("review interrupted")}
+}
+
+// interruptMessage renders the user-facing notice for a signal-interrupted
+// review (epic 4.1 AC5/AC6). result may be nil when ExecuteReview was cancelled
+// before producing one, so the review id and directory fall back to the
+// PreparedReview, which is always available before the fan-out starts. It
+// deliberately references only `atcr status <id>` — not a `--resume` flag, which
+// is out of scope and does not exist.
+func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) string {
+	done, total, dir := 0, 0, prep.Dir
+	if result != nil {
+		done, total, dir = result.Summary.Succeeded, result.Summary.Total, result.Dir
+	}
+	return fmt.Sprintf(
+		"\n⚠️ Review interrupted. %d/%d agents completed; partial results saved to %s.\n"+
+			"   Run 'atcr status %s' to inspect.\n",
+		done, total, dir, prep.ID)
 }
 
 // absFn resolves a path to absolute form. It is a package var so a test can

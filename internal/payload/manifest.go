@@ -26,6 +26,15 @@ type Manifest struct {
 	CompletedAt     time.Time         `json:"completed_at,omitempty"`
 	Partial         bool              `json:"partial"`
 
+	// Interrupted is true when the fan-out was cut short by an external signal
+	// (SIGINT/SIGTERM cancelling the root context), as opposed to running to
+	// completion or hitting its own timeout (epic 4.1). It is the durable marker
+	// that ReadReviewStatus derives the "interrupted" run state from, so partial
+	// results from a Ctrl-C are distinguishable from a clean completion. omitempty
+	// keeps a never-interrupted manifest byte-identical to the pre-4.1 shape and
+	// lets older readers ignore it.
+	Interrupted bool `json:"interrupted,omitempty"`
+
 	// Stages records which review stages ran. Reserved for the agentic stages
 	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
 	// "debate", etc. Optional so a manifest written without it parses cleanly.

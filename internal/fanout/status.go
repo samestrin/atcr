@@ -49,6 +49,13 @@ const (
 	RunCompleted  = "completed"
 	RunFailed     = "failed"
 	RunStale      = "stale"
+	// RunInterrupted is the terminal state of a fan-out cut short by an external
+	// signal (SIGINT/SIGTERM): its summary.json is present (partial results were
+	// preserved) but manifest.interrupted is set, so the run is reported as
+	// interrupted rather than completed/failed (epic 4.1). It takes precedence
+	// over the succeeded/failed tally because the cause of incompleteness is the
+	// interrupt, not the agents' outcomes.
+	RunInterrupted = "interrupted"
 )
 
 // staleGraceSecs is added atop the manifest's effective timeout before a
@@ -201,6 +208,13 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
 		st.Status = RunCompleted
 	} else {
 		st.Status = RunFailed
+	}
+	// A signal-interrupted run (manifest.interrupted) is reported as interrupted
+	// regardless of the succeeded/failed tally: the run was cut short by the user,
+	// so its partial result set must not masquerade as a clean completion (or a
+	// genuine all-agents-failure). Applied last so it overrides both branches.
+	if m.Interrupted {
+		st.Status = RunInterrupted
 	}
 	return st, nil
 }
