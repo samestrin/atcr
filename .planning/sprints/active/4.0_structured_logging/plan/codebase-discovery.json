@@ -1,0 +1,494 @@
+{
+  "generated": "2026-06-16",
+  "refined": "2026-06-16",
+  "discovery_method": "semantic",
+  "queries": [
+    "structured logger initialization",
+    "error classification retryable",
+    "command line flag logging",
+    "agent invocation logging context",
+    "redact secrets from logs"
+  ],
+  "match_count": 13,
+  "build_from": {
+    "primary_file": "internal/mcp/handlers.go",
+    "reason": "Verified nil-safe logger injection with discard fallback; engine.log field is the model for extending logger wiring to the new internal/log package and fanout engine.",
+    "suggested_approach": "Promote the internal/mcp logger injection pattern into a shared internal/log package. Add a WithLogger EngineOption in fanout so ExecuteReview and invokeSkeptic can pass the root logger through. Replace slog.Default() fallbacks in payload with explicit logger injection via context or parameter."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/llmclient/client.go",
+      "symbol": "HTTPStatusError",
+      "type": "type",
+      "line": 307,
+      "score": 0.997,
+      "query": "error classification retryable",
+      "relevance": "Concrete error type returned for non-2xx provider responses. Should be wrapped in internal/errors.ClassifiedError while preserving errors.As support."
+    },
+    {
+      "file": "internal/llmclient/client.go",
+      "symbol": "send",
+      "type": "function",
+      "line": 253,
+      "score": 0.994,
+      "query": "error classification retryable",
+      "relevance": "Retry/transient classification logic lives here; the retryableStatus map drives Transient vs Permanent classification."
+    },
+    {
+      "file": "internal/llmclient/client_test.go",
+      "symbol": "TestComplete_HTTPStatusErrorSurfacedForClassification",
+      "type": "function",
+      "line": 437,
+      "score": 0.997,
+      "query": "error classification retryable",
+      "relevance": "Existing test asserts HTTPStatusError is surfaced via errors.As; classification wrapper must keep this contract."
+    },
+    {
+      "file": "internal/doctor/run.go",
+      "symbol": "classify",
+      "type": "function",
+      "line": 215,
+      "score": 0.856,
+      "query": "error classification retryable",
+      "relevance": "Another classification site mapping provider results to status codes; future consumer of errors.ClassifiedError."
+    },
+    {
+      "file": "internal/mcp/handlers.go",
+      "symbol": "logger",
+      "type": "method",
+      "line": 63,
+      "score": 0.951,
+      "query": "structured logger initialization",
+      "relevance": "Verified nil-safe logger accessor returning a discard logger when e.log is nil. Pattern to replicate in new packages."
+    },
+    {
+      "file": "internal/payload/diff.go",
+      "symbol": "log",
+      "type": "method",
+      "line": 196,
+      "score": 0.947,
+      "query": "structured logger initialization",
+      "relevance": "Falls back to slog.Default() when logger is nil; must be removed and replaced with injected logger."
+    },
+    {
+      "file": "internal/llmclient/client.go",
+      "symbol": "redactErrorSnippet",
+      "type": "function",
+      "line": 342,
+      "score": 0.707,
+      "query": "redact secrets from logs",
+      "relevance": "Existing secret-scrubbing implementation for provider error bodies; informs internal/log redaction regexes."
+    },
+    {
+      "file": "internal/llmclient/client_test.go",
+      "symbol": "TestComplete_ErrorBodyRedactsForeignBearerAndSKTokens",
+      "type": "function",
+      "line": 329,
+      "score": 0.885,
+      "query": "redact secrets from logs",
+      "relevance": "Existing regression test for secret redaction; log redaction tests can mirror these cases."
+    },
+    {
+      "file": "cmd/atcr/main.go",
+      "symbol": "main",
+      "type": "function",
+      "line": 15,
+      "score": 0.1,
+      "query": "command line flag logging",
+      "relevance": "CLI entry point. Root command must declare LOG_LEVEL/--log-format flags and a PersistentPreRunE that builds the shared logger."
+    },
+    {
+      "file": "cmd/atcr/review.go",
+      "symbol": "runReview",
+      "type": "function",
+      "line": 72,
+      "score": 0.05,
+      "query": "agent invocation logging context",
+      "relevance": "After fanout.PrepareReview returns (prep.ID is available), call log.WithReviewID(logger, prep.ID) and put the returned logger back into the context so downstream logs carry the review ID."
+    },
+    {
+      "file": "internal/fanout/engine.go",
+      "symbol": "Agent",
+      "type": "struct",
+      "line": 57,
+      "score": 0.02,
+      "query": "agent invocation logging context",
+      "relevance": "Agent carries Name; invokeAgent should call log.WithAgent before the LLM call."
+    },
+    {
+      "file": "internal/verify/invoke.go",
+      "symbol": "invokeSkeptic",
+      "type": "function",
+      "line": 49,
+      "score": 0.285,
+      "query": "agent invocation logging context",
+      "relevance": "Constructs a throwaway fanout.Engine per skeptic; needs logger wiring so skeptic failures flow through shared logs."
+    },
+    {
+      "file": "internal/payload/builder.go",
+      "symbol": "BuildEntries",
+      "type": "function",
+      "line": 83,
+      "score": 0.05,
+      "query": "structured logger initialization",
+      "relevance": "Creates gitRunner without a logger; must inject the context logger so payload-build warnings use internal/log."
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Logger Injection with Nil-Safe Fallback",
+      "description": "The MCP server injects a *slog.Logger into the engine struct at construction time. When nil, it falls back to a discard logger (slog.New(slog.NewTextHandler(io.Discard, nil))). This prevents panics and allows tests to omit the logger.",
+      "files": ["internal/mcp/handlers.go", "internal/mcp/server.go"],
+      "follow_for": "When adding logger injection to new packages, follow this pattern: accept *slog.Logger, check for nil, fall back to discard logger. Extend to fanout.Engine via a new WithLogger option."
+    },
+    {
+      "name": "HTTP Error Classification",
+      "description": "The llmclient already classifies HTTP errors as retryable (429, 5xx) vs permanent (other non-2xx). This is implemented as a map of retryable statuses and checked in the retry loop.",
+      "files": ["internal/llmclient/client.go"],
+      "follow_for": "When wrapping errors in the new internal/errors package, use this existing classification as the basis for the Transient vs Permanent categories."
+    },
+    {
+      "name": "slog.Default() Fallback (Problematic)",
+      "description": "The payload package's gitRunner falls back to slog.Default() when no logger is injected. This is problematic because it uses global state and cannot be captured in tests without swapping the global logger.",
+      "files": ["internal/payload/diff.go"],
+      "follow_for": "This pattern should NOT be followed. The new internal/log package should require explicit logger injection (via context or parameter) and never fall back to slog.Default()."
+    },
+    {
+      "name": "Direct Stderr Writes (Problematic)",
+      "description": "Engine wiring and verify skeptic failures write directly to os.Stderr with fmt.Fprintf. These bypass the shared logger, cannot be captured in tests, and risk leaking paths/details at default levels.",
+      "files": ["internal/fanout/review.go", "internal/verify/invoke.go"],
+      "follow_for": "Migrate these to the injected logger. Emit a generic warning at info/warn and put path-bearing details behind LOG_LEVEL=debug."
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/mcp/handlers.go",
+      "relevance": "high",
+      "purpose": "MCP engine with existing logger injection pattern",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/mcp/server.go",
+      "relevance": "high",
+      "purpose": "MCP server construction with logger injection",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/diff.go",
+      "relevance": "high",
+      "purpose": "Git diff runner with slog.Default() fallback to remove",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/payload/builder.go",
+      "relevance": "high",
+      "purpose": "Payload entry points that construct gitRunner; must inject logger",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "relevance": "high",
+      "purpose": "Fanout engine that invokes agents. Needs log.WithAgent before each invocation and a logger field/option.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "relevance": "high",
+      "purpose": "ExecuteReview builds the engine; must pass the root logger through",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "relevance": "high",
+      "purpose": "LLM client with HTTP error classification and redaction. Needs to wrap errors in internal/errors.ClassifiedError.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "relevance": "high",
+      "purpose": "Root command lives here (no root.go). Add LOG_LEVEL/--log-format flags and PersistentPreRunE to build and store the logger.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/serve.go",
+      "relevance": "high",
+      "purpose": "Currently builds a local logger. Must use the root logger from context instead.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/review.go",
+      "relevance": "high",
+      "purpose": "Review command resolves the review ID and runs the fan-out. Call log.WithReviewID after PrepareReview.",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "internal/verify/invoke.go",
+      "relevance": "medium",
+      "purpose": "Skeptic invocation and logSkepticFailure direct-stderr writes; need logger wiring",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/reconcile.go",
+      "relevance": "medium",
+      "purpose": "Reconcile command should use the context logger for scorecard diagnostics and warnings",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "docs/",
+      "relevance": "medium",
+      "purpose": "Document LOG_LEVEL and --log-format",
+      "likely_modification": "modify"
+    },
+    {
+      "path": ".planning/.config/sprint-config.md",
+      "relevance": "low",
+      "purpose": "Update LOG_LEVEL from optional/documented to implemented",
+      "likely_modification": "modify"
+    }
+  ],
+  "integration_points": [
+    {
+      "location": "cmd/atcr/main.go:newRootCmd",
+      "type": "entry-point",
+      "description": "Declare LOG_LEVEL env support and --log-format persistent flag on the root command. Add a PersistentPreRunE that constructs the logger with internal/log.New, reads LOG_LEVEL, and stores the logger in the command context."
+    },
+    {
+      "location": "cmd/atcr/review.go:runReview",
+      "type": "entry-point",
+      "description": "After fanout.PrepareReview returns (prep.ID is available), call log.WithReviewID(logger, prep.ID) and put the returned logger back into the context so all downstream logs carry the review ID."
+    },
+    {
+      "location": "cmd/atcr/serve.go:newServeCmd",
+      "type": "entry-point",
+      "description": "Retrieve the root logger from cmd.Context() (set by PersistentPreRunE) and pass it to mcp.Serve instead of constructing a local slog.Logger."
+    },
+    {
+      "location": "internal/fanout/review.go:ExecuteReview",
+      "type": "hook",
+      "description": "Pull the logger from the context (or accept it as a parameter) and pass it to NewEngine via a new WithLogger option so the engine can attach agent context."
+    },
+    {
+      "location": "internal/fanout/engine.go:invokeAgent",
+      "type": "hook",
+      "description": "At the start of each agent invocation, call log.WithAgent(logger, a.Name) to attach the agent name to all log lines within that agent's execution."
+    },
+    {
+      "location": "internal/mcp/server.go:buildServer",
+      "type": "entry-point",
+      "description": "Continue to accept *slog.Logger and inject it into the engine struct; now receives the root logger from cmd/atcr/serve.go."
+    },
+    {
+      "location": "internal/payload/builder.go:BuildEntries",
+      "type": "hook",
+      "description": "Retrieve the context logger (e.g., log.FromContext(ctx)) and pass it into the gitRunner so payload-build logs use the shared sink."
+    },
+    {
+      "location": "internal/payload/builder.go:ChangedFileCount",
+      "type": "hook",
+      "description": "Same logger injection as BuildEntries so the cheap pre-flight path is also covered."
+    },
+    {
+      "location": "internal/payload/diff.go:gitRunner.log",
+      "type": "hook",
+      "description": "Remove the slog.Default() fallback. Return the injected logger when present; otherwise return a discard logger so production never touches global state."
+    },
+    {
+      "location": "internal/llmclient/client.go:send",
+      "type": "hook",
+      "description": "Wrap HTTP/transport errors in internal/errors.ClassifiedError: Transient for retryable statuses and transport failures, Permanent for other non-2xx. Preserve errors.As for *HTTPStatusError."
+    },
+    {
+      "location": "internal/verify/invoke.go:invokeSkeptic",
+      "type": "hook",
+      "description": "Pass the context logger into fanout.NewEngine so skeptic failures are logged through internal/log. Migrate logSkepticFailure from fmt.Fprintf(os.Stderr, ...) to the injected logger."
+    },
+    {
+      "location": "cmd/atcr/reconcile.go:runReconcile",
+      "type": "entry-point",
+      "description": "Use the context logger for scorecard.EmitForReconcile diagnostics and the --require-verified warning instead of cmd.ErrOrStderr()/os.Stderr."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "Nil-Safe Logger Pattern",
+      "path": "internal/mcp/handlers.go:logger",
+      "can_extend": true,
+      "usage_example": "func (e *engine) logger() *slog.Logger { if e.log == nil { return slog.New(slog.NewTextHandler(io.Discard, nil)) } return e.log }"
+    },
+    {
+      "name": "HTTP Retry Status Map",
+      "path": "internal/llmclient/client.go:retryableStatus",
+      "can_extend": true,
+      "usage_example": "var retryableStatus = map[int]bool{429: true, 500: true, 502: true, 503: true, 504: true}"
+    },
+    {
+      "name": "Secret-Scrubbing Regexes",
+      "path": "internal/llmclient/client.go:redactErrorSnippet",
+      "can_extend": true,
+      "usage_example": "snippet = bearerTokenPattern.ReplaceAllString(snippet, \"Bearer [redacted]\")\nsnippet = skKeyPattern.ReplaceAllString(snippet, \"[redacted]\")"
+    }
+  ],
+  "architecture_notes": [
+    "There is no cmd/atcr/root.go; the root command is defined in cmd/atcr/main.go:newRootCmd. Flags and PersistentPreRunE must be added there.",
+    "The codebase already uses structured logging via log/slog, but inconsistently. MCP has the most mature injection pattern and should be the model for the new internal/log package.",
+    "fanout.Engine currently has no logger field. A WithLogger EngineOption (or context-based retrieval) is required before log.WithAgent can be used inside invokeAgent.",
+    "payload.BuildEntries and payload.ChangedFileCount create gitRunner without a logger. The logger must be injected into gitRunner so payload warnings (e.g., blocks fallback) flow through internal/log rather than slog.Default().",
+    "Direct os.Stderr writes in internal/fanout/review.go (snapshot/jail warnings) and internal/verify/invoke.go (logSkepticFailure) are the highest-risk legacy sinks targeted for incremental migration.",
+    "Error classification exists informally in llmclient (retryableStatus map and HTTPStatusError). The new internal/errors package should wrap these while preserving errors.As so existing tests and callers keep working.",
+    "No correlation IDs are currently threaded through the logging context. log.WithReviewID and log.WithAgent are new capabilities; they require a context logger (FromContext/NewContext) to be useful across packages.",
+    "llmclient already redacts secrets from provider error snippets; internal/log redaction can reuse/adapt those regexes and add path-redaction relative to the review root.",
+    "Redaction of absolute paths requires the review/repo root. The internal/log API needs a way to receive the root (e.g., WithRoot(logger, root) or a context value) so paths can be rendered relative to it."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/mcp/server.go",
+      "reason": "Reuse root logger from cmd/atcr instead of constructing local one",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/mcp/handlers.go",
+      "reason": "Already has good logger injection pattern; may need minor updates to use new internal/log package",
+      "scope": "trivial"
+    },
+    {
+      "path": "internal/payload/diff.go",
+      "reason": "Remove slog.Default() fallback, require explicit logger injection",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/payload/builder.go",
+      "reason": "Inject the context logger into gitRunner in BuildEntries and ChangedFileCount",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/engine.go",
+      "reason": "Add logger field/option and log.WithAgent call before each agent invocation",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/fanout/review.go",
+      "reason": "Pass the root logger from context into NewEngine when running the fan-out",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/llmclient/client.go",
+      "reason": "Wrap HTTP errors in internal/errors.ClassifiedError while preserving errors.As",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/verify/invoke.go",
+      "reason": "Wire logger into the throwaway engine and migrate logSkepticFailure from os.Stderr",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "reason": "Add LOG_LEVEL/--log-format persistent flags and PersistentPreRunE to build and store the root logger (no separate root.go exists)",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/serve.go",
+      "reason": "Use the root logger from context instead of constructing a local slog.Logger",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/review.go",
+      "reason": "Call log.WithReviewID after PrepareReview and store the logger in context",
+      "scope": "minor"
+    },
+    {
+      "path": "cmd/atcr/reconcile.go",
+      "reason": "Use the context logger for diagnostics instead of cmd.ErrOrStderr() where appropriate",
+      "scope": "trivial"
+    },
+    {
+      "path": "docs/",
+      "reason": "Document LOG_LEVEL and --log-format in the user-facing docs",
+      "scope": "trivial"
+    },
+    {
+      "path": ".planning/.config/sprint-config.md",
+      "reason": "Remove the optional/documented ambiguity now that LOG_LEVEL is implemented",
+      "scope": "trivial"
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "internal/log/log.go",
+      "purpose": "Core logging package with New(), LevelFromString(), format selection, and context helpers (FromContext/NewContext)",
+      "based_on": "internal/mcp/handlers.go:logger pattern"
+    },
+    {
+      "path": "internal/log/redact.go",
+      "purpose": "Redaction helpers for secrets and absolute paths",
+      "based_on": "internal/llmclient/client.go:redactErrorSnippet"
+    },
+    {
+      "path": "internal/log/correlation.go",
+      "purpose": "WithReviewID and WithAgent functions for attaching correlation context",
+      "based_on": null
+    },
+    {
+      "path": "internal/errors/errors.go",
+      "purpose": "Error classification package with ClassifiedError, NewTransient, NewPermanent, IsRetryable",
+      "based_on": "internal/llmclient/client.go:retryableStatus"
+    },
+    {
+      "path": "internal/log/log_test.go",
+      "purpose": "Tests for level parsing, format output, redaction, correlation, and context wiring",
+      "based_on": null
+    },
+    {
+      "path": "internal/errors/errors_test.go",
+      "purpose": "Tests for error classification and IsRetryable",
+      "based_on": null
+    }
+  ],
+  "integration_gaps": [
+    {
+      "gap": "Engine logger injection mechanism",
+      "description": "fanout.Engine has no *slog.Logger field and ExecuteReview/invokeSkeptic construct it without a logger. A WithLogger option or equivalent is needed before log.WithAgent can be called.",
+      "affected_files": ["internal/fanout/engine.go", "internal/fanout/review.go", "internal/verify/invoke.go"]
+    },
+    {
+      "gap": "Payload builder logger injection",
+      "description": "BuildEntries and ChangedFileCount create gitRunner without a logger. They need to accept or retrieve the logger and pass it into gitRunner to eliminate the slog.Default() fallback.",
+      "affected_files": ["internal/payload/builder.go", "internal/payload/diff.go"]
+    },
+    {
+      "gap": "Context logger API",
+      "description": "The plan's API sketch does not include FromContext/NewContext helpers, but subcommands and packages need a standard way to store and retrieve the root logger from context.",
+      "affected_files": ["internal/log/log.go", "cmd/atcr/main.go", "cmd/atcr/serve.go", "cmd/atcr/review.go", "internal/fanout/review.go"]
+    },
+    {
+      "gap": "Direct stderr migration targets",
+      "description": "internal/fanout/review.go and internal/verify/invoke.go write diagnostics directly to os.Stderr. These need to be routed through the logger, with path/detail at debug level.",
+      "affected_files": ["internal/fanout/review.go", "internal/verify/invoke.go"]
+    },
+    {
+      "gap": "Path redaction needs review root",
+      "description": "Rendering absolute paths relative to the review root requires the root path to be available to the logger. The API must provide a way to set the root (e.g., WithRoot(logger, root) or a context value).",
+      "affected_files": ["internal/log/redact.go", "cmd/atcr/review.go", "internal/mcp/handlers.go"]
+    },
+    {
+      "gap": "Test wiring for payload logger",
+      "description": "After removing slog.Default(), all gitRunner tests must inject a discard logger. Some tests currently construct gitRunner{...} without a logger field.",
+      "affected_files": ["internal/payload/diff_test.go", "internal/payload/builder_test.go", "internal/payload/pipeline_test.go"]
+    },
+    {
+      "gap": "Error classification preserves errors.As",
+      "description": "Wrapping *HTTPStatusError in ClassifiedError must keep errors.As reachable so existing llmclient tests and callers can still inspect status/snippet.",
+      "affected_files": ["internal/errors/errors.go", "internal/llmclient/client.go"]
+    },
+    {
+      "gap": "Review ID threading timing",
+      "description": "log.WithReviewID is called after PrepareReview in cmd/atcr/review.go, but payload building happens inside PrepareReview. BuildEntries must read the logger from context set earlier (or PrepareReview must accept a logger) so payload logs also include the review ID.",
+      "affected_files": ["cmd/atcr/review.go", "internal/fanout/review.go", "internal/payload/builder.go"]
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test",
+    "test_location": "same directory as source files",
+    "naming_convention": "*_test.go",
+    "example_test": "internal/mcp/handlers_test.go:TestEngine_LoggerNilSafe"
+  }
+}
