@@ -413,7 +413,9 @@ func redactErrorSnippet(snippet, key string) string {
 // body is drained so the connection can be reused.
 func readErrorSnippet(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
-	_, _ = io.Copy(io.Discard, r)
+	// Drain a bounded remainder so the connection can be reused, without reading
+	// an unbounded body from a hostile/malfunctioning endpoint on the error path.
+	_, _ = io.CopyN(io.Discard, r, maxErrorBodyBytes)
 	return strings.Join(strings.Fields(string(b)), " ")
 }
 
