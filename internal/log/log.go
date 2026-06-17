@@ -78,7 +78,7 @@ func New(level string, format string, w io.Writer) (*slog.Logger, error) {
 	case "json":
 		handler = slog.NewJSONHandler(w, opts)
 	default:
-		return nil, fmt.Errorf("log: invalid format %q (want text or json)", format)
+		return nil, fmt.Errorf("log: invalid format %q (want text or json)", clampForError(format))
 	}
 
 	return slog.New(handler), nil
