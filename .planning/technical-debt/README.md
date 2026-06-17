@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 13 | 0 |
-| LOW | 0 | 13 | 0 |
+| MEDIUM | 2 | 13 | 0 |
+| LOW | 6 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-17 | **Open Items:** 0 | **Deferred Items:** 27 | **Resolved Items:** 0 | **Total Items:** 27
+**Last Modified:** 2026-06-17 | **Open Items:** 8 | **Deferred Items:** 27 | **Resolved Items:** 0 | **Total Items:** 35
 
 ## Directory Structure
 
@@ -33,6 +33,19 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-17] From Sprint: epic-4.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | cmd/atcr/main.go:57 | A second SIGINT/SIGTERM after graceful shutdown begins is buffered but never read, so double Ctrl-C cannot force an immediate exit (user waits the full 10s grace). | Optionally handle a second signal in handleSignals to call forceExit(1) immediately, giving impatient users a fast-path force-quit. | EDGE_CASES | 15 | execute-epic-stage3 |
+| 1 | [ ] | LOW | cmd/atcr/main.go:60 | Graceful-shutdown notices ("shutting down gracefully", "forcing exit") write to os.Stderr directly instead of the structured logger (epic 4.0 suggested using it). | If the root logger is ever hoisted out of cobra's PersistentPreRunE so it is constructible at main() scope, route these notices through it for consistent log-format/redaction. | CROSS_CUTTING | 30 | execute-epic-cumulative |
+| 1 | [ ] | MEDIUM | cmd/atcr/main.go:124 | Only the first SIGINT/SIGTERM is consumed; a second Ctrl-C during the 10s grace window is buffered but ignored, so an impatient user cannot force an immediate exit. | Deferred deliberately: forcing exit on a second signal would abort the in-progress partial-result write that is this epic's core goal. If added later, gate the force so it only fires after partial results are flushed. | EDGE_CASES | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/review.go:262 | The CLI interrupt notice prints to stderr but is not also emitted through the structured logger, so an interrupt leaves no greppable structured log record (epic 4.0 relationship note asks shutdown messages to use the structured logger). | Emit a structured Warn line carrying review_id alongside the human-facing stderr notice in runReview, where log.FromContext(ctx) is available. | OBSERVABILITY | 15 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/fanout/review.go:337 | AC2 ("in-flight agents allowed to complete") is met only in the "(or timeout)" sense: the agent running at signal time shares the cancelled parent ctx and is cut off (classified timeout), so its in-progress work is lost — only agents that finished BEFORE the signal are preserved. | Clarify AC2/user docs that cooperative shutdown preserves already-completed agents and cancels in-flight ones; truly completing in-flight agents would need an uncancelled child ctx (a deliberate engine change out of scope here). | CORRECTNESS | 30 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/fanout/review.go:337 | interrupted is inferred from errors.Is(ctx.Err(), context.Canceled) on the parent ctx, coupling "parent cancelled" to "user interrupt"; a future caller cancelling the parent for a non-signal reason would be misreported as interrupted. | Document the parent-ctx-implies-signal coupling on the ExecuteReview contract, or thread an explicit interrupt cause instead of inferring from ctx cancellation. | CORRECTNESS | 20 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/fanout/review.go:354 | On the WritePool-failure path the interrupted manifest write is best-effort (error discarded); if that write also fails the marker is lost and ReadReviewStatus cannot derive RunInterrupted (it relies solely on manifest.interrupted), unlike completion which has summary.json as a second signal. | Accept as best-effort, or add a fallback interrupted signal independent of the manifest if the double-write-failure case ever matters in practice. | ERROR_PATHS | 20 | execute-epic-independent |
+| U | [ ] | MEDIUM | internal/mcp/handlers.go:88 | Serve-mode background fan-out runs under context.WithoutCancel(ctx) so a SIGINT to the MCP server never cancels or marks an in-flight detached review interrupted; it is allowed to finish (intended MCP design) but never gets the interrupted marker CLI mode promises. | Decide whether detached MCP reviews should be marked interrupted on server shutdown; if so, thread a cancellable/interrupt-aware context or post-hoc marker into the background review path — a separate design from this CLI-focused epic. | REGRESSION_RISK | 60 | execute-epic-independent |
 
 ### [2026-06-17] From Sprint: 4.0_structured_logging
 
