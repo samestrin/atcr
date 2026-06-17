@@ -77,8 +77,14 @@ func (e *engine) logger() *slog.Logger {
 func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Context {
 	// Seed review_id and enforce sink-level redaction (secret-shaped tokens →
 	// AC5, absolute paths under the repo root → AC6) so the serve-mode fan-out
-	// matches the CLI path's single-sink redaction contract (TD-007).
-	logger := log.WithRedactor(log.WithReviewID(e.logger(), reviewID), log.NewRedactor(e.root))
+	// matches the CLI path's single-sink redaction contract (TD-007). Resolve the
+	// root to absolute first — e.root is "." in serve mode and relativizePaths
+	// no-ops on ".", so AC6 needs the concrete root.
+	root := e.root
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	logger := log.WithRedactor(log.WithReviewID(e.logger(), reviewID), log.NewRedactor(root))
 	return log.NewContext(context.WithoutCancel(ctx), logger)
 }
 

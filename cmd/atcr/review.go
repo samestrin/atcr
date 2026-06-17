@@ -163,7 +163,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// Enforce sink-level redaction for the whole review: scrub secret-shaped
 	// tokens (AC5) and relativize absolute paths under the repo root (AC6) on
 	// every log line, at every level and call site (TD-007 enforcement model).
-	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(prep.Repo)))
+	// Resolve the root to an absolute path first — the CLI default repo is "."
+	// and relativizePaths no-ops on ".", so AC6 needs the concrete root.
+	redactRoot := prep.Repo
+	if abs, err := filepath.Abs(redactRoot); err == nil {
+		redactRoot = abs
+	}
+	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(redactRoot)))
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
 		return err // no slot can authenticate → exit 2 before any provider call
