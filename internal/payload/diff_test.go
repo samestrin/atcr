@@ -134,3 +134,18 @@ func TestIsBinary_NoDiffIsNotBinaryNotError(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, bin)
 }
+
+// TestGitRunner_NilLogger_NoPanic verifies the nil-safe logger fallback (AC4,
+// AC7): a gitRunner constructed without a logger returns a usable no-op discard
+// logger from log() — never the global slog default, never nil — and logging through it
+// does not panic. This is the contract that lets direct gitRunner{} test
+// construction stay free of global logger state.
+func TestGitRunner_NilLogger_NoPanic(t *testing.T) {
+	g := &gitRunner{ctx: context.Background(), dir: t.TempDir()}
+	require.Nil(t, g.logger, "precondition: no logger injected")
+	logger := g.log()
+	require.NotNil(t, logger, "log() must never return nil")
+	assert.NotPanics(t, func() {
+		logger.Info("nil-logger fallback", "file", "x.go")
+	}, "discard fallback must not panic")
+}

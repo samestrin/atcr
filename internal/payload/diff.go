@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"regexp"
@@ -65,7 +66,7 @@ type rangeState struct {
 type gitRunner struct {
 	ctx    context.Context
 	dir    string
-	logger *slog.Logger // nil → slog.Default(); set in tests to capture output without swapping global
+	logger *slog.Logger // nil → no-op discard logger; set to capture output without swapping global
 
 	// execCount counts git subprocess invocations (every output call). It backs
 	// the constant-process-count regression test; it is otherwise inert.
@@ -193,13 +194,16 @@ func headPathOf(paths []string) string {
 	return paths[len(paths)-1]
 }
 
-// log returns the runner's logger, falling back to slog.Default() when none
-// is injected. Callers use g.log().Warn(...) instead of slog.Warn(...).
+// log returns the runner's logger, falling back to a no-op discard logger when
+// none is injected (mirrors internal/mcp/handlers.go's nil-safe guard). This
+// keeps the single-sink contract: production callers inject the context logger
+// via BuildEntries/ChangedFileCount, and direct gitRunner{} construction in
+// tests never reaches the global slog default logger. Callers use g.log().Warn(...).
 func (g *gitRunner) log() *slog.Logger {
 	if g.logger != nil {
 		return g.logger
 	}
-	return slog.Default()
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 // forRange reconciles the cached state against base..head and returns a
