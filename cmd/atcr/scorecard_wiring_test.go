@@ -38,10 +38,13 @@ func seedMalformedStore(t *testing.T, runID, reviewer string) {
 	storeRecord(t, reviewerRec(runID, reviewer, "claude-sonnet-4-6", 12, 7))
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
-	month := runID[:7] // YYYY-MM month-file stem (mirrors monthFromRunID)
-	f, err := os.OpenFile(filepath.Join(dir, month+".jsonl"), os.O_APPEND|os.O_WRONLY, 0o600)
+	matches, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	require.NoError(t, err)
-	_, _ = f.WriteString("{not valid json\n")
+	require.Len(t, matches, 1, "expected exactly one month file after storeRecord")
+	f, err := os.OpenFile(matches[0], os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString("{not valid json\n")
+	require.NoError(t, err)
 	require.NoError(t, f.Close())
 }
 
@@ -56,10 +59,10 @@ func TestLeaderboardCmd_ReadDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	seedMalformedStore(t, "2026-06-14T10:00:00Z-corrupt", "bruce")
 
 	code, stdout, stderr := execCmdSplit(t, "leaderboard", "--since", "all")
-	require.Equal(t, 0, code, stderr)
-	require.Contains(t, stderr, "skipping malformed record",
+	require.Equal(t, 0, code)
+	require.Contains(t, stderr, scorecard.MsgMalformedSkip,
 		"leaderboard read diagnostic must route to cmd.ErrOrStderr()")
-	require.NotContains(t, stdout, "skipping malformed record",
+	require.NotContains(t, stdout, scorecard.MsgMalformedSkip,
 		"the diagnostic must not leak onto stdout")
 }
 
@@ -74,10 +77,10 @@ func TestScorecardCmd_ReadDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	seedMalformedStore(t, runID, "bruce")
 
 	code, stdout, stderr := execCmdSplit(t, "scorecard", runID)
-	require.Equal(t, 0, code, stderr)
-	require.Contains(t, stderr, "skipping malformed record",
+	require.Equal(t, 0, code)
+	require.Contains(t, stderr, scorecard.MsgMalformedSkip,
 		"scorecard read diagnostic must route to cmd.ErrOrStderr()")
-	require.NotContains(t, stdout, "skipping malformed record",
+	require.NotContains(t, stdout, scorecard.MsgMalformedSkip,
 		"the diagnostic must not leak onto stdout")
 }
 
@@ -96,7 +99,12 @@ func TestReconcileCmd_EmitDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	})
 	// Force a scorecard write-failure: create the store's parent dir, then place
 	// a regular file where the scorecard store directory should be, so Append's
-	// MkdirAll(dir) fails with ENOTDIR.
+	// MkdirAll(dir) fails. This works cross-platform: Go's os.MkdirAll returns
+	// ENOTDIR on any OS when a regular file occupies the target path, and the
+	// test asserts only the diagnostic + exit 0, never the errno — so it passes
+	// on Windows too. (The genuinely POSIX-specific caveat in this area is
+	// store.go's O_APPEND append-atomicity guarantee, TD-004 — production
+	// behavior, not this test.)
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o755))
@@ -105,6 +113,6 @@ func TestReconcileCmd_EmitDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	code, _, stderr := execCmdSplit(t, "reconcile", "2026-06-10_feat")
 	require.Equal(t, 0, code,
 		"a scorecard emit failure is best-effort and must not fail the reconcile")
-	require.Contains(t, stderr, "scorecard: write failed",
+	require.Contains(t, stderr, scorecard.MsgWriteFailed,
 		"reconcile emit diagnostic must route to cmd.ErrOrStderr()")
 }
