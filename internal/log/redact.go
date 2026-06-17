@@ -82,12 +82,48 @@ func (r *Redactor) Redact(msg string) string {
 		}
 	}
 
-	out = bearerTokenPattern.ReplaceAllString(out, "Bearer [redacted]")
-	out = skKeyPattern.ReplaceAllString(out, "[redacted]")
+	// Fast path: the regex engine is far costlier than a single byte scan, and the
+	// overwhelming majority of log lines carry no token marker. Only run each
+	// pattern when its literal marker is present under ASCII case folding (matching
+	// the (?i) flag for the ASCII tokens these patterns target — keys and bearer
+	// tokens are ASCII). This skips the regex engine entirely on common lines.
+	if containsFoldASCII(out, "bearer") {
+		out = bearerTokenPattern.ReplaceAllString(out, "Bearer [redacted]")
+	}
+	if containsFoldASCII(out, "sk-") {
+		out = skKeyPattern.ReplaceAllString(out, "[redacted]")
+	}
 
 	out = relativizePaths(out, r.root)
 
 	return out
+}
+
+// containsFoldASCII reports whether sub occurs in s under ASCII case folding,
+// without allocating (unlike strings.Contains(strings.ToLower(s), sub)). sub
+// must be lowercase ASCII. It is a cheap prefilter guarding the redaction
+// regexes; sub is a short literal so the O(len(s)*len(sub)) scan stays linear in
+// practice.
+func containsFoldASCII(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		j := 0
+		for ; j < len(sub); j++ {
+			c := s[i+j]
+			if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != sub[j] {
+				break
+			}
+		}
+		if j == len(sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // relativizePaths strips occurrences of "<cleanRoot>/" from s so absolute paths

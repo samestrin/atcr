@@ -3,6 +3,7 @@ package log
 import (
 	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -194,6 +195,18 @@ func TestWithRedactor_PreservesLevelFiltering(t *testing.T) {
 	logger.Info("should appear")
 	if !strings.Contains(buf.String(), "should appear") {
 		t.Fatalf("info line suppressed: %q", buf.String())
+	}
+}
+
+// BenchmarkHandle_NoMatch measures the per-record redaction cost on a common log
+// line that carries no secret/token marker — the case the Redact prefilter is
+// meant to keep cheap (the design targets <0.1ms per record).
+func BenchmarkHandle_NoMatch(b *testing.B) {
+	base := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := WithRedactor(base, NewRedactor("/home/u/repo", "configuredsecret"))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		logger.Info("handled request", "id", 12345, "status", 200, "user", "alice")
 	}
 }
 

@@ -239,6 +239,62 @@ func TestRedact_EmptySecretsIgnored(t *testing.T) {
 	}
 }
 
+// TestRedact_PrefilterPreservesCaseVariants guards the ASCII case-fold prefilter:
+// uppercase/mixed-case token markers must still trigger the regex pass. A naive
+// case-sensitive strings.Contains prefilter would skip these and leak the token.
+func TestRedact_PrefilterPreservesCaseVariants(t *testing.T) {
+	r := NewRedactor("")
+	cases := map[string]string{
+		"BEARER UPPERTOKEN1": "UPPERTOKEN1",
+		"Bearer MixedTok2":   "MixedTok2",
+		"SK-UPPERKEY3":       "UPPERKEY3",
+	}
+	for in, leak := range cases {
+		out := r.Redact(in)
+		if strings.Contains(out, leak) {
+			t.Fatalf("case-variant token leaked past prefilter: in=%q out=%q", in, out)
+		}
+	}
+}
+
+func TestContainsFoldASCII(t *testing.T) {
+	cases := []struct {
+		s, sub string
+		want   bool
+	}{
+		{"has Bearer here", "bearer", true},
+		{"HAS BEARER", "bearer", true},
+		{"no marker", "bearer", false},
+		{"SK-key", "sk-", true},
+		{"prefix sk", "sk-", false},
+		{"anything", "", true},
+		{"ab", "abc", false},
+	}
+	for _, c := range cases {
+		if got := containsFoldASCII(c.s, c.sub); got != c.want {
+			t.Fatalf("containsFoldASCII(%q,%q)=%v, want %v", c.s, c.sub, got, c.want)
+		}
+	}
+}
+
+func BenchmarkRedact_NoMatch(b *testing.B) {
+	r := NewRedactor("/home/u/repo", "configuredsecret")
+	msg := "handled request id=12345 status=200 latency=4ms user=alice path=/api/v1/items"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = r.Redact(msg)
+	}
+}
+
+func BenchmarkRedact_WithToken(b *testing.B) {
+	r := NewRedactor("/home/u/repo", "configuredsecret")
+	msg := "auth failed Authorization: Bearer abc123def456 for /home/u/repo/x.go"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = r.Redact(msg)
+	}
+}
+
 func TestRedact_ConcurrentSafety(t *testing.T) {
 	r := NewRedactor("/home/u/repo", "concurrentsecret")
 	const goroutines = 50
