@@ -55,7 +55,7 @@ func LevelFromString(s string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo, fmt.Errorf("log: invalid level %q (want debug, info, warn, or error)", clampForError(s))
+		return slog.LevelInfo, fmt.Errorf("%w %q (want debug, info, warn, or error)", ErrInvalidLevel, clampForError(s))
 	}
 }
 
@@ -93,7 +93,7 @@ func New(level string, format string, w io.Writer) (*slog.Logger, error) {
 	case "json":
 		handler = slog.NewJSONHandler(w, opts)
 	default:
-		return nil, fmt.Errorf("log: invalid format %q (want text or json)", clampForError(format))
+		return nil, fmt.Errorf("%w %q (want text or json)", ErrInvalidFormat, clampForError(format))
 	}
 
 	return slog.New(handler), nil
