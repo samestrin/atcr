@@ -219,7 +219,10 @@ func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
 // failed" diagnostic; with the writer wired, that diagnostic lands in the
 // injected buffer. A regression passing os.Stderr (or nil) routes it to the real
 // stderr and fails this test. The scorecard failure is best-effort, so it must
-// NOT fail the reconcile.
+// NOT fail the reconcile. The write-failure is induced cross-platform: Go's
+// os.MkdirAll returns ENOTDIR on any OS when a regular file occupies the target
+// path, and the test asserts only the diagnostic + exit 0, never the errno (cf.
+// store.go TD-004 for the genuinely POSIX-specific O_APPEND append caveat).
 func TestReconcileHandler_ScorecardDiagnosticRoutesToInjectedDiag(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()

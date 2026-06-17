@@ -99,7 +99,12 @@ func TestReconcileCmd_EmitDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	})
 	// Force a scorecard write-failure: create the store's parent dir, then place
 	// a regular file where the scorecard store directory should be, so Append's
-	// MkdirAll(dir) fails.
+	// MkdirAll(dir) fails. This works cross-platform: Go's os.MkdirAll returns
+	// ENOTDIR on any OS when a regular file occupies the target path, and the
+	// test asserts only the diagnostic + exit 0, never the errno — so it passes
+	// on Windows too. (The genuinely POSIX-specific caveat in this area is
+	// store.go's O_APPEND append-atomicity guarantee, TD-004 — production
+	// behavior, not this test.)
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o755))
