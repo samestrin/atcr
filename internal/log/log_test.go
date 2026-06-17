@@ -232,7 +232,9 @@ func TestFromContext_DiscardLoggerNoOutput(t *testing.T) {
 		t.Fatal("FromContext should return discard logger when stored logger is nil")
 	}
 	// Two misses should return the same cached discard logger (no per-call alloc).
-	if FromContext(context.Background()) != FromContext(context.Background()) {
+	first := FromContext(context.Background())
+	second := FromContext(context.Background())
+	if first != second {
 		t.Fatal("discard logger should be cached, not reallocated per call")
 	}
 }
