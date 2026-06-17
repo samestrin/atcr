@@ -12,10 +12,28 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestReviewHandler_AttachesReviewIDToFanoutContext verifies the MCP review path
+// seeds the detached fan-out context with the server logger tagged by review_id,
+// so AC9 (every review log line carries review_id) holds under `atcr serve`,
+// matching the CLI path. Phase 4 fan-out reads this logger via log.FromContext.
+func TestReviewHandler_AttachesReviewIDToFanoutContext(t *testing.T) {
+	var buf bytes.Buffer
+	logger, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	e := &engine{log: logger}
+
+	ctx := e.reviewContext(context.Background(), "2026-06-17_rid")
+	log.FromContext(ctx).Info("fan-out line")
+
+	assert.Contains(t, buf.String(), "review_id=2026-06-17_rid",
+		"the detached fan-out context must carry the server logger tagged with review_id")
+}
 
 // gitRepo creates a temp git repo with a base and head commit, returning the
 // repo dir and the two full SHAs.

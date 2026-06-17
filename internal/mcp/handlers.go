@@ -16,6 +16,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -65,6 +66,16 @@ func (e *engine) logger() *slog.Logger {
 		return slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return e.log
+}
+
+// reviewContext detaches ctx for the background fan-out (so the run is not
+// cancelled when the handler returns) and seeds it with the server logger tagged
+// by review_id, so every fan-out log line for this review is greppable by
+// review_id (AC9). This mirrors the CLI review path (cmd/atcr/review.go
+// correlateReviewID) for the MCP entry point; Phase 4 fan-out reads the logger
+// back via log.FromContext.
+func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Context {
+	return log.NewContext(context.WithoutCancel(ctx), log.WithReviewID(e.logger(), reviewID))
 }
 
 // drain waits up to timeout for in-flight background reviews to finish, so a
@@ -173,7 +184,7 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 				e.logger().Error("review fan-out panicked", "review_id", prep.ID, "panic", r)
 			}
 		}()
-		if _, err := fanout.ExecuteReview(context.WithoutCancel(ctx), e.completer, prep); err != nil {
+		if _, err := fanout.ExecuteReview(e.reviewContext(ctx, prep.ID), e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
 		}
 	}()
