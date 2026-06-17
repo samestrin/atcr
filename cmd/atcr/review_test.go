@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +10,8 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,6 +22,55 @@ func slotWithKeys(envs ...string) fanout.Slot {
 		s.Fallbacks = append(s.Fallbacks, fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: e}})
 	}
 	return s
+}
+
+// --- Review correlation (sprint 4.0, task 3.4) ----------------------------
+
+// TestRunReview_AttachesReviewID verifies correlateReviewID tags the context
+// logger so every subsequent log line carries review_id=<id> (AC9).
+func TestRunReview_AttachesReviewID(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), base)
+
+	ctx = correlateReviewID(ctx, "2026-06-17_feat")
+	log.FromContext(ctx).Info("executing review")
+
+	assert.Contains(t, buf.String(), "review_id=2026-06-17_feat",
+		"every log line after correlation must carry the review id")
+}
+
+// TestRunReview_ContextLoggerFlowsToExecuteReview verifies the correlated logger
+// is reachable via log.FromContext on the returned context — the same access
+// path ExecuteReview/RunReconcile/Verify use — and differs from the base logger.
+func TestRunReview_ContextLoggerFlowsToExecuteReview(t *testing.T) {
+	base, err := log.New("info", "text", &bytes.Buffer{})
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), base)
+
+	correlated := correlateReviewID(ctx, "rev-1")
+	require.NotSame(t, base, log.FromContext(correlated),
+		"correlation must store a derived logger reachable by downstream stages")
+}
+
+// TestRunReview_NoLocalLogger verifies correlateReviewID builds on the existing
+// context logger rather than constructing a new one: an attribute attached
+// upstream survives alongside review_id.
+func TestRunReview_NoLocalLogger(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	// Attribute attached upstream (e.g. a future agent/source tag).
+	base = base.With("upstream", "present")
+	ctx := log.NewContext(context.Background(), base)
+
+	ctx = correlateReviewID(ctx, "rev-2")
+	log.FromContext(ctx).Info("line")
+
+	out := buf.String()
+	assert.Contains(t, out, "upstream=present", "must preserve the upstream context logger, not replace it")
+	assert.Contains(t, out, "review_id=rev-2", "must also attach the review id")
 }
 
 func TestCLIOverrides_MaxParallelSet(t *testing.T) {

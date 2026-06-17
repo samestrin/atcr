@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -9,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/scorecard"
 )
@@ -78,6 +81,69 @@ func fixtureReview(t *testing.T, id string, files map[string]string) {
 	}
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "reconciled"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "latest"), []byte(id+"\n"), 0o644))
+}
+
+// --- Reconcile logger wiring (sprint 4.0, task 3.5) -----------------------
+
+// runReconcileWithLogger drives runReconcile directly (bypassing the root
+// PersistentPreRunE) with a buffer-backed context logger and the given args, so
+// a test can assert on the diagnostic output the context logger captures.
+func runReconcileWithLogger(t *testing.T, ctxLogBuf *bytes.Buffer, errBuf *bytes.Buffer, args ...string) {
+	t.Helper()
+	logger, err := log.New("info", "text", ctxLogBuf)
+	require.NoError(t, err)
+	cmd := newReconcileCmd()
+	cmd.SetContext(log.NewContext(context.Background(), logger))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(errBuf)
+	require.NoError(t, cmd.ParseFlags(args))
+	_ = runReconcile(cmd, cmd.Flags().Args()) // gate may return exit-1; not asserted here
+}
+
+// TestRunReconcile_RequireVerifiedWarning verifies the --require-verified-without-
+// verify warning is emitted at the default info level through the context logger.
+func TestRunReconcile_RequireVerifiedWarning(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
+	})
+	var logBuf, errBuf bytes.Buffer
+	runReconcileWithLogger(t, &logBuf, &errBuf, "--require-verified", "--fail-on", "LOW", "r")
+
+	assert.Contains(t, logBuf.String(), "--require-verified set but verify never ran",
+		"the warning must be visible at the default info level")
+}
+
+// TestRunReconcile_UsesContextLogger verifies the warning routes through the
+// context logger and NOT directly to the command's stderr.
+func TestRunReconcile_UsesContextLogger(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
+	})
+	var logBuf, errBuf bytes.Buffer
+	runReconcileWithLogger(t, &logBuf, &errBuf, "--require-verified", "--fail-on", "LOW", "r")
+
+	assert.Contains(t, logBuf.String(), "--require-verified set but",
+		"diagnostic must reach the context logger")
+	assert.NotContains(t, errBuf.String(), "--require-verified set but",
+		"diagnostic must not bypass the logger to direct stderr")
+}
+
+// TestRunReconcile_NoSlogDefault verifies reconcile relies on the FromContext
+// discard fallback (not slog.Default): with no logger in context it runs without
+// panicking.
+func TestRunReconcile_NoSlogDefault(t *testing.T) {
+	isolate(t)
+	fixtureReview(t, "r", map[string]string{
+		"sources/host/findings.txt": "LOW|a.go:1|x|f|style|1|ev|host\n",
+	})
+	cmd := newReconcileCmd()
+	cmd.SetContext(context.Background()) // no logger → discard fallback
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	require.NoError(t, cmd.ParseFlags([]string{"r"}))
+	require.NotPanics(t, func() { _ = runReconcile(cmd, cmd.Flags().Args()) })
 }
 
 // TestReconcileCmd_InProgressReviewRejected verifies a fan-out-managed review

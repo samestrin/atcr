@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -32,6 +33,12 @@ func newReconcileCmd() *cobra.Command {
 }
 
 func runReconcile(cmd *cobra.Command, args []string) error {
+	// Diagnostics route through the shared context logger so they honor LOG_LEVEL,
+	// redaction, and correlation; the discard fallback keeps this nil-safe when no
+	// logger was wired (no reliance on slog.Default). User-facing summary output
+	// still goes to stdout (OutOrStdout) unchanged.
+	logger := log.FromContext(cmd.Context())
+
 	// Resolve the gate threshold (validated against the closed enum) BEFORE any
 	// I/O so a bad value fails fast as a usage error (exit 2). The --fail-on flag
 	// wins; absent it, the project config's fail_on is the default gate.
@@ -90,10 +97,12 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	noScorecard, _ := cmd.Flags().GetBool("no-scorecard")
 	scorecard.EmitForReconcile(reviewDir, res, scorecard.EmitOpts{NoScorecard: noScorecard, Diag: cmd.ErrOrStderr()})
 
-	// TD-004: warn when verify never ran — the gate would trivially pass everything.
+	// TD-004: warn when verify never ran — the gate would trivially pass
+	// everything. Routed through the context logger so it honors LOG_LEVEL and is
+	// correlated; visible at the default info level.
 	if requireVerified {
 		if verr := reconcile.ValidateRequireVerified(reviewDir); verr != nil {
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "atcr: warning: --require-verified set but", verr)
+			logger.Warn("--require-verified set but verify never ran", "detail", verr)
 		}
 	}
 
