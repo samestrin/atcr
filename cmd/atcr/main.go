@@ -158,6 +158,14 @@ func setupLogger(cmd *cobra.Command) error {
 	if err != nil {
 		return usageError(err)
 	}
+	// Scrub secret-shaped tokens (bearer/sk-) at the single root-logger
+	// construction point so EVERY command's log lines — CLI, serve, MCP — are
+	// covered by AC5 without each call site opting in. NewRedactor("") applies
+	// only the token regexes (empty root = no path work); per-review AC6 path
+	// relativization stays layered in review.go/handlers.go where the review root
+	// is known. Wrapping here (not in serve) preserves AC3 — serve still forwards
+	// the context logger unchanged.
+	logger = log.WithRedactor(logger, log.NewRedactor(""))
 	cmd.SetContext(log.NewContext(cmd.Context(), logger))
 	return nil
 }
