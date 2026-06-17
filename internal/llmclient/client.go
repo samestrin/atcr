@@ -186,13 +186,20 @@ func (u *UsageData) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// clampNonNegative truncates a usage count toward zero and clamps negatives to
-// zero at the data boundary, so every consumer of UsageData — not just
-// ComputeCostUSD — sees a non-negative count. A non-numeric value yields zero.
+// clampNonNegative truncates a usage count toward zero and clamps it into the
+// non-negative int range at the data boundary, so every consumer of UsageData —
+// not just ComputeCostUSD — sees a valid count. The 0 return is reserved for
+// values that are not a usable count: non-numeric, NaN, Inf, or negative. A
+// genuinely large but valid count that exceeds math.MaxInt clamps to math.MaxInt
+// rather than collapsing to 0, so an oversized count is reported as a ceiling
+// (over-counting at worst) instead of masking a real request as free.
 func clampNonNegative(n json.Number) int {
 	v, err := n.Float64()
-	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) || v > 1e15 {
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0
+	}
+	if v > float64(math.MaxInt) {
+		return math.MaxInt
 	}
 	return int(v)
 }
