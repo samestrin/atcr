@@ -68,6 +68,12 @@ func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.httpClie
 // they do not sleep for real).
 func WithRetry(maxRetries int, initialBackoff time.Duration, factor float64) Option {
 	return func(c *Client) {
+		// A negative budget would make the attempt loop never execute and fall
+		// through to an "exhausted retries" error wrapping a nil cause; clamp it
+		// to zero so at least one attempt is always made.
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
 		c.maxRetries = maxRetries
 		c.initialBackoff = initialBackoff
 		c.backoffFactor = factor
