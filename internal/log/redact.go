@@ -1,6 +1,7 @@
 package log
 
 import (
+	"encoding/base64"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -43,8 +44,8 @@ func NewRedactor(reviewRoot string, secrets ...string) *Redactor {
 // explicit secrets (literal + URL-encoded), then generic token shapes, then
 // path relativization.
 //
-// Configured secrets are matched VERBATIM (case-sensitive) in their literal and
-// URL-encoded forms. This is intentional: opaque secrets are echoed by upstream
+// Configured secrets are matched VERBATIM (case-sensitive) in their literal,
+// URL-query-escaped, URL-path-escaped, and base64 (StdEncoding) forms. This is intentional: opaque secrets are echoed by upstream
 // providers verbatim or omitted, never case-mangled, and case-folding a short
 // secret would over-redact unrelated text that merely shares its letters. A
 // secret echoed in a genuinely altered casing is therefore not caught by the
@@ -60,8 +61,18 @@ func (r *Redactor) Redact(msg string) string {
 		// Verbatim, case-sensitive match — see the Redact doc comment for why
 		// casing is not folded here.
 		out = strings.ReplaceAll(out, s, "[redacted]")
-		if enc := url.QueryEscape(s); enc != s {
-			out = strings.ReplaceAll(out, enc, "[redacted]")
+		// Common transport encodings of the secret: a value echoed in a URL query,
+		// a URL path segment, or a base64'd Authorization header would otherwise
+		// slip past the literal match. Each variant is stripped only when it
+		// actually differs from the raw form (base64 always does for non-empty s).
+		for _, enc := range []string{
+			url.QueryEscape(s),
+			url.PathEscape(s),
+			base64.StdEncoding.EncodeToString([]byte(s)),
+		} {
+			if enc != s {
+				out = strings.ReplaceAll(out, enc, "[redacted]")
+			}
 		}
 	}
 
