@@ -2,6 +2,7 @@ package log
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 )
 
@@ -74,6 +75,16 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 	case slog.KindAny:
 		if err, ok := v.Any().(error); ok {
 			return slog.String(a.Key, h.r.Redact(err.Error()))
+		}
+		// Any other value (struct, slice, map, Stringer) could carry a secret in
+		// its rendered form, which the base handler would marshal to the sink
+		// verbatim. Render it the way slog's text handler would (%+v, preserving
+		// field names), scrub that, and substitute the redacted string only when
+		// redaction actually removed something — otherwise pass the original attr
+		// through so non-secret values keep their native marshaling/type.
+		rendered := fmt.Sprintf("%+v", v.Any())
+		if red := h.r.Redact(rendered); red != rendered {
+			return slog.String(a.Key, red)
 		}
 		return a
 	default:
