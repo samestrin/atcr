@@ -26,22 +26,47 @@ var (
 
 // Redactor scrubs secrets and absolute paths from log messages before they are
 // emitted. It is immutable after construction and safe for concurrent use: all
-// state (review root and the configured secret list) is read-only, and Redact
+// state (review root and the precomputed secret forms) is read-only, and Redact
 // holds no mutable state.
 type Redactor struct {
-	root    string
-	secrets []string
+	root string
+	// secretForms holds every distinct, non-empty form of each configured secret
+	// to scrub — literal plus transport encodings — precomputed once at
+	// construction so Redact does no per-call encoding allocation.
+	secretForms []string
 }
 
 // NewRedactor builds a Redactor. reviewRoot, when non-empty, causes absolute
 // paths under it to be rendered relative to it; secrets are exact values
-// (e.g. registry API keys) scrubbed in both literal and URL-encoded form. An
-// empty reviewRoot disables path relativization; bearer/sk- scrubbing always
-// applies regardless of configured secrets.
+// (e.g. registry API keys) scrubbed in their literal, URL-query-escaped,
+// URL-path-escaped, and base64 (StdEncoding) forms. An empty reviewRoot disables
+// path relativization; bearer/sk- scrubbing always applies regardless of
+// configured secrets.
 func NewRedactor(reviewRoot string, secrets ...string) *Redactor {
+	var forms []string
+	seen := make(map[string]struct{})
+	add := func(v string) {
+		if v == "" {
+			return
+		}
+		if _, dup := seen[v]; dup {
+			return
+		}
+		seen[v] = struct{}{}
+		forms = append(forms, v)
+	}
+	for _, s := range secrets {
+		if s == "" {
+			continue
+		}
+		add(s)
+		add(url.QueryEscape(s))
+		add(url.PathEscape(s))
+		add(base64.StdEncoding.EncodeToString([]byte(s)))
+	}
 	return &Redactor{
-		root:    reviewRoot,
-		secrets: append([]string(nil), secrets...),
+		root:        reviewRoot,
+		secretForms: forms,
 	}
 }
 
@@ -51,35 +76,20 @@ func NewRedactor(reviewRoot string, secrets ...string) *Redactor {
 // path relativization.
 //
 // Configured secrets are matched VERBATIM (case-sensitive) in their literal,
-// URL-query-escaped, URL-path-escaped, and base64 (StdEncoding) forms. This is intentional: opaque secrets are echoed by upstream
-// providers verbatim or omitted, never case-mangled, and case-folding a short
-// secret would over-redact unrelated text that merely shares its letters. A
-// secret echoed in a genuinely altered casing is therefore not caught by the
+// URL-query-escaped, URL-path-escaped, and base64 (StdEncoding) forms (all
+// precomputed at construction). This is intentional: opaque secrets are echoed
+// by upstream providers verbatim or omitted, never case-mangled, and case-folding
+// a short secret would over-redact unrelated text that merely shares its letters.
+// A secret echoed in a genuinely altered casing is therefore not caught by the
 // exact-secret pass; the case-insensitive bearer/sk- shape patterns below are
 // the backstop for the token shapes providers actually emit.
 func (r *Redactor) Redact(msg string) string {
 	out := msg
 
-	for _, s := range r.secrets {
-		if s == "" {
-			continue
-		}
-		// Verbatim, case-sensitive match — see the Redact doc comment for why
-		// casing is not folded here.
-		out = strings.ReplaceAll(out, s, "[redacted]")
-		// Common transport encodings of the secret: a value echoed in a URL query,
-		// a URL path segment, or a base64'd Authorization header would otherwise
-		// slip past the literal match. Each variant is stripped only when it
-		// actually differs from the raw form (base64 always does for non-empty s).
-		for _, enc := range []string{
-			url.QueryEscape(s),
-			url.PathEscape(s),
-			base64.StdEncoding.EncodeToString([]byte(s)),
-		} {
-			if enc != s {
-				out = strings.ReplaceAll(out, enc, "[redacted]")
-			}
-		}
+	// Verbatim, case-sensitive matches over the precomputed literal + transport
+	// encodings — see the Redact doc comment for why casing is not folded.
+	for _, form := range r.secretForms {
+		out = strings.ReplaceAll(out, form, "[redacted]")
 	}
 
 	// Fast path: the regex engine is far costlier than a single byte scan, and the
