@@ -2,13 +2,18 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/mcp"
 	"github.com/spf13/cobra"
 )
+
+// serveFn is the MCP engine entrypoint, exposed as a package var so tests can
+// substitute a non-blocking stub: the real StdioTransport owns os.Stdin and
+// os.Stdout and would block a unit test on the pipe.
+var serveFn = mcp.Serve
 
 // newServeCmd builds `atcr serve`: an MCP stdio server wrapping the same engine
 // as the CLI. Stdout is owned by the MCP protocol; every log and diagnostic
@@ -26,11 +31,13 @@ func newServeCmd() *cobra.Command {
 				return fmt.Errorf("atcr serve requires stdin/stdout pipe; use atcr review for interactive mode")
 			}
 
-			// Stdout is owned by the protocol; logs go to stderr. Serve blocks until
-			// the client disconnects (stdin EOF) or ctx is cancelled, drains
+			// Stdout is owned by the protocol; logs go to stderr. Reuse the root
+			// logger from context (AC3) — serve constructs none of its own — so
+			// LOG_LEVEL/--log-format and redaction apply uniformly. Serve blocks
+			// until the client disconnects (stdin EOF) or ctx is cancelled, drains
 			// in-flight background reviews, then returns nil for a clean exit 0.
-			logger := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), nil))
-			return mcp.Serve(cmd.Context(), ".", llmclient.New(), logger)
+			logger := log.FromContext(cmd.Context())
+			return serveFn(cmd.Context(), ".", llmclient.New(), logger)
 		},
 	}
 	return cmd

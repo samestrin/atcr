@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/spf13/cobra"
 )
 
@@ -83,10 +85,21 @@ func newRootCmd() *cobra.Command {
 		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
 		// printing help with exit 0.
 		Args: usageArgs(cobra.NoArgs),
+		// PersistentPreRunE is inherited by every subcommand, so it is the single
+		// point where the root logger is constructed (from LOG_LEVEL and
+		// --log-format) and stored in the command context. No subcommand builds
+		// its own logger after this; they retrieve it via log.FromContext.
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return setupLogger(cmd)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
+
+	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
+	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
+	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.
@@ -109,4 +122,31 @@ func newRootCmd() *cobra.Command {
 		newLeaderboardCmd(),
 	)
 	return root
+}
+
+// logLevelFromEnv returns the configured LOG_LEVEL, defaulting to "info" when the
+// variable is unset or blank. LOG_LEVEL is read from the environment (not a flag)
+// so operators can raise verbosity per-invocation without changing the command
+// line; log.LevelFromString validates the value in setupLogger.
+func logLevelFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("LOG_LEVEL")); v != "" {
+		return v
+	}
+	return "info"
+}
+
+// setupLogger constructs the single root logger from LOG_LEVEL and --log-format
+// and stores it in the command context, where every subcommand retrieves it via
+// log.FromContext. The sink is cmd.ErrOrStderr() — os.Stderr in production, so
+// MCP serve mode keeps stdout protocol-only, while tests can capture output by
+// redirecting the command's error writer. An invalid level or format is a usage
+// error (exit 2) returned before any subcommand handler runs.
+func setupLogger(cmd *cobra.Command) error {
+	format, _ := cmd.Flags().GetString("log-format")
+	logger, err := log.New(logLevelFromEnv(), format, cmd.ErrOrStderr())
+	if err != nil {
+		return usageError(err)
+	}
+	cmd.SetContext(log.NewContext(cmd.Context(), logger))
+	return nil
 }
