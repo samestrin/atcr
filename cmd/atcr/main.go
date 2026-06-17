@@ -96,6 +96,10 @@ func newRootCmd() *cobra.Command {
 		// point where the root logger is constructed (from LOG_LEVEL and
 		// --log-format) and stored in the command context. No subcommand builds
 		// its own logger after this; they retrieve it via log.FromContext.
+		// Note: cobra's --help/-h and --version flags short-circuit before
+		// PersistentPreRunE runs, so no logger is stored in context on those
+		// paths. All consumers must use log.FromContext, which falls back to a
+		// shared discard logger on a miss — never assert logger presence directly.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			return setupLogger(cmd)
 		},
