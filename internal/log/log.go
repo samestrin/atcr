@@ -40,8 +40,20 @@ func LevelFromString(s string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo, fmt.Errorf("log: invalid level %q (want debug, info, warn, or error)", s)
+		return slog.LevelInfo, fmt.Errorf("log: invalid level %q (want debug, info, warn, or error)", clampForError(s))
 	}
+}
+
+// clampForError bounds an externally-influenced value (e.g. LOG_LEVEL) before it
+// is echoed into an error message, so a hostile or oversized input cannot flood
+// stderr. The %q verb that consumes the result already escapes control
+// characters; this only bounds length, truncating on a rune boundary.
+func clampForError(s string) string {
+	const maxRunes = 32
+	if r := []rune(s); len(r) > maxRunes {
+		return string(r[:maxRunes]) + "…"
+	}
+	return s
 }
 
 // New constructs a *slog.Logger writing to w at the given level and format.
