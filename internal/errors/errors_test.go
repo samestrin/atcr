@@ -98,8 +98,9 @@ func TestError_DelegatesToUnderlying(t *testing.T) {
 // with a nil Err falls back to the classification label instead of panicking.
 func TestError_NilErrDoesNotPanic(t *testing.T) {
 	ce := &apperrors.ClassifiedError{Classification: apperrors.SystemError}
-	if got := ce.Error(); got != "system_error" {
-		t.Errorf("Error() with nil Err = %q, want %q", got, "system_error")
+	want := "classified error (system_error) with nil cause"
+	if got := ce.Error(); got != want {
+		t.Errorf("Error() with nil Err = %q, want %q", got, want)
 	}
 	if ce.Unwrap() != nil {
 		t.Error("Unwrap() with nil Err should return nil to terminate the chain")
