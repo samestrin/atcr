@@ -215,11 +215,14 @@ func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
 // AC4: handleReconcile must pass the engine's diagnostics sink (engine.diag) into
 // EmitOpts.Diag, not the process-global os.Stderr. Forcing a scorecard
 // write-failure — the resolved store path is a regular file, so Append's
-// MkdirAll(dir) fails with ENOTDIR — makes Emit write its "scorecard: write
+// MkdirAll(dir) fails — makes Emit write its "scorecard: write
 // failed" diagnostic; with the writer wired, that diagnostic lands in the
 // injected buffer. A regression passing os.Stderr (or nil) routes it to the real
 // stderr and fails this test. The scorecard failure is best-effort, so it must
-// NOT fail the reconcile.
+// NOT fail the reconcile. The write-failure is induced cross-platform: Go's
+// os.MkdirAll returns ENOTDIR on any OS when a regular file occupies the target
+// path, and the test asserts only the diagnostic + exit 0, never the errno (cf.
+// store.go TD-004 for the genuinely POSIX-specific O_APPEND append caveat).
 func TestReconcileHandler_ScorecardDiagnosticRoutesToInjectedDiag(t *testing.T) {
 	isolateUserConfig(t)
 	root := t.TempDir()
@@ -234,7 +237,7 @@ func TestReconcileHandler_ScorecardDiagnosticRoutesToInjectedDiag(t *testing.T) 
 	e := &engine{root: root, diag: &buf}
 	_, _, err = e.handleReconcile(context.Background(), nil, ReconcileArgs{})
 	require.NoError(t, err, "a best-effort scorecard failure must not fail the reconcile")
-	require.Contains(t, buf.String(), "scorecard: write failed",
+	require.Contains(t, buf.String(), scorecard.MsgWriteFailed,
 		"handleReconcile must wire engine.diag into EmitOpts.Diag")
 }
 
@@ -518,4 +521,11 @@ func TestLoadVerifyRegistry_CanonicalContainment(t *testing.T) {
 			assert.Contains(t, err.Error(), "invalid registryPath", "path %q must return invalid registryPath error", p)
 		})
 	}
+}
+
+// TestEngine_LoggerNilSafe verifies logger() returns a usable logger when
+// engine.log is nil, matching the nil-guard buildServer provides at construction.
+func TestEngine_LoggerNilSafe(t *testing.T) {
+	e := &engine{}
+	require.NotPanics(t, func() { e.logger().Info("nil-log probe") })
 }

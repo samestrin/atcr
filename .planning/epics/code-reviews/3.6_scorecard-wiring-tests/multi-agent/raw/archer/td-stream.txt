@@ -1,0 +1,6 @@
+HIGH|cmd/atcr/scorecard_wiring_test.go:25|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+HIGH|cmd/atcr/scorecard_wiring_test.go:55|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+HIGH|cmd/atcr/scorecard_wiring_test.go:85|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+LOW|internal/mcp/handlers.go:230|Dead code|Remove unused variable|maintainability|2|variable declared but not used|bruce
+LOW|internal/mcp/handlers.go:231|Dead code|Remove unused variable|maintainability|2|variable declared but not used|bruce
+LOW|internal/mcp/handlers_test.go:22|Unused import|Remove unused package|maintainability|1|import not used in test|bruce

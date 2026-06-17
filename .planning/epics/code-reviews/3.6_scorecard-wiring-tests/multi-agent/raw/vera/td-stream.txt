@@ -1,0 +1,5 @@
+HIGH|internal/mcp/handlers_test.go:3|Unused import os/exec|Remove unused import|maintainability|1|import os/exec not used|bruce
+HIGH|internal/mcp/handlers_test.go:4|Unused import fanout|Remove unused import|maintainability|1|import fanout not used|bruce
+HIGH|internal/mcp/handlers_test.go:7|Unused import os/exec|Remove unused import|maintainability|1|import os/exec not used|bruce
+HIGH|internal/mcp/handlers_test.go:13|Unused import fanout|Remove unused import|maintainability|1|import fanout not used|bruce
+HIGH|internal/mcp/handlers_test.go:13|Unused import fanout|Remove unused import|maintainability|1|import fanout not used|bruce
