@@ -59,7 +59,7 @@ func TestLeaderboardCmd_ReadDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	seedMalformedStore(t, "2026-06-14T10:00:00Z-corrupt", "bruce")
 
 	code, stdout, stderr := execCmdSplit(t, "leaderboard", "--since", "all")
-	require.Equal(t, 0, code, stderr)
+	require.Equal(t, 0, code)
 	require.Contains(t, stderr, "skipping malformed record",
 		"leaderboard read diagnostic must route to cmd.ErrOrStderr()")
 	require.NotContains(t, stdout, "skipping malformed record",
