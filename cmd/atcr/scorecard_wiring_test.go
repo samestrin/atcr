@@ -77,7 +77,7 @@ func TestScorecardCmd_ReadDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	seedMalformedStore(t, runID, "bruce")
 
 	code, stdout, stderr := execCmdSplit(t, "scorecard", runID)
-	require.Equal(t, 0, code, stderr)
+	require.Equal(t, 0, code)
 	require.Contains(t, stderr, "skipping malformed record",
 		"scorecard read diagnostic must route to cmd.ErrOrStderr()")
 	require.NotContains(t, stdout, "skipping malformed record",
