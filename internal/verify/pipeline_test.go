@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -213,28 +212,19 @@ func TestRunVerify_ToolHarnessUnavailable_RedactsDetail(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
 	})
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
+	// Route diagnostics through an injected debug-level logger; even at debug the
+	// harness error detail (which carries a path) must not leak to the sink.
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "text", &buf)
 	require.NoError(t, err)
-	os.Stderr = w
+	ctx := log.NewContext(context.Background(), logger)
 
-	// Drain the read end concurrently so a larger-than-pipe-buffer (~64KB) stderr
-	// write cannot block runVerify and deadlock the test.
-	done := make(chan string, 1)
-	go func() {
-		var buf strings.Builder
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
-
-	_, err = runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+	_, err = runVerify(ctx, dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		return nil, nil, nil, errors.New("snapshot failed: /secret/repo/path")
 	})
-	require.NoError(t, w.Close())
-	os.Stderr = oldStderr
 	require.NoError(t, err)
 
-	output := <-done
+	output := buf.String()
 	assert.Contains(t, output, "tool harness unavailable")
 	assert.NotContains(t, output, "/secret/repo/path")
 }
@@ -681,30 +671,18 @@ func TestRunVerify_CorruptPriorNoWarningWhenNoSkippedFindings(t *testing.T) {
 	recon := filepath.Join(dir, reconciledSubdir)
 	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
 
-	// Capture stderr. Drain the read end concurrently so a larger-than-pipe-buffer
-	// (~64KB) write cannot block runVerify and deadlock the test.
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
+	// Route diagnostics through an injected debug-level logger so the absence of a
+	// prior-unreadable warning is observable on the buffer.
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "text", &buf)
 	require.NoError(t, err)
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = oldStderr })
+	ctx := log.NewContext(context.Background(), logger)
 
-	done := make(chan string, 1)
-	go func() {
-		var buf strings.Builder
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
-
-	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{},
+	_, runErr := runVerify(ctx, dir, skepticRegistry(), Options{},
 		scriptedHarness(`{"verdict":"confirmed","reasoning":"checked"}`))
 	require.NoError(t, runErr)
 
-	_ = w.Close()
-	os.Stderr = oldStderr
-	stderrOutput := <-done
-
-	assert.NotContains(t, stderrOutput, "prior verification.json unreadable",
+	assert.NotContains(t, buf.String(), "class=prior_unreadable",
 		"corrupt prior must not warn when no findings are skipped")
 }
 
@@ -980,26 +958,17 @@ func TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns(t *testing.T) {
 	recon := filepath.Join(dir, reconciledSubdir)
 	require.NoError(t, os.WriteFile(filepath.Join(recon, "verification.json"), []byte("{not json"), 0o644))
 
-	oldStderr := os.Stderr
-	r, w, err := os.Pipe()
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "text", &buf)
 	require.NoError(t, err)
-	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = oldStderr })
-	done := make(chan string, 1)
-	go func() {
-		var buf strings.Builder
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
+	ctx := log.NewContext(context.Background(), logger)
 
-	_, runErr := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+	_, runErr := runVerify(ctx, dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		t.Fatal("already-verified finding must not invoke the harness")
 		return nil, nil, nil, nil
 	})
 	require.NoError(t, runErr)
-	_ = w.Close()
-	os.Stderr = oldStderr
-	stderrOutput := <-done
+	stderrOutput := buf.String()
 
 	data, rerr := os.ReadFile(filepath.Join(recon, "verification.json"))
 	require.NoError(t, rerr)
