@@ -243,9 +243,13 @@ var absFn = filepath.Abs
 // stub it to exercise the fail-open branch.
 var evalSymlinksFn = filepath.EvalSymlinks
 
-// resolveRedactRoot returns root in absolute form for AC6 path relativization
-// (relativizePaths no-ops on the CLI default "."). When absolute resolution
-// fails it returns root unchanged.
+// resolveRedactRoot returns root in absolute, symlink-resolved form for AC6 path
+// relativization (relativizePaths no-ops on the CLI default "."). Symlink
+// resolution matters on macOS, where the temp/repo root is reached through a
+// symlink (e.g. /tmp -> /private/var/...) but paths are logged in their real
+// form — without resolving, the real-form path lacks the un-resolved root prefix
+// and leaks. When absolute resolution fails it returns root unchanged; when only
+// symlink resolution fails it falls open to the absolute form.
 func resolveRedactRoot(ctx context.Context, root string) string {
 	abs, err := absFn(root)
 	if err != nil {
@@ -255,7 +259,13 @@ func resolveRedactRoot(ctx context.Context, root string) string {
 			"root", root, "error", err)
 		return root
 	}
-	return abs
+	resolved, err := evalSymlinksFn(abs)
+	if err != nil {
+		// The path may not be on disk yet; relativizing the absolute (un-resolved)
+		// form still works, so fall open to abs rather than dropping relativization.
+		return abs
+	}
+	return resolved
 }
 
 // correlateReviewID returns ctx carrying a logger tagged with the review id, so
