@@ -13,9 +13,15 @@ import (
 // mirror the defense-in-depth scrub in internal/llmclient/client.go so the two
 // redaction sites stay consistent. Compiled once at package level (concurrent
 // safe; never recompiled per Redact call).
+//
+// The token body is anchored to the token charset ([A-Za-z0-9._-], the base64url
+// + dotted-segment alphabet real keys/JWTs use) rather than a greedy \S+: in a
+// JSON-formatted log line a token is immediately followed by structural
+// punctuation (`","next":...`), and \S+ would consume the closing quote and the
+// following fields, corrupting the line.
 var (
-	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer(?:\s+|%20)\S+`)
-	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
+	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer(?:\s+|%20)[A-Za-z0-9._-]+`)
+	skKeyPattern       = regexp.MustCompile(`(?i)sk-[A-Za-z0-9._-]+`)
 )
 
 // Redactor scrubs secrets and absolute paths from log messages before they are
