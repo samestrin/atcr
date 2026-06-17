@@ -1,9 +1,11 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
@@ -578,4 +581,40 @@ func TestExecuteReview_SnapshotFailureRecordsFailedMode(t *testing.T) {
 	require.NotNil(t, got.Review, "tool agent must produce a non-nil review stage")
 	assert.Equal(t, "failed", got.Review.SnapshotMode,
 		"a failed snapshot must record snapshot_mode=failed so the state is observable in the manifest")
+}
+
+// TestExecuteReview_SnapshotFailureWarnsViaLogger verifies that when a snapshot
+// fails in ExecuteReview, the warning routes through the context logger (Warn
+// level) rather than raw stderr. This pins the single-sink contract: operators
+// must see tool-harness degradation in the structured log stream, not as an
+// unstructured stderr blurb that bypasses LOG_LEVEL and redaction.
+func TestExecuteReview_SnapshotFailureWarnsViaLogger(t *testing.T) {
+	repo, _, _ := initRepo(t)
+	dir := t.TempDir()
+
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: []string{"greta"},
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600,
+	}
+	require.NoError(t, WriteManifest(dir, m))
+
+	var buf bytes.Buffer
+	capture := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), capture)
+
+	prep := &PreparedReview{
+		ID:       "x",
+		Dir:      dir,
+		Repo:     repo,
+		Head:     "0000000000000000000000000000000000000000",
+		Slots:    []Slot{{Primary: Agent{Name: "greta", Tools: true}}},
+		manifest: m,
+	}
+	_, _ = ExecuteReview(ctx, newFake(), prep)
+
+	got := buf.String()
+	assert.Contains(t, got, "snapshot",
+		"snapshot failure must emit a structured log line containing 'snapshot' so operators see it in the log stream")
+	assert.Contains(t, got, "WARN",
+		"snapshot failure must log at Warn level so it rides LOG_LEVEL filtering")
 }

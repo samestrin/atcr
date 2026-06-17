@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,21 @@ import (
 	"strings"
 	"time"
 )
+
+// basePathErr reduces an *os.PathError's path to its base name so a
+// username-bearing absolute store path (~/.config/atcr/...) is not embedded in an
+// error that may reach the unredacted scorecard Diag sink. The operational Op and
+// underlying Err are preserved for debuggability; non-PathError errors pass
+// through unchanged.
+func basePathErr(err error) error {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		clone := *pe
+		clone.Path = filepath.Base(pe.Path)
+		return &clone
+	}
+	return err
+}
 
 // maxLineBytes bounds a single JSONL line on read. Records are ~500 bytes; 1 MiB
 // is a generous cap that prevents a corrupt/oversized line from allocating an
@@ -76,7 +92,7 @@ func Append(dir string, rec Record) error {
 		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating scorecard dir: %w", err)
+		return fmt.Errorf("creating scorecard dir: %w", basePathErr(err))
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {
@@ -87,11 +103,11 @@ func Append(dir string, rec Record) error {
 	path := filepath.Join(dir, month+".jsonl")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return fmt.Errorf("opening scorecard file: %w", err)
+		return fmt.Errorf("opening scorecard file: %w", basePathErr(err))
 	}
 	defer func() { _ = f.Close() }()
 	if _, err := f.Write(line); err != nil {
-		return fmt.Errorf("appending scorecard record: %w", err)
+		return fmt.Errorf("appending scorecard record: %w", basePathErr(err))
 	}
 	return nil
 }
