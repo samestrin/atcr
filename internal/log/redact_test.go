@@ -1,6 +1,7 @@
 package log
 
 import (
+	"encoding/base64"
 	"net/url"
 	"strings"
 	"sync"
@@ -28,6 +29,34 @@ func TestRedact_URLEncodedSecret(t *testing.T) {
 	out := r.Redact("payload contains " + enc + " encoded")
 	if strings.Contains(out, enc) {
 		t.Fatalf("URL-encoded secret leaked: %q", out)
+	}
+}
+
+// TestRedact_Base64EncodedSecret verifies a configured secret echoed in
+// base64 (e.g. an Authorization header value) is scrubbed, not just its literal
+// and URL-query forms.
+func TestRedact_Base64EncodedSecret(t *testing.T) {
+	secret := "supersecretvalue"
+	enc := base64.StdEncoding.EncodeToString([]byte(secret))
+	r := NewRedactor("", secret)
+	out := r.Redact("Authorization: Basic " + enc)
+	if strings.Contains(out, enc) {
+		t.Fatalf("base64-encoded secret leaked: %q", out)
+	}
+}
+
+// TestRedact_PathEscapedSecret verifies a secret transformed via url.PathEscape
+// (a different escaping than QueryEscape) is scrubbed.
+func TestRedact_PathEscapedSecret(t *testing.T) {
+	secret := "my secret tok"
+	enc := url.PathEscape(secret)
+	if enc == secret || enc == url.QueryEscape(secret) {
+		t.Fatal("test precondition: PathEscape form must differ from raw and QueryEscape")
+	}
+	r := NewRedactor("", secret)
+	out := r.Redact("path segment " + enc + " seen")
+	if strings.Contains(out, enc) {
+		t.Fatalf("path-escaped secret leaked: %q", out)
 	}
 }
 
