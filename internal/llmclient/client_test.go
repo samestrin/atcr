@@ -869,3 +869,13 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.PromptTokens)
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
+
+func TestRedactErrorSnippet_SKKeyCaseInsensitive(t *testing.T) {
+	// skKeyPattern must match upper/mixed-case sk- tokens, mirroring the
+	// case-insensitive scrub in internal/log/redact.go. A SK-/Sk- shaped foreign
+	// token echoed in a provider error body must not bypass the scrub.
+	got := redactErrorSnippet("upstream rejected SK-ABC123 and Sk-Def456", "")
+	assert.NotContains(t, got, "SK-ABC123")
+	assert.NotContains(t, got, "Sk-Def456")
+	assert.Contains(t, got, "[redacted]")
+}
