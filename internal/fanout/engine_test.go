@@ -1,9 +1,11 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,6 +91,57 @@ func agentSlot(name string) Slot {
 		Invocation:  llmclient.Invocation{Model: name},
 		PayloadMode: "blocks",
 	}}
+}
+
+// TestEngine_WithLogger verifies the WithLogger option stores the injected
+// logger so logger() returns it (the review_id-correlated logger seeded by
+// ExecuteReview reaches every agent invocation).
+func TestEngine_WithLogger(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	e := NewEngine(newFake(), WithLogger(logger))
+	require.Same(t, logger, e.logger(), "WithLogger must store the injected logger")
+}
+
+// TestEngine_NilLogger_ReturnsDiscard verifies the nil-safe fallback: an engine
+// constructed without WithLogger returns a usable no-op discard logger — never
+// nil, never the global slog default — and logging through it does not panic.
+func TestEngine_NilLogger_ReturnsDiscard(t *testing.T) {
+	t.Parallel()
+	e := NewEngine(newFake())
+	got := e.logger()
+	require.NotNil(t, got, "logger() must never return nil")
+	assert.NotPanics(t, func() { got.Info("no logger injected") }, "discard fallback must not panic")
+}
+
+// TestEngine_NilLogger_NoAlloc verifies the discard fallback returns the shared
+// singleton with zero allocations, rather than constructing a fresh discard
+// logger on every call (logger() is invoked once per agent in invokeAgent).
+func TestEngine_NilLogger_NoAlloc(t *testing.T) {
+	// No t.Parallel(): testing.AllocsPerRun panics if called during a parallel test.
+	e := NewEngine(newFake())
+	var sink *slog.Logger
+	allocs := testing.AllocsPerRun(100, func() {
+		sink = e.logger()
+	})
+	_ = sink
+	assert.Zero(t, allocs, "logger() must not allocate on the discard path")
+}
+
+// TestInvokeAgent_AttachesAgentName verifies AC10: every log line emitted while
+// an agent runs carries agent_name. The per-agent logger is scoped via
+// log.WithAgent before the invocation and threaded through ctx.
+func TestInvokeAgent_AttachesAgentName(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	e := NewEngine(newFake(), WithLogger(logger))
+
+	r := e.invokeAgent(context.Background(), agentSlot("security").Primary)
+	require.Equal(t, StatusOK, r.Status)
+	assert.Contains(t, buf.String(), log.AttrAgentName+"=security",
+		"every log line during an agent invocation must carry agent_name (AC10)")
 }
 
 func TestRun_ParallelAgentsRunConcurrently(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	atcrerrors "github.com/samestrin/atcr/internal/errors"
 )
 
 const testKey = "sk-secret-value-123"
@@ -474,6 +477,131 @@ func TestComplete_HTTPStatusErrorSurfacedThroughExhaustedRetries(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, se.Status)
 }
 
+// --- Epic 4.0 Phase 4.3: ClassifiedError taxonomy (AC11, AC12) ---
+
+// TestComplete_TransientError_IsRetryable verifies a 503 exhausted through the
+// retry budget is classified Transient so IsRetryable returns true (AC11, AC12).
+func TestComplete_TransientError_IsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream down"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.True(t, atcrerrors.IsRetryable(err), "exhausted 503 must classify as retryable transient")
+}
+
+// TestComplete_PermanentError_NotRetryable verifies a 404 is classified
+// Permanent so IsRetryable returns false (AC11, AC12).
+func TestComplete_PermanentError_NotRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.False(t, atcrerrors.IsRetryable(err), "404 permanent must not be retryable")
+}
+
+// TestComplete_TransientError_ErrorsAsHTTPStatusError verifies the ClassifiedError
+// transient wrapper does not break errors.As reachability to *HTTPStatusError
+// through the exhausted-retries wrapper (AC11).
+func TestComplete_TransientError_ErrorsAsHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"message":"upstream down"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+
+	var se *HTTPStatusError
+	require.True(t, errors.As(err, &se), "errors.As must reach *HTTPStatusError through the ClassifiedError wrapper")
+	assert.Equal(t, http.StatusServiceUnavailable, se.Status)
+}
+
+// TestComplete_PermanentError_ErrorsAsHTTPStatusError verifies the ClassifiedError
+// permanent wrapper keeps *HTTPStatusError errors.As-reachable (AC11, AC12).
+func TestComplete_PermanentError_ErrorsAsHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"message":"model not found"}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+
+	var se *HTTPStatusError
+	require.True(t, errors.As(err, &se), "errors.As must reach *HTTPStatusError through the ClassifiedError wrapper")
+	assert.Equal(t, http.StatusNotFound, se.Status)
+}
+
+// TestComplete_TransportError_IsRetryable verifies a transport-level failure
+// (connection dropped on every attempt) exhausts the budget and classifies as
+// transient (AC11, AC12).
+func TestComplete_TransportError_IsRetryable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Drop the connection mid-exchange on every attempt so the client only
+		// ever sees a transport-level error, never an HTTP status.
+		hj, ok := w.(http.Hijacker)
+		require.True(t, ok, "test server must support hijacking")
+		conn, _, err := hj.Hijack()
+		require.NoError(t, err)
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	_, err := fastRetry(srv.Client()).Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	assert.True(t, atcrerrors.IsRetryable(err), "exhausted transport failure must classify as retryable transient")
+}
+
+// TestComplete_ContextDeadline_NotWrapped verifies a context deadline is its own
+// sentinel: it is NOT wrapped in ClassifiedError (so errors.Is still reaches
+// context.DeadlineExceeded and IsRetryable does not misclassify it as transient).
+func TestComplete_ContextDeadline_NotWrapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		okResponse(w, "too slow")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := fastRetry(srv.Client()).Complete(ctx, Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "deadline sentinel must remain reachable")
+
+	var ce *atcrerrors.ClassifiedError
+	assert.False(t, errors.As(err, &ce), "context deadline must not be wrapped in ClassifiedError")
+	assert.False(t, atcrerrors.IsRetryable(err), "an unwrapped deadline is not a transient classification")
+}
+
 func TestComplete_MaxTokensIncludedWhenSet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -587,10 +715,19 @@ func TestChat_TokensFromUsage(t *testing.T) {
 	assert.Equal(t, 1500, resp.Usage.CompletionTokens)
 }
 
-func TestClampNonNegative_OverflowReturnsZero(t *testing.T) {
+func TestClampNonNegative_OverflowClampsToMaxInt(t *testing.T) {
 	// 1e20 is a valid finite float64 but exceeds math.MaxInt; int(v) without
 	// a cap overflows to implementation-defined garbage (typically MinInt64).
-	assert.Equal(t, 0, clampNonNegative(json.Number("1e20")))
+	// A genuinely large but valid count must clamp to the ceiling, not collapse
+	// to 0 (which would mask a real request as free).
+	assert.Equal(t, math.MaxInt, clampNonNegative(json.Number("1e20")))
+}
+
+func TestClampNonNegative_LargeValidCountPreserved(t *testing.T) {
+	// 1e16 is above the old >1e15 guard yet well within int64 range; it must pass
+	// through, not be discarded. The previous guard returned 0 for in-range counts,
+	// reporting a real token count as zero (a free request) instead of preserving it.
+	assert.Equal(t, 10_000_000_000_000_000, clampNonNegative(json.Number("1e16")))
 }
 
 func TestClampNonNegative_InfReturnsZero(t *testing.T) {
@@ -741,4 +878,184 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, "ok", out)
 	assert.Equal(t, 0, usage.PromptTokens)
 	assert.Equal(t, 0, usage.CompletionTokens)
+}
+
+// unboundedReader yields up to `remaining` bytes and counts how many were read.
+type unboundedReader struct {
+	remaining int
+	read      int
+}
+
+func (u *unboundedReader) Read(p []byte) (int, error) {
+	if u.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > u.remaining {
+		n = u.remaining
+	}
+	u.remaining -= n
+	u.read += n
+	return n, nil
+}
+
+func TestReadErrorSnippet_DrainIsBounded(t *testing.T) {
+	// A hostile endpoint streaming a huge error body must not be read in full on
+	// the error path: the snippet read plus the connection-reuse drain are both
+	// bounded.
+	r := &unboundedReader{remaining: 64 << 20}
+	_ = readErrorSnippet(r)
+	assert.LessOrEqual(t, r.read, maxErrorBodyBytes*2, "error-body read (snippet + drain) must be bounded")
+}
+
+func TestWithHTTPClient_PreservesNoRedirectGuard(t *testing.T) {
+	// A client injected via WithHTTPClient must still refuse to follow redirects,
+	// so the Authorization: Bearer header is never forwarded to a redirect target.
+	var gotAuthAtTarget atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/target", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			gotAuthAtTarget.Store(true)
+		}
+		okResponse(w, "leaked")
+	})
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/target", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	// srv.Client() follows redirects by default; WithHTTPClient must re-apply the
+	// no-redirect guard onto it.
+	c := New(WithHTTPClient(srv.Client()), WithRetry(0, time.Millisecond, 1.5))
+	_, err := c.Complete(context.Background(), Invocation{
+		BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err, "a 302 must be a hard failure, not a followed redirect")
+	assert.False(t, gotAuthAtTarget.Load(), "Authorization must not be forwarded to redirect target")
+}
+
+func TestCompleteWithUsage_EmptyCompletionReturnsError(t *testing.T) {
+	// When both content and reasoning_content are empty, the call must fail
+	// loudly so callers do not propagate an empty review as success.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message message `json:"message"`
+		}{Message: message{Role: "assistant", Content: "", ReasoningContent: ""}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Empty(t, out)
+	assert.Contains(t, err.Error(), "empty completion")
+	assert.False(t, atcrerrors.IsRetryable(err), "an empty completion must not be retryable")
+}
+
+func TestWithRetry_NegativeMaxRetriesClampedToSingleAttempt(t *testing.T) {
+	// A negative WithRetry budget must not produce a zero-attempt loop that
+	// falls through to "exhausted retries" wrapping a nil cause; it clamps to a
+	// single attempt.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		okResponse(w, "ok")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	c := New(WithHTTPClient(srv.Client()), WithRetry(-1, time.Millisecond, 1.5))
+	out, err := c.Complete(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", out)
+	assert.Equal(t, int32(1), calls.Load(), "negative maxRetries must clamp to a single attempt")
+}
+
+func TestClampBackoff_BoundsGrowth(t *testing.T) {
+	assert.Equal(t, maxBackoff, clampBackoff(maxBackoff+time.Hour))
+	assert.Equal(t, 5*time.Second, clampBackoff(5*time.Second))
+}
+
+func TestJitter_BoundedBelowFull(t *testing.T) {
+	d := 100 * time.Millisecond
+	for i := 0; i < 200; i++ {
+		j := jitter(d)
+		assert.GreaterOrEqual(t, j, d/2)
+		assert.Less(t, j, d)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{"delta-seconds", "5", 5 * time.Second},
+		{"zero", "0", 0},
+		{"negative", "-3", 0},
+		{"empty", "", 0},
+		{"garbage", "soon", 0},
+		{"whitespace-padded", "  2 ", 2 * time.Second},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, parseRetryAfter(c.value))
+		})
+	}
+}
+
+func TestParseRetryAfter_HTTPDate(t *testing.T) {
+	// An HTTP-date in the future yields a positive delay; a past date yields 0.
+	future := time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)
+	got := parseRetryAfter(future)
+	assert.Greater(t, got, time.Duration(0))
+	assert.LessOrEqual(t, got, 30*time.Second)
+
+	past := time.Now().Add(-30 * time.Second).UTC().Format(http.TimeFormat)
+	assert.Equal(t, time.Duration(0), parseRetryAfter(past))
+}
+
+func TestComplete_HonorsRetryAfterHeader(t *testing.T) {
+	// A 429 advertising Retry-After must override the (tiny) fixed backoff: the
+	// client must wait at least the advertised cooldown before retrying.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		okResponse(w, "recovered")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	// initialBackoff is 1ms; without honoring Retry-After the retry fires almost
+	// immediately, so an elapsed >= ~1s proves the header was honored.
+	c := New(WithHTTPClient(srv.Client()), WithRetry(2, time.Millisecond, 1.5))
+	start := time.Now()
+	out, err := c.Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	assert.Equal(t, "recovered", out)
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond, "Retry-After cooldown not honored")
+}
+
+func TestRedactErrorSnippet_SKKeyCaseInsensitive(t *testing.T) {
+	// skKeyPattern must match upper/mixed-case sk- tokens, mirroring the
+	// case-insensitive scrub in internal/log/redact.go. A SK-/Sk- shaped foreign
+	// token echoed in a provider error body must not bypass the scrub.
+	got := redactErrorSnippet("upstream rejected SK-ABC123 and Sk-Def456", "")
+	assert.NotContains(t, got, "SK-ABC123")
+	assert.NotContains(t, got, "Sk-Def456")
+	assert.Contains(t, got, "[redacted]")
 }

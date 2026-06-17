@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,8 +11,81 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestResolveRedactRoot_ReturnsAbsolute verifies the happy path resolves the
+// repo root to an absolute path used for AC6 path relativization.
+func TestResolveRedactRoot_ReturnsAbsolute(t *testing.T) {
+	got := resolveRedactRoot(context.Background(), ".")
+	require.True(t, filepath.IsAbs(got), "resolveRedactRoot(\".\") should return an absolute path, got %q", got)
+}
+
+// TestResolveRedactRoot_LogsWarnOnAbsError verifies that when absolute
+// resolution fails the silent loss of AC6 path redaction is made observable via
+// a warning, and the original root is returned unchanged (fail-open, not silent).
+func TestResolveRedactRoot_LogsWarnOnAbsError(t *testing.T) {
+	orig := absFn
+	absFn = func(string) (string, error) { return "", errors.New("boom") }
+	defer func() { absFn = orig }()
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	got := resolveRedactRoot(ctx, "some/rel/path")
+	require.Equal(t, "some/rel/path", got, "on Abs failure the input root is returned unchanged")
+	require.Contains(t, buf.String(), "path redaction may be incomplete", "a warning must make the silent failure observable")
+}
+
+// TestResolveRedactRoot_ResolvesSymlinks verifies the review root is symlink-
+// resolved so a path logged in its real form (e.g. macOS resolves /tmp ->
+// /private/var/...) still matches the review-root prefix for AC6 relativization.
+func TestResolveRedactRoot_ResolvesSymlinks(t *testing.T) {
+	realResolved, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+
+	link := filepath.Join(t.TempDir(), "link")
+	require.NoError(t, os.Symlink(realResolved, link))
+
+	got := resolveRedactRoot(context.Background(), link)
+	require.Equal(t, realResolved, got, "resolveRedactRoot should resolve the symlinked root to its real path")
+}
+
+// TestResolveRedactRoot_FailsOpenOnEvalSymlinksError verifies that when symlink
+// resolution fails (e.g. the root is not yet on disk) the absolute form is used,
+// so relativization of the un-resolved path still works.
+func TestResolveRedactRoot_FailsOpenOnEvalSymlinksError(t *testing.T) {
+	orig := evalSymlinksFn
+	evalSymlinksFn = func(string) (string, error) { return "", errors.New("boom") }
+	defer func() { evalSymlinksFn = orig }()
+
+	got := resolveRedactRoot(context.Background(), ".")
+	require.True(t, filepath.IsAbs(got), "on EvalSymlinks failure the absolute root is returned, got %q", got)
+}
+
+// TestReviewIDSurvivesRedaction locks the AC9-vs-AC5/6 contract: binding
+// review_id BEFORE the redactor (review.go:162 then :172) stores it in the inner
+// handler, so a correlation key that itself looks secret-shaped (sk-...) is NOT
+// scrubbed and stays greppable by review_id. Guards against a future reorder that
+// would bind review_id on top of the redactor and silently redact it.
+func TestReviewIDSurvivesRedaction(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := log.New("info", "json", &buf)
+	require.NoError(t, err)
+
+	reviewID := "2026-06-17_sk-feature-branch" // a correlation key with an sk--shaped substring
+	logger := log.WithReviewID(base, reviewID)
+	logger = log.WithRedactor(logger, log.NewRedactor("/tmp/repo"))
+
+	logger.Info("review started")
+
+	require.Contains(t, buf.String(), reviewID,
+		"review_id must survive redaction so logs stay greppable by review_id (AC9)")
+}
 
 // slotWithKeys builds a one-slot chain whose agents read the given env vars.
 func slotWithKeys(envs ...string) fanout.Slot {
@@ -18,6 +94,55 @@ func slotWithKeys(envs ...string) fanout.Slot {
 		s.Fallbacks = append(s.Fallbacks, fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: e}})
 	}
 	return s
+}
+
+// --- Review correlation (sprint 4.0, task 3.4) ----------------------------
+
+// TestRunReview_AttachesReviewID verifies correlateReviewID tags the context
+// logger so every subsequent log line carries review_id=<id> (AC9).
+func TestRunReview_AttachesReviewID(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), base)
+
+	ctx = correlateReviewID(ctx, "2026-06-17_feat")
+	log.FromContext(ctx).Info("executing review")
+
+	assert.Contains(t, buf.String(), "review_id=2026-06-17_feat",
+		"every log line after correlation must carry the review id")
+}
+
+// TestRunReview_ContextLoggerFlowsToExecuteReview verifies the correlated logger
+// is reachable via log.FromContext on the returned context — the same access
+// path ExecuteReview/RunReconcile/Verify use — and differs from the base logger.
+func TestRunReview_ContextLoggerFlowsToExecuteReview(t *testing.T) {
+	base, err := log.New("info", "text", &bytes.Buffer{})
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), base)
+
+	correlated := correlateReviewID(ctx, "rev-1")
+	require.NotSame(t, base, log.FromContext(correlated),
+		"correlation must store a derived logger reachable by downstream stages")
+}
+
+// TestRunReview_NoLocalLogger verifies correlateReviewID builds on the existing
+// context logger rather than constructing a new one: an attribute attached
+// upstream survives alongside review_id.
+func TestRunReview_NoLocalLogger(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	// Attribute attached upstream (e.g. a future agent/source tag).
+	base = base.With("upstream", "present")
+	ctx := log.NewContext(context.Background(), base)
+
+	ctx = correlateReviewID(ctx, "rev-2")
+	log.FromContext(ctx).Info("line")
+
+	out := buf.String()
+	assert.Contains(t, out, "upstream=present", "must preserve the upstream context logger, not replace it")
+	assert.Contains(t, out, "review_id=rev-2", "must also attach the review id")
 }
 
 func TestCLIOverrides_MaxParallelSet(t *testing.T) {

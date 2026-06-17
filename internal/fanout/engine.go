@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -164,6 +166,11 @@ type Engine struct {
 	// Each agent gets its own writer (concurrent loops, separate files); the loop
 	// closes it when the agent finishes (Epic 2.0, AC 05-01/05-02).
 	transcript func(agentName string) *tools.Transcript
+	// log is the engine's diagnostic logger. nil (the default) falls back to a
+	// no-op discard logger via logger(). ExecuteReview injects the review_id-
+	// correlated context logger via WithLogger, so invokeAgent's per-agent
+	// WithAgent scoping produces lines carrying both review_id and agent_name.
+	log *slog.Logger
 }
 
 // EngineOption configures an Engine at construction.
@@ -196,6 +203,26 @@ func WithDispatcher(d toolDispatcher) EngineOption {
 // review.
 func WithTranscript(f func(agentName string) *tools.Transcript) EngineOption {
 	return func(e *Engine) { e.transcript = f }
+}
+
+// WithLogger injects the engine's diagnostic logger. Pass the review_id-
+// correlated logger from the request context (log.FromContext) so every agent
+// log line is greppable by review. Without it, the engine logs to a no-op
+// discard sink (logger()), preserving the original silent behavior in tests
+// that construct an Engine without a logger.
+func WithLogger(l *slog.Logger) EngineOption {
+	return func(e *Engine) { e.log = l }
+}
+
+// logger returns the engine's logger, or a no-op discard logger when none was
+// injected (mirrors internal/mcp/handlers.go's nil-safe guard) so direct
+// construction and WithLogger-less tests never nil-panic or reach the global
+// slog default.
+func (e *Engine) logger() *slog.Logger {
+	if e.log == nil {
+		return log.Discard()
+	}
+	return e.log
 }
 
 // NewEngine builds an Engine over the given completer. A nil completer is a
@@ -386,6 +413,13 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
 		defer cancel()
 	}
+	// Scope a per-agent logger so every line emitted while this agent runs carries
+	// agent_name (AC10). The engine logger already carries review_id (seeded by
+	// ExecuteReview), so agent lines carry both. Thread it through ctx so downstream
+	// calls (tool loop, llmclient) inherit the agent scope via log.FromContext.
+	agentLogger := log.WithAgent(e.logger(), a.Name)
+	ctx = log.NewContext(ctx, agentLogger)
+	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
 	// Tool-enabled agents run the multi-turn loop only when the model is declared
 	// function-calling-capable AND both a ChatCompleter and a dispatcher are
 	// wired; otherwise they degrade to single-shot. The capability check is the

@@ -26,17 +26,24 @@ var allowedInternalImports = map[string][]string{
 	"atomicfs":  {},
 	"stream":    {},
 	"gitrange":  {},
+	"log":       {},         // single diagnostic sink; stdlib-only (epic 4.0)
+	"errors":    {},         // error-classification taxonomy; stdlib-only (epic 4.0)
 	"registry":  {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
 	"tools":     {},
-	"payload":   {"gitrange", "atomicfs"},
-	"llmclient": {"registry"},
+	"payload":   {"gitrange", "atomicfs", "log"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+	"llmclient": {"registry", "errors"},          // errors: HTTP failures wrapped in ClassifiedError (epic 4.0 phase 4.3)
 	"doctor":    {"llmclient", "registry"},
-	"fanout":    {"llmclient", "registry", "stream", "payload", "tools"},
+	"fanout":    {"llmclient", "registry", "stream", "payload", "tools", "log"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2)
 	"reconcile": {"stream", "atomicfs"},
 	"scorecard": {"llmclient", "reconcile", "fanout"},
 	"report":    {"stream", "reconcile"},
-	"verify":    {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs"},
-	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard"},
+	"verify":    {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
+	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log"},
+	// integration holds only end-to-end _test.go files (no production code).
+	// The dependency-direction walk skips _test.go, so this entry exists to
+	// satisfy the allowlist-completeness check; it records the packages those
+	// tests exercise (epic 4.0 phase 5.2).
+	"integration": {"fanout", "llmclient", "log", "errors", "registry", "mcp"},
 }
 
 // repoRoot walks up from the working directory to the directory containing

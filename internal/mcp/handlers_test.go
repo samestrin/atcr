@@ -12,10 +12,52 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestReviewHandler_AttachesReviewIDToFanoutContext verifies the MCP review path
+// seeds the detached fan-out context with the server logger tagged by review_id,
+// so AC9 (every review log line carries review_id) holds under `atcr serve`,
+// matching the CLI path. Phase 4 fan-out reads this logger via log.FromContext.
+func TestReviewHandler_AttachesReviewIDToFanoutContext(t *testing.T) {
+	var buf bytes.Buffer
+	logger, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	e := &engine{log: logger}
+
+	ctx := e.reviewContext(context.Background(), "2026-06-17_rid")
+	log.FromContext(ctx).Info("fan-out line")
+
+	assert.Contains(t, buf.String(), "review_id=2026-06-17_rid",
+		"the detached fan-out context must carry the server logger tagged with review_id")
+}
+
+// TestReviewContext_RedactsSecretsAndPaths verifies the serve-mode fan-out
+// context enforces sink-level redaction (AC5 secret scrub, AC6 path
+// relativization) even with the default root ".", which reviewContext resolves
+// to an absolute path so paths under it relativize.
+func TestReviewContext_RedactsSecretsAndPaths(t *testing.T) {
+	var buf bytes.Buffer
+	logger, err := log.New("info", "text", &buf)
+	require.NoError(t, err)
+	e := &engine{log: logger, root: "."} // serve-mode default root
+
+	ctx := e.reviewContext(context.Background(), "rid-1")
+
+	cwd, err := filepath.Abs(".")
+	require.NoError(t, err)
+	abs := filepath.Join(cwd, "internal", "secret.go")
+	log.FromContext(ctx).Info("loaded "+abs, "key", "sk-leakedvalue123")
+
+	out := buf.String()
+	assert.Contains(t, out, "review_id=rid-1")
+	assert.NotContains(t, out, "sk-leakedvalue123", "secret must be redacted at the sink (AC5)")
+	assert.NotContains(t, out, cwd+string(filepath.Separator), "absolute root must be relativized (AC6)")
+	assert.Contains(t, out, filepath.Join("internal", "secret.go"), "path must render relative to root")
+}
 
 // gitRepo creates a temp git repo with a base and head commit, returning the
 // repo dir and the two full SHAs.

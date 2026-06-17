@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/verify"
@@ -152,6 +154,20 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return usageError(err)
 	}
+
+	// The review id is the earliest correlation anchor (it exists only after
+	// PrepareReview). Attach it to the context logger so every downstream stage —
+	// execute, reconcile, verify — emits log lines greppable by review_id (AC9).
+	// From here on use this correlated ctx, never cmd.Context() again.
+	ctx = correlateReviewID(ctx, prep.ID)
+	// Enforce sink-level redaction for the whole review: scrub secret-shaped
+	// tokens (AC5) and relativize absolute paths under the repo root (AC6) on
+	// every log line, at every level and call site (TD-007 enforcement model).
+	// Resolve the root to an absolute path first — the CLI default repo is "."
+	// and relativizePaths no-ops on ".", so AC6 needs the concrete root.
+	redactRoot := resolveRedactRoot(ctx, prep.Repo)
+	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(redactRoot)))
+
 	if err := preflightAPIKeys(prep.Slots); err != nil {
 		return err // no slot can authenticate → exit 2 before any provider call
 	}
@@ -176,7 +192,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
 	if threshold != "" || verifyFlag {
-		rec, rerr := reconcile.RunReconcile(cmd.Context(), result.Dir, nil, reconcile.Options{
+		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reconcile.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
 		})
@@ -188,7 +204,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		// --verify implies the reconcile stage (run exactly once, above) and then
 		// chains the adversarial verify stage in the same process (AC 04-02).
 		if verifyFlag {
-			vres, verr := verify.Verify(cmd.Context(), ".", result.Dir, cfg.Registry, verify.Options{
+			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
 				Fresh:       boolFlag(cmd, "fresh"),
 				Thorough:    boolFlag(cmd, "thorough"),
 				MinSeverity: verifyMinSev,
@@ -216,6 +232,49 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return gateFindings(rec, threshold, false)
 	}
 	return nil
+}
+
+// absFn resolves a path to absolute form. It is a package var so a test can
+// substitute a failing resolver — filepath.Abs only fails when os.Getwd fails on
+// a relative path, which cannot be forced in-process (mirrors the serveFn seam).
+var absFn = filepath.Abs
+
+// evalSymlinksFn resolves symlinks in a path. It is a package var so a test can
+// stub it to exercise the fail-open branch.
+var evalSymlinksFn = filepath.EvalSymlinks
+
+// resolveRedactRoot returns root in absolute, symlink-resolved form for AC6 path
+// relativization (relativizePaths no-ops on the CLI default "."). Symlink
+// resolution matters on macOS, where the temp/repo root is reached through a
+// symlink (e.g. /tmp -> /private/var/...) but paths are logged in their real
+// form — without resolving, the real-form path lacks the un-resolved root prefix
+// and leaks. When absolute resolution fails it returns root unchanged; when only
+// symlink resolution fails it falls open to the absolute form.
+func resolveRedactRoot(ctx context.Context, root string) string {
+	abs, err := absFn(root)
+	if err != nil {
+		// Fail open (keep redacting with the relative root) but make the silent
+		// loss of path relativization observable instead of swallowing the error.
+		log.FromContext(ctx).Warn("path redaction may be incomplete: could not resolve absolute repo root",
+			"root", root, "error", err)
+		return root
+	}
+	resolved, err := evalSymlinksFn(abs)
+	if err != nil {
+		// The path may not be on disk yet; relativizing the absolute (un-resolved)
+		// form still works, so fall open to abs rather than dropping relativization.
+		return abs
+	}
+	return resolved
+}
+
+// correlateReviewID returns ctx carrying a logger tagged with the review id, so
+// every downstream review stage (execute, reconcile, verify) emits log lines a
+// reviewer can grep by review_id (AC9). It builds on the context logger (never a
+// freshly constructed one), preserving any attributes already attached upstream.
+func correlateReviewID(ctx context.Context, reviewID string) context.Context {
+	logger := log.WithReviewID(log.FromContext(ctx), reviewID)
+	return log.NewContext(ctx, logger)
 }
 
 // boolFlag reads a bool flag, panicking on lookup error (an undefined flag is a

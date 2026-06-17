@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+
+	atcrerrors "github.com/samestrin/atcr/internal/errors"
 )
 
 // Default retry/backoff tuning. The base delay and 1.5x factor are chosen so
@@ -57,13 +61,35 @@ type Client struct {
 // Option configures a Client.
 type Option func(*Client)
 
-// WithHTTPClient injects a custom *http.Client (tests point it at httptest).
-func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.httpClient = h } }
+// WithHTTPClient injects a custom *http.Client (tests point it at httptest). The
+// no-redirect guard is re-applied onto the injected client so the
+// Authorization-not-forwarded-on-redirect invariant cannot be bypassed by
+// dependency injection.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *Client) {
+		if h != nil {
+			h.CheckRedirect = noRedirect
+		}
+		c.httpClient = h
+	}
+}
+
+// noRedirect blocks redirect following so the Authorization: Bearer header is
+// never forwarded to a redirect target: a 3xx is a hard failure (only 200
+// succeeds). Shared by New() and WithHTTPClient so the invariant holds for both
+// the default and any injected client.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // WithRetry overrides the retry budget and backoff (tests use a tiny base so
 // they do not sleep for real).
 func WithRetry(maxRetries int, initialBackoff time.Duration, factor float64) Option {
 	return func(c *Client) {
+		// A negative budget would make the attempt loop never execute and fall
+		// through to an "exhausted retries" error wrapping a nil cause; clamp it
+		// to zero so at least one attempt is always made.
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
 		c.maxRetries = maxRetries
 		c.initialBackoff = initialBackoff
 		c.backoffFactor = factor
@@ -78,9 +104,7 @@ func New(opts ...Option) *Client {
 			// Do not follow redirects: a 3xx is a hard failure (only 200
 			// succeeds), and auto-following would forward the Bearer header to
 			// the redirect target.
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+			CheckRedirect: noRedirect,
 		},
 		maxRetries:     defaultMaxRetries,
 		initialBackoff: defaultInitialBackoff,
@@ -162,13 +186,22 @@ func (u *UsageData) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// clampNonNegative truncates a usage count toward zero and clamps negatives to
-// zero at the data boundary, so every consumer of UsageData — not just
-// ComputeCostUSD — sees a non-negative count. A non-numeric value yields zero.
+// clampNonNegative truncates a usage count toward zero and clamps it into the
+// non-negative int range at the data boundary, so every consumer of UsageData —
+// not just ComputeCostUSD — sees a valid count. The 0 return is reserved for
+// values that are not a usable count: non-numeric, NaN, Inf, or negative. A
+// genuinely large but valid count that exceeds math.MaxInt clamps to math.MaxInt
+// rather than collapsing to 0, so an oversized count is reported as a ceiling
+// (over-counting at worst) instead of masking a real request as free.
 func clampNonNegative(n json.Number) int {
 	v, err := n.Float64()
-	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) || v > 1e15 {
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0
+	}
+	// float64(math.MaxInt) rounds up to 2^63, so compare with >= to also clamp the
+	// boundary value (int(2^63) would overflow).
+	if v >= float64(math.MaxInt) {
+		return math.MaxInt
 	}
 	return int(v)
 }
@@ -226,6 +259,12 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 		// an empty review.
 		content = msg.ReasoningContent
 	}
+	if content == "" {
+		// Both content and reasoning_content are empty: the provider said nothing.
+		// Fail loudly so callers cannot mistake silence for a clean/empty review.
+		// Non-retryable — a re-request with the same budget would repeat the result.
+		return "", UsageData{}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+	}
 	return content, parsed.Usage, nil
 }
 
@@ -258,15 +297,23 @@ func resolveEndpoint(baseURL string) string {
 func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
 	var lastErr error
 	delay := c.initialBackoff
+	// honorExact is set when the next sleep is a server-advertised Retry-After
+	// cooldown, which must be slept verbatim (neither jittered down nor clamped).
+	honorExact := false
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
-			if err := sleepCtx(ctx, delay); err != nil {
+			sleepFor := delay
+			if !honorExact {
+				sleepFor = jitter(delay)
+			}
+			if err := sleepCtx(ctx, sleepFor); err != nil {
 				return nil, err
 			}
-			delay = time.Duration(float64(delay) * c.backoffFactor)
+			honorExact = false
+			delay = clampBackoff(time.Duration(float64(delay) * c.backoffFactor))
 		}
 
-		payload, status, err := c.attempt(ctx, endpoint, key, body)
+		payload, status, retryAfter, err := c.attempt(ctx, endpoint, key, body)
 		switch {
 		case status == 0:
 			// Context cancellation/deadline must return immediately so timeout
@@ -280,7 +327,9 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 			if attempt < c.maxRetries {
 				continue
 			}
-			return nil, fmt.Errorf("exhausted retries: %w", lastErr)
+			// Transport-level exhaustion (connection reset, EOF, DNS) is transient:
+			// the same class as a 5xx, so callers can retry at a higher layer (AC11).
+			return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 		case status == http.StatusOK:
 			// A 200 with an unreadable/oversized body is a hard failure, not a retry.
 			if err != nil {
@@ -290,18 +339,30 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 		case retryableStatus[status]:
 			lastErr = httpStatusError(status, string(payload))
 			if attempt < c.maxRetries {
+				// Honor a server-advertised cooldown (Retry-After) over the fixed
+				// backoff when present; otherwise keep the exponential schedule.
+				if retryAfter > 0 {
+					delay = retryAfter
+					honorExact = true
+				}
 				continue
 			}
-			// Last attempt still retryable: report the exhausted budget.
-			return nil, fmt.Errorf("exhausted retries: %w", lastErr)
+			// Last attempt still retryable (429/5xx): report the exhausted budget as
+			// transient. The wrapped *HTTPStatusError stays errors.As-reachable
+			// through ClassifiedError.Unwrap → the exhausted-retries wrapper (AC11).
+			return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 		default:
 			if err != nil {
 				return nil, err
 			}
-			return nil, httpStatusError(status, string(payload))
+			// Non-retryable status (401/403/404/...): a permanent failure. Wrapping
+			// preserves errors.As reachability to *HTTPStatusError (AC11, AC12).
+			return nil, atcrerrors.NewPermanent(httpStatusError(status, string(payload)))
 		}
 	}
-	return nil, fmt.Errorf("exhausted retries: %w", lastErr)
+	// Defensive loop-exit fallback (the switch always returns or continues): the
+	// budget is exhausted, so classify transient like the other exhaustion paths.
+	return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 }
 
 // HTTPStatusError is a non-2xx provider response surfaced to callers so they
@@ -336,7 +397,7 @@ func httpStatusError(status int, snippet string) error {
 // whitespace first, so `Bearer <token>` is single-spaced when these run.
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
-	skKeyPattern       = regexp.MustCompile(`sk-\S+`)
+	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
 )
 
 // redactErrorSnippet scrubs secrets from a provider error snippet. It removes
@@ -361,25 +422,29 @@ func redactErrorSnippet(snippet, key string) string {
 // body is drained so the connection can be reused.
 func readErrorSnippet(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
-	_, _ = io.Copy(io.Discard, r)
+	// Drain a bounded remainder so the connection can be reused, without reading
+	// an unbounded body from a hostile/malfunctioning endpoint on the error path.
+	_, _ = io.CopyN(io.Discard, r, maxErrorBodyBytes)
 	return strings.Join(strings.Fields(string(b)), " ")
 }
 
 // attempt performs a single request. On 200 it returns the raw (bounded)
 // response body for the caller to decode; on non-200 it returns a sanitized
-// error-body snippet (as bytes). status is 0 on a transport error. A 200 whose
-// body exceeds the size cap returns the size error with status 200.
-func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, error) {
+// error-body snippet (as bytes). status is 0 on a transport error. The returned
+// duration is the server-advertised Retry-After cooldown for a retryable
+// status (0 when absent/malformed). A 200 whose body exceeds the size cap
+// returns the size error with status 200.
+func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, 0, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("request failed: %w", err)
+		return nil, 0, 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -388,7 +453,7 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
 		snippet := redactErrorSnippet(readErrorSnippet(resp.Body), key)
-		return []byte(snippet), resp.StatusCode, nil
+		return []byte(snippet), resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), nil
 	}
 
 	// N is cap+1 so crossing the cap is distinguishable from a body that is
@@ -397,12 +462,59 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 	limited := &io.LimitedReader{R: resp.Body, N: maxResponseBodyBytes + 1}
 	raw, rerr := io.ReadAll(limited)
 	if rerr != nil {
-		return nil, resp.StatusCode, fmt.Errorf("reading response: %w", rerr)
+		return nil, resp.StatusCode, 0, fmt.Errorf("reading response: %w", rerr)
 	}
 	if limited.N <= 0 {
-		return nil, resp.StatusCode, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
+		return nil, resp.StatusCode, 0, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
 	}
-	return raw, resp.StatusCode, nil
+	return raw, resp.StatusCode, 0, nil
+}
+
+// parseRetryAfter interprets a Retry-After header value per RFC 7231: either
+// delta-seconds (a non-negative integer) or an HTTP-date. It returns the
+// indicated delay, or 0 when the header is absent, malformed, non-positive, or
+// in the past — in which case the caller falls back to its own backoff.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(value); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(value); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// maxBackoff caps the per-retry exponential backoff so a large WithRetry budget
+// cannot produce multi-minute sleeps. Server-advertised Retry-After cooldowns
+// are honored exactly and are not subject to this cap.
+const maxBackoff = 30 * time.Second
+
+// clampBackoff bounds an exponential backoff delay at maxBackoff.
+func clampBackoff(d time.Duration) time.Duration {
+	if d > maxBackoff {
+		return maxBackoff
+	}
+	return d
+}
+
+// jitter spreads a backoff delay across [d/2, d) so many agents that hit a 429
+// at the same instant do not retry in lockstep (thundering herd). A delay too
+// small to halve is returned unchanged.
+func jitter(d time.Duration) time.Duration {
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + time.Duration(rand.Int63n(int64(half)))
 }
 
 // sleepCtx waits for d or until ctx is cancelled, whichever comes first.

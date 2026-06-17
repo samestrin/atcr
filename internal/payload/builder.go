@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // PayloadMode is the typed enum of reviewer-input modes. Values are lowercase;
@@ -84,7 +86,7 @@ func BuildEntries(ctx context.Context, mode PayloadMode, repo, base, head string
 	if mode != ModeDiff && mode != ModeBlocks && mode != ModeFiles {
 		return nil, fmt.Errorf("unknown payload mode '%s': must be one of diff, blocks, files", mode)
 	}
-	g := &gitRunner{ctx: ctx, dir: repo}
+	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
 	return g.buildEntries(mode, base, head)
 }
 
@@ -116,7 +118,7 @@ func (g *gitRunner) buildEntries(mode PayloadMode, base, head string) ([]FileEnt
 // Rename detection (-M) matches changedFiles, so the count equals
 // len(BuildEntries(ModeDiff, ...)) for added, deleted, and renamed files.
 func ChangedFileCount(ctx context.Context, repo, base, head string) (int, error) {
-	g := &gitRunner{ctx: ctx, dir: repo}
+	g := &gitRunner{ctx: ctx, dir: repo, logger: log.FromContext(ctx)}
 	if err := validateRange(g, base, head); err != nil {
 		return 0, err
 	}

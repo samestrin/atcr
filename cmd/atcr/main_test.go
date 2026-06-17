@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,6 +129,91 @@ func TestUsageErrors_ExitCodeTwo(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, 2, exitCode(err))
 	})
+}
+
+// --- Logging wiring (sprint 4.0, tasks 3.1–3.2) ---------------------------
+
+// TestRootCmd_LogFormatDefault verifies the persistent --log-format flag exists
+// on the root command and defaults to "text" (AC2), inherited by all subcommands.
+func TestRootCmd_LogFormatDefault(t *testing.T) {
+	root := newRootCmd()
+	f := root.PersistentFlags().Lookup("log-format")
+	require.NotNil(t, f, "root must declare a persistent --log-format flag")
+	assert.Equal(t, "text", f.DefValue, "--log-format defaults to text")
+}
+
+// TestRootCmd_LogLevelFromEnv verifies LOG_LEVEL is read from the environment.
+func TestRootCmd_LogLevelFromEnv(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "debug")
+	assert.Equal(t, "debug", logLevelFromEnv())
+}
+
+// TestRootCmd_LogLevelEnvEmptyDefaultsToInfo verifies an unset/blank LOG_LEVEL
+// defaults to info (AC1).
+func TestRootCmd_LogLevelEnvEmptyDefaultsToInfo(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "")
+	assert.Equal(t, "info", logLevelFromEnv())
+	t.Setenv("LOG_LEVEL", "   ")
+	assert.Equal(t, "info", logLevelFromEnv(), "whitespace-only LOG_LEVEL is treated as unset")
+}
+
+// TestSetupLogger_RedactsSecrets verifies the root logger constructed in
+// setupLogger scrubs secret-shaped tokens (AC5) at the single construction point,
+// so EVERY command (CLI, serve, MCP) inherits one already-redacted logger.
+func TestSetupLogger_RedactsSecrets(t *testing.T) {
+	var buf bytes.Buffer
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	root.SetErr(&buf)
+	require.NoError(t, setupLogger(root))
+
+	log.FromContext(root.Context()).Info("token leak", "key", "sk-secret123")
+
+	out := buf.String()
+	require.NotContains(t, out, "sk-secret123", "secret-shaped token must be scrubbed at the root logger (AC5)")
+	require.Contains(t, out, "[redacted]")
+}
+
+// TestPersistentPreRunE_ValidLevelAndFormat verifies setupLogger constructs a
+// logger and stores it in the command context (replacing the discard fallback).
+func TestPersistentPreRunE_ValidLevelAndFormat(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "info")
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	root.SetErr(io.Discard)
+
+	before := log.FromContext(root.Context())
+	require.NoError(t, setupLogger(root))
+	after := log.FromContext(root.Context())
+
+	require.NotSame(t, before, after, "setupLogger must store a new logger in the context")
+}
+
+// TestPersistentPreRunE_InvalidLevel verifies an unparseable LOG_LEVEL is a usage
+// error (exit 2) surfaced before any subcommand runs.
+func TestPersistentPreRunE_InvalidLevel(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "bogus")
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	root.SetErr(io.Discard)
+
+	err := setupLogger(root)
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "an invalid LOG_LEVEL is a usage error")
+}
+
+// TestPersistentPreRunE_InvalidFormat verifies an unknown --log-format value is a
+// usage error (exit 2).
+func TestPersistentPreRunE_InvalidFormat(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "info")
+	root := newRootCmd()
+	root.SetContext(context.Background())
+	root.SetErr(io.Discard)
+	require.NoError(t, root.ParseFlags([]string{"--log-format", "bogus"}))
+
+	err := setupLogger(root)
+	require.Error(t, err)
+	assert.Equal(t, 2, exitCode(err), "an invalid --log-format is a usage error")
 }
 
 func TestRootCmd_SubcommandsUseRunE(t *testing.T) {

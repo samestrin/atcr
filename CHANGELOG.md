@@ -1,3 +1,34 @@
+## [Technical Debt] - 2026-06-17
+
+### Fixed
+
+- Anchored `sk-`/`Bearer` redaction patterns to token charsets to prevent over-redacting adjacent JSON fields; extended coverage to URL-encoded (`Bearer%20`), base64, and path-escaped secret forms
+- Added ASCII case-fold prefilter and precomputed per-secret encodings for a zero-alloc no-match fast path in `Redact`; benchmarks document the sub-millisecond per-record target
+- Redacted secrets in non-error `KindAny` attributes; non-secret values preserve native slog rendering
+- Made `skKeyPattern` case-insensitive in `llmclient.Client` to match the log-package behavior
+- Re-applied the no-redirect guard onto `WithHTTPClient`-injected clients to prevent `Authorization` header leaks on redirects
+- Scrubbed secret-shaped tokens at root-logger construction so MCP base-logger lines are covered before any per-review redactor layer (AC5)
+- Exempted `review_id`/`agent_name` correlation keys from value redaction to resolve AC9 vs AC5 tension
+- Resolved symlinks in `resolveRedactRoot` so macOS real-form paths (`/private/var/...`) relativize correctly under the review root (AC6)
+- Emitted a warn-level log line when `filepath.Abs` fails on the redact root so silent loss of path relativization is observable
+- Based scorecard store paths in error messages to avoid absolute `~/.config/atcr` path disclosure
+- Routed all `ExecuteReview` and `verify/pipeline.go` stderr warnings through the context logger, enforcing single-sink discipline
+- Validated nil writer in `log.New` to surface misconfiguration at construction rather than first write
+- Wrapped `LevelFromString`/`New` errors with exported `ErrInvalidLevel`/`ErrInvalidFormat` sentinels so callers can branch programmatically
+- Bounded echoed `LOG_LEVEL` and `--log-format` strings in error messages to prevent unbounded user-input reflection
+- Fixed `ClassifiedError.Error` nil-`Err` diagnostic to produce unmistakably diagnostic output instead of a bare classification label
+- Clamped negative `maxRetries` to zero in `WithRetry` to prevent a nil-wrapped exhausted-retries error on zero-attempt loops
+- Honored `Retry-After` header in `client.go` retry backoff on 429/503 responses; falls back to fixed exponential otherwise
+- Clamped retry backoff to `maxBackoff` and added bounded jitter to prevent thundering-herd on concurrent rate-limit responses
+- Bounded error-body drain in `readErrorSnippet` with `io.CopyN` to prevent unbounded reads on the error path
+- Returned empty completion as a classified permanent error in `CompleteWithUsage` so callers fail loudly instead of propagating silent empty content
+- Clamped oversized token counts to `math.MaxInt` instead of zero in `clampNonNegative` to avoid misreporting large valid counts as free
+- Returned the shared `log.Discard()` singleton from per-call logger fallbacks, eliminating a handler allocation per agent invocation
+- Renamed test `sentinel` to `errSentinel` (ST1012) and fixed SA4000 discard-cache identity assertion to clear lint gate failures
+- Documented `PersistentPreRunE` bypass paths rely on the discard-logger fallback; scoped redaction claim to values and documented static-key invariant in `handler.go`
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [Technical Debt] - 2026-06-16
 
 ### Fixed

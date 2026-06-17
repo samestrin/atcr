@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"log/slog"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -57,8 +58,9 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 		return nil, nil, errors.New("invokeSkeptic: nil dispatcher")
 	}
 
+	logger := log.FromContext(ctx)
 	agent := buildSkepticAgent(skeptic, prompt)
-	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp))
+	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
 	// exactly one result. Guard the index anyway: a zero-length return must not
@@ -75,14 +77,14 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// tripped-budget slice is returned so the caller records it structurally.
 	if res.Status != fanout.StatusOK || len(res.TrippedBudgets) > 0 {
 		notes := failureNotes(res)
-		logSkepticFailure(skeptic.Name, failureClass(res), notes)
+		logSkepticFailure(logger, skeptic.Name, failureClass(res), notes)
 		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
 	v, _ := parseVerdict(res.Content)
 	v.Skeptic = skeptic.Name
 	if v.Verdict == verdictUnverifiable {
-		logSkepticFailure(skeptic.Name, "malformed_output", v.Notes)
+		logSkepticFailure(logger, skeptic.Name, "malformed_output", v.Notes)
 	}
 	return v, nil, nil
 }
@@ -148,11 +150,16 @@ func failureClass(res fanout.Result) string {
 	}
 }
 
-// logSkepticFailure emits a single structured stderr line so a skeptic failure is
-// visible in logs even though it is intentionally not propagated as an error.
-func logSkepticFailure(skeptic, class, detail string) {
+// logSkepticFailure emits a structured log line so a skeptic failure is visible
+// even though it is intentionally not propagated as an error. The skeptic name
+// and failure class go to Warn (visible at the default level); the diagnostic
+// detail — which can carry provider error bodies and path-bearing context — is
+// held to Debug so it does not leak at the default level (mirrors the path-at-
+// debug discipline used across the engine wiring).
+func logSkepticFailure(logger *slog.Logger, skeptic, class, detail string) {
 	detail = strings.ReplaceAll(detail, "\n", " ")
-	fmt.Fprintf(os.Stderr, "atcr: verify: skeptic=%s class=%s: %s\n", skeptic, class, detail)
+	logger.Warn("skeptic failed", "skeptic", skeptic, "class", class)
+	logger.Debug("skeptic failure detail", "skeptic", skeptic, "class", class, "detail", detail)
 }
 
 func derefInt(p *int) int {

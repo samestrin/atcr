@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/spf13/cobra"
 )
 
@@ -72,9 +74,16 @@ func usageArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
 // errors bubble up to main() for centralized exit-code mapping.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "atcr",
-		Short:         "Agent Team Code Review — a review panel, not a reviewer",
-		Long:          "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\nthen deterministically reconciles their findings into a single deduplicated,\nconfidence-scored deliverable.",
+		Use:   "atcr",
+		Short: "Agent Team Code Review — a review panel, not a reviewer",
+		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
+			"then deterministically reconciles their findings into a single deduplicated,\n" +
+			"confidence-scored deliverable.\n\n" +
+			"Logging:\n" +
+			"  LOG_LEVEL      environment variable: debug, info, warn, error (default info).\n" +
+			"                 Set LOG_LEVEL=debug to diagnose a failing review.\n" +
+			"  --log-format   log output format: text or json (default text).\n" +
+			"                 Use json for machine-readable, newline-delimited logs in CI.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// An unknown subcommand is a usage error (exit 2), not the generic
@@ -83,10 +92,25 @@ func newRootCmd() *cobra.Command {
 		// returns an uncoded error from Find), and the RunE keeps bare `atcr`
 		// printing help with exit 0.
 		Args: usageArgs(cobra.NoArgs),
+		// PersistentPreRunE is inherited by every subcommand, so it is the single
+		// point where the root logger is constructed (from LOG_LEVEL and
+		// --log-format) and stored in the command context. No subcommand builds
+		// its own logger after this; they retrieve it via log.FromContext.
+		// Note: cobra's --help/-h and --version flags short-circuit before
+		// PersistentPreRunE runs, so no logger is stored in context on those
+		// paths. All consumers must use log.FromContext, which falls back to a
+		// shared discard logger on a miss — never assert logger presence directly.
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return setupLogger(cmd)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
+
+	// --log-format is a persistent flag so every subcommand inherits it; LOG_LEVEL
+	// is read from the environment (see logLevelFromEnv). Both feed setupLogger.
+	root.PersistentFlags().String("log-format", "text", "log output format: text or json")
 
 	// Flag-parse errors (unknown flags, bad values, violated flag groups)
 	// are usage errors: exit 2.
@@ -109,4 +133,39 @@ func newRootCmd() *cobra.Command {
 		newLeaderboardCmd(),
 	)
 	return root
+}
+
+// logLevelFromEnv returns the configured LOG_LEVEL, defaulting to "info" when the
+// variable is unset or blank. LOG_LEVEL is read from the environment (not a flag)
+// so operators can raise verbosity per-invocation without changing the command
+// line; log.LevelFromString validates the value in setupLogger.
+func logLevelFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("LOG_LEVEL")); v != "" {
+		return v
+	}
+	return "info"
+}
+
+// setupLogger constructs the single root logger from LOG_LEVEL and --log-format
+// and stores it in the command context, where every subcommand retrieves it via
+// log.FromContext. The sink is cmd.ErrOrStderr() — os.Stderr in production, so
+// MCP serve mode keeps stdout protocol-only, while tests can capture output by
+// redirecting the command's error writer. An invalid level or format is a usage
+// error (exit 2) returned before any subcommand handler runs.
+func setupLogger(cmd *cobra.Command) error {
+	format, _ := cmd.Flags().GetString("log-format")
+	logger, err := log.New(logLevelFromEnv(), format, cmd.ErrOrStderr())
+	if err != nil {
+		return usageError(err)
+	}
+	// Scrub secret-shaped tokens (bearer/sk-) at the single root-logger
+	// construction point so EVERY command's log lines — CLI, serve, MCP — are
+	// covered by AC5 without each call site opting in. NewRedactor("") applies
+	// only the token regexes (empty root = no path work); per-review AC6 path
+	// relativization stays layered in review.go/handlers.go where the review root
+	// is known. Wrapping here (not in serve) preserves AC3 — serve still forwards
+	// the context logger unchanged.
+	logger = log.WithRedactor(logger, log.NewRedactor(""))
+	cmd.SetContext(log.NewContext(cmd.Context(), logger))
+	return nil
 }

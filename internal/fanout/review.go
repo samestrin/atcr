@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
@@ -286,10 +287,13 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// unless a snapshot actually runs and succeeds below; stamped onto the review
 	// stage after fan-out.
 	var snapMode, snapHeadSHA, snapWorktreePath string
-	opts := []EngineOption{WithMaxParallel(p.MaxParallel)}
+	// Seed the engine with the review_id-correlated context logger so every agent
+	// log line is greppable by review (AC9 + AC10 together once invokeAgent adds
+	// agent_name). FromContext returns a never-nil discard logger if none is set.
+	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
-			fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (snapshot for %s: %v); tool agents degrade to single-shot\n", p.Head, err)
+			log.FromContext(ctx).Warn("tool harness disabled (snapshot); tool agents degrade to single-shot", "head", p.Head, "err", err)
 			snapMode = "failed" // snapshot attempted but failed; distinguishable from no-snapshot-attempted
 		} else {
 			defer cleanup()
@@ -303,18 +307,18 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 			if resolved, err := resolveHeadSHA(p.Repo, p.Head); err == nil {
 				headSHA = resolved
 			} else {
-				fmt.Fprintf(os.Stderr, "atcr: warning: could not resolve head SHA for manifest: %v\n", err)
+				log.FromContext(ctx).Warn("could not resolve head SHA for manifest", "err", err)
 			}
 			snapMode, snapHeadSHA, snapWorktreePath = snapshotManifestFields(root, p.Repo, headSHA)
 			if jail, jerr := tools.NewJail(root); jerr != nil {
-				fmt.Fprintf(os.Stderr, "atcr: warning: tool harness disabled (jail: %v); tool agents degrade to single-shot\n", jerr)
+				log.FromContext(ctx).Warn("tool harness disabled (jail); tool agents degrade to single-shot", "err", jerr)
 			} else {
 				disp := tools.NewDispatcher(jail, tools.DefaultLimits())
 				rawBase := filepath.Join(poolDir, poolRawAgentDir)
 				opts = append(opts, WithDispatcher(disp), WithTranscript(func(agent string) *tools.Transcript {
 					dir := filepath.Join(rawBase, transcriptAgentDir(agent))
 					if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
-						fmt.Fprintf(os.Stderr, "atcr: warning: transcript dir for %s: %v\n", agent, mkErr)
+						log.FromContext(ctx).Warn("transcript dir creation failed", "agent", agent, "err", mkErr)
 					}
 					return tools.OpenTranscript(filepath.Join(dir, "transcript.jsonl"), agent)
 				}))
