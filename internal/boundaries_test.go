@@ -39,6 +39,11 @@ var allowedInternalImports = map[string][]string{
 	"report":    {"stream", "reconcile"},
 	"verify":    {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
 	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log"},
+	// integration holds only end-to-end _test.go files (no production code).
+	// The dependency-direction walk skips _test.go, so this entry exists to
+	// satisfy the allowlist-completeness check; it records the packages those
+	// tests exercise (epic 4.0 phase 5.2).
+	"integration": {"fanout", "llmclient", "log", "errors", "registry", "mcp"},
 }
 
 // repoRoot walks up from the working directory to the directory containing
