@@ -151,14 +151,14 @@ func TestIsRetryable_WrappedDeepInChain(t *testing.T) {
 	}
 }
 
-// sentinel is used to confirm errors.Is reaches through the wrapper.
-var sentinel = stderrors.New("sentinel")
+// errSentinel is used to confirm errors.Is reaches through the wrapper.
+var errSentinel = stderrors.New("sentinel")
 
 // TestErrorsIs_ReachesThroughWrapper verifies errors.Is matches a sentinel
 // wrapped by a ClassifiedError.
 func TestErrorsIs_ReachesThroughWrapper(t *testing.T) {
-	err := apperrors.NewPermanent(sentinel)
-	if !stderrors.Is(err, sentinel) {
+	err := apperrors.NewPermanent(errSentinel)
+	if !stderrors.Is(err, errSentinel) {
 		t.Error("errors.Is did not reach sentinel through ClassifiedError")
 	}
 }
