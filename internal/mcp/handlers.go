@@ -43,11 +43,28 @@ type engine struct {
 // writer, or os.Stderr when unset. It mirrors scorecard's own default-to-stderr
 // rule at the MCP construction site so a nil diag never reaches EmitOpts as a
 // surprise (Epic 3.4 AC4).
+//
+// This guard intentionally covers only the plain e.diag==nil case. The typed-nil
+// guard — a non-nil io.Writer wrapping a nil pointer, e.g. (*bytes.Buffer)(nil) —
+// is delegated to scorecard.diagWriter, which re-applies its isNilPointer check
+// downstream before any write. The typed-nil normalization lives in one place
+// (the scorecard package that owns the diagnostics contract) rather than being
+// duplicated at every call site.
 func (e *engine) diagWriter() io.Writer {
 	if e.diag == nil {
 		return os.Stderr
 	}
 	return e.diag
+}
+
+// logger returns the engine's logger, or a no-op discard logger when log is
+// nil. Mirrors the nil-logger guard in buildServer so direct engine{} test
+// construction is safe even when the log field is omitted.
+func (e *engine) logger() *slog.Logger {
+	if e.log == nil {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return e.log
 }
 
 // drain waits up to timeout for in-flight background reviews to finish, so a
@@ -153,11 +170,11 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		defer e.bg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				e.log.Error("review fan-out panicked", "review_id", prep.ID, "panic", r)
+				e.logger().Error("review fan-out panicked", "review_id", prep.ID, "panic", r)
 			}
 		}()
 		if _, err := fanout.ExecuteReview(context.WithoutCancel(ctx), e.completer, prep); err != nil {
-			e.log.Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
+			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
 		}
 	}()
 
@@ -236,7 +253,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	// TD-004: warn when verify never ran — the gate would trivially pass everything.
 	if in.RequireVerified {
 		if verr := reconcile.ValidateRequireVerified(dir); verr != nil {
-			e.log.Warn("require_verified: verify stage not complete", "detail", verr.Error())
+			e.logger().Warn("require_verified: verify stage not complete", "detail", verr.Error())
 		}
 	}
 

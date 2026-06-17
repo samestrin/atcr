@@ -379,7 +379,7 @@ func TestStore_ReadRecords_MalformedDiagnosticRoutesToInjectedWriter(t *testing.
 	recs, err := ReadRecords(path, ReadOpts{Writer: &buf})
 	require.NoError(t, err)
 	require.Len(t, recs, 1, "valid record retained, malformed skipped")
-	assert.Contains(t, buf.String(), "skipping malformed record",
+	assert.Contains(t, buf.String(), MsgMalformedSkip,
 		"malformed-record diagnostic must route to ReadOpts.Writer")
 }
 

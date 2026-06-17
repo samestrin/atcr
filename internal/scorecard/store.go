@@ -164,7 +164,7 @@ func ReadRecords(path string, opts ReadOpts) ([]Record, error) {
 func decodeRecord(line []byte, path string, w io.Writer) (Record, bool) {
 	var r Record
 	if err := json.Unmarshal(line, &r); err != nil {
-		_, _ = fmt.Fprintf(w, "scorecard: skipping malformed record in %s: %v\n", path, err)
+		_, _ = fmt.Fprintf(w, "scorecard: "+MsgMalformedSkip+" in %s: %v\n", path, err)
 		return Record{}, false
 	}
 	// Schema-version negotiation: a record from a newer, forward-incompatible
