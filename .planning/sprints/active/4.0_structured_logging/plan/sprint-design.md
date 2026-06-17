@@ -273,7 +273,7 @@ logger injection nil-safe discard fallback
 |----------|-----------|-------------------|
 | Nil logger injection | Logger field is nil in struct | Return discard logger (slog.New(slog.NewTextHandler(io.Discard, nil))); no panic |
 | Empty correlation IDs | WithReviewID(logger, "") or WithAgent(logger, "") | Attach empty string attribute; log output includes attribute with empty value |
-| Invalid log levels | LevelFromString("invalid") | Default to info level; no error returned |
+| Invalid log levels | LevelFromString("") (empty) vs LevelFromString("bogus") (non-empty unrecognized) | Empty string defaults to info with no error; a non-empty unrecognized value returns an error so PersistentPreRunE fails fast before any subcommand runs (AC1) |
 | Wrapped errors | ClassifiedError wrapping ClassifiedError | Unwrap returns inner error; errors.As/Is reach through all layers |
 | Concurrent logger access | Multiple goroutines logging simultaneously | slog.Logger is thread-safe; redaction must not introduce race conditions |
 | Path with special characters | Unicode, spaces, symlinks in paths | Path redaction handles all valid file paths; relativization works with symlinks |
