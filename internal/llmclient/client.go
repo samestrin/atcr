@@ -236,6 +236,12 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 		// an empty review.
 		content = msg.ReasoningContent
 	}
+	if content == "" {
+		// Both content and reasoning_content are empty: the provider said nothing.
+		// Fail loudly so callers cannot mistake silence for a clean/empty review.
+		// Non-retryable — a re-request with the same budget would repeat the result.
+		return "", UsageData{}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+	}
 	return content, parsed.Usage, nil
 }
 
