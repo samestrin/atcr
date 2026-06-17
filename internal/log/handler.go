@@ -52,6 +52,14 @@ func (h *redactingHandler) WithGroup(name string) slog.Handler {
 // every other kind (bool, int, time, ...) passes through unchanged. Attribute
 // keys are never redacted — they are static field names, not secret-bearing.
 func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
+	// Correlation keys (review_id, agent_name) are internally-generated
+	// identifiers, not secret-bearing, and AC9 requires them greppable verbatim.
+	// Exempt their values from redaction so a correlation key that happens to look
+	// secret-shaped (e.g. a branch slug starting "sk-") is not scrubbed when bound
+	// on top of a redactor — the case once a root secret-redactor exists.
+	if a.Key == AttrReviewID || a.Key == AttrAgentName {
+		return a
+	}
 	v := a.Value.Resolve()
 	switch v.Kind() {
 	case slog.KindString:

@@ -95,6 +95,29 @@ func TestWithRedactor_PreservesCorrelationAttrs(t *testing.T) {
 	}
 }
 
+// TestWithRedactor_ExemptsSecretShapedCorrelationKeys verifies the correlation
+// keys (review_id, agent_name) are exempt from VALUE redaction even when their
+// value looks secret-shaped and they are attached on top of the redactor (the
+// production chain once a root secret-redactor exists). They are internally
+// generated identifiers, not secrets, and AC9 requires them greppable verbatim.
+func TestWithRedactor_ExemptsSecretShapedCorrelationKeys(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newBufLogger(&buf)
+	logger = WithRedactor(logger, NewRedactor("")) // root secret-redactor (setupLogger)
+	logger = WithReviewID(logger, "2026-06-17_sk-feature")
+	logger = WithAgent(logger, "sk-bot")
+
+	logger.Info("scanning")
+
+	out := buf.String()
+	if !strings.Contains(out, AttrReviewID+"=2026-06-17_sk-feature") {
+		t.Fatalf("review_id with sk- substring was redacted, breaking grep-by-review_id (AC9): %q", out)
+	}
+	if !strings.Contains(out, AttrAgentName+"=sk-bot") {
+		t.Fatalf("agent_name with sk- substring was redacted (AC9): %q", out)
+	}
+}
+
 // TestWithRedactor_RedactsGroupedAttrs verifies the handler's WithGroup path and
 // the KindGroup recursion in redactAttr: a secret nested inside a group-valued
 // attribute, under a WithGroup-scoped logger, is still scrubbed.
