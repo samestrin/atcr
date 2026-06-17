@@ -870,6 +870,34 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+// unboundedReader yields up to `remaining` bytes and counts how many were read.
+type unboundedReader struct {
+	remaining int
+	read      int
+}
+
+func (u *unboundedReader) Read(p []byte) (int, error) {
+	if u.remaining <= 0 {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > u.remaining {
+		n = u.remaining
+	}
+	u.remaining -= n
+	u.read += n
+	return n, nil
+}
+
+func TestReadErrorSnippet_DrainIsBounded(t *testing.T) {
+	// A hostile endpoint streaming a huge error body must not be read in full on
+	// the error path: the snippet read plus the connection-reuse drain are both
+	// bounded.
+	r := &unboundedReader{remaining: 64 << 20}
+	_ = readErrorSnippet(r)
+	assert.LessOrEqual(t, r.read, maxErrorBodyBytes*2, "error-body read (snippet + drain) must be bounded")
+}
+
 func TestWithHTTPClient_PreservesNoRedirectGuard(t *testing.T) {
 	// A client injected via WithHTTPClient must still refuse to follow redirects,
 	// so the Authorization: Bearer header is never forwarded to a redirect target.
