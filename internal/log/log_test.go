@@ -145,6 +145,13 @@ func TestNew_InvalidFormatReturnsError(t *testing.T) {
 	}
 }
 
+func TestNew_NilWriterReturnsError(t *testing.T) {
+	_, err := New("info", "text", nil)
+	if err == nil {
+		t.Fatal("New with nil writer expected error")
+	}
+}
+
 func TestFromContext_EmptyContext(t *testing.T) {
 	logger := FromContext(context.Background())
 	if logger == nil {
