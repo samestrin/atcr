@@ -9,9 +9,12 @@ import (
 // redactingHandler wraps a base slog.Handler and scrubs every emitted record
 // through a Redactor before it reaches the sink: the record message, all string
 // attribute values (including those bound earlier via WithAttrs and nested group
-// values), and the string form of error-valued attributes. This makes redaction
-// enforced-by-construction rather than opt-in per call site — no log line at any
-// level can bypass it (AC5, AC6; the TD-007 enforcement model).
+// values), and the string form of error-valued attributes. Redaction of VALUES
+// is enforced-by-construction rather than opt-in per call site — no attribute or
+// message value at any level can bypass it (AC5, AC6; the TD-007 enforcement
+// model). Attribute KEYS are not scrubbed: the handler assumes keys are static
+// field names, an invariant the codebase upholds (every slog call site passes a
+// string-literal key; none is derived from request/header/path data).
 type redactingHandler struct {
 	base slog.Handler
 	r    *Redactor
@@ -51,7 +54,8 @@ func (h *redactingHandler) WithGroup(name string) slog.Handler {
 // redactAttr scrubs a single attribute's value. String values are redacted
 // directly; error values are redacted by their message; group values recurse;
 // every other kind (bool, int, time, ...) passes through unchanged. Attribute
-// keys are never redacted — they are static field names, not secret-bearing.
+// keys are not redacted — they are assumed to be static field names, not
+// secret-bearing (verified: all slog call sites use string-literal keys).
 func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 	// Correlation keys (review_id, agent_name) are internally-generated
 	// identifiers, not secret-bearing, and AC9 requires them greppable verbatim.
