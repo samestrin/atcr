@@ -475,7 +475,7 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
 
 ---
 
-### 3.1 [ ] 🔧 **CLI Flags — LOG_LEVEL and --log-format**
+### 3.1 [x] 🔧 **CLI Flags — LOG_LEVEL and --log-format**
    **Task:** Add `--log-format` persistent flag and read `LOG_LEVEL` env var in `cmd/atcr/main.go:newRootCmd`. These values are consumed by `PersistentPreRunE` in task 3.2.
    **Priority:** P1 | **Effort:** S
    1. Understand: Review [cli-mcp-integration.md](plan/documentation/cli-mcp-integration.md) and current `cmd/atcr/main.go:newRootCmd` structure before any changes
@@ -487,7 +487,7 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
    **Success Criteria:** `--log-format` persistent flag declared; `LOG_LEVEL` env var read with `"info"` default; both available to `PersistentPreRunE`; all subcommands inherit `--log-format` (AC1, AC2)
    **Files:** `cmd/atcr/main.go` (modify), `cmd/atcr/main_test.go` (create/modify) | **Duration:** 0.2 days
 
-### 3.2 [ ] 🔧 **Root Logger Construction and Context Storage**
+### 3.2 [x] 🔧 **Root Logger Construction and Context Storage**
    **Task:** Add `PersistentPreRunE` to root command that constructs `*slog.Logger` from flags and stores it in command context. Single construction point — no subcommand constructs its own logger after this.
    **Priority:** P1 | **Effort:** S
    1. Understand: `PersistentPreRunE` runs before every subcommand handler; `cmd.ExecuteContext(context.Background())` is required for context propagation through cobra
@@ -499,7 +499,7 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
    **Success Criteria:** Root logger constructed once; accessible via `log.FromContext` in all subcommands; invalid `LOG_LEVEL` produces error before any subcommand runs (AC1, AC2)
    **Files:** `cmd/atcr/main.go` (modify), `cmd/atcr/review.go` (modify baseline), `cmd/atcr/main_test.go` (modify) | **Duration:** 0.2 days
 
-### 3.3 [ ] 🔧 **MCP Server Logger Reuse (AC3)**
+### 3.3 [x] 🔧 **MCP Server Logger Reuse (AC3)**
    **Task:** Remove local `slog.Logger` construction from `cmd/atcr/serve.go`. Use root logger from context via `log.FromContext`. MCP stdio discipline (stdout = transport only) must be preserved.
    **Priority:** P1 | **Effort:** S
    1. Understand: `cmd/atcr/serve.go:newServeCmd` currently builds a local `slog.New(...)`. `internal/mcp/server.go` already accepts `*slog.Logger`. MCP stdout must remain protocol-only.
@@ -511,7 +511,7 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
    **Success Criteria:** `cmd/atcr/serve.go` has no local logger construction; root logger from context passed to MCP server; MCP stdout is protocol-only (AC3)
    **Files:** `cmd/atcr/serve.go` (modify), `cmd/atcr/serve_test.go` (create/modify) | **Duration:** 0.2 days
 
-### 3.4 [ ] 🔧 **Review Command Correlation — WithReviewID (AC9)**
+### 3.4 [x] 🔧 **Review Command Correlation — WithReviewID (AC9)**
    **Task:** After `fanout.PrepareReview` returns `prep.ID`, attach `review_id` to the context logger and propagate the correlated context to all downstream calls (ExecuteReview, RunReconcile, Verify).
    **Priority:** P1 | **Effort:** S
    1. Understand: Review [request-correlation.md](plan/documentation/request-correlation.md). The review ID is only available after `PrepareReview` returns — this is the earliest correlation attachment point.
@@ -522,7 +522,7 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
    **Success Criteria:** `review_id` attached after `PrepareReview`; updated context used for all downstream calls; no local `slog.New` or `slog.Default` in `review.go` (AC9)
    **Files:** `cmd/atcr/review.go` (modify), `cmd/atcr/review_test.go` (create/modify) | **Duration:** 0.2 days
 
-### 3.5 [ ] 🔧 **Reconcile Command Logger Wiring**
+### 3.5 [x] 🔧 **Reconcile Command Logger Wiring**
    **Task:** Route `cmd/atcr/reconcile.go` diagnostics through the context logger. Replace direct `cmd.ErrOrStderr()` writes with `logger.Warn`/`logger.Debug`. Path-bearing details go to Debug level. User-facing stdout summary unchanged.
    **Priority:** P2 | **Effort:** S
    1. Understand: `runReconcile` writes `--require-verified` warning and scorecard diagnostics to stderr directly, bypassing `LOG_LEVEL`, redaction, and correlation IDs. Stdout summary output must remain unchanged.
@@ -534,7 +534,7 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
    **Success Criteria:** Diagnostics route through context logger; path details at debug level; `--require-verified` warning visible at default level; stdout summary unchanged (no breaking change for CLI users)
    **Files:** `cmd/atcr/reconcile.go` (modify), `cmd/atcr/reconcile_test.go` (create/modify) | **Duration:** 0.2 days
 
-### 3.5.A [ ] **Phase 3 — ADVERSARIAL REVIEW (subagent)**
+### 3.5.A [x] **Phase 3 — ADVERSARIAL REVIEW (subagent)**
    **Changed Files:** `cmd/atcr/main.go`, `cmd/atcr/serve.go`, `cmd/atcr/review.go`, `cmd/atcr/reconcile.go`, and related test files
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the Phase 3 implementation — this is intentional. Do NOT review inline.
@@ -556,38 +556,37 @@ Manual Review: [x] Code reviewed (adversarial 2.1.A + Phase 2 gate)
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (0 CRITICAL/HIGH/MEDIUM, 2 LOW deferred):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | cmd/atcr/main.go:setupLogger | Invalid `LOG_LEVEL` echoes the raw env value verbatim to stderr via `log.New`'s `%q` error. Constrained enum (not secret), so negligible blast radius. | Deferred → TD-009 |
+   | LOW | cmd/atcr/main.go:newRootCmd | `--help`/`--version` short-circuit before `PersistentPreRunE`, so no logger is in context; correct today only via the `FromContext` discard fallback. Reviewer: "no fix required." | Deferred → TD-010 |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before 3.6, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   **Verified clean (checklist, no findings):** MCP stdout discipline holds — `setupLogger` sinks to `cmd.ErrOrStderr()` (os.Stderr), serve reuses the context logger and constructs none of its own, and the invalid-level error returns from `PersistentPreRunE` to stderr before `RunE`; no `WithReviewID` nil-panic (`correlateReviewID` feeds the never-nil `FromContext` result into the nil-safe `WithReviewID`, reached only after the `PrepareReview` error early-return so `prep.ID` is set); ctx propagation complete (review.go reassigns `ctx`, all of `ExecuteReview`/`RunReconcile`/`Verify` use it, `cmd.Context()` not reused); `PersistentPreRunE` error blocks subcommands and maps to exit 2; `runReconcile` degrades gracefully via the discard fallback; `log.New` is allocation-cheap (and `--help` bypasses it entirely).
+
+   **Action Taken:** No CRITICAL/HIGH/MEDIUM — adversarial review passed, no inline fixes required. 2 LOW deferred → `tech-debt-captured.md` (TD-009, TD-010). Proceeding to 3.6.
 
 ---
 
-### 3.6 [ ] Phase 3 — Definition of Done
+### 3.6 [x] Phase 3 — Definition of Done
 
-- [ ] `go test ./cmd/atcr/... ./internal/mcp/...` — all passing
-- [ ] `go build ./cmd/atcr/...` — succeeds
-- [ ] `go vet ./cmd/atcr/...` — clean
-- [ ] `cmd/atcr/serve.go` has no local `slog.New(...)` construction
-- [ ] `cmd/atcr/review.go` attaches `review_id` after `PrepareReview`; updated context used for all downstream calls
-- [ ] `cmd/atcr/reconcile.go` uses context logger for diagnostics; no direct `cmd.ErrOrStderr()` for warnings
-- [ ] `LOG_LEVEL=bogus atcr version` exits with error before subcommand runs
-- [ ] MCP tests verify stdout is protocol-only (AC3)
-- [ ] Adversarial review 3.5.A completed
+- [x] `go test ./cmd/atcr/... ./internal/mcp/...` — all passing
+- [x] `go build ./cmd/atcr/...` — succeeds
+- [x] `go vet ./cmd/atcr/...` — clean
+- [x] `cmd/atcr/serve.go` has no local `slog.New(...)` construction
+- [x] `cmd/atcr/review.go` attaches `review_id` after `PrepareReview`; updated context used for all downstream calls
+- [x] `cmd/atcr/reconcile.go` uses context logger for diagnostics; no direct `cmd.ErrOrStderr()` for warnings
+- [x] `LOG_LEVEL=bogus atcr <subcommand>` exits with error before subcommand runs (no `version` cmd exists; verified with `atcr status` → exit 2, error is the level error so the subcommand never ran)
+- [x] MCP tests verify stdout is protocol-only — `TestServe_NoStdoutLeak` passes (AC3)
+- [x] Adversarial review 3.5.A completed
 
 ```
 Phase-3 DoD Complete
-Auto: {X}/5 | Task-Specific: {Y}/9
-Manual Review: [ ] Code reviewed
+Auto: 5/5 | Task-Specific: 9/9
+Manual Review: [x] Code reviewed (adversarial 3.5.A + Phase 3 gate)
 ```
 
-### 3.7 [ ] **Phase 3 — GATE: Integration & Exit Review (subagent)**
+### 3.7 [x] **Phase 3 — GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of Phase 3 implementation — this is intentional. Do NOT review inline.
@@ -610,16 +609,21 @@ Manual Review: [ ] Code reviewed
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Gate findings — FIRST PASS (1 HIGH fixed inline, 1 MEDIUM + 1 LOW already-planned):**
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | HIGH | internal/mcp/handlers.go:176 | MCP `atcr_review` ran the fan-out via `ExecuteReview(context.WithoutCancel(ctx), …)` with a context carrying no logger and no `review_id`; under `atcr serve`, AC9 correlation would be silently absent (FromContext → discard). No later task owned the MCP-handler correlation. | FIXED inline before phase boundary: added `engine.reviewContext(ctx, reviewID)` seeding the detached context with `log.WithReviewID(e.logger(), prep.ID)`; mirrors the CLI `correlateReviewID`. Added `mcp→log` to the boundary allowlist + `TestReviewHandler_AttachesReviewIDToFanoutContext`. Committed `4cc24b9`. |
+   | MEDIUM | cmd/atcr/main.go (root `Long`) | `LOG_LEVEL` is read from env but not surfaced in cobra `--help`; no in-CLI discoverability. | NOT new debt — task **5.1** explicitly updates the root `Long` description to document `LOG_LEVEL` and `--log-format`. Deferred to its owning task. |
+   | LOW | internal/payload/diff.go | `gitRunner` falls back to `slog.Default()` (pre-existing), contradicting the single-sink contract. | NOT new debt — task **4.1** explicitly removes this `slog.Default()` fallback. Deferred to its owning task. |
+
+   **Gate findings — RE-REVIEW after HIGH fix (0 findings):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | — | — | — | — |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   Fresh-context re-review confirmed: both entry points seed the fan-out context with `root_logger.With(review_id)` (CLI `correlateReviewID`, MCP `reviewContext`), so `log.FromContext(ctx)` inside `ExecuteReview` returns a review_id-correlated logger on both paths with no divergence; `mcp→log` import respects the allowlist (acyclic); `TestServe_NoStdoutLeak` and the full `go test -race ./...` pass; `reviewContext` preserves the `context.WithoutCancel` detach and is nil-safe via `e.logger()`.
+
+   **Action Taken:** Phase gate PASSED on re-review (0 CRITICAL/HIGH). The one HIGH was fixed inline before the boundary (no stop); the MEDIUM and LOW are owned by already-planned tasks 5.1 and 4.1 (no new TD). Proceeding to the gated phase stop.
    **Duration:** 15-30 min
 
 ---

@@ -57,3 +57,17 @@ Items deferred during `/execute-sprint`. Read by `/execute-code-review` and pre-
 **Issue:** `IsRetryable` resolves the outermost `*ClassifiedError` via `errors.As`. If a permanent failure (e.g. a 401) were re-wrapped as `NewTransient(NewPermanent(err))`, `IsRetryable` would report true, forging retryability and risking repeated calls against a permanent auth error.
 **Why accepted:** The plan (task 2.1) explicitly specifies "outer classification wins"; the outermost-wins contract is intentional so the most recent, most-informed classifier decides. No double-wrap path exists in the intended wiring — each error is classified exactly once (Phase 4 llmclient maps each HTTP status to a single constructor). Re-wrapping is a Go programming error, not external/attacker input. Mitigated this sprint via the documented single-classification contract on `ClassifiedError` and `IsRetryable`.
 **Fix in:** Future hardening — if a double-classification path is ever introduced (e.g. a generic retry wrapper), add a "Permanent poisons the chain" guard: have constructors detect an inner non-retryable `*ClassifiedError` and refuse to escalate it to Transient, with a regression test asserting an inner Permanent stays non-retryable.
+
+## TD-009 — invalid LOG_LEVEL echoes the raw env value to stderr (LOW)
+**Origin:** Phase 3, task 3.5.A adversarial review, 2026-06-17
+**File:** cmd/atcr/main.go:setupLogger
+**Issue:** `setupLogger` passes `LOG_LEVEL` to `log.New`; an invalid value yields `log: invalid level %q` (internal/log/log.go:43) which `main()` echoes verbatim to stderr. `LOG_LEVEL` is externally influenceable in some CI contexts, and the verbatim echo is unnecessary defense-in-depth exposure.
+**Why accepted:** `LOG_LEVEL` is a constrained enum (debug/info/warn/error), not free-form secret content, so blast radius is negligible — it only reflects back the level string the operator themselves set. Not a correctness or leak bug.
+**Fix in:** Future hardening — emit a fixed message listing the valid level values without echoing the raw input (or cap echoed length), with a covering test.
+
+## TD-010 — help/version paths rely on the FromContext discard fallback (LOW)
+**Origin:** Phase 3, task 3.5.A adversarial review, 2026-06-17
+**File:** cmd/atcr/main.go:newRootCmd
+**Issue:** cobra's `--help`/`--version`/`-h` short-circuit before `PersistentPreRunE`, so no logger is stored in context for those paths. It is correct today only because every consumer uses `log.FromContext`, which returns the shared discard logger on a miss — a future consumer that asserts a logger is always present would break on these paths.
+**Why accepted:** No current defect — the discard fallback (internal/log/log.go:84-91) makes all bypass paths nil-safe and silent. This is a robustness/documentation note, not actionable debt; the reviewer flagged it as "no fix required."
+**Fix in:** Future hardening — document (package or PersistentPreRunE comment) that bypass paths rely on the discard fallback so future code keeps using `FromContext` rather than asserting logger presence.
