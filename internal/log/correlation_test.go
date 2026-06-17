@@ -20,6 +20,9 @@ func decodeLines(t *testing.T, b []byte) []map[string]any {
 		}
 		recs = append(recs, rec)
 	}
+	if len(recs) == 0 {
+		t.Fatalf("expected at least one log line, got none from %q", b)
+	}
 	return recs
 }
 
@@ -101,6 +104,23 @@ func TestCorrelation_EmptyStringStillAttaches(t *testing.T) {
 	recs := decodeLines(t, buf.Bytes())
 	if _, ok := recs[0][AttrReviewID]; !ok {
 		t.Fatalf("review_id attribute should be present even when empty: %v", recs[0])
+	}
+}
+
+// TestCorrelation_DoubleWrapAppends locks the documented contract: slog appends
+// rather than replaces, so double-wrapping the same key emits it twice. This is
+// a regression guard for the call-once contract, not an endorsement of misuse.
+func TestCorrelation_DoubleWrapAppends(t *testing.T) {
+	var buf bytes.Buffer
+	base, err := New("info", "text", &buf)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	WithReviewID(WithReviewID(base, "first"), "second").Info("hi")
+	out := buf.String()
+	if !bytes.Contains(buf.Bytes(), []byte("review_id=first")) ||
+		!bytes.Contains(buf.Bytes(), []byte("review_id=second")) {
+		t.Fatalf("expected both review_id values present (append semantics): %q", out)
 	}
 }
 
