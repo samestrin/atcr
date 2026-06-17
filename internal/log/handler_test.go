@@ -136,6 +136,27 @@ func TestWithRedactor_RedactsGroupedAttrs(t *testing.T) {
 	}
 }
 
+// TestWithRedactor_RedactsNonErrorAnyValue verifies a secret embedded in a
+// non-error KindAny attribute (a struct, here) is scrubbed. Before the fix the
+// KindAny default branch returned such values unchanged, letting the base
+// handler marshal the secret to the sink — breaking the handler-level guarantee
+// that no emitted line can leak a configured secret (the item-6 HIGH finding).
+func TestWithRedactor_RedactsNonErrorAnyValue(t *testing.T) {
+	var buf bytes.Buffer
+	logger := WithRedactor(newBufLogger(&buf), NewRedactor("", "topsecretvalue"))
+
+	cfg := struct{ APIKey string }{APIKey: "topsecretvalue"}
+	logger.Info("config loaded", "cfg", cfg)
+
+	out := buf.String()
+	if strings.Contains(out, "topsecretvalue") {
+		t.Fatalf("secret in non-error struct attr leaked: %q", out)
+	}
+	if !strings.Contains(out, "[redacted]") {
+		t.Fatalf("expected redaction marker for struct attr: %q", out)
+	}
+}
+
 // TestWithRedactor_PreservesNonStringAttrs verifies non-string attribute kinds
 // (bool, int) pass through unchanged.
 func TestWithRedactor_PreservesNonStringAttrs(t *testing.T) {
