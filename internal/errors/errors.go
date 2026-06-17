@@ -45,7 +45,8 @@ type ClassifiedError struct {
 
 // Error delegates to the underlying error's message. It tolerates a nil Err
 // (possible only via direct struct construction, not the constructors) by
-// falling back to the classification label instead of panicking.
+// returning a diagnostic string "classified error (X) with nil cause" so
+// misuse is visible in logs rather than looking like a real error message.
 func (e *ClassifiedError) Error() string {
 	if e.Err == nil {
 		return "classified error (" + string(e.Classification) + ") with nil cause"
