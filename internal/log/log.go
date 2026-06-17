@@ -49,6 +49,9 @@ func LevelFromString(s string) (slog.Level, error) {
 // (the default when empty) or "json"; any other value returns an error. The
 // caller owns w (typically os.Stderr in cmd/atcr).
 func New(level string, format string, w io.Writer) (*slog.Logger, error) {
+	if w == nil {
+		return nil, fmt.Errorf("log: nil writer")
+	}
 	lvl, err := LevelFromString(level)
 	if err != nil {
 		return nil, err
