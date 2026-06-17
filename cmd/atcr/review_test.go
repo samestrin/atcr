@@ -171,6 +171,21 @@ func TestInterruptMessage_UsesResultCounts(t *testing.T) {
 	assert.Contains(t, msg, "/real/dir", "uses the result's dir when present")
 }
 
+// TestInterruptedBeforeFanout_ExitOneWithNotice verifies an interrupt that lands
+// before the fan-out starts exits 1 with a graceful notice — not the misleading
+// exit-2 "review failed" usage error (independent-review MED).
+func TestInterruptedBeforeFanout_ExitOneWithNotice(t *testing.T) {
+	cmd := newReviewCmd()
+	var buf bytes.Buffer
+	cmd.SetErr(&buf)
+
+	err := interruptedBeforeFanout(cmd)
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err), "interrupt before fan-out exits 1, not the exit-2 usage error")
+	assert.Contains(t, buf.String(), "Review interrupted before it started")
+	assert.NotContains(t, err.Error(), "review failed", "must not surface as a range/usage failure")
+}
+
 func TestCLIOverrides_MaxParallelSet(t *testing.T) {
 	cmd := newReviewCmd()
 	require.NoError(t, cmd.ParseFlags([]string{"--max-parallel", "3"}))

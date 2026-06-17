@@ -114,6 +114,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
+		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
+		// here; route it to the graceful interrupt path (exit 1 + notice) rather
+		// than a confusing "review failed: context canceled" usage error (exit 2).
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return interruptedBeforeFanout(cmd)
+		}
 		// A range failure aborts the pipeline before any agent runs — a usage
 		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
 		return usageError(fmt.Errorf("review failed: %w", err))
@@ -152,6 +158,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// plain exit 1 with artifacts preserved on disk.
 	prep, err := fanout.PrepareReview(ctx, cfg, req)
 	if err != nil {
+		// An interrupt during payload build / scaffolding cancels the context; no
+		// review directory exists yet, so route to the graceful no-results path
+		// instead of a usage error.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return interruptedBeforeFanout(cmd)
+		}
 		return usageError(err)
 	}
 
@@ -245,6 +257,16 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return gateFindings(rec, threshold, false)
 	}
 	return nil
+}
+
+// interruptedBeforeFanout handles a SIGINT/SIGTERM that arrived before the
+// fan-out started (during range resolution, config load, or scaffolding). No
+// review directory exists yet, so there are no partial results to preserve — the
+// notice just confirms the interrupt and exits 1, consistent with the post-fan-out
+// interrupt path (and never the misleading exit-2 "review failed" usage error).
+func interruptedBeforeFanout(cmd *cobra.Command) error {
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\n⚠️ Review interrupted before it started; no partial results to save.")
+	return &codedError{code: exitFailure, err: errors.New("review interrupted")}
 }
 
 // interruptMessage renders the user-facing notice for a signal-interrupted
