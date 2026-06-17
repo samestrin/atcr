@@ -48,7 +48,7 @@ type ClassifiedError struct {
 // falling back to the classification label instead of panicking.
 func (e *ClassifiedError) Error() string {
 	if e.Err == nil {
-		return string(e.Classification)
+		return "classified error (" + string(e.Classification) + ") with nil cause"
 	}
 	return e.Err.Error()
 }
