@@ -42,6 +42,20 @@ func TestRedact_BearerToken(t *testing.T) {
 	}
 }
 
+// TestRedact_URLEncodedBearerToken verifies a percent-encoded space between
+// "Bearer" and the token (Bearer%20<token>, as it appears in a logged URL or
+// error body) is still scrubbed — the pattern must not require literal whitespace.
+func TestRedact_URLEncodedBearerToken(t *testing.T) {
+	r := NewRedactor("")
+	out := r.Redact("GET /x?h=Bearer%20abc123XYZtoken failed")
+	if strings.Contains(out, "abc123XYZtoken") {
+		t.Fatalf("URL-encoded bearer token leaked: %q", out)
+	}
+	if !strings.Contains(out, "[redacted]") {
+		t.Fatalf("expected redaction marker: %q", out)
+	}
+}
+
 func TestRedact_SKKey(t *testing.T) {
 	r := NewRedactor("")
 	out := r.Redact("api key sk-abcDEF123456 used")
