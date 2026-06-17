@@ -215,7 +215,7 @@ func TestReconcileHandler_LatestMergesToHighConfidence(t *testing.T) {
 // AC4: handleReconcile must pass the engine's diagnostics sink (engine.diag) into
 // EmitOpts.Diag, not the process-global os.Stderr. Forcing a scorecard
 // write-failure — the resolved store path is a regular file, so Append's
-// MkdirAll(dir) fails with ENOTDIR — makes Emit write its "scorecard: write
+// MkdirAll(dir) fails — makes Emit write its "scorecard: write
 // failed" diagnostic; with the writer wired, that diagnostic lands in the
 // injected buffer. A regression passing os.Stderr (or nil) routes it to the real
 // stderr and fails this test. The scorecard failure is best-effort, so it must
@@ -234,7 +234,7 @@ func TestReconcileHandler_ScorecardDiagnosticRoutesToInjectedDiag(t *testing.T) 
 	e := &engine{root: root, diag: &buf}
 	_, _, err = e.handleReconcile(context.Background(), nil, ReconcileArgs{})
 	require.NoError(t, err, "a best-effort scorecard failure must not fail the reconcile")
-	require.Contains(t, buf.String(), "scorecard: write failed",
+	require.Contains(t, buf.String(), scorecard.MsgWriteFailed,
 		"handleReconcile must wire engine.diag into EmitOpts.Diag")
 }
 

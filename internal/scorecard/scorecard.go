@@ -29,6 +29,16 @@ const (
 	RecordTypeAggregate = "aggregate"
 )
 
+// Diagnostic message substrings emitted on the scorecard read/write paths,
+// exported so the wiring tests in cmd/atcr and internal/mcp assert against the
+// same literal the producers emit: a reword updates this one constant and every
+// regression test follows it. Producers keep their richer surrounding format
+// (path, error); these constants are the stable substrings the tests pin.
+const (
+	MsgMalformedSkip = "skipping malformed record"
+	MsgWriteFailed   = "scorecard: write failed"
+)
+
 // defaultRole labels per-reviewer records produced from a reconcile run. Every
 // reconcile finding originates from the review stage, whose agents are reviewers
 // by definition (skeptics/judges run in later stages), so the role is constant
@@ -133,7 +143,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 
 	dir, err := resolveDir(opts.Dir)
 	if err != nil {
-		_, _ = fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
+		_, _ = fmt.Fprintf(w, MsgWriteFailed+": %v\n", err)
 		return err
 	}
 
@@ -210,7 +220,7 @@ func Emit(in EmitInput, opts EmitOpts) error {
 	var firstErr error
 	for _, rec := range records {
 		if err := Append(dir, rec); err != nil {
-			_, _ = fmt.Fprintf(w, "scorecard: write failed: %v\n", err)
+			_, _ = fmt.Fprintf(w, MsgWriteFailed+": %v\n", err)
 			if firstErr == nil {
 				firstErr = err
 			}

@@ -60,9 +60,9 @@ func TestLeaderboardCmd_ReadDiagnosticRoutesToErrOrStderr(t *testing.T) {
 
 	code, stdout, stderr := execCmdSplit(t, "leaderboard", "--since", "all")
 	require.Equal(t, 0, code)
-	require.Contains(t, stderr, "skipping malformed record",
+	require.Contains(t, stderr, scorecard.MsgMalformedSkip,
 		"leaderboard read diagnostic must route to cmd.ErrOrStderr()")
-	require.NotContains(t, stdout, "skipping malformed record",
+	require.NotContains(t, stdout, scorecard.MsgMalformedSkip,
 		"the diagnostic must not leak onto stdout")
 }
 
@@ -78,9 +78,9 @@ func TestScorecardCmd_ReadDiagnosticRoutesToErrOrStderr(t *testing.T) {
 
 	code, stdout, stderr := execCmdSplit(t, "scorecard", runID)
 	require.Equal(t, 0, code)
-	require.Contains(t, stderr, "skipping malformed record",
+	require.Contains(t, stderr, scorecard.MsgMalformedSkip,
 		"scorecard read diagnostic must route to cmd.ErrOrStderr()")
-	require.NotContains(t, stdout, "skipping malformed record",
+	require.NotContains(t, stdout, scorecard.MsgMalformedSkip,
 		"the diagnostic must not leak onto stdout")
 }
 
@@ -99,7 +99,7 @@ func TestReconcileCmd_EmitDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	})
 	// Force a scorecard write-failure: create the store's parent dir, then place
 	// a regular file where the scorecard store directory should be, so Append's
-	// MkdirAll(dir) fails with ENOTDIR.
+	// MkdirAll(dir) fails.
 	dir, err := scorecard.DefaultDir()
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o755))
@@ -108,6 +108,6 @@ func TestReconcileCmd_EmitDiagnosticRoutesToErrOrStderr(t *testing.T) {
 	code, _, stderr := execCmdSplit(t, "reconcile", "2026-06-10_feat")
 	require.Equal(t, 0, code,
 		"a scorecard emit failure is best-effort and must not fail the reconcile")
-	require.Contains(t, stderr, "scorecard: write failed",
+	require.Contains(t, stderr, scorecard.MsgWriteFailed,
 		"reconcile emit diagnostic must route to cmd.ErrOrStderr()")
 }
