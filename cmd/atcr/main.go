@@ -7,22 +7,64 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/spf13/cobra"
 )
 
+// gracefulShutdownTimeout bounds how long the process waits for cooperative
+// shutdown after the first interrupt signal before forcing exit. Hardcoded per
+// epic 4.1 (no flag — a --shutdown-timeout would collide with review's
+// --timeout); a package var only so tests can shrink it.
+var gracefulShutdownTimeout = 10 * time.Second
+
+// forceExit terminates the process when the grace period elapses. A package var
+// so tests can substitute a capture and assert the exit code without the test
+// binary actually exiting.
+var forceExit = os.Exit
+
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Intercept SIGINT/SIGTERM and cancel the root context so the fanout engine
+	// drains cooperatively (no new agents start; in-flight ones finish or time
+	// out) and partial results are preserved. Buffer 1 so the signal is never
+	// dropped if it arrives before the goroutine blocks on the channel.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	handleSignals(sigCh, cancel, os.Stderr)
+
 	root := newRootCmd()
-	if err := root.ExecuteContext(context.Background()); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		code := exitCode(err)
 		if code != 0 {
 			fmt.Fprintln(os.Stderr, "atcr:", err)
 		}
 		os.Exit(code)
 	}
+}
+
+// handleSignals starts a goroutine that, on the first SIGINT/SIGTERM, prints a
+// graceful-shutdown notice to out, cancels the root context, and then force-exits
+// with code 1 if cooperative shutdown overruns gracefulShutdownTimeout. SIGTERM
+// and SIGINT are treated identically — both mean "shut down". Only the first
+// signal is handled; the grace timer is the hard backstop against a hang.
+func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Writer) {
+	go func() {
+		<-sigCh
+		fmt.Fprintln(out, "\nReceived interrupt, shutting down gracefully...")
+		cancel()
+		<-time.After(gracefulShutdownTimeout)
+		fmt.Fprintln(out, "Graceful shutdown timed out, forcing exit")
+		forceExit(1)
+	}()
 }
 
 // Exit-code semantics, centralized: 0 success, 1 failure (including
