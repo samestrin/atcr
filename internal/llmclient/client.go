@@ -198,7 +198,9 @@ func clampNonNegative(n json.Number) int {
 	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0
 	}
-	if v > float64(math.MaxInt) {
+	// float64(math.MaxInt) rounds up to 2^63, so compare with >= to also clamp the
+	// boundary value (int(2^63) would overflow).
+	if v >= float64(math.MaxInt) {
 		return math.MaxInt
 	}
 	return int(v)
