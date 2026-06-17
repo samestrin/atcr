@@ -43,7 +43,8 @@ func seedMalformedStore(t *testing.T, runID, reviewer string) {
 	require.Len(t, matches, 1, "expected exactly one month file after storeRecord")
 	f, err := os.OpenFile(matches[0], os.O_APPEND|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
-	_, _ = f.WriteString("{not valid json\n")
+	_, err = f.WriteString("{not valid json\n")
+	require.NoError(t, err)
 	require.NoError(t, f.Close())
 }
 
