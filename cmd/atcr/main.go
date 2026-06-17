@@ -59,10 +59,10 @@ func main() {
 func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Writer) {
 	go func() {
 		<-sigCh
-		fmt.Fprintln(out, "\nReceived interrupt, shutting down gracefully...")
+		_, _ = fmt.Fprintln(out, "\nReceived interrupt, shutting down gracefully...")
 		cancel()
 		<-time.After(gracefulShutdownTimeout)
-		fmt.Fprintln(out, "Graceful shutdown timed out, forcing exit")
+		_, _ = fmt.Fprintln(out, "Graceful shutdown timed out, forcing exit")
 		forceExit(1)
 	}()
 }
