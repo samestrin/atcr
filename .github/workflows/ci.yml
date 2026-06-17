@@ -16,7 +16,7 @@ concurrency:
 jobs:
   ci:
     name: Go Lint & Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, gauntlet]
 
     steps:
       - name: Check out code
