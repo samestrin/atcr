@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"sync/atomic"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
@@ -214,6 +218,68 @@ func TestPersistentPreRunE_InvalidFormat(t *testing.T) {
 	err := setupLogger(root)
 	require.Error(t, err)
 	assert.Equal(t, 2, exitCode(err), "an invalid --log-format is a usage error")
+}
+
+// --- Graceful shutdown / signal handling (epic 4.1) -----------------------
+
+// stubForceExit replaces the package forceExit and gracefulShutdownTimeout for a
+// test, returning a pointer to the captured exit code (-1 until forceExit fires)
+// and registering cleanup. The shrunk timeout keeps the handler goroutine from
+// blocking for the real 10s grace period.
+func stubForceExit(t *testing.T, timeout time.Duration) *int32 {
+	t.Helper()
+	origExit, origTimeout := forceExit, gracefulShutdownTimeout
+	t.Cleanup(func() { forceExit = origExit; gracefulShutdownTimeout = origTimeout })
+	var code int32 = -1
+	forceExit = func(c int) { atomic.StoreInt32(&code, int32(c)) }
+	gracefulShutdownTimeout = timeout
+	return &code
+}
+
+// TestHandleSignals_CancelsContextOnSignal verifies a single SIGINT cancels the
+// root context (AC2/AC3 — the fanout engine drains cooperatively off this signal)
+// and prints the graceful-shutdown notice to the writer (AC1).
+func TestHandleSignals_CancelsContextOnSignal(t *testing.T) {
+	code := stubForceExit(t, 15*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	var buf bytes.Buffer
+	handleSignals(sigCh, cancel, &buf)
+
+	sigCh <- syscall.SIGINT
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("context was not cancelled after SIGINT")
+	}
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
+
+	// Once the grace timer fires forceExit, the goroutine has returned, so reading
+	// buf is race-free.
+	require.Eventually(t, func() bool { return atomic.LoadInt32(code) == 1 }, time.Second, 5*time.Millisecond)
+	assert.Contains(t, buf.String(), "shutting down gracefully", "AC1: graceful notice printed")
+}
+
+// TestHandleSignals_ForceExitsAfterGracePeriod verifies that when cooperative
+// shutdown overruns the grace period the handler force-exits with code 1 and
+// prints the timeout notice (AC7).
+func TestHandleSignals_ForceExitsAfterGracePeriod(t *testing.T) {
+	code := stubForceExit(t, 10*time.Millisecond)
+
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigCh := make(chan os.Signal, 1)
+	var buf bytes.Buffer
+	handleSignals(sigCh, cancel, &buf)
+
+	sigCh <- syscall.SIGTERM // SIGTERM behaves identically to SIGINT
+
+	require.Eventually(t, func() bool { return atomic.LoadInt32(code) == 1 }, time.Second, 5*time.Millisecond)
+	assert.Equal(t, int32(1), atomic.LoadInt32(code), "AC7: force-exit code 1 after grace period")
+	assert.Contains(t, buf.String(), "forcing exit", "AC7: timeout notice printed")
 }
 
 func TestRootCmd_SubcommandsUseRunE(t *testing.T) {
