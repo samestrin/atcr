@@ -870,6 +870,34 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestComplete_HonorsRetryAfterHeader(t *testing.T) {
+	// A 429 advertising Retry-After must override the (tiny) fixed backoff: the
+	// client must wait at least the advertised cooldown before retrying.
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		okResponse(w, "recovered")
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	// initialBackoff is 1ms; without honoring Retry-After the retry fires almost
+	// immediately, so an elapsed >= ~1s proves the header was honored.
+	c := New(WithHTTPClient(srv.Client()), WithRetry(2, time.Millisecond, 1.5))
+	start := time.Now()
+	out, err := c.Complete(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	assert.Equal(t, "recovered", out)
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond, "Retry-After cooldown not honored")
+}
+
 func TestRedactErrorSnippet_SKKeyCaseInsensitive(t *testing.T) {
 	// skKeyPattern must match upper/mixed-case sk- tokens, mirroring the
 	// case-insensitive scrub in internal/log/redact.go. A SK-/Sk- shaped foreign
