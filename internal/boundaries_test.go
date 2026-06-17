@@ -26,6 +26,8 @@ var allowedInternalImports = map[string][]string{
 	"atomicfs":  {},
 	"stream":    {},
 	"gitrange":  {},
+	"log":       {},         // single diagnostic sink; stdlib-only (epic 4.0)
+	"errors":    {},         // error-classification taxonomy; stdlib-only (epic 4.0)
 	"registry":  {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
 	"tools":     {},
 	"payload":   {"gitrange", "atomicfs"},
