@@ -870,6 +870,28 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	assert.Equal(t, 0, usage.CompletionTokens)
 }
 
+func TestCompleteWithUsage_EmptyCompletionReturnsError(t *testing.T) {
+	// When both content and reasoning_content are empty, the call must fail
+	// loudly so callers do not propagate an empty review as success.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := chatResponse{}
+		resp.Choices = append(resp.Choices, struct {
+			Message message `json:"message"`
+		}{Message: message{Role: "assistant", Content: "", ReasoningContent: ""}})
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	t.Setenv("TEST_KEY", testKey)
+
+	out, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
+	})
+	require.Error(t, err)
+	assert.Empty(t, out)
+	assert.Contains(t, err.Error(), "empty completion")
+	assert.False(t, atcrerrors.IsRetryable(err), "an empty completion must not be retryable")
+}
+
 func TestWithRetry_NegativeMaxRetriesClampedToSingleAttempt(t *testing.T) {
 	// A negative WithRetry budget must not produce a zero-attempt loop that
 	// falls through to "exhausted retries" wrapping a nil cause; it clamps to a
