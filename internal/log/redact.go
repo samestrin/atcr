@@ -42,6 +42,14 @@ func NewRedactor(reviewRoot string, secrets ...string) *Redactor {
 // absolute paths under the review root removed or relativized. The order is:
 // explicit secrets (literal + URL-encoded), then generic token shapes, then
 // path relativization.
+//
+// Configured secrets are matched VERBATIM (case-sensitive) in their literal and
+// URL-encoded forms. This is intentional: opaque secrets are echoed by upstream
+// providers verbatim or omitted, never case-mangled, and case-folding a short
+// secret would over-redact unrelated text that merely shares its letters. A
+// secret echoed in a genuinely altered casing is therefore not caught by the
+// exact-secret pass; the case-insensitive bearer/sk- shape patterns below are
+// the backstop for the token shapes providers actually emit.
 func (r *Redactor) Redact(msg string) string {
 	out := msg
 
@@ -49,6 +57,8 @@ func (r *Redactor) Redact(msg string) string {
 		if s == "" {
 			continue
 		}
+		// Verbatim, case-sensitive match — see the Redact doc comment for why
+		// casing is not folded here.
 		out = strings.ReplaceAll(out, s, "[redacted]")
 		if enc := url.QueryEscape(s); enc != s {
 			out = strings.ReplaceAll(out, enc, "[redacted]")
