@@ -1,0 +1,2 @@
+MEDIUM|cmd/atcr/scorecard_wiring_test.go:55|Incorrect assertion arguments|Change `require.Equal(t, 0, code, stderr)` to `require.Equal(t, 0, code)`|correctness|2|`require.Equal` takes 3 arguments (t, expected, actual); `stderr` is passed as a 4th argument|otto
+MEDIUM|cmd/atcr/scorecard_wiring_test.go:74|Incorrect assertion arguments|Change `require.Equal(t, 0, code, stderr)` to `require.Equal(t, 0, code)`|correctness|2|`require.Equal` takes 3 arguments (t, expected, actual); `stderr` is passed as a 4th argument|otto

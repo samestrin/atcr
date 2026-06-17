@@ -1,3 +1,16 @@
+## [Technical Debt] - 2026-06-16
+
+### Fixed
+
+- Removed the redundant third argument from `require.Equal` assertions in the scorecard and leaderboard wiring tests, eliminating suppressed failure messages
+- Added `require.NoError` for the `f.WriteString` call in `seedMalformedStore` so test-setup failures surface immediately instead of masking downstream assertions
+- Fixed `seedMalformedStore` to locate the month file via glob rather than duplicating `monthFromRunID`'s stem logic, preventing silent desync if month derivation changes
+- Extracted a `logger()` nil-guard helper in `handlers.go` and replaced direct `e.log` field accesses throughout, preventing a nil-pointer panic when the engine carries no logger
+- Exported `MsgMalformedSkip` and `MsgWriteFailed` constants from `internal/scorecard`; updated producers and all regression tests to reference them so a single diagnostic reword keeps every assertion green
+- Softened write-failure test comments to describe the failure mechanism generically rather than citing the POSIX-specific `ENOTDIR` errno; documented that `engine.diagWriter`'s typed-nil guard is intentionally delegated to `scorecard.diagWriter`
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [3.6.0] - 2026-06-16
 
 ### Added

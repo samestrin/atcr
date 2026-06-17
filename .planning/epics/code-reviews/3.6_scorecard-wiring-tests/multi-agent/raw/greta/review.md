@@ -1,0 +1,1 @@
+No security findings identified. The production change (`engine.diag` + `diagWriter()`) properly defaults nil to `os.Stderr` (defense in depth against nil propagation), the injectable writer is an unexported field set only at construction time (no attacker-controlled input path), and the test code operates on isolated temp directories with hardcoded inputs.

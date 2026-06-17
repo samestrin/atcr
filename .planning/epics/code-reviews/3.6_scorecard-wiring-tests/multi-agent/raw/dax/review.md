@@ -1,0 +1,4 @@
+MEDIUM|cmd/atcr/scorecard_wiring_test.go:44|Missing error check on f.WriteString|Check error return from f.WriteString|error-handling|2|_, _ = f.WriteString("{not valid json\n")|bruce
+LOW|cmd/atcr/scorecard_wiring_test.go:44|Unchecked error on f.WriteString may mask test setup failure|Add require.NoError(t, err) for WriteString|error-handling|2|_, _ = f.WriteString("{not valid json\n")|bruce
+MEDIUM|internal/mcp/handlers.go:227|engine.diag field not initialized in production path|Ensure NewEngine or constructor sets diag field|correctness|5|diag io.Writer field added but no constructor sets it|bruce
+LOW|internal/mcp/handlers_test.go:234|Test uses nil logger; engine.log may be nil|Add a no-op logger or check for nil log usage|correctness|3|e := &engine{root: root, diag: &buf} — log field is nil|bruce

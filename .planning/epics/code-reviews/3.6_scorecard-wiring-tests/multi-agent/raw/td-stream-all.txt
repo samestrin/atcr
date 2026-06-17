@@ -1,0 +1,21 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|cmd/atcr/scorecard_wiring_test.go:44|Missing error check on f.WriteString|Check error return from f.WriteString|error-handling|2|_, _ = f.WriteString("{not valid json\n")|bruce
+LOW|cmd/atcr/scorecard_wiring_test.go:44|Unchecked error on f.WriteString may mask test setup failure|Add require.NoError(t, err) for WriteString|error-handling|2|_, _ = f.WriteString("{not valid json\n")|bruce
+MEDIUM|internal/mcp/handlers.go:227|engine.diag field not initialized in production path|Ensure NewEngine or constructor sets diag field|correctness|5|diag io.Writer field added but no constructor sets it|bruce
+LOW|internal/mcp/handlers_test.go:234|Test uses nil logger; engine.log may be nil|Add a no-op logger or check for nil log usage|correctness|3|e := &engine{root: root, diag: &buf} — log field is nil|bruce
+HIGH|cmd/atcr/scorecard_wiring_test.go:25|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+HIGH|cmd/atcr/scorecard_wiring_test.go:55|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+HIGH|cmd/atcr/scorecard_wiring_test.go:85|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+LOW|internal/mcp/handlers.go:230|Dead code|Remove unused variable|maintainability|2|variable declared but not used|bruce
+LOW|internal/mcp/handlers.go:231|Dead code|Remove unused variable|maintainability|2|variable declared but not used|bruce
+LOW|internal/mcp/handlers_test.go:22|Unused import|Remove unused package|maintainability|1|import not used in test|bruce
+HIGH|internal/mcp/handlers_test.go:262|Passing nil *mcpsdk.CallToolRequest to handleReconcile may panic|Pass a valid request or handle nil case|correctness|5|nil request may panic|bruce
+MEDIUM|cmd/atcr/scorecard_wiring_test.go:55|Incorrect assertion arguments|Change `require.Equal(t, 0, code, stderr)` to `require.Equal(t, 0, code)`|correctness|2|`require.Equal` takes 3 arguments (t, expected, actual); `stderr` is passed as a 4th argument|otto
+MEDIUM|cmd/atcr/scorecard_wiring_test.go:74|Incorrect assertion arguments|Change `require.Equal(t, 0, code, stderr)` to `require.Equal(t, 0, code)`|correctness|2|`require.Equal` takes 3 arguments (t, expected, actual); `stderr` is passed as a 4th argument|otto
+HIGH|internal/mcp/handlers_test.go:3|Unused import os/exec|Remove unused import|maintainability|1|import os/exec not used|bruce
+HIGH|internal/mcp/handlers_test.go:4|Unused import fanout|Remove unused import|maintainability|1|import fanout not used|bruce
+HIGH|internal/mcp/handlers_test.go:7|Unused import os/exec|Remove unused import|maintainability|1|import os/exec not used|bruce
+HIGH|internal/mcp/handlers_test.go:13|Unused import fanout|Remove unused import|maintainability|1|import fanout not used|bruce
+HIGH|internal/mcp/handlers_test.go:13|Unused import fanout|Remove unused import|maintainability|1|import fanout not used|bruce

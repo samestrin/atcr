@@ -1,0 +1,2 @@
+
+HIGH|internal/mcp/handlers_test.go:262|Passing nil *mcpsdk.CallToolRequest to handleReconcile may panic|Pass a valid request or handle nil case|correctness|5|nil request may panic|bruce
