@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,31 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestResolveRedactRoot_ReturnsAbsolute verifies the happy path resolves the
+// repo root to an absolute path used for AC6 path relativization.
+func TestResolveRedactRoot_ReturnsAbsolute(t *testing.T) {
+	got := resolveRedactRoot(context.Background(), ".")
+	require.True(t, filepath.IsAbs(got), "resolveRedactRoot(\".\") should return an absolute path, got %q", got)
+}
+
+// TestResolveRedactRoot_LogsWarnOnAbsError verifies that when absolute
+// resolution fails the silent loss of AC6 path redaction is made observable via
+// a warning, and the original root is returned unchanged (fail-open, not silent).
+func TestResolveRedactRoot_LogsWarnOnAbsError(t *testing.T) {
+	orig := absFn
+	absFn = func(string) (string, error) { return "", errors.New("boom") }
+	defer func() { absFn = orig }()
+
+	var buf bytes.Buffer
+	logger, err := log.New("debug", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	got := resolveRedactRoot(ctx, "some/rel/path")
+	require.Equal(t, "some/rel/path", got, "on Abs failure the input root is returned unchanged")
+	require.Contains(t, buf.String(), "path redaction may be incomplete", "a warning must make the silent failure observable")
+}
 
 // slotWithKeys builds a one-slot chain whose agents read the given env vars.
 func slotWithKeys(envs ...string) fanout.Slot {

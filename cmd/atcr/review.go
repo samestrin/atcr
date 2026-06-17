@@ -165,10 +165,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// every log line, at every level and call site (TD-007 enforcement model).
 	// Resolve the root to an absolute path first — the CLI default repo is "."
 	// and relativizePaths no-ops on ".", so AC6 needs the concrete root.
-	redactRoot := prep.Repo
-	if abs, err := filepath.Abs(redactRoot); err == nil {
-		redactRoot = abs
-	}
+	redactRoot := resolveRedactRoot(ctx, prep.Repo)
 	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(redactRoot)))
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
@@ -235,6 +232,22 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return gateFindings(rec, threshold, false)
 	}
 	return nil
+}
+
+// absFn resolves a path to absolute form. It is a package var so a test can
+// substitute a failing resolver — filepath.Abs only fails when os.Getwd fails on
+// a relative path, which cannot be forced in-process (mirrors the serveFn seam).
+var absFn = filepath.Abs
+
+// resolveRedactRoot returns root in absolute form for AC6 path relativization
+// (relativizePaths no-ops on the CLI default "."). When absolute resolution
+// fails it returns root unchanged.
+func resolveRedactRoot(ctx context.Context, root string) string {
+	abs, err := absFn(root)
+	if err != nil {
+		return root
+	}
+	return abs
 }
 
 // correlateReviewID returns ctx carrying a logger tagged with the review id, so
