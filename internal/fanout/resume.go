@@ -400,6 +400,7 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 
 	var statuses []AgentStatus
 	var merged []stream.Finding
+	seen := make(map[string]bool, len(roster))
 	// Iterate in roster order so the merged findings.txt rows match a fresh
 	// WritePool's output (which iterates results in roster order).
 	for _, agent := range roster {
@@ -407,6 +408,10 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		if err != nil {
 			continue
 		}
+		if seen[dirName] {
+			return Summary{}, nil, fmt.Errorf("duplicate agent directory %q (from agent %q)", dirName, agent)
+		}
+		seen[dirName] = true
 		agentDir, ok := onDisk[dirName]
 		if !ok {
 			continue // not on disk → never completed; not part of the union
