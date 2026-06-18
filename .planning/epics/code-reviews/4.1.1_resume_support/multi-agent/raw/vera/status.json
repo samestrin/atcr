@@ -1,0 +1,7 @@
+{
+  "agent_name": "vera",
+  "model": "gpt-oss-20b",
+  "status": "failed",
+  "duration_ms": 387011,
+  "error": "stream read failed: read tcp 192.168.68.115:64644-\u003e192.168.68.109:4000: read: operation timed out"
+}

@@ -1,0 +1,98 @@
+{
+  "reviewers": [
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 95083,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 126249,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "ok",
+      "durationMs": 146663,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 260762,
+      "tdLineCount": 0,
+      "error": "stream read failed: read tcp 192.168.68.115:64646-\u003e192.168.68.109:4000: read: operation timed out"
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "failed",
+      "durationMs": 387011,
+      "tdLineCount": 0,
+      "error": "stream read failed: read tcp 192.168.68.115:64644-\u003e192.168.68.109:4000: read: operation timed out"
+    },
+    {
+      "agent": "mira-backup",
+      "model": "minimax-m2.7",
+      "status": "ok",
+      "durationMs": 64935,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 36262,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 27608,
+      "tdLineCount": 11
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 12407,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 68780,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "timeout",
+      "durationMs": 246888,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded (fallback brad-backup also failed: stream idle timeout: no activity for 2m0s: context deadline exceeded)"
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "timeout",
+      "durationMs": 300001,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    }
+  ],
+  "totalFindings": 15,
+  "partial": true,
+  "totalDurationMs": 734432,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-18T10:47:34-07:00"
+}

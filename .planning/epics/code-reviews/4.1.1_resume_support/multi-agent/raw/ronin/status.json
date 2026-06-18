@@ -1,0 +1,7 @@
+{
+  "agent_name": "ronin",
+  "model": "nemotron-3-nano",
+  "status": "failed",
+  "duration_ms": 260762,
+  "error": "stream read failed: read tcp 192.168.68.115:64646-\u003e192.168.68.109:4000: read: operation timed out"
+}

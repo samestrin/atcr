@@ -1,0 +1,18 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|internal/fanout/resume.go:104|Symlink traversal in agent status scan|Verify resolved path stays within reviewDir before reading|security|10|filepath.Join(rawDir, e.Name(), statusFile) follows symlinks|greta
+LOW|cmd/atcr/resume_test.go:33|Test modifies global user config directory|Use t.TempDir and override HOME env var|maintainability|5|os.UserHomeDir() writes to real ~/.config/atcr|greta
+LOW|internal/fanout/resume.go:318|Unbounded file read during pool rebuild|Add size limit or stream parsing|security|10|os.ReadFile on findings.txt without size check|greta
+MEDIUM|cmd/atcr/resume.go:52|Inconsistent error handling for flag conflicts|Use consistent error return pattern for all flag checks|maintainability|5|Flag checks use usageError for some but not all conflicts|dax
+LOW|cmd/atcr/resume.go:72|Potential nil pointer if gitrange.Resolve returns error with nil result|Add nil check before accessing res fields|correctness|5|res fields accessed in ReviewRequest without nil guard|dax
+MEDIUM|cmd/atcr/resume.go:96|Missing validation of ReviewRequest fields before passing to PrepareResume|Validate required fields in ReviewRequest|error-handling|10|ReviewRequest passed directly without field validation|dax
+LOW|cmd/atcr/resume.go:143|Error message could be more descriptive for interrupted resume|Include agent completion counts in interrupt message|maintainability|5|Generic "review interrupted" message lacks context|dax
+MEDIUM|internal/fanout/resume.go:85|sort.Strings modifies slices in-place without defensive copy|Create copies before sorting to avoid side effects|correctness|5|Direct sort on recorded and configured slices|dax
+LOW|internal/fanout/resume.go:163|Missing error context when manifest read fails|Wrap error with directory path for debugging|error-handling|5|ReadFile error not wrapped with path context|dax
+MEDIUM|internal/fanout/resume.go:210|filterPendingSlots doesn't handle empty slots slice|Add explicit check for empty slots to avoid unnecessary processing|performance|5|Empty slots slice processed unnecessarily|dax
+LOW|internal/fanout/resume.go:280|Missing validation of poolDir path before RebuildPool|Validate poolDir exists before calling RebuildPool|error-handling|5|poolDir passed without existence check|dax
+MEDIUM|cmd/atcr/resume_test.go:45|Hardcoded test key environment variable name|Use constant for test key env var|maintainability|5|"ATCR_TEST_REVIEW_KEY" used directly in multiple places|dax
+LOW|cmd/atcr/resume_test.go:156|Test helper execResume doesn't handle context cancellation|Add context timeout to prevent test hangs|correctness|5|context.Background() used without timeout|dax
+MEDIUM|internal/fanout/resume_test.go:48|writeAgentStatusFixture uses t.Fatal instead of require|Use require.NoError for consistent test style|maintainability|5|Mixed t.Fatal and require usage in same test file|dax
+MEDIUM|cmd/atcr/resume.go:122|Potential race condition/incorrect range resolution|The code calls `gitrange.Resolve` with current flags but does not verify if those flags were the same as the original run before passing them to `PrepareResume`.|correctness|15|`res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})`|otto

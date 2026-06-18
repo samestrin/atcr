@@ -19,6 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testReviewKeyEnv is the env var name used by live-provider tests as the
+// API key sentinel (set to a dummy value via t.Setenv before the test runs).
+const testReviewKeyEnv = "ATCR_TEST_REVIEW_KEY"
+
 // liveReviewConfig writes a user registry whose agents are pointed at srvURL (a
 // live mock provider) and a project config selecting them, so a real `atcr review`
 // produces a genuinely complete review on disk. Each agent's persona equals its
@@ -29,7 +33,7 @@ func liveReviewConfig(t *testing.T, srvURL string, agents ...string) {
 	require.NoError(t, err)
 	regDir := filepath.Join(home, ".config", "atcr")
 	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	reg := "providers:\n  p:\n    api_key_env: ATCR_TEST_REVIEW_KEY\n    base_url: " + srvURL + "\nagents:\n"
+	reg := "providers:\n  p:\n    api_key_env: " + testReviewKeyEnv + "\n    base_url: " + srvURL + "\nagents:\n"
 	for _, a := range agents {
 		reg += "  " + a + ":\n    provider: p\n    model: m-" + a + "\n    persona: " + a + "\n"
 	}
@@ -147,7 +151,11 @@ func execResume(t *testing.T, args ...string) (int, string) {
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	err := root.ExecuteContext(context.Background())
+	// Bound the run so a stuck command (e.g. a provider that never replies)
+	// fails fast here instead of hanging until the package-wide `go test` timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := root.ExecuteContext(ctx)
 	out := buf.String()
 	if err != nil {
 		out += err.Error()
@@ -196,7 +204,7 @@ func TestResume_RosterMismatchIsExit2(t *testing.T) {
 
 func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 	srv := liveMockProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce")
@@ -213,7 +221,7 @@ func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
 
 func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 	srv := liveMockProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce", "robin")
@@ -251,7 +259,7 @@ func TestResume_VerifyFlagIsExit2(t *testing.T) {
 
 func TestResume_AllCompleteClearsStaleInterrupted(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 	srv := liveMockProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce")
@@ -275,4 +283,62 @@ func TestResume_AllCompleteClearsStaleInterrupted(t *testing.T) {
 	stAfter, err := fanout.ReadReviewStatus(dir, id)
 	require.NoError(t, err)
 	require.Equal(t, fanout.RunCompleted, stAfter.Status, "AC6: resume clears the stale interrupted marker")
+}
+
+func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		args []string
+	}{
+		{"fresh", []string{"review", "--resume", "latest", "--fresh"}},
+		{"thorough", []string{"review", "--resume", "latest", "--thorough"}},
+		{"min-severity", []string{"review", "--resume", "latest", "--min-severity", "HIGH"}},
+	} {
+		tc := tc
+		t.Run(tc.flag, func(t *testing.T) {
+			isolate(t)
+			code, out := execResume(t, tc.args...)
+			require.Equal(t, 2, code, "--%s should be rejected with exit 2 when using --resume", tc.flag)
+			require.Contains(t, out, "does not support --"+tc.flag)
+		})
+	}
+}
+
+func TestResume_InterruptEmitsStructuredWarn(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Mock provider that cancels the context when polled, simulating a
+	// mid-fan-out interrupt (SIGINT/SIGTERM on the parent process).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		cancel()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	liveReviewConfig(t, srv.URL, "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"robin"}, nil)
+
+	root := newRootCmd()
+	root.SetArgs([]string{"review", "--resume", "latest", "--base", "HEAD^"})
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	err := root.ExecuteContext(ctx)
+	out := buf.String()
+	if err != nil {
+		out += err.Error()
+	}
+
+	require.Equal(t, 1, exitCode(err), "interrupted resume exits 1")
+	// AC9/AC10 parity: structured Warn must appear so monitoring/CI can grep
+	// for interrupted resumes by review_id.
+	require.Contains(t, out, "review interrupted by signal", "runResume must emit structured Warn on interrupt, mirroring review.go")
 }

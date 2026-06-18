@@ -1,0 +1,1 @@
+MEDIUM|cmd/atcr/resume.go:122|Potential race condition/incorrect range resolution|The code calls `gitrange.Resolve` with current flags but does not verify if those flags were the same as the original run before passing them to `PrepareResume`.|correctness|15|`res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})`|otto

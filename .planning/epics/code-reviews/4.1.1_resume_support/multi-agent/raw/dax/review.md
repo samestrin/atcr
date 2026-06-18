@@ -1,0 +1,11 @@
+MEDIUM|cmd/atcr/resume.go:52|Inconsistent error handling for flag conflicts|Use consistent error return pattern for all flag checks|maintainability|5|Flag checks use usageError for some but not all conflicts
+LOW|cmd/atcr/resume.go:72|Potential nil pointer if gitrange.Resolve returns error with nil result|Add nil check before accessing res fields|correctness|5|res fields accessed in ReviewRequest without nil guard
+MEDIUM|cmd/atcr/resume.go:96|Missing validation of ReviewRequest fields before passing to PrepareResume|Validate required fields in ReviewRequest|error-handling|10|ReviewRequest passed directly without field validation
+LOW|cmd/atcr/resume.go:143|Error message could be more descriptive for interrupted resume|Include agent completion counts in interrupt message|maintainability|5|Generic "review interrupted" message lacks context
+MEDIUM|internal/fanout/resume.go:85|sort.Strings modifies slices in-place without defensive copy|Create copies before sorting to avoid side effects|correctness|5|Direct sort on recorded and configured slices
+LOW|internal/fanout/resume.go:163|Missing error context when manifest read fails|Wrap error with directory path for debugging|error-handling|5|ReadFile error not wrapped with path context
+MEDIUM|internal/fanout/resume.go:210|filterPendingSlots doesn't handle empty slots slice|Add explicit check for empty slots to avoid unnecessary processing|performance|5|Empty slots slice processed unnecessarily
+LOW|internal/fanout/resume.go:280|Missing validation of poolDir path before RebuildPool|Validate poolDir exists before calling RebuildPool|error-handling|5|poolDir passed without existence check
+MEDIUM|cmd/atcr/resume_test.go:45|Hardcoded test key environment variable name|Use constant for test key env var|maintainability|5|"ATCR_TEST_REVIEW_KEY" used directly in multiple places
+LOW|cmd/atcr/resume_test.go:156|Test helper execResume doesn't handle context cancellation|Add context timeout to prevent test hangs|correctness|5|context.Background() used without timeout
+MEDIUM|internal/fanout/resume_test.go:48|writeAgentStatusFixture uses t.Fatal instead of require|Use require.NoError for consistent test style|maintainability|5|Mixed t.Fatal and require usage in same test file
