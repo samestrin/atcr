@@ -478,14 +478,24 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		statuses = append(statuses, st)
 		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
 		if ferr != nil {
-			if errors.Is(ferr, errFindingsTooLarge) {
-				return Summary{}, nil, ferr
+			// A completed agent's findings must be readable: silently dropping
+			// them would let the resumed aggregate diverge from the original run
+			// (short summary.TotalFindings, missing merged rows) with no signal.
+			// Fail loudly for OK agents; a failed agent's findings are empty by
+			// construction, so an unreadable file there is tolerated.
+			if st.Status == StatusOK {
+				return Summary{}, nil, fmt.Errorf("reading findings for completed agent %q: %w", st.Agent, ferr)
 			}
 			continue
 		}
-		if pr, perr := stream.ParseSource(fdata); perr == nil {
-			merged = append(merged, pr.Findings...)
+		pr, perr := stream.ParseSource(fdata)
+		if perr != nil {
+			if st.Status == StatusOK {
+				return Summary{}, nil, fmt.Errorf("parsing findings for completed agent %q: %w", st.Agent, perr)
+			}
+			continue
 		}
+		merged = append(merged, pr.Findings...)
 	}
 
 	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
