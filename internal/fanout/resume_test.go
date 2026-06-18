@@ -10,9 +10,33 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/require"
 )
+
+// fourAgentConfig builds a roster of four agents pointed at srvURL, serialized
+// (MaxParallel=1) so an interrupt lands deterministically after N completions.
+// Each persona equals its agent name so resolution falls through to the embedded
+// default (an explicit persona ref distinct from the agent name would require a
+// file on disk).
+func fourAgentConfig(srvURL string) *ReviewConfig {
+	reg := &registry.Registry{
+		Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: srvURL}},
+		Agents: map[string]registry.AgentConfig{
+			"greta": {Provider: "p", Model: "m-greta", Persona: "greta", Temperature: ptrF(0.7)},
+			"kai":   {Provider: "p", Model: "m-kai", Persona: "kai", Temperature: ptrF(0.7)},
+			"mira":  {Provider: "p", Model: "m-mira", Persona: "mira", Temperature: ptrF(0.7)},
+			"otto":  {Provider: "p", Model: "m-otto", Persona: "otto", Temperature: ptrF(0.7)},
+		},
+	}
+	return &ReviewConfig{
+		Registry:    reg,
+		Project:     &registry.ProjectConfig{Agents: []string{"greta", "kai", "mira", "otto"}},
+		Settings:    registry.Settings{PayloadMode: "blocks", TimeoutSecs: 600, MaxParallel: 1},
+		PersonaDirs: registry.PersonaDirs{}, // empty → embedded personas
+	}
+}
 
 // okCompleter is a fake Completer that returns one finding for every call, so a
 // resumed pending agent always succeeds deterministically.
@@ -213,4 +237,66 @@ func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
 	done, err := CompletedAgents(dir)
 	require.NoError(t, err)
 	require.Len(t, done, 4)
+}
+
+// TestResume_InterruptThenResumeCompletesAllAgents is the epic 4.1.1 AC9
+// integration test: a 4-agent review is interrupted after 2 agents complete, then
+// resumed against a healthy provider — exercising the real PrepareReview ->
+// ExecuteReview(interrupt) -> PrepareResume -> ExecuteResume stack. Only the 2
+// pending agents are re-run, all 4 end with results on disk, and the final derived
+// status is "completed" (not interrupted/partial).
+func TestResume_InterruptThenResumeCompletesAllAgents(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+
+	// Phase 1: scaffold + fan out, interrupted after greta + kai complete. The
+	// provider URL is irrelevant here — the fake completer drives this phase.
+	cfg := fourAgentConfig("http://unused")
+	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake := &cancelAfterCompleter{cancelAt: 2, cancel: cancel}
+	_, _ = ExecuteReview(ctx, fake, prep)
+
+	done, err := CompletedAgents(prep.Dir)
+	require.NoError(t, err)
+	require.Len(t, done, 2, "exactly 2 agents completed before the interrupt (the engine picks which 2)")
+	st, err := ReadReviewStatus(prep.Dir, prep.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunInterrupted, st.Status)
+
+	// Phase 2: resume against a healthy provider — runs only the pending agents.
+	srv := mockProvider(t)
+	cfg2 := fourAgentConfig(srv.URL)
+	rprep, info, err := PrepareResume(context.Background(), cfg2, prep.Dir, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	require.Len(t, info.Completed, 2)
+	require.Len(t, info.Pending, 2)
+	require.ElementsMatch(t, []string{"greta", "kai", "mira", "otto"},
+		append(append([]string{}, info.Completed...), info.Pending...), "completed + pending = full roster")
+	require.Len(t, rprep.Slots, 2, "AC4: only the pending agents fan out")
+
+	res, err := ExecuteResume(context.Background(), llmclient.New(), rprep)
+	require.NoError(t, err)
+	require.Equal(t, 4, res.Summary.Total)
+	require.Equal(t, 4, res.Summary.Succeeded, "AC9: all four agents have results")
+	require.False(t, res.Summary.Partial)
+
+	doneAfter, err := CompletedAgents(prep.Dir)
+	require.NoError(t, err)
+	require.Len(t, doneAfter, 4)
+	stAfter, err := ReadReviewStatus(prep.Dir, prep.ID)
+	require.NoError(t, err)
+	require.Equal(t, RunCompleted, stAfter.Status, "AC6/AC9: final status is completed, not interrupted")
+	require.False(t, stAfter.Partial)
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
