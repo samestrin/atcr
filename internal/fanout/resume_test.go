@@ -177,6 +177,30 @@ func TestFilterPendingSlots_EmptySlots(t *testing.T) {
 	}
 }
 
+// TestRebuildPool_RejectsDuplicateBasename verifies that two roster names whose
+// filepath.Base collides (e.g. "foo/alpha" and "bar/alpha" both produce "alpha")
+// are not double-counted in the union. RebuildPool must guard the same way
+// WritePool does with its seen[dir] check.
+func TestRebuildPool_RejectsDuplicateBasename(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Write artifacts under the shared basename "alpha".
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "foo/alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+	}))
+	// Both "foo/alpha" and "bar/alpha" resolve to dirname "alpha".
+	// Without the guard, the same on-disk dir is counted twice.
+	roster := []string{"foo/alpha", "bar/alpha"}
+	sum, _, err := RebuildPool(poolDir, roster)
+	if err != nil {
+		// If the guard returns an error on collision, that is also acceptable.
+		return
+	}
+	if sum.Total > 1 {
+		t.Fatalf("RebuildPool double-counted a duplicate basename: got Total=%d, want <=1", sum.Total)
+	}
+}
+
 func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	poolDir := filepath.Join(dir, "sources", "pool")
