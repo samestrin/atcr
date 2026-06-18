@@ -356,6 +356,8 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// signal cancels the parent (Canceled). The engine has already collapsed both
 	// into StatusTimeout per-agent, so the parent ctx is the only signal that still
 	// distinguishes a user interrupt from an exhausted time budget.
+	// Contract: callers must cancel the parent ctx only via a signal handler;
+	// any other cancellation would be misreported as interrupted in the manifest.
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
 	sum, err := WritePool(poolDir, results)
