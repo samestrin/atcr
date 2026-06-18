@@ -85,6 +85,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 		return usageError(fmt.Errorf("resume failed: %w", err))
 	}
+	if res == nil {
+		return usageError(errors.New("resume failed: git range returned no result"))
+	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
 	if err != nil {
