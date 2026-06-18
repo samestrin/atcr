@@ -258,17 +258,15 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
 }
 
-// ExecuteReview runs phase two: fan out the prepared roster under the global
-// timeout, then write per-agent artifacts, the merged pool, summary.json, and
-// the finalized manifest (Partial reflecting the outcome). The completer is
-// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
-//
-// Artifacts are always persisted, even when every agent fails; in that case the
-// populated *ReviewResult is still returned alongside the wrapped
-// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
-// remains for inspection. The background MCP path discards the error (status is
-// read from disk) while the CLI maps it to the process exit code.
-func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+// runEngine wires the optional read-only tool harness for p's tool-enabled slots
+// (a head snapshot → path jail → dispatcher, shared across the run, plus a
+// per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
+// and returns the per-agent results together with the manifest review-stage entry
+// (snapshot provenance already stamped). Best-effort harness setup: a snapshot or
+// jail failure logs and degrades tool agents to single-shot rather than failing
+// the review. Extracted from ExecuteReview so ExecuteResume runs the identical
+// engine setup; the two differ only in how they persist the results.
+func runEngine(ctx context.Context, completer Completer, p *PreparedReview, poolDir string) ([]Result, *payload.ReviewStage) {
 	runCtx := ctx
 	if p.TimeoutSec > 0 {
 		var cancel context.CancelFunc
@@ -276,20 +274,12 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		defer cancel()
 	}
 
-	poolDir := filepath.Join(p.Dir, "sources", "pool")
-
-	// Wire the read-only tool harness only when a slot is tool-enabled: a snapshot
-	// of the repo at head → path jail → dispatcher, shared across the run, plus a
-	// per-agent transcript writer under the pool raw dir. Best-effort: a snapshot
-	// or jail failure logs and leaves tool agents to degrade to single-shot
-	// (tools_degraded) rather than failing the whole review.
 	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
-	// unless a snapshot actually runs and succeeds below; stamped onto the review
-	// stage after fan-out.
+	// unless a snapshot actually runs and succeeds below.
 	var snapMode, snapHeadSHA, snapWorktreePath string
 	// Seed the engine with the review_id-correlated context logger so every agent
-	// log line is greppable by review (AC9 + AC10 together once invokeAgent adds
-	// agent_name). FromContext returns a never-nil discard logger if none is set.
+	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
+	// discard logger if none is set.
 	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
@@ -328,6 +318,32 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 
 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
 
+	// Classify the run into the manifest's review-stage entry and stamp the
+	// snapshot provenance (nil when no agent ran with tools).
+	stage := reviewStageFor(results)
+	if stage != nil {
+		stage.SnapshotMode = snapMode
+		stage.HeadSHA = snapHeadSHA
+		stage.SnapshotWorktreePath = snapWorktreePath
+	}
+	return results, stage
+}
+
+// ExecuteReview runs phase two: fan out the prepared roster under the global
+// timeout, then write per-agent artifacts, the merged pool, summary.json, and
+// the finalized manifest (Partial reflecting the outcome). The completer is
+// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+//
+// Artifacts are always persisted, even when every agent fails; in that case the
+// populated *ReviewResult is still returned alongside the wrapped
+// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+// remains for inspection. The background MCP path discards the error (status is
+// read from disk) while the CLI maps it to the process exit code.
+func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+	poolDir := filepath.Join(p.Dir, "sources", "pool")
+
+	results, stage := runEngine(ctx, completer, p, poolDir)
+
 	// Detect an external interrupt (SIGINT/SIGTERM cancelled the root context) so
 	// the manifest can record it. The check is on the PARENT ctx, not runCtx: a
 	// review timeout cancels only the child runCtx (DeadlineExceeded), while a
@@ -364,17 +380,9 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	m.CompletedAt = time.Now().UTC()
 	m.Interrupted = interrupted
 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
-	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
-	// unchanged.
-	m.Review = reviewStageFor(results)
-	// Stamp the snapshot provenance (AC 03-02 / 03-03) onto the review stage when
-	// one is present. When no snapshot ran (snapshot failed, or no tool agent), the
-	// omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays "".
-	if m.Review != nil {
-		m.Review.SnapshotMode = snapMode
-		m.Review.HeadSHA = snapHeadSHA
-		m.Review.SnapshotWorktreePath = snapWorktreePath
-	}
+	// 05-04), with snapshot provenance already stamped by runEngine. nil when no
+	// agent ran with tools, so a pure 1.x roster's manifest is unchanged.
+	m.Review = stage
 	if err := WriteManifest(p.Dir, &m); err != nil {
 		return nil, err
 	}
