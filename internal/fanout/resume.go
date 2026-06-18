@@ -338,9 +338,20 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 // writeResumedAgents persists the per-agent artifacts (review.md, findings.txt,
 // status.json) for each re-run result. A re-run agent's prior (failed/timeout)
 // artifacts are overwritten in place; completed agents are not in results, so
-// their artifacts on disk are left untouched.
+// their artifacts on disk are left untouched. A result whose error is a
+// synthesized context cancellation/deadline (the engine stamps these for slots
+// it never actually invoked because the parent ctx was cancelled first) is
+// skipped so a previously-failed agent's original error message is preserved
+// rather than overwritten with a generic "context canceled" timeout.
 func writeResumedAgents(poolDir string, results []Result) error {
 	for _, r := range results {
+		// Detect a synthesized timeout: the engine never invoked this agent
+		// (no content produced) and the error is a pure context cancellation
+		// or deadline. These results exist only to satisfy the per-slot Result
+		// contract; writing them would clobber a prior real failure's status.
+		if r.Content == "" && (errors.Is(r.Err, context.Canceled) || errors.Is(r.Err, context.DeadlineExceeded)) {
+			continue
+		}
 		dir, err := agentDirName(r.Agent)
 		if err != nil {
 			return err
