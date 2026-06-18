@@ -115,7 +115,7 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 		if !e.IsDir() {
 			continue
 		}
-		name, ok := agentStatusName(filepath.Join(rawDir, e.Name(), statusFile))
+		name, ok := agentStatusName(rawDir, filepath.Join(rawDir, e.Name(), statusFile))
 		if ok {
 			done[name] = true
 		}
@@ -129,7 +129,14 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 // — re-running an agent is always safe, so an untrustworthy record never causes
 // a skip. The name comes from the record's Agent field (the engine's
 // authoritative value), not the directory name (which is a sanitized basename).
-func agentStatusName(path string) (string, bool) {
+func agentStatusName(root, path string) (string, bool) {
+	// Reject a status.json that resolves outside the review tree (symlink
+	// traversal): an out-of-tree file the review never produced must never be
+	// trusted as a completion record. Failing the containment check keeps the
+	// agent pending, which is always safe (a pending agent simply re-runs).
+	if !pathWithin(root, path) {
+		return "", false
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
@@ -142,6 +149,27 @@ func agentStatusName(path string) (string, bool) {
 		return "", false
 	}
 	return st.Agent, true
+}
+
+// pathWithin reports whether path, with all symlinks resolved, stays inside
+// root (also symlink-resolved). It guards artifact reads against symlink
+// traversal — a path escaping the review tree returns false. A path that does
+// not exist (or a broken symlink) also returns false: it cannot be read, so it
+// is never trusted.
+func pathWithin(root, path string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ReadManifest loads and parses a review's manifest.json. A missing manifest
