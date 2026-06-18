@@ -1,0 +1,1414 @@
+diff --git a/README.md b/README.md
+index e239072..7a5fa4e 100644
+--- a/README.md
++++ b/README.md
+@@ -76,7 +76,7 @@ atcr report --format md
+ 
+ Key flags:
+ 
+-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate)
++- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+ - `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+@@ -96,6 +96,20 @@ atcr report ./artifacts/review --format md
+ - `--output-dir` and `--id` are mutually exclusive (the id is meaningless when the path is explicit).
+ - `atcr reconcile` and `atcr report` need no extra flag — they already accept a filesystem path as their `[id-or-path]` argument, so hand them the same `--output-dir` path.
+ 
++### Resuming an interrupted review (`--resume`)
++
++When a review is interrupted (Ctrl-C/SIGINT) or some agents fail, the completed agents' results are already on disk. `--resume` finishes the run by fanning out **only** the agents that did not complete, then reconciles — so you never re-spend tokens on agents that already produced a result:
++
++```bash
++atcr review --resume latest        # resolve .atcr/latest
++atcr review --resume <id>          # a review id under .atcr/reviews/
++atcr review --resume ./path        # an explicit review directory
++```
++
++- The panel is locked: resume re-resolves the current git range and compares it (plus the configured roster) against the interrupted run's `manifest.json`. A changed range or roster aborts with exit code **2** — resuming against changed code or a different panel would mix inconsistent results, so start a fresh `atcr review` instead.
++- An agent counts as complete only when its per-agent `status.json` records `ok` (a clean reviewer that found nothing is complete; a failed/timed-out one is re-run). Pass the same range flags (`--base`/`--head`/`--merge-commit`) the original review used so the range matches.
++- If every agent already completed, resume just re-runs reconciliation. `--resume` cannot be combined with `--id` or `--output-dir`.
++
+ ## Payload modes
+ 
+ `atcr` ships three payload modes that control what each reviewer agent sees. The default is `blocks`; set per-agent overrides in `~/.config/atcr/registry.yaml` when a model handles a different format better.
+diff --git a/cmd/atcr/resume.go b/cmd/atcr/resume.go
+new file mode 100644
+index 0000000..87d845d
+--- /dev/null
++++ b/cmd/atcr/resume.go
+@@ -0,0 +1,173 @@
++package main
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/fanout"
++	"github.com/samestrin/atcr/internal/gitrange"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/log"
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/spf13/cobra"
++)
++
++// resolveResumeDir maps the --resume anchor to a review directory. The literal
++// "latest" (and an empty value) resolve the .atcr/latest pointer, matching the
++// documented `atcr review --resume latest` form; any other value is delegated to
++// resolveReviewDir, which accepts a bare review id (resolved under
++// .atcr/reviews/) or an explicit path used verbatim, and verifies the directory
++// holds a sources/ tree (otherwise a clear exit-2 usage error). Note that an
++// explicit anchor of "latest" can never be a real id: ReviewID always prefixes
++// the date (<YYYY-MM-DD>_<slug>), so reserving the word for the pointer is safe.
++func resolveResumeDir(anchor string) (string, error) {
++	a := strings.TrimSpace(anchor)
++	if a == "" || a == "latest" {
++		return resolveReviewDir("") // empty arg → .atcr/latest
++	}
++	return resolveReviewDir(a)
++}
++
++// runResume drives `atcr review --resume <anchor>`: it resolves the target review
++// directory, re-resolves the current git range (using any --base/--head/
++// --merge-commit flags, exactly as a fresh review would), and hands both to
++// PrepareResume, which locks the range and roster against the interrupted run.
++// Every pre-fan-out validation problem — a changed range (AC3), a changed roster,
++// a missing/corrupt manifest, or a bad config — is a usage error (exit 2). When
++// every agent already completed, it re-runs reconciliation and exits clean (AC2);
++// otherwise it fans out only the pending agents, then auto-reconciles. A
++// SIGINT/SIGTERM during the resumed fan-out preserves the new partial results and
++// the interrupted marker (AC7), exiting 1 with the same notice as a fresh review.
++func runResume(cmd *cobra.Command, anchor string) error {
++	ctx := cmd.Context()
++
++	// --resume targets an existing review; --id and --output-dir only make sense
++	// when creating a new one, so reject the combination up front (exit 2).
++	if cmd.Flags().Changed("id") || cmd.Flags().Changed("output-dir") {
++		return usageError(errors.New("--resume cannot be combined with --id or --output-dir"))
++	}
++
++	// The one-shot gate/verify flags drive an exit-code gate on a fresh review;
++	// --resume always reconciles but deliberately does NOT re-implement that gate
++	// (out of scope). Silently ignoring them would let a CI pipeline resume a
++	// review and false-PASS despite surviving findings, so reject them fail-closed
++	// (exit 2) and point at the standalone gate commands.
++	for _, f := range []string{"fail-on", "verify", "require-verified"} {
++		if cmd.Flags().Changed(f) {
++			return usageError(fmt.Errorf("--resume does not support --%s; resume reconciles automatically — run `atcr reconcile --fail-on <severity>` or `atcr verify` afterward to gate", f))
++		}
++	}
++
++	dir, err := resolveResumeDir(anchor)
++	if err != nil {
++		return usageError(err)
++	}
++
++	base, _ := cmd.Flags().GetString("base")
++	head, _ := cmd.Flags().GetString("head")
++	mergeCommit, _ := cmd.Flags().GetString("merge-commit")
++	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
++	if err != nil {
++		if errors.Is(ctx.Err(), context.Canceled) {
++			return interruptedBeforeFanout(cmd)
++		}
++		return usageError(fmt.Errorf("resume failed: %w", err))
++	}
++
++	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
++	if err != nil {
++		return usageError(err)
++	}
++	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
++		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
++	}
++
++	req := fanout.ReviewRequest{
++		Repo: ".",
++		Root: ".",
++		Range: fanout.ReviewRange{
++			Base:          res.Base,
++			Head:          res.Head,
++			DetectionMode: res.DetectionMode,
++			DefaultBranch: res.DefaultBranch,
++			CommitCount:   res.CommitCount,
++		},
++		StartedAt: time.Now(),
++	}
++
++	prep, info, err := fanout.PrepareResume(ctx, cfg, dir, req)
++	if err != nil {
++		// Range/roster mismatch (AC3) and every other pre-fan-out validation
++		// problem is a usage/configuration error (exit 2). The interrupt path is not
++		// reachable here: PrepareResume performs no long-running work.
++		return usageError(err)
++	}
++
++	// Correlate every downstream log line by review id and enforce sink-level
++	// redaction (scrub secret-shaped tokens, relativize absolute paths under the
++	// repo root) for the resumed fan-out and reconcile — parity with the fresh
++	// review path so the resume flow never leaks secrets or absolute paths.
++	ctx = correlateReviewID(ctx, prep.ID)
++	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(resolveRedactRoot(ctx, prep.Repo))))
++
++	// AC2: nothing pending — re-run reconciliation against the complete review and
++	// exit clean, never touching a provider. Clear any stale interrupt marker first
++	// so a review that was interrupted-but-actually-complete reports completed
++	// rather than interrupted (AC6).
++	if info.AllComplete() {
++		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
++		if err := fanout.ClearInterrupted(dir); err != nil {
++			return usageError(fmt.Errorf("resume failed: %w", err))
++		}
++		return resumeReconcile(ctx, cmd, dir)
++	}
++
++	if err := preflightAPIKeys(prep.Slots); err != nil {
++		return err // no pending slot can authenticate → exit 2 before any provider call
++	}
++
++	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
++		prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
++
++	result, err := fanout.ExecuteResume(ctx, llmclient.New(), prep)
++
++	// Graceful interrupt during the resumed fan-out (AC7): the new partial results
++	// are already persisted and the manifest is re-marked interrupted, so report
++	// what was saved and stop. Checked before err so an interrupted resume is never
++	// reported as a clean completion. Exit 1, consistent with a fresh review.
++	if errors.Is(ctx.Err(), context.Canceled) {
++		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
++		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
++	}
++
++	if result != nil {
++		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
++			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
++	}
++	if err != nil {
++		return err // every agent (union) failed → exit 1, artifacts preserved
++	}
++
++	// Auto-reconcile on successful completion (epic 4.1.1: a resumed run always
++	// produces a fresh reconciliation, mirroring the in-process one-shot path).
++	return resumeReconcile(ctx, cmd, result.Dir)
++}
++
++// resumeReconcile runs the deterministic reconcile pipeline against dir and prints
++// the merged finding count, mapping a reconcile failure to a usage error (exit 2)
++// with the on-disk review preserved for inspection. The partial flag is read from
++// the just-finalized review so reconcile records the run's partial provenance.
++func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) error {
++	rec, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
++		ReconciledAt: time.Now(),
++		Partial:      fanout.ReadManifestPartial(dir),
++	})
++	if err != nil {
++		return usageError(fmt.Errorf("resume failed: %w", err))
++	}
++	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
++	return nil
++}
+diff --git a/cmd/atcr/resume_test.go b/cmd/atcr/resume_test.go
+new file mode 100644
+index 0000000..fb0ed27
+--- /dev/null
++++ b/cmd/atcr/resume_test.go
+@@ -0,0 +1,278 @@
++package main
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/fanout"
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/stretchr/testify/require"
++)
++
++// liveReviewConfig writes a user registry whose agents are pointed at srvURL (a
++// live mock provider) and a project config selecting them, so a real `atcr review`
++// produces a genuinely complete review on disk. Each agent's persona equals its
++// name so resolution falls through to the embedded default.
++func liveReviewConfig(t *testing.T, srvURL string, agents ...string) {
++	t.Helper()
++	home, err := os.UserHomeDir()
++	require.NoError(t, err)
++	regDir := filepath.Join(home, ".config", "atcr")
++	require.NoError(t, os.MkdirAll(regDir, 0o755))
++	reg := "providers:\n  p:\n    api_key_env: ATCR_TEST_REVIEW_KEY\n    base_url: " + srvURL + "\nagents:\n"
++	for _, a := range agents {
++		reg += "  " + a + ":\n    provider: p\n    model: m-" + a + "\n    persona: " + a + "\n"
++	}
++	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(reg), 0o644))
++	require.NoError(t, os.MkdirAll(".atcr", 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
++		[]byte("agents: ["+strings.Join(agents, ", ")+"]\n"), 0o644))
++}
++
++// liveMockProvider returns an httptest server speaking the OpenAI chat-completions
++// shape, replying with one finding for any model.
++func liveMockProvider(t *testing.T) *httptest.Server {
++	t.Helper()
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		_, _ = io.ReadAll(r.Body)
++		content := "CRITICAL|a.txt:1|Unchecked call|Guard it|security|15|evidence"
++		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
++		_ = json.NewEncoder(w).Encode(resp)
++	}))
++	t.Cleanup(srv.Close)
++	return srv
++}
++
++// scaffoldResumeReview creates a minimal review directory (id under
++// .atcr/reviews/) with a sources/ tree so resolveResumeDir's completeness check
++// passes. Returns the review dir path.
++func scaffoldResumeReview(t *testing.T, id string) string {
++	t.Helper()
++	dir := filepath.Join(fanout.ReviewsRoot("."), id)
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources"), 0o755))
++	return dir
++}
++
++func TestResolveResumeDir_LatestAndEmpty(t *testing.T) {
++	isolate(t)
++	dir := scaffoldResumeReview(t, "2026-06-18_demo")
++	require.NoError(t, fanout.WriteLatest(".", "2026-06-18_demo"))
++
++	// Both the literal "latest" and an empty anchor resolve the .atcr/latest pointer.
++	for _, anchor := range []string{"latest", ""} {
++		got, err := resolveResumeDir(anchor)
++		require.NoError(t, err, "anchor %q", anchor)
++		require.Equal(t, dir, got, "anchor %q", anchor)
++	}
++}
++
++func TestResolveResumeDir_ByID(t *testing.T) {
++	isolate(t)
++	dir := scaffoldResumeReview(t, "2026-06-18_demo")
++	got, err := resolveResumeDir("2026-06-18_demo")
++	require.NoError(t, err)
++	require.Equal(t, dir, got)
++}
++
++func TestResolveResumeDir_ExplicitPath(t *testing.T) {
++	isolate(t)
++	dir := t.TempDir()
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources"), 0o755))
++	got, err := resolveResumeDir(dir)
++	require.NoError(t, err)
++	require.Equal(t, dir, got)
++}
++
++func TestResolveResumeDir_MissingLatestErrors(t *testing.T) {
++	isolate(t)
++	_, err := resolveResumeDir("latest")
++	require.Error(t, err)
++}
++
++func TestResolveResumeDir_UnknownIDErrors(t *testing.T) {
++	isolate(t)
++	_, err := resolveResumeDir("2026-06-18_nope")
++	require.Error(t, err)
++}
++
++// gitRevParse resolves a ref to its SHA in the current repo (tests run inside an
++// isolated, chdir'd repo).
++func gitRevParse(t *testing.T, ref string) string {
++	t.Helper()
++	out, err := exec.Command("git", "rev-parse", ref).Output()
++	require.NoError(t, err)
++	return strings.TrimSpace(string(out))
++}
++
++// writeResumeReviewFixture writes a review directory under .atcr/reviews/<id> with
++// a manifest for the given range/roster and per-agent ok status.json for each
++// completed agent, and repoints .atcr/latest. sources/ always exists so
++// resolveResumeDir's completeness check passes.
++func writeResumeReviewFixture(t *testing.T, id, base, head string, roster, completed []string) string {
++	t.Helper()
++	dir := filepath.Join(fanout.ReviewsRoot("."), id)
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
++	m := &payload.Manifest{
++		Base: base, Head: head, Roster: roster,
++		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
++		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
++	}
++	require.NoError(t, fanout.WriteManifest(dir, m))
++	for _, name := range completed {
++		ad := filepath.Join(dir, "sources", "pool", "raw", "agent", name)
++		require.NoError(t, os.MkdirAll(ad, 0o755))
++		require.NoError(t, fanout.WriteStatus(filepath.Join(ad, "status.json"),
++			&fanout.AgentStatus{Agent: name, Status: fanout.StatusOK}))
++	}
++	require.NoError(t, fanout.WriteLatest(".", id))
++	return dir
++}
++
++// execResume runs the command tree and returns the exit code plus the combined
++// stdout/stderr and error text, so a test can assert resume-specific diagnostics.
++func execResume(t *testing.T, args ...string) (int, string) {
++	t.Helper()
++	root := newRootCmd()
++	root.SetArgs(args)
++	var buf bytes.Buffer
++	root.SetOut(&buf)
++	root.SetErr(&buf)
++	err := root.ExecuteContext(context.Background())
++	out := buf.String()
++	if err != nil {
++		out += err.Error()
++	}
++	return exitCode(err), out
++}
++
++func TestResume_IncompatibleWithIDIsExit2(t *testing.T) {
++	isolate(t)
++	code, out := execResume(t, "review", "--resume", "latest", "--id", "x")
++	require.Equal(t, 2, code)
++	require.Contains(t, out, "--resume cannot be combined")
++}
++
++func TestResume_UnknownAnchorIsExit2(t *testing.T) {
++	isolate(t)
++	code := execCmd(t, "review", "--resume", "2026-06-18_nope")
++	require.Equal(t, 2, code)
++}
++
++func TestResume_RangeMismatchIsExit2(t *testing.T) {
++	isolate(t)
++	initGitRepoWithChange(t)
++	writeReviewFixtureConfig(t) // roster = [bruce]
++	// Manifest range deliberately does not match HEAD^..HEAD.
++	writeResumeReviewFixture(t, "2026-06-18_demo", "deadbeefdeadbeef", "cafebabecafebabe", []string{"bruce"}, nil)
++
++	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
++	require.Equal(t, 2, code, "AC3: changed range aborts with exit 2")
++	require.Contains(t, out, "working tree changed", "AC3: clear range-mismatch error")
++}
++
++func TestResume_RosterMismatchIsExit2(t *testing.T) {
++	isolate(t)
++	initGitRepoWithChange(t)
++	writeReviewFixtureConfig(t) // roster = [bruce]
++	base := gitRevParse(t, "HEAD^")
++	head := gitRevParse(t, "HEAD")
++	// Range matches; roster differs ([bruce, robin] vs configured [bruce]).
++	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, nil)
++
++	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
++	require.Equal(t, 2, code, "roster drift aborts with exit 2")
++	require.Contains(t, out, "roster changed")
++}
++
++func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
++	isolate(t)
++	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
++	initGitRepoWithChange(t)
++	srv := liveMockProvider(t)
++	liveReviewConfig(t, srv.URL, "bruce")
++
++	// A real review completes bruce and writes the full review tree + manifest.
++	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
++
++	// Resume finds nothing pending: AC2 — announce + re-reconcile + exit 0.
++	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
++	require.Equal(t, 0, code, "AC2: all agents already completed -> clean exit")
++	require.Contains(t, out, "All configured agents already completed")
++	require.Contains(t, out, "reconciled")
++}
++
++func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
++	isolate(t)
++	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
++	initGitRepoWithChange(t)
++	srv := liveMockProvider(t)
++	liveReviewConfig(t, srv.URL, "bruce", "robin")
++	base := gitRevParse(t, "HEAD^")
++	head := gitRevParse(t, "HEAD")
++	// bruce already completed; robin is pending (no status.json). Range + roster match.
++	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
++
++	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
++	require.Equal(t, 0, code, "resume runs the pending agent and reconciles -> exit 0")
++	require.Contains(t, out, "1 completed, 1 pending")
++	require.Contains(t, out, "reconciled")
++
++	// AC4/AC6: robin now has results and the review derives to completed.
++	dir := filepath.Join(fanout.ReviewsRoot("."), "2026-06-18_demo")
++	st, err := fanout.ReadReviewStatus(dir, "2026-06-18_demo")
++	require.NoError(t, err)
++	require.Equal(t, fanout.RunCompleted, st.Status)
++	require.False(t, st.Partial)
++}
++
++func TestResume_FailOnFlagIsExit2(t *testing.T) {
++	isolate(t)
++	code, out := execResume(t, "review", "--resume", "latest", "--fail-on", "high")
++	require.Equal(t, 2, code, "the one-shot gate is not supported with --resume")
++	require.Contains(t, out, "does not support --fail-on")
++}
++
++func TestResume_VerifyFlagIsExit2(t *testing.T) {
++	isolate(t)
++	code, out := execResume(t, "review", "--resume", "latest", "--verify")
++	require.Equal(t, 2, code)
++	require.Contains(t, out, "does not support --verify")
++}
++
++func TestResume_AllCompleteClearsStaleInterrupted(t *testing.T) {
++	isolate(t)
++	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
++	initGitRepoWithChange(t)
++	srv := liveMockProvider(t)
++	liveReviewConfig(t, srv.URL, "bruce")
++	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
++
++	// Simulate the narrow window: every agent is ok on disk, but the manifest is
++	// still marked interrupted (signal landed after the last agent wrote ok).
++	id, err := fanout.ReadLatest(".")
++	require.NoError(t, err)
++	dir := filepath.Join(fanout.ReviewsRoot("."), id)
++	m, err := fanout.ReadManifest(dir)
++	require.NoError(t, err)
++	m.Interrupted = true
++	require.NoError(t, fanout.WriteManifest(dir, m))
++	st, err := fanout.ReadReviewStatus(dir, id)
++	require.NoError(t, err)
++	require.Equal(t, fanout.RunInterrupted, st.Status, "precondition: stale interrupted state")
++
++	code, _ := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
++	require.Equal(t, 0, code)
++	stAfter, err := fanout.ReadReviewStatus(dir, id)
++	require.NoError(t, err)
++	require.Equal(t, fanout.RunCompleted, stAfter.Status, "AC6: resume clears the stale interrupted marker")
++}
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 85e696c..4c97091 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -40,6 +40,7 @@ func newReviewCmd() *cobra.Command {
+ 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+ 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
+ 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
++	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
+ 	addRangeFlags(cmd)
+ 	return cmd
+ }
+@@ -72,6 +73,14 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
+ // Range/config problems are usage errors (exit 2); an all-agents-failed review
+ // is a plain failure (exit 1) with the artifacts preserved on disk.
+ func runReview(cmd *cobra.Command, _ []string) error {
++	// --resume targets an existing review directory and runs only its pending
++	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
++	// before any new-review flag handling.
++	if cmd.Flags().Changed("resume") {
++		anchor, _ := cmd.Flags().GetString("resume")
++		return runResume(cmd, anchor)
++	}
++
+ 	ctx := cmd.Context()
+ 	base, _ := cmd.Flags().GetString("base")
+ 	head, _ := cmd.Flags().GetString("head")
+@@ -272,9 +281,10 @@ func interruptedBeforeFanout(cmd *cobra.Command) error {
+ // interruptMessage renders the user-facing notice for a signal-interrupted
+ // review (epic 4.1 AC5/AC6). result may be nil when ExecuteReview was cancelled
+ // before producing one, so the review id and directory fall back to the
+-// PreparedReview, which is always available before the fan-out starts. It
+-// deliberately references only `atcr status <id>` — not a `--resume` flag, which
+-// is out of scope and does not exist.
++// PreparedReview, which is always available before the fan-out starts. It points
++// at `atcr status <id>` to inspect and `atcr review --resume <id>` to finish the
++// remaining agents (epic 4.1.1 makes --resume real, completing the partial run
++// without re-spending tokens on the already-completed agents).
+ func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) string {
+ 	done, total, dir := 0, 0, prep.Dir
+ 	if result != nil {
+@@ -282,8 +292,8 @@ func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview)
+ 	}
+ 	return fmt.Sprintf(
+ 		"\n⚠️ Review interrupted. %d/%d agents completed; partial results saved to %s.\n"+
+-			"   Run 'atcr status %s' to inspect.\n",
+-		done, total, dir, prep.ID)
++			"   Run 'atcr status %s' to inspect, or 'atcr review --resume %s' to finish the remaining agents.\n",
++		done, total, dir, prep.ID, prep.ID)
+ }
+ 
+ // absFn resolves a path to absolute form. It is a package var so a test can
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 92c4976..83e903e 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -149,8 +149,9 @@ func TestRunReview_NoLocalLogger(t *testing.T) {
+ 
+ // TestInterruptMessage_NilResultFallsBackToPrep verifies the warning is rendered
+ // from the PreparedReview when ExecuteReview returned no result (interrupted
+-// before producing one), reports 0/0, references only commands that exist, and
+-// never mentions the out-of-scope --resume flag (AC5/AC6).
++// before producing one), reports 0/0, and points at both `atcr status` and the
++// `atcr review --resume` flow that finishes the remaining agents (epic 4.1.1
++// makes --resume real, so the notice now advertises it — AC5/AC6).
+ func TestInterruptMessage_NilResultFallsBackToPrep(t *testing.T) {
+ 	prep := &fanout.PreparedReview{ID: "2026-06-17_feat", Dir: "/x/.atcr/reviews/2026-06-17_feat"}
+ 	msg := interruptMessage(nil, prep)
+@@ -158,7 +159,7 @@ func TestInterruptMessage_NilResultFallsBackToPrep(t *testing.T) {
+ 	assert.Contains(t, msg, "0/0 agents completed", "nil result falls back to a zero tally")
+ 	assert.Contains(t, msg, "/x/.atcr/reviews/2026-06-17_feat", "AC6: prints the review directory")
+ 	assert.Contains(t, msg, "atcr status 2026-06-17_feat", "AC6: points at a command that exists")
+-	assert.NotContains(t, msg, "--resume", "must not reference the out-of-scope --resume flag")
++	assert.Contains(t, msg, "atcr review --resume 2026-06-17_feat", "epic 4.1.1: advertises the resume flow")
+ }
+ 
+ // TestInterruptMessage_UsesResultCounts verifies that when a partial result is
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+new file mode 100644
+index 0000000..f82763d
+--- /dev/null
++++ b/internal/fanout/resume.go
+@@ -0,0 +1,425 @@
++package fanout
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io/fs"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// ErrRangeChanged reports that the working tree's resolved git range no longer
++// matches the range the interrupted review recorded in manifest.json. Resuming
++// would fan the pending agents out at a different base/head than the completed
++// ones reviewed, mixing inconsistent contexts — so resume aborts (exit 2) and
++// the user must start a fresh `atcr review` (epic 4.1.1 AC3).
++var ErrRangeChanged = errors.New("the working tree changed since the interrupted review (git base/head differ)")
++
++// ErrRosterChanged reports that the currently configured agent roster differs
++// from the roster the interrupted review recorded. The panel configuration is
++// locked for a resume (epic 4.1.1 Open Question #2 / out-of-scope): a changed
++// roster aborts (exit 2) rather than silently resuming a different panel.
++var ErrRosterChanged = errors.New("the configured roster changed since the interrupted review")
++
++// ValidateResumeRange verifies the manifest's recorded range matches the range
++// resolved from the current working tree. Base and head are compared as the
++// already-resolved SHAs gitrange.Resolve produced (manifest.json stores them
++// verbatim), so an equal pair proves the pending agents will review exactly what
++// the completed agents did.
++func ValidateResumeRange(m *payload.Manifest, cur ReviewRange) error {
++	if m.Base != cur.Base || m.Head != cur.Head {
++		return fmt.Errorf("%w: recorded %s..%s, current %s..%s; start a fresh `atcr review`",
++			ErrRangeChanged, shortRef(m.Base), shortRef(m.Head), shortRef(cur.Base), shortRef(cur.Head))
++	}
++	return nil
++}
++
++// ValidateResumeRoster verifies the configured roster is the same SET of agent
++// names the interrupted review recorded (order-independent — manifest.Roster is
++// an ordered snapshot but the roster is semantically a set). Any added, removed,
++// or swapped agent fails closed.
++func ValidateResumeRoster(m *payload.Manifest, configured []string) error {
++	recorded := nameSet(m.Roster)
++	current := nameSet(configured)
++	if len(recorded) != len(current) {
++		return rosterMismatch(m.Roster, configured)
++	}
++	for name := range recorded {
++		if !current[name] {
++			return rosterMismatch(m.Roster, configured)
++		}
++	}
++	return nil
++}
++
++// nameSet collapses a roster slice to a presence set.
++func nameSet(names []string) map[string]bool {
++	s := make(map[string]bool, len(names))
++	for _, n := range names {
++		s[n] = true
++	}
++	return s
++}
++
++// rosterMismatch renders the ErrRosterChanged error with both rosters sorted so
++// the diff is legible regardless of declaration order.
++func rosterMismatch(recorded, configured []string) error {
++	r := append([]string(nil), recorded...)
++	c := append([]string(nil), configured...)
++	sort.Strings(r)
++	sort.Strings(c)
++	return fmt.Errorf("%w: recorded [%s], configured [%s]; start a fresh `atcr review`",
++		ErrRosterChanged, strings.Join(r, " "), strings.Join(c, " "))
++}
++
++// shortRef trims a git SHA to 12 chars for diagnostics, leaving shorter or
++// symbolic refs intact.
++func shortRef(ref string) string {
++	if len(ref) > 12 {
++		return ref[:12]
++	}
++	return ref
++}
++
++// CompletedAgents scans a review's per-agent status records and returns the set
++// of agent names that finished successfully (status == StatusOK), so a resumed
++// run can skip them. An agent is treated as PENDING — and therefore re-run —
++// when its status.json is missing, unreadable, corrupt, or records a non-OK
++// outcome (StatusFailed / StatusTimeout). This is the authoritative completion
++// signal: WritePool stamps StatusOK regardless of findings count, so a clean
++// reviewer that found nothing is correctly "complete", while a failed agent —
++// which writes an identical empty findings.txt — is correctly "pending"
++// (resolves epic 4.1.1 Open Question #1).
++//
++// A missing pool tree (a review scaffolded but never fanned out) yields an empty
++// set with no error: every roster agent is pending.
++func CompletedAgents(reviewDir string) (map[string]bool, error) {
++	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
++	entries, err := os.ReadDir(rawDir)
++	if err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return map[string]bool{}, nil
++		}
++		return nil, err
++	}
++	done := make(map[string]bool, len(entries))
++	for _, e := range entries {
++		if !e.IsDir() {
++			continue
++		}
++		name, ok := agentStatusName(filepath.Join(rawDir, e.Name(), statusFile))
++		if ok {
++			done[name] = true
++		}
++	}
++	return done, nil
++}
++
++// agentStatusName reads a per-agent status.json and returns the agent name when
++// the record is readable, parseable, and reports StatusOK. Any failure to read
++// or parse, or any non-OK outcome, returns ok=false so the agent stays pending
++// — re-running an agent is always safe, so an untrustworthy record never causes
++// a skip. The name comes from the record's Agent field (the engine's
++// authoritative value), not the directory name (which is a sanitized basename).
++func agentStatusName(path string) (string, bool) {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return "", false
++	}
++	var st AgentStatus
++	if json.Unmarshal(data, &st) != nil {
++		return "", false
++	}
++	if st.Status != StatusOK || st.Agent == "" {
++		return "", false
++	}
++	return st.Agent, true
++}
++
++// ReadManifest loads and parses a review's manifest.json. A missing manifest
++// means the directory is not a fan-out-managed review (so it cannot be resumed);
++// a present-but-corrupt manifest surfaces as a parse error rather than a guessed
++// state.
++func ReadManifest(reviewDir string) (*payload.Manifest, error) {
++	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
++	if err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return nil, fmt.Errorf("%s has no manifest.json: not a resumable review (run a fresh `atcr review`)", reviewDir)
++		}
++		return nil, err
++	}
++	var m payload.Manifest
++	if err := json.Unmarshal(data, &m); err != nil {
++		return nil, fmt.Errorf("manifest.json is corrupt: %w", err)
++	}
++	return &m, nil
++}
++
++// ClearInterrupted rewrites the review's manifest with Interrupted=false when it
++// is currently set. A review whose every agent already finished but whose manifest
++// still carries the interrupt marker (a signal that landed after the last agent
++// wrote ok, before manifest finalization) would otherwise keep deriving to
++// "interrupted" forever; clearing the marker when a resume confirms the roster is
++// complete lets it report "completed" (epic 4.1.1 AC6). It is a no-op (and writes
++// nothing) when the manifest is not marked interrupted.
++func ClearInterrupted(reviewDir string) error {
++	m, err := ReadManifest(reviewDir)
++	if err != nil {
++		return err
++	}
++	if !m.Interrupted {
++		return nil
++	}
++	m.Interrupted = false
++	return WriteManifest(reviewDir, m)
++}
++
++// ResumeInfo reports how a resume run partitioned the locked roster: the agents
++// already completed (skipped) and the agents that will be re-run.
++type ResumeInfo struct {
++	Completed []string
++	Pending   []string
++}
++
++// AllComplete reports whether every roster agent already finished, so the caller
++// can skip the fan-out entirely and go straight to reconciliation (epic 4.1.1 AC2).
++func (r *ResumeInfo) AllComplete() bool { return len(r.Pending) == 0 }
++
++// filterPendingSlots keeps only the slots whose primary agent is not already in
++// the completed set, so a resumed fan-out re-runs only the pending/failed agents
++// (epic 4.1.1 AC4).
++func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
++	pending := make([]Slot, 0, len(slots))
++	for _, s := range slots {
++		if !done[s.Primary.Name] {
++			pending = append(pending, s)
++		}
++	}
++	return pending
++}
++
++// PrepareResume validates an existing review directory against the current
++// working tree and configured roster, then assembles a PreparedReview whose Dir
++// is that existing directory and whose Slots are only the pending agents. The
++// range and roster are locked: a changed git range (ErrRangeChanged) or a
++// changed roster set (ErrRosterChanged) aborts before any agent runs, so a resume
++// can never mix inconsistent contexts or silently run a different panel. Payloads
++// are rebuilt from the (validated-identical) recorded range so pending agents see
++// exactly what the completed agents reviewed. The returned ResumeInfo reports the
++// completed/pending split; when AllComplete is true the Slots are empty and the
++// caller reconciles without a fan-out.
++func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req ReviewRequest) (*PreparedReview, *ResumeInfo, error) {
++	m, err := ReadManifest(reviewDir)
++	if err != nil {
++		return nil, nil, err
++	}
++	if err := ValidateResumeRange(m, req.Range); err != nil {
++		return nil, nil, err
++	}
++	configured := rosterNames(cfg.Project)
++	if err := ValidateResumeRoster(m, configured); err != nil {
++		return nil, nil, err
++	}
++
++	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
++	if err != nil {
++		return nil, nil, err
++	}
++	slots, _, err := buildSlots(cfg, payloads, req.Range)
++	if err != nil {
++		return nil, nil, err
++	}
++
++	done, err := CompletedAgents(reviewDir)
++	if err != nil {
++		return nil, nil, err
++	}
++
++	info := &ResumeInfo{}
++	for _, name := range configured {
++		if done[name] {
++			info.Completed = append(info.Completed, name)
++		} else {
++			info.Pending = append(info.Pending, name)
++		}
++	}
++
++	p := &PreparedReview{
++		ID:          filepath.Base(reviewDir),
++		Dir:         reviewDir,
++		Slots:       filterPendingSlots(slots, done),
++		TimeoutSec:  cfg.Settings.TimeoutSecs,
++		MaxParallel: cfg.Settings.MaxParallel,
++		Repo:        req.Repo,
++		Head:        req.Range.Head,
++		manifest:    m,
++	}
++	return p, info, nil
++}
++
++// ExecuteResume runs the pending slots, persists their per-agent artifacts (the
++// already-completed agents' artifacts on disk are untouched), then rebuilds
++// summary.json and the merged findings.txt over the FULL on-disk union so the
++// aggregate reflects the whole roster — not just the re-run subset. The manifest
++// is finalized with the union's partial flag and the interrupt marker: if the
++// resume is itself interrupted (AC7), whatever pending agents completed are
++// preserved and the run stays interrupted. The all-agents-failed gate is judged
++// over the union, so a resume whose pending agents all fail again still returns
++// success when an earlier completed agent succeeded.
++func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
++	poolDir := filepath.Join(p.Dir, "sources", "pool")
++
++	results, _ := runEngine(ctx, completer, p, poolDir)
++	interrupted := errors.Is(ctx.Err(), context.Canceled)
++
++	if err := writeResumedAgents(poolDir, results); err != nil {
++		return nil, err
++	}
++
++	sum, statuses, err := RebuildPool(poolDir)
++	if err != nil {
++		return nil, err
++	}
++
++	// Finalize the manifest into a local copy (only adopted on a successful write).
++	// m.Review is preserved from the original run: the roster is locked, so the
++	// original review stage already lists every tool agent (reviewStageFor records
++	// ToolsRequested even on a failed agent), and the resumed subset cannot add new
++	// members.
++	m := *p.manifest
++	m.Partial = sum.Partial
++	m.CompletedAt = time.Now().UTC()
++	m.Interrupted = interrupted
++	if err := WriteManifest(p.Dir, &m); err != nil {
++		return nil, err
++	}
++	p.manifest = &m
++
++	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
++	if sum.Total == 0 {
++		return res, ErrEmptyRoster
++	}
++	if sum.Succeeded == 0 {
++		return res, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatStatusFailures(statuses))
++	}
++	return res, nil
++}
++
++// writeResumedAgents persists the per-agent artifacts (review.md, findings.txt,
++// status.json) for each re-run result. A re-run agent's prior (failed/timeout)
++// artifacts are overwritten in place; completed agents are not in results, so
++// their artifacts on disk are left untouched.
++func writeResumedAgents(poolDir string, results []Result) error {
++	for _, r := range results {
++		dir, err := agentDirName(r.Agent)
++		if err != nil {
++			return err
++		}
++		fr := findingsFor(r)
++		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++// RebuildPool recomputes the merged pool findings.txt and summary.json from every
++// per-agent artifact currently under poolDir/raw/agent (completed + newly
++// resumed), returning the aggregate Summary and the union of per-agent statuses.
++// os.ReadDir yields entries in sorted order, so the rebuilt artifacts are
++// deterministic. An agent directory without a readable/parseable status.json is
++// skipped (it never completed); a missing or unparseable findings.txt contributes
++// no findings but does not fail the rebuild.
++func RebuildPool(poolDir string) (Summary, []AgentStatus, error) {
++	rawDir := filepath.Join(poolDir, poolRawAgentDir)
++	entries, err := os.ReadDir(rawDir)
++	if err != nil {
++		return Summary{}, nil, fmt.Errorf("reading agent artifacts: %w", err)
++	}
++
++	var statuses []AgentStatus
++	var merged []stream.Finding
++	for _, e := range entries {
++		if !e.IsDir() {
++			continue
++		}
++		agentDir := filepath.Join(rawDir, e.Name())
++		sdata, rerr := os.ReadFile(filepath.Join(agentDir, statusFile))
++		if rerr != nil {
++			continue // no status.json → never completed; not part of the union
++		}
++		var st AgentStatus
++		if json.Unmarshal(sdata, &st) != nil {
++			continue
++		}
++		statuses = append(statuses, st)
++		if fdata, ferr := os.ReadFile(filepath.Join(agentDir, findingsFile)); ferr == nil {
++			if pr, perr := stream.ParseSource(fdata); perr == nil {
++				merged = append(merged, pr.Findings...)
++			}
++		}
++	}
++
++	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
++		return Summary{}, nil, err
++	}
++	sum := summarizeStatuses(statuses)
++	ps := PoolSummary{
++		Agents:        statuses,
++		Total:         sum.Total,
++		Succeeded:     sum.Succeeded,
++		Failed:        sum.Failed,
++		Partial:       sum.Partial,
++		TotalFindings: len(merged),
++	}
++	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
++		return Summary{}, nil, err
++	}
++	return sum, statuses, nil
++}
++
++// summarizeStatuses tallies a union of per-agent statuses into a Summary, mirroring
++// summarize() (which works over []Result) for the resume rebuild path.
++func summarizeStatuses(sts []AgentStatus) Summary {
++	s := Summary{Total: len(sts)}
++	for _, st := range sts {
++		if st.Status == StatusOK {
++			s.Succeeded++
++		} else {
++			s.Failed++
++		}
++	}
++	s.Partial = s.Failed > 0 && s.Succeeded > 0
++	return s
++}
++
++// formatStatusFailures renders "agent (reason), ..." for the all-failed resume
++// error, sorted for deterministic output. The reason is the recorded error
++// message when present, else the status string.
++func formatStatusFailures(sts []AgentStatus) string {
++	parts := make([]string, 0, len(sts))
++	for _, st := range sts {
++		if st.Status == StatusOK {
++			continue
++		}
++		reason := st.Status
++		if st.Error != "" {
++			reason = st.Error
++		}
++		name := st.Agent
++		if name == "" {
++			name = "<unnamed>"
++		}
++		parts = append(parts, fmt.Sprintf("%s (%s)", name, reason))
++	}
++	sort.Strings(parts)
++	return strings.Join(parts, ", ")
++}
+diff --git a/internal/fanout/resume_test.go b/internal/fanout/resume_test.go
+new file mode 100644
+index 0000000..3ec85eb
+--- /dev/null
++++ b/internal/fanout/resume_test.go
+@@ -0,0 +1,294 @@
++package fanout
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/require"
++)
++
++// fourAgentConfig builds a roster of four agents pointed at srvURL, serialized
++// (MaxParallel=1) so an interrupt lands deterministically after N completions.
++// Each persona equals its agent name so resolution falls through to the embedded
++// default (an explicit persona ref distinct from the agent name would require a
++// file on disk).
++func fourAgentConfig(srvURL string) *ReviewConfig {
++	reg := &registry.Registry{
++		Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: srvURL}},
++		Agents: map[string]registry.AgentConfig{
++			"greta": {Provider: "p", Model: "m-greta", Persona: "greta", Temperature: ptrF(0.7)},
++			"kai":   {Provider: "p", Model: "m-kai", Persona: "kai", Temperature: ptrF(0.7)},
++			"mira":  {Provider: "p", Model: "m-mira", Persona: "mira", Temperature: ptrF(0.7)},
++			"otto":  {Provider: "p", Model: "m-otto", Persona: "otto", Temperature: ptrF(0.7)},
++		},
++	}
++	return &ReviewConfig{
++		Registry:    reg,
++		Project:     &registry.ProjectConfig{Agents: []string{"greta", "kai", "mira", "otto"}},
++		Settings:    registry.Settings{PayloadMode: "blocks", TimeoutSecs: 600, MaxParallel: 1},
++		PersonaDirs: registry.PersonaDirs{}, // empty → embedded personas
++	}
++}
++
++// okCompleter is a fake Completer that returns one finding for every call, so a
++// resumed pending agent always succeeds deterministically.
++type okCompleter struct{}
++
++func (okCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
++	return "CRITICAL|auth.go:3|Unchecked call|Guard it|security|15|b() unchecked", nil
++}
++
++// writeAgentStatusFixture scaffolds sources/pool/raw/agent/<agent>/status.json with
++// the given outcome so resume-state tests exercise the real on-disk layout.
++func writeAgentStatusFixture(t *testing.T, reviewDir, agent, status string) {
++	t.Helper()
++	dir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir, agent)
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	st := &AgentStatus{Agent: agent, Status: status}
++	if err := WriteStatus(filepath.Join(dir, statusFile), st); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCompletedAgents_OnlyOKAgentsAreComplete(t *testing.T) {
++	dir := t.TempDir()
++	writeAgentStatusFixture(t, dir, "alpha", StatusOK)
++	writeAgentStatusFixture(t, dir, "bravo", StatusOK)
++	writeAgentStatusFixture(t, dir, "charlie", StatusFailed)
++	writeAgentStatusFixture(t, dir, "delta", StatusTimeout)
++
++	got, err := CompletedAgents(dir)
++	if err != nil {
++		t.Fatalf("CompletedAgents: %v", err)
++	}
++	if len(got) != 2 || !got["alpha"] || !got["bravo"] {
++		t.Fatalf("expected completed = {alpha, bravo}, got %v", got)
++	}
++	if got["charlie"] || got["delta"] {
++		t.Fatalf("failed/timeout agents must be pending, got %v", got)
++	}
++}
++
++func TestCompletedAgents_MissingPoolDirIsEmpty(t *testing.T) {
++	dir := t.TempDir() // nothing fanned out yet
++	got, err := CompletedAgents(dir)
++	if err != nil {
++		t.Fatalf("missing pool dir must not error: %v", err)
++	}
++	if len(got) != 0 {
++		t.Fatalf("expected empty set, got %v", got)
++	}
++}
++
++func TestCompletedAgents_CorruptOrMissingStatusIsPending(t *testing.T) {
++	dir := t.TempDir()
++	writeAgentStatusFixture(t, dir, "alpha", StatusOK)
++
++	// Corrupt status.json: cannot be trusted as complete, so the agent re-runs.
++	corrupt := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "bravo")
++	if err := os.MkdirAll(corrupt, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(corrupt, statusFile), []byte("{not json"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	// Agent dir with no status.json at all (interrupted before it started).
++	if err := os.MkdirAll(filepath.Join(dir, "sources", "pool", poolRawAgentDir, "charlie"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++
++	got, err := CompletedAgents(dir)
++	if err != nil {
++		t.Fatalf("CompletedAgents: %v", err)
++	}
++	if !got["alpha"] {
++		t.Fatalf("alpha (ok) must be complete, got %v", got)
++	}
++	if got["bravo"] || got["charlie"] {
++		t.Fatalf("corrupt/missing status must be pending, got %v", got)
++	}
++}
++
++func TestValidateResumeRange(t *testing.T) {
++	m := &payload.Manifest{Base: "aaa111", Head: "bbb222"}
++
++	if err := ValidateResumeRange(m, ReviewRange{Base: "aaa111", Head: "bbb222"}); err != nil {
++		t.Fatalf("matching range must validate, got %v", err)
++	}
++	if err := ValidateResumeRange(m, ReviewRange{Base: "ZZZ", Head: "bbb222"}); !errors.Is(err, ErrRangeChanged) {
++		t.Fatalf("base mismatch must be ErrRangeChanged, got %v", err)
++	}
++	if err := ValidateResumeRange(m, ReviewRange{Base: "aaa111", Head: "ZZZ"}); !errors.Is(err, ErrRangeChanged) {
++		t.Fatalf("head mismatch must be ErrRangeChanged, got %v", err)
++	}
++}
++
++func TestValidateResumeRoster_SetEquality(t *testing.T) {
++	m := &payload.Manifest{Roster: []string{"alpha", "bravo", "charlie"}}
++
++	// Same set, different order — must pass (order-independent).
++	if err := ValidateResumeRoster(m, []string{"charlie", "alpha", "bravo"}); err != nil {
++		t.Fatalf("same set in different order must validate, got %v", err)
++	}
++	// Extra agent in config.
++	if err := ValidateResumeRoster(m, []string{"alpha", "bravo", "charlie", "delta"}); !errors.Is(err, ErrRosterChanged) {
++		t.Fatalf("added agent must be ErrRosterChanged, got %v", err)
++	}
++	// Missing agent from config.
++	if err := ValidateResumeRoster(m, []string{"alpha", "bravo"}); !errors.Is(err, ErrRosterChanged) {
++		t.Fatalf("removed agent must be ErrRosterChanged, got %v", err)
++	}
++	// Swapped agent (same count, different membership).
++	if err := ValidateResumeRoster(m, []string{"alpha", "bravo", "delta"}); !errors.Is(err, ErrRosterChanged) {
++		t.Fatalf("swapped agent must be ErrRosterChanged, got %v", err)
++	}
++}
++
++func TestFilterPendingSlots(t *testing.T) {
++	slots := []Slot{
++		{Primary: Agent{Name: "alpha"}},
++		{Primary: Agent{Name: "bravo"}},
++		{Primary: Agent{Name: "charlie"}},
++	}
++	done := map[string]bool{"alpha": true, "charlie": true}
++	got := filterPendingSlots(slots, done)
++	require.Len(t, got, 1)
++	require.Equal(t, "bravo", got[0].Primary.Name)
++}
++
++func TestRebuildPool_UnionFromDisk(t *testing.T) {
++	dir := t.TempDir()
++	poolDir := filepath.Join(dir, "sources", "pool")
++	// alpha: ok with a finding; bravo: ok with zero findings; charlie: failed.
++	require.NoError(t, writeResumedAgents(poolDir, []Result{
++		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
++		{Agent: "bravo", Status: StatusOK, Content: ""},
++		{Agent: "charlie", Status: StatusFailed, Err: errors.New("boom")},
++	}))
++
++	sum, statuses, err := RebuildPool(poolDir)
++	require.NoError(t, err)
++	require.Equal(t, 3, sum.Total)
++	require.Equal(t, 2, sum.Succeeded)
++	require.Equal(t, 1, sum.Failed)
++	require.True(t, sum.Partial)
++	require.Len(t, statuses, 3)
++
++	fdata, err := os.ReadFile(filepath.Join(poolDir, findingsFile))
++	require.NoError(t, err)
++	pr, err := stream.ParseSource(fdata)
++	require.NoError(t, err)
++	require.Len(t, pr.Findings, 1, "only alpha contributed a finding")
++
++	ps, err := ReadPoolSummary(dir)
++	require.NoError(t, err)
++	require.Equal(t, 3, ps.Total)
++	require.Equal(t, 1, ps.TotalFindings)
++}
++
++func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
++	dir := t.TempDir()
++	names := []string{"greta", "kai", "mira", "otto"}
++	m := &payload.Manifest{
++		Base: "a", Head: "b", Roster: names,
++		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
++		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
++	}
++	require.NoError(t, WriteManifest(dir, m))
++
++	// Pre-populate greta + kai as already completed on disk (kai found nothing).
++	poolDir := filepath.Join(dir, "sources", "pool")
++	require.NoError(t, writeResumedAgents(poolDir, []Result{
++		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
++		{Agent: "kai", Status: StatusOK, Content: ""},
++	}))
++
++	// Resume runs only the pending slots (mira, otto).
++	var slots []Slot
++	for _, n := range []string{"mira", "otto"} {
++		slots = append(slots, Slot{Primary: Agent{
++			Name: n, Invocation: llmclient.Invocation{Model: n}, PayloadMode: "blocks",
++		}})
++	}
++	prep := &PreparedReview{ID: "2026-06-18_x", Dir: dir, Slots: slots, MaxParallel: 1, manifest: m}
++
++	res, err := ExecuteResume(context.Background(), okCompleter{}, prep)
++	require.NoError(t, err)
++	require.Equal(t, 4, res.Summary.Total, "union covers the whole roster")
++	require.Equal(t, 4, res.Summary.Succeeded)
++	require.False(t, res.Summary.Partial)
++
++	st, err := ReadReviewStatus(dir, "2026-06-18_x")
++	require.NoError(t, err)
++	require.Equal(t, RunCompleted, st.Status, "AC6: all agents complete -> completed")
++
++	// All four per-agent status.json present and ok.
++	done, err := CompletedAgents(dir)
++	require.NoError(t, err)
++	require.Len(t, done, 4)
++}
++
++// TestResume_InterruptThenResumeCompletesAllAgents is the epic 4.1.1 AC9
++// integration test: a 4-agent review is interrupted after 2 agents complete, then
++// resumed against a healthy provider — exercising the real PrepareReview ->
++// ExecuteReview(interrupt) -> PrepareResume -> ExecuteResume stack. Only the 2
++// pending agents are re-run, all 4 end with results on disk, and the final derived
++// status is "completed" (not interrupted/partial).
++func TestResume_InterruptThenResumeCompletesAllAgents(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	repo, base, head := initRepo(t)
++
++	// Phase 1: scaffold + fan out, interrupted after greta + kai complete. The
++	// provider URL is irrelevant here — the fake completer drives this phase.
++	cfg := fourAgentConfig("http://unused")
++	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
++	require.NoError(t, err)
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	fake := &cancelAfterCompleter{cancelAt: 2, cancel: cancel}
++	_, _ = ExecuteReview(ctx, fake, prep)
++
++	done, err := CompletedAgents(prep.Dir)
++	require.NoError(t, err)
++	require.Len(t, done, 2, "exactly 2 agents completed before the interrupt (the engine picks which 2)")
++	st, err := ReadReviewStatus(prep.Dir, prep.ID)
++	require.NoError(t, err)
++	require.Equal(t, RunInterrupted, st.Status)
++
++	// Phase 2: resume against a healthy provider — runs only the pending agents.
++	srv := mockProvider(t)
++	cfg2 := fourAgentConfig(srv.URL)
++	rprep, info, err := PrepareResume(context.Background(), cfg2, prep.Dir, reviewReq(repo, repo, base, head))
++	require.NoError(t, err)
++	require.Len(t, info.Completed, 2)
++	require.Len(t, info.Pending, 2)
++	require.ElementsMatch(t, []string{"greta", "kai", "mira", "otto"},
++		append(append([]string{}, info.Completed...), info.Pending...), "completed + pending = full roster")
++	require.Len(t, rprep.Slots, 2, "AC4: only the pending agents fan out")
++
++	res, err := ExecuteResume(context.Background(), llmclient.New(), rprep)
++	require.NoError(t, err)
++	require.Equal(t, 4, res.Summary.Total)
++	require.Equal(t, 4, res.Summary.Succeeded, "AC9: all four agents have results")
++	require.False(t, res.Summary.Partial)
++
++	doneAfter, err := CompletedAgents(prep.Dir)
++	require.NoError(t, err)
++	require.Len(t, doneAfter, 4)
++	stAfter, err := ReadReviewStatus(prep.Dir, prep.ID)
++	require.NoError(t, err)
++	require.Equal(t, RunCompleted, stAfter.Status, "AC6/AC9: final status is completed, not interrupted")
++	require.False(t, stAfter.Partial)
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index a09eada..bebe916 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -258,17 +258,15 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
+ }
+ 
+-// ExecuteReview runs phase two: fan out the prepared roster under the global
+-// timeout, then write per-agent artifacts, the merged pool, summary.json, and
+-// the finalized manifest (Partial reflecting the outcome). The completer is
+-// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+-//
+-// Artifacts are always persisted, even when every agent fails; in that case the
+-// populated *ReviewResult is still returned alongside the wrapped
+-// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+-// remains for inspection. The background MCP path discards the error (status is
+-// read from disk) while the CLI maps it to the process exit code.
+-func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
++// runEngine wires the optional read-only tool harness for p's tool-enabled slots
++// (a head snapshot → path jail → dispatcher, shared across the run, plus a
++// per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
++// and returns the per-agent results together with the manifest review-stage entry
++// (snapshot provenance already stamped). Best-effort harness setup: a snapshot or
++// jail failure logs and degrades tool agents to single-shot rather than failing
++// the review. Extracted from ExecuteReview so ExecuteResume runs the identical
++// engine setup; the two differ only in how they persist the results.
++func runEngine(ctx context.Context, completer Completer, p *PreparedReview, poolDir string) ([]Result, *payload.ReviewStage) {
+ 	runCtx := ctx
+ 	if p.TimeoutSec > 0 {
+ 		var cancel context.CancelFunc
+@@ -276,20 +274,12 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 		defer cancel()
+ 	}
+ 
+-	poolDir := filepath.Join(p.Dir, "sources", "pool")
+-
+-	// Wire the read-only tool harness only when a slot is tool-enabled: a snapshot
+-	// of the repo at head → path jail → dispatcher, shared across the run, plus a
+-	// per-agent transcript writer under the pool raw dir. Best-effort: a snapshot
+-	// or jail failure logs and leaves tool agents to degrade to single-shot
+-	// (tools_degraded) rather than failing the whole review.
+ 	// Snapshot provenance for the manifest review stage (AC 03-02 / 03-03). Zero
+-	// unless a snapshot actually runs and succeeds below; stamped onto the review
+-	// stage after fan-out.
++	// unless a snapshot actually runs and succeeds below.
+ 	var snapMode, snapHeadSHA, snapWorktreePath string
+ 	// Seed the engine with the review_id-correlated context logger so every agent
+-	// log line is greppable by review (AC9 + AC10 together once invokeAgent adds
+-	// agent_name). FromContext returns a never-nil discard logger if none is set.
++	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
++	// discard logger if none is set.
+ 	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
+ 	if anyToolAgent(p.Slots) && p.Head != "" {
+ 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+@@ -328,6 +318,32 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 
+ 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
+ 
++	// Classify the run into the manifest's review-stage entry and stamp the
++	// snapshot provenance (nil when no agent ran with tools).
++	stage := reviewStageFor(results)
++	if stage != nil {
++		stage.SnapshotMode = snapMode
++		stage.HeadSHA = snapHeadSHA
++		stage.SnapshotWorktreePath = snapWorktreePath
++	}
++	return results, stage
++}
++
++// ExecuteReview runs phase two: fan out the prepared roster under the global
++// timeout, then write per-agent artifacts, the merged pool, summary.json, and
++// the finalized manifest (Partial reflecting the outcome). The completer is
++// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
++//
++// Artifacts are always persisted, even when every agent fails; in that case the
++// populated *ReviewResult is still returned alongside the wrapped
++// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
++// remains for inspection. The background MCP path discards the error (status is
++// read from disk) while the CLI maps it to the process exit code.
++func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
++	poolDir := filepath.Join(p.Dir, "sources", "pool")
++
++	results, stage := runEngine(ctx, completer, p, poolDir)
++
+ 	// Detect an external interrupt (SIGINT/SIGTERM cancelled the root context) so
+ 	// the manifest can record it. The check is on the PARENT ctx, not runCtx: a
+ 	// review timeout cancels only the child runCtx (DeadlineExceeded), while a
+@@ -364,17 +380,9 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	m.CompletedAt = time.Now().UTC()
+ 	m.Interrupted = interrupted
+ 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
+-	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
+-	// unchanged.
+-	m.Review = reviewStageFor(results)
+-	// Stamp the snapshot provenance (AC 03-02 / 03-03) onto the review stage when
+-	// one is present. When no snapshot ran (snapshot failed, or no tool agent), the
+-	// omitempty snapshot_mode/head_sha drop out and snapshot_worktree_path stays "".
+-	if m.Review != nil {
+-		m.Review.SnapshotMode = snapMode
+-		m.Review.HeadSHA = snapHeadSHA
+-		m.Review.SnapshotWorktreePath = snapWorktreePath
+-	}
++	// 05-04), with snapshot provenance already stamped by runEngine. nil when no
++	// agent ran with tools, so a pure 1.x roster's manifest is unchanged.
++	m.Review = stage
+ 	if err := WriteManifest(p.Dir, &m); err != nil {
+ 		return nil, err
+ 	}

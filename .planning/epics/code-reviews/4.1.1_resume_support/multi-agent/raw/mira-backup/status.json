@@ -1,0 +1,9 @@
+{
+  "agent_name": "mira-backup",
+  "model": "minimax-m2.7",
+  "status": "ok",
+  "duration_ms": 64935,
+  "fallback_used": true,
+  "fallback_from": "mira",
+  "original_error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+}

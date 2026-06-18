@@ -1,0 +1,3 @@
+MEDIUM|internal/fanout/resume.go:104|Symlink traversal in agent status scan|Verify resolved path stays within reviewDir before reading|security|10|filepath.Join(rawDir, e.Name(), statusFile) follows symlinks|greta
+LOW|cmd/atcr/resume_test.go:33|Test modifies global user config directory|Use t.TempDir and override HOME env var|maintainability|5|os.UserHomeDir() writes to real ~/.config/atcr|greta
+LOW|internal/fanout/resume.go:318|Unbounded file read during pool rebuild|Add size limit or stream parsing|security|10|os.ReadFile on findings.txt without size check|greta
