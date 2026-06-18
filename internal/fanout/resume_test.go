@@ -167,6 +167,16 @@ func TestFilterPendingSlots(t *testing.T) {
 	require.Equal(t, "bravo", got[0].Primary.Name)
 }
 
+func TestFilterPendingSlots_EmptySlots(t *testing.T) {
+	// nil and empty inputs must return nil, not a non-nil empty allocation.
+	if got := filterPendingSlots(nil, nil); got != nil {
+		t.Fatalf("expected nil for nil slots, got %v", got)
+	}
+	if got := filterPendingSlots([]Slot{}, nil); got != nil {
+		t.Fatalf("expected nil for empty slots, got %v", got)
+	}
+}
+
 func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	poolDir := filepath.Join(dir, "sources", "pool")
