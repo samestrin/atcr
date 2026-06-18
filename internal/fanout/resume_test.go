@@ -273,6 +273,27 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	require.Equal(t, 1, ps.TotalFindings)
 }
 
+// TestRebuildPool_HardFailsOnCorruptCompletedFindings verifies that a completed
+// (StatusOK) agent whose findings.txt is unparseable fails the rebuild loudly
+// rather than being silently dropped — which would let the resumed aggregate
+// diverge from the original run (short TotalFindings, missing merged rows) with
+// no signal.
+func TestRebuildPool_HardFailsOnCorruptCompletedFindings(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+	}))
+	// Corrupt alpha's findings.txt: strip the version header so ParseSource fails.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsFile),
+		[]byte("garbage without a version header\n"), 0o644))
+
+	_, _, err := RebuildPool(poolDir, []string{"alpha"})
+	require.Error(t, err,
+		"a completed agent's unparseable findings.txt must fail the rebuild, not be silently dropped")
+}
+
 // TestRebuildPool_FindingsMergedInRosterOrder verifies the merged findings.txt
 // rows follow the manifest roster order, not the os.ReadDir lexicographic
 // order. A fresh WritePool iterates over results in roster order; RebuildPool
