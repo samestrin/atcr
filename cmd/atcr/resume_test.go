@@ -151,7 +151,11 @@ func execResume(t *testing.T, args ...string) (int, string) {
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	err := root.ExecuteContext(context.Background())
+	// Bound the run so a stuck command (e.g. a provider that never replies)
+	// fails fast here instead of hanging until the package-wide `go test` timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := root.ExecuteContext(ctx)
 	out := buf.String()
 	if err != nil {
 		out += err.Error()
