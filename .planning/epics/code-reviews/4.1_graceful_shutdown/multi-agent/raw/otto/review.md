@@ -1,0 +1,1 @@
+MEDIUM|cmd/atcr/main.go:45|Potential race condition on forceExit and gracefulShutdownTimeout|Use atomic values or a mutex for package-level variables modified by tests|correctness|20|Package variables forceExit and gracefulShutdownTimeout are modified in tests without synchronization|otto

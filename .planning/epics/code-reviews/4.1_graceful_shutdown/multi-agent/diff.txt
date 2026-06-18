@@ -1,0 +1,562 @@
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index d2e4df7..8077fe4 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -7,16 +7,42 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
++	"io"
+ 	"os"
++	"os/signal"
+ 	"strings"
++	"syscall"
++	"time"
+ 
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/spf13/cobra"
+ )
+ 
++// gracefulShutdownTimeout bounds how long the process waits for cooperative
++// shutdown after the first interrupt signal before forcing exit. Hardcoded per
++// epic 4.1 (no flag — a --shutdown-timeout would collide with review's
++// --timeout); a package var only so tests can shrink it.
++var gracefulShutdownTimeout = 10 * time.Second
++
++// forceExit terminates the process when the grace period elapses. A package var
++// so tests can substitute a capture and assert the exit code without the test
++// binary actually exiting.
++var forceExit = os.Exit
++
+ func main() {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++
++	// Intercept SIGINT/SIGTERM and cancel the root context so the fanout engine
++	// drains cooperatively (no new agents start; in-flight ones finish or time
++	// out) and partial results are preserved. Buffer 1 so the signal is never
++	// dropped if it arrives before the goroutine blocks on the channel.
++	sigCh := make(chan os.Signal, 1)
++	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
++	handleSignals(sigCh, cancel, os.Stderr)
++
+ 	root := newRootCmd()
+-	if err := root.ExecuteContext(context.Background()); err != nil {
++	if err := root.ExecuteContext(ctx); err != nil {
+ 		code := exitCode(err)
+ 		if code != 0 {
+ 			fmt.Fprintln(os.Stderr, "atcr:", err)
+@@ -25,6 +51,22 @@ func main() {
+ 	}
+ }
+ 
++// handleSignals starts a goroutine that, on the first SIGINT/SIGTERM, prints a
++// graceful-shutdown notice to out, cancels the root context, and then force-exits
++// with code 1 if cooperative shutdown overruns gracefulShutdownTimeout. SIGTERM
++// and SIGINT are treated identically — both mean "shut down". Only the first
++// signal is handled; the grace timer is the hard backstop against a hang.
++func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Writer) {
++	go func() {
++		<-sigCh
++		_, _ = fmt.Fprintln(out, "\nReceived interrupt, shutting down gracefully...")
++		cancel()
++		<-time.After(gracefulShutdownTimeout)
++		_, _ = fmt.Fprintln(out, "Graceful shutdown timed out, forcing exit")
++		forceExit(1)
++	}()
++}
++
+ // Exit-code semantics, centralized: 0 success, 1 failure (including
+ // --fail-on threshold violations), 2 usage or configuration errors.
+ const (
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index dc519c9..b009d2a 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -6,7 +6,11 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"os"
++	"sync/atomic"
++	"syscall"
+ 	"testing"
++	"time"
+ 
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/stretchr/testify/assert"
+@@ -216,6 +220,68 @@ func TestPersistentPreRunE_InvalidFormat(t *testing.T) {
+ 	assert.Equal(t, 2, exitCode(err), "an invalid --log-format is a usage error")
+ }
+ 
++// --- Graceful shutdown / signal handling (epic 4.1) -----------------------
++
++// stubForceExit replaces the package forceExit and gracefulShutdownTimeout for a
++// test, returning a pointer to the captured exit code (-1 until forceExit fires)
++// and registering cleanup. The shrunk timeout keeps the handler goroutine from
++// blocking for the real 10s grace period.
++func stubForceExit(t *testing.T, timeout time.Duration) *int32 {
++	t.Helper()
++	origExit, origTimeout := forceExit, gracefulShutdownTimeout
++	t.Cleanup(func() { forceExit = origExit; gracefulShutdownTimeout = origTimeout })
++	var code int32 = -1
++	forceExit = func(c int) { atomic.StoreInt32(&code, int32(c)) }
++	gracefulShutdownTimeout = timeout
++	return &code
++}
++
++// TestHandleSignals_CancelsContextOnSignal verifies a single SIGINT cancels the
++// root context (AC2/AC3 — the fanout engine drains cooperatively off this signal)
++// and prints the graceful-shutdown notice to the writer (AC1).
++func TestHandleSignals_CancelsContextOnSignal(t *testing.T) {
++	code := stubForceExit(t, 15*time.Millisecond)
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	sigCh := make(chan os.Signal, 1)
++	var buf bytes.Buffer
++	handleSignals(sigCh, cancel, &buf)
++
++	sigCh <- syscall.SIGINT
++
++	select {
++	case <-ctx.Done():
++	case <-time.After(time.Second):
++		t.Fatal("context was not cancelled after SIGINT")
++	}
++	assert.ErrorIs(t, ctx.Err(), context.Canceled)
++
++	// Once the grace timer fires forceExit, the goroutine has returned, so reading
++	// buf is race-free.
++	require.Eventually(t, func() bool { return atomic.LoadInt32(code) == 1 }, time.Second, 5*time.Millisecond)
++	assert.Contains(t, buf.String(), "shutting down gracefully", "AC1: graceful notice printed")
++}
++
++// TestHandleSignals_ForceExitsAfterGracePeriod verifies that when cooperative
++// shutdown overruns the grace period the handler force-exits with code 1 and
++// prints the timeout notice (AC7).
++func TestHandleSignals_ForceExitsAfterGracePeriod(t *testing.T) {
++	code := stubForceExit(t, 10*time.Millisecond)
++
++	_, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	sigCh := make(chan os.Signal, 1)
++	var buf bytes.Buffer
++	handleSignals(sigCh, cancel, &buf)
++
++	sigCh <- syscall.SIGTERM // SIGTERM behaves identically to SIGINT
++
++	require.Eventually(t, func() bool { return atomic.LoadInt32(code) == 1 }, time.Second, 5*time.Millisecond)
++	assert.Equal(t, int32(1), atomic.LoadInt32(code), "AC7: force-exit code 1 after grace period")
++	assert.Contains(t, buf.String(), "forcing exit", "AC7: timeout notice printed")
++}
++
+ func TestRootCmd_SubcommandsUseRunE(t *testing.T) {
+ 	// Handlers must return errors (RunE) so exit codes are mapped centrally
+ 	// in main() — no os.Exit inside handlers.
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 7a28f54..85e696c 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -114,6 +114,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 
+ 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
+ 	if err != nil {
++		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
++		// here; route it to the graceful interrupt path (exit 1 + notice) rather
++		// than a confusing "review failed: context canceled" usage error (exit 2).
++		if errors.Is(ctx.Err(), context.Canceled) {
++			return interruptedBeforeFanout(cmd)
++		}
+ 		// A range failure aborts the pipeline before any agent runs — a usage
+ 		// error (exit 2), per AC 03-02 Error Scenario 2 ("review failed: ...").
+ 		return usageError(fmt.Errorf("review failed: %w", err))
+@@ -152,6 +158,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	// plain exit 1 with artifacts preserved on disk.
+ 	prep, err := fanout.PrepareReview(ctx, cfg, req)
+ 	if err != nil {
++		// An interrupt during payload build / scaffolding cancels the context; no
++		// review directory exists yet, so route to the graceful no-results path
++		// instead of a usage error.
++		if errors.Is(ctx.Err(), context.Canceled) {
++			return interruptedBeforeFanout(cmd)
++		}
+ 		return usageError(err)
+ 	}
+ 
+@@ -173,6 +185,19 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	}
+ 
+ 	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
++
++	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
++	// agents are already persisted by WritePool and the manifest is marked
++	// interrupted, so report what was saved and stop — running reconcile/verify on
++	// a cancelled context would only fail. The check is on the parent ctx, the one
++	// signal that survives the engine's per-agent timeout classification. Exit 1
++	// (consistent with the 10s force-exit path); skips the normal success line so
++	// an interrupted run is never reported as "succeeded".
++	if errors.Is(ctx.Err(), context.Canceled) {
++		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
++		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
++	}
++
+ 	if result != nil {
+ 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
+ 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+@@ -234,6 +259,33 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	return nil
+ }
+ 
++// interruptedBeforeFanout handles a SIGINT/SIGTERM that arrived before the
++// fan-out started (during range resolution, config load, or scaffolding). No
++// review directory exists yet, so there are no partial results to preserve — the
++// notice just confirms the interrupt and exits 1, consistent with the post-fan-out
++// interrupt path (and never the misleading exit-2 "review failed" usage error).
++func interruptedBeforeFanout(cmd *cobra.Command) error {
++	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "\n⚠️ Review interrupted before it started; no partial results to save.")
++	return &codedError{code: exitFailure, err: errors.New("review interrupted")}
++}
++
++// interruptMessage renders the user-facing notice for a signal-interrupted
++// review (epic 4.1 AC5/AC6). result may be nil when ExecuteReview was cancelled
++// before producing one, so the review id and directory fall back to the
++// PreparedReview, which is always available before the fan-out starts. It
++// deliberately references only `atcr status <id>` — not a `--resume` flag, which
++// is out of scope and does not exist.
++func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) string {
++	done, total, dir := 0, 0, prep.Dir
++	if result != nil {
++		done, total, dir = result.Summary.Succeeded, result.Summary.Total, result.Dir
++	}
++	return fmt.Sprintf(
++		"\n⚠️ Review interrupted. %d/%d agents completed; partial results saved to %s.\n"+
++			"   Run 'atcr status %s' to inspect.\n",
++		done, total, dir, prep.ID)
++}
++
+ // absFn resolves a path to absolute form. It is a package var so a test can
+ // substitute a failing resolver — filepath.Abs only fails when os.Getwd fails on
+ // a relative path, which cannot be forced in-process (mirrors the serveFn seam).
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index c75d8dc..92c4976 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -145,6 +145,47 @@ func TestRunReview_NoLocalLogger(t *testing.T) {
+ 	assert.Contains(t, out, "review_id=rev-2", "must also attach the review id")
+ }
+ 
++// --- Graceful-shutdown interrupt notice (epic 4.1) ------------------------
++
++// TestInterruptMessage_NilResultFallsBackToPrep verifies the warning is rendered
++// from the PreparedReview when ExecuteReview returned no result (interrupted
++// before producing one), reports 0/0, references only commands that exist, and
++// never mentions the out-of-scope --resume flag (AC5/AC6).
++func TestInterruptMessage_NilResultFallsBackToPrep(t *testing.T) {
++	prep := &fanout.PreparedReview{ID: "2026-06-17_feat", Dir: "/x/.atcr/reviews/2026-06-17_feat"}
++	msg := interruptMessage(nil, prep)
++	assert.Contains(t, msg, "Review interrupted", "AC5: clear interrupt notice")
++	assert.Contains(t, msg, "0/0 agents completed", "nil result falls back to a zero tally")
++	assert.Contains(t, msg, "/x/.atcr/reviews/2026-06-17_feat", "AC6: prints the review directory")
++	assert.Contains(t, msg, "atcr status 2026-06-17_feat", "AC6: points at a command that exists")
++	assert.NotContains(t, msg, "--resume", "must not reference the out-of-scope --resume flag")
++}
++
++// TestInterruptMessage_UsesResultCounts verifies that when a partial result is
++// present the warning reports its succeeded/total tally and its on-disk dir.
++func TestInterruptMessage_UsesResultCounts(t *testing.T) {
++	prep := &fanout.PreparedReview{ID: "rev", Dir: "/fallback"}
++	result := &fanout.ReviewResult{ID: "rev", Dir: "/real/dir", Summary: fanout.Summary{Total: 5, Succeeded: 2, Failed: 1, Partial: true}}
++	msg := interruptMessage(result, prep)
++	assert.Contains(t, msg, "2/5 agents completed", "reports the partial tally")
++	assert.Contains(t, msg, "/real/dir", "uses the result's dir when present")
++}
++
++// TestInterruptedBeforeFanout_ExitOneWithNotice verifies an interrupt that lands
++// before the fan-out starts exits 1 with a graceful notice — not the misleading
++// exit-2 "review failed" usage error (independent-review MED).
++func TestInterruptedBeforeFanout_ExitOneWithNotice(t *testing.T) {
++	cmd := newReviewCmd()
++	var buf bytes.Buffer
++	cmd.SetErr(&buf)
++
++	err := interruptedBeforeFanout(cmd)
++	require.Error(t, err)
++	assert.Equal(t, exitFailure, exitCode(err), "interrupt before fan-out exits 1, not the exit-2 usage error")
++	assert.Contains(t, buf.String(), "Review interrupted before it started")
++	assert.NotContains(t, err.Error(), "review failed", "must not surface as a range/usage failure")
++}
++
+ func TestCLIOverrides_MaxParallelSet(t *testing.T) {
+ 	cmd := newReviewCmd()
+ 	require.NoError(t, cmd.ParseFlags([]string{"--max-parallel", "3"}))
+diff --git a/internal/fanout/interrupt_test.go b/internal/fanout/interrupt_test.go
+new file mode 100644
+index 0000000..346d5d5
+--- /dev/null
++++ b/internal/fanout/interrupt_test.go
+@@ -0,0 +1,120 @@
++package fanout
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// cancelAfterCompleter succeeds for the first cancelAt completions and cancels
++// the parent context on the cancelAt-th call, simulating a SIGINT landing after
++// that many agents finished. The engine checks ctx.Err() before each invocation,
++// so once cancelled it starts no further agents. Driven serially (MaxParallel=1),
++// this makes the succeeded count deterministic regardless of slot scheduling.
++type cancelAfterCompleter struct {
++	mu       sync.Mutex
++	count    int
++	cancelAt int
++	cancel   context.CancelFunc
++}
++
++func (c *cancelAfterCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
++	c.mu.Lock()
++	c.count++
++	n := c.count
++	c.mu.Unlock()
++	if n > c.cancelAt {
++		// Defensive: unreached under MaxParallel=1 because the engine short-circuits
++		// post-cancel without calling Complete. Respect cancellation if it ever is.
++		return "", ctx.Err()
++	}
++	if n == c.cancelAt {
++		c.cancel() // the interrupt arrives just as the cancelAt-th agent completes
++	}
++	return "CRITICAL|auth.go:3|Unchecked call|Guard it|security|15|b() unchecked", nil
++}
++
++// TestExecuteReview_InterruptPreservesPartialAndMarksInterrupted is the epic 4.1
++// AC9 integration test: a review is interrupted (root context cancelled) after 2
++// agents complete. The 2 completed agents' results are preserved on disk, and the
++// run is marked interrupted in the manifest and derived as the "interrupted"
++// state by ReadReviewStatus — distinguishable from a clean completion. No new
++// agents start after the interrupt (AC3); completed results are never lost (AC4,
++// AC5 success criteria).
++func TestExecuteReview_InterruptPreservesPartialAndMarksInterrupted(t *testing.T) {
++	dir := t.TempDir()
++	names := []string{"greta", "kai", "mira", "otto"}
++
++	m := &payload.Manifest{
++		Base: "a", Head: "b", Roster: names,
++		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
++		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
++	}
++	require.NoError(t, WriteManifest(dir, m))
++
++	var slots []Slot
++	for _, n := range names {
++		slots = append(slots, Slot{Primary: Agent{
++			Name:        n,
++			Invocation:  llmclient.Invocation{Model: n},
++			PayloadMode: "blocks",
++		}})
++	}
++
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	fake := &cancelAfterCompleter{cancelAt: 2, cancel: cancel}
++
++	// MaxParallel=1 serializes the fan-out so exactly 2 agents complete before the
++	// cancellation lands and the remaining slots short-circuit to timeout.
++	prep := &PreparedReview{
++		ID: "2026-06-17_interrupt", Dir: dir,
++		Slots: slots, MaxParallel: 1, manifest: m,
++	}
++
++	res, err := ExecuteReview(ctx, fake, prep)
++	require.NoError(t, err, "≥1 agent succeeded, so no run-level error despite the interrupt")
++	require.NotNil(t, res)
++
++	// Partial results preserved: exactly the 2 agents that ran before the interrupt.
++	assert.Equal(t, 2, res.Summary.Succeeded, "AC4: the 2 completed agents' results are preserved")
++	assert.Equal(t, 2, res.Summary.Failed, "the 2 not-yet-started agents short-circuit (AC3: no new agents start)")
++	assert.True(t, res.Summary.Partial, "an interrupted run with partial success is partial")
++
++	// Manifest records the interrupt (the durable marker).
++	mdata, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
++	require.NoError(t, err)
++	var got payload.Manifest
++	require.NoError(t, json.Unmarshal(mdata, &got))
++	assert.True(t, got.Interrupted, "AC4: manifest records the interrupt")
++
++	// Derived status reports interrupted — the single source of truth read by
++	// `atcr status` and the MCP handler.
++	st, err := ReadReviewStatus(dir, "2026-06-17_interrupt")
++	require.NoError(t, err)
++	assert.Equal(t, RunInterrupted, st.Status, "AC9: status derives to interrupted, not completed")
++
++	// Concrete on-disk evidence: exactly 2 per-agent status.json marked ok.
++	matches, err := filepath.Glob(filepath.Join(dir, "sources", "pool", "raw", "agent", "*", statusFile))
++	require.NoError(t, err)
++	okCount := 0
++	for _, p := range matches {
++		b, rerr := os.ReadFile(p)
++		require.NoError(t, rerr)
++		var as AgentStatus
++		require.NoError(t, json.Unmarshal(b, &as))
++		if as.Status == StatusOK {
++			okCount++
++		}
++	}
++	assert.Equal(t, 2, okCount, "AC9: exactly 2 agent results persisted to disk")
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 54dd565..a09eada 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -327,6 +327,15 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	}
+ 
+ 	results := NewEngine(completer, opts...).Run(runCtx, p.Slots)
++
++	// Detect an external interrupt (SIGINT/SIGTERM cancelled the root context) so
++	// the manifest can record it. The check is on the PARENT ctx, not runCtx: a
++	// review timeout cancels only the child runCtx (DeadlineExceeded), while a
++	// signal cancels the parent (Canceled). The engine has already collapsed both
++	// into StatusTimeout per-agent, so the parent ctx is the only signal that still
++	// distinguishes a user interrupt from an exhausted time budget.
++	interrupted := errors.Is(ctx.Err(), context.Canceled)
++
+ 	sum, err := WritePool(poolDir, results)
+ 	if err != nil {
+ 		// Persistence failed after the fan-out ran. Write a best-effort failure
+@@ -341,6 +350,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 		// Nil guard: PreparedReview may be constructed directly in tests without a manifest.
+ 		if p.manifest != nil {
+ 			p.manifest.CompletedAt = time.Now().UTC()
++			p.manifest.Interrupted = interrupted
+ 			_ = WriteManifest(p.Dir, p.manifest) // best-effort; if this also fails, stale inference covers it
+ 		}
+ 		return nil, err
+@@ -352,6 +362,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	m := *p.manifest
+ 	m.Partial = sum.Partial
+ 	m.CompletedAt = time.Now().UTC()
++	m.Interrupted = interrupted
+ 	// Record the review-stage entry listing the tool-using agents (Epic 2.0, AC
+ 	// 05-04). nil when no agent ran with tools, so a pure 1.x roster's manifest is
+ 	// unchanged.
+diff --git a/internal/fanout/status.go b/internal/fanout/status.go
+index 699d6d1..9329490 100644
+--- a/internal/fanout/status.go
++++ b/internal/fanout/status.go
+@@ -49,6 +49,13 @@ const (
+ 	RunCompleted  = "completed"
+ 	RunFailed     = "failed"
+ 	RunStale      = "stale"
++	// RunInterrupted is the terminal state of a fan-out cut short by an external
++	// signal (SIGINT/SIGTERM): its summary.json is present (partial results were
++	// preserved) but manifest.interrupted is set, so the run is reported as
++	// interrupted rather than completed/failed (epic 4.1). It takes precedence
++	// over the succeeded/failed tally because the cause of incompleteness is the
++	// interrupt, not the agents' outcomes.
++	RunInterrupted = "interrupted"
+ )
+ 
+ // staleGraceSecs is added atop the manifest's effective timeout before a
+@@ -202,6 +209,13 @@ func ReadReviewStatus(reviewDir, id string) (*ReviewStatus, error) {
+ 	} else {
+ 		st.Status = RunFailed
+ 	}
++	// A signal-interrupted run (manifest.interrupted) is reported as interrupted
++	// regardless of the succeeded/failed tally: the run was cut short by the user,
++	// so its partial result set must not masquerade as a clean completion (or a
++	// genuine all-agents-failure). Applied last so it overrides both branches.
++	if m.Interrupted {
++		st.Status = RunInterrupted
++	}
+ 	return st, nil
+ }
+ 
+diff --git a/internal/fanout/status_test.go b/internal/fanout/status_test.go
+index d846e3a..8227e7a 100644
+--- a/internal/fanout/status_test.go
++++ b/internal/fanout/status_test.go
+@@ -120,6 +120,51 @@ func TestReadReviewStatus_CompletedNeverStale(t *testing.T) {
+ 	assert.Equal(t, RunCompleted, st.Status)
+ }
+ 
++// An interrupted review (manifest.interrupted=true) with at least one successful
++// agent reports "interrupted", NOT "completed": the run was cut short by a signal,
++// so the partial result set must be distinguishable from a clean completion
++// (epic 4.1 AC4). Interrupted takes precedence over the succeeded/failed tally.
++func TestReadReviewStatus_InterruptedWithPartialSuccess(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta","stevie"],"started_at":"2026-06-17T12:00:00Z","timeout_secs":600,"interrupted":true,"partial":true}`)
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
++		[]byte(`{"total":2,"succeeded":1,"failed":1,"partial":true,"total_findings":3}`), 0o644))
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunInterrupted, st.Status, "AC4: a signal-interrupted run reports interrupted, not completed")
++	assert.True(t, st.Partial, "an interrupted partial run is still partial")
++	assert.Equal(t, 2, st.AgentsDone, "both agents were processed (1 ok + 1 failed)")
++	assert.Equal(t, 0, st.AgentsPending)
++}
++
++// An interrupted review where every agent failed still reports "interrupted"
++// (the user cut it short) rather than "failed": the run never got a fair chance
++// to complete, so the cause-of-incompleteness is the interrupt, not failure.
++func TestReadReviewStatus_InterruptedOverridesFailed(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-17T12:00:00Z","timeout_secs":600,"interrupted":true,"partial":false}`)
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
++		[]byte(`{"total":1,"succeeded":0,"failed":1,"partial":false,"total_findings":0}`), 0o644))
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunInterrupted, st.Status, "interrupted overrides failed when the run was signal-cancelled")
++}
++
++// A normal completed review (no interrupted flag) is unaffected — interrupted is
++// off by default and an absent flag never reclassifies a clean completion.
++func TestReadReviewStatus_NotInterruptedByDefault(t *testing.T) {
++	dir := t.TempDir()
++	writeManifestOnly(t, dir, `{"base":"a","head":"b","roster":["greta"],"started_at":"2026-06-17T12:00:00Z","timeout_secs":600,"partial":false}`)
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool"), 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "pool", summaryFile),
++		[]byte(`{"total":1,"succeeded":1,"failed":0,"partial":false,"total_findings":0}`), 0o644))
++	st, err := ReadReviewStatus(dir, "x")
++	require.NoError(t, err)
++	assert.Equal(t, RunCompleted, st.Status, "a manifest without interrupted reports completed as before")
++}
++
+ // A stale (dead) review has no completion signal, so EnsureReviewComplete must
+ // reject it like an in-progress one — reconciling a dead, possibly partial agent
+ // set would emit a complete-looking verdict from incomplete data. Unlike
+diff --git a/internal/payload/manifest.go b/internal/payload/manifest.go
+index 579d8ab..c32c015 100644
+--- a/internal/payload/manifest.go
++++ b/internal/payload/manifest.go
+@@ -26,6 +26,15 @@ type Manifest struct {
+ 	CompletedAt     time.Time         `json:"completed_at,omitempty"`
+ 	Partial         bool              `json:"partial"`
+ 
++	// Interrupted is true when the fan-out was cut short by an external signal
++	// (SIGINT/SIGTERM cancelling the root context), as opposed to running to
++	// completion or hitting its own timeout (epic 4.1). It is the durable marker
++	// that ReadReviewStatus derives the "interrupted" run state from, so partial
++	// results from a Ctrl-C are distinguishable from a clean completion. omitempty
++	// keeps a never-interrupted manifest byte-identical to the pre-4.1 shape and
++	// lets older readers ignore it.
++	Interrupted bool `json:"interrupted,omitempty"`
++
+ 	// Stages records which review stages ran. Reserved for the agentic stages
+ 	// (Epics 3.0–5.0): 1.x records ["review"]; later runs append "verify",
+ 	// "debate", etc. Optional so a manifest written without it parses cleanly.
