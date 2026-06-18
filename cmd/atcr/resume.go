@@ -61,6 +61,15 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
+	// --fresh, --thorough, and --min-severity only apply to the --verify stage;
+	// --verify is already rejected above, so silently accepting them would
+	// discard the flag without any feedback to the user.
+	for _, f := range []string{"fresh", "thorough", "min-severity"} {
+		if cmd.Flags().Changed(f) {
+			return usageError(fmt.Errorf("--resume does not support --%s; this flag only applies to --verify, which is not supported with --resume", f))
+		}
+	}
+
 	dir, err := resolveResumeDir(anchor)
 	if err != nil {
 		return usageError(err)
