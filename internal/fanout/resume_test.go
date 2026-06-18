@@ -177,6 +177,54 @@ func TestFilterPendingSlots_EmptySlots(t *testing.T) {
 	}
 }
 
+// TestExecuteResume_BestEffortManifestOnInterrupt verifies that when WriteManifest
+// fails after RebuildPool succeeds and the context was cancelled, ExecuteResume
+// stamps Interrupted=true via a best-effort write (mirroring ExecuteReview).
+func TestExecuteResume_BestEffortManifestOnInterrupt(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{"greta", "kai"}
+	m := &payload.Manifest{
+		Base: "a", Head: "b", Roster: names,
+		StartedAt: time.Now().UTC(), TimeoutSecs: 600, PayloadMode: "blocks",
+		PerAgentPayload: map[string]string{}, Stages: []string{"review"},
+	}
+	require.NoError(t, WriteManifest(dir, m))
+
+	// Pre-populate both agents as already-completed so RebuildPool succeeds.
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "greta", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+		{Agent: "kai", Status: StatusOK, Content: ""},
+	}))
+
+	// Make the review dir read-only so atomicfs.WriteFileAtomic (temp+rename)
+	// cannot create a new temp file in the directory, causing WriteManifest to fail.
+	require.NoError(t, os.Chmod(dir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	// Simulate an interrupted context.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	prep := &PreparedReview{
+		ID: "test-id", Dir: dir,
+		Slots:       []Slot{},
+		MaxParallel: 1, manifest: m,
+	}
+	_, err := ExecuteResume(ctx, okCompleter{}, prep)
+	// ExecuteResume should return the write error
+	require.Error(t, err, "WriteManifest failure must propagate")
+
+	// Restore writability so we can inspect state
+	require.NoError(t, os.Chmod(dir, 0o755))
+
+	// Best-effort fallback must have stamped Interrupted=true on the old manifest.
+	mAfter, err2 := ReadManifest(dir)
+	require.NoError(t, err2)
+	require.True(t, mAfter.Interrupted,
+		"best-effort fallback must stamp Interrupted=true when WriteManifest fails under interruption")
+}
+
 func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	poolDir := filepath.Join(dir, "sources", "pool")
