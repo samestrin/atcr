@@ -1,9 +1,12 @@
 package fanout
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/samestrin/atcr/internal/payload"
 )
 
 // writeAgentStatusFixture scaffolds sources/pool/raw/agent/<agent>/status.json with
@@ -77,5 +80,40 @@ func TestCompletedAgents_CorruptOrMissingStatusIsPending(t *testing.T) {
 	}
 	if got["bravo"] || got["charlie"] {
 		t.Fatalf("corrupt/missing status must be pending, got %v", got)
+	}
+}
+
+func TestValidateResumeRange(t *testing.T) {
+	m := &payload.Manifest{Base: "aaa111", Head: "bbb222"}
+
+	if err := ValidateResumeRange(m, ReviewRange{Base: "aaa111", Head: "bbb222"}); err != nil {
+		t.Fatalf("matching range must validate, got %v", err)
+	}
+	if err := ValidateResumeRange(m, ReviewRange{Base: "ZZZ", Head: "bbb222"}); !errors.Is(err, ErrRangeChanged) {
+		t.Fatalf("base mismatch must be ErrRangeChanged, got %v", err)
+	}
+	if err := ValidateResumeRange(m, ReviewRange{Base: "aaa111", Head: "ZZZ"}); !errors.Is(err, ErrRangeChanged) {
+		t.Fatalf("head mismatch must be ErrRangeChanged, got %v", err)
+	}
+}
+
+func TestValidateResumeRoster_SetEquality(t *testing.T) {
+	m := &payload.Manifest{Roster: []string{"alpha", "bravo", "charlie"}}
+
+	// Same set, different order — must pass (order-independent).
+	if err := ValidateResumeRoster(m, []string{"charlie", "alpha", "bravo"}); err != nil {
+		t.Fatalf("same set in different order must validate, got %v", err)
+	}
+	// Extra agent in config.
+	if err := ValidateResumeRoster(m, []string{"alpha", "bravo", "charlie", "delta"}); !errors.Is(err, ErrRosterChanged) {
+		t.Fatalf("added agent must be ErrRosterChanged, got %v", err)
+	}
+	// Missing agent from config.
+	if err := ValidateResumeRoster(m, []string{"alpha", "bravo"}); !errors.Is(err, ErrRosterChanged) {
+		t.Fatalf("removed agent must be ErrRosterChanged, got %v", err)
+	}
+	// Swapped agent (same count, different membership).
+	if err := ValidateResumeRoster(m, []string{"alpha", "bravo", "delta"}); !errors.Is(err, ErrRosterChanged) {
+		t.Fatalf("swapped agent must be ErrRosterChanged, got %v", err)
 	}
 }
