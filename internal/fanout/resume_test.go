@@ -51,13 +51,9 @@ func (okCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, 
 func writeAgentStatusFixture(t *testing.T, reviewDir, agent, status string) {
 	t.Helper()
 	dir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir, agent)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	st := &AgentStatus{Agent: agent, Status: status}
-	if err := WriteStatus(filepath.Join(dir, statusFile), st); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, WriteStatus(filepath.Join(dir, statusFile), st))
 }
 
 func TestCompletedAgents_OnlyOKAgentsAreComplete(t *testing.T) {
