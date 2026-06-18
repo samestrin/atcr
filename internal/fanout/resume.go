@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -115,7 +116,14 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 		if !e.IsDir() {
 			continue
 		}
-		name, ok := agentStatusName(filepath.Join(rawDir, e.Name(), statusFile))
+		statusPath := filepath.Join(rawDir, e.Name(), statusFile)
+		name, ok, err := agentStatusName(rawDir, statusPath)
+		if err != nil {
+			// An existing status.json that won't read or parse is a real anomaly
+			// (distinct from a legitimately-pending agent): surface it so the
+			// corruption is greppable instead of a silent re-run.
+			slog.Warn("corrupt agent status", "path", statusPath, "err", err)
+		}
 		if ok {
 			done[name] = true
 		}
@@ -129,19 +137,58 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 // — re-running an agent is always safe, so an untrustworthy record never causes
 // a skip. The name comes from the record's Agent field (the engine's
 // authoritative value), not the directory name (which is a sanitized basename).
-func agentStatusName(path string) (string, bool) {
+//
+// The returned error is non-nil only when an EXISTING status.json is unreadable
+// or unparseable (corruption worth surfacing to an operator); a missing file
+// (the legitimately-pending case), a symlink-escape, or a non-OK/empty record
+// returns a nil error.
+func agentStatusName(root, path string) (string, bool, error) {
+	// Reject a status.json that resolves outside the review tree (symlink
+	// traversal): an out-of-tree file the review never produced must never be
+	// trusted as a completion record. Failing the containment check keeps the
+	// agent pending, which is always safe (a pending agent simply re-runs).
+	if !pathWithin(root, path) {
+		return "", false, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		// A missing status.json is the legitimately-pending case (the agent
+		// never started) — not corruption, so stay silent. Any other read error
+		// means on-disk state exists but is unreadable: surface it.
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	var st AgentStatus
-	if json.Unmarshal(data, &st) != nil {
-		return "", false
+	if err := json.Unmarshal(data, &st); err != nil {
+		return "", false, err
 	}
 	if st.Status != StatusOK || st.Agent == "" {
-		return "", false
+		return "", false, nil
 	}
-	return st.Agent, true
+	return st.Agent, true, nil
+}
+
+// pathWithin reports whether path, with all symlinks resolved, stays inside
+// root (also symlink-resolved). It guards artifact reads against symlink
+// traversal — a path escaping the review tree returns false. A path that does
+// not exist (or a broken symlink) also returns false: it cannot be read, so it
+// is never trusted.
+func pathWithin(root, path string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ReadManifest loads and parses a review's manifest.json. A missing manifest
@@ -197,6 +244,9 @@ func (r *ResumeInfo) AllComplete() bool { return len(r.Pending) == 0 }
 // the completed set, so a resumed fan-out re-runs only the pending/failed agents
 // (epic 4.1.1 AC4).
 func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
+	if len(slots) == 0 {
+		return nil
+	}
 	pending := make([]Slot, 0, len(slots))
 	for _, s := range slots {
 		if !done[s.Primary.Name] {
@@ -277,28 +327,57 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
-	results, _ := runEngine(ctx, completer, p, poolDir)
+	results, resumedStage := runEngine(ctx, completer, p, poolDir)
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
 	if err := writeResumedAgents(poolDir, results); err != nil {
 		return nil, err
 	}
 
-	sum, statuses, err := RebuildPool(poolDir)
+	sum, statuses, err := RebuildPool(poolDir, p.manifest.Roster)
 	if err != nil {
 		return nil, err
 	}
 
+	// Recompute the Review stage from the union of on-disk statuses so the
+	// manifest reflects the current state — not the original run's verbatim
+	// stage. A tool agent that degraded in the original run but succeeded with
+	// full tools on resume must not stay recorded as degraded.
+	reviewStage := reviewStageFromStatuses(statuses)
+	if reviewStage != nil {
+		// Carry snapshot provenance (AC 03-02 / 03-03): prefer the resumed run's
+		// values when the resume attempted a snapshot; otherwise preserve the
+		// original manifest's snapshot fields (they're still authoritative for
+		// the roster).
+		if resumedStage != nil && resumedStage.SnapshotMode != "" {
+			reviewStage.SnapshotMode = resumedStage.SnapshotMode
+			reviewStage.HeadSHA = resumedStage.HeadSHA
+			reviewStage.SnapshotWorktreePath = resumedStage.SnapshotWorktreePath
+		} else if p.manifest.Review != nil {
+			reviewStage.SnapshotMode = p.manifest.Review.SnapshotMode
+			reviewStage.HeadSHA = p.manifest.Review.HeadSHA
+			reviewStage.SnapshotWorktreePath = p.manifest.Review.SnapshotWorktreePath
+		}
+	} else if p.manifest.Review != nil {
+		// No tool agents in the union: preserve the original stage (the roster
+		// is locked and the original stage's membership is still authoritative).
+		reviewStage = p.manifest.Review
+	}
+
 	// Finalize the manifest into a local copy (only adopted on a successful write).
-	// m.Review is preserved from the original run: the roster is locked, so the
-	// original review stage already lists every tool agent (reviewStageFor records
-	// ToolsRequested even on a failed agent), and the resumed subset cannot add new
-	// members.
 	m := *p.manifest
 	m.Partial = sum.Partial
 	m.CompletedAt = time.Now().UTC()
 	m.Interrupted = interrupted
+	m.Review = reviewStage
 	if err := WriteManifest(p.Dir, &m); err != nil {
+		// Best-effort: stamp Interrupted on the existing manifest so the run is
+		// not stuck in_progress when a resume is itself interrupted (AC7). Mirrors
+		// the analogous fallback in ExecuteReview.
+		if interrupted {
+			p.manifest.Interrupted = true
+			_ = WriteManifest(p.Dir, p.manifest)
+		}
 		return nil, err
 	}
 	p.manifest = &m
@@ -316,9 +395,20 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 // writeResumedAgents persists the per-agent artifacts (review.md, findings.txt,
 // status.json) for each re-run result. A re-run agent's prior (failed/timeout)
 // artifacts are overwritten in place; completed agents are not in results, so
-// their artifacts on disk are left untouched.
+// their artifacts on disk are left untouched. A result whose error is a
+// synthesized context cancellation/deadline (the engine stamps these for slots
+// it never actually invoked because the parent ctx was cancelled first) is
+// skipped so a previously-failed agent's original error message is preserved
+// rather than overwritten with a generic "context canceled" timeout.
 func writeResumedAgents(poolDir string, results []Result) error {
 	for _, r := range results {
+		// Detect a synthesized timeout: the engine never invoked this agent
+		// (no content produced) and the error is a pure context cancellation
+		// or deadline. These results exist only to satisfy the per-slot Result
+		// contract; writing them would clobber a prior real failure's status.
+		if r.Content == "" && (errors.Is(r.Err, context.Canceled) || errors.Is(r.Err, context.DeadlineExceeded)) {
+			continue
+		}
 		dir, err := agentDirName(r.Agent)
 		if err != nil {
 			return err
@@ -331,41 +421,105 @@ func writeResumedAgents(poolDir string, results []Result) error {
 	return nil
 }
 
+// maxAgentFileBytes caps a single per-agent findings.txt read during pool
+// rebuild so a corrupt or pathologically large artifact cannot exhaust memory.
+// It is a var (not const) so tests can shrink it.
+var maxAgentFileBytes int64 = 32 << 20 // 32 MiB
+
+// errFindingsTooLarge reports a per-agent findings.txt that exceeds
+// maxAgentFileBytes; the rebuild fails loudly rather than reading it unbounded.
+var errFindingsTooLarge = errors.New("findings file exceeds size limit")
+
+// readFileLimited reads path but refuses files larger than limit bytes,
+// returning errFindingsTooLarge instead. This bounds the pool rebuild's memory
+// use against an unbounded read of an on-disk artifact.
+func readFileLimited(path string, limit int64) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > limit {
+		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errFindingsTooLarge, path, fi.Size(), limit)
+	}
+	return os.ReadFile(path)
+}
+
 // RebuildPool recomputes the merged pool findings.txt and summary.json from every
 // per-agent artifact currently under poolDir/raw/agent (completed + newly
 // resumed), returning the aggregate Summary and the union of per-agent statuses.
-// os.ReadDir yields entries in sorted order, so the rebuilt artifacts are
-// deterministic. An agent directory without a readable/parseable status.json is
-// skipped (it never completed); a missing or unparseable findings.txt contributes
-// no findings but does not fail the rebuild.
-func RebuildPool(poolDir string) (Summary, []AgentStatus, error) {
+// roster supplies the manifest's agent ordering so the merged findings.txt rows
+// follow the same order as a fresh WritePool (which iterates results in roster
+// order); without it, os.ReadDir would yield lexicographic order and a resumed
+// review's findings.txt would differ from an equivalent fresh run. An agent in
+// the roster without an on-disk directory is skipped (it never completed); an
+// agent directory not in the roster is also skipped (stale/orphan entry).
+func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error) {
 	rawDir := filepath.Join(poolDir, poolRawAgentDir)
+
+	// Build an index of on-disk agent directories for O(1) lookup.
+	onDisk := make(map[string]string, len(roster))
 	entries, err := os.ReadDir(rawDir)
 	if err != nil {
 		return Summary{}, nil, fmt.Errorf("reading agent artifacts: %w", err)
 	}
+	for _, e := range entries {
+		if e.IsDir() {
+			onDisk[e.Name()] = filepath.Join(rawDir, e.Name())
+		}
+	}
 
 	var statuses []AgentStatus
 	var merged []stream.Finding
-	for _, e := range entries {
-		if !e.IsDir() {
+	seen := make(map[string]bool, len(roster))
+	// Iterate in roster order so the merged findings.txt rows match a fresh
+	// WritePool's output (which iterates results in roster order).
+	for _, agent := range roster {
+		dirName, err := agentDirName(agent)
+		if err != nil {
 			continue
 		}
-		agentDir := filepath.Join(rawDir, e.Name())
+		if seen[dirName] {
+			return Summary{}, nil, fmt.Errorf("duplicate agent directory %q (from agent %q)", dirName, agent)
+		}
+		seen[dirName] = true
+		agentDir, ok := onDisk[dirName]
+		if !ok {
+			continue // not on disk → never completed; not part of the union
+		}
 		sdata, rerr := os.ReadFile(filepath.Join(agentDir, statusFile))
 		if rerr != nil {
-			continue // no status.json → never completed; not part of the union
+			continue
 		}
 		var st AgentStatus
 		if json.Unmarshal(sdata, &st) != nil {
 			continue
 		}
 		statuses = append(statuses, st)
-		if fdata, ferr := os.ReadFile(filepath.Join(agentDir, findingsFile)); ferr == nil {
-			if pr, perr := stream.ParseSource(fdata); perr == nil {
-				merged = append(merged, pr.Findings...)
+		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
+		if ferr != nil {
+			// An oversize findings.txt is a corruption signal — fail the rebuild
+			// rather than read it unbounded. A merely missing or unreadable
+			// findings.txt stays tolerated: a completed agent whose status.json
+			// landed but whose findings were never finalized contributes no
+			// findings, exactly as the original lenient read did.
+			if errors.Is(ferr, errFindingsTooLarge) {
+				return Summary{}, nil, ferr
 			}
+			continue
 		}
+		pr, perr := stream.ParseSource(fdata)
+		if perr != nil {
+			// The findings.txt exists but does not parse: silently dropping it
+			// would let the resumed aggregate diverge from the original run
+			// (short summary.TotalFindings, missing merged rows) with no signal.
+			// Fail loudly for OK agents; tolerate for already-failed agents
+			// (their findings are empty/irrelevant by construction).
+			if st.Status == StatusOK {
+				return Summary{}, nil, fmt.Errorf("parsing findings for completed agent %q: %w", st.Agent, perr)
+			}
+			continue
+		}
+		merged = append(merged, pr.Findings...)
 	}
 
 	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
@@ -422,4 +576,16 @@ func formatStatusFailures(sts []AgentStatus) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ", ")
+}
+
+// reviewStageFromStatuses rebuilds the manifest's Review stage from the union of
+// per-agent statuses (as returned by RebuildPool) via the shared
+// reviewStageForAgents classifier — the same rule the fresh []Result path
+// (reviewStageFor) uses, so the two manifest paths cannot silently diverge.
+// Returns nil when no agent ran with tools.
+func reviewStageFromStatuses(statuses []AgentStatus) *payload.ReviewStage {
+	return reviewStageForAgents(statuses,
+		func(s AgentStatus) bool { return s.ToolsRequested },
+		func(s AgentStatus) bool { return s.ToolsDegraded },
+		func(s AgentStatus) string { return s.Agent })
 }

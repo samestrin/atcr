@@ -339,6 +339,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 // ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
 // remains for inspection. The background MCP path discards the error (status is
 // read from disk) while the CLI maps it to the process exit code.
+//
+// Graceful-shutdown note: cooperative shutdown preserves agents that finished
+// before the signal; in-flight agents share the cancelled parent ctx and are cut
+// off (classified as timeout). Truly completing in-flight work would require
+// running them on an uncancelled child ctx — a deliberate engine change out of
+// scope here.
 func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
@@ -350,6 +356,8 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// signal cancels the parent (Canceled). The engine has already collapsed both
 	// into StatusTimeout per-agent, so the parent ctx is the only signal that still
 	// distinguishes a user interrupt from an exhausted time budget.
+	// Contract: callers must cancel the parent ctx only via a signal handler;
+	// any other cancellation would be misreported as interrupted in the manifest.
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
 	sum, err := WritePool(poolDir, results)
@@ -367,7 +375,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		if p.manifest != nil {
 			p.manifest.CompletedAt = time.Now().UTC()
 			p.manifest.Interrupted = interrupted
-			_ = WriteManifest(p.Dir, p.manifest) // best-effort; if this also fails, stale inference covers it
+			_ = WriteManifest(p.Dir, p.manifest) // best-effort; stale inference covers the `failed` outcome but manifest.Interrupted is lost if this write also fails
 		}
 		return nil, err
 	}
@@ -701,22 +709,36 @@ func transcriptAgentDir(agent string) string {
 // single-shot. Returns nil when no agent ran with tools, so the manifest omits
 // the review entry for a pure 1.x roster (Scenario 5).
 func reviewStageFor(results []Result) *payload.ReviewStage {
-	var enabled, degraded []string
-	for _, r := range results {
-		if !r.ToolsRequested {
+	return reviewStageForAgents(results,
+		func(r Result) bool { return r.ToolsRequested },
+		func(r Result) bool { return r.ToolsDegraded },
+		func(r Result) string { return r.Agent })
+}
+
+// reviewStageForAgents is the single manifest review-stage classifier shared by
+// the fresh ([]Result via reviewStageFor) and resume ([]AgentStatus via
+// reviewStageFromStatuses) paths, so the classification rule lives in exactly
+// one place and the two paths cannot silently diverge. An element contributes to
+// ToolsEnabled when requested() is true, and additionally to ToolsDegraded when
+// degraded() is true. Returns nil when no element ran with tools, so the
+// manifest omits the review entry for a pure 1.x roster. Agents is a distinct
+// copy of ToolsEnabled so the two slices never alias (a later mutation of one
+// must not silently mutate the other).
+func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded func(T) bool, name func(T) string) *payload.ReviewStage {
+	var enabled, deg []string
+	for _, it := range items {
+		if !requested(it) {
 			continue
 		}
-		enabled = append(enabled, r.Agent)
-		if r.ToolsDegraded {
-			degraded = append(degraded, r.Agent)
+		enabled = append(enabled, name(it))
+		if degraded(it) {
+			deg = append(deg, name(it))
 		}
 	}
 	if len(enabled) == 0 {
 		return nil
 	}
-	// Agents is a distinct copy of ToolsEnabled so the two slices never alias (a
-	// later mutation of one must not silently mutate the other).
-	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: degraded}
+	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: deg}
 }
 
 // snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /
