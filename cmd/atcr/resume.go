@@ -50,6 +50,17 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		return usageError(errors.New("--resume cannot be combined with --id or --output-dir"))
 	}
 
+	// The one-shot gate/verify flags drive an exit-code gate on a fresh review;
+	// --resume always reconciles but deliberately does NOT re-implement that gate
+	// (out of scope). Silently ignoring them would let a CI pipeline resume a
+	// review and false-PASS despite surviving findings, so reject them fail-closed
+	// (exit 2) and point at the standalone gate commands.
+	for _, f := range []string{"fail-on", "verify", "require-verified"} {
+		if cmd.Flags().Changed(f) {
+			return usageError(fmt.Errorf("--resume does not support --%s; resume reconciles automatically — run `atcr reconcile --fail-on <severity>` or `atcr verify` afterward to gate", f))
+		}
+	}
+
 	dir, err := resolveResumeDir(anchor)
 	if err != nil {
 		return usageError(err)
@@ -103,9 +114,14 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(resolveRedactRoot(ctx, prep.Repo))))
 
 	// AC2: nothing pending — re-run reconciliation against the complete review and
-	// exit clean, never touching a provider.
+	// exit clean, never touching a provider. Clear any stale interrupt marker first
+	// so a review that was interrupted-but-actually-complete reports completed
+	// rather than interrupted (AC6).
 	if info.AllComplete() {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "All configured agents already completed. Re-running reconciliation...")
+		if err := fanout.ClearInterrupted(dir); err != nil {
+			return usageError(fmt.Errorf("resume failed: %w", err))
+		}
 		return resumeReconcile(ctx, cmd, dir)
 	}
 

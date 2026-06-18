@@ -163,6 +163,25 @@ func ReadManifest(reviewDir string) (*payload.Manifest, error) {
 	return &m, nil
 }
 
+// ClearInterrupted rewrites the review's manifest with Interrupted=false when it
+// is currently set. A review whose every agent already finished but whose manifest
+// still carries the interrupt marker (a signal that landed after the last agent
+// wrote ok, before manifest finalization) would otherwise keep deriving to
+// "interrupted" forever; clearing the marker when a resume confirms the roster is
+// complete lets it report "completed" (epic 4.1.1 AC6). It is a no-op (and writes
+// nothing) when the manifest is not marked interrupted.
+func ClearInterrupted(reviewDir string) error {
+	m, err := ReadManifest(reviewDir)
+	if err != nil {
+		return err
+	}
+	if !m.Interrupted {
+		return nil
+	}
+	m.Interrupted = false
+	return WriteManifest(reviewDir, m)
+}
+
 // ResumeInfo reports how a resume run partitioned the locked roster: the agents
 // already completed (skipped) and the agents that will be re-run.
 type ResumeInfo struct {

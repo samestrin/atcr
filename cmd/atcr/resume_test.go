@@ -234,3 +234,45 @@ func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	require.Equal(t, fanout.RunCompleted, st.Status)
 	require.False(t, st.Partial)
 }
+
+func TestResume_FailOnFlagIsExit2(t *testing.T) {
+	isolate(t)
+	code, out := execResume(t, "review", "--resume", "latest", "--fail-on", "high")
+	require.Equal(t, 2, code, "the one-shot gate is not supported with --resume")
+	require.Contains(t, out, "does not support --fail-on")
+}
+
+func TestResume_VerifyFlagIsExit2(t *testing.T) {
+	isolate(t)
+	code, out := execResume(t, "review", "--resume", "latest", "--verify")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "does not support --verify")
+}
+
+func TestResume_AllCompleteClearsStaleInterrupted(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+
+	// Simulate the narrow window: every agent is ok on disk, but the manifest is
+	// still marked interrupted (signal landed after the last agent wrote ok).
+	id, err := fanout.ReadLatest(".")
+	require.NoError(t, err)
+	dir := filepath.Join(fanout.ReviewsRoot("."), id)
+	m, err := fanout.ReadManifest(dir)
+	require.NoError(t, err)
+	m.Interrupted = true
+	require.NoError(t, fanout.WriteManifest(dir, m))
+	st, err := fanout.ReadReviewStatus(dir, id)
+	require.NoError(t, err)
+	require.Equal(t, fanout.RunInterrupted, st.Status, "precondition: stale interrupted state")
+
+	code, _ := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code)
+	stAfter, err := fanout.ReadReviewStatus(dir, id)
+	require.NoError(t, err)
+	require.Equal(t, fanout.RunCompleted, stAfter.Status, "AC6: resume clears the stale interrupted marker")
+}
