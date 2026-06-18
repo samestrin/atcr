@@ -284,7 +284,7 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
-	sum, statuses, err := RebuildPool(poolDir)
+	sum, statuses, err := RebuildPool(poolDir, p.manifest.Roster)
 	if err != nil {
 		return nil, err
 	}
@@ -356,27 +356,43 @@ func writeResumedAgents(poolDir string, results []Result) error {
 // RebuildPool recomputes the merged pool findings.txt and summary.json from every
 // per-agent artifact currently under poolDir/raw/agent (completed + newly
 // resumed), returning the aggregate Summary and the union of per-agent statuses.
-// os.ReadDir yields entries in sorted order, so the rebuilt artifacts are
-// deterministic. An agent directory without a readable/parseable status.json is
-// skipped (it never completed); a missing or unparseable findings.txt contributes
-// no findings but does not fail the rebuild.
-func RebuildPool(poolDir string) (Summary, []AgentStatus, error) {
+// roster supplies the manifest's agent ordering so the merged findings.txt rows
+// follow the same order as a fresh WritePool (which iterates results in roster
+// order); without it, os.ReadDir would yield lexicographic order and a resumed
+// review's findings.txt would differ from an equivalent fresh run. An agent in
+// the roster without an on-disk directory is skipped (it never completed); an
+// agent directory not in the roster is also skipped (stale/orphan entry).
+func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error) {
 	rawDir := filepath.Join(poolDir, poolRawAgentDir)
+
+	// Build an index of on-disk agent directories for O(1) lookup.
+	onDisk := make(map[string]string, len(roster))
 	entries, err := os.ReadDir(rawDir)
 	if err != nil {
 		return Summary{}, nil, fmt.Errorf("reading agent artifacts: %w", err)
 	}
+	for _, e := range entries {
+		if e.IsDir() {
+			onDisk[e.Name()] = filepath.Join(rawDir, e.Name())
+		}
+	}
 
 	var statuses []AgentStatus
 	var merged []stream.Finding
-	for _, e := range entries {
-		if !e.IsDir() {
+	// Iterate in roster order so the merged findings.txt rows match a fresh
+	// WritePool's output (which iterates results in roster order).
+	for _, agent := range roster {
+		dirName, err := agentDirName(agent)
+		if err != nil {
 			continue
 		}
-		agentDir := filepath.Join(rawDir, e.Name())
+		agentDir, ok := onDisk[dirName]
+		if !ok {
+			continue // not on disk → never completed; not part of the union
+		}
 		sdata, rerr := os.ReadFile(filepath.Join(agentDir, statusFile))
 		if rerr != nil {
-			continue // no status.json → never completed; not part of the union
+			continue
 		}
 		var st AgentStatus
 		if json.Unmarshal(sdata, &st) != nil {

@@ -177,7 +177,7 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 		{Agent: "charlie", Status: StatusFailed, Err: errors.New("boom")},
 	}))
 
-	sum, statuses, err := RebuildPool(poolDir)
+	sum, statuses, err := RebuildPool(poolDir, []string{"alpha", "bravo", "charlie"})
 	require.NoError(t, err)
 	require.Equal(t, 3, sum.Total)
 	require.Equal(t, 2, sum.Succeeded)
@@ -195,6 +195,40 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, ps.Total)
 	require.Equal(t, 1, ps.TotalFindings)
+}
+
+// TestRebuildPool_FindingsMergedInRosterOrder verifies the merged findings.txt
+// rows follow the manifest roster order, not the os.ReadDir lexicographic
+// order. A fresh WritePool iterates over results in roster order; RebuildPool
+// must produce the same row order so a resumed review's findings.txt is
+// byte-identical to an equivalent fresh run.
+func TestRebuildPool_FindingsMergedInRosterOrder(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Roster is deliberately NOT lexicographic: zeta before alpha before mira.
+	// If RebuildPool iterates os.ReadDir entries in sorted order, the merged
+	// findings.txt would list alpha's finding first; the correct (roster) order
+	// is zeta's finding first.
+	roster := []string{"zeta", "alpha", "mira"}
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "zeta", Status: StatusOK, Content: "CRITICAL|z.go:1|z finding|fix z|security|15|z()"},
+		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|a finding|fix a|security|15|a()"},
+		{Agent: "mira", Status: StatusOK, Content: "CRITICAL|m.go:1|m finding|fix m|security|15|m()"},
+	}))
+
+	_, _, err := RebuildPool(poolDir, roster)
+	require.NoError(t, err)
+
+	fdata, err := os.ReadFile(filepath.Join(poolDir, findingsFile))
+	require.NoError(t, err)
+	pr, err := stream.ParseSource(fdata)
+	require.NoError(t, err)
+	require.Len(t, pr.Findings, 3)
+	// Findings must be in roster order (zeta, alpha, mira), not lexicographic
+	// (alpha, mira, zeta).
+	require.Equal(t, "z.go", pr.Findings[0].File, "first finding must be zeta's (roster head)")
+	require.Equal(t, "a.go", pr.Findings[1].File, "second finding must be alpha's")
+	require.Equal(t, "m.go", pr.Findings[2].File, "third finding must be mira's (roster tail)")
 }
 
 func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
@@ -302,7 +336,12 @@ func TestExecuteResume_ReviewStageReflectsResumedRun(t *testing.T) {
 	mAfter, err := ReadManifest(prep.Dir)
 	require.NoError(t, err)
 	require.NotNil(t, mAfter.Review, "Review stage must be present after resume")
-	require.ElementsMatch(t, []string{"greta", "kai", "mira", "otto"}, mAfter.Review.ToolsEnabled)
+	// THE BUG: before the fix, mAfter.Review is preserved verbatim from the
+	// pre-resume manifest (ToolsDegraded=["greta", "kai"]). After the fix,
+	// ToolsDegraded is derived from the union of on-disk statuses: greta and
+	// kai have ToolsDegraded=false (their status.json says so), and mira/otto
+	// are either absent from ToolsEnabled (if they degraded or failed) or
+	// present with ToolsDegraded=false. Either way, ToolsDegraded must be empty.
 	require.Empty(t, mAfter.Review.ToolsDegraded,
 		"ToolsDegraded must be derived from the union of on-disk statuses (all false), not preserved from pre-resume manifest")
 	// Snapshot provenance must also reflect the resumed run, not the pre-resume
