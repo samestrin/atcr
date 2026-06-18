@@ -40,6 +40,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	addRangeFlags(cmd)
 	return cmd
 }
@@ -72,6 +73,14 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
 func runReview(cmd *cobra.Command, _ []string) error {
+	// --resume targets an existing review directory and runs only its pending
+	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
+	// before any new-review flag handling.
+	if cmd.Flags().Changed("resume") {
+		anchor, _ := cmd.Flags().GetString("resume")
+		return runResume(cmd, anchor)
+	}
+
 	ctx := cmd.Context()
 	base, _ := cmd.Flags().GetString("base")
 	head, _ := cmd.Flags().GetString("head")
@@ -272,9 +281,10 @@ func interruptedBeforeFanout(cmd *cobra.Command) error {
 // interruptMessage renders the user-facing notice for a signal-interrupted
 // review (epic 4.1 AC5/AC6). result may be nil when ExecuteReview was cancelled
 // before producing one, so the review id and directory fall back to the
-// PreparedReview, which is always available before the fan-out starts. It
-// deliberately references only `atcr status <id>` — not a `--resume` flag, which
-// is out of scope and does not exist.
+// PreparedReview, which is always available before the fan-out starts. It points
+// at `atcr status <id>` to inspect and `atcr review --resume <id>` to finish the
+// remaining agents (epic 4.1.1 makes --resume real, completing the partial run
+// without re-spending tokens on the already-completed agents).
 func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) string {
 	done, total, dir := 0, 0, prep.Dir
 	if result != nil {
@@ -282,8 +292,8 @@ func interruptMessage(result *fanout.ReviewResult, prep *fanout.PreparedReview) 
 	}
 	return fmt.Sprintf(
 		"\n⚠️ Review interrupted. %d/%d agents completed; partial results saved to %s.\n"+
-			"   Run 'atcr status %s' to inspect.\n",
-		done, total, dir, prep.ID)
+			"   Run 'atcr status %s' to inspect, or 'atcr review --resume %s' to finish the remaining agents.\n",
+		done, total, dir, prep.ID, prep.ID)
 }
 
 // absFn resolves a path to absolute form. It is a package var so a test can

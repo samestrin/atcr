@@ -1,0 +1,96 @@
+{
+  "reviewers": [
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 32368,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 127190,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 100718,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 68888,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "ok",
+      "durationMs": 232317,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "failed",
+      "durationMs": 33020,
+      "tdLineCount": 0,
+      "error": "max retries exceeded: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Concurrency limit exceeded. Your account details:\n\n**Current Usage:**\n- Active concurrent requests: 4 units\n- This request requires: 4 units\n- Total needed: 8 units\n- Your plan limit: 4 units\n- Over limit by: 4 units\n\n**Model Details:**\n- Model: deepseek-ai/DeepSeek-V4-Pro\n- Model class: deepseek4-1.6t\n- Model concurrency cost: 4 units per request\n\n**Account Details:**\n- Organization: org_PKGaA94gKa4EGVYNJEBJ1\n- Plan: feather_pro_plus\n- Plan concurrency limit: 4\n- Subscription quantity: 1\n- Effective limit: 4 units\n\nPlease upgrade your plan to increase your concurrency limit or wait for current requests to complete.No fallback model group found for original model_group=deepseek-4. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=deepseek-4\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Concurrency limit exceeded. Your account details:\n\n**Current Usage:**\n- Active concurrent requests: 4 units\n- This request requires: 4 units\n- Total needed: 8 units\n- Your plan limit: 4 units\n- Over limit by: 4 units\n\n**Model Details:**\n- Model: deepseek-ai/DeepSeek-V4-Pro\n- Model class: deepseek4-1.6t\n- Model concurrency cost: 4 units per request\n\n**Account Details:**\n- Organization: org_PKGaA94gKa4EGVYNJEBJ1\n- Plan: feather_pro_plus\n- Plan concurrency limit: 4\n- Subscription quantity: 1\n- Effective limit: 4 units\n\nPlease upgrade your plan to increase your concurrency limit or wait for current requests to complete.No fallback model group found for original model_group=deepseek-4. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2: API error (429): litellm.RateLimitError: RateLimitError: OpenAIException - Concurrency limit exceeded. Your account details:\n\n**Current Usage:**\n- Active concurrent requests: 4 units\n- This request requires: 4 units\n- Total needed: 8 units\n- Your plan limit: 4 units\n- Over limit by: 4 units\n\n**Model Details:**\n- Model: deepseek-ai/DeepSeek-V4-Pro\n- Model class: deepseek4-1.6t\n- Model concurrency cost: 4 units per request\n\n**Account Details:**\n- Organization: org_PKGaA94gKa4EGVYNJEBJ1\n- Plan: feather_pro_plus\n- Plan concurrency limit: 4\n- Subscription quantity: 1\n- Effective limit: 4 units\n\nPlease upgrade your plan to increase your concurrency limit or wait for current requests to complete.No fallback model group found for original model_group=deepseek-4. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=deepseek-4\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.RateLimitError: RateLimitError: OpenAIException - Concurrency limit exceeded. Your account details:\n\n**Current Usage:**\n- Active concurrent requests: 4 units\n- This request requires: 4 units\n- Total needed: 8 units\n- Your plan limit: 4 units\n- Over limit by: 4 units\n\n**Model Details:**\n- Model: deepseek-ai/DeepSeek-V4-Pro\n- Model class: deepseek4-1.6t\n- Model concurrency cost: 4 units per request\n\n**Account Details:**\n- Organization: org_PKGaA94gKa4EGVYNJEBJ1\n- Plan: feather_pro_plus\n- Plan concurrency limit: 4\n- Subscription quantity: 1\n- Effective limit: 4 units\n\nPlease upgrade your plan to increase your concurrency limit or wait for current requests to complete.No fallback model group found for original model_group=deepseek-4. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2 (fallback dax-local also failed: API error (400): litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 8192 output tokens and your prompt contains at least 8193 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=8193)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=llm-large\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 8192 output tokens and your prompt contains at least 8193 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=8193)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times: API error (400): litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 8192 output tokens and your prompt contains at least 8193 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=8193)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=llm-large\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 8192 output tokens and your prompt contains at least 8193 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=8193)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times)"
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 32602,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 271555,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "ok",
+      "durationMs": 178020,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 113099,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 253965,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "timeout",
+      "durationMs": 120002,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded (fallback brad-backup also failed: stream idle timeout: no activity for 2m0s: context deadline exceeded)"
+    }
+  ],
+  "totalFindings": 1,
+  "partial": true,
+  "totalDurationMs": 504935,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-17T17:07:54-07:00"
+}

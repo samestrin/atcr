@@ -1,3 +1,18 @@
+## [4.1.1] - 2026-06-18
+
+Resume support: finish an interrupted or partially-failed review without re-spending tokens on the agents that already completed.
+
+### Added
+
+- `atcr review --resume <latest|id|path>` re-runs only the pending/failed agents of an existing review into the same directory, then reconciles — completed agents (those whose per-agent `status.json` records `ok`, including clean reviewers that found nothing) are skipped, so their tokens are never re-spent
+- Resume locks the panel: it re-resolves the current git range and compares it (plus the configured roster) against the interrupted run's `manifest.json`, aborting with exit code 2 when the range or roster changed, so a resume can never mix inconsistent results or silently run a different panel
+
+### Changed
+
+- The interrupt notice now points at `atcr review --resume <id>` to finish the remaining agents, alongside `atcr status <id>` to inspect
+
+*Shipped via /execute-epic (epic 4.1.1)*
+
 ## [4.1.0] - 2026-06-17
 
 Graceful shutdown and signal handling: Ctrl-C during a review no longer loses completed work.

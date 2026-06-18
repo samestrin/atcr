@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 2 | 13 | 0 |
-| LOW | 6 | 13 | 0 |
+| LOW | 10 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-17 | **Open Items:** 8 | **Deferred Items:** 27 | **Resolved Items:** 0 | **Total Items:** 35
+**Last Modified:** 2026-06-18 | **Open Items:** 12 | **Deferred Items:** 27 | **Resolved Items:** 0 | **Total Items:** 39
 
 ## Directory Structure
 
@@ -33,6 +33,15 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-18] From Sprint: epic-4.1.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 3 | [ ] | LOW | internal/fanout/resume.go:280 | ExecuteResume preserves the original manifest Review tool-stage verbatim, so a tool agent degraded in the original run but run with full tools on resume stays recorded as degraded and resumed snapshot provenance is discarded | Recompute the review stage from resumed engine results and union it with the preserved stage, marking degraded only when still degraded | OBSERVABILITY | 30 | execute-epic-independent |
+| 3 | [ ] | LOW | internal/fanout/resume.go:322 | RebuildPool merges per-agent findings in os.ReadDir lexicographic order whereas fresh WritePool merges in roster order, so a resumed review merged pool findings.txt row order differs from an equivalent fresh run | Iterate per-agent artifacts in manifest.Roster order or sort merged findings by a stable key so resume and fresh paths produce identical pool ordering | CORRECTNESS | 30 | execute-epic-independent |
+| 3 | [ ] | LOW | internal/fanout/resume.go:301 | On an interrupted resume writeResumedAgents overwrites a previously-failed pending agent status.json (status failed with a real Error) with status timeout for agents the cancelled engine never ran, discarding the original failure reason (completion detection unaffected) | Preserve the prior Error when re-stamping a never-run agent or skip overwriting artifacts for slots the engine never started | EDGE_CASES | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/resume.go:215 | ExecuteResume can return ErrEmptyRoster when the union is empty which runResume maps to exit 1 via the generic err path though an empty-union resume is a usage/state error better mapped to exit 2 (effectively unreachable when pending slots exist) | Map ErrEmptyRoster from ExecuteResume to usageError exit 2 in runResume for consistency with the other pre-fan-out state errors | ERROR_HANDLING | 15 | execute-epic-independent |
 
 ### [2026-06-17] From Sprint: epic-4.1
 

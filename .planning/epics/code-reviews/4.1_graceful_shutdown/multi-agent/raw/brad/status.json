@@ -1,0 +1,7 @@
+{
+  "agent_name": "brad",
+  "model": "openai/qwen-3.7-plus",
+  "status": "timeout",
+  "duration_ms": 120002,
+  "error": "stream idle timeout: no activity for 2m0s: context deadline exceeded (fallback brad-backup also failed: stream idle timeout: no activity for 2m0s: context deadline exceeded)"
+}
