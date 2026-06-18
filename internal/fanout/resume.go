@@ -324,6 +324,13 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 	m.Interrupted = interrupted
 	m.Review = reviewStage
 	if err := WriteManifest(p.Dir, &m); err != nil {
+		// Best-effort: stamp Interrupted on the existing manifest so the run is
+		// not stuck in_progress when a resume is itself interrupted (AC7). Mirrors
+		// the analogous fallback in ExecuteReview.
+		if interrupted {
+			p.manifest.Interrupted = true
+			_ = WriteManifest(p.Dir, p.manifest)
+		}
 		return nil, err
 	}
 	p.manifest = &m
