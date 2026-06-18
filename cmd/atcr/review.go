@@ -203,6 +203,10 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// (consistent with the 10s force-exit path); skips the normal success line so
 	// an interrupted run is never reported as "succeeded".
 	if errors.Is(ctx.Err(), context.Canceled) {
+		// Mirror the human-facing stderr notice as a structured Warn so an
+		// interrupt also leaves a greppable, review_id-correlated log record
+		// (correlateReviewID tagged the ctx logger with the review id above).
+		log.FromContext(ctx).Warn("review interrupted by signal")
 		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
 		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
 	}
