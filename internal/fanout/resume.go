@@ -407,6 +407,24 @@ func writeResumedAgents(poolDir string, results []Result) error {
 // It is a var (not const) so tests can shrink it.
 var maxAgentFileBytes int64 = 32 << 20 // 32 MiB
 
+// errFindingsTooLarge reports a per-agent findings.txt that exceeds
+// maxAgentFileBytes; the rebuild fails loudly rather than reading it unbounded.
+var errFindingsTooLarge = errors.New("findings file exceeds size limit")
+
+// readFileLimited reads path but refuses files larger than limit bytes,
+// returning errFindingsTooLarge instead. This bounds the pool rebuild's memory
+// use against an unbounded read of an on-disk artifact.
+func readFileLimited(path string, limit int64) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > limit {
+		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errFindingsTooLarge, path, fi.Size(), limit)
+	}
+	return os.ReadFile(path)
+}
+
 // RebuildPool recomputes the merged pool findings.txt and summary.json from every
 // per-agent artifact currently under poolDir/raw/agent (completed + newly
 // resumed), returning the aggregate Summary and the union of per-agent statuses.
@@ -458,10 +476,15 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 			continue
 		}
 		statuses = append(statuses, st)
-		if fdata, ferr := os.ReadFile(filepath.Join(agentDir, findingsFile)); ferr == nil {
-			if pr, perr := stream.ParseSource(fdata); perr == nil {
-				merged = append(merged, pr.Findings...)
+		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
+		if ferr != nil {
+			if errors.Is(ferr, errFindingsTooLarge) {
+				return Summary{}, nil, ferr
 			}
+			continue
+		}
+		if pr, perr := stream.ParseSource(fdata); perr == nil {
+			merged = append(merged, pr.Findings...)
 		}
 	}
 
