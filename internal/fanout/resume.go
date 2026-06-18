@@ -402,6 +402,11 @@ func writeResumedAgents(poolDir string, results []Result) error {
 	return nil
 }
 
+// maxAgentFileBytes caps a single per-agent findings.txt read during pool
+// rebuild so a corrupt or pathologically large artifact cannot exhaust memory.
+// It is a var (not const) so tests can shrink it.
+var maxAgentFileBytes int64 = 32 << 20 // 32 MiB
+
 // RebuildPool recomputes the merged pool findings.txt and summary.json from every
 // per-agent artifact currently under poolDir/raw/agent (completed + newly
 // resumed), returning the aggregate Summary and the union of per-agent statuses.

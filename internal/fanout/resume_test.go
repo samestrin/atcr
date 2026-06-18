@@ -224,6 +224,25 @@ func TestRebuildPool_RejectsDuplicateBasename(t *testing.T) {
 	}
 }
 
+// TestRebuildPool_RejectsOversizeFindings verifies the pool rebuild refuses to
+// read a per-agent findings.txt larger than the configured byte limit, bounding
+// memory against a corrupt or pathologically large artifact rather than reading
+// it unbounded.
+func TestRebuildPool_RejectsOversizeFindings(t *testing.T) {
+	prev := maxAgentFileBytes
+	maxAgentFileBytes = 4 // tiny: even the findings header alone exceeds this
+	defer func() { maxAgentFileBytes = prev }()
+
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+	}))
+
+	_, _, err := RebuildPool(poolDir, []string{"alpha"})
+	require.Error(t, err, "an oversize findings.txt must fail the rebuild, not be read unbounded")
+}
+
 func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	poolDir := filepath.Join(dir, "sources", "pool")
