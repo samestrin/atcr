@@ -295,3 +295,42 @@ func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
 		})
 	}
 }
+
+func TestResume_InterruptEmitsStructuredWarn(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	initGitRepoWithChange(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Mock provider that cancels the context when polled, simulating a
+	// mid-fan-out interrupt (SIGINT/SIGTERM on the parent process).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		cancel()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	liveReviewConfig(t, srv.URL, "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"robin"}, nil)
+
+	root := newRootCmd()
+	root.SetArgs([]string{"review", "--resume", "latest", "--base", "HEAD^"})
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	err := root.ExecuteContext(ctx)
+	out := buf.String()
+	if err != nil {
+		out += err.Error()
+	}
+
+	require.Equal(t, 1, exitCode(err), "interrupted resume exits 1")
+	// AC9/AC10 parity: structured Warn must appear so monitoring/CI can grep
+	// for interrupted resumes by review_id.
+	require.Contains(t, out, "review interrupted by signal", "runResume must emit structured Warn on interrupt, mirroring review.go")
+}
