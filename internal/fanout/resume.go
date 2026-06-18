@@ -478,18 +478,23 @@ func RebuildPool(poolDir string, roster []string) (Summary, []AgentStatus, error
 		statuses = append(statuses, st)
 		fdata, ferr := readFileLimited(filepath.Join(agentDir, findingsFile), maxAgentFileBytes)
 		if ferr != nil {
-			// A completed agent's findings must be readable: silently dropping
-			// them would let the resumed aggregate diverge from the original run
-			// (short summary.TotalFindings, missing merged rows) with no signal.
-			// Fail loudly for OK agents; a failed agent's findings are empty by
-			// construction, so an unreadable file there is tolerated.
-			if st.Status == StatusOK {
-				return Summary{}, nil, fmt.Errorf("reading findings for completed agent %q: %w", st.Agent, ferr)
+			// An oversize findings.txt is a corruption signal — fail the rebuild
+			// rather than read it unbounded. A merely missing or unreadable
+			// findings.txt stays tolerated: a completed agent whose status.json
+			// landed but whose findings were never finalized contributes no
+			// findings, exactly as the original lenient read did.
+			if errors.Is(ferr, errFindingsTooLarge) {
+				return Summary{}, nil, ferr
 			}
 			continue
 		}
 		pr, perr := stream.ParseSource(fdata)
 		if perr != nil {
+			// The findings.txt exists but does not parse: silently dropping it
+			// would let the resumed aggregate diverge from the original run
+			// (short summary.TotalFindings, missing merged rows) with no signal.
+			// Fail loudly for OK agents; tolerate for already-failed agents
+			// (their findings are empty/irrelevant by construction).
 			if st.Status == StatusOK {
 				return Summary{}, nil, fmt.Errorf("parsing findings for completed agent %q: %w", st.Agent, perr)
 			}

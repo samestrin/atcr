@@ -290,6 +290,27 @@ func TestRebuildPool_HardFailsOnCorruptCompletedFindings(t *testing.T) {
 		"a completed agent's unparseable findings.txt must fail the rebuild, not be silently dropped")
 }
 
+// TestRebuildPool_ToleratesMissingFindingsForCompletedAgent verifies that a
+// completed (StatusOK) agent with a status.json but NO findings.txt (its
+// findings were never finalized) is tolerated, not hard-failed: it contributes
+// no findings but the rebuild still succeeds. Distinguishes a MISSING findings
+// file (lenient) from a present-but-corrupt one (hard fail).
+func TestRebuildPool_ToleratesMissingFindingsForCompletedAgent(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Write only a status.json (StatusOK) for alpha — no findings.txt.
+	ad := filepath.Join(poolDir, poolRawAgentDir, "alpha")
+	require.NoError(t, os.MkdirAll(ad, 0o755))
+	require.NoError(t, WriteStatus(filepath.Join(ad, statusFile),
+		&AgentStatus{Agent: "alpha", Status: StatusOK}))
+
+	sum, statuses, err := RebuildPool(poolDir, []string{"alpha"})
+	require.NoError(t, err, "a completed agent missing findings.txt must be tolerated, not hard-failed")
+	require.Equal(t, 1, sum.Total)
+	require.Equal(t, 1, sum.Succeeded)
+	require.Len(t, statuses, 1)
+}
+
 // TestRebuildPool_FindingsMergedInRosterOrder verifies the merged findings.txt
 // rows follow the manifest roster order, not the os.ReadDir lexicographic
 // order. A fresh WritePool iterates over results in roster order; RebuildPool
