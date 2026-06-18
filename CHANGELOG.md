@@ -1,3 +1,17 @@
+## [Technical Debt] - 2026-06-18
+
+### Fixed
+
+- `agentStatusName` now emits a structured Warn (with path) on a corrupt or unreadable `status.json` instead of silently re-running the agent (re-spending tokens) with no operator signal
+- `RebuildPool` hard-fails on a completed agent's unparseable findings instead of silently dropping them; merges per-agent findings in roster order so a resumed pool matches an equivalent fresh run; rejects roster names that collapse to the same sanitized dirname; bounds per-agent `findings.txt` reads with a size limit; and writes a best-effort `Interrupted` marker when the final manifest write fails on an interrupted resume
+- Rejected `status.json` symlinks that escape the review tree during the agent scan
+- Recompute the Review tool-stage from the union of resumed statuses instead of preserving the original run's stage verbatim
+- `writeResumedAgents` preserves a prior failed status (and its error) for agents the resumed engine never ran
+- A signal-interrupted resume now emits a structured, `review_id`-correlated Warn, matching the fresh review path for log greppability
+- Guarded a nil result from `gitrange.Resolve`; mapped `ErrEmptyRoster` to usage error (exit 2); rejected `--fresh`/`--thorough`/`--min-severity` when combined with `--resume`; and early-returned for empty pending slots
+- Deduplicated the redaction/interrupt-reporting and review-stage-classifier logic shared by `runReview`/`runResume` and the fresh/resume manifest paths
+- Test hygiene: `require.NoError` in fixtures, a checked `writeResumedAgents` error return for errcheck, a context timeout on `execResume`, and a `testReviewKeyEnv` constant
+
 ## [4.1.1] - 2026-06-18
 
 Resume support: finish an interrupted or partially-failed review without re-spending tokens on the agents that already completed.

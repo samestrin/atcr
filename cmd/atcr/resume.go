@@ -10,7 +10,6 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
-	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
 )
@@ -61,6 +60,15 @@ func runResume(cmd *cobra.Command, anchor string) error {
 		}
 	}
 
+	// --fresh, --thorough, and --min-severity only apply to the --verify stage;
+	// --verify is already rejected above, so silently accepting them would
+	// discard the flag without any feedback to the user.
+	for _, f := range []string{"fresh", "thorough", "min-severity"} {
+		if cmd.Flags().Changed(f) {
+			return usageError(fmt.Errorf("--resume does not support --%s; this flag only applies to --verify, which is not supported with --resume", f))
+		}
+	}
+
 	dir, err := resolveResumeDir(anchor)
 	if err != nil {
 		return usageError(err)
@@ -75,6 +83,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			return interruptedBeforeFanout(cmd)
 		}
 		return usageError(fmt.Errorf("resume failed: %w", err))
+	}
+	if res == nil {
+		return usageError(errors.New("resume failed: git range returned no result"))
 	}
 
 	cfg, err := fanout.LoadReviewConfig(".", cliOverrides(cmd))
@@ -109,9 +120,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// Correlate every downstream log line by review id and enforce sink-level
 	// redaction (scrub secret-shaped tokens, relativize absolute paths under the
 	// repo root) for the resumed fan-out and reconcile — parity with the fresh
-	// review path so the resume flow never leaks secrets or absolute paths.
-	ctx = correlateReviewID(ctx, prep.ID)
-	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(resolveRedactRoot(ctx, prep.Repo))))
+	// review path so the resume flow never leaks secrets or absolute paths. Shared
+	// with runReview via correlateAndRedact so the contract can't drift.
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo)
 
 	// AC2: nothing pending — re-run reconciliation against the complete review and
 	// exit clean, never touching a provider. Clear any stale interrupt marker first
@@ -139,8 +150,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// what was saved and stop. Checked before err so an interrupted resume is never
 	// reported as a clean completion. Exit 1, consistent with a fresh review.
 	if errors.Is(ctx.Err(), context.Canceled) {
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
-		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
+		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
 	if result != nil {
@@ -148,6 +158,13 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 	}
 	if err != nil {
+		// An empty union is a usage/state error (exit 2), consistent with the
+		// other pre-fan-out state errors above — not the exit-1 "agents failed"
+		// path. Effectively unreachable once there are pending slots, but mapped
+		// for consistency.
+		if errors.Is(err, fanout.ErrEmptyRoster) {
+			return usageError(err)
+		}
 		return err // every agent (union) failed → exit 1, artifacts preserved
 	}
 

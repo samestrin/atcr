@@ -1,8 +1,10 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,13 +53,9 @@ func (okCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, 
 func writeAgentStatusFixture(t *testing.T, reviewDir, agent, status string) {
 	t.Helper()
 	dir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir, agent)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	st := &AgentStatus{Agent: agent, Status: status}
-	if err := WriteStatus(filepath.Join(dir, statusFile), st); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, WriteStatus(filepath.Join(dir, statusFile), st))
 }
 
 func TestCompletedAgents_OnlyOKAgentsAreComplete(t *testing.T) {
@@ -120,6 +118,97 @@ func TestCompletedAgents_CorruptOrMissingStatusIsPending(t *testing.T) {
 	}
 }
 
+// TestCompletedAgents_RejectsSymlinkedStatusEscapingReviewDir verifies that a
+// status.json which is a symlink resolving OUTSIDE the review tree is not read
+// (symlink traversal): the agent is treated as pending, never silently marked
+// complete from an out-of-tree file the review never produced.
+func TestCompletedAgents_RejectsSymlinkedStatusEscapingReviewDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// A valid OK status record living OUTSIDE the review tree.
+	outside := t.TempDir()
+	outsideStatus := filepath.Join(outside, "status.json")
+	require.NoError(t, WriteStatus(outsideStatus, &AgentStatus{Agent: "evil", Status: StatusOK}))
+
+	// Agent dir inside the pool whose status.json symlinks to the outside file.
+	evilDir := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "evil")
+	require.NoError(t, os.MkdirAll(evilDir, 0o755))
+	require.NoError(t, os.Symlink(outsideStatus, filepath.Join(evilDir, statusFile)))
+
+	got, err := CompletedAgents(dir)
+	require.NoError(t, err)
+	require.False(t, got["evil"],
+		"a status.json symlinked outside the review tree must not mark the agent complete")
+}
+
+// TestCompletedAgents_WarnsOnCorruptStatus verifies that a present-but-corrupt
+// status.json emits a greppable Warn (with the path), so an unreadable on-disk
+// record is a visible anomaly — while a healthy record and a legitimately-
+// missing one (a pending agent that never started) stay silent.
+func TestCompletedAgents_WarnsOnCorruptStatus(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	dir := t.TempDir()
+	writeAgentStatusFixture(t, dir, "alpha", StatusOK) // healthy: must not warn
+
+	// Corrupt (present-but-unparseable) status.json for bravo.
+	bravo := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "bravo")
+	require.NoError(t, os.MkdirAll(bravo, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bravo, statusFile), []byte("{not json"), 0o644))
+
+	// Missing status.json for charlie (legitimately pending): must not warn.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool", poolRawAgentDir, "charlie"), 0o755))
+
+	_, err := CompletedAgents(dir)
+	require.NoError(t, err)
+
+	logs := buf.String()
+	require.Contains(t, logs, "corrupt agent status", "a present-but-unparseable status.json must emit a Warn")
+	require.Contains(t, logs, "bravo", "the warning must carry the offending path")
+	require.NotContains(t, logs, "charlie", "a missing status.json (pending agent) must not warn")
+	require.NotContains(t, logs, "alpha", "a healthy status.json must not warn")
+}
+
+// TestReviewStage_FreshAndResumePathsAgree verifies the fresh ([]Result,
+// reviewStageFor) and resume ([]AgentStatus, reviewStageFromStatuses) classifiers
+// produce identical ReviewStage for equivalent inputs — guarding the shared
+// reviewStageForAgents classifier against the two paths ever diverging.
+func TestReviewStage_FreshAndResumePathsAgree(t *testing.T) {
+	cases := []struct {
+		name     string
+		results  []Result
+		statuses []AgentStatus
+	}{
+		{
+			name: "mixed enabled and degraded",
+			results: []Result{
+				{Agent: "a", ToolsRequested: true, ToolsDegraded: false},
+				{Agent: "b", ToolsRequested: true, ToolsDegraded: true},
+				{Agent: "c", ToolsRequested: false},
+			},
+			statuses: []AgentStatus{
+				{Agent: "a", ToolsRequested: true, ToolsDegraded: false},
+				{Agent: "b", ToolsRequested: true, ToolsDegraded: true},
+				{Agent: "c", ToolsRequested: false},
+			},
+		},
+		{
+			name:     "no tool agents yields nil",
+			results:  []Result{{Agent: "solo", ToolsRequested: false}},
+			statuses: []AgentStatus{{Agent: "solo", ToolsRequested: false}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, reviewStageFor(tc.results), reviewStageFromStatuses(tc.statuses),
+				"fresh and resume review-stage classifiers must agree for equivalent inputs")
+		})
+	}
+}
+
 func TestValidateResumeRange(t *testing.T) {
 	m := &payload.Manifest{Base: "aaa111", Head: "bbb222"}
 
@@ -167,6 +256,59 @@ func TestFilterPendingSlots(t *testing.T) {
 	require.Equal(t, "bravo", got[0].Primary.Name)
 }
 
+func TestFilterPendingSlots_EmptySlots(t *testing.T) {
+	// nil and empty inputs must return nil, not a non-nil empty allocation.
+	if got := filterPendingSlots(nil, nil); got != nil {
+		t.Fatalf("expected nil for nil slots, got %v", got)
+	}
+	if got := filterPendingSlots([]Slot{}, nil); got != nil {
+		t.Fatalf("expected nil for empty slots, got %v", got)
+	}
+}
+
+// TestRebuildPool_RejectsDuplicateBasename verifies that two roster names whose
+// filepath.Base collides (e.g. "foo/alpha" and "bar/alpha" both produce "alpha")
+// are not double-counted in the union. RebuildPool must guard the same way
+// WritePool does with its seen[dir] check.
+func TestRebuildPool_RejectsDuplicateBasename(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Write artifacts under the shared basename "alpha".
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "foo/alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+	}))
+	// Both "foo/alpha" and "bar/alpha" resolve to dirname "alpha".
+	// Without the guard, the same on-disk dir is counted twice.
+	roster := []string{"foo/alpha", "bar/alpha"}
+	sum, _, err := RebuildPool(poolDir, roster)
+	if err != nil {
+		// If the guard returns an error on collision, that is also acceptable.
+		return
+	}
+	if sum.Total > 1 {
+		t.Fatalf("RebuildPool double-counted a duplicate basename: got Total=%d, want <=1", sum.Total)
+	}
+}
+
+// TestRebuildPool_RejectsOversizeFindings verifies the pool rebuild refuses to
+// read a per-agent findings.txt larger than the configured byte limit, bounding
+// memory against a corrupt or pathologically large artifact rather than reading
+// it unbounded.
+func TestRebuildPool_RejectsOversizeFindings(t *testing.T) {
+	prev := maxAgentFileBytes
+	maxAgentFileBytes = 4 // tiny: even the findings header alone exceeds this
+	defer func() { maxAgentFileBytes = prev }()
+
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+	}))
+
+	_, _, err := RebuildPool(poolDir, []string{"alpha"})
+	require.Error(t, err, "an oversize findings.txt must fail the rebuild, not be read unbounded")
+}
+
 func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	dir := t.TempDir()
 	poolDir := filepath.Join(dir, "sources", "pool")
@@ -177,7 +319,7 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 		{Agent: "charlie", Status: StatusFailed, Err: errors.New("boom")},
 	}))
 
-	sum, statuses, err := RebuildPool(poolDir)
+	sum, statuses, err := RebuildPool(poolDir, []string{"alpha", "bravo", "charlie"})
 	require.NoError(t, err)
 	require.Equal(t, 3, sum.Total)
 	require.Equal(t, 2, sum.Succeeded)
@@ -195,6 +337,119 @@ func TestRebuildPool_UnionFromDisk(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, ps.Total)
 	require.Equal(t, 1, ps.TotalFindings)
+}
+
+// TestRebuildPool_HardFailsOnCorruptCompletedFindings verifies that a completed
+// (StatusOK) agent whose findings.txt is unparseable fails the rebuild loudly
+// rather than being silently dropped — which would let the resumed aggregate
+// diverge from the original run (short TotalFindings, missing merged rows) with
+// no signal.
+func TestRebuildPool_HardFailsOnCorruptCompletedFindings(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|x|y|security|15|ev"},
+	}))
+	// Corrupt alpha's findings.txt: strip the version header so ParseSource fails.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(poolDir, poolRawAgentDir, "alpha", findingsFile),
+		[]byte("garbage without a version header\n"), 0o644))
+
+	_, _, err := RebuildPool(poolDir, []string{"alpha"})
+	require.Error(t, err,
+		"a completed agent's unparseable findings.txt must fail the rebuild, not be silently dropped")
+}
+
+// TestRebuildPool_ToleratesMissingFindingsForCompletedAgent verifies that a
+// completed (StatusOK) agent with a status.json but NO findings.txt (its
+// findings were never finalized) is tolerated, not hard-failed: it contributes
+// no findings but the rebuild still succeeds. Distinguishes a MISSING findings
+// file (lenient) from a present-but-corrupt one (hard fail).
+func TestRebuildPool_ToleratesMissingFindingsForCompletedAgent(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Write only a status.json (StatusOK) for alpha — no findings.txt.
+	ad := filepath.Join(poolDir, poolRawAgentDir, "alpha")
+	require.NoError(t, os.MkdirAll(ad, 0o755))
+	require.NoError(t, WriteStatus(filepath.Join(ad, statusFile),
+		&AgentStatus{Agent: "alpha", Status: StatusOK}))
+
+	sum, statuses, err := RebuildPool(poolDir, []string{"alpha"})
+	require.NoError(t, err, "a completed agent missing findings.txt must be tolerated, not hard-failed")
+	require.Equal(t, 1, sum.Total)
+	require.Equal(t, 1, sum.Succeeded)
+	require.Len(t, statuses, 1)
+}
+
+// TestRebuildPool_FindingsMergedInRosterOrder verifies the merged findings.txt
+// rows follow the manifest roster order, not the os.ReadDir lexicographic
+// order. A fresh WritePool iterates over results in roster order; RebuildPool
+// must produce the same row order so a resumed review's findings.txt is
+// byte-identical to an equivalent fresh run.
+func TestRebuildPool_FindingsMergedInRosterOrder(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+	// Roster is deliberately NOT lexicographic: zeta before alpha before mira.
+	// If RebuildPool iterates os.ReadDir entries in sorted order, the merged
+	// findings.txt would list alpha's finding first; the correct (roster) order
+	// is zeta's finding first.
+	roster := []string{"zeta", "alpha", "mira"}
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "zeta", Status: StatusOK, Content: "CRITICAL|z.go:1|z finding|fix z|security|15|z()"},
+		{Agent: "alpha", Status: StatusOK, Content: "CRITICAL|a.go:1|a finding|fix a|security|15|a()"},
+		{Agent: "mira", Status: StatusOK, Content: "CRITICAL|m.go:1|m finding|fix m|security|15|m()"},
+	}))
+
+	_, _, err := RebuildPool(poolDir, roster)
+	require.NoError(t, err)
+
+	fdata, err := os.ReadFile(filepath.Join(poolDir, findingsFile))
+	require.NoError(t, err)
+	pr, err := stream.ParseSource(fdata)
+	require.NoError(t, err)
+	require.Len(t, pr.Findings, 3)
+	// Findings must be in roster order (zeta, alpha, mira), not lexicographic
+	// (alpha, mira, zeta).
+	require.Equal(t, "z.go", pr.Findings[0].File, "first finding must be zeta's (roster head)")
+	require.Equal(t, "a.go", pr.Findings[1].File, "second finding must be alpha's")
+	require.Equal(t, "m.go", pr.Findings[2].File, "third finding must be mira's (roster tail)")
+}
+
+// TestWriteResumedAgents_PreservesFailedStatusOnNeverRun verifies that a
+// previously-failed agent's status.json is NOT overwritten when the resumed
+// engine never actually ran the agent (interrupted before it started). The
+// engine synthesizes a timeout Result for never-run slots; writeResumedAgents
+// must skip those to preserve the original failure reason.
+func TestWriteResumedAgents_PreservesFailedStatusOnNeverRun(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+
+	// Pre-populate agent "alpha" as failed (with a real error message).
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusFailed, Err: errors.New("provider 500: rate limited")},
+	}))
+
+	// Sanity: status.json shows failed with the real error.
+	sdata, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
+	require.NoError(t, err)
+	require.Contains(t, string(sdata), "rate limited", "precondition: alpha must be recorded as failed with real error")
+
+	// Resume is interrupted before alpha runs. The engine synthesizes a timeout
+	// Result (Content="", Err=context.Canceled, Status=StatusTimeout).
+	// writeResumedAgents must NOT overwrite alpha's status.json with this
+	// synthesized timeout, because the original failure's error message would
+	// be lost.
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusTimeout, Content: "", Err: context.Canceled},
+	}))
+
+	// Re-read alpha's status.json: it must still contain the original error.
+	sdataAfter, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
+	require.NoError(t, err)
+	require.Contains(t, string(sdataAfter), "rate limited",
+		"writeResumedAgents must preserve the original failed status when the engine never ran the agent")
+	require.NotContains(t, string(sdataAfter), `"status": "timeout"`,
+		"writeResumedAgents must not overwrite a prior failed status with a synthesized timeout")
 }
 
 func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
@@ -237,6 +492,83 @@ func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
 	done, err := CompletedAgents(dir)
 	require.NoError(t, err)
 	require.Len(t, done, 4)
+}
+
+// TestExecuteResume_ReviewStageReflectsResumedRun verifies the manifest's Review
+// stage is recomputed from the resumed engine results, not preserved verbatim
+// from the original run. A tool agent that degraded in the original run but
+// succeeds with full tools on resume must not stay recorded as degraded.
+func TestExecuteResume_ReviewStageReflectsResumedRun(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+
+	// Phase 1: scaffold a 4-agent review. Pre-populate greta+kai as already
+	// completed on disk — this time with ToolsDegraded=FALSE (they succeeded
+	// with tools). The original manifest's Review stage, however, records them
+	// as degraded (simulating a scenario where the manifest was written before
+	// the agent artifacts were finalized, or where the manifest was preserved
+	// from an earlier interrupted snapshot).
+	cfg := fourAgentConfig("http://unused")
+	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	poolDir := filepath.Join(prep.Dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "greta", Status: StatusOK, Tools: true, ToolsRequested: true, ToolsDegraded: false,
+			Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
+		{Agent: "kai", Status: StatusOK, Tools: true, ToolsRequested: true, ToolsDegraded: false,
+			Content: ""},
+	}))
+
+	// Stamp the manifest with a Review stage showing greta+kai as degraded
+	// (simulating the bug: the manifest says degraded, but the on-disk statuses
+	// say they completed successfully with tools).
+	m, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	m.Review = &payload.ReviewStage{
+		Agents:        []string{"greta", "kai", "mira", "otto"},
+		ToolsEnabled:  []string{"greta", "kai", "mira", "otto"},
+		ToolsDegraded: []string{"greta", "kai"},
+		SnapshotMode:  "live",
+		HeadSHA:       head,
+	}
+	require.NoError(t, WriteManifest(prep.Dir, m))
+
+	// Phase 2: resume against a healthy provider. Only the 2 pending agents run;
+	// they succeed with tools enabled (not degraded).
+	srv := mockProvider(t)
+	cfg2 := fourAgentConfig(srv.URL)
+	rprep, info, err := PrepareResume(context.Background(), cfg2, prep.Dir, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	require.Len(t, info.Completed, 2)
+	require.Len(t, info.Pending, 2)
+
+	res, err := ExecuteResume(context.Background(), llmclient.New(), rprep)
+	require.NoError(t, err)
+	require.Equal(t, 4, res.Summary.Total)
+	require.Equal(t, 4, res.Summary.Succeeded)
+
+	// THE FIX ASSERTION: manifest Review stage must be recomputed from the
+	// union of on-disk statuses, NOT preserved verbatim from the pre-resume
+	// manifest. greta+kai's status.json says ToolsDegraded=false; mira+otto
+	// just ran with tools and did NOT degrade. The union's ToolsDegraded must
+	// be empty — but the bug preserves the pre-resume manifest's
+	// ToolsDegraded=["greta", "kai"] verbatim.
+	mAfter, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, mAfter.Review, "Review stage must be present after resume")
+	// THE BUG: before the fix, mAfter.Review is preserved verbatim from the
+	// pre-resume manifest (ToolsDegraded=["greta", "kai"]). After the fix,
+	// ToolsDegraded is derived from the union of on-disk statuses: greta and
+	// kai have ToolsDegraded=false (their status.json says so), and mira/otto
+	// are either absent from ToolsEnabled (if they degraded or failed) or
+	// present with ToolsDegraded=false. Either way, ToolsDegraded must be empty.
+	require.Empty(t, mAfter.Review.ToolsDegraded,
+		"ToolsDegraded must be derived from the union of on-disk statuses (all false), not preserved from pre-resume manifest")
+	// Snapshot provenance must also reflect the resumed run, not the pre-resume
+	// manifest (which happened to match in this test, but the principle holds).
+	require.Equal(t, "live", mAfter.Review.SnapshotMode)
+	require.Equal(t, head, mAfter.Review.HeadSHA)
 }
 
 // TestResume_InterruptThenResumeCompletesAllAgents is the epic 4.1.1 AC9

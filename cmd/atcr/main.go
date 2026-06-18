@@ -54,11 +54,22 @@ func main() {
 // handleSignals starts a goroutine that, on the first SIGINT/SIGTERM, prints a
 // graceful-shutdown notice to out, cancels the root context, and then force-exits
 // with code 1 if cooperative shutdown overruns gracefulShutdownTimeout. SIGTERM
-// and SIGINT are treated identically — both mean "shut down". Only the first
-// signal is handled; the grace timer is the hard backstop against a hang.
+// and SIGINT are treated identically — both mean "shut down".
+//
+// Only the first signal is handled and a buffered second signal is intentionally
+// never drained: forcing exit on a second Ctrl-C would race the in-flight
+// partial-result write (driven cooperatively by cancel() deep inside the fanout
+// engine), aborting exactly the partial results epic 4.1 exists to preserve.
+// main() has no flush-done seam to gate such a force-quit on, so the grace timer
+// is the bounded backstop against a genuine hang.
 func handleSignals(sigCh <-chan os.Signal, cancel context.CancelFunc, out io.Writer) {
 	go func() {
 		<-sigCh
+		// Notices go to out (os.Stderr in production), not the structured logger, by
+		// design: that logger is request-scoped (built per-invocation in cobra's
+		// PersistentPreRunE) and is absent on the early --help/--version signal paths
+		// where PersistentPreRunE never runs, so the signal handler must not depend on
+		// it. These are plain interactive UX strings, not structured events.
 		_, _ = fmt.Fprintln(out, "\nReceived interrupt, shutting down gracefully...")
 		cancel()
 		<-time.After(gracefulShutdownTimeout)
