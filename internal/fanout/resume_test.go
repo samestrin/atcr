@@ -120,6 +120,29 @@ func TestCompletedAgents_CorruptOrMissingStatusIsPending(t *testing.T) {
 	}
 }
 
+// TestCompletedAgents_RejectsSymlinkedStatusEscapingReviewDir verifies that a
+// status.json which is a symlink resolving OUTSIDE the review tree is not read
+// (symlink traversal): the agent is treated as pending, never silently marked
+// complete from an out-of-tree file the review never produced.
+func TestCompletedAgents_RejectsSymlinkedStatusEscapingReviewDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// A valid OK status record living OUTSIDE the review tree.
+	outside := t.TempDir()
+	outsideStatus := filepath.Join(outside, "status.json")
+	require.NoError(t, WriteStatus(outsideStatus, &AgentStatus{Agent: "evil", Status: StatusOK}))
+
+	// Agent dir inside the pool whose status.json symlinks to the outside file.
+	evilDir := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "evil")
+	require.NoError(t, os.MkdirAll(evilDir, 0o755))
+	require.NoError(t, os.Symlink(outsideStatus, filepath.Join(evilDir, statusFile)))
+
+	got, err := CompletedAgents(dir)
+	require.NoError(t, err)
+	require.False(t, got["evil"],
+		"a status.json symlinked outside the review tree must not mark the agent complete")
+}
+
 func TestValidateResumeRange(t *testing.T) {
 	m := &payload.Manifest{Base: "aaa111", Head: "bbb222"}
 
