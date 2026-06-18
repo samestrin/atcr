@@ -292,11 +292,3 @@ func TestResume_InterruptThenResumeCompletesAllAgents(t *testing.T) {
 	require.Equal(t, RunCompleted, stAfter.Status, "AC6/AC9: final status is completed, not interrupted")
 	require.False(t, stAfter.Partial)
 }
-
-func keysOf(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}

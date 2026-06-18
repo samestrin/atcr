@@ -258,16 +258,6 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
 }
 
-// ExecuteReview runs phase two: fan out the prepared roster under the global
-// timeout, then write per-agent artifacts, the merged pool, summary.json, and
-// the finalized manifest (Partial reflecting the outcome). The completer is
-// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
-//
-// Artifacts are always persisted, even when every agent fails; in that case the
-// populated *ReviewResult is still returned alongside the wrapped
-// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
-// remains for inspection. The background MCP path discards the error (status is
-// read from disk) while the CLI maps it to the process exit code.
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
 // (a head snapshot → path jail → dispatcher, shared across the run, plus a
 // per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
@@ -339,6 +329,16 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	return results, stage
 }
 
+// ExecuteReview runs phase two: fan out the prepared roster under the global
+// timeout, then write per-agent artifacts, the merged pool, summary.json, and
+// the finalized manifest (Partial reflecting the outcome). The completer is
+// injected so the CLI uses the real HTTP client and tests use a fake/httptest.
+//
+// Artifacts are always persisted, even when every agent fails; in that case the
+// populated *ReviewResult is still returned alongside the wrapped
+// ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
+// remains for inspection. The background MCP path discards the error (status is
+// read from disk) while the CLI maps it to the process exit code.
 func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 

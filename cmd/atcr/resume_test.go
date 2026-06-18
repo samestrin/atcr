@@ -3,6 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +18,40 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
 )
+
+// liveReviewConfig writes a user registry whose agents are pointed at srvURL (a
+// live mock provider) and a project config selecting them, so a real `atcr review`
+// produces a genuinely complete review on disk. Each agent's persona equals its
+// name so resolution falls through to the embedded default.
+func liveReviewConfig(t *testing.T, srvURL string, agents ...string) {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	reg := "providers:\n  p:\n    api_key_env: ATCR_TEST_REVIEW_KEY\n    base_url: " + srvURL + "\nagents:\n"
+	for _, a := range agents {
+		reg += "  " + a + ":\n    provider: p\n    model: m-" + a + "\n    persona: " + a + "\n"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(reg), 0o644))
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"),
+		[]byte("agents: ["+strings.Join(agents, ", ")+"]\n"), 0o644))
+}
+
+// liveMockProvider returns an httptest server speaking the OpenAI chat-completions
+// shape, replying with one finding for any model.
+func liveMockProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		content := "CRITICAL|a.txt:1|Unchecked call|Guard it|security|15|evidence"
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 // scaffoldResumeReview creates a minimal review directory (id under
 // .atcr/reviews/) with a sources/ tree so resolveResumeDir's completeness check
@@ -154,4 +192,45 @@ func TestResume_RosterMismatchIsExit2(t *testing.T) {
 	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
 	require.Equal(t, 2, code, "roster drift aborts with exit 2")
 	require.Contains(t, out, "roster changed")
+}
+
+func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce")
+
+	// A real review completes bruce and writes the full review tree + manifest.
+	require.Equal(t, 0, execCmd(t, "review", "--base", "HEAD^"))
+
+	// Resume finds nothing pending: AC2 — announce + re-reconcile + exit 0.
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, "AC2: all agents already completed -> clean exit")
+	require.Contains(t, out, "All configured agents already completed")
+	require.Contains(t, out, "reconciled")
+}
+
+func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
+	isolate(t)
+	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	// bruce already completed; robin is pending (no status.json). Range + roster match.
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, "resume runs the pending agent and reconciles -> exit 0")
+	require.Contains(t, out, "1 completed, 1 pending")
+	require.Contains(t, out, "reconciled")
+
+	// AC4/AC6: robin now has results and the review derives to completed.
+	dir := filepath.Join(fanout.ReviewsRoot("."), "2026-06-18_demo")
+	st, err := fanout.ReadReviewStatus(dir, "2026-06-18_demo")
+	require.NoError(t, err)
+	require.Equal(t, fanout.RunCompleted, st.Status)
+	require.False(t, st.Partial)
 }
