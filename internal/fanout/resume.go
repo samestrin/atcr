@@ -277,7 +277,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
-	results, _ := runEngine(ctx, completer, p, poolDir)
+	results, resumedStage := runEngine(ctx, completer, p, poolDir)
 	interrupted := errors.Is(ctx.Err(), context.Canceled)
 
 	if err := writeResumedAgents(poolDir, results); err != nil {
@@ -289,15 +289,37 @@ func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) 
 		return nil, err
 	}
 
+	// Recompute the Review stage from the union of on-disk statuses so the
+	// manifest reflects the current state — not the original run's verbatim
+	// stage. A tool agent that degraded in the original run but succeeded with
+	// full tools on resume must not stay recorded as degraded.
+	reviewStage := reviewStageFromStatuses(statuses)
+	if reviewStage != nil {
+		// Carry snapshot provenance (AC 03-02 / 03-03): prefer the resumed run's
+		// values when the resume attempted a snapshot; otherwise preserve the
+		// original manifest's snapshot fields (they're still authoritative for
+		// the roster).
+		if resumedStage != nil && resumedStage.SnapshotMode != "" {
+			reviewStage.SnapshotMode = resumedStage.SnapshotMode
+			reviewStage.HeadSHA = resumedStage.HeadSHA
+			reviewStage.SnapshotWorktreePath = resumedStage.SnapshotWorktreePath
+		} else if p.manifest.Review != nil {
+			reviewStage.SnapshotMode = p.manifest.Review.SnapshotMode
+			reviewStage.HeadSHA = p.manifest.Review.HeadSHA
+			reviewStage.SnapshotWorktreePath = p.manifest.Review.SnapshotWorktreePath
+		}
+	} else if p.manifest.Review != nil {
+		// No tool agents in the union: preserve the original stage (the roster
+		// is locked and the original stage's membership is still authoritative).
+		reviewStage = p.manifest.Review
+	}
+
 	// Finalize the manifest into a local copy (only adopted on a successful write).
-	// m.Review is preserved from the original run: the roster is locked, so the
-	// original review stage already lists every tool agent (reviewStageFor records
-	// ToolsRequested even on a failed agent), and the resumed subset cannot add new
-	// members.
 	m := *p.manifest
 	m.Partial = sum.Partial
 	m.CompletedAt = time.Now().UTC()
 	m.Interrupted = interrupted
+	m.Review = reviewStage
 	if err := WriteManifest(p.Dir, &m); err != nil {
 		return nil, err
 	}
@@ -422,4 +444,31 @@ func formatStatusFailures(sts []AgentStatus) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, ", ")
+}
+
+// reviewStageFromStatuses rebuilds the manifest's Review stage from the union
+// of per-agent statuses (as returned by RebuildPool). Mirrors reviewStageFor
+// over []Result: an agent contributes to ToolsEnabled when its status.json
+// records ToolsRequested=true, and to ToolsDegraded when ToolsDegraded=true.
+// Returns nil when no agent ran with tools, so the manifest omits the review
+// entry for a pure 1.x roster.
+func reviewStageFromStatuses(statuses []AgentStatus) *payload.ReviewStage {
+	var enabled, degraded []string
+	for _, st := range statuses {
+		if !st.ToolsRequested {
+			continue
+		}
+		enabled = append(enabled, st.Agent)
+		if st.ToolsDegraded {
+			degraded = append(degraded, st.Agent)
+		}
+	}
+	if len(enabled) == 0 {
+		return nil
+	}
+	return &payload.ReviewStage{
+		Agents:        append([]string(nil), enabled...),
+		ToolsEnabled:  enabled,
+		ToolsDegraded: degraded,
+	}
 }
