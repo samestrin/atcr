@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -115,7 +116,14 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 		if !e.IsDir() {
 			continue
 		}
-		name, ok := agentStatusName(rawDir, filepath.Join(rawDir, e.Name(), statusFile))
+		statusPath := filepath.Join(rawDir, e.Name(), statusFile)
+		name, ok, err := agentStatusName(rawDir, statusPath)
+		if err != nil {
+			// An existing status.json that won't read or parse is a real anomaly
+			// (distinct from a legitimately-pending agent): surface it so the
+			// corruption is greppable instead of a silent re-run.
+			slog.Warn("corrupt agent status", "path", statusPath, "err", err)
+		}
 		if ok {
 			done[name] = true
 		}
@@ -129,26 +137,37 @@ func CompletedAgents(reviewDir string) (map[string]bool, error) {
 // — re-running an agent is always safe, so an untrustworthy record never causes
 // a skip. The name comes from the record's Agent field (the engine's
 // authoritative value), not the directory name (which is a sanitized basename).
-func agentStatusName(root, path string) (string, bool) {
+//
+// The returned error is non-nil only when an EXISTING status.json is unreadable
+// or unparseable (corruption worth surfacing to an operator); a missing file
+// (the legitimately-pending case), a symlink-escape, or a non-OK/empty record
+// returns a nil error.
+func agentStatusName(root, path string) (string, bool, error) {
 	// Reject a status.json that resolves outside the review tree (symlink
 	// traversal): an out-of-tree file the review never produced must never be
 	// trusted as a completion record. Failing the containment check keeps the
 	// agent pending, which is always safe (a pending agent simply re-runs).
 	if !pathWithin(root, path) {
-		return "", false
+		return "", false, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		// A missing status.json is the legitimately-pending case (the agent
+		// never started) — not corruption, so stay silent. Any other read error
+		// means on-disk state exists but is unreadable: surface it.
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	var st AgentStatus
-	if json.Unmarshal(data, &st) != nil {
-		return "", false
+	if err := json.Unmarshal(data, &st); err != nil {
+		return "", false, err
 	}
 	if st.Status != StatusOK || st.Agent == "" {
-		return "", false
+		return "", false, nil
 	}
-	return st.Agent, true
+	return st.Agent, true, nil
 }
 
 // pathWithin reports whether path, with all symlinks resolved, stays inside
