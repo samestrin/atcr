@@ -1,8 +1,10 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -137,6 +139,37 @@ func TestCompletedAgents_RejectsSymlinkedStatusEscapingReviewDir(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, got["evil"],
 		"a status.json symlinked outside the review tree must not mark the agent complete")
+}
+
+// TestCompletedAgents_WarnsOnCorruptStatus verifies that a present-but-corrupt
+// status.json emits a greppable Warn (with the path), so an unreadable on-disk
+// record is a visible anomaly — while a healthy record and a legitimately-
+// missing one (a pending agent that never started) stay silent.
+func TestCompletedAgents_WarnsOnCorruptStatus(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	dir := t.TempDir()
+	writeAgentStatusFixture(t, dir, "alpha", StatusOK) // healthy: must not warn
+
+	// Corrupt (present-but-unparseable) status.json for bravo.
+	bravo := filepath.Join(dir, "sources", "pool", poolRawAgentDir, "bravo")
+	require.NoError(t, os.MkdirAll(bravo, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bravo, statusFile), []byte("{not json"), 0o644))
+
+	// Missing status.json for charlie (legitimately pending): must not warn.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sources", "pool", poolRawAgentDir, "charlie"), 0o755))
+
+	_, err := CompletedAgents(dir)
+	require.NoError(t, err)
+
+	logs := buf.String()
+	require.Contains(t, logs, "corrupt agent status", "a present-but-unparseable status.json must emit a Warn")
+	require.Contains(t, logs, "bravo", "the warning must carry the offending path")
+	require.NotContains(t, logs, "charlie", "a missing status.json (pending agent) must not warn")
+	require.NotContains(t, logs, "alpha", "a healthy status.json must not warn")
 }
 
 func TestValidateResumeRange(t *testing.T) {
