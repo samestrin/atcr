@@ -148,6 +148,13 @@ func runResume(cmd *cobra.Command, anchor string) error {
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
 	}
 	if err != nil {
+		// An empty union is a usage/state error (exit 2), consistent with the
+		// other pre-fan-out state errors above — not the exit-1 "agents failed"
+		// path. Effectively unreachable once there are pending slots, but mapped
+		// for consistency.
+		if errors.Is(err, fanout.ErrEmptyRoster) {
+			return usageError(err)
+		}
 		return err // every agent (union) failed → exit 1, artifacts preserved
 	}
 
