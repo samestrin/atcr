@@ -239,6 +239,78 @@ func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
 	require.Len(t, done, 4)
 }
 
+// TestExecuteResume_ReviewStageReflectsResumedRun verifies the manifest's Review
+// stage is recomputed from the resumed engine results, not preserved verbatim
+// from the original run. A tool agent that degraded in the original run but
+// succeeds with full tools on resume must not stay recorded as degraded.
+func TestExecuteResume_ReviewStageReflectsResumedRun(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+
+	// Phase 1: scaffold a 4-agent review. Pre-populate greta+kai as already
+	// completed on disk — this time with ToolsDegraded=FALSE (they succeeded
+	// with tools). The original manifest's Review stage, however, records them
+	// as degraded (simulating a scenario where the manifest was written before
+	// the agent artifacts were finalized, or where the manifest was preserved
+	// from an earlier interrupted snapshot).
+	cfg := fourAgentConfig("http://unused")
+	prep, err := PrepareReview(context.Background(), cfg, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+
+	poolDir := filepath.Join(prep.Dir, "sources", "pool")
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "greta", Status: StatusOK, Tools: true, ToolsRequested: true, ToolsDegraded: false,
+			Content: "CRITICAL|auth.go:3|x|y|security|15|ev"},
+		{Agent: "kai", Status: StatusOK, Tools: true, ToolsRequested: true, ToolsDegraded: false,
+			Content: ""},
+	}))
+
+	// Stamp the manifest with a Review stage showing greta+kai as degraded
+	// (simulating the bug: the manifest says degraded, but the on-disk statuses
+	// say they completed successfully with tools).
+	m, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	m.Review = &payload.ReviewStage{
+		Agents:        []string{"greta", "kai", "mira", "otto"},
+		ToolsEnabled:  []string{"greta", "kai", "mira", "otto"},
+		ToolsDegraded: []string{"greta", "kai"},
+		SnapshotMode:  "live",
+		HeadSHA:       head,
+	}
+	require.NoError(t, WriteManifest(prep.Dir, m))
+
+	// Phase 2: resume against a healthy provider. Only the 2 pending agents run;
+	// they succeed with tools enabled (not degraded).
+	srv := mockProvider(t)
+	cfg2 := fourAgentConfig(srv.URL)
+	rprep, info, err := PrepareResume(context.Background(), cfg2, prep.Dir, reviewReq(repo, repo, base, head))
+	require.NoError(t, err)
+	require.Len(t, info.Completed, 2)
+	require.Len(t, info.Pending, 2)
+
+	res, err := ExecuteResume(context.Background(), llmclient.New(), rprep)
+	require.NoError(t, err)
+	require.Equal(t, 4, res.Summary.Total)
+	require.Equal(t, 4, res.Summary.Succeeded)
+
+	// THE FIX ASSERTION: manifest Review stage must be recomputed from the
+	// union of on-disk statuses, NOT preserved verbatim from the pre-resume
+	// manifest. greta+kai's status.json says ToolsDegraded=false; mira+otto
+	// just ran with tools and did NOT degrade. The union's ToolsDegraded must
+	// be empty — but the bug preserves the pre-resume manifest's
+	// ToolsDegraded=["greta", "kai"] verbatim.
+	mAfter, err := ReadManifest(prep.Dir)
+	require.NoError(t, err)
+	require.NotNil(t, mAfter.Review, "Review stage must be present after resume")
+	require.ElementsMatch(t, []string{"greta", "kai", "mira", "otto"}, mAfter.Review.ToolsEnabled)
+	require.Empty(t, mAfter.Review.ToolsDegraded,
+		"ToolsDegraded must be derived from the union of on-disk statuses (all false), not preserved from pre-resume manifest")
+	// Snapshot provenance must also reflect the resumed run, not the pre-resume
+	// manifest (which happened to match in this test, but the principle holds).
+	require.Equal(t, "live", mAfter.Review.SnapshotMode)
+	require.Equal(t, head, mAfter.Review.HeadSHA)
+}
+
 // TestResume_InterruptThenResumeCompletesAllAgents is the epic 4.1.1 AC9
 // integration test: a 4-agent review is interrupted after 2 agents complete, then
 // resumed against a healthy provider — exercising the real PrepareReview ->
