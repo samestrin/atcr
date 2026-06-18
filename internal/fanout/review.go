@@ -339,6 +339,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 // ErrAllAgentsFailed so the caller can map it to exit 1 while the on-disk review
 // remains for inspection. The background MCP path discards the error (status is
 // read from disk) while the CLI maps it to the process exit code.
+//
+// Graceful-shutdown note: cooperative shutdown preserves agents that finished
+// before the signal; in-flight agents share the cancelled parent ctx and are cut
+// off (classified as timeout). Truly completing in-flight work would require
+// running them on an uncancelled child ctx — a deliberate engine change out of
+// scope here.
 func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
