@@ -255,9 +255,9 @@ func TestWriteResumedAgents_PreservesFailedStatusOnNeverRun(t *testing.T) {
 	// writeResumedAgents must NOT overwrite alpha's status.json with this
 	// synthesized timeout, because the original failure's error message would
 	// be lost.
-	writeResumedAgents(poolDir, []Result{
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
 		{Agent: "alpha", Status: StatusTimeout, Content: "", Err: context.Canceled},
-	})
+	}))
 
 	// Re-read alpha's status.json: it must still contain the original error.
 	sdataAfter, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
