@@ -197,6 +197,9 @@ func (r *ResumeInfo) AllComplete() bool { return len(r.Pending) == 0 }
 // the completed set, so a resumed fan-out re-runs only the pending/failed agents
 // (epic 4.1.1 AC4).
 func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
+	if len(slots) == 0 {
+		return nil
+	}
 	pending := make([]Slot, 0, len(slots))
 	for _, s := range slots {
 		if !done[s.Primary.Name] {
