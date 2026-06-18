@@ -151,6 +151,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// what was saved and stop. Checked before err so an interrupted resume is never
 	// reported as a clean completion. Exit 1, consistent with a fresh review.
 	if errors.Is(ctx.Err(), context.Canceled) {
+		// Mirror the human-facing stderr notice as a structured Warn so an
+		// interrupt also leaves a greppable, review_id-correlated log record,
+		// parity with review.go.
+		log.FromContext(ctx).Warn("review interrupted by signal")
 		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
 		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
 	}
