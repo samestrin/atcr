@@ -231,6 +231,43 @@ func TestRebuildPool_FindingsMergedInRosterOrder(t *testing.T) {
 	require.Equal(t, "m.go", pr.Findings[2].File, "third finding must be mira's (roster tail)")
 }
 
+// TestWriteResumedAgents_PreservesFailedStatusOnNeverRun verifies that a
+// previously-failed agent's status.json is NOT overwritten when the resumed
+// engine never actually ran the agent (interrupted before it started). The
+// engine synthesizes a timeout Result for never-run slots; writeResumedAgents
+// must skip those to preserve the original failure reason.
+func TestWriteResumedAgents_PreservesFailedStatusOnNeverRun(t *testing.T) {
+	dir := t.TempDir()
+	poolDir := filepath.Join(dir, "sources", "pool")
+
+	// Pre-populate agent "alpha" as failed (with a real error message).
+	require.NoError(t, writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusFailed, Err: errors.New("provider 500: rate limited")},
+	}))
+
+	// Sanity: status.json shows failed with the real error.
+	sdata, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
+	require.NoError(t, err)
+	require.Contains(t, string(sdata), "rate limited", "precondition: alpha must be recorded as failed with real error")
+
+	// Resume is interrupted before alpha runs. The engine synthesizes a timeout
+	// Result (Content="", Err=context.Canceled, Status=StatusTimeout).
+	// writeResumedAgents must NOT overwrite alpha's status.json with this
+	// synthesized timeout, because the original failure's error message would
+	// be lost.
+	writeResumedAgents(poolDir, []Result{
+		{Agent: "alpha", Status: StatusTimeout, Content: "", Err: context.Canceled},
+	})
+
+	// Re-read alpha's status.json: it must still contain the original error.
+	sdataAfter, err := os.ReadFile(filepath.Join(poolDir, poolRawAgentDir, "alpha", statusFile))
+	require.NoError(t, err)
+	require.Contains(t, string(sdataAfter), "rate limited",
+		"writeResumedAgents must preserve the original failed status when the engine never ran the agent")
+	require.NotContains(t, string(sdataAfter), `"status": "timeout"`,
+		"writeResumedAgents must not overwrite a prior failed status with a synthesized timeout")
+}
+
 func TestExecuteResume_MergesCompletedAndPending(t *testing.T) {
 	dir := t.TempDir()
 	names := []string{"greta", "kai", "mira", "otto"}
