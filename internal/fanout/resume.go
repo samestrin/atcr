@@ -578,29 +578,14 @@ func formatStatusFailures(sts []AgentStatus) string {
 	return strings.Join(parts, ", ")
 }
 
-// reviewStageFromStatuses rebuilds the manifest's Review stage from the union
-// of per-agent statuses (as returned by RebuildPool). Mirrors reviewStageFor
-// over []Result: an agent contributes to ToolsEnabled when its status.json
-// records ToolsRequested=true, and to ToolsDegraded when ToolsDegraded=true.
-// Returns nil when no agent ran with tools, so the manifest omits the review
-// entry for a pure 1.x roster.
+// reviewStageFromStatuses rebuilds the manifest's Review stage from the union of
+// per-agent statuses (as returned by RebuildPool) via the shared
+// reviewStageForAgents classifier — the same rule the fresh []Result path
+// (reviewStageFor) uses, so the two manifest paths cannot silently diverge.
+// Returns nil when no agent ran with tools.
 func reviewStageFromStatuses(statuses []AgentStatus) *payload.ReviewStage {
-	var enabled, degraded []string
-	for _, st := range statuses {
-		if !st.ToolsRequested {
-			continue
-		}
-		enabled = append(enabled, st.Agent)
-		if st.ToolsDegraded {
-			degraded = append(degraded, st.Agent)
-		}
-	}
-	if len(enabled) == 0 {
-		return nil
-	}
-	return &payload.ReviewStage{
-		Agents:        append([]string(nil), enabled...),
-		ToolsEnabled:  enabled,
-		ToolsDegraded: degraded,
-	}
+	return reviewStageForAgents(statuses,
+		func(s AgentStatus) bool { return s.ToolsRequested },
+		func(s AgentStatus) bool { return s.ToolsDegraded },
+		func(s AgentStatus) string { return s.Agent })
 }

@@ -172,6 +172,43 @@ func TestCompletedAgents_WarnsOnCorruptStatus(t *testing.T) {
 	require.NotContains(t, logs, "alpha", "a healthy status.json must not warn")
 }
 
+// TestReviewStage_FreshAndResumePathsAgree verifies the fresh ([]Result,
+// reviewStageFor) and resume ([]AgentStatus, reviewStageFromStatuses) classifiers
+// produce identical ReviewStage for equivalent inputs — guarding the shared
+// reviewStageForAgents classifier against the two paths ever diverging.
+func TestReviewStage_FreshAndResumePathsAgree(t *testing.T) {
+	cases := []struct {
+		name     string
+		results  []Result
+		statuses []AgentStatus
+	}{
+		{
+			name: "mixed enabled and degraded",
+			results: []Result{
+				{Agent: "a", ToolsRequested: true, ToolsDegraded: false},
+				{Agent: "b", ToolsRequested: true, ToolsDegraded: true},
+				{Agent: "c", ToolsRequested: false},
+			},
+			statuses: []AgentStatus{
+				{Agent: "a", ToolsRequested: true, ToolsDegraded: false},
+				{Agent: "b", ToolsRequested: true, ToolsDegraded: true},
+				{Agent: "c", ToolsRequested: false},
+			},
+		},
+		{
+			name:     "no tool agents yields nil",
+			results:  []Result{{Agent: "solo", ToolsRequested: false}},
+			statuses: []AgentStatus{{Agent: "solo", ToolsRequested: false}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, reviewStageFor(tc.results), reviewStageFromStatuses(tc.statuses),
+				"fresh and resume review-stage classifiers must agree for equivalent inputs")
+		})
+	}
+}
+
 func TestValidateResumeRange(t *testing.T) {
 	m := &payload.Manifest{Base: "aaa111", Head: "bbb222"}
 

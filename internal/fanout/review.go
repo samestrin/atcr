@@ -709,22 +709,36 @@ func transcriptAgentDir(agent string) string {
 // single-shot. Returns nil when no agent ran with tools, so the manifest omits
 // the review entry for a pure 1.x roster (Scenario 5).
 func reviewStageFor(results []Result) *payload.ReviewStage {
-	var enabled, degraded []string
-	for _, r := range results {
-		if !r.ToolsRequested {
+	return reviewStageForAgents(results,
+		func(r Result) bool { return r.ToolsRequested },
+		func(r Result) bool { return r.ToolsDegraded },
+		func(r Result) string { return r.Agent })
+}
+
+// reviewStageForAgents is the single manifest review-stage classifier shared by
+// the fresh ([]Result via reviewStageFor) and resume ([]AgentStatus via
+// reviewStageFromStatuses) paths, so the classification rule lives in exactly
+// one place and the two paths cannot silently diverge. An element contributes to
+// ToolsEnabled when requested() is true, and additionally to ToolsDegraded when
+// degraded() is true. Returns nil when no element ran with tools, so the
+// manifest omits the review entry for a pure 1.x roster. Agents is a distinct
+// copy of ToolsEnabled so the two slices never alias (a later mutation of one
+// must not silently mutate the other).
+func reviewStageForAgents[T any](items []T, requested func(T) bool, degraded func(T) bool, name func(T) string) *payload.ReviewStage {
+	var enabled, deg []string
+	for _, it := range items {
+		if !requested(it) {
 			continue
 		}
-		enabled = append(enabled, r.Agent)
-		if r.ToolsDegraded {
-			degraded = append(degraded, r.Agent)
+		enabled = append(enabled, name(it))
+		if degraded(it) {
+			deg = append(deg, name(it))
 		}
 	}
 	if len(enabled) == 0 {
 		return nil
 	}
-	// Agents is a distinct copy of ToolsEnabled so the two slices never alias (a
-	// later mutation of one must not silently mutate the other).
-	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: degraded}
+	return &payload.ReviewStage{Agents: append([]string(nil), enabled...), ToolsEnabled: enabled, ToolsDegraded: deg}
 }
 
 // snapshotManifestFields derives the review-stage snapshot provenance (AC 03-02 /
