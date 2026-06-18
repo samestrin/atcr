@@ -375,7 +375,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 		if p.manifest != nil {
 			p.manifest.CompletedAt = time.Now().UTC()
 			p.manifest.Interrupted = interrupted
-			_ = WriteManifest(p.Dir, p.manifest) // best-effort; if this also fails, stale inference covers it
+			_ = WriteManifest(p.Dir, p.manifest) // best-effort; stale inference covers the `failed` outcome but manifest.Interrupted is lost if this write also fails
 		}
 		return nil, err
 	}
