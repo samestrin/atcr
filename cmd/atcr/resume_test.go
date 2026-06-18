@@ -276,3 +276,22 @@ func TestResume_AllCompleteClearsStaleInterrupted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fanout.RunCompleted, stAfter.Status, "AC6: resume clears the stale interrupted marker")
 }
+
+func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
+	for _, tc := range []struct {
+		flag string
+		args []string
+	}{
+		{"fresh", []string{"review", "--resume", "latest", "--fresh"}},
+		{"thorough", []string{"review", "--resume", "latest", "--thorough"}},
+		{"min-severity", []string{"review", "--resume", "latest", "--min-severity", "HIGH"}},
+	} {
+		tc := tc
+		t.Run(tc.flag, func(t *testing.T) {
+			isolate(t)
+			code, out := execResume(t, tc.args...)
+			require.Equal(t, 2, code, "--%s should be rejected with exit 2 when using --resume", tc.flag)
+			require.Contains(t, out, "does not support --"+tc.flag)
+		})
+	}
+}
