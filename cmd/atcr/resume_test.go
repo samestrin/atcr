@@ -19,6 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testReviewKeyEnv is the env var name used by live-provider tests as the
+// API key sentinel (set to a dummy value via t.Setenv before the test runs).
+const testReviewKeyEnv = "ATCR_TEST_REVIEW_KEY"
+
 // liveReviewConfig writes a user registry whose agents are pointed at srvURL (a
 // live mock provider) and a project config selecting them, so a real `atcr review`
 // produces a genuinely complete review on disk. Each agent's persona equals its
@@ -29,7 +33,7 @@ func liveReviewConfig(t *testing.T, srvURL string, agents ...string) {
 	require.NoError(t, err)
 	regDir := filepath.Join(home, ".config", "atcr")
 	require.NoError(t, os.MkdirAll(regDir, 0o755))
-	reg := "providers:\n  p:\n    api_key_env: ATCR_TEST_REVIEW_KEY\n    base_url: " + srvURL + "\nagents:\n"
+	reg := "providers:\n  p:\n    api_key_env: " + testReviewKeyEnv + "\n    base_url: " + srvURL + "\nagents:\n"
 	for _, a := range agents {
 		reg += "  " + a + ":\n    provider: p\n    model: m-" + a + "\n    persona: " + a + "\n"
 	}
@@ -196,7 +200,7 @@ func TestResume_RosterMismatchIsExit2(t *testing.T) {
 
 func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 	srv := liveMockProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce")
@@ -213,7 +217,7 @@ func TestResume_AllCompleteReconcilesAndExitsZero(t *testing.T) {
 
 func TestResume_RunsPendingAgentThenReconciles(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 	srv := liveMockProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce", "robin")
@@ -251,7 +255,7 @@ func TestResume_VerifyFlagIsExit2(t *testing.T) {
 
 func TestResume_AllCompleteClearsStaleInterrupted(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 	srv := liveMockProvider(t)
 	liveReviewConfig(t, srv.URL, "bruce")
@@ -298,7 +302,7 @@ func TestResume_VerifyOnlyFlagsAreExit2(t *testing.T) {
 
 func TestResume_InterruptEmitsStructuredWarn(t *testing.T) {
 	isolate(t)
-	t.Setenv("ATCR_TEST_REVIEW_KEY", "secret")
+	t.Setenv(testReviewKeyEnv, "secret")
 	initGitRepoWithChange(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
