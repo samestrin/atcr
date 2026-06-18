@@ -177,17 +177,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	}
 
 	// The review id is the earliest correlation anchor (it exists only after
-	// PrepareReview). Attach it to the context logger so every downstream stage —
-	// execute, reconcile, verify — emits log lines greppable by review_id (AC9).
+	// PrepareReview). correlateAndRedact attaches it to the context logger so every
+	// downstream stage — execute, reconcile, verify — emits log lines greppable by
+	// review_id (AC9), and installs sink-level redaction (AC5/AC6) for the whole
+	// review. Shared with runResume so the contract can't drift between paths.
 	// From here on use this correlated ctx, never cmd.Context() again.
-	ctx = correlateReviewID(ctx, prep.ID)
-	// Enforce sink-level redaction for the whole review: scrub secret-shaped
-	// tokens (AC5) and relativize absolute paths under the repo root (AC6) on
-	// every log line, at every level and call site (TD-007 enforcement model).
-	// Resolve the root to an absolute path first — the CLI default repo is "."
-	// and relativizePaths no-ops on ".", so AC6 needs the concrete root.
-	redactRoot := resolveRedactRoot(ctx, prep.Repo)
-	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(redactRoot)))
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo)
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
 		return err // no slot can authenticate → exit 2 before any provider call
@@ -203,12 +198,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// (consistent with the 10s force-exit path); skips the normal success line so
 	// an interrupted run is never reported as "succeeded".
 	if errors.Is(ctx.Err(), context.Canceled) {
-		// Mirror the human-facing stderr notice as a structured Warn so an
-		// interrupt also leaves a greppable, review_id-correlated log record
-		// (correlateReviewID tagged the ctx logger with the review id above).
-		log.FromContext(ctx).Warn("review interrupted by signal")
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
-		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
+		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
 	if result != nil {

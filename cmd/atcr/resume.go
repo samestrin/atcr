@@ -10,7 +10,6 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
-	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
 )
@@ -121,9 +120,9 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// Correlate every downstream log line by review id and enforce sink-level
 	// redaction (scrub secret-shaped tokens, relativize absolute paths under the
 	// repo root) for the resumed fan-out and reconcile — parity with the fresh
-	// review path so the resume flow never leaks secrets or absolute paths.
-	ctx = correlateReviewID(ctx, prep.ID)
-	ctx = log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(resolveRedactRoot(ctx, prep.Repo))))
+	// review path so the resume flow never leaks secrets or absolute paths. Shared
+	// with runReview via correlateAndRedact so the contract can't drift.
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo)
 
 	// AC2: nothing pending — re-run reconciliation against the complete review and
 	// exit clean, never touching a provider. Clear any stale interrupt marker first
@@ -151,12 +150,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// what was saved and stop. Checked before err so an interrupted resume is never
 	// reported as a clean completion. Exit 1, consistent with a fresh review.
 	if errors.Is(ctx.Err(), context.Canceled) {
-		// Mirror the human-facing stderr notice as a structured Warn so an
-		// interrupt also leaves a greppable, review_id-correlated log record,
-		// parity with review.go.
-		log.FromContext(ctx).Warn("review interrupted by signal")
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), interruptMessage(result, prep))
-		return &codedError{code: exitFailure, err: errors.New("review interrupted")}
+		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
 	if result != nil {
