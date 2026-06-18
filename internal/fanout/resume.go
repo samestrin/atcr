@@ -1,0 +1,425 @@
+package fanout
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/samestrin/atcr/internal/payload"
+	"github.com/samestrin/atcr/internal/stream"
+)
+
+// ErrRangeChanged reports that the working tree's resolved git range no longer
+// matches the range the interrupted review recorded in manifest.json. Resuming
+// would fan the pending agents out at a different base/head than the completed
+// ones reviewed, mixing inconsistent contexts — so resume aborts (exit 2) and
+// the user must start a fresh `atcr review` (epic 4.1.1 AC3).
+var ErrRangeChanged = errors.New("the working tree changed since the interrupted review (git base/head differ)")
+
+// ErrRosterChanged reports that the currently configured agent roster differs
+// from the roster the interrupted review recorded. The panel configuration is
+// locked for a resume (epic 4.1.1 Open Question #2 / out-of-scope): a changed
+// roster aborts (exit 2) rather than silently resuming a different panel.
+var ErrRosterChanged = errors.New("the configured roster changed since the interrupted review")
+
+// ValidateResumeRange verifies the manifest's recorded range matches the range
+// resolved from the current working tree. Base and head are compared as the
+// already-resolved SHAs gitrange.Resolve produced (manifest.json stores them
+// verbatim), so an equal pair proves the pending agents will review exactly what
+// the completed agents did.
+func ValidateResumeRange(m *payload.Manifest, cur ReviewRange) error {
+	if m.Base != cur.Base || m.Head != cur.Head {
+		return fmt.Errorf("%w: recorded %s..%s, current %s..%s; start a fresh `atcr review`",
+			ErrRangeChanged, shortRef(m.Base), shortRef(m.Head), shortRef(cur.Base), shortRef(cur.Head))
+	}
+	return nil
+}
+
+// ValidateResumeRoster verifies the configured roster is the same SET of agent
+// names the interrupted review recorded (order-independent — manifest.Roster is
+// an ordered snapshot but the roster is semantically a set). Any added, removed,
+// or swapped agent fails closed.
+func ValidateResumeRoster(m *payload.Manifest, configured []string) error {
+	recorded := nameSet(m.Roster)
+	current := nameSet(configured)
+	if len(recorded) != len(current) {
+		return rosterMismatch(m.Roster, configured)
+	}
+	for name := range recorded {
+		if !current[name] {
+			return rosterMismatch(m.Roster, configured)
+		}
+	}
+	return nil
+}
+
+// nameSet collapses a roster slice to a presence set.
+func nameSet(names []string) map[string]bool {
+	s := make(map[string]bool, len(names))
+	for _, n := range names {
+		s[n] = true
+	}
+	return s
+}
+
+// rosterMismatch renders the ErrRosterChanged error with both rosters sorted so
+// the diff is legible regardless of declaration order.
+func rosterMismatch(recorded, configured []string) error {
+	r := append([]string(nil), recorded...)
+	c := append([]string(nil), configured...)
+	sort.Strings(r)
+	sort.Strings(c)
+	return fmt.Errorf("%w: recorded [%s], configured [%s]; start a fresh `atcr review`",
+		ErrRosterChanged, strings.Join(r, " "), strings.Join(c, " "))
+}
+
+// shortRef trims a git SHA to 12 chars for diagnostics, leaving shorter or
+// symbolic refs intact.
+func shortRef(ref string) string {
+	if len(ref) > 12 {
+		return ref[:12]
+	}
+	return ref
+}
+
+// CompletedAgents scans a review's per-agent status records and returns the set
+// of agent names that finished successfully (status == StatusOK), so a resumed
+// run can skip them. An agent is treated as PENDING — and therefore re-run —
+// when its status.json is missing, unreadable, corrupt, or records a non-OK
+// outcome (StatusFailed / StatusTimeout). This is the authoritative completion
+// signal: WritePool stamps StatusOK regardless of findings count, so a clean
+// reviewer that found nothing is correctly "complete", while a failed agent —
+// which writes an identical empty findings.txt — is correctly "pending"
+// (resolves epic 4.1.1 Open Question #1).
+//
+// A missing pool tree (a review scaffolded but never fanned out) yields an empty
+// set with no error: every roster agent is pending.
+func CompletedAgents(reviewDir string) (map[string]bool, error) {
+	rawDir := filepath.Join(reviewDir, "sources", "pool", poolRawAgentDir)
+	entries, err := os.ReadDir(rawDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string]bool{}, nil
+		}
+		return nil, err
+	}
+	done := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name, ok := agentStatusName(filepath.Join(rawDir, e.Name(), statusFile))
+		if ok {
+			done[name] = true
+		}
+	}
+	return done, nil
+}
+
+// agentStatusName reads a per-agent status.json and returns the agent name when
+// the record is readable, parseable, and reports StatusOK. Any failure to read
+// or parse, or any non-OK outcome, returns ok=false so the agent stays pending
+// — re-running an agent is always safe, so an untrustworthy record never causes
+// a skip. The name comes from the record's Agent field (the engine's
+// authoritative value), not the directory name (which is a sanitized basename).
+func agentStatusName(path string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var st AgentStatus
+	if json.Unmarshal(data, &st) != nil {
+		return "", false
+	}
+	if st.Status != StatusOK || st.Agent == "" {
+		return "", false
+	}
+	return st.Agent, true
+}
+
+// ReadManifest loads and parses a review's manifest.json. A missing manifest
+// means the directory is not a fan-out-managed review (so it cannot be resumed);
+// a present-but-corrupt manifest surfaces as a parse error rather than a guessed
+// state.
+func ReadManifest(reviewDir string) (*payload.Manifest, error) {
+	data, err := os.ReadFile(filepath.Join(reviewDir, manifestFile))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%s has no manifest.json: not a resumable review (run a fresh `atcr review`)", reviewDir)
+		}
+		return nil, err
+	}
+	var m payload.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("manifest.json is corrupt: %w", err)
+	}
+	return &m, nil
+}
+
+// ClearInterrupted rewrites the review's manifest with Interrupted=false when it
+// is currently set. A review whose every agent already finished but whose manifest
+// still carries the interrupt marker (a signal that landed after the last agent
+// wrote ok, before manifest finalization) would otherwise keep deriving to
+// "interrupted" forever; clearing the marker when a resume confirms the roster is
+// complete lets it report "completed" (epic 4.1.1 AC6). It is a no-op (and writes
+// nothing) when the manifest is not marked interrupted.
+func ClearInterrupted(reviewDir string) error {
+	m, err := ReadManifest(reviewDir)
+	if err != nil {
+		return err
+	}
+	if !m.Interrupted {
+		return nil
+	}
+	m.Interrupted = false
+	return WriteManifest(reviewDir, m)
+}
+
+// ResumeInfo reports how a resume run partitioned the locked roster: the agents
+// already completed (skipped) and the agents that will be re-run.
+type ResumeInfo struct {
+	Completed []string
+	Pending   []string
+}
+
+// AllComplete reports whether every roster agent already finished, so the caller
+// can skip the fan-out entirely and go straight to reconciliation (epic 4.1.1 AC2).
+func (r *ResumeInfo) AllComplete() bool { return len(r.Pending) == 0 }
+
+// filterPendingSlots keeps only the slots whose primary agent is not already in
+// the completed set, so a resumed fan-out re-runs only the pending/failed agents
+// (epic 4.1.1 AC4).
+func filterPendingSlots(slots []Slot, done map[string]bool) []Slot {
+	pending := make([]Slot, 0, len(slots))
+	for _, s := range slots {
+		if !done[s.Primary.Name] {
+			pending = append(pending, s)
+		}
+	}
+	return pending
+}
+
+// PrepareResume validates an existing review directory against the current
+// working tree and configured roster, then assembles a PreparedReview whose Dir
+// is that existing directory and whose Slots are only the pending agents. The
+// range and roster are locked: a changed git range (ErrRangeChanged) or a
+// changed roster set (ErrRosterChanged) aborts before any agent runs, so a resume
+// can never mix inconsistent contexts or silently run a different panel. Payloads
+// are rebuilt from the (validated-identical) recorded range so pending agents see
+// exactly what the completed agents reviewed. The returned ResumeInfo reports the
+// completed/pending split; when AllComplete is true the Slots are empty and the
+// caller reconciles without a fan-out.
+func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req ReviewRequest) (*PreparedReview, *ResumeInfo, error) {
+	m, err := ReadManifest(reviewDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := ValidateResumeRange(m, req.Range); err != nil {
+		return nil, nil, err
+	}
+	configured := rosterNames(cfg.Project)
+	if err := ValidateResumeRoster(m, configured); err != nil {
+		return nil, nil, err
+	}
+
+	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
+	if err != nil {
+		return nil, nil, err
+	}
+	slots, _, err := buildSlots(cfg, payloads, req.Range)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	done, err := CompletedAgents(reviewDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	info := &ResumeInfo{}
+	for _, name := range configured {
+		if done[name] {
+			info.Completed = append(info.Completed, name)
+		} else {
+			info.Pending = append(info.Pending, name)
+		}
+	}
+
+	p := &PreparedReview{
+		ID:          filepath.Base(reviewDir),
+		Dir:         reviewDir,
+		Slots:       filterPendingSlots(slots, done),
+		TimeoutSec:  cfg.Settings.TimeoutSecs,
+		MaxParallel: cfg.Settings.MaxParallel,
+		Repo:        req.Repo,
+		Head:        req.Range.Head,
+		manifest:    m,
+	}
+	return p, info, nil
+}
+
+// ExecuteResume runs the pending slots, persists their per-agent artifacts (the
+// already-completed agents' artifacts on disk are untouched), then rebuilds
+// summary.json and the merged findings.txt over the FULL on-disk union so the
+// aggregate reflects the whole roster — not just the re-run subset. The manifest
+// is finalized with the union's partial flag and the interrupt marker: if the
+// resume is itself interrupted (AC7), whatever pending agents completed are
+// preserved and the run stays interrupted. The all-agents-failed gate is judged
+// over the union, so a resume whose pending agents all fail again still returns
+// success when an earlier completed agent succeeded.
+func ExecuteResume(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+	poolDir := filepath.Join(p.Dir, "sources", "pool")
+
+	results, _ := runEngine(ctx, completer, p, poolDir)
+	interrupted := errors.Is(ctx.Err(), context.Canceled)
+
+	if err := writeResumedAgents(poolDir, results); err != nil {
+		return nil, err
+	}
+
+	sum, statuses, err := RebuildPool(poolDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Finalize the manifest into a local copy (only adopted on a successful write).
+	// m.Review is preserved from the original run: the roster is locked, so the
+	// original review stage already lists every tool agent (reviewStageFor records
+	// ToolsRequested even on a failed agent), and the resumed subset cannot add new
+	// members.
+	m := *p.manifest
+	m.Partial = sum.Partial
+	m.CompletedAt = time.Now().UTC()
+	m.Interrupted = interrupted
+	if err := WriteManifest(p.Dir, &m); err != nil {
+		return nil, err
+	}
+	p.manifest = &m
+
+	res := &ReviewResult{ID: p.ID, Dir: p.Dir, Summary: sum}
+	if sum.Total == 0 {
+		return res, ErrEmptyRoster
+	}
+	if sum.Succeeded == 0 {
+		return res, fmt.Errorf("%w: %s", ErrAllAgentsFailed, formatStatusFailures(statuses))
+	}
+	return res, nil
+}
+
+// writeResumedAgents persists the per-agent artifacts (review.md, findings.txt,
+// status.json) for each re-run result. A re-run agent's prior (failed/timeout)
+// artifacts are overwritten in place; completed agents are not in results, so
+// their artifacts on disk are left untouched.
+func writeResumedAgents(poolDir string, results []Result) error {
+	for _, r := range results {
+		dir, err := agentDirName(r.Agent)
+		if err != nil {
+			return err
+		}
+		fr := findingsFor(r)
+		if err := writeAgentArtifacts(poolDir, dir, r, fr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RebuildPool recomputes the merged pool findings.txt and summary.json from every
+// per-agent artifact currently under poolDir/raw/agent (completed + newly
+// resumed), returning the aggregate Summary and the union of per-agent statuses.
+// os.ReadDir yields entries in sorted order, so the rebuilt artifacts are
+// deterministic. An agent directory without a readable/parseable status.json is
+// skipped (it never completed); a missing or unparseable findings.txt contributes
+// no findings but does not fail the rebuild.
+func RebuildPool(poolDir string) (Summary, []AgentStatus, error) {
+	rawDir := filepath.Join(poolDir, poolRawAgentDir)
+	entries, err := os.ReadDir(rawDir)
+	if err != nil {
+		return Summary{}, nil, fmt.Errorf("reading agent artifacts: %w", err)
+	}
+
+	var statuses []AgentStatus
+	var merged []stream.Finding
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		agentDir := filepath.Join(rawDir, e.Name())
+		sdata, rerr := os.ReadFile(filepath.Join(agentDir, statusFile))
+		if rerr != nil {
+			continue // no status.json → never completed; not part of the union
+		}
+		var st AgentStatus
+		if json.Unmarshal(sdata, &st) != nil {
+			continue
+		}
+		statuses = append(statuses, st)
+		if fdata, ferr := os.ReadFile(filepath.Join(agentDir, findingsFile)); ferr == nil {
+			if pr, perr := stream.ParseSource(fdata); perr == nil {
+				merged = append(merged, pr.Findings...)
+			}
+		}
+	}
+
+	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
+		return Summary{}, nil, err
+	}
+	sum := summarizeStatuses(statuses)
+	ps := PoolSummary{
+		Agents:        statuses,
+		Total:         sum.Total,
+		Succeeded:     sum.Succeeded,
+		Failed:        sum.Failed,
+		Partial:       sum.Partial,
+		TotalFindings: len(merged),
+	}
+	if err := writeJSON(filepath.Join(poolDir, summaryFile), ps); err != nil {
+		return Summary{}, nil, err
+	}
+	return sum, statuses, nil
+}
+
+// summarizeStatuses tallies a union of per-agent statuses into a Summary, mirroring
+// summarize() (which works over []Result) for the resume rebuild path.
+func summarizeStatuses(sts []AgentStatus) Summary {
+	s := Summary{Total: len(sts)}
+	for _, st := range sts {
+		if st.Status == StatusOK {
+			s.Succeeded++
+		} else {
+			s.Failed++
+		}
+	}
+	s.Partial = s.Failed > 0 && s.Succeeded > 0
+	return s
+}
+
+// formatStatusFailures renders "agent (reason), ..." for the all-failed resume
+// error, sorted for deterministic output. The reason is the recorded error
+// message when present, else the status string.
+func formatStatusFailures(sts []AgentStatus) string {
+	parts := make([]string, 0, len(sts))
+	for _, st := range sts {
+		if st.Status == StatusOK {
+			continue
+		}
+		reason := st.Status
+		if st.Error != "" {
+			reason = st.Error
+		}
+		name := st.Agent
+		if name == "" {
+			name = "<unnamed>"
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", name, reason))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
+}

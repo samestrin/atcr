@@ -149,8 +149,9 @@ func TestRunReview_NoLocalLogger(t *testing.T) {
 
 // TestInterruptMessage_NilResultFallsBackToPrep verifies the warning is rendered
 // from the PreparedReview when ExecuteReview returned no result (interrupted
-// before producing one), reports 0/0, references only commands that exist, and
-// never mentions the out-of-scope --resume flag (AC5/AC6).
+// before producing one), reports 0/0, and points at both `atcr status` and the
+// `atcr review --resume` flow that finishes the remaining agents (epic 4.1.1
+// makes --resume real, so the notice now advertises it — AC5/AC6).
 func TestInterruptMessage_NilResultFallsBackToPrep(t *testing.T) {
 	prep := &fanout.PreparedReview{ID: "2026-06-17_feat", Dir: "/x/.atcr/reviews/2026-06-17_feat"}
 	msg := interruptMessage(nil, prep)
@@ -158,7 +159,7 @@ func TestInterruptMessage_NilResultFallsBackToPrep(t *testing.T) {
 	assert.Contains(t, msg, "0/0 agents completed", "nil result falls back to a zero tally")
 	assert.Contains(t, msg, "/x/.atcr/reviews/2026-06-17_feat", "AC6: prints the review directory")
 	assert.Contains(t, msg, "atcr status 2026-06-17_feat", "AC6: points at a command that exists")
-	assert.NotContains(t, msg, "--resume", "must not reference the out-of-scope --resume flag")
+	assert.Contains(t, msg, "atcr review --resume 2026-06-17_feat", "epic 4.1.1: advertises the resume flow")
 }
 
 // TestInterruptMessage_UsesResultCounts verifies that when a partial result is
