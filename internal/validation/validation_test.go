@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,6 +29,15 @@ func TestGitRef(t *testing.T) {
 		assert.Error(t, GitRef(ref), ref)
 	}
 
+	// Control chars, shell/git metacharacters, and leading dash that git-check-ref-format rejects.
+	for _, ref := range []string{
+		"has\rCR", "has\vVT", "has\fFF", "has\x7fDEL",
+		"has\\backslash", "has?question", "has*asterisk", "has[bracket",
+		"-leading-dash",
+	} {
+		assert.Error(t, GitRef(ref), "GitRef should reject %q", ref)
+	}
+
 	// Empty and over-length are distinct messages.
 	assert.EqualError(t, GitRef(""), `invalid git ref "": must not be empty`)
 	long := strings.Repeat("a", 256)
@@ -41,6 +51,9 @@ func TestFilePath(t *testing.T) {
 	assert.EqualError(t, FilePath(""), `invalid file path "": must not be empty`)
 	assert.EqualError(t, FilePath("../escape"), `invalid file path "../escape": must not contain ..`)
 
+	// A filename that contains ".." as a substring (not a traversal segment) must not be rejected.
+	require.NoError(t, FilePath("/home/user/my..file"), "FilePath should accept '..'' in a filename component")
+
 	// AC3: system directories are rejected with the documented message.
 	assert.EqualError(t, FilePath("/etc/passwd"),
 		`invalid file path "/etc/passwd": must not reference system directories`)
@@ -53,6 +66,43 @@ func TestFilePath(t *testing.T) {
 	// Directory-boundary match: siblings of the system dirs are NOT system
 	// directories and must pass (no bare-prefix false positives).
 	for _, p := range []string{"/etcd/data", "/etc-backup", "/system/x", "/procession"} {
+		require.NoError(t, FilePath(p), p)
+	}
+
+	// Caller contract: callers invoke filepath.Abs before FilePath. A traversal
+	// that Clean collapses to a system dir is still rejected by the guard.
+	require.Error(t, FilePath(filepath.Clean("/foo/../etc/passwd")))
+	// A legitimate ".." -in-name path survives Clean unchanged and must be accepted.
+	require.NoError(t, FilePath(filepath.Clean("/home/user/my..file")))
+
+	// macOS symlink bypass: /etc and /var are symlinks to /private/etc and /private/var.
+	// A caller-resolved (post-EvalSymlinks) path reaches the same files via the /private prefix.
+	assert.EqualError(t, FilePath("/private/etc/passwd"),
+		`invalid file path "/private/etc/passwd": must not reference system directories`)
+	assert.EqualError(t, FilePath("/private/var/db/something"),
+		`invalid file path "/private/var/db/something": must not reference system directories`)
+}
+
+func TestFilePath_WindowsSystemDirs(t *testing.T) {
+	// Windows volume/drive-letter system paths must be rejected with the same
+	// guard as Unix system dirs. The check is host-independent string matching:
+	// case-insensitive, accepting both "\" and "/" separators.
+	for _, p := range []string{
+		`C:\Windows`, `C:\Windows\System32\drivers\etc\hosts`,
+		`c:\windows\system32`, `C:\Program Files\app`,
+		`C:\Program Files (x86)\app`, `D:/Windows/System32`,
+	} {
+		err := FilePath(p)
+		require.Error(t, err, p)
+		assert.Contains(t, err.Error(), "must not reference system directories", p)
+	}
+
+	// Non-system Windows paths and look-alikes must pass: a drive-letter user
+	// path, a prefix near-miss, and a Unix path that merely contains "windows"
+	// without a drive prefix (no bare-prefix false positives).
+	for _, p := range []string{
+		`C:\Users\me\reviews`, `C:\WindowsApps2\x`, "/windows/foo", "/home/windows/x",
+	} {
 		require.NoError(t, FilePath(p), p)
 	}
 }
