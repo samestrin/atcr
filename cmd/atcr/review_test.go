@@ -447,3 +447,19 @@ func TestRunReview_ProjectConfigGateActivatedWithoutFlag(t *testing.T) {
 	require.NotContains(t, out, "--require-verified requires --fail-on and --verify",
 		"project config fail_on must satisfy --require-verified gate precondition without --fail-on flag")
 }
+
+// TestRunReview_SummaryPrintsOnAllAgentsFailed verifies the end-of-review metrics
+// summary (Epic 4.4 AC3) is emitted even when every agent fails (exit 1, artifacts
+// preserved) — the run an operator most needs the breakdown for. The agent points at
+// an unreachable URL so the fan-out fails completely.
+func TestRunReview_SummaryPrintsOnAllAgentsFailed(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	writeReviewFixtureConfig(t) // bruce -> http://127.0.0.1:1/v1, unreachable
+
+	code, out := execCmdCapture(t, "review", "--base", "HEAD^")
+	require.Equal(t, 1, code, "all agents failed -> exit 1")
+	require.Contains(t, out, "Total elapsed:", "AC3 summary must print on the all-agents-failed path")
+	require.Contains(t, out, "Agents: 0/", "summary reports zero successes when every agent failed")
+}

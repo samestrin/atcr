@@ -35,7 +35,7 @@ func TestEngineRecordsAgentMetrics(t *testing.T) {
 	check("atcr_agents_succeeded", 1)
 	check("atcr_agents_failed", 1)
 	check("atcr_agents_timed_out", 1)
-	check("atcr_api_calls_total", 3)
+	check("atcr_api_calls_total", 2) // slow agent's context.DeadlineExceeded before any HTTP call now correctly counts 0
 	check(metrics.Key("atcr_api_errors_total", "status", "429"), 1)
 
 	if got := metrics.Histogram("atcr_agent_duration_seconds").Count(); got != 3 {
@@ -67,4 +67,51 @@ func TestRecordAgentOutcome(t *testing.T) {
 	check("atcr_api_calls_total", 6) // 1 + 1 + 3 (tool loop) + 1
 	check(metrics.Key("atcr_api_errors_total", "status", "500"), 1)
 	check("atcr_tool_calls_total", 4)
+}
+
+// TestRecordAgentOutcomeNegativeTurns verifies a corrupt Result with negative
+// Turns does not decrement atcr_api_calls_total; it should be treated as a
+// single-shot (1 call) per the documented max(1,Turns) semantics.
+func TestRecordAgentOutcomeNegativeTurns(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	recordAgentOutcome(Result{Status: StatusFailed, Turns: -1})
+
+	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 1 {
+		t.Errorf("atcr_api_calls_total = %d, want 1 (negative Turns must be treated as single-shot)", got)
+	}
+}
+
+// TestRecordAgentOutcomeZeroHTTPStatus verifies that an HTTPStatusError with
+// Status==0 does not emit an uninformative {status="0"} error bucket.
+func TestRecordAgentOutcomeZeroHTTPStatus(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.HTTPStatusError{Status: 0}})
+
+	if got := metrics.Counter(metrics.Key("atcr_api_errors_total", "status", "0")).Value(); got != 0 {
+		t.Errorf("atcr_api_errors_total{status=0} = %d, want 0 (non-positive status must not be recorded)", got)
+	}
+}
+
+// TestRecordAgentOutcomeContextCancelledBeforeRequest verifies that a single-shot
+// agent whose context was cancelled before any HTTP request does not inflate
+// atcr_api_calls_total. Also covers negative Turns + context error to ensure the
+// counter is never decremented.
+func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	// context.DeadlineExceeded: cancelled before first HTTP round-trip, Turns==0
+	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded})
+	// context.Canceled: same scenario via SIGINT path
+	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.Canceled})
+	// negative Turns + context error: must not decrement the monotonic counter
+	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded, Turns: -1})
+
+	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 0 {
+		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count or decrement)", got)
+	}
 }

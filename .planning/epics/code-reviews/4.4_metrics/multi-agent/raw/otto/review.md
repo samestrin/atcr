@@ -1,0 +1,1 @@
+LOW|internal/metrics/metrics.go:102|Potential precision loss in ceilDiv|Use math.Ceil for clarity and precision|correctness|10|manual implementation of ceil(p/100 * n) via float-to-int cast|otto

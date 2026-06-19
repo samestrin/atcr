@@ -1,0 +1,2 @@
+LOW|internal/metrics/prometheus.go:31|Missing carriage return escape in label value sanitizer|Add `\r` escape to prevent Prometheus parser line-break injection|correctness|5|strings.ReplaceAll misses \r escape for label values|greta
+LOW|internal/mcp/handlers.go:420|Metrics exposed via MCP tool without authentication|Enforce local-only deployment or add token validation|security|15|handleMetrics returns full registry to any MCP caller|greta
