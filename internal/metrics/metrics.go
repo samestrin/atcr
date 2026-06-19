@@ -79,7 +79,7 @@ func (h *histogram) Observe(v float64) {
 	h.count++
 	if !h.full {
 		h.values = append(h.values, v)
-		if len(h.values) == maxHistogramSamples {
+		if len(h.values) >= maxHistogramSamples {
 			h.full = true
 			h.next = 0
 		}
@@ -101,22 +101,8 @@ func (h *histogram) Percentile(p float64) float64 {
 	sorted := make([]float64, len(h.values))
 	copy(sorted, h.values)
 	sort.Float64s(sorted)
-	// Nearest-rank: rank = ceil(p/100 * N), 1-indexed, clamped to [1, N]. The
-	// clamp is defensive — with p in [0,100] the rank is already in range — and
-	// uses builtins so it adds no uncoverable branch.
-	rank := min(max(int(ceilDiv(p, float64(len(sorted)))), 1), len(sorted))
+	rank := min(max(int(math.Ceil(p/100*float64(len(sorted)))), 1), len(sorted))
 	return sorted[rank-1]
-}
-
-// ceilDiv returns ceil(p/100 * n) without importing math: the nearest-rank index
-// for percentile p over n samples.
-func ceilDiv(p, n float64) float64 {
-	x := p / 100 * n
-	t := float64(int64(x))
-	if x > t {
-		return t + 1
-	}
-	return t
 }
 
 // Mean returns the arithmetic mean of every observed value (exact, not windowed),

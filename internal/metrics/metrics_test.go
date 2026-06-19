@@ -132,6 +132,39 @@ func TestRegistryHistogramGetOrCreate(t *testing.T) {
 	}
 }
 
+func TestHistogramWrapBoundary(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("wrap_boundary")
+	for i := 0; i < maxHistogramSamples+1; i++ {
+		h.Observe(float64(i))
+	}
+	if !h.full {
+		t.Fatal("h.full should be true after maxHistogramSamples+1 observations")
+	}
+	if got := len(h.values); got != maxHistogramSamples {
+		t.Fatalf("len(values) = %d, want %d", got, maxHistogramSamples)
+	}
+	if got := h.Count(); got != int64(maxHistogramSamples+1) {
+		t.Fatalf("Count() = %d, want %d", got, maxHistogramSamples+1)
+	}
+}
+
+func TestHistogramPercentileNearestRank(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("nearest_rank")
+	for _, v := range []float64{1, 2, 3} {
+		h.Observe(v)
+	}
+	// p=0: ceil(0/100*3)=0 → clamped to rank 1 → value 1
+	if got := h.Percentile(0); got != 1 {
+		t.Errorf("Percentile(0) = %v, want 1", got)
+	}
+	// p=100: ceil(100/100*3)=3 → rank 3 → value 3
+	if got := h.Percentile(100); got != 3 {
+		t.Errorf("Percentile(100) = %v, want 3", got)
+	}
+}
+
 func TestRegistryReset(t *testing.T) {
 	r := NewRegistry()
 	r.Counter("c").Add(3)
