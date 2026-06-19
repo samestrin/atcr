@@ -35,7 +35,7 @@ func TestEngineRecordsAgentMetrics(t *testing.T) {
 	check("atcr_agents_succeeded", 1)
 	check("atcr_agents_failed", 1)
 	check("atcr_agents_timed_out", 1)
-	check("atcr_api_calls_total", 3)
+	check("atcr_api_calls_total", 2) // slow agent's context.DeadlineExceeded before any HTTP call now correctly counts 0
 	check(metrics.Key("atcr_api_errors_total", "status", "429"), 1)
 
 	if got := metrics.Histogram("atcr_agent_duration_seconds").Count(); got != 3 {

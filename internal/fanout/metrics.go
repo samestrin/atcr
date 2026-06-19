@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"errors"
 	"strconv"
 
@@ -35,7 +36,12 @@ func recordAgentOutcome(r Result) {
 
 	apiCalls := r.Turns
 	if apiCalls == 0 {
-		apiCalls = 1 // single-shot/degraded path: one provider call, Turns unset
+		// Single-shot path normally makes exactly one provider round-trip, but a
+		// context cancellation/deadline that fires before the first HTTP call leaves
+		// Turns at 0 with no actual request — don't inflate the counter.
+		if !errors.Is(r.Err, context.DeadlineExceeded) && !errors.Is(r.Err, context.Canceled) {
+			apiCalls = 1
+		}
 	}
 	metrics.Counter(metrics.NameAPICallsTotal).Add(int64(apiCalls))
 
