@@ -234,6 +234,9 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
 		}
+		if e.shutdownCtx != nil && e.shutdownCtx.Err() != nil {
+			log.FromContext(rctx).Warn("review interrupted by server shutdown")
+		}
 	}()
 
 	return nil, ReviewResult{
