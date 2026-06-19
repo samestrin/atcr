@@ -38,6 +38,15 @@ type engine struct {
 	log       *slog.Logger
 	diag      io.Writer
 	bg        sync.WaitGroup
+	// shutdownCtx is cancelled (via shutdownCancel) when the server begins
+	// shutdown — Serve fires it after the transport loop returns, before drain.
+	// Detached background reviews tie their cancellation to it (withShutdownCancel)
+	// so a server shutdown cuts them off like the CLI's SIGINT path and they record
+	// Interrupted=true, while a handler returning normally leaves them untouched
+	// (epic 4.1.2). nil when the engine is built outside buildServer (NewServer
+	// discards its engine; tests may construct &engine{} directly).
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // diagWriter resolves the engine's scorecard-diagnostics sink: the injected
@@ -86,6 +95,29 @@ func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Con
 	}
 	logger := log.WithRedactor(log.WithReviewID(e.logger(), reviewID), log.NewRedactor(root))
 	return log.NewContext(context.WithoutCancel(ctx), logger)
+}
+
+// withShutdownCancel derives a child of ctx that is cancelled when the server
+// begins shutdown — and ONLY then. The server-lifecycle signal (e.shutdownCtx,
+// fired by Serve after the transport loop returns) is the sole cancellation
+// source; the request handler returning never reaches it, because the ctx passed
+// here is already detached via reviewContext's context.WithoutCancel. So a
+// detached review stays detached across a normal handler return (AC2) but is cut
+// off like the CLI's SIGINT path on server shutdown (AC1), letting ExecuteReview's
+// existing ctx.Err()==Canceled marker record Interrupted=true with no out-of-band
+// manifest write (no race with the fan-out's own write).
+//
+// The returned cancel MUST be deferred by the caller for the lifetime of the
+// review: it stops the AfterFunc registration so a completed review does not
+// retain its cancelCtx on e.shutdownCtx until process exit. When e.shutdownCtx is
+// nil (engine built outside buildServer), it is a no-op passthrough.
+func (e *engine) withShutdownCancel(ctx context.Context) (context.Context, context.CancelFunc) {
+	if e.shutdownCtx == nil {
+		return ctx, func() {}
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(e.shutdownCtx, cancel)
+	return cctx, func() { stop(); cancel() }
 }
 
 // drain waits up to timeout for in-flight background reviews to finish, so a
@@ -194,7 +226,12 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 				e.logger().Error("review fan-out panicked", "review_id", prep.ID, "panic", r)
 			}
 		}()
-		if _, err := fanout.ExecuteReview(e.reviewContext(ctx, prep.ID), e.completer, prep); err != nil {
+		// Detach for handler-return (reviewContext: WithoutCancel), then re-attach a
+		// cancellation tied to server shutdown only. cancel is deferred so a review
+		// that finishes before any shutdown releases its AfterFunc registration.
+		rctx, cancel := e.withShutdownCancel(e.reviewContext(ctx, prep.ID))
+		defer cancel()
+		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
 		}
 	}()
