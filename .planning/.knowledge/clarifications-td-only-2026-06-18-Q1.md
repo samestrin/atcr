@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-18-9d4f1f
-question: "How to add structured Warn logging to a private Go function without threading a *slog.Logger through an exported API and its test call sites?"
+id: mem-2026-06-18-fd2ace
+question: "Is the staged validate()→ValidateFallbacks() ordering in validateMerged()/LoadRegistry() intentional, or should both run unconditionally and be combined via errors.Join?"
 created: 2026-06-18
 last_retrieved: ""
 sprints: []
-files: [internal/fanout/resume.go, internal/fanout/resume_test.go]
-tags: [td-clarification, td-only, error-handling, observability, slog, logging, go-patterns]
+files: [internal/registry/overlay.go, internal/registry/config.go]
+tags: [td-clarification, td-only, architecture, registry, validation, error-accumulation]
 retrievals: 0
 status: active
-type: clarifications/td-only/2026-06-18
+type: clarifications td-only 2026-06-18
 ---
 
-# How to add structured Warn logging to a private Go function 
+# Is the staged validate()→ValidateFallbacks() ordering in v
 
 ## Decision
 
-Return a typed error from the private function (only for genuine failures, not for expected ok=false cases), then call slog.Warn at the caller (the exported function) with path/error context. This keeps the exported signature unchanged — no cascade to test call sites — while satisfying structured-log greppability. Use Go's package-level slog.Warn rather than threading a *slog.Logger when no context is available at the call site. Example: agentStatusName changed to (string, bool, error) where error is set only on os.ReadFile/json.Unmarshal failures; CompletedAgents calls slog.Warn("corrupt agent status", "path", path, "err", err) on non-nil error.
+The staged order is intentional. Epic 4.2 AC6 scoped error accumulation to within each function individually, not across them. Fallback-chain checks (ValidateFallbacks) assume structurally-valid agents — running them against a malformed registry could surface misleading or redundant errors. The correct resolution is to add a comment in validateMerged() (overlay.go:223) and LoadRegistry() (config.go:193) documenting this constraint, not to combine the two calls. TD row was closed as documented-intentional.
 
 ## Rationale
 
@@ -27,5 +27,5 @@ Return a typed error from the private function (only for genuine failures, not f
 
 ## Code Reference
 
-- internal/fanout/resume.go
-- internal/fanout/resume_test.go
+- internal/registry/overlay.go
+- internal/registry/config.go

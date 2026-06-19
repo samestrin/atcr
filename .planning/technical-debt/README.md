@@ -7,12 +7,12 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 1 | 1 | 0 |
+| HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 15 | 0 |
-| LOW | 3 | 13 | 0 |
+| LOW | 0 | 14 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 29 | **Resolved Items:** 0 | **Total Items:** 33
+**Last Modified:** 2026-06-18 | **Open Items:** 0 | **Deferred Items:** 30 | **Resolved Items:** 0 | **Total Items:** 30
 
 ## Directory Structure
 
@@ -34,29 +34,17 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
-### [2026-06-18] From Sprint: 4.2_config_validation
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 2 | [ ] | HIGH | internal/registry/graph.go:42 | walkFallbacks panics when accumulation continues past dangling fallbacks | Add color[name]=black after dangling error to skip cycle walk | correctness | 10 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/registry/overlay.go:224 | validateMerged() and LoadRegistry() (config.go:193-197) call validate() then ValidateFallbacks() sequentially with an early return on the first non-nil result. A registry that has BOTH a settings/agent fault AND a fallback-chain fault reports only the validate() faults in one run; the user fixes those, re-runs, and only then discovers the fallback fault. Within each function accumulation works (AC6), but across the validate/fallback boundary it still behaves one-at-a-time. (intent_note: deferred per epic §Clarifications) | In validateMerged() and LoadRegistry(), run both validate() and ValidateFallbacks() unconditionally and combine via errors.Join(r.attribute(vErr), r.attribute(fbErr)) (errors.Join drops nils, preserving the valid path). Alternatively, if the staged order is intentional (fallback checks assume structurally-valid agents), document the limitation in the AC6 acceptance note. Deliberately scoped out per epic Clarifications — flagging so a human confirms close-vs-document. | completeness | 30 | code-review | claude | MEDIUM |
-| U | [ ] | LOW | cmd/atcr/review_test.go:386 | TestReviewCmd_InvalidConfigReportsAllErrors validates AC7 (validation before review-directory creation) only indirectly via exit code 2 and message substrings; it never asserts that NO review output directory / report was created on the invalid-config path. A future regression that validated late (after creating the review dir) but still exited 2 would pass this test, leaving AC7's fail-before-side-effects guarantee unguarded. | After execCmdCapture returns code 2, add an assertion that the review run/report output directory does not exist on disk, proving fail-fast occurred before any filesystem side effect. | testing | 20 | code-review | claude | MEDIUM |
-
-
 ### [2026-06-18] From Sprint: epic-4.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it | INTEGRATION | 5 | execute-epic-independent |
+| U | [/] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it (WON'T-FIX 2026-06-18: trigger unmet — error-path only, never hit on normal load; no perf AC in epic 4.2) | INTEGRATION | 5 | execute-epic-independent |
 
 ### [2026-06-18] From Sprint: epic-4.1.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/mcp/handlers.go:231 | A detached MCP review cancelled by server shutdown records the interrupted marker on disk but emits no greppable structured Warn (the CLI path logs "review interrupted by signal" with review_id per epic 4.1/4.1.1); monitoring/CI grepping serve-mode logs for interrupted reviews finds nothing. | In handleReview's goroutine, when ExecuteReview returns and e.shutdownCtx.Err()!=nil, emit log.FromContext(rctx).Warn("review interrupted by server shutdown", review_id) for CLI/MCP observability parity. | OBSERVABILITY | 30 | execute-epic-cumulative |
-| 1 | [ ] | LOW | internal/mcp/server.go:48 | Serve cancels in-flight detached reviews on shutdown with no log line, so an interrupted serve-mode review is only evidenced by the on-disk manifest, nothing in stderr. | Emit a slog Warn (e.g. logger().Warn("server shutdown: cancelling in-flight detached reviews")) in shutdownReviews before firing shutdownCancel, for diagnosability. | OBSERVABILITY | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/mcp/handlers.go:120 | The cancel returned by withShutdownCancel runs stop() then cancel(); when shutdown already fired AfterFunc has concurrently invoked cancel and stop() returns false, so cancel runs twice - harmless (CancelFunc is idempotent) but the concurrent double-invoke is not noted at the call site. | Add a one-line note to the withShutdownCancel doc that cancel may already have run via AfterFunc and the second call is a deliberate idempotent no-op. | EDGE_CASES | 5 | execute-epic-independent |
-| U | [ ] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. | CORRECTNESS | 30 | execute-epic-independent |
+| U | [/] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. (WON'T-FIX 2026-06-18: --resume self-healing via ClearInterrupted (resume.go:220) already recovers a stale interrupted-on-complete; revisit in a backlog sprint if insufficient) | CORRECTNESS | 30 | execute-epic-independent |
 
 ### [2026-06-17] From Sprint: epic-4.1
 

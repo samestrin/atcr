@@ -1,3 +1,13 @@
+## [Technical Debt] - 2026-06-18
+
+### Fixed
+
+- Added structured Warn log when MCP server shutdown interrupts an in-flight detached review, so serve-mode interruptions are now observable in logs (`internal/mcp/handlers.go:231`)
+- Added Warn log in `shutdownReviews` before cancelling in-flight reviews, making server-shutdown events diagnosable from stderr alone (`internal/mcp/server.go:48`)
+- Documented that `withShutdownCancel`'s returned cancel is safe to call twice — the second call via AfterFunc is a deliberate idempotent no-op (`internal/mcp/handlers.go:120`)
+- Added assertion that config-validation failure exits before creating any review output directory, guarding the AC7 fail-fast guarantee against silent regression (`cmd/atcr/review_test.go:386`)
+- Documented that the staged `validate → ValidateFallbacks` call order in `validateMerged` and `LoadRegistry` is intentional (`internal/registry/overlay.go:224`)
+
 ## [4.2.0] - 2026-06-18
 
 Configuration validation now reports every error at once, so a bad `registry.yaml` is fixed in a single pass instead of one error per run.
