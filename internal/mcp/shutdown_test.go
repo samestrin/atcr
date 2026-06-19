@@ -2,11 +2,113 @@ package mcp
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// blockingCompleter blocks each agent inside Complete until the review context is
+// cancelled, closing entered the first time an agent runs so a test can guarantee
+// the detached fan-out is actually in flight before it triggers shutdown.
+type blockingCompleter struct {
+	once    sync.Once
+	entered chan struct{}
+}
+
+func (b *blockingCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
+	b.once.Do(func() { close(b.entered) })
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// startInFlightReview builds a serve-mode engine (via buildServer, so shutdownCtx
+// is wired exactly as production), starts a detached review whose agents block
+// until cancelled, and waits until the fan-out is in flight. Returns the engine,
+// the review dir, and the review id.
+func startInFlightReview(t *testing.T) (e *engine, dir, id string) {
+	t.Helper()
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	bc := &blockingCompleter{entered: make(chan struct{})}
+	_, e, err := buildServer(root, bc, nil)
+	require.NoError(t, err)
+
+	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	require.Equal(t, runningStatus, res.Status)
+
+	select {
+	case <-bc.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detached fan-out never started")
+	}
+	return e, res.ReviewPath, res.ReviewID
+}
+
+// TestServeShutdown_MarksInFlightDetachedReviewInterrupted is the core epic 4.1.2
+// guarantee (AC1/AC4): a detached MCP review in flight when the server begins
+// shutdown — the exact sequence Serve runs after the transport loop returns,
+// e.shutdownCancel() then e.drain() — is marked interrupted on disk, never left
+// in_progress and never reported as a clean completion.
+func TestServeShutdown_MarksInFlightDetachedReviewInterrupted(t *testing.T) {
+	e, dir, id := startInFlightReview(t)
+
+	// Replicate Serve's post-Run shutdown sequence (guarded exactly as Serve is).
+	if e.shutdownCancel != nil {
+		e.shutdownCancel()
+	}
+	e.drain(shutdownDrain)
+
+	st, err := fanout.ReadReviewStatus(dir, id)
+	require.NoError(t, err)
+	assert.Equal(t, fanout.RunInterrupted, st.Status,
+		"a detached review in flight at server shutdown must be marked interrupted (AC1/AC4)")
+}
+
+// TestServeShutdown_NormalCompletionNotInterrupted locks AC2/AC4: a detached
+// review that finishes on its own (handler already returned, no shutdown) is
+// recorded completed, and a later server shutdown does not retroactively flip a
+// finished review to interrupted.
+func TestServeShutdown_NormalCompletionNotInterrupted(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	_, e, err := buildServer(root, fakeCompleter{resp: validFindings}, nil)
+	require.NoError(t, err)
+
+	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+
+	var st *fanout.ReviewStatus
+	for i := 0; i < 400; i++ {
+		st, err = fanout.ReadReviewStatus(res.ReviewPath, res.ReviewID)
+		require.NoError(t, err)
+		if st.Status != fanout.RunInProgress {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.Equal(t, fanout.RunCompleted, st.Status,
+		"a detached review that finished before any shutdown must be completed (AC2)")
+
+	if e.shutdownCancel != nil {
+		e.shutdownCancel()
+	}
+	e.drain(shutdownDrain)
+
+	st, err = fanout.ReadReviewStatus(res.ReviewPath, res.ReviewID)
+	require.NoError(t, err)
+	assert.Equal(t, fanout.RunCompleted, st.Status,
+		"shutdown must not retroactively interrupt an already-finished review (AC4)")
+}
 
 // TestWithShutdownCancel_CancelsDetachedCtxOnServerShutdown verifies the engine
 // derives a review context that is cancelled when the server-lifecycle context is

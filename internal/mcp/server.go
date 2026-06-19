@@ -45,6 +45,13 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger 
 		return err
 	}
 	runErr := s.Run(ctx, &mcpsdk.StdioTransport{})
+	// Signal in-flight detached reviews that the server is shutting down BEFORE
+	// draining, so they are cancelled like the CLI's SIGINT path and flush their
+	// partial results + interrupted marker within the drain window (epic 4.1.2 AC1).
+	// Ordering matters: cancel first, then drain waits for those flush writes.
+	if e.shutdownCancel != nil {
+		e.shutdownCancel()
+	}
 	e.drain(shutdownDrain)
 	if runErr != nil {
 		return fmt.Errorf("serve stdio: %w", runErr)
@@ -58,7 +65,15 @@ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	e := &engine{root: root, completer: completer, log: logger}
+	// Server-lifecycle cancellation: cancelled by Serve once the transport loop
+	// returns (client disconnect or SIGINT-cancelled ctx). Detached reviews tie
+	// their cancellation to shutdownCtx via withShutdownCancel, so a server
+	// shutdown marks in-flight reviews interrupted without a handler return ever
+	// aborting them (epic 4.1.2). The NewServer path discards the engine and never
+	// fires shutdownCancel; context.WithCancel(Background) spawns no goroutine, so
+	// the unfired cancel is reclaimed with the engine.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	e := &engine{root: root, completer: completer, log: logger, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel}
 
 	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "atcr", Version: Version}, nil)
 	r := &registrar{server: s, seen: map[string]bool{}}
