@@ -17,6 +17,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -414,6 +415,18 @@ func (e *engine) handleStatus(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		return nil, StatusResult{}, err
 	}
 	return nil, *st, nil
+}
+
+// handleMetrics renders the process-wide metrics registry in Prometheus text
+// exposition format (Epic 4.4). The epic's AC4 named an HTTP /metrics endpoint,
+// but atcr serve is a stdio JSON-RPC server with no HTTP listener, so metrics
+// are surfaced as this tool instead (see the epic Clarifications). Metrics are
+// cumulative since the server started.
+func (e *engine) handleMetrics(ctx context.Context, _ *mcpsdk.CallToolRequest, _ MetricsArgs) (*mcpsdk.CallToolResult, MetricsResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, MetricsResult{}, err
+	}
+	return nil, MetricsResult{Format: "prometheus", Content: metrics.DefaultRegistry.WritePrometheus()}, nil
 }
 
 // resolveReviewDir resolves the id_or_path anchor to an on-disk review directory
