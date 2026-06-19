@@ -64,6 +64,11 @@ type histogram struct {
 	full   bool // true once values reached maxHistogramSamples
 	sum    float64
 	count  int64
+	// sortedCache holds the last sorted snapshot of values; rebuilt only when
+	// cacheDirty is true so multiple Percentile calls between Observe calls pay
+	// the O(n log n) sort cost at most once.
+	sortedCache []float64
+	cacheDirty  bool
 }
 
 // Observe records one value. sum and count are updated for every observation;
@@ -77,6 +82,7 @@ func (h *histogram) Observe(v float64) {
 	defer h.mu.Unlock()
 	h.sum += v
 	h.count++
+	h.cacheDirty = true
 	if !h.full {
 		h.values = append(h.values, v)
 		if len(h.values) >= maxHistogramSamples {
@@ -98,11 +104,14 @@ func (h *histogram) Percentile(p float64) float64 {
 		return 0
 	}
 	p = min(max(p, 0), 100)
-	sorted := make([]float64, len(h.values))
-	copy(sorted, h.values)
-	sort.Float64s(sorted)
-	rank := min(max(int(math.Ceil(p/100*float64(len(sorted)))), 1), len(sorted))
-	return sorted[rank-1]
+	if h.cacheDirty || h.sortedCache == nil {
+		h.sortedCache = make([]float64, len(h.values))
+		copy(h.sortedCache, h.values)
+		sort.Float64s(h.sortedCache)
+		h.cacheDirty = false
+	}
+	rank := min(max(int(math.Ceil(p/100*float64(len(h.sortedCache)))), 1), len(h.sortedCache))
+	return h.sortedCache[rank-1]
 }
 
 // Mean returns the arithmetic mean of every observed value (exact, not windowed),

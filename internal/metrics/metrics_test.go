@@ -132,6 +132,20 @@ func TestRegistryHistogramGetOrCreate(t *testing.T) {
 	}
 }
 
+func TestHistogramPercentileCacheInvalidatedOnObserve(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("cache_invalidation")
+	h.Observe(1)
+	if got := h.Percentile(100); got != 1 {
+		t.Fatalf("Percentile(100) after Observe(1) = %v, want 1", got)
+	}
+	h.Observe(9)
+	// After second Observe the cache must be invalidated; p100 must reflect 9.
+	if got := h.Percentile(100); got != 9 {
+		t.Fatalf("Percentile(100) after Observe(9) = %v, want 9 (stale cache?)", got)
+	}
+}
+
 func TestHistogramWrapBoundary(t *testing.T) {
 	r := NewRegistry()
 	h := r.Histogram("wrap_boundary")
