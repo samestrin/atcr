@@ -83,6 +83,30 @@ func TestFilePath(t *testing.T) {
 		`invalid file path "/private/var/db/something": must not reference system directories`)
 }
 
+func TestFilePath_WindowsSystemDirs(t *testing.T) {
+	// Windows volume/drive-letter system paths must be rejected with the same
+	// guard as Unix system dirs. The check is host-independent string matching:
+	// case-insensitive, accepting both "\" and "/" separators.
+	for _, p := range []string{
+		`C:\Windows`, `C:\Windows\System32\drivers\etc\hosts`,
+		`c:\windows\system32`, `C:\Program Files\app`,
+		`C:\Program Files (x86)\app`, `D:/Windows/System32`,
+	} {
+		err := FilePath(p)
+		require.Error(t, err, p)
+		assert.Contains(t, err.Error(), "must not reference system directories", p)
+	}
+
+	// Non-system Windows paths and look-alikes must pass: a drive-letter user
+	// path, a prefix near-miss, and a Unix path that merely contains "windows"
+	// without a drive prefix (no bare-prefix false positives).
+	for _, p := range []string{
+		`C:\Users\me\reviews`, `C:\WindowsApps2\x`, "/windows/foo", "/home/windows/x",
+	} {
+		require.NoError(t, FilePath(p), p)
+	}
+}
+
 func TestReviewID(t *testing.T) {
 	require.NoError(t, ReviewID("2026-06-18_my-branch"))
 	require.NoError(t, ReviewID(strings.Repeat("a", 100))) // exactly the max length is allowed
