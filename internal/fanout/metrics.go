@@ -35,10 +35,12 @@ func recordAgentOutcome(r Result) {
 	}
 
 	apiCalls := r.Turns
-	if apiCalls == 0 {
+	if apiCalls < 1 {
 		// Single-shot path normally makes exactly one provider round-trip, but a
 		// context cancellation/deadline that fires before the first HTTP call leaves
-		// Turns at 0 with no actual request — don't inflate the counter.
+		// Turns at 0 with no actual request — don't inflate the counter. Negative
+		// Turns from a corrupt Result are also clamped here rather than decrementing
+		// the monotonic counter.
 		if !errors.Is(r.Err, context.DeadlineExceeded) && !errors.Is(r.Err, context.Canceled) {
 			apiCalls = 1
 		}
@@ -46,7 +48,7 @@ func recordAgentOutcome(r Result) {
 	metrics.Counter(metrics.NameAPICallsTotal).Add(int64(apiCalls))
 
 	var he *llmclient.HTTPStatusError
-	if errors.As(r.Err, &he) {
+	if errors.As(r.Err, &he) && he.Status > 0 {
 		metrics.Counter(metrics.Key(metrics.NameAPIErrorsTotal, metrics.LabelStatus, strconv.Itoa(he.Status))).Inc()
 	}
 
