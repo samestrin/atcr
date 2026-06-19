@@ -190,6 +190,30 @@ func TestAttribute_SingleEntryStillAttributed(t *testing.T) {
 		"single fault must keep its file prefix, got: %s", attributed.Error())
 }
 
+// TestLoadRegistry_ReportsAllErrorsAtOnce is the Epic 4.2 acceptance test at the
+// load boundary: a registry carrying faults spanning every category — required
+// field (AC1), enum (AC2), type/range (AC3), and an enum/semantic agent fault
+// (AC4 intent) — surfaces them all in a single LoadRegistry error (AC6), not one
+// per run. This walks the real parse+validate path, not validate() in isolation.
+func TestLoadRegistry_ReportsAllErrorsAtOnce(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+timeout_secs: -1
+payload_mode: bogus
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  alpha: {provider: openai}
+  bravo: {provider: openai, model: m, min_severity: BOGUS}
+`))
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "timeout_secs", "AC3: type/range fault must be reported")
+	assert.Contains(t, msg, "payload_mode", "AC2: enum fault must be reported")
+	assert.Contains(t, msg, "agent 'alpha': required field 'model'", "AC1: required-field fault must be reported")
+	assert.Contains(t, msg, "agent 'bravo': min_severity", "AC2/AC4: agent enum fault must be reported")
+}
+
 // TestAttribute_SettingsFaultGetsUserLabel guards the non-entry branch: a
 // top-level settings fault (carried only by the user registry) is prefixed with
 // the user registry label even inside an accumulated join.
