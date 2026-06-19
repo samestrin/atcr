@@ -49,27 +49,52 @@ func startInFlightReview(t *testing.T) (e *engine, dir, id string) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("detached fan-out never started")
 	}
+	// Unblock the parked fan-out at test end (before t.TempDir cleanup, which is
+	// registered earlier and so runs after this) so a test that does NOT trigger a
+	// server shutdown does not leak the blocked review goroutine.
+	t.Cleanup(func() {
+		if e.shutdownCancel != nil {
+			e.shutdownCancel()
+		}
+		e.drain(time.Second)
+	})
 	return e, res.ReviewPath, res.ReviewID
 }
 
 // TestServeShutdown_MarksInFlightDetachedReviewInterrupted is the core epic 4.1.2
-// guarantee (AC1/AC4): a detached MCP review in flight when the server begins
-// shutdown — the exact sequence Serve runs after the transport loop returns,
-// e.shutdownCancel() then e.drain() — is marked interrupted on disk, never left
-// in_progress and never reported as a clean completion.
+// guarantee (AC1/AC4): a detached MCP review in flight when the server is shutting
+// down — the exact sequence Serve runs after a SIGINT-cancelled transport loop
+// returns — is marked interrupted on disk, never left in_progress and never
+// reported as a clean completion.
 func TestServeShutdown_MarksInFlightDetachedReviewInterrupted(t *testing.T) {
 	e, dir, id := startInFlightReview(t)
 
-	// Replicate Serve's post-Run shutdown sequence (guarded exactly as Serve is).
-	if e.shutdownCancel != nil {
-		e.shutdownCancel()
-	}
-	e.drain(shutdownDrain)
+	e.shutdownReviews(true, shutdownDrain) // serverShutdown=true: SIGINT path
 
 	st, err := fanout.ReadReviewStatus(dir, id)
 	require.NoError(t, err)
 	assert.Equal(t, fanout.RunInterrupted, st.Status,
 		"a detached review in flight at server shutdown must be marked interrupted (AC1/AC4)")
+}
+
+// TestServeShutdown_ClientDisconnectDoesNotInterrupt locks AC3 and the
+// independent-review regression: a clean client/stdio disconnect (ctx NOT
+// cancelled) must NOT force-cancel an in-flight detached review. The drain keeps
+// its original contract — the review is left running, so it is never flipped to
+// interrupted by a mere disconnect.
+func TestServeShutdown_ClientDisconnectDoesNotInterrupt(t *testing.T) {
+	e, dir, id := startInFlightReview(t)
+
+	// serverShutdown=false: client disconnect. Short drain — the blocked review
+	// stays running, so it must remain in_progress, never interrupted.
+	e.shutdownReviews(false, 200*time.Millisecond)
+
+	st, err := fanout.ReadReviewStatus(dir, id)
+	require.NoError(t, err)
+	assert.NotEqual(t, fanout.RunInterrupted, st.Status,
+		"a clean client disconnect must not force-interrupt an in-flight review (AC3)")
+	assert.Equal(t, fanout.RunInProgress, st.Status,
+		"the still-running review stays in_progress after a disconnect drain")
 }
 
 // TestServeShutdown_NormalCompletionNotInterrupted locks AC2/AC4: a detached
@@ -87,15 +112,7 @@ func TestServeShutdown_NormalCompletionNotInterrupted(t *testing.T) {
 	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
 	require.NoError(t, err)
 
-	var st *fanout.ReviewStatus
-	for i := 0; i < 400; i++ {
-		st, err = fanout.ReadReviewStatus(res.ReviewPath, res.ReviewID)
-		require.NoError(t, err)
-		if st.Status != fanout.RunInProgress {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	st := waitForTerminalStatus(t, res.ReviewPath, res.ReviewID)
 	require.Equal(t, fanout.RunCompleted, st.Status,
 		"a detached review that finished before any shutdown must be completed (AC2)")
 
@@ -108,6 +125,26 @@ func TestServeShutdown_NormalCompletionNotInterrupted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fanout.RunCompleted, st.Status,
 		"shutdown must not retroactively interrupt an already-finished review (AC4)")
+}
+
+// waitForTerminalStatus polls a review's on-disk status until it leaves
+// in_progress, failing with a clear message on timeout rather than asserting
+// against a transient in_progress under CI load (a generous 10s budget for a
+// hermetic fake completer that performs no network I/O).
+func waitForTerminalStatus(t *testing.T, dir, id string) *fanout.ReviewStatus {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st, err := fanout.ReadReviewStatus(dir, id)
+		require.NoError(t, err)
+		if st.Status != fanout.RunInProgress {
+			return st
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("review %s did not reach a terminal status within 10s (last: %s)", id, st.Status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // TestWithShutdownCancel_CancelsDetachedCtxOnServerShutdown verifies the engine

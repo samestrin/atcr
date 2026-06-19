@@ -45,18 +45,30 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger 
 		return err
 	}
 	runErr := s.Run(ctx, &mcpsdk.StdioTransport{})
-	// Signal in-flight detached reviews that the server is shutting down BEFORE
-	// draining, so they are cancelled like the CLI's SIGINT path and flush their
-	// partial results + interrupted marker within the drain window (epic 4.1.2 AC1).
-	// Ordering matters: cancel first, then drain waits for those flush writes.
-	if e.shutdownCancel != nil {
-		e.shutdownCancel()
-	}
-	e.drain(shutdownDrain)
+	// s.Run returns for two distinct reasons that must NOT be treated alike: a
+	// cancelled root ctx (SIGINT/SIGTERM via the CLI signal handler) means the
+	// server itself is shutting down, while ctx.Err()==nil means a clean client
+	// stdio disconnect. Only the former interrupts in-flight detached reviews.
+	e.shutdownReviews(ctx.Err() != nil, shutdownDrain)
 	if runErr != nil {
 		return fmt.Errorf("serve stdio: %w", runErr)
 	}
 	return nil
+}
+
+// shutdownReviews ends in-flight detached reviews according to WHY the transport
+// loop returned, then drains. serverShutdown is true only when the root context
+// was cancelled (SIGINT/SIGTERM): the server is going down, so in-flight detached
+// reviews are cancelled BEFORE the drain and record interrupted (epic 4.1.2 AC1),
+// mirroring the CLI's SIGINT path; the drain then waits for those flush writes.
+// On a clean client/stdio disconnect (serverShutdown false) the reviews are left
+// running so the drain keeps its original contract — let a near-complete review
+// FINISH its writes rather than orphan or force-interrupt it (AC3).
+func (e *engine) shutdownReviews(serverShutdown bool, timeout time.Duration) {
+	if serverShutdown && e.shutdownCancel != nil {
+		e.shutdownCancel()
+	}
+	e.drain(timeout)
 }
 
 // buildServer wires the engine and registers the five tools, returning both the
