@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/metrics.go:43|API call count inflated for single-shot agents when no HTTP request made|Only count if result indicates an actual attempt, e.g., not context deadline before request|correctness|15|unconditional fallback to 1 call for single-shot path; timeout before request still counts|bruce

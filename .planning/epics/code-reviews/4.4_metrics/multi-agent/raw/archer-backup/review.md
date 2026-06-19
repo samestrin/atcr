@@ -1,0 +1,3 @@
+SECURITY|cmd/atcr/review.go:13|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+SECURITY|cmd/atcr/review_summary.go:30|Potential format string vulnerability|Use fmt.Fprintf instead of fmt.Sprintf for untrusted data|security|3|untrusted data in formatted string|bruce
+LOW|cmd/atcr/review_summary.go:45|Missing error handling for file operations|Check error return from WriteFile|maintainability|2|file operation without error check|bruce

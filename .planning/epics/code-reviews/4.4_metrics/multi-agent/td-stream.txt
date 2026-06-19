@@ -1,0 +1,12 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+LOW|internal/metrics/prometheus.go:31|Missing carriage return escape in label value sanitizer|Add `\r` escape to prevent Prometheus parser line-break injection|correctness|5|strings.ReplaceAll misses \r escape for label values|greta
+LOW|internal/mcp/handlers.go:420|Metrics exposed via MCP tool without authentication|Enforce local-only deployment or add token validation|security|15|handleMetrics returns full registry to any MCP caller|greta
+LOW|cmd/atcr/review_summary.go:45|Missing error handling for file operations|Check error return from WriteFile|maintainability|2|file operation without error check|bruce
+HIGH|src/auth.go:42|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
+LOW|internal/metrics/metrics.go:102|Potential precision loss in ceilDiv|Use math.Ceil for clarity and precision|correctness|10|manual implementation of ceil(p/100 * n) via float-to-int cast|otto
+MEDIUM|internal/metrics/prometheus.go:23|Missing \r escape in label values|Add strings.ReplaceAll(v, "\r", `\r`)|security|2|Prometheus text spec requires \r escape to prevent line-break injection|bruce
+MEDIUM|cmd/atcr/review_summary.go:35|Severity keys may mismatch normalized values|Ensure severityOrder matches stream.NormalizeSeverity output|correctness|5|summary uses hardcoded uppercase but metrics record normalized severity|bruce
+LOW|internal/metrics/metrics.go:103|Percentile sorts full buffer on every call|Cache sorted slice or limit sort frequency|performance|10|O(N log N) sort runs synchronously during each Prometheus scrape|bruce
+MEDIUM|internal/fanout/metrics.go:43|API call count inflated for single-shot agents when no HTTP request made|Only count if result indicates an actual attempt, e.g., not context deadline before request|correctness|15|unconditional fallback to 1 call for single-shot path; timeout before request still counts|bruce

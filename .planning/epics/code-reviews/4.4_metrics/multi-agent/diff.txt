@@ -1,0 +1,1469 @@
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 97941ad..10087e4 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -13,6 +13,7 @@ import (
+ 	"github.com/samestrin/atcr/internal/gitrange"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
++	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
+ 	"github.com/samestrin/atcr/internal/validation"
+@@ -217,6 +218,14 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 		return err // all-agents-failed → exit 1, artifacts preserved
+ 	}
+ 
++	// End-of-review metrics summary (Epic 4.4 AC3): duration, agent outcome, API
++	// calls, and findings. Reads the process-global registry, which holds this
++	// review's totals (a CLI process runs one review). Printed after the one-line
++	// status above and before any one-shot reconcile/verify output.
++	if result != nil {
++		writeReviewSummary(cmd.OutOrStdout(), metrics.DefaultRegistry, time.Since(now), result.Summary.Total)
++	}
++
+ 	// One-shot mode: reconcile in-process and gate on the threshold. Review
+ 	// artifacts are already on disk, so a reconcile failure (exit 2) preserves
+ 	// them for inspection (AC 03-02 Error Scenario 3).
+diff --git a/cmd/atcr/review_summary.go b/cmd/atcr/review_summary.go
+new file mode 100644
+index 0000000..5ebb76a
+--- /dev/null
++++ b/cmd/atcr/review_summary.go
+@@ -0,0 +1,46 @@
++package main
++
++import (
++	"fmt"
++	"io"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/metrics"
++)
++
++// severityOrder is the high-to-low display order for the findings breakdown.
++var severityOrder = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
++
++// writeReviewSummary prints the end-of-review metrics summary (Epic 4.4 AC3):
++// duration, agent success/failure/timeout counts, API calls, and findings with a
++// severity breakdown. It reads the counts from reg — in production the
++// process-global DefaultRegistry, which (a CLI process runs exactly one review)
++// holds this review's totals — so the summary is a direct readout of the same
++// metrics the MCP server exports. reg is a parameter so the helper is unit
++// testable against a seeded registry.
++func writeReviewSummary(w io.Writer, reg *metrics.Registry, elapsed time.Duration, totalAgents int) {
++	val := func(name string) int64 { return reg.Counter(name).Value() }
++
++	_, _ = fmt.Fprintf(w, "Review completed in %.1fs\n", elapsed.Seconds())
++	_, _ = fmt.Fprintf(w, "Agents: %d/%d succeeded, %d failed, %d timed out\n",
++		val(metrics.NameAgentsSucceeded), totalAgents,
++		val(metrics.NameAgentsFailed), val(metrics.NameAgentsTimedOut))
++	_, _ = fmt.Fprintf(w, "API calls: %d\n", val(metrics.NameAPICallsTotal))
++	_, _ = fmt.Fprintf(w, "Findings: %d%s\n", val(metrics.NameFindingsTotal), severityBreakdown(reg))
++}
++
++// severityBreakdown renders " (2 HIGH, 3 MEDIUM)" for the non-zero severities in
++// high-to-low order, or "" when no findings were recorded.
++func severityBreakdown(reg *metrics.Registry) string {
++	var parts []string
++	for _, sev := range severityOrder {
++		if n := reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, sev)).Value(); n > 0 {
++			parts = append(parts, fmt.Sprintf("%d %s", n, sev))
++		}
++	}
++	if len(parts) == 0 {
++		return ""
++	}
++	return " (" + strings.Join(parts, ", ") + ")"
++}
+diff --git a/cmd/atcr/review_summary_test.go b/cmd/atcr/review_summary_test.go
+new file mode 100644
+index 0000000..0a41911
+--- /dev/null
++++ b/cmd/atcr/review_summary_test.go
+@@ -0,0 +1,48 @@
++package main
++
++import (
++	"bytes"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/metrics"
++)
++
++func TestWriteReviewSummary(t *testing.T) {
++	reg := metrics.NewRegistry()
++	reg.Counter(metrics.NameAgentsSucceeded).Add(8)
++	reg.Counter(metrics.NameAgentsFailed).Add(1)
++	reg.Counter(metrics.NameAgentsTimedOut).Add(1)
++	reg.Counter(metrics.NameAPICallsTotal).Add(12)
++	reg.Counter(metrics.NameFindingsTotal).Add(5)
++	reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, "HIGH")).Add(2)
++	reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, "MEDIUM")).Add(3)
++
++	var buf bytes.Buffer
++	writeReviewSummary(&buf, reg, 142300*time.Millisecond, 10)
++	out := buf.String()
++
++	for _, want := range []string{
++		"Review completed in 142.3s",
++		"Agents: 8/10 succeeded, 1 failed, 1 timed out",
++		"API calls: 12",
++		"Findings: 5 (2 HIGH, 3 MEDIUM)",
++	} {
++		if !strings.Contains(out, want) {
++			t.Errorf("summary missing %q\n---\n%s", want, out)
++		}
++	}
++}
++
++// TestWriteReviewSummaryNoFindings verifies the breakdown suffix is omitted when
++// there are no findings.
++func TestWriteReviewSummaryNoFindings(t *testing.T) {
++	reg := metrics.NewRegistry()
++	var buf bytes.Buffer
++	writeReviewSummary(&buf, reg, time.Second, 3)
++	out := buf.String()
++	if !strings.Contains(out, "Findings: 0\n") {
++		t.Errorf("expected bare 'Findings: 0' line, got:\n%s", out)
++	}
++}
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index c5d7ad1..64c8e04 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -30,16 +30,17 @@ var allowedInternalImports = map[string][]string{
+ 	"errors":     {},         // error-classification taxonomy; stdlib-only (epic 4.0)
+ 	"registry":   {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
+ 	"tools":      {},
++	"metrics":    {},                              // in-process metrics collector; stdlib-only leaf (epic 4.4)
+ 	"validation": {},                              // user-input validators; stdlib-only leaf (epic 4.3)
+ 	"payload":    {"gitrange", "atomicfs", "log"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+ 	"llmclient":  {"registry", "errors"},          // errors: HTTP failures wrapped in ClassifiedError (epic 4.0 phase 4.3)
+ 	"doctor":     {"llmclient", "registry"},
+-	"fanout":     {"llmclient", "registry", "stream", "payload", "tools", "log"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2)
++	"fanout":     {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4)
+ 	"reconcile":  {"stream", "atomicfs"},
+ 	"scorecard":  {"llmclient", "reconcile", "fanout"},
+ 	"report":     {"stream", "reconcile"},
+ 	"verify":     {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
+-	"mcp":        {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log"},
++	"mcp":        {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log", "metrics"},
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index f3c5510..1e2bf77 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -87,6 +87,10 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
+ 		statuses = append(statuses, statusFor(r, fr))
+ 	}
+ 
++	// Findings metrics (Epic 4.4): count the raw findings the agents emitted, in
++	// total and by severity, before they are merged to disk.
++	recordFindingMetrics(merged)
++
+ 	// Merged pool findings (8-col, REVIEWER per row) for downstream convenience.
+ 	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
+ 		return Summary{}, err
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index cffcbb1..767802a 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -11,6 +11,7 @@ import (
+ 
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
++	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/samestrin/atcr/internal/tools"
+ )
+@@ -420,12 +421,27 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
+ 	agentLogger := log.WithAgent(e.logger(), a.Name)
+ 	ctx = log.NewContext(ctx, agentLogger)
+ 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
+-	// Tool-enabled agents run the multi-turn loop only when the model is declared
+-	// function-calling-capable AND both a ChatCompleter and a dispatcher are
+-	// wired; otherwise they degrade to single-shot. The capability check is the
+-	// registry (per-agent), consulted before the loop starts (AC 04-01/04-02) —
+-	// an incapable model degrades even when the harness is fully wired. Non-tool
+-	// agents take the unchanged 1.x path.
++
++	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch
++	// (including any tool loop). The per-agent API-call count and outcome tally
++	// are derived from the returned Result in recordAgentOutcome — a tool-loop
++	// agent makes one provider call per turn, so counting from Result.Turns there
++	// reflects real round-trips rather than a flat one-per-invocation.
++	metrics.Counter(metrics.NameAgentsTotal).Inc()
++	start := time.Now()
++	r := e.dispatchAgent(ctx, a)
++	metrics.Histogram(metrics.NameAgentDurationSeconds).Observe(time.Since(start).Seconds())
++	recordAgentOutcome(r)
++	return r
++}
++
++// dispatchAgent selects the execution path for an agent: the multi-turn tool
++// loop when the model is declared function-calling-capable AND both a
++// ChatCompleter and a dispatcher are wired, the degraded single-shot path when a
++// tool agent's harness is unavailable, or the plain single-shot path for a
++// non-tool agent (the unchanged 1.x path). Split from invokeAgent so the metrics
++// wrapper there spans every path uniformly.
++func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
+ 	if a.Tools {
+ 		if a.SupportsFC {
+ 			cc, ok := e.completer.(ChatCompleter)
+diff --git a/internal/fanout/engine_metrics_test.go b/internal/fanout/engine_metrics_test.go
+new file mode 100644
+index 0000000..e7fe400
+--- /dev/null
++++ b/internal/fanout/engine_metrics_test.go
+@@ -0,0 +1,70 @@
++package fanout
++
++import (
++	"context"
++	"errors"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/metrics"
++)
++
++// TestEngineRecordsAgentMetrics drives a roster of one success, one HTTP failure,
++// and one timeout through Run and asserts the agent/API metrics are recorded.
++// Not parallel: it asserts absolute counter values against the process-global
++// DefaultRegistry, which it resets first (non-parallel tests never overlap the
++// parallel ones, so the reset window is exclusive).
++func TestEngineRecordsAgentMetrics(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++
++	f := newFake()
++	f.failFor["fail"] = &llmclient.HTTPStatusError{Status: 429}
++	f.failFor["slow"] = context.DeadlineExceeded
++	e := NewEngine(f)
++
++	e.Run(context.Background(), []Slot{agentSlot("ok"), agentSlot("fail"), agentSlot("slow")})
++
++	check := func(name string, want int64) {
++		t.Helper()
++		if got := metrics.Counter(name).Value(); got != want {
++			t.Errorf("%s = %d, want %d", name, got, want)
++		}
++	}
++	check("atcr_agents_total", 3)
++	check("atcr_agents_succeeded", 1)
++	check("atcr_agents_failed", 1)
++	check("atcr_agents_timed_out", 1)
++	check("atcr_api_calls_total", 3)
++	check(metrics.Key("atcr_api_errors_total", "status", "429"), 1)
++
++	if got := metrics.Histogram("atcr_agent_duration_seconds").Count(); got != 3 {
++		t.Errorf("atcr_agent_duration_seconds count = %d, want 3", got)
++	}
++}
++
++// TestRecordAgentOutcome covers every branch of the outcome classifier directly,
++// including the non-HTTP error path (no api_errors series) and the tool-call
++// counter, which the single-shot Run path above cannot exercise.
++func TestRecordAgentOutcome(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++
++	recordAgentOutcome(Result{Status: StatusOK})                                                   // 1 API call (Turns 0)
++	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.HTTPStatusError{Status: 500}}) // 1 API call
++	recordAgentOutcome(Result{Status: StatusTimeout, ToolCalls: 4, Turns: 3})                      // 3 API calls (tool loop)
++	recordAgentOutcome(Result{Status: StatusFailed, Err: errors.New("non-http failure")})          // 1 API call
++
++	check := func(name string, want int64) {
++		t.Helper()
++		if got := metrics.Counter(name).Value(); got != want {
++			t.Errorf("%s = %d, want %d", name, got, want)
++		}
++	}
++	check("atcr_agents_succeeded", 1)
++	check("atcr_agents_failed", 2)
++	check("atcr_agents_timed_out", 1)
++	check("atcr_api_calls_total", 6) // 1 + 1 + 3 (tool loop) + 1
++	check(metrics.Key("atcr_api_errors_total", "status", "500"), 1)
++	check("atcr_tool_calls_total", 4)
++}
+diff --git a/internal/fanout/metrics.go b/internal/fanout/metrics.go
+new file mode 100644
+index 0000000..b885c9f
+--- /dev/null
++++ b/internal/fanout/metrics.go
+@@ -0,0 +1,79 @@
++package fanout
++
++import (
++	"errors"
++	"strconv"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/metrics"
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// recordAgentOutcome translates one finished agent Result into metric updates:
++// the success/failure/timeout tally, the API-call count, the per-HTTP-status
++// API-error counter (when the error unwraps to *llmclient.HTTPStatusError — the
++// public type the clarification settled on, so no internal/llmclient edits are
++// needed), and the tool-call total. API calls are counted as provider
++// round-trips: a tool-loop agent makes one Chat call per turn (Result.Turns),
++// while the single-shot path leaves Turns at 0 and makes exactly one call, so
++// max(1, Turns) is the round-trip count. Slot-level fallbacks are separate
++// invokeAgent calls and so are counted independently, covering "API calls
++// (including retries)" at the granularity the fan-out can observe. API call
++// latency is intentionally not recorded: the per-call start time lives inside the
++// client and is not surfaced on Result, so the histogram is deferred (Epic 4.4
++// clarification; AC7 needs only the error counter). errors.As tolerates a nil
++// Result.Err, so non-error results skip the API-error counter without a guard.
++func recordAgentOutcome(r Result) {
++	switch r.Status {
++	case StatusOK:
++		metrics.Counter(metrics.NameAgentsSucceeded).Inc()
++	case StatusFailed:
++		metrics.Counter(metrics.NameAgentsFailed).Inc()
++	case StatusTimeout:
++		metrics.Counter(metrics.NameAgentsTimedOut).Inc()
++	}
++
++	apiCalls := r.Turns
++	if apiCalls == 0 {
++		apiCalls = 1 // single-shot/degraded path: one provider call, Turns unset
++	}
++	metrics.Counter(metrics.NameAPICallsTotal).Add(int64(apiCalls))
++
++	var he *llmclient.HTTPStatusError
++	if errors.As(r.Err, &he) {
++		metrics.Counter(metrics.Key(metrics.NameAPIErrorsTotal, metrics.LabelStatus, strconv.Itoa(he.Status))).Inc()
++	}
++
++	if r.ToolCalls > 0 {
++		metrics.Counter(metrics.NameToolCallsTotal).Add(int64(r.ToolCalls))
++	}
++}
++
++// recordFindingMetrics counts the findings emitted by the agents of one review:
++// the total and a per-severity breakdown. These are raw per-agent findings (the
++// metric definition is "emitted by agents"), recorded once in WritePool so both
++// the CLI and the MCP server observe the same numbers.
++func recordFindingMetrics(findings []stream.Finding) {
++	if len(findings) == 0 {
++		return
++	}
++	metrics.Counter(metrics.NameFindingsTotal).Add(int64(len(findings)))
++	for _, f := range findings {
++		sev := stream.NormalizeSeverity(f.Severity)
++		metrics.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, sev)).Inc()
++	}
++}
++
++// recordReviewOutcome records one review's terminal classification. An interrupt
++// (SIGINT/SIGTERM) takes precedence over a failure: a review whose agents were
++// all cut off by a signal is interrupted, not failed.
++func recordReviewOutcome(interrupted, failed bool) {
++	switch {
++	case interrupted:
++		metrics.Counter(metrics.NameReviewsInterrupted).Inc()
++	case failed:
++		metrics.Counter(metrics.NameReviewsFailed).Inc()
++	default:
++		metrics.Counter(metrics.NameReviewsSucceeded).Inc()
++	}
++}
+diff --git a/internal/fanout/metrics_review_test.go b/internal/fanout/metrics_review_test.go
+new file mode 100644
+index 0000000..4af6f61
+--- /dev/null
++++ b/internal/fanout/metrics_review_test.go
+@@ -0,0 +1,94 @@
++package fanout
++
++import (
++	"context"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/metrics"
++	"github.com/stretchr/testify/require"
++)
++
++// TestWritePoolRecordsFindingMetrics verifies the findings emitted by agents are
++// counted in total and bucketed by severity (Epic 4.4 atcr_findings_total /
++// atcr_findings_by_severity). Findings are raw per-agent ("emitted by agents"),
++// so two agents each emitting one HIGH counts as two.
++func TestWritePoolRecordsFindingMetrics(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++
++	pool := filepath.Join(t.TempDir(), "pool")
++	results := []Result{
++		okResult("greta", "CRITICAL|auth.go:42|Token|Fix|security|15|ev\nHIGH|main.go:88|Leak|Fix|concurrency|30|ev"),
++		okResult("kai", "HIGH|x.go:1|p|f|cat|10|ev"),
++	}
++	_, err := WritePool(pool, results)
++	require.NoError(t, err)
++
++	check := func(name string, want int64) {
++		t.Helper()
++		if got := metrics.Counter(name).Value(); got != want {
++			t.Errorf("%s = %d, want %d", name, got, want)
++		}
++	}
++	check("atcr_findings_total", 3)
++	check(metrics.Key("atcr_findings_by_severity", "severity", "HIGH"), 2)
++	check(metrics.Key("atcr_findings_by_severity", "severity", "CRITICAL"), 1)
++}
++
++// TestRunReviewRecordsReviewMetrics is the Epic 4.4 integration test (AC9): a
++// full review through RunReview increments atcr_reviews_total and the review/
++// agent/findings metrics, end to end through the real HTTP client against a mock
++// provider.
++func TestRunReviewRecordsReviewMetrics(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++	t.Setenv("ATCR_TEST_KEY", "secret")
++
++	repo, base, head := initRepo(t)
++	srv := mockProvider(t)
++	cfg := twoAgentConfig(srv.URL)
++
++	res, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
++	require.NoError(t, err)
++	require.NotNil(t, res)
++
++	check := func(name string, want int64) {
++		t.Helper()
++		if got := metrics.Counter(name).Value(); got != want {
++			t.Errorf("%s = %d, want %d", name, got, want)
++		}
++	}
++	check("atcr_reviews_total", 1)
++	check("atcr_reviews_succeeded", 1)
++	check("atcr_agents_total", 2)
++	check("atcr_agents_succeeded", 2)
++	check("atcr_findings_total", 2) // one CRITICAL per agent (mockProvider)
++	check(metrics.Key("atcr_findings_by_severity", "severity", "CRITICAL"), 2)
++
++	if got := metrics.Histogram("atcr_review_duration_seconds").Count(); got != 1 {
++		t.Errorf("atcr_review_duration_seconds count = %d, want 1", got)
++	}
++}
++
++// TestRecordReviewOutcome covers the three outcome branches directly, including
++// interrupt precedence over failure.
++func TestRecordReviewOutcome(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++
++	recordReviewOutcome(false, false) // success
++	recordReviewOutcome(false, true)  // failed
++	recordReviewOutcome(true, true)   // interrupted wins over failed
++
++	check := func(name string, want int64) {
++		t.Helper()
++		if got := metrics.Counter(name).Value(); got != want {
++			t.Errorf("%s = %d, want %d", name, got, want)
++		}
++	}
++	check("atcr_reviews_succeeded", 1)
++	check("atcr_reviews_failed", 1)
++	check("atcr_reviews_interrupted", 1)
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 87bcb98..87dfdb7 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -12,6 +12,7 @@ import (
+ 
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
++	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/samestrin/atcr/internal/registry"
+ 	"github.com/samestrin/atcr/internal/tools"
+@@ -346,6 +347,17 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
+ // running them on an uncancelled child ctx — a deliberate engine change out of
+ // scope here.
+ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
++	// Review metrics (Epic 4.4): count this review and time the whole execution
++	// (fan-out + artifact persistence). The deferred Observe fires on every exit;
++	// the terminal succeeded/failed/interrupted classification is recorded at each
++	// return below. Instrumented here (not in the CLI) so the MCP server's
++	// background reviews are counted identically.
++	metrics.Counter(metrics.NameReviewsTotal).Inc()
++	reviewStart := time.Now()
++	defer func() {
++		metrics.Histogram(metrics.NameReviewDurationSeconds).Observe(time.Since(reviewStart).Seconds())
++	}()
++
+ 	poolDir := filepath.Join(p.Dir, "sources", "pool")
+ 
+ 	results, stage := runEngine(ctx, completer, p, poolDir)
+@@ -377,6 +389,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 			p.manifest.Interrupted = interrupted
+ 			_ = WriteManifest(p.Dir, p.manifest) // best-effort; stale inference covers the `failed` outcome but manifest.Interrupted is lost if this write also fails
+ 		}
++		recordReviewOutcome(interrupted, true)
+ 		return nil, err
+ 	}
+ 
+@@ -392,6 +405,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	// agent ran with tools, so a pure 1.x roster's manifest is unchanged.
+ 	m.Review = stage
+ 	if err := WriteManifest(p.Dir, &m); err != nil {
++		recordReviewOutcome(interrupted, true)
+ 		return nil, err
+ 	}
+ 	p.manifest = &m
+@@ -400,8 +414,10 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview)
+ 	// The all-agents-failed gate runs after artifacts are on disk; the result is
+ 	// returned regardless so the caller knows where to look.
+ 	if _, outErr := Outcome(results); outErr != nil {
++		recordReviewOutcome(interrupted, true)
+ 		return res, outErr
+ 	}
++	recordReviewOutcome(interrupted, false)
+ 	return res, nil
+ }
+ 
+diff --git a/internal/mcp/handlers.go b/internal/mcp/handlers.go
+index 9432263..a64c5f3 100644
+--- a/internal/mcp/handlers.go
++++ b/internal/mcp/handlers.go
+@@ -17,6 +17,7 @@ import (
+ 	"github.com/samestrin/atcr/internal/fanout"
+ 	"github.com/samestrin/atcr/internal/gitrange"
+ 	"github.com/samestrin/atcr/internal/log"
++	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
+@@ -416,6 +417,18 @@ func (e *engine) handleStatus(ctx context.Context, _ *mcpsdk.CallToolRequest, in
+ 	return nil, *st, nil
+ }
+ 
++// handleMetrics renders the process-wide metrics registry in Prometheus text
++// exposition format (Epic 4.4). The epic's AC4 named an HTTP /metrics endpoint,
++// but atcr serve is a stdio JSON-RPC server with no HTTP listener, so metrics
++// are surfaced as this tool instead (see the epic Clarifications). Metrics are
++// cumulative since the server started.
++func (e *engine) handleMetrics(ctx context.Context, _ *mcpsdk.CallToolRequest, _ MetricsArgs) (*mcpsdk.CallToolResult, MetricsResult, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, MetricsResult{}, err
++	}
++	return nil, MetricsResult{Format: "prometheus", Content: metrics.DefaultRegistry.WritePrometheus()}, nil
++}
++
+ // resolveReviewDir resolves the id_or_path anchor to an on-disk review directory
+ // and its id. An empty anchor falls back to .atcr/latest. A non-empty anchor is
+ // treated strictly as a review id and validated so a path separator, "..", an
+diff --git a/internal/mcp/metrics_test.go b/internal/mcp/metrics_test.go
+new file mode 100644
+index 0000000..488b353
+--- /dev/null
++++ b/internal/mcp/metrics_test.go
+@@ -0,0 +1,47 @@
++package mcp
++
++import (
++	"context"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/metrics"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// TestHandleMetricsReturnsPrometheus verifies the atcr_metrics handler renders
++// the DefaultRegistry in Prometheus text format (Epic 4.4 AC4, resolved as an
++// MCP tool rather than an HTTP endpoint — see the epic Clarifications).
++func TestHandleMetricsReturnsPrometheus(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++	metrics.Counter(metrics.NameReviewsTotal).Add(2)
++
++	e := &engine{}
++	_, out, err := e.handleMetrics(context.Background(), nil, MetricsArgs{})
++	require.NoError(t, err)
++	assert.Equal(t, "prometheus", out.Format)
++	assert.Contains(t, out.Content, "atcr_reviews_total 2")
++}
++
++// TestHandleMetricsContextCancelled verifies a cancelled context short-circuits
++// before rendering (parity with the other read handlers).
++func TestHandleMetricsContextCancelled(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	e := &engine{}
++	_, _, err := e.handleMetrics(ctx, nil, MetricsArgs{})
++	require.Error(t, err)
++}
++
++// TestMetricsToolRegistered verifies the server advertises atcr_metrics.
++func TestMetricsToolRegistered(t *testing.T) {
++	cs := connectTest(t, t.TempDir(), fakeCompleter{})
++	res, err := cs.ListTools(context.Background(), nil)
++	require.NoError(t, err)
++	names := map[string]bool{}
++	for _, tool := range res.Tools {
++		names[tool.Name] = true
++	}
++	assert.True(t, names[ToolMetrics], "atcr_metrics tool must be advertised")
++}
+diff --git a/internal/mcp/server.go b/internal/mcp/server.go
+index a9cfd45..75e56a2 100644
+--- a/internal/mcp/server.go
++++ b/internal/mcp/server.go
+@@ -30,7 +30,7 @@ const Version = "1.0.0"
+ // larger bound) before trusting the marker under heavier flush load.
+ const shutdownDrain = 5 * time.Second
+ 
+-// NewServer constructs the atcr MCP server with all five tools registered
++// NewServer constructs the atcr MCP server with all seven tools registered
+ // against a shared engine rooted at root. completer drives the fan-out (the
+ // real *llmclient.Client in production, a fake in tests); logger receives all
+ // diagnostics and MUST write to stderr in serve mode (stdout is owned by the
+@@ -94,7 +94,7 @@ func (e *engine) shutdownReviews(serverShutdown bool, timeout time.Duration) {
+ 	e.drain(timeout)
+ }
+ 
+-// buildServer wires the engine and registers the five tools, returning both the
++// buildServer wires the engine and registers the seven tools, returning both the
+ // SDK server and the engine (so Serve can drain its background reviews).
+ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (*mcpsdk.Server, *engine, error) {
+ 	if logger == nil {
+@@ -125,6 +125,7 @@ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (
+ 
+ 	registerTool(r, &mcpsdk.Tool{Name: ToolRange, Description: descRange}, e.handleRange)
+ 	registerTool(r, &mcpsdk.Tool{Name: ToolStatus, Description: descStatus}, e.handleStatus)
++	registerTool(r, &mcpsdk.Tool{Name: ToolMetrics, Description: descMetrics}, e.handleMetrics)
+ 
+ 	if r.err != nil {
+ 		return nil, nil, r.err
+diff --git a/internal/mcp/server_test.go b/internal/mcp/server_test.go
+index 13f930f..df06b22 100644
+--- a/internal/mcp/server_test.go
++++ b/internal/mcp/server_test.go
+@@ -90,7 +90,7 @@ func TestServe_InitializeHandshake(t *testing.T) {
+ 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
+ 	res, err := cs.ListTools(context.Background(), nil)
+ 	require.NoError(t, err)
+-	assert.Len(t, res.Tools, 6, "server advertises exactly six tools after initialize")
++	assert.Len(t, res.Tools, 7, "server advertises exactly seven tools after initialize")
+ }
+ 
+ // TestServe_InMemoryTransport verifies a tool is callable in-process with no
+diff --git a/internal/mcp/tools.go b/internal/mcp/tools.go
+index 2157bf9..6a7b7bc 100644
+--- a/internal/mcp/tools.go
++++ b/internal/mcp/tools.go
+@@ -19,6 +19,7 @@ const (
+ 	ToolReport    = "atcr_report"
+ 	ToolRange     = "atcr_range"
+ 	ToolStatus    = "atcr_status"
++	ToolMetrics   = "atcr_metrics"
+ )
+ 
+ // runningStatus is the status atcr_review returns immediately; the fan-out
+@@ -78,6 +79,17 @@ type StatusArgs struct {
+ 	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to query (review id only; paths are not accepted); defaults to .atcr/latest"`
+ }
+ 
++// MetricsArgs are the atcr_metrics tool arguments: none. The tool returns the
++// whole in-process registry.
++type MetricsArgs struct{}
++
++// MetricsResult carries the rendered metrics and the format they are in
++// (mirrors ReportResult). Format is always "prometheus".
++type MetricsResult struct {
++	Format  string `json:"format"`
++	Content string `json:"content"`
++}
++
+ // ReviewResult is returned by atcr_review immediately after the review directory
+ // is created and the fan-out has started; the run continues in the server
+ // process and completion is polled via atcr_status (AC 04-03).
+@@ -164,6 +176,8 @@ const (
+ 		"Returns {base, head, commit_count, file_count}. Optional args: base, head, merge_commit (defaults to the current branch vs. the default branch)."
+ 	descStatus = "Report a review's fan-out progress. " +
+ 		"Returns {review_id, status, agent_count, agents_done, agents_pending, partial}. Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review)."
++	descMetrics = "Return the atcr in-process metrics (review/agent counts and latencies, API errors, findings) in Prometheus text exposition format, cumulative since the server started. " +
++		"Returns {format:\"prometheus\", content}. No arguments. Local-only: do not expose the server publicly."
+ )
+ 
+ // reportInputSchema builds the atcr_report input schema with the format property
+diff --git a/internal/mcp/tools_test.go b/internal/mcp/tools_test.go
+index 0581ea3..fe9ca21 100644
+--- a/internal/mcp/tools_test.go
++++ b/internal/mcp/tools_test.go
+@@ -23,13 +23,13 @@ func listTools(t *testing.T, cs *mcpsdk.ClientSession) map[string]*mcpsdk.Tool {
+ 
+ func TestToolRegistration_Count(t *testing.T) {
+ 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
+-	assert.Len(t, listTools(t, cs), 6)
++	assert.Len(t, listTools(t, cs), 7)
+ }
+ 
+ func TestToolRegistration_Names(t *testing.T) {
+ 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
+ 	tools := listTools(t, cs)
+-	for _, want := range []string{ToolReview, ToolReconcile, ToolVerify, ToolReport, ToolRange, ToolStatus} {
++	for _, want := range []string{ToolReview, ToolReconcile, ToolVerify, ToolReport, ToolRange, ToolStatus, ToolMetrics} {
+ 		_, ok := tools[want]
+ 		assert.True(t, ok, "tool %q must be registered", want)
+ 	}
+diff --git a/internal/metrics/metrics.go b/internal/metrics/metrics.go
+new file mode 100644
+index 0000000..059e17a
+--- /dev/null
++++ b/internal/metrics/metrics.go
+@@ -0,0 +1,216 @@
++// Package metrics is a lightweight, in-process metrics collector: monotonic
++// counters and bounded histograms aggregated in a registry, with a process-wide
++// DefaultRegistry and package-level accessors. It has no external dependencies
++// (Epic 4.4 Open Questions 1 & 2 — custom implementation, no third-party metrics
++// library) and every exported operation is safe for concurrent use.
++//
++// Labels are encoded into the metric name using Prometheus syntax —
++// `atcr_api_errors_total{status="429"}` is one counter, `{status="500"}` is
++// another — so the registry needs no label type. The Prometheus renderer
++// (prometheus.go) groups same-family keys under a single `# TYPE` header.
++//
++// The package-level Counter/Histogram functions are the call-site API
++// (metrics.Counter("name").Inc()). The concrete counter/histogram types are
++// unexported because that name space is owned by those accessor functions;
++// callers hold the returned values fluently and never name the type.
++package metrics
++
++import (
++	"sort"
++	"sync"
++	"sync/atomic"
++)
++
++// maxHistogramSamples caps the per-histogram retained sample buffer. Beyond it
++// the oldest sample is overwritten (ring semantics) so a long-running process
++// cannot grow histogram memory without bound (Epic 4.4 risk: unbounded growth).
++// Sum and count stay exact across every observation regardless of the cap; only
++// the percentile sample window is bounded.
++const maxHistogramSamples = 10000
++
++// counter is a monotonically increasing integer metric (e.g. total reviews).
++// Obtain one from a Registry or the package-level Counter; the zero value is not
++// registered. Safe for concurrent use.
++type counter struct {
++	name  string
++	value atomic.Int64
++}
++
++// Inc adds one to the counter.
++func (c *counter) Inc() { c.value.Add(1) }
++
++// Add adds n to the counter. Callers pass non-negative deltas (a counter is
++// monotonic); the method does not enforce it so a batch increment stays cheap.
++func (c *counter) Add(n int64) { c.value.Add(n) }
++
++// Value returns the current total.
++func (c *counter) Value() int64 { return c.value.Load() }
++
++// Name returns the metric name (including any encoded label suffix).
++func (c *counter) Name() string { return c.name }
++
++// histogram tracks the distribution of observed float64 values (e.g. latency in
++// seconds). It keeps an exact running sum/count for the mean and retains up to
++// maxHistogramSamples recent values for percentile queries. Safe for concurrent
++// use.
++type histogram struct {
++	name string
++	mu   sync.Mutex
++	// values is the retained sample window. It grows by append until it reaches
++	// maxHistogramSamples, after which writes wrap around (next) as a ring.
++	values []float64
++	next   int  // ring write cursor, used only once full
++	full   bool // true once values reached maxHistogramSamples
++	sum    float64
++	count  int64
++}
++
++// Observe records one value. sum and count are updated for every observation;
++// the retained sample window is bounded to maxHistogramSamples, overwriting the
++// oldest sample once full so memory stays bounded.
++func (h *histogram) Observe(v float64) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	h.sum += v
++	h.count++
++	if !h.full {
++		h.values = append(h.values, v)
++		if len(h.values) == maxHistogramSamples {
++			h.full = true
++			h.next = 0
++		}
++		return
++	}
++	h.values[h.next] = v
++	h.next = (h.next + 1) % maxHistogramSamples
++}
++
++// Percentile returns the p-th percentile (nearest-rank) of the retained sample
++// window, or 0 when nothing has been observed. p is clamped to [0, 100].
++func (h *histogram) Percentile(p float64) float64 {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	if len(h.values) == 0 {
++		return 0
++	}
++	p = min(max(p, 0), 100)
++	sorted := make([]float64, len(h.values))
++	copy(sorted, h.values)
++	sort.Float64s(sorted)
++	// Nearest-rank: rank = ceil(p/100 * N), 1-indexed, clamped to [1, N]. The
++	// clamp is defensive — with p in [0,100] the rank is already in range — and
++	// uses builtins so it adds no uncoverable branch.
++	rank := min(max(int(ceilDiv(p, float64(len(sorted)))), 1), len(sorted))
++	return sorted[rank-1]
++}
++
++// ceilDiv returns ceil(p/100 * n) without importing math: the nearest-rank index
++// for percentile p over n samples.
++func ceilDiv(p, n float64) float64 {
++	x := p / 100 * n
++	t := float64(int64(x))
++	if x > t {
++		return t + 1
++	}
++	return t
++}
++
++// Mean returns the arithmetic mean of every observed value (exact, not windowed),
++// or 0 when nothing has been observed.
++func (h *histogram) Mean() float64 {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	if h.count == 0 {
++		return 0
++	}
++	return h.sum / float64(h.count)
++}
++
++// Sum returns the exact running sum of every observed value.
++func (h *histogram) Sum() float64 {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	return h.sum
++}
++
++// Count returns the exact number of observations.
++func (h *histogram) Count() int64 {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	return h.count
++}
++
++// Name returns the metric name (including any encoded label suffix).
++func (h *histogram) Name() string { return h.name }
++
++// Registry holds all counters and histograms, each keyed by its full name
++// (label suffix included). Accessors are get-or-create: the same name always
++// returns the same instance, so collaborating call sites share one metric. Safe
++// for concurrent use.
++//
++// One mutex guards both maps. The accessors hold it only for a single map
++// lookup/insert; the actual metric mutations (atomic counter adds, the
++// histogram's own mutex) happen outside it, so this lock is never the hot path —
++// it trades a hair of lookup concurrency for a get-or-create with no
++// double-checked-locking branch to leave uncovered.
++type Registry struct {
++	mu         sync.Mutex
++	counters   map[string]*counter
++	histograms map[string]*histogram
++}
++
++// NewRegistry creates an empty registry. Tests use a fresh registry for
++// isolation; production uses the package-global DefaultRegistry.
++func NewRegistry() *Registry {
++	return &Registry{
++		counters:   make(map[string]*counter),
++		histograms: make(map[string]*histogram),
++	}
++}
++
++// Counter returns the counter registered under name, creating it on first use.
++func (r *Registry) Counter(name string) *counter {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	c, ok := r.counters[name]
++	if !ok {
++		c = &counter{name: name}
++		r.counters[name] = c
++	}
++	return c
++}
++
++// Histogram returns the histogram registered under name, creating it on first use.
++func (r *Registry) Histogram(name string) *histogram {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	h, ok := r.histograms[name]
++	if !ok {
++		h = &histogram{name: name}
++		r.histograms[name] = h
++	}
++	return h
++}
++
++// Reset drops every counter and histogram. It exists for test isolation (and a
++// hypothetical operator reset); production never calls it — serve-mode metrics
++// are cumulative since process start.
++func (r *Registry) Reset() {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	r.counters = make(map[string]*counter)
++	r.histograms = make(map[string]*histogram)
++}
++
++// DefaultRegistry is the process-wide registry the package-level accessors and
++// all production instrumentation write to. A CLI process runs one review, so its
++// values reflect that review; a serve process accumulates across reviews.
++var DefaultRegistry = NewRegistry()
++
++// Counter returns the named counter from DefaultRegistry (get-or-create). This
++// is the call-site API: metrics.Counter("atcr_reviews_total").Inc().
++func Counter(name string) *counter { return DefaultRegistry.Counter(name) }
++
++// Histogram returns the named histogram from DefaultRegistry (get-or-create):
++// metrics.Histogram("atcr_review_duration_seconds").Observe(secs).
++func Histogram(name string) *histogram { return DefaultRegistry.Histogram(name) }
+diff --git a/internal/metrics/metrics_test.go b/internal/metrics/metrics_test.go
+new file mode 100644
+index 0000000..1b9d41d
+--- /dev/null
++++ b/internal/metrics/metrics_test.go
+@@ -0,0 +1,182 @@
++package metrics
++
++import (
++	"sync"
++	"testing"
++)
++
++func TestCounterIncAddValue(t *testing.T) {
++	r := NewRegistry()
++	c := r.Counter("atcr_reviews_total")
++	if got := c.Value(); got != 0 {
++		t.Fatalf("fresh counter Value() = %d, want 0", got)
++	}
++	c.Inc()
++	if got := c.Value(); got != 1 {
++		t.Fatalf("after Inc() Value() = %d, want 1", got)
++	}
++	c.Add(5)
++	if got := c.Value(); got != 6 {
++		t.Fatalf("after Add(5) Value() = %d, want 6", got)
++	}
++	if got := c.Name(); got != "atcr_reviews_total" {
++		t.Fatalf("Name() = %q, want %q", got, "atcr_reviews_total")
++	}
++}
++
++func TestCounterGetOrCreateSameInstance(t *testing.T) {
++	r := NewRegistry()
++	a := r.Counter("x")
++	a.Inc()
++	b := r.Counter("x")
++	if a != b {
++		t.Fatalf("Counter(%q) returned different instances", "x")
++	}
++	if got := b.Value(); got != 1 {
++		t.Fatalf("shared counter Value() = %d, want 1", got)
++	}
++}
++
++func TestHistogramObservePercentileMean(t *testing.T) {
++	r := NewRegistry()
++	h := r.Histogram("atcr_review_duration_seconds")
++	// Empty histogram: zero, not a panic.
++	if got := h.Percentile(50); got != 0 {
++		t.Fatalf("empty Percentile(50) = %v, want 0", got)
++	}
++	if got := h.Mean(); got != 0 {
++		t.Fatalf("empty Mean() = %v, want 0", got)
++	}
++	if got := h.Count(); got != 0 {
++		t.Fatalf("empty Count() = %d, want 0", got)
++	}
++
++	h.Observe(1.5)
++	if got := h.Percentile(50); got != 1.5 {
++		t.Fatalf("Percentile(50) = %v, want 1.5", got)
++	}
++	if got := h.Mean(); got != 1.5 {
++		t.Fatalf("Mean() = %v, want 1.5", got)
++	}
++	if got := h.Count(); got != 1 {
++		t.Fatalf("Count() = %d, want 1", got)
++	}
++	if got := h.Sum(); got != 1.5 {
++		t.Fatalf("Sum() = %v, want 1.5", got)
++	}
++	if got := h.Name(); got != "atcr_review_duration_seconds" {
++		t.Fatalf("Name() = %q, want %q", got, "atcr_review_duration_seconds")
++	}
++}
++
++func TestHistogramPercentileDistribution(t *testing.T) {
++	r := NewRegistry()
++	h := r.Histogram("d")
++	for _, v := range []float64{5, 1, 4, 2, 3} { // unsorted on purpose
++		h.Observe(v)
++	}
++	// nearest-rank on sorted [1,2,3,4,5]
++	cases := []struct {
++		p    float64
++		want float64
++	}{
++		{0, 1},   // clamps to rank 1
++		{50, 3},  // median
++		{100, 5}, // max
++		{-10, 1}, // clamp low
++		{200, 5}, // clamp high
++	}
++	for _, tc := range cases {
++		if got := h.Percentile(tc.p); got != tc.want {
++			t.Errorf("Percentile(%v) = %v, want %v", tc.p, got, tc.want)
++		}
++	}
++	if got := h.Mean(); got != 3 {
++		t.Errorf("Mean() = %v, want 3", got)
++	}
++}
++
++func TestHistogramBoundedSamples(t *testing.T) {
++	r := NewRegistry()
++	h := r.Histogram("bounded")
++	const n = maxHistogramSamples + 5
++	for i := 0; i < n; i++ {
++		h.Observe(float64(i))
++	}
++	// count and sum stay exact across all observations...
++	if got := h.Count(); got != int64(n) {
++		t.Fatalf("Count() = %d, want %d", got, n)
++	}
++	// ...but the retained sample buffer is capped.
++	if got := len(h.values); got != maxHistogramSamples {
++		t.Fatalf("retained samples = %d, want %d (capped)", got, maxHistogramSamples)
++	}
++	// The most recent value (n-1) survived the ring; the oldest (0) did not, so
++	// the max percentile reflects recent data.
++	if got := h.Percentile(100); got != float64(n-1) {
++		t.Fatalf("Percentile(100) = %v, want %v", got, float64(n-1))
++	}
++}
++
++func TestRegistryHistogramGetOrCreate(t *testing.T) {
++	r := NewRegistry()
++	a := r.Histogram("h")
++	a.Observe(2)
++	b := r.Histogram("h")
++	if a != b {
++		t.Fatalf("Histogram(%q) returned different instances", "h")
++	}
++	if got := b.Count(); got != 1 {
++		t.Fatalf("shared histogram Count() = %d, want 1", got)
++	}
++}
++
++func TestRegistryReset(t *testing.T) {
++	r := NewRegistry()
++	r.Counter("c").Add(3)
++	r.Histogram("h").Observe(9)
++	r.Reset()
++	if got := r.Counter("c").Value(); got != 0 {
++		t.Fatalf("after Reset() counter Value() = %d, want 0", got)
++	}
++	if got := r.Histogram("h").Count(); got != 0 {
++		t.Fatalf("after Reset() histogram Count() = %d, want 0", got)
++	}
++}
++
++func TestPackageLevelAccessorsUseDefaultRegistry(t *testing.T) {
++	DefaultRegistry.Reset()
++	t.Cleanup(DefaultRegistry.Reset)
++
++	Counter("pkg_total").Inc()
++	if got := DefaultRegistry.Counter("pkg_total").Value(); got != 1 {
++		t.Fatalf("package Counter did not write DefaultRegistry: got %d", got)
++	}
++	Histogram("pkg_hist").Observe(7)
++	if got := DefaultRegistry.Histogram("pkg_hist").Count(); got != 1 {
++		t.Fatalf("package Histogram did not write DefaultRegistry: got %d", got)
++	}
++}
++
++func TestConcurrentCounterAndHistogram(t *testing.T) {
++	r := NewRegistry()
++	const goroutines, iters = 16, 1000
++	var wg sync.WaitGroup
++	wg.Add(goroutines)
++	for g := 0; g < goroutines; g++ {
++		go func() {
++			defer wg.Done()
++			for i := 0; i < iters; i++ {
++				r.Counter("hits").Inc()
++				r.Histogram("lat").Observe(1)
++			}
++		}()
++	}
++	wg.Wait()
++	if got := r.Counter("hits").Value(); got != goroutines*iters {
++		t.Fatalf("concurrent counter Value() = %d, want %d", got, goroutines*iters)
++	}
++	if got := r.Histogram("lat").Count(); got != goroutines*iters {
++		t.Fatalf("concurrent histogram Count() = %d, want %d", got, goroutines*iters)
++	}
++}
+diff --git a/internal/metrics/names.go b/internal/metrics/names.go
+new file mode 100644
+index 0000000..2289aa9
+--- /dev/null
++++ b/internal/metrics/names.go
+@@ -0,0 +1,35 @@
++package metrics
++
++// The atcr metric contract (Epic 4.4). Every metric name lives here so producers
++// (the fan-out engine, the CLI review flow) and consumers (the CLI summary, the
++// atcr_metrics Prometheus export) reference one source of truth and the exported
++// `/metrics` names never drift across packages. Label values are attached with
++// Key (which escapes them); the label NAMES are the Label* constants below.
++const (
++	// Review-level (recorded in fanout.ExecuteReview).
++	NameReviewsTotal          = "atcr_reviews_total"
++	NameReviewsSucceeded      = "atcr_reviews_succeeded"
++	NameReviewsFailed         = "atcr_reviews_failed"
++	NameReviewsInterrupted    = "atcr_reviews_interrupted"
++	NameReviewDurationSeconds = "atcr_review_duration_seconds"
++
++	// Agent-level (recorded in the fan-out engine's invokeAgent path).
++	NameAgentsTotal          = "atcr_agents_total"
++	NameAgentsSucceeded      = "atcr_agents_succeeded"
++	NameAgentsFailed         = "atcr_agents_failed"
++	NameAgentsTimedOut       = "atcr_agents_timed_out"
++	NameAgentDurationSeconds = "atcr_agent_duration_seconds"
++
++	// API + tool calls (recorded from the fan-out boundary).
++	NameAPICallsTotal  = "atcr_api_calls_total"
++	NameAPIErrorsTotal = "atcr_api_errors_total"
++	NameToolCallsTotal = "atcr_tool_calls_total"
++
++	// Findings (recorded in fanout.WritePool from the agents' parsed findings).
++	NameFindingsTotal      = "atcr_findings_total"
++	NameFindingsBySeverity = "atcr_findings_by_severity"
++
++	// Label names used with Key.
++	LabelStatus   = "status"
++	LabelSeverity = "severity"
++)
+diff --git a/internal/metrics/prometheus.go b/internal/metrics/prometheus.go
+new file mode 100644
+index 0000000..6501492
+--- /dev/null
++++ b/internal/metrics/prometheus.go
+@@ -0,0 +1,142 @@
++package metrics
++
++import (
++	"fmt"
++	"sort"
++	"strconv"
++	"strings"
++)
++
++// summaryQuantiles are the quantiles emitted for every histogram in the
++// Prometheus summary exposition. p50/p90/p95/p99 are the latency cut points
++// operators dashboard on (Epic 4.4: p95 review latency).
++var summaryQuantiles = []float64{0.5, 0.9, 0.95, 0.99}
++
++// Key builds a single-label metric key in Prometheus syntax —
++// `name{label="value"}` — escaping the value so a backslash, double-quote, or
++// newline in it cannot break out of the label and inject extra series. Label
++// values can originate from model output (e.g. a finding severity), so the
++// escaping is a security boundary, not a cosmetic nicety. The result is used as
++// the registry key AND rendered verbatim, so escaping happens once, here.
++func Key(name, label, value string) string {
++	return name + "{" + label + `="` + escapeLabelValue(value) + `"}`
++}
++
++// escapeLabelValue applies the Prometheus text-format label-value escapes.
++// Backslash MUST be replaced first so the escapes it introduces are not
++// re-escaped.
++func escapeLabelValue(v string) string {
++	v = strings.ReplaceAll(v, `\`, `\\`)
++	v = strings.ReplaceAll(v, `"`, `\"`)
++	v = strings.ReplaceAll(v, "\n", `\n`)
++	return v
++}
++
++// metricFamily returns the family name for a registry key: the portion before
++// the first '{'. Keys without labels are their own family. Same-family keys
++// (e.g. atcr_api_errors_total{status="429"} and {status="500"}) share one
++// "# TYPE" header.
++func metricFamily(key string) string {
++	if i := strings.IndexByte(key, '{'); i >= 0 {
++		return key[:i]
++	}
++	return key
++}
++
++// splitLabels splits a registry key into its family and the inner label text
++// (without the braces): `m{a="1"}` → ("m", `a="1"`); `m` → ("m", "").
++func splitLabels(key string) (family, inner string) {
++	i := strings.IndexByte(key, '{')
++	if i < 0 {
++		return key, ""
++	}
++	return key[:i], strings.TrimSuffix(key[i+1:], "}")
++}
++
++// WritePrometheus renders the whole registry in Prometheus text exposition
++// format, deterministically (families and keys sorted) so the output is stable
++// for scraping and tests. Counters render as `counter`; histograms render as
++// `summary` (per-quantile lines plus _sum and _count). Metrics are cumulative
++// since the registry was created (Epic 4.4: cumulative since server start).
++func (r *Registry) WritePrometheus() string {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++
++	var b strings.Builder
++
++	// Counters, grouped by family so each family emits exactly one TYPE header
++	// even when keys with a shared family do not sort contiguously next to a
++	// neighbouring family's keys.
++	families := make(map[string][]string, len(r.counters))
++	for k := range r.counters {
++		f := metricFamily(k)
++		families[f] = append(families[f], k)
++	}
++	for _, fam := range sortedKeys(families) {
++		fmt.Fprintf(&b, "# TYPE %s counter\n", fam)
++		keys := families[fam]
++		sort.Strings(keys)
++		for _, k := range keys {
++			fmt.Fprintf(&b, "%s %d\n", k, r.counters[k].Value())
++		}
++	}
++
++	// Histograms as Prometheus summaries, grouped by family so each family emits
++	// exactly one TYPE header even when it has several labeled keyed variants
++	// (duplicate TYPE lines are invalid exposition format).
++	histFamilies := make(map[string][]string, len(r.histograms))
++	for k := range r.histograms {
++		f := metricFamily(k)
++		histFamilies[f] = append(histFamilies[f], k)
++	}
++	for _, fam := range sortedKeys(histFamilies) {
++		fmt.Fprintf(&b, "# TYPE %s summary\n", fam)
++		keys := histFamilies[fam]
++		sort.Strings(keys)
++		for _, k := range keys {
++			h := r.histograms[k]
++			_, inner := splitLabels(k)
++			for _, q := range summaryQuantiles {
++				fmt.Fprintf(&b, "%s%s %s\n", fam, withQuantile(inner, q), formatFloat(h.Percentile(q*100)))
++			}
++			fmt.Fprintf(&b, "%s_sum%s %s\n", fam, labelSuffix(inner), formatFloat(h.Sum()))
++			fmt.Fprintf(&b, "%s_count%s %d\n", fam, labelSuffix(inner), h.Count())
++		}
++	}
++
++	return b.String()
++}
++
++// sortedKeys returns the map keys in sorted order.
++func sortedKeys(m map[string][]string) []string {
++	out := make([]string, 0, len(m))
++	for k := range m {
++		out = append(out, k)
++	}
++	sort.Strings(out)
++	return out
++}
++
++// withQuantile renders the label set for a summary quantile line, merging the
++// quantile label into any pre-existing labels on the key.
++func withQuantile(inner string, q float64) string {
++	if inner == "" {
++		return fmt.Sprintf(`{quantile="%s"}`, formatFloat(q))
++	}
++	return fmt.Sprintf(`{%s,quantile="%s"}`, inner, formatFloat(q))
++}
++
++// labelSuffix renders the label braces for the _sum/_count lines, or "" when the
++// key carries no labels.
++func labelSuffix(inner string) string {
++	if inner == "" {
++		return ""
++	}
++	return "{" + inner + "}"
++}
++
++// formatFloat renders a metric value the way Prometheus expects: shortest exact
++// decimal, no trailing zeros (1.5 → "1.5", 10 → "10", 0 → "0").
++func formatFloat(f float64) string {
++	return strconv.FormatFloat(f, 'g', -1, 64)
++}
+diff --git a/internal/metrics/prometheus_test.go b/internal/metrics/prometheus_test.go
+new file mode 100644
+index 0000000..8076286
+--- /dev/null
++++ b/internal/metrics/prometheus_test.go
+@@ -0,0 +1,142 @@
++package metrics
++
++import (
++	"strings"
++	"testing"
++)
++
++func TestWritePrometheusEmpty(t *testing.T) {
++	r := NewRegistry()
++	if got := r.WritePrometheus(); got != "" {
++		t.Fatalf("empty registry WritePrometheus() = %q, want empty", got)
++	}
++}
++
++func TestWritePrometheusCounters(t *testing.T) {
++	r := NewRegistry()
++	r.Counter("atcr_reviews_total").Add(5)
++	// Labeled family: two keyed variants must share one # TYPE header.
++	r.Counter(Key("atcr_api_errors_total", "status", "429")).Add(3)
++	r.Counter(Key("atcr_api_errors_total", "status", "500")).Inc()
++
++	out := r.WritePrometheus()
++
++	wantLines := []string{
++		"# TYPE atcr_api_errors_total counter",
++		`atcr_api_errors_total{status="429"} 3`,
++		`atcr_api_errors_total{status="500"} 1`,
++		"# TYPE atcr_reviews_total counter",
++		"atcr_reviews_total 5",
++	}
++	for _, w := range wantLines {
++		if !strings.Contains(out, w) {
++			t.Errorf("output missing line %q\n---\n%s", w, out)
++		}
++	}
++	// Exactly one TYPE header per family.
++	if n := strings.Count(out, "# TYPE atcr_api_errors_total counter"); n != 1 {
++		t.Errorf("api_errors_total TYPE header appeared %d times, want 1\n%s", n, out)
++	}
++}
++
++func TestWritePrometheusHistogramUnlabeled(t *testing.T) {
++	r := NewRegistry()
++	h := r.Histogram("atcr_review_duration_seconds")
++	h.Observe(1)
++	h.Observe(2)
++	h.Observe(3)
++	h.Observe(4)
++
++	out := r.WritePrometheus()
++	for _, w := range []string{
++		"# TYPE atcr_review_duration_seconds summary",
++		`atcr_review_duration_seconds{quantile="0.5"} `,
++		`atcr_review_duration_seconds{quantile="0.99"} `,
++		"atcr_review_duration_seconds_sum 10",
++		"atcr_review_duration_seconds_count 4",
++	} {
++		if !strings.Contains(out, w) {
++			t.Errorf("histogram output missing %q\n---\n%s", w, out)
++		}
++	}
++}
++
++func TestWritePrometheusHistogramLabeled(t *testing.T) {
++	r := NewRegistry()
++	// A labeled histogram key exercises the inner-label merge branches.
++	r.Histogram(Key("atcr_agent_duration_seconds", "persona", "skeptic")).Observe(2)
++
++	out := r.WritePrometheus()
++	for _, w := range []string{
++		"# TYPE atcr_agent_duration_seconds summary",
++		`atcr_agent_duration_seconds{persona="skeptic",quantile="0.5"} `,
++		`atcr_agent_duration_seconds_sum{persona="skeptic"} 2`,
++		`atcr_agent_duration_seconds_count{persona="skeptic"} 1`,
++	} {
++		if !strings.Contains(out, w) {
++			t.Errorf("labeled histogram output missing %q\n---\n%s", w, out)
++		}
++	}
++}
++
++func TestWritePrometheusHistogramSameFamilyOneTypeHeader(t *testing.T) {
++	r := NewRegistry()
++	// Two labeled histograms sharing a family must emit exactly one TYPE header
++	// (duplicate TYPE lines are invalid Prometheus exposition format).
++	r.Histogram(Key("atcr_agent_duration_seconds", "persona", "a")).Observe(1)
++	r.Histogram(Key("atcr_agent_duration_seconds", "persona", "b")).Observe(2)
++
++	out := r.WritePrometheus()
++	if n := strings.Count(out, "# TYPE atcr_agent_duration_seconds summary"); n != 1 {
++		t.Errorf("same-family histograms emitted %d TYPE headers, want 1\n%s", n, out)
++	}
++	for _, w := range []string{
++		`atcr_agent_duration_seconds{persona="a",quantile="0.5"} `,
++		`atcr_agent_duration_seconds{persona="b",quantile="0.5"} `,
++	} {
++		if !strings.Contains(out, w) {
++			t.Errorf("output missing %q\n%s", w, out)
++		}
++	}
++}
++
++func TestKeyEscapesLabelValue(t *testing.T) {
++	// A value with a quote, backslash, and newline must be escaped so it cannot
++	// break out of the label and inject extra Prometheus series.
++	k := Key("m", "label", "a\"b\\c\nd")
++	want := `m{label="a\"b\\c\nd"}`
++	if k != want {
++		t.Fatalf("Key escaping = %q, want %q", k, want)
++	}
++	// Rendered output keeps the escaped form intact.
++	r := NewRegistry()
++	r.Counter(k).Inc()
++	out := r.WritePrometheus()
++	if !strings.Contains(out, want+" 1") {
++		t.Errorf("rendered output missing escaped key %q\n%s", want, out)
++	}
++}
++
++func TestMetricFamilyAndSplitLabels(t *testing.T) {
++	if got := metricFamily("m"); got != "m" {
++		t.Errorf("metricFamily(m) = %q, want m", got)
++	}
++	if got := metricFamily(`m{a="1"}`); got != "m" {
++		t.Errorf("metricFamily labeled = %q, want m", got)
++	}
++	if fam, inner := splitLabels("m"); fam != "m" || inner != "" {
++		t.Errorf("splitLabels(m) = %q,%q want m,''", fam, inner)
++	}
++	if fam, inner := splitLabels(`m{a="1"}`); fam != "m" || inner != `a="1"` {
++		t.Errorf("splitLabels labeled = %q,%q want m,a=\"1\"", fam, inner)
++	}
++}
++
++func TestFormatFloat(t *testing.T) {
++	cases := map[float64]string{0: "0", 1.5: "1.5", 10: "10"}
++	for in, want := range cases {
++		if got := formatFloat(in); got != want {
++			t.Errorf("formatFloat(%v) = %q, want %q", in, got, want)
++		}
++	}
++}

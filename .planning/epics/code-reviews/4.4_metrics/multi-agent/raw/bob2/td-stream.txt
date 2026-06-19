@@ -1,0 +1,1 @@
+HIGH|src/auth.go:42|Missing input validation|Add length check|security|5|user input passed directly to query|bruce

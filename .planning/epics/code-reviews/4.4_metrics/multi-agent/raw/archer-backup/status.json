@@ -1,0 +1,9 @@
+{
+  "agent_name": "archer-backup",
+  "model": "mellum2",
+  "status": "ok",
+  "duration_ms": 69812,
+  "fallback_used": true,
+  "fallback_from": "archer",
+  "original_error": "API error (408): litellm.Timeout: APITimeoutError - Request timed out. Error_str: Request timed out.\n\nDeployment Info: request_timeout: None\ntimeout: 85.0No fallback model group found for original model_group=glm-5.2. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=glm-5.2\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.Timeout: APITimeoutError - Request timed out. Error_str: Request timed out.\n\nDeployment Info: request_timeout: None\ntimeout: 85.0No fallback model group found for original model_group=glm-5.2. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2: API error (408): litellm.Timeout: APITimeoutError - Request timed out. Error_str: Request timed out.\n\nDeployment Info: request_timeout: None\ntimeout: 85.0No fallback model group found for original model_group=glm-5.2. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=glm-5.2\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.Timeout: APITimeoutError - Request timed out. Error_str: Request timed out.\n\nDeployment Info: request_timeout: None\ntimeout: 85.0No fallback model group found for original model_group=glm-5.2. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times, LiteLLM Max Retries: 2"
+}

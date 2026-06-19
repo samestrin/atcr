@@ -1,0 +1,1 @@
+LOW|cmd/atcr/review_summary.go:45|Missing error handling for file operations|Check error return from WriteFile|maintainability|2|file operation without error check|bruce

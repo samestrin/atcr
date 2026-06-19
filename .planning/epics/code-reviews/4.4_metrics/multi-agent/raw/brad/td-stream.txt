@@ -1,0 +1,3 @@
+MEDIUM|internal/metrics/prometheus.go:23|Missing \r escape in label values|Add strings.ReplaceAll(v, "\r", `\r`)|security|2|Prometheus text spec requires \r escape to prevent line-break injection|bruce
+MEDIUM|cmd/atcr/review_summary.go:35|Severity keys may mismatch normalized values|Ensure severityOrder matches stream.NormalizeSeverity output|correctness|5|summary uses hardcoded uppercase but metrics record normalized severity|bruce
+LOW|internal/metrics/metrics.go:103|Percentile sorts full buffer on every call|Cache sorted slice or limit sort frequency|performance|10|O(N log N) sort runs synchronously during each Prometheus scrape|bruce
