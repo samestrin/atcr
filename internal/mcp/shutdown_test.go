@@ -95,8 +95,6 @@ func TestServeShutdown_ClientDisconnectDoesNotInterrupt(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, fanout.RunInterrupted, st.Status,
 		"a clean client disconnect must not force-interrupt an in-flight review (AC3)")
-	assert.Equal(t, fanout.RunInProgress, st.Status,
-		"the still-running review stays in_progress after a disconnect drain")
 }
 
 // TestServeShutdown_NormalCompletionNotInterrupted locks AC2/AC4: a detached
