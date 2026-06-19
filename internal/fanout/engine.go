@@ -11,6 +11,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -420,12 +421,29 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	agentLogger := log.WithAgent(e.logger(), a.Name)
 	ctx = log.NewContext(ctx, agentLogger)
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
-	// Tool-enabled agents run the multi-turn loop only when the model is declared
-	// function-calling-capable AND both a ChatCompleter and a dispatcher are
-	// wired; otherwise they degrade to single-shot. The capability check is the
-	// registry (per-agent), consulted before the loop starts (AC 04-01/04-02) —
-	// an incapable model degrades even when the harness is fully wired. Non-tool
-	// agents take the unchanged 1.x path.
+
+	// Metrics (Epic 4.4): one invokeAgent call is one agent invocation and one
+	// API call at the fan-out boundary. In-client retries are invisible here, but
+	// slot-level fallbacks are separate invokeAgent calls and so are counted,
+	// satisfying "API calls (including retries)" at the granularity the fan-out
+	// can observe. Duration spans the whole dispatch (including any tool loop);
+	// the outcome tally is recorded from the returned Result.
+	metrics.Counter(metricAgentsTotal).Inc()
+	metrics.Counter(metricAPICallsTotal).Inc()
+	start := time.Now()
+	r := e.dispatchAgent(ctx, a)
+	metrics.Histogram(metricAgentDurationSeconds).Observe(time.Since(start).Seconds())
+	recordAgentOutcome(r)
+	return r
+}
+
+// dispatchAgent selects the execution path for an agent: the multi-turn tool
+// loop when the model is declared function-calling-capable AND both a
+// ChatCompleter and a dispatcher are wired, the degraded single-shot path when a
+// tool agent's harness is unavailable, or the plain single-shot path for a
+// non-tool agent (the unchanged 1.x path). Split from invokeAgent so the metrics
+// wrapper there spans every path uniformly.
+func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 	if a.Tools {
 		if a.SupportsFC {
 			cc, ok := e.completer.(ChatCompleter)
