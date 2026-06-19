@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 1 | 14 | 0 |
-| LOW | 3 | 13 | 0 |
+| LOW | 4 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 28 | **Resolved Items:** 0 | **Total Items:** 32
+**Last Modified:** 2026-06-18 | **Open Items:** 5 | **Deferred Items:** 28 | **Resolved Items:** 0 | **Total Items:** 33
 
 ## Directory Structure
 
@@ -33,6 +33,12 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-18] From Sprint: epic-4.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/registry/attribution.go:55 | attribute() recurses and reconstructs the join even for a single-error errors.Join (which still satisfies Unwrap() []error), a small avoidable cost on the load-time validation path | Optionally short-circuit when len(children)==1 if profiling ever flags it | INTEGRATION | 5 | execute-epic-independent |
 
 ### [2026-06-18] From Sprint: epic-4.1.2
 
