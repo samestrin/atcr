@@ -28,6 +28,15 @@ func TestGitRef(t *testing.T) {
 		assert.Error(t, GitRef(ref), ref)
 	}
 
+	// Control chars, shell/git metacharacters, and leading dash that git-check-ref-format rejects.
+	for _, ref := range []string{
+		"has\rCR", "has\vVT", "has\fFF", "has\x7fDEL",
+		"has\\backslash", "has?question", "has*asterisk", "has[bracket",
+		"-leading-dash",
+	} {
+		assert.Error(t, GitRef(ref), "GitRef should reject %q", ref)
+	}
+
 	// Empty and over-length are distinct messages.
 	assert.EqualError(t, GitRef(""), `invalid git ref "": must not be empty`)
 	long := strings.Repeat("a", 256)
