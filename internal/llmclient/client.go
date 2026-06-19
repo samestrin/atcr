@@ -309,7 +309,17 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 	if !breaker.Allow() {
 		return nil, &CircuitOpenError{Provider: provider}
 	}
+	// resolved is set to true once the switch below records a verdict. The defer
+	// fires on both normal return and panic; if resolved is still false when it
+	// runs (panic path), it releases the probe so the slot is never leaked.
+	resolved := false
+	defer func() {
+		if !resolved {
+			breaker.ReleaseProbe()
+		}
+	}()
 	raw, err := c.dispatch(ctx, endpoint, key, body)
+	resolved = true
 	// Every branch reports the outcome to the breaker exactly once: a half-open
 	// probe MUST be resolved (RecordSuccess/RecordFailure/ReleaseProbe) or the
 	// probe slot leaks and the circuit wedges half-open forever.
