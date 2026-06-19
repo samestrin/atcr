@@ -111,6 +111,10 @@ func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Con
 // review: it stops the AfterFunc registration so a completed review does not
 // retain its cancelCtx on e.shutdownCtx until process exit. When e.shutdownCtx is
 // nil (engine built outside buildServer), it is a no-op passthrough.
+//
+// If shutdown already fired, AfterFunc has concurrently invoked cancel and stop()
+// returns false; the returned closure then calls cancel() a second time — a
+// deliberate idempotent no-op, as context.CancelFunc is safe to call repeatedly.
 func (e *engine) withShutdownCancel(ctx context.Context) (context.Context, context.CancelFunc) {
 	if e.shutdownCtx == nil {
 		return ctx, func() {}
@@ -233,6 +237,13 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		defer cancel()
 		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
+		}
+		// Observability parity with the CLI's "review interrupted by signal"
+		// (epic 4.1/4.1.1): when server shutdown cut this detached review off,
+		// emit a greppable structured Warn so monitoring/CI finds interrupted
+		// serve-mode reviews in logs, not only via the on-disk manifest.
+		if e.shutdownCtx != nil && e.shutdownCtx.Err() != nil {
+			e.logger().Warn("review interrupted by server shutdown", "review_id", prep.ID)
 		}
 	}()
 
