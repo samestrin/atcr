@@ -132,6 +132,32 @@ func TestValidateFallbacks_LeadInIntoReportedCycleNoPanic(t *testing.T) {
 		"lead-in into an existing cycle must not be reported as a second cycle, got: %s", err.Error())
 }
 
+// TestValidateFallbacks_LeadInLeftGrayThenRevisited is the regression test for
+// the panic the independent reviewer reproduced: walkFallbacks colors a lead-in
+// node ("a") gray on the way INTO a cycle ("b"<->"c"), but "a" is not part of the
+// trimmed cycle path. If only the cycle path were blackened, a separate later
+// root ("d") whose edge points at the leftover-gray "a" would trip walkFallbacks's
+// "gray node not on current path" invariant and panic. Both reviewer repros are
+// covered: {a:b,b:c,c:b,d:a} and {a:x,x:y,y:z,z:y,w:x}.
+func TestValidateFallbacks_LeadInLeftGrayThenRevisited(t *testing.T) {
+	cases := []map[string]string{
+		{"a": "b", "b": "c", "c": "b", "d": "a"},
+		{"a": "x", "x": "y", "y": "z", "z": "y", "w": "x"},
+	}
+	for i, edges := range cases {
+		reg := agentsWithFallbacks(edges)
+		var err error
+		require.NotPanics(t, func() { err = reg.ValidateFallbacks() },
+			"case %d: a lead-in node left gray must not panic when revisited", i)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFallbackCycle)
+		// The single real cycle is reported exactly once; lead-in chains are not
+		// re-reported as cycles.
+		assert.Equal(t, 1, strings.Count(err.Error(), "fallback cycle detected"),
+			"case %d: exactly one cycle expected, got: %s", i, err.Error())
+	}
+}
+
 // TestValidateFallbacks_TwoIndependentCycles proves two disjoint cycles are both
 // reported.
 func TestValidateFallbacks_TwoIndependentCycles(t *testing.T) {

@@ -62,15 +62,9 @@ func (r *Registry) ValidateFallbacks() error {
 			}
 			errs = append(errs, agentSentinelErr(attributed, ErrFallbackCycle,
 				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> "))))
-			// walkFallbacks leaves the cycle's nodes gray when it returns early.
-			// Accumulation continues the outer scan, so blacken them now: a later
-			// lead-in node that points INTO this cycle then hits a gray→black edge
-			// (a legal, already-explored target) and breaks cleanly, instead of
-			// re-reporting the cycle or tripping walkFallbacks's "gray node is on
-			// the current path" invariant (which would panic).
-			for _, n := range path {
-				color[n] = black
-			}
+			// walkFallbacks blackens every node it visited (cycle + lead-in) on
+			// detection, so the outer scan never re-walks a node left gray and
+			// never trips the gray-not-on-path invariant. Nothing to do here.
 		}
 	}
 	return errors.Join(errs...)
@@ -90,13 +84,27 @@ func (r *Registry) walkFallbacks(start string, color map[string]nodeColor) ([]st
 			break
 		}
 		if color[next] == gray {
-			// Close the loop for the error message: trim the lead-in so the
-			// path starts at the repeated node. Because ValidateFallbacks only
-			// walks white roots and colors nodes gray on the current path, next
-			// is always in path — the loop below cannot complete without matching.
+			// Trim the lead-in so the reported path starts at the repeated node.
+			// Build the cycle into a fresh slice BEFORE blackening so it never
+			// aliases path's backing array, then blacken EVERY node this walk
+			// visited — lead-in nodes included, not just the trimmed cycle. Under
+			// accumulation ValidateFallbacks keeps scanning, and a later root that
+			// edges into a leftover-gray lead-in node would otherwise reach the
+			// panic below. The single-outgoing-edge invariant makes this safe: a
+			// lead-in node has one edge (into this cycle) and cannot start another
+			// cycle, so marking it fully-explored loses no future detection.
+			// Because ValidateFallbacks only walks white roots and colors nodes
+			// gray on the current path, next is always in path — the loop cannot
+			// complete without matching.
 			for i, n := range path {
 				if n == next {
-					return append(path[i:], next), true
+					cycle := make([]string, 0, len(path)-i+1)
+					cycle = append(cycle, path[i:]...)
+					cycle = append(cycle, next)
+					for _, visited := range path {
+						color[visited] = black
+					}
+					return cycle, true
 				}
 			}
 			// Unreachable: next is gray, hence already on the current path.
