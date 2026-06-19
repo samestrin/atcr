@@ -3,7 +3,6 @@ package registry
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -25,15 +24,15 @@ const (
 )
 
 // ValidateFallbacks checks every agent's fallback chain at load time:
-// dangling references and cycles (including self-references) are hard
-// errors. Runs in O(V + E); each agent has at most one outgoing edge.
+// dangling references and cycles (including self-references) are hard errors.
+// Runs in O(V + E); each agent has at most one outgoing edge. It accumulates
+// every dangling reference and every disjoint cycle and reports them together
+// via errors.Join (Epic 4.2 / AC6) rather than returning the first found.
 func (r *Registry) ValidateFallbacks() error {
 	// Deterministic iteration so error messages are stable.
-	names := make([]string, 0, len(r.Agents))
-	for name := range r.Agents {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := sortedKeys(r.Agents)
+
+	var errs []error
 
 	for _, name := range names {
 		fb := r.Agents[name].Fallback
@@ -41,8 +40,8 @@ func (r *Registry) ValidateFallbacks() error {
 			continue
 		}
 		if _, ok := r.Agents[fb]; !ok {
-			return agentSentinelErr(name, ErrDanglingFallback,
-				fmt.Sprintf("%s: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb))
+			errs = append(errs, agentSentinelErr(name, ErrDanglingFallback,
+				fmt.Sprintf("%s: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb)))
 		}
 	}
 
@@ -61,11 +60,20 @@ func (r *Registry) ValidateFallbacks() error {
 					break
 				}
 			}
-			return agentSentinelErr(attributed, ErrFallbackCycle,
-				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> ")))
+			errs = append(errs, agentSentinelErr(attributed, ErrFallbackCycle,
+				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> "))))
+			// walkFallbacks leaves the cycle's nodes gray when it returns early.
+			// Accumulation continues the outer scan, so blacken them now: a later
+			// lead-in node that points INTO this cycle then hits a gray→black edge
+			// (a legal, already-explored target) and breaks cleanly, instead of
+			// re-reporting the cycle or tripping walkFallbacks's "gray node is on
+			// the current path" invariant (which would panic).
+			for _, n := range path {
+				color[n] = black
+			}
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // walkFallbacks follows the (single) fallback edge from start, coloring
