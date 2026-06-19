@@ -6,20 +6,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/metrics"
-)
-
-// Metric names recorded by the fan-out engine (Epic 4.4). Kept as constants so a
-// rename is a single edit; tests assert the literal strings so a typo here is
-// caught rather than masked.
-const (
-	metricAgentsTotal          = "atcr_agents_total"
-	metricAgentsSucceeded      = "atcr_agents_succeeded"
-	metricAgentsFailed         = "atcr_agents_failed"
-	metricAgentsTimedOut       = "atcr_agents_timed_out"
-	metricAgentDurationSeconds = "atcr_agent_duration_seconds"
-	metricAPICallsTotal        = "atcr_api_calls_total"
-	metricAPIErrorsTotal       = "atcr_api_errors_total"
-	metricToolCallsTotal       = "atcr_tool_calls_total"
+	"github.com/samestrin/atcr/internal/stream"
 )
 
 // recordAgentOutcome translates one finished agent Result into metric updates:
@@ -34,19 +21,48 @@ const (
 func recordAgentOutcome(r Result) {
 	switch r.Status {
 	case StatusOK:
-		metrics.Counter(metricAgentsSucceeded).Inc()
+		metrics.Counter(metrics.NameAgentsSucceeded).Inc()
 	case StatusFailed:
-		metrics.Counter(metricAgentsFailed).Inc()
+		metrics.Counter(metrics.NameAgentsFailed).Inc()
 	case StatusTimeout:
-		metrics.Counter(metricAgentsTimedOut).Inc()
+		metrics.Counter(metrics.NameAgentsTimedOut).Inc()
 	}
 
 	var he *llmclient.HTTPStatusError
 	if errors.As(r.Err, &he) {
-		metrics.Counter(metrics.Key(metricAPIErrorsTotal, "status", strconv.Itoa(he.Status))).Inc()
+		metrics.Counter(metrics.Key(metrics.NameAPIErrorsTotal, metrics.LabelStatus, strconv.Itoa(he.Status))).Inc()
 	}
 
 	if r.ToolCalls > 0 {
-		metrics.Counter(metricToolCallsTotal).Add(int64(r.ToolCalls))
+		metrics.Counter(metrics.NameToolCallsTotal).Add(int64(r.ToolCalls))
+	}
+}
+
+// recordFindingMetrics counts the findings emitted by the agents of one review:
+// the total and a per-severity breakdown. These are raw per-agent findings (the
+// metric definition is "emitted by agents"), recorded once in WritePool so both
+// the CLI and the MCP server observe the same numbers.
+func recordFindingMetrics(findings []stream.Finding) {
+	if len(findings) == 0 {
+		return
+	}
+	metrics.Counter(metrics.NameFindingsTotal).Add(int64(len(findings)))
+	for _, f := range findings {
+		sev := stream.NormalizeSeverity(f.Severity)
+		metrics.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, sev)).Inc()
+	}
+}
+
+// recordReviewOutcome records one review's terminal classification. An interrupt
+// (SIGINT/SIGTERM) takes precedence over a failure: a review whose agents were
+// all cut off by a signal is interrupted, not failed.
+func recordReviewOutcome(interrupted, failed bool) {
+	switch {
+	case interrupted:
+		metrics.Counter(metrics.NameReviewsInterrupted).Inc()
+	case failed:
+		metrics.Counter(metrics.NameReviewsFailed).Inc()
+	default:
+		metrics.Counter(metrics.NameReviewsSucceeded).Inc()
 	}
 }

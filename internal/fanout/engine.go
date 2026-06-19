@@ -428,11 +428,11 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// satisfying "API calls (including retries)" at the granularity the fan-out
 	// can observe. Duration spans the whole dispatch (including any tool loop);
 	// the outcome tally is recorded from the returned Result.
-	metrics.Counter(metricAgentsTotal).Inc()
-	metrics.Counter(metricAPICallsTotal).Inc()
+	metrics.Counter(metrics.NameAgentsTotal).Inc()
+	metrics.Counter(metrics.NameAPICallsTotal).Inc()
 	start := time.Now()
 	r := e.dispatchAgent(ctx, a)
-	metrics.Histogram(metricAgentDurationSeconds).Observe(time.Since(start).Seconds())
+	metrics.Histogram(metrics.NameAgentDurationSeconds).Observe(time.Since(start).Seconds())
 	recordAgentOutcome(r)
 	return r
 }
