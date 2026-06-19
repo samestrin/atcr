@@ -1,0 +1,7 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+HIGH|internal/mcp/handlers.go:231|Potential race condition on shutdownCtx access|Ensure shutdownCtx is initialized before handleReview is called or use a mutex|correctness|30|e.shutdownCtx is accessed in withShutdownCancel without synchronization while being set in buildServer|otto
+MEDIUM|internal/mcp/handlers.go:230|goroutine leak if shutdownCancel never called and e.shutdownCtx is non-nil|Ensure shutdownCancel is always called eventually, or document lifecycle contract|correctness|10|defer cancel() stops AfterFunc; if Serve never calls shutdownCancel, AfterFunc leaks until process exit|bruce
+LOW|internal/mcp/server.go:67|shutdownReviews called unconditionally but e may be nil if buildServer fails|Add nil check for e before calling e.shutdownReviews|error-handling|5|e.shutdownReviews(ctx.Err() != nil, shutdownDrain) called before nil check on e|bruce
+LOW|internal/mcp/shutdown_test.go:47|blockingCompleter.Complete returns ctx.Err() as error string; may mask real error|Return a sentinel error or context.Canceled directly for clarity|maintainability|5|return "", ctx.Err() — ctx.Err() returns error interface, not string|bruce
