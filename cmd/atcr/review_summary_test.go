@@ -24,7 +24,7 @@ func TestWriteReviewSummary(t *testing.T) {
 	out := buf.String()
 
 	for _, want := range []string{
-		"Review completed in 142.3s",
+		"Total elapsed: 142.3s",
 		"Agents: 8/10 succeeded, 1 failed, 1 timed out",
 		"API calls: 12",
 		"Findings: 5 (2 HIGH, 3 MEDIUM)",
