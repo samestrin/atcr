@@ -101,6 +101,14 @@ func New(provider string, threshold int, cooldown time.Duration) *Breaker {
 // caller becomes the probe). It returns false when the circuit is open, or
 // half-open with a probe already running. A time-elapsed open circuit is first
 // rolled forward to half-open so the cooldown is honoured lazily without a timer.
+//
+// A caller that wins the half-open probe MUST report the outcome exactly once via
+// RecordSuccess, RecordFailure, or ReleaseProbe — otherwise the probe slot leaks
+// and the circuit wedges half-open forever. The slot is held for the caller's
+// whole call (which may include a retry/backoff schedule spanning several
+// seconds), so during a probe every other agent for the provider fails fast even
+// if the provider has already recovered; this single-probe gate is intentional
+// (it bounds the recovery burst to one request).
 func (b *Breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -156,6 +164,18 @@ func (b *Breaker) RecordFailure() {
 		b.probeInFlight = false
 	default: // StateOpen
 	}
+}
+
+// ReleaseProbe frees a half-open probe slot without recording a health verdict.
+// It is for outcomes that prove nothing about the provider — a caller-initiated
+// cancellation that cut the probe short before any response. The circuit stays
+// half-open so the next caller can retry the probe; no failure is counted (the
+// provider did not actually fail) and the circuit is not closed (no success was
+// observed). Outside half-open it is a no-op (there is no probe to release).
+func (b *Breaker) ReleaseProbe() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.probeInFlight = false
 }
 
 // State returns the current state, rolling a cooldown-elapsed open circuit

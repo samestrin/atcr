@@ -223,3 +223,42 @@ func TestConcurrentAccessIsRaceFree(t *testing.T) {
 	// No assertion on the final state — the point is the -race detector sees no
 	// data race and no method panics under concurrent access.
 }
+
+// Regression (independent review): a half-open probe released without a verdict
+// (caller cancellation) must free the slot so a later caller can retry — the
+// circuit must NOT wedge half-open forever.
+func TestHalfOpenReleaseProbeReadmits(t *testing.T) {
+	b, clk := newTestBreaker(t, 1, 60*time.Second)
+	b.RecordFailure() // open
+	clk.advance(60 * time.Second)
+	if !b.Allow() {
+		t.Fatal("first Allow() after cooldown = false, want true (probe)")
+	}
+	if b.Allow() {
+		t.Fatal("second Allow() = true while probe in flight, want false")
+	}
+	b.ReleaseProbe() // caller cancelled — release without a verdict
+	if got := b.State(); got != StateHalfOpen {
+		t.Fatalf("State() = %v after ReleaseProbe, want still half-open", got)
+	}
+	if !b.Allow() {
+		t.Fatal("Allow() after ReleaseProbe = false, want true (slot re-armed, not wedged)")
+	}
+	// Recovery still works: a subsequent success closes the circuit.
+	b.RecordSuccess()
+	if got := b.State(); got != StateClosed {
+		t.Fatalf("State() = %v after recovery, want closed", got)
+	}
+}
+
+// ReleaseProbe outside half-open is a harmless no-op.
+func TestReleaseProbeNoOpWhenClosed(t *testing.T) {
+	b, _ := newTestBreaker(t, 3, DefaultCooldown)
+	b.ReleaseProbe()
+	if got := b.State(); got != StateClosed {
+		t.Fatalf("State() = %v, want closed (ReleaseProbe no-op)", got)
+	}
+	if !b.Allow() {
+		t.Fatal("Allow() = false after no-op ReleaseProbe, want true")
+	}
+}

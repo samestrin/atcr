@@ -253,3 +253,63 @@ func TestCircuitOpenErrorMessage(t *testing.T) {
 		t.Fatalf("CircuitOpenError.Error() = %q, want it to mention the provider and 'circuit breaker open'", msg)
 	}
 }
+
+// A 4xx (here 429) means the provider replied — it is reachable — so the breaker
+// treats it as a healthy round-trip that resets the consecutive-failure run.
+// (Independent-review fix: this also closes a half-open probe instead of wedging
+// it.) Four 500s interrupted by a 429 never reach 3 consecutive failures.
+func TestBreaker_4xxResetsFailureRun(t *testing.T) {
+	resetBreakers(t)
+	t.Setenv("TEST_KEY", testKey)
+
+	var code atomic.Int64
+	code.Store(http.StatusInternalServerError)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(int(code.Load()))
+		_, _ = w.Write([]byte(`{"error":"x"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := noRetryClient(srv.Client())
+	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
+	ctx := breakerCtx("openai")
+
+	_, _ = c.Complete(ctx, inv) // 500 → fail 1
+	_, _ = c.Complete(ctx, inv) // 500 → fail 2
+	code.Store(http.StatusTooManyRequests)
+	_, _ = c.Complete(ctx, inv) // 429 → reachable → resets the run
+	code.Store(http.StatusInternalServerError)
+	_, _ = c.Complete(ctx, inv) // 500 → fail 1 (new run)
+	_, _ = c.Complete(ctx, inv) // 500 → fail 2 (new run)
+
+	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State(),
+		"a 429 between failures resets the run, so 4 total 500s never reach 3 consecutive")
+}
+
+// AC1 granularity (independent review): the breaker records one outcome per agent
+// invocation (after that invocation's own retry budget), not per HTTP attempt.
+// With retries enabled, three invocations against a 500 — nine HTTP attempts —
+// trip the breaker after the third invocation.
+func TestBreaker_RetriesThenTripsPerInvocation(t *testing.T) {
+	resetBreakers(t)
+	t.Setenv("TEST_KEY", testKey)
+
+	var hits atomic.Int64
+	srv := statusServer(t, http.StatusInternalServerError, &hits)
+	c := New(WithHTTPClient(srv.Client()), WithRetry(2, time.Millisecond, 1.5)) // 3 attempts/invocation
+	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
+	ctx := breakerCtx("openai")
+
+	for i := 0; i < 3; i++ {
+		_, err := c.Complete(ctx, inv)
+		require.Error(t, err)
+	}
+	assert.Equal(t, int64(9), hits.Load(), "each invocation exhausts its 3-attempt retry budget (3×3)")
+	require.Equal(t, circuitbreaker.StateOpen, circuitbreaker.DefaultRegistry.Get("openai").State(),
+		"breaker trips after 3 invocations, not 3 HTTP attempts")
+
+	_, err := c.Complete(ctx, inv)
+	var coe *CircuitOpenError
+	require.True(t, errors.As(err, &coe))
+	assert.Equal(t, int64(9), hits.Load(), "open circuit makes no further HTTP attempts")
+}

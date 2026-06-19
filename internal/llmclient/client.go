@@ -310,11 +310,26 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 		return nil, &CircuitOpenError{Provider: provider}
 	}
 	raw, err := c.dispatch(ctx, endpoint, key, body)
+	// Every branch reports the outcome to the breaker exactly once: a half-open
+	// probe MUST be resolved (RecordSuccess/RecordFailure/ReleaseProbe) or the
+	// probe slot leaks and the circuit wedges half-open forever.
 	switch {
 	case err == nil:
+		// A successful round-trip: closes a half-open probe, resets the run.
 		breaker.RecordSuccess()
 	case isBreakerFailure(err):
+		// 5xx, timeout, or transport failure: trips/advances the failure run.
 		breaker.RecordFailure()
+	case errors.Is(err, context.Canceled):
+		// The caller cancelled mid-call — nothing was learned about the provider.
+		// Release any half-open probe without a verdict (do not count it).
+		breaker.ReleaseProbe()
+	default:
+		// A non-tripping HTTP response (4xx incl. 429/401): the provider replied,
+		// so it is reachable. The breaker tracks outages, not auth/rate-limit
+		// correctness, so a reply counts as a healthy round-trip — which also
+		// closes a half-open probe instead of wedging it.
+		breaker.RecordSuccess()
 	}
 	return raw, err
 }
