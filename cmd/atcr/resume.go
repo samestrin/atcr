@@ -10,6 +10,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
 )
@@ -143,6 +144,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "resuming review %s: %d completed, %d pending (%s)\n",
 		prep.ID, len(info.Completed), len(info.Pending), strings.Join(info.Pending, ", "))
 
+	// Snapshot the summary counters before the resumed fan-out so the end-of-review
+	// summary reports only this resume's contribution, mirroring runReview.
+	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
+
 	result, err := fanout.ExecuteResume(ctx, llmclient.New(), prep)
 
 	// Graceful interrupt during the resumed fan-out (AC7): the new partial results
@@ -156,6 +161,12 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	if result != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+		// End-of-review metrics summary (Epic 4.4 AC3), mirroring runReview: emitted
+		// before the all-agents-failed error guard so a fully-failed resume still prints
+		// the breakdown. elapsed is measured from req.StartedAt (set just before
+		// PrepareResume), the resume's wall-clock start.
+		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(req.StartedAt))
 	}
 	if err != nil {
 		// An empty union is a usage/state error (exit 2), consistent with the
