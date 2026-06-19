@@ -110,7 +110,9 @@ func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Con
 // The returned cancel MUST be deferred by the caller for the lifetime of the
 // review: it stops the AfterFunc registration so a completed review does not
 // retain its cancelCtx on e.shutdownCtx until process exit. When e.shutdownCtx is
-// nil (engine built outside buildServer), it is a no-op passthrough.
+// nil (engine built outside buildServer), it is a no-op passthrough. If shutdown
+// fires while the review is in flight, AfterFunc has already invoked cancel, so
+// the deferred call runs cancel a second time — harmless, CancelFunc is idempotent.
 func (e *engine) withShutdownCancel(ctx context.Context) (context.Context, context.CancelFunc) {
 	if e.shutdownCtx == nil {
 		return ctx, func() {}
