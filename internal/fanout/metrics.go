@@ -37,12 +37,17 @@ func recordAgentOutcome(r Result) {
 	apiCalls := r.Turns
 	if apiCalls < 1 {
 		// Turns < 1 covers both the single-shot path (Turns==0, one provider
-		// round-trip) and a corrupt negative value. Context cancellation/deadline
-		// before the first HTTP call means no actual request was made; in that case
-		// keep apiCalls at 0. Otherwise treat as a single-shot: 1 call.
-		if errors.Is(r.Err, context.DeadlineExceeded) || errors.Is(r.Err, context.Canceled) {
+		// round-trip) and a corrupt negative value. Some terminal errors mean no
+		// actual request was made — context cancellation/deadline before the first
+		// HTTP call, or a circuit-open fail-fast (Epic 4.5, AC2: no request made) —
+		// so keep apiCalls at 0. Otherwise treat as a single-shot: 1 call.
+		var coe *llmclient.CircuitOpenError
+		switch {
+		case errors.Is(r.Err, context.DeadlineExceeded) || errors.Is(r.Err, context.Canceled):
 			apiCalls = 0
-		} else {
+		case errors.As(r.Err, &coe):
+			apiCalls = 0
+		default:
 			apiCalls = 1
 		}
 	}

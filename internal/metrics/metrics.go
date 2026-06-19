@@ -142,7 +142,27 @@ func (h *histogram) Count() int64 {
 // Name returns the metric name (including any encoded label suffix).
 func (h *histogram) Name() string { return h.name }
 
-// Registry holds all counters and histograms, each keyed by its full name
+// gauge is a settable float64 metric whose value can rise and fall (e.g. a
+// circuit breaker's current state: 0 closed / 1 open / 2 half-open). Unlike a
+// counter it is not monotonic. The value is stored as the bit pattern of a
+// float64 in an atomic uint64 so Set and Value are lock-free, matching the
+// counter's atomic style. Obtain one from a Registry or the package-level Gauge;
+// the zero value reads as 0. Safe for concurrent use.
+type gauge struct {
+	name string
+	bits atomic.Uint64
+}
+
+// Set replaces the gauge's current value.
+func (g *gauge) Set(v float64) { g.bits.Store(math.Float64bits(v)) }
+
+// Value returns the current value.
+func (g *gauge) Value() float64 { return math.Float64frombits(g.bits.Load()) }
+
+// Name returns the metric name (including any encoded label suffix).
+func (g *gauge) Name() string { return g.name }
+
+// Registry holds all counters, gauges, and histograms, each keyed by its full name
 // (label suffix included). Accessors are get-or-create: the same name always
 // returns the same instance, so collaborating call sites share one metric. Safe
 // for concurrent use.
@@ -155,6 +175,7 @@ func (h *histogram) Name() string { return h.name }
 type Registry struct {
 	mu         sync.Mutex
 	counters   map[string]*counter
+	gauges     map[string]*gauge
 	histograms map[string]*histogram
 }
 
@@ -163,6 +184,7 @@ type Registry struct {
 func NewRegistry() *Registry {
 	return &Registry{
 		counters:   make(map[string]*counter),
+		gauges:     make(map[string]*gauge),
 		histograms: make(map[string]*histogram),
 	}
 }
@@ -191,6 +213,18 @@ func (r *Registry) Histogram(name string) *histogram {
 	return h
 }
 
+// Gauge returns the gauge registered under name, creating it on first use.
+func (r *Registry) Gauge(name string) *gauge {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	g, ok := r.gauges[name]
+	if !ok {
+		g = &gauge{name: name}
+		r.gauges[name] = g
+	}
+	return g
+}
+
 // Reset drops every counter and histogram. It exists for test isolation (and a
 // hypothetical operator reset); production never calls it — serve-mode metrics
 // are cumulative since process start.
@@ -198,6 +232,7 @@ func (r *Registry) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.counters = make(map[string]*counter)
+	r.gauges = make(map[string]*gauge)
 	r.histograms = make(map[string]*histogram)
 }
 
@@ -213,3 +248,7 @@ func Counter(name string) *counter { return DefaultRegistry.Counter(name) }
 // Histogram returns the named histogram from DefaultRegistry (get-or-create):
 // metrics.Histogram("atcr_review_duration_seconds").Observe(secs).
 func Histogram(name string) *histogram { return DefaultRegistry.Histogram(name) }
+
+// Gauge returns the named gauge from DefaultRegistry (get-or-create). This is the
+// call-site API: metrics.Gauge(metrics.Key(name, "provider", p)).Set(state).
+func Gauge(name string) *gauge { return DefaultRegistry.Gauge(name) }

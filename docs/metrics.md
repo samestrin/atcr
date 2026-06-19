@@ -51,6 +51,12 @@ every review that exits normally.
 | `atcr_findings_total` | counter | Findings kept after guardrails (min-severity floor + max-findings cap). |
 | `atcr_findings_by_severity{severity}` | counter | Kept findings, labeled `CRITICAL`/`HIGH`/`MEDIUM`/`LOW` (anything outside that set is bucketed as `UNKNOWN`). |
 
+### Circuit breaker
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `atcr_circuit_breaker_state{provider}` | gauge | Per-provider circuit state: `0` closed (normal), `1` open (failing fast), `2` half-open (probing recovery). A provider trips open after 3 consecutive breaker-failures (5xx, timeout, or connection-level transport error; 4xx including 429/401 never count) and returns to half-open after a 60s cooldown. |
+
 ## End-of-review CLI summary
 
 After a review, `atcr review` prints a four-line summary reflecting that review
