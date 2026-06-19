@@ -23,15 +23,19 @@ func (e *ValidationError) Error() string {
 }
 
 // GitRef validates a git ref name (branch, tag, or SHA). It applies a subset of
-// git-check-ref-format rules — no "..", no "~^: " or control chars, and a length
-// bound. It is intentionally NOT applied to the --base/--head flags, which take
+// git-check-ref-format rules — no "..", no ASCII control chars (0x00–0x1f, 0x7f),
+// no metacharacters (~^: space \ ? * [), and no leading "-". Length bound ≤ 255.
+// It is intentionally NOT applied to the --base/--head flags, which take
 // git *revisions* (HEAD^, HEAD~3, @{...}) that legitimately use these characters.
 func GitRef(ref string) error {
 	if ref == "" {
 		return &ValidationError{"git ref", ref, "must not be empty"}
 	}
-	// Git ref rules: no .., no ~, no ^, no :, no space, no control chars.
-	if strings.Contains(ref, "..") || strings.ContainsAny(ref, "~^: \t\n") {
+	// No .., no ASCII control chars (0x00–0x1f/0x7f), no shell/git metacharacters, no leading dash.
+	if strings.Contains(ref, "..") || strings.HasPrefix(ref, "-") ||
+		strings.IndexFunc(ref, func(r rune) bool {
+			return r < 0x20 || r == 0x7f || strings.ContainsRune("~^: \\?*[", r)
+		}) >= 0 {
 		return &ValidationError{"git ref", ref, "contains invalid characters"}
 	}
 	if len(ref) > 255 {
@@ -41,30 +45,61 @@ func GitRef(ref string) error {
 }
 
 // FilePath validates a file path: non-empty, no path traversal (".."), and no
-// reference to the system directories /etc, /proc, or /sys. Callers that accept
-// relative paths should resolve them to an absolute, cleaned form (filepath.Abs)
-// before validating, so a legitimate relative path is not rejected for "..".
+// reference to the system directories /etc, /proc, /sys (and their macOS canonical
+// equivalents /private/etc and /private/var, since macOS /etc and /var are symlinks).
+// Callers that accept relative paths should resolve them to an absolute, cleaned form
+// (filepath.Abs) before validating, so a legitimate relative path is not rejected.
 //
-// The system-directory guard is oriented at Unix absolute paths. On Windows
-// (drive-letter/volume paths such as C:\Windows) it is inert; callers targeting
-// Windows need volume-aware system-path detection (tracked as technical debt).
+// The Unix guard covers forward-slash absolute paths; Windows volume paths
+// (drive-letter system dirs such as C:\Windows or C:\Program Files) are rejected
+// separately via a host-independent string check, so the protection holds on
+// Windows as well as Unix.
 func FilePath(path string) error {
 	if path == "" {
 		return &ValidationError{"file path", path, "must not be empty"}
 	}
-	// No path traversal.
-	if strings.Contains(path, "..") {
+	// No path traversal: match only path segments that are exactly "..", not
+	// filenames that happen to contain ".." as a substring (e.g. my..file).
+	if path == ".." || strings.HasPrefix(path, "../") ||
+		strings.Contains(path, "/../") || strings.HasSuffix(path, "/..") {
 		return &ValidationError{"file path", path, "must not contain .."}
 	}
-	// No paths under the system directories /etc, /proc, /sys. Match a directory
-	// boundary (the exact dir or a "<dir>/" prefix) so siblings like /etcd or
-	// /system are not falsely rejected by a bare prefix check.
-	for _, sysDir := range []string{"/etc", "/proc", "/sys"} {
+	// No paths under the system directories /etc, /proc, /sys or their macOS
+	// canonical paths (/private/etc, /private/var — macOS /etc and /var are symlinks).
+	// Match a directory boundary (exact dir or "<dir>/" prefix).
+	for _, sysDir := range []string{"/etc", "/proc", "/sys", "/private/etc", "/private/var"} {
 		if path == sysDir || strings.HasPrefix(path, sysDir+"/") {
 			return &ValidationError{"file path", path, "must not reference system directories"}
 		}
 	}
+	// Windows volume/drive-letter system paths (C:\Windows, C:\Program Files).
+	// The Unix guard above does not see these, so on Windows the system-dir
+	// protection would otherwise be inert. Matched by host-independent string
+	// comparison so the guard holds regardless of the running OS.
+	if windowsSystemPath(path) {
+		return &ValidationError{"file path", path, "must not reference system directories"}
+	}
 	return nil
+}
+
+// windowsSystemPath reports whether path is a Windows volume path under a system
+// directory (\Windows, \Program Files). It requires a drive-letter prefix (C:)
+// so a Unix path that merely contains "/windows" is not falsely rejected, and it
+// is case-insensitive and separator-agnostic to match Windows path semantics.
+func windowsSystemPath(path string) bool {
+	if len(path) < 2 || path[1] != ':' {
+		return false
+	}
+	if c := path[0]; (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return false
+	}
+	rest := strings.ToLower(strings.ReplaceAll(path[2:], "\\", "/"))
+	for _, sysDir := range []string{"/windows", "/program files", "/program files (x86)"} {
+		if rest == sysDir || strings.HasPrefix(rest, sysDir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // reviewIDPattern is the review-ID allowlist: alphanumerics, dash, underscore.
@@ -84,10 +119,12 @@ func ReviewID(id string) error {
 	return nil
 }
 
+// validSeverities is the set of accepted severity levels (case-normalized).
+var validSeverities = map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
+
 // Severity validates a severity level (case-insensitive).
 func Severity(s string) error {
-	valid := map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
-	if !valid[strings.ToUpper(s)] {
+	if !validSeverities[strings.ToUpper(s)] {
 		return &ValidationError{"severity", s, "must be one of: LOW, MEDIUM, HIGH, CRITICAL"}
 	}
 	return nil

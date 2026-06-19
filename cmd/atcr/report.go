@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
@@ -36,15 +35,20 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are %s", format, report.Formats()))
 	}
 
-	// Validate --output (when set) before any rendering: a path under a system
-	// directory is rejected at the input layer (exit 2). Validate the resolved
-	// absolute form so a legitimate relative path (e.g. ../report.md) is preserved.
-	if output, _ := cmd.Flags().GetString("output"); output != "" {
-		abs, err := filepath.Abs(output)
+	// Validate --output (when set) before any rendering: resolve it to an
+	// absolute, symlink-resolved path so a path under a system directory — or a
+	// symlink that points into one — is rejected at the input layer (exit 2). The
+	// resolved path is also the path written below, so the value validated is the
+	// value used (no link-follow bypass between check and write).
+	output, _ := cmd.Flags().GetString("output")
+	var outputPath string
+	if output != "" {
+		var err error
+		outputPath, err = resolveOutputPath(output)
 		if err != nil {
-			return usageError(fmt.Errorf("resolving --output: %w", err))
+			return usageError(err)
 		}
-		if err := validation.FilePath(abs); err != nil {
+		if err := validation.FilePath(outputPath); err != nil {
 			return usageError(err)
 		}
 	}
@@ -103,17 +107,35 @@ func runReport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	output, _ := cmd.Flags().GetString("output")
 	if output == "" {
 		_, err := cmd.OutOrStdout().Write(buf.Bytes())
 		return err
 	}
-	if err := os.WriteFile(output, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(outputPath, buf.Bytes(), 0o644); err != nil {
 		// A local I/O failure is an infrastructure/usage error (exit 2), the
 		// same classification reconcile.go applies to its disk writes.
-		return usageError(fmt.Errorf("failed to write report to %q: %w", output, err))
+		return usageError(fmt.Errorf("failed to write report to %q: %w", outputPath, err))
 	}
 	return nil
+}
+
+// resolveOutputPath returns the --output target in absolute, symlink-resolved
+// form so validation and the subsequent write both act on the real on-disk
+// location. Resolving symlinks first closes a bypass where --output is a symlink
+// into a system directory: filepath.Abs would validate the link path while
+// os.WriteFile follows the link to its target. A not-yet-created output file has
+// no on-disk form to resolve, so it falls open to the absolute path (mirrors
+// resolveRedactRoot's fail-open in review.go).
+func resolveOutputPath(output string) (string, error) {
+	abs, err := absFn(output)
+	if err != nil {
+		return "", fmt.Errorf("resolving --output: %w", err)
+	}
+	resolved, err := evalSymlinksFn(abs)
+	if err != nil {
+		return abs, nil
+	}
+	return resolved, nil
 }
 
 // readReconciledFindings wraps the shared reconcile loader with the CLI's

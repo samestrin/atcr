@@ -145,6 +145,23 @@ func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
 	require.Equal(t, 2, execCmd(t, "report", "r"))
 }
 
+func TestReportCmd_SymlinkOutputToSystemDirIsUsageError(t *testing.T) {
+	// Epic 4.3 hardening (reviewers: otto, greta): a --output that is a symlink
+	// into a system directory must be rejected. filepath.Abs alone validates the
+	// link path (which passes the prefix check) while os.WriteFile follows the
+	// link to the real system file — so symlinks must be resolved before
+	// validation, and the resolved path must be the one written.
+	isolate(t)
+	fixtureReconciled(t, "r", oneFinding)
+
+	link := filepath.Join(t.TempDir(), "sneaky.md")
+	require.NoError(t, os.Symlink("/etc/hosts", link))
+
+	code, out := execCmdCapture(t, "report", "--output", link, "r")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "must not reference system directories")
+}
+
 func TestReportCmd_DisagreementsWithJSONFormat(t *testing.T) {
 	isolate(t)
 	fixtureReconciled(t, "2026-06-10_dj", splitFinding)
