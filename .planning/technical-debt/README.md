@@ -7,12 +7,12 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 1 | 0 |
-| MEDIUM | 1 | 14 | 0 |
-| LOW | 4 | 13 | 0 |
+| HIGH | 1 | 1 | 0 |
+| MEDIUM | 0 | 15 | 0 |
+| LOW | 3 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 5 | **Deferred Items:** 28 | **Resolved Items:** 0 | **Total Items:** 33
+**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 29 | **Resolved Items:** 0 | **Total Items:** 33
 
 ## Directory Structure
 
@@ -32,6 +32,15 @@ technical-debt/
 2. **Larger items**: Create a new document in `sprints/pending/`
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
+
+
+### [2026-06-18] From Sprint: 4.2_config_validation
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 2 | [ ] | HIGH | internal/registry/graph.go:42 | walkFallbacks panics when accumulation continues past dangling fallbacks | Add color[name]=black after dangling error to skip cycle walk | correctness | 10 | code-review | bruce | MEDIUM |
+| 2 | [ ] | LOW | internal/registry/overlay.go:224 | validateMerged() and LoadRegistry() (config.go:193-197) call validate() then ValidateFallbacks() sequentially with an early return on the first non-nil result. A registry that has BOTH a settings/agent fault AND a fallback-chain fault reports only the validate() faults in one run; the user fixes those, re-runs, and only then discovers the fallback fault. Within each function accumulation works (AC6), but across the validate/fallback boundary it still behaves one-at-a-time. (intent_note: deferred per epic §Clarifications) | In validateMerged() and LoadRegistry(), run both validate() and ValidateFallbacks() unconditionally and combine via errors.Join(r.attribute(vErr), r.attribute(fbErr)) (errors.Join drops nils, preserving the valid path). Alternatively, if the staged order is intentional (fallback checks assume structurally-valid agents), document the limitation in the AC6 acceptance note. Deliberately scoped out per epic Clarifications — flagging so a human confirms close-vs-document. | completeness | 30 | code-review | claude | MEDIUM |
+| U | [ ] | LOW | cmd/atcr/review_test.go:386 | TestReviewCmd_InvalidConfigReportsAllErrors validates AC7 (validation before review-directory creation) only indirectly via exit code 2 and message substrings; it never asserts that NO review output directory / report was created on the invalid-config path. A future regression that validated late (after creating the review dir) but still exited 2 would pass this test, leaving AC7's fail-before-side-effects guarantee unguarded. | After execCmdCapture returns code 2, add an assertion that the review run/report output directory does not exist on disk, proving fail-fast occurred before any filesystem side effect. | testing | 20 | code-review | claude | MEDIUM |
 
 
 ### [2026-06-18] From Sprint: epic-4.2

@@ -1,0 +1,90 @@
+# Code Review Report: 4.2_config_validation
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 9 / 9 acceptance criteria
+- **Approval Status:** Approved
+- **Review Date:** June 18, 2026
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial + Tests)
+
+This epic was reframed during execution (see the epic's Clarifications, 2026-06-18): the
+illustrative `Config.Validate()` design does not exist; the real model is `registry.Registry`
+with `validate()` (`config.go`), `ValidateFallbacks()` (`graph.go`), and merged-view attribution
+(`attribution.go` / `overlay.go`). The single genuine deliverable was **AC6 — accumulate all
+validation errors and report them at once** rather than short-circuiting on the first. That
+refactor landed cleanly and all acceptance criteria are satisfied against the real structs.
+
+## 2. Acceptance Criteria Verified
+
+| AC | Result | Evidence |
+|----|--------|----------|
+| AC1 required-field | ✅ | `config.go:330-336` validateAgent; `accumulate_test.go` TestLoadRegistry_ReportsAllErrorsAtOnce |
+| AC2 enum | ✅ | `config.go:218` payload_mode; agent min_severity/payload enums |
+| AC3 type/range | ✅ | `config.go:209` `timeout_secs must be within 1..N` |
+| AC4 semantic | ✅ (intent) | `max_findings` rejected ≤0 outright; co-reported under accumulation |
+| AC5 usageError exit 2 | ✅ | `review_test.go` TestReviewCmd_InvalidConfigReportsAllErrors asserts code==2 |
+| AC6 all-at-once | ✅ | `config.go:206-243`, `graph.go:31-70`, `attribution.go:55-63` + accumulate_test suite |
+| AC7 before side effects | ✅ | validation at load (`config.go:193-197`, `overlay.go:142`); command test fails fast |
+| AC8 per-category tests | ✅ | `internal/registry/accumulate_test.go` |
+| AC9 integration test | ✅ | `cmd/atcr/review_test.go` full-command path |
+
+## 3. Evidence Map (core deliverable AC6)
+- **`internal/registry/config.go:206-289`** — `validate()` rewritten to accumulate into a `[]error`
+  and return `errors.Join(errs...)`; per-entry checks extracted to `validateProvider` /
+  `validateAgent`; `sortedKeys` walks maps deterministically. `errors.Join` returns nil on the
+  valid path.
+- **`internal/registry/graph.go:31-70`** — `ValidateFallbacks()` accumulates every dangling
+  reference and every disjoint cycle; `walkFallbacks` blackens all visited nodes on cycle
+  detection so the continuing scan never trips the gray-not-on-path invariant.
+- **`internal/registry/attribution.go:55-63`** — `attribute()` made join-aware: recurses over the
+  `errors.Join` tree so each fault is prefixed with its own defining file.
+
+## 4. Remaining Unchecked Items
+No remaining unchecked items — all 9 acceptance criteria verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** Refactor is minimal, well-scoped, and matches the epic's recorded intent. Existing
+  `errors.Is` / substring assertions keep passing because `errors.Join` concatenates child
+  messages. All tests pass; quality gates green.
+
+## 6. Coverage Analysis
+- **Coverage:** 88.8% (registry pkg 88.2%, cmd/atcr 84.2%)
+- **Baseline:** 80%
+- **Delta:** ↑8.8%
+- **Status:** PASSING
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Tests | PASSING | go test -coverprofile=coverage.out ./... |
+| Lint | PASSING | golangci-lint run (0 issues) |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | gofmt -l (no diffs) |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 5 (config.go, graph.go, attribution.go, accumulate_test.go, review_test.go)
+- **Issues Found:** 2 (Critical: 0, High: 0, Medium: 0, Low: 2)
+- **Mode:** Discovery-only (epics carry no sprint-design.md risk profile)
+
+### Issues by Severity
+**LOW — completeness — `internal/registry/overlay.go:223-229`**
+`validateMerged()` and `LoadRegistry()` call `validate()` then `ValidateFallbacks()` sequentially
+with an early return, so a config with BOTH a settings/agent fault and a fallback fault reports
+only the validate() faults in one run. Within each function accumulation works; across the
+validate/fallback boundary it is still one-at-a-time. Deliberately scoped out per the epic
+Clarifications (fallback checks assume structurally-valid agents) — flagged for human confirm:
+close the boundary (join both results) or document the limitation in the AC6 note.
+
+**LOW — testing — `cmd/atcr/review_test.go:386-417`**
+`TestReviewCmd_InvalidConfigReportsAllErrors` validates AC7 only indirectly (exit code 2 + message
+substrings); it does not assert that NO review output directory/report was created on the invalid
+path. A regression that validated late but still exited 2 would pass. Add a filesystem assertion
+that no review run/report dir exists.
+
+## 9. Follow-ups
+- Both findings are LOW and non-blocking. Route to technical debt via `/reconcile-code-review`.
+- No code changes required for approval.
+
+---
+*Generated by /execute-code-review on June 18, 2026 08:11:28PM*

@@ -1,0 +1,12 @@
+# TD_STREAM - Technical Debt Items
+# TARGET_ID: /Users/samestrin/Documents/GitHub/atcr/.planning/epics/completed/4.2_config_validation.md
+# TARGET_TYPE: epic
+# CREATED: 2026-06-18 20:11:28
+# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+# EST_MINUTES: estimated fix time
+# EVIDENCE: Code snippet reference with file:line_start-line_end range (e.g., src/auth.ts:45-52)
+# REVIEWER: 'claude' (this prompt), agent name (multi_review pool, e.g. bruce/greta)
+# --- DATA BELOW THIS LINE ---
+
+LOW|internal/registry/overlay.go:224|validateMerged() and LoadRegistry() (config.go:193-197) call validate() then ValidateFallbacks() sequentially with an early return on the first non-nil result. A registry that has BOTH a settings/agent fault AND a fallback-chain fault reports only the validate() faults in one run; the user fixes those, re-runs, and only then discovers the fallback fault. Within each function accumulation works (AC6), but across the validate/fallback boundary it still behaves one-at-a-time.|In validateMerged() and LoadRegistry(), run both validate() and ValidateFallbacks() unconditionally and combine via errors.Join(r.attribute(vErr), r.attribute(fbErr)) (errors.Join drops nils, preserving the valid path). Alternatively, if the staged order is intentional (fallback checks assume structurally-valid agents), document the limitation in the AC6 acceptance note. Deliberately scoped out per epic Clarifications — flagging so a human confirms close-vs-document.|completeness|30|internal/registry/overlay.go:223-229|claude
+LOW|cmd/atcr/review_test.go:386|TestReviewCmd_InvalidConfigReportsAllErrors validates AC7 (validation before review-directory creation) only indirectly via exit code 2 and message substrings; it never asserts that NO review output directory / report was created on the invalid-config path. A future regression that validated late (after creating the review dir) but still exited 2 would pass this test, leaving AC7's fail-before-side-effects guarantee unguarded.|After execCmdCapture returns code 2, add an assertion that the review run/report output directory does not exist on disk, proving fail-fast occurred before any filesystem side effect.|testing|20|cmd/atcr/review_test.go:386-417|claude

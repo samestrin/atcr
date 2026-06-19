@@ -616,3 +616,30 @@ func TestAgentConfig_ToolBudgetBytesIsInt64(t *testing.T) {
 		t.Fatal("ToolBudgetBytes must not be nil")
 	}
 }
+
+// TestValidate_PayloadModeErrorPreservesRawValue confirms that the invalid
+// payload_mode error message shows the raw configured value, not a trimmed
+// version. strings.TrimSpace in the error format string is redundant
+// (payloadModeValid already trims internally) and hides what the user set.
+func TestValidate_PayloadModeErrorPreservesRawValue(t *testing.T) {
+	r := &Registry{
+		Providers:   map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents:      map[string]AgentConfig{"a": {Provider: "p", Model: "m"}},
+		PayloadMode: " bogus ",
+	}
+	err := r.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "' bogus '")
+}
+
+// TestValidate_AgentPayloadErrorPreservesRawValue confirms the same for the
+// per-agent payload field.
+func TestValidate_AgentPayloadErrorPreservesRawValue(t *testing.T) {
+	r := &Registry{
+		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents:    map[string]AgentConfig{"a": {Provider: "p", Model: "m", Payload: " bogus "}},
+	}
+	err := r.validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "' bogus '")
+}
