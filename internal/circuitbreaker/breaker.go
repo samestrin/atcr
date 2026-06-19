@@ -114,7 +114,10 @@ func New(provider string, threshold int, cooldown time.Duration) *Breaker {
 // whole call (which may include a retry/backoff schedule spanning several
 // seconds), so during a probe every other agent for the provider fails fast even
 // if the provider has already recovered; this single-probe gate is intentional
-// (it bounds the recovery burst to one request).
+// (it bounds the recovery burst to one request). The maximum slot-hold equals the
+// caller's I/O timeout (typically the HTTP client deadline); a context
+// cancellation that short-circuits the probe before any response must call
+// ReleaseProbe, not RecordFailure, so the slot is freed for the next caller.
 func (b *Breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
