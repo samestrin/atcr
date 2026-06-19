@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"math"
 	"sync"
 	"testing"
 )
@@ -155,6 +156,29 @@ func TestPackageLevelAccessorsUseDefaultRegistry(t *testing.T) {
 	Histogram("pkg_hist").Observe(7)
 	if got := DefaultRegistry.Histogram("pkg_hist").Count(); got != 1 {
 		t.Fatalf("package Histogram did not write DefaultRegistry: got %d", got)
+	}
+}
+
+func TestHistogramObserveNonFiniteIgnored(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("nan_inf_test")
+	h.Observe(1.0)
+	h.Observe(math.NaN())
+	h.Observe(math.Inf(1))
+	h.Observe(math.Inf(-1))
+	h.Observe(2.0)
+
+	if got := h.Count(); got != 2 {
+		t.Fatalf("Count() = %d, want 2 (NaN/Inf must be discarded)", got)
+	}
+	if got := h.Sum(); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Fatalf("Sum() = %v, want finite", got)
+	}
+	if got := h.Mean(); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Fatalf("Mean() = %v, want finite", got)
+	}
+	if got := h.Percentile(50); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Fatalf("Percentile(50) = %v, want finite", got)
 	}
 }
 
