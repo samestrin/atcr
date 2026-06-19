@@ -15,6 +15,7 @@ import (
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +66,13 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
 	abs, err := filepath.Abs(strings.TrimSpace(dir))
 	if err != nil {
 		return "", usageError(fmt.Errorf("resolving --output-dir: %w", err))
+	}
+	// Validate the resolved (absolute, cleaned) path, not the raw value: a
+	// legitimate relative path like ../reviews resolves clean and passes, while
+	// a path under a system directory (/etc, /proc, /sys) is rejected by the
+	// input-validation layer (exit 2) before any review work begins.
+	if err := validation.FilePath(abs); err != nil {
+		return "", usageError(err)
 	}
 	return abs, nil
 }
