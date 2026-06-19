@@ -325,10 +325,11 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 		// Release any half-open probe without a verdict (do not count it).
 		breaker.ReleaseProbe()
 	default:
-		// A non-tripping HTTP response (4xx incl. 429/401): the provider replied,
-		// so it is reachable. The breaker tracks outages, not auth/rate-limit
-		// correctness, so a reply counts as a healthy round-trip — which also
-		// closes a half-open probe instead of wedging it.
+		// A non-tripping HTTP response (3xx redirect surfaced by noRedirect, or
+		// 4xx incl. 429/401): the provider replied, so it is reachable. The
+		// breaker tracks outages, not redirect or auth/rate-limit correctness,
+		// so a provider reply counts as a healthy round-trip — which also closes
+		// a half-open probe instead of wedging it.
 		breaker.RecordSuccess()
 	}
 	return raw, err
