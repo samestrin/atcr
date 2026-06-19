@@ -80,3 +80,73 @@ func TestValidate_ValidRegistryReturnsNil(t *testing.T) {
 	}
 	assert.NoError(t, reg.validate())
 }
+
+// TestValidateFallbacks_AccumulatesMultipleDangling proves two distinct dangling
+// references are both reported in one pass.
+func TestValidateFallbacks_AccumulatesMultipleDangling(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"alpha": "ghost-a",
+		"bravo": "ghost-b",
+	})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDanglingFallback)
+	assert.Contains(t, err.Error(), "agent 'alpha' fallback references unknown agent 'ghost-a'")
+	assert.Contains(t, err.Error(), "agent 'bravo' fallback references unknown agent 'ghost-b'")
+}
+
+// TestValidateFallbacks_AccumulatesDanglingAndCycle proves an independent
+// dangling reference and a cycle are both reported, not just the first found.
+func TestValidateFallbacks_AccumulatesDanglingAndCycle(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"dang":  "ghost",
+		"cycle": "loop",
+		"loop":  "cycle",
+	})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDanglingFallback)
+	assert.ErrorIs(t, err, ErrFallbackCycle)
+	assert.Contains(t, err.Error(), "agent 'dang' fallback references unknown agent 'ghost'")
+	assert.Contains(t, err.Error(), "fallback cycle detected")
+}
+
+// TestValidateFallbacks_LeadInIntoReportedCycleNoPanic guards the accumulation
+// hazard: after a cycle is detected, continuing the DFS must not re-walk a
+// lead-in node that points INTO the already-reported cycle (which would trip
+// walkFallbacks's "gray node must be on current path" invariant and panic).
+// {a:b, b:a} is a cycle; {c:a} is a lead-in that must NOT be reported as a
+// second cycle and must NOT panic.
+func TestValidateFallbacks_LeadInIntoReportedCycleNoPanic(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"a": "b",
+		"b": "a",
+		"c": "a",
+	})
+	var err error
+	require.NotPanics(t, func() { err = reg.ValidateFallbacks() })
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFallbackCycle)
+	// Exactly one cycle reported — the lead-in "c" is not a separate cycle.
+	assert.Equal(t, 1, strings.Count(err.Error(), "fallback cycle detected"),
+		"lead-in into an existing cycle must not be reported as a second cycle, got: %s", err.Error())
+}
+
+// TestValidateFallbacks_TwoIndependentCycles proves two disjoint cycles are both
+// reported.
+func TestValidateFallbacks_TwoIndependentCycles(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"a": "b", "b": "a",
+		"c": "d", "d": "c",
+	})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.Equal(t, 2, strings.Count(err.Error(), "fallback cycle detected"),
+		"two disjoint cycles must both be reported, got: %s", err.Error())
+}
+
+// TestValidateFallbacks_ValidReturnsNil guards the happy path.
+func TestValidateFallbacks_ValidReturnsNil(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{"a": "b", "b": ""})
+	assert.NoError(t, reg.ValidateFallbacks())
+}
