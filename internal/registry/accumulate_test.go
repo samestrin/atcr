@@ -150,3 +150,59 @@ func TestValidateFallbacks_ValidReturnsNil(t *testing.T) {
 	reg := agentsWithFallbacks(map[string]string{"a": "b", "b": ""})
 	assert.NoError(t, reg.ValidateFallbacks())
 }
+
+// TestAttribute_MultiErrorPerEntryFiles proves that when accumulation produces
+// faults spanning both registry tiers, each fault is attributed to the file that
+// defined its entry — not the whole blob to whichever entry happened to be first.
+func TestAttribute_MultiErrorPerEntryFiles(t *testing.T) {
+	reg := &Registry{
+		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents: map[string]AgentConfig{
+			"uagent": {Provider: "p", Model: "m", MinSeverity: "BOGUS"},
+			"pagent": {Provider: "p", Model: "m", MinSeverity: "BOGUS"},
+		},
+	}
+	reg.stampSource(SourceUser)                                                              // all entries user-tier...
+	reg.AgentSource["pagent"] = EntrySource{Tier: SourceProject, File: projectRegistryLabel} // ...except pagent
+
+	attributed := reg.attribute(reg.validate())
+	require.Error(t, attributed)
+	msg := attributed.Error()
+
+	assert.Contains(t, msg, "registry.yaml: agent 'uagent'",
+		"user-tier fault must be prefixed with the user registry file")
+	assert.Contains(t, msg, ".atcr/registry.yaml: agent 'pagent'",
+		"project-tier fault must be prefixed with the project registry file")
+}
+
+// TestAttribute_SingleEntryStillAttributed guards backward compatibility: a lone
+// fault (now wrapped in errors.Join of one) is still attributed to its file.
+func TestAttribute_SingleEntryStillAttributed(t *testing.T) {
+	reg := &Registry{
+		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents:    map[string]AgentConfig{"solo": {Provider: "p", Model: "m", MinSeverity: "BOGUS"}},
+	}
+	reg.stampSource(SourceUser)
+
+	attributed := reg.attribute(reg.validate())
+	require.Error(t, attributed)
+	assert.True(t, strings.HasPrefix(attributed.Error(), "registry.yaml: agent 'solo'"),
+		"single fault must keep its file prefix, got: %s", attributed.Error())
+}
+
+// TestAttribute_SettingsFaultGetsUserLabel guards the non-entry branch: a
+// top-level settings fault (carried only by the user registry) is prefixed with
+// the user registry label even inside an accumulated join.
+func TestAttribute_SettingsFaultGetsUserLabel(t *testing.T) {
+	reg := &Registry{
+		Providers:   map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents:      map[string]AgentConfig{"a": {Provider: "p", Model: "m"}},
+		PayloadMode: "bogus",
+	}
+	reg.stampSource(SourceUser)
+
+	attributed := reg.attribute(reg.validate())
+	require.Error(t, attributed)
+	assert.Contains(t, attributed.Error(), "registry.yaml: invalid payload_mode",
+		"settings fault must be prefixed with the user registry label")
+}
