@@ -1,3 +1,14 @@
+## [4.3.0] - 2026-06-18
+
+Centralized input validation: a new `internal/validation` package gives the CLI consistent, field-aware validation errors, and path inputs are now rejected at the input layer before any work begins.
+
+### Added
+
+- New `internal/validation` package with validators for git refs, file paths, review IDs, severity levels, and enums; each returns a field-aware `ValidationError` that wraps as a usage error (exit 2)
+- `atcr review --output-dir` and `atcr report --output` now reject paths under system directories (`/etc`, `/proc`, `/sys`) via the input-validation layer before execution, instead of failing late on the filesystem
+
+*Shipped via /execute-epic (epic 4.3)*
+
 ## [Technical Debt] - 2026-06-18
 
 ### Fixed

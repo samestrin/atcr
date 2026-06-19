@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
+	"github.com/samestrin/atcr/internal/validation"
 	"github.com/spf13/cobra"
 )
 
@@ -32,6 +34,19 @@ func runReport(cmd *cobra.Command, args []string) error {
 	format, _ := cmd.Flags().GetString("format")
 	if !report.ValidFormat(format) {
 		return usageError(fmt.Errorf("unknown format %q: supported formats are %s", format, report.Formats()))
+	}
+
+	// Validate --output (when set) before any rendering: a path under a system
+	// directory is rejected at the input layer (exit 2). Validate the resolved
+	// absolute form so a legitimate relative path (e.g. ../report.md) is preserved.
+	if output, _ := cmd.Flags().GetString("output"); output != "" {
+		abs, err := filepath.Abs(output)
+		if err != nil {
+			return usageError(fmt.Errorf("resolving --output: %w", err))
+		}
+		if err := validation.FilePath(abs); err != nil {
+			return usageError(err)
+		}
 	}
 
 	arg := ""

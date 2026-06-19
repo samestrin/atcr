@@ -128,6 +128,17 @@ func TestReportCmd_OutputWriteFailureIsUsageError(t *testing.T) {
 	require.Equal(t, 2, execCmd(t, "report", "--output", filepath.Join(ro, "report.md"), "r"))
 }
 
+func TestReportCmd_SystemDirOutputIsUsageError(t *testing.T) {
+	// Epic 4.3: a --output path under a system directory is rejected by the
+	// input-validation layer (exit 2) before any rendering — not left to the
+	// filesystem to refuse on write.
+	isolate(t)
+	fixtureReconciled(t, "r", oneFinding)
+	code, out := execCmdCapture(t, "report", "--output", "/etc/atcr-report.md", "r")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "must not reference system directories")
+}
+
 func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
 	isolate(t)
 	fixtureReconciled(t, "r", "") // 0-byte findings.json → malformed, not "no findings"

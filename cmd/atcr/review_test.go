@@ -329,6 +329,18 @@ func TestOutputDirFromFlags_WhitespacePaddedResolvesTrimmed(t *testing.T) {
 	require.Equal(t, filepath.Join(cwd, "out"), dir, "leading spaces must be trimmed before filepath.Abs")
 }
 
+func TestOutputDirFromFlags_SystemDirRejected(t *testing.T) {
+	// Epic 4.3: --output-dir resolving to a system directory is rejected by the
+	// input-validation layer (usage error, exit 2) before any review work — not
+	// left to the filesystem to refuse mid-run.
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "/etc/atcr"}))
+	_, err := outputDirFromFlags(cmd)
+	require.Error(t, err)
+	require.Equal(t, 2, exitCode(err))
+	require.Contains(t, err.Error(), "must not reference system directories")
+}
+
 // TestReviewCmd_VerifyFlagsRegistered verifies the --verify chaining flags exist
 // on reviewCmd with the documented defaults (AC 04-02).
 func TestReviewCmd_VerifyFlagsRegistered(t *testing.T) {
