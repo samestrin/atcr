@@ -251,6 +251,29 @@ func TestHalfOpenReleaseProbeReadmits(t *testing.T) {
 	}
 }
 
+// New must clamp non-positive threshold/cooldown to defaults so a caller
+// passing 0 or a negative value does not produce a breaker that trips on one
+// failure or recovers immediately (no cooldown).
+func TestNewClampsBadThresholdAndCooldown(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	defer metrics.DefaultRegistry.Reset()
+	cases := []struct {
+		threshold int
+		cooldown  time.Duration
+	}{
+		{0, 0},
+		{-1, -1 * time.Second},
+	}
+	for _, tc := range cases {
+		b := New("clamp-test", tc.threshold, tc.cooldown)
+		b.RecordFailure() // must NOT trip when threshold is clamped to DefaultThreshold (3)
+		if got := b.State(); got != StateClosed {
+			t.Errorf("New(%d, %v).RecordFailure()→State() = %v, want closed (threshold must be clamped)",
+				tc.threshold, tc.cooldown, got)
+		}
+	}
+}
+
 // ReleaseProbe outside half-open is a harmless no-op.
 func TestReleaseProbeNoOpWhenClosed(t *testing.T) {
 	b, _ := newTestBreaker(t, 3, DefaultCooldown)
