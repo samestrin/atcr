@@ -44,11 +44,23 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger 
 	if err != nil {
 		return err
 	}
-	runErr := s.Run(ctx, &mcpsdk.StdioTransport{})
-	// s.Run returns for two distinct reasons that must NOT be treated alike: a
-	// cancelled root ctx (SIGINT/SIGTERM via the CLI signal handler) means the
-	// server itself is shutting down, while ctx.Err()==nil means a clean client
-	// stdio disconnect. Only the former interrupts in-flight detached reviews.
+	return serveOver(ctx, s, e, &mcpsdk.StdioTransport{})
+}
+
+// serveOver runs s over transport until the transport loop returns, then shuts
+// down in-flight detached reviews according to WHY it returned. Split from Serve
+// solely so a test can exercise this post-transport discrimination over an
+// in-memory transport — the StdioTransport Serve passes in production binds
+// os.Stdin/os.Stdout and is not drivable from a test, so the crux epic-4.1.2
+// wiring (the ctx.Err() != nil argument below) would otherwise be untested
+// end-to-end.
+//
+// s.Run returns for two distinct reasons that must NOT be treated alike: a
+// cancelled root ctx (SIGINT/SIGTERM via the CLI signal handler) means the
+// server itself is shutting down, while ctx.Err()==nil means a clean client
+// stdio disconnect. Only the former interrupts in-flight detached reviews.
+func serveOver(ctx context.Context, s *mcpsdk.Server, e *engine, transport mcpsdk.Transport) error {
+	runErr := s.Run(ctx, transport)
 	e.shutdownReviews(ctx.Err() != nil, shutdownDrain)
 	if runErr != nil {
 		return fmt.Errorf("serve stdio: %w", runErr)
