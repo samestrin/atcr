@@ -1,0 +1,2 @@
+MEDIUM|internal/registry/config.go:233|validateProvider may return empty error slice for valid providers|Add a check to skip appending if errs is empty|maintainability|5|append(errs, validateProvider(name, r.Providers[name])...) will add nothing but still allocates|bruce
+MEDIUM|internal/registry/graph.go:67|walkFallbacks now blackens lead-in nodes but comment says "Nothing to do here"|Remove dead comment or add a log statement|maintainability|2|"Nothing to do here" comment is misleading after the fix|bruce

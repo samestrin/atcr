@@ -1,0 +1,1 @@
+LOW|internal/registry/config.go:248|Redundant `strings.TrimSpace` in error message|Remove `strings.TrimSpace` since it is only used in the formatted error string and not for validation|maintainability|2|`fmt.Errorf("... '%s' ...", strings.TrimSpace(r.PayloadMode))`|otto

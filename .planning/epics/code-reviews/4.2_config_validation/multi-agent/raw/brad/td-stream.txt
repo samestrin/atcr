@@ -1,0 +1,2 @@
+HIGH|internal/registry/graph.go:42|walkFallbacks panics when accumulation continues past dangling fallbacks|Add color[name]=black after dangling error to skip cycle walk|correctness|10|next := r.Agents[current].Fallback panics if fallback target is missing|bruce
+LOW|internal/registry/attribution.go:48|Unidiomatic type assertion for multi-error unwrapping|Use errors.As(err, &joined) instead of direct type assertion|maintainability|5|err.(interface{ Unwrap() []error }) works but errors.As is idiomatic|bruce
