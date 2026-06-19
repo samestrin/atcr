@@ -66,6 +66,7 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger 
 // FINISH its writes rather than orphan or force-interrupt it (AC3).
 func (e *engine) shutdownReviews(serverShutdown bool, timeout time.Duration) {
 	if serverShutdown && e.shutdownCancel != nil {
+		e.logger().Warn("server shutdown: cancelling in-flight detached reviews")
 		e.shutdownCancel()
 	}
 	e.drain(timeout)
