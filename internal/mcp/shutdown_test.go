@@ -1,7 +1,9 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -125,6 +127,42 @@ func TestServeShutdown_NormalCompletionNotInterrupted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fanout.RunCompleted, st.Status,
 		"shutdown must not retroactively interrupt an already-finished review (AC4)")
+}
+
+// TestServeShutdown_LogsInterruptWarn locks the serve-mode observability parity
+// with the CLI's "review interrupted by signal" Warn (epic 4.1/4.1.1): when a
+// detached MCP review is cut off by server shutdown, the engine emits a greppable
+// structured Warn carrying the review_id, so monitoring/CI grepping serve-mode
+// logs can find interrupted reviews instead of only the on-disk manifest.
+func TestServeShutdown_LogsInterruptWarn(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	bc := &blockingCompleter{entered: make(chan struct{})}
+	_, e, err := buildServer(root, bc, logger)
+	require.NoError(t, err)
+
+	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	select {
+	case <-bc.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detached fan-out never started")
+	}
+
+	// serverShutdown=true cancels the in-flight review, which unblocks the
+	// completer; drain waits for the goroutine (and thus its Warn) to finish.
+	e.shutdownReviews(true, shutdownDrain)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "review interrupted by server shutdown",
+		"server shutdown must emit a structured Warn for the interrupted detached review")
+	assert.Contains(t, logged, res.ReviewID,
+		"the interrupt Warn must carry the review_id for greppability")
 }
 
 // waitForTerminalStatus polls a review's on-disk status until it leaves
