@@ -210,7 +210,7 @@ func (r *Registry) validate() error {
 		return fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel)
 	}
 	if !payloadModeValid(r.PayloadMode) {
-		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
+		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode)
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
@@ -264,7 +264,7 @@ func (r *Registry) validate() error {
 			return agentErrf(name, "agent '%s': temperature must be within [0, 2]", name)
 		}
 		if !payloadModeValid(a.Payload) {
-			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, a.Payload)
 		}
 		// role is still reserved (Stage 3/4) but validated at load; max_turns and
 		// tool_budget_bytes are active in 2.0 and bound the tool loop.
