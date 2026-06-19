@@ -1,3 +1,17 @@
+## [4.2.0] - 2026-06-18
+
+Configuration validation now reports every error at once, so a bad `registry.yaml` is fixed in a single pass instead of one error per run.
+
+### Changed
+
+- Registry validation (required fields, enum values, numeric ranges, review-constraint guardrails, and fallback-chain dangling/cycle checks) now accumulates and reports all faults together via `errors.Join` instead of stopping at the first; output is deterministic (providers and agents are validated in sorted order), and in a merged user+project config each fault still names the file that defined the offending entry
+
+### Fixed
+
+- A fallback graph with a lead-in chain feeding a cycle (e.g. `a→b`, `b↔c`, `d→a`) no longer panics `atcr` at config-load time; the cycle is reported as a clean validation error
+
+*Shipped via /execute-epic (epic 4.2)*
+
 ## [4.1.2] - 2026-06-18
 
 Serve-mode detached reviews are now marked `interrupted` on server shutdown, matching CLI semantics.

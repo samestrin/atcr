@@ -382,6 +382,41 @@ func TestBoolFlag_UndefinedFlagPanics(t *testing.T) {
 // Observable: --require-verified --verify with project fail_on:HIGH must NOT
 // fire the precondition error ("--require-verified requires --fail-on and
 // --verify"), because the config-supplied threshold satisfies the gate check.
+// TestReviewCmd_InvalidConfigReportsAllErrors is the Epic 4.2 command-boundary
+// acceptance test: `atcr review` with an invalid registry fails fast as a usage
+// error (exit 2 — AC5) before any provider call or review-directory creation
+// (AC7), and the message lists every validation fault at once (AC6), so the user
+// fixes them in one edit (AC9 — fails fast with a clear error).
+func TestReviewCmd_InvalidConfigReportsAllErrors(t *testing.T) {
+	isolate(t)
+	initGitRepoWithChange(t)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	regDir := filepath.Join(home, ".config", "atcr")
+	require.NoError(t, os.MkdirAll(regDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(`timeout_secs: -1
+payload_mode: bogus
+providers:
+  testprov:
+    api_key_env: ATCR_TEST_REVIEW_KEY
+agents:
+  bruce:
+    provider: testprov
+    min_severity: BOGUS
+`), 0o644))
+	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte("agents: [bruce]\n"), 0o644))
+
+	code, out := execCmdCapture(t, "review", "--base", "HEAD^")
+	require.Equal(t, 2, code, "AC5: invalid config is a usage error (exit 2)")
+	// AC6: all faults reported together, not one-at-a-time.
+	assert.Contains(t, out, "timeout_secs", "AC3 fault must surface")
+	assert.Contains(t, out, "payload_mode", "AC2 fault must surface")
+	assert.Contains(t, out, "required field 'model'", "AC1 fault must surface")
+	assert.Contains(t, out, "min_severity", "AC2/AC4 fault must surface")
+}
+
 func TestRunReview_ProjectConfigGateActivatedWithoutFlag(t *testing.T) {
 	isolate(t)
 	require.NoError(t, os.MkdirAll(".atcr", 0o755))

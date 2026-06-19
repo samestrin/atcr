@@ -1,11 +1,13 @@
 package registry
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/stream"
@@ -198,105 +200,141 @@ func LoadRegistry(path string) (*Registry, error) {
 	return reg, nil
 }
 
-// validate checks required fields and reference integrity.
+// validate checks required fields and reference integrity. It accumulates every
+// fault and reports them together via errors.Join (Epic 4.2 / AC6) rather than
+// short-circuiting on the first, so a user fixes all config mistakes in one
+// edit. Providers and agents are walked in sorted-name order so the joined
+// message is deterministic despite randomized map iteration. errors.Join
+// returns nil when no faults were collected, preserving the valid-config path.
 func (r *Registry) validate() error {
+	var errs []error
+
+	// Settings-level checks, in fixed source order.
 	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
-		return fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs)
+		errs = append(errs, fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs))
 	}
 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
-		return fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget)
+		errs = append(errs, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget))
 	}
 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
-		return fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel)
+		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
 	}
 	if !payloadModeValid(r.PayloadMode) {
-		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
+		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode)))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
 	if normalized := stream.NormalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
-		return fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity)
+		errs = append(errs, fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity))
 	}
 	if r.Verify.Votes < 0 {
-		return fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes)
+		errs = append(errs, fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes))
 	}
 	if r.Verify.MaxParallel < 0 {
-		return fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel)
+		errs = append(errs, fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel))
 	}
-	for name, p := range r.Providers {
-		if strings.TrimSpace(name) == "" {
-			return providerErrf(name, "providers.%s: provider name must not be empty", name)
-		}
-		if p.APIKeyEnv == "" {
-			return providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name)
-		}
-		if !envVarName.MatchString(p.APIKeyEnv) {
-			return providerErrf(name, "providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
-		}
-		if p.BaseURL != "" {
-			u, err := url.Parse(p.BaseURL)
-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-				return providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name)
-			}
-			if u.User != nil {
-				return providerErrf(name, "providers.%s: base_url must not embed credentials (userinfo)", name)
-			}
-		}
+
+	for _, name := range sortedKeys(r.Providers) {
+		errs = append(errs, validateProvider(name, r.Providers[name])...)
 	}
-	for name, a := range r.Agents {
-		if strings.TrimSpace(name) == "" {
-			return agentErrf(name, "agent '%s': agent name must not be empty", name)
-		}
-		if a.Provider == "" {
-			return agentErrf(name, "agent '%s': required field 'provider' is missing", name)
-		}
-		if a.Model == "" {
-			return agentErrf(name, "agent '%s': required field 'model' is missing", name)
-		}
-		if _, ok := r.Providers[a.Provider]; !ok {
-			return agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider)
-		}
-		if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
-			return agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
-		}
-		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
-			return agentErrf(name, "agent '%s': temperature must be within [0, 2]", name)
-		}
-		if !payloadModeValid(a.Payload) {
-			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
-		}
-		// role is still reserved (Stage 3/4) but validated at load; max_turns and
-		// tool_budget_bytes are active in 2.0 and bound the tool loop.
-		if !roleValid(a.Role) {
-			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
-		}
-		if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
-			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
-		}
-		if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
-			return agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes)
-		}
-		// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
-		// not validated. min_severity is checked case-insensitively against the
-		// rubric, max_findings must be a positive cap, and every scope entry must
-		// be a non-empty category (a blank entry is a YAML typo, not "all").
-		if normalized := stream.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
-			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
-		}
-		if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
-			return agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap)
-		}
-		for _, s := range a.Scope {
-			if strings.TrimSpace(s) == "" {
-				return agentErrf(name, "agent '%s': scope entries must not be empty", name)
-			}
-			if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
-				return agentErrf(name, "agent '%s': scope entries must not contain control characters", name)
-			}
+	for _, name := range sortedKeys(r.Agents) {
+		errs = append(errs, r.validateAgent(name, r.Agents[name])...)
+	}
+
+	return errors.Join(errs...)
+}
+
+// validateProvider returns every fault found in a single provider entry (Epic
+// 4.2 / AC6 — accumulate rather than short-circuit).
+func validateProvider(name string, p Provider) []error {
+	var errs []error
+	if strings.TrimSpace(name) == "" {
+		errs = append(errs, providerErrf(name, "providers.%s: provider name must not be empty", name))
+	}
+	if p.APIKeyEnv == "" {
+		errs = append(errs, providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name))
+	} else if !envVarName.MatchString(p.APIKeyEnv) {
+		errs = append(errs, providerErrf(name, "providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv))
+	}
+	if p.BaseURL != "" {
+		u, err := url.Parse(p.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			errs = append(errs, providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name))
+		} else if u.User != nil {
+			errs = append(errs, providerErrf(name, "providers.%s: base_url must not embed credentials (userinfo)", name))
 		}
 	}
-	return nil
+	return errs
+}
+
+// validateAgent returns every fault found in a single agent entry (Epic 4.2 /
+// AC6 — accumulate rather than short-circuit). The unknown-provider reference
+// check is suppressed when provider is empty so a missing-provider agent reports
+// only the "required field" fault, not a spurious "references unknown provider ”".
+func (r *Registry) validateAgent(name string, a AgentConfig) []error {
+	var errs []error
+	if strings.TrimSpace(name) == "" {
+		errs = append(errs, agentErrf(name, "agent '%s': agent name must not be empty", name))
+	}
+	if a.Provider == "" {
+		errs = append(errs, agentErrf(name, "agent '%s': required field 'provider' is missing", name))
+	} else if _, ok := r.Providers[a.Provider]; !ok {
+		errs = append(errs, agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider))
+	}
+	if a.Model == "" {
+		errs = append(errs, agentErrf(name, "agent '%s': required field 'model' is missing", name))
+	}
+	if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
+		errs = append(errs, agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs))
+	}
+	if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
+		errs = append(errs, agentErrf(name, "agent '%s': temperature must be within [0, 2]", name))
+	}
+	if !payloadModeValid(a.Payload) {
+		errs = append(errs, agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload)))
+	}
+	// role is still reserved (Stage 3/4) but validated at load; max_turns and
+	// tool_budget_bytes are active in 2.0 and bound the tool loop.
+	if !roleValid(a.Role) {
+		errs = append(errs, agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name))
+	}
+	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
+		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
+	}
+	if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
+		errs = append(errs, agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes))
+	}
+	// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
+	// not validated. min_severity is checked case-insensitively against the
+	// rubric, max_findings must be a positive cap, and every scope entry must
+	// be a non-empty category (a blank entry is a YAML typo, not "all").
+	if normalized := stream.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+		errs = append(errs, agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name))
+	}
+	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
+		errs = append(errs, agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap))
+	}
+	for _, s := range a.Scope {
+		if strings.TrimSpace(s) == "" {
+			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not be empty", name))
+		} else if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
+			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not contain control characters", name))
+		}
+	}
+	return errs
+}
+
+// sortedKeys returns a map's string keys in ascending order, so validation walks
+// providers and agents deterministically regardless of Go's randomized map
+// iteration.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // applyDefaults fills optional agent fields: persona defaults to the agent
