@@ -25,7 +25,7 @@ type blockingCompleter struct {
 func (b *blockingCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
 	b.once.Do(func() { close(b.entered) })
 	<-ctx.Done()
-	return "", ctx.Err()
+	return "", context.Canceled
 }
 
 // startInFlightReview builds a serve-mode engine (via buildServer, so shutdownCtx
