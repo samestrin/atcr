@@ -44,10 +44,16 @@ func TestFilePath(t *testing.T) {
 	// AC3: system directories are rejected with the documented message.
 	assert.EqualError(t, FilePath("/etc/passwd"),
 		`invalid file path "/etc/passwd": must not reference system directories`)
-	for _, p := range []string{"/proc/self", "/sys/kernel"} {
+	for _, p := range []string{"/proc/self", "/sys/kernel", "/etc", "/proc", "/sys"} {
 		err := FilePath(p)
 		require.Error(t, err, p)
 		assert.Contains(t, err.Error(), "must not reference system directories", p)
+	}
+
+	// Directory-boundary match: siblings of the system dirs are NOT system
+	// directories and must pass (no bare-prefix false positives).
+	for _, p := range []string{"/etcd/data", "/etc-backup", "/system/x", "/procession"} {
+		require.NoError(t, FilePath(p), p)
 	}
 }
 
