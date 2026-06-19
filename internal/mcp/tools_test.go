@@ -23,13 +23,13 @@ func listTools(t *testing.T, cs *mcpsdk.ClientSession) map[string]*mcpsdk.Tool {
 
 func TestToolRegistration_Count(t *testing.T) {
 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
-	assert.Len(t, listTools(t, cs), 6)
+	assert.Len(t, listTools(t, cs), 7)
 }
 
 func TestToolRegistration_Names(t *testing.T) {
 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
 	tools := listTools(t, cs)
-	for _, want := range []string{ToolReview, ToolReconcile, ToolVerify, ToolReport, ToolRange, ToolStatus} {
+	for _, want := range []string{ToolReview, ToolReconcile, ToolVerify, ToolReport, ToolRange, ToolStatus, ToolMetrics} {
 		_, ok := tools[want]
 		assert.True(t, ok, "tool %q must be registered", want)
 	}

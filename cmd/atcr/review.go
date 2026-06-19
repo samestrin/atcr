@@ -13,6 +13,7 @@ import (
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/validation"
@@ -215,6 +216,14 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved
+	}
+
+	// End-of-review metrics summary (Epic 4.4 AC3): duration, agent outcome, API
+	// calls, and findings. Reads the process-global registry, which holds this
+	// review's totals (a CLI process runs one review). Printed after the one-line
+	// status above and before any one-shot reconcile/verify output.
+	if result != nil {
+		writeReviewSummary(cmd.OutOrStdout(), metrics.DefaultRegistry, time.Since(now), result.Summary.Total)
 	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review

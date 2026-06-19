@@ -90,7 +90,7 @@ func TestServe_InitializeHandshake(t *testing.T) {
 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
 	res, err := cs.ListTools(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Len(t, res.Tools, 6, "server advertises exactly six tools after initialize")
+	assert.Len(t, res.Tools, 7, "server advertises exactly seven tools after initialize")
 }
 
 // TestServe_InMemoryTransport verifies a tool is callable in-process with no

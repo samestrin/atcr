@@ -30,7 +30,7 @@ const Version = "1.0.0"
 // larger bound) before trusting the marker under heavier flush load.
 const shutdownDrain = 5 * time.Second
 
-// NewServer constructs the atcr MCP server with all five tools registered
+// NewServer constructs the atcr MCP server with all seven tools registered
 // against a shared engine rooted at root. completer drives the fan-out (the
 // real *llmclient.Client in production, a fake in tests); logger receives all
 // diagnostics and MUST write to stderr in serve mode (stdout is owned by the
@@ -94,7 +94,7 @@ func (e *engine) shutdownReviews(serverShutdown bool, timeout time.Duration) {
 	e.drain(timeout)
 }
 
-// buildServer wires the engine and registers the five tools, returning both the
+// buildServer wires the engine and registers the seven tools, returning both the
 // SDK server and the engine (so Serve can drain its background reviews).
 func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (*mcpsdk.Server, *engine, error) {
 	if logger == nil {
@@ -125,6 +125,7 @@ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (
 
 	registerTool(r, &mcpsdk.Tool{Name: ToolRange, Description: descRange}, e.handleRange)
 	registerTool(r, &mcpsdk.Tool{Name: ToolStatus, Description: descStatus}, e.handleStatus)
+	registerTool(r, &mcpsdk.Tool{Name: ToolMetrics, Description: descMetrics}, e.handleMetrics)
 
 	if r.err != nil {
 		return nil, nil, r.err

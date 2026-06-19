@@ -87,6 +87,10 @@ func WritePool(poolDir string, results []Result) (Summary, error) {
 		statuses = append(statuses, statusFor(r, fr))
 	}
 
+	// Findings metrics (Epic 4.4): count the raw findings the agents emitted, in
+	// total and by severity, before they are merged to disk.
+	recordFindingMetrics(merged)
+
 	// Merged pool findings (8-col, REVIEWER per row) for downstream convenience.
 	if err := writeFindings(filepath.Join(poolDir, findingsFile), merged); err != nil {
 		return Summary{}, err

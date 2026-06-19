@@ -19,6 +19,7 @@ const (
 	ToolReport    = "atcr_report"
 	ToolRange     = "atcr_range"
 	ToolStatus    = "atcr_status"
+	ToolMetrics   = "atcr_metrics"
 )
 
 // runningStatus is the status atcr_review returns immediately; the fan-out
@@ -76,6 +77,17 @@ type RangeArgs struct {
 // StatusArgs are the atcr_status tool arguments (all optional).
 type StatusArgs struct {
 	IDOrPath string `json:"id_or_path,omitempty" jsonschema:"review id to query (review id only; paths are not accepted); defaults to .atcr/latest"`
+}
+
+// MetricsArgs are the atcr_metrics tool arguments: none. The tool returns the
+// whole in-process registry.
+type MetricsArgs struct{}
+
+// MetricsResult carries the rendered metrics and the format they are in
+// (mirrors ReportResult). Format is always "prometheus".
+type MetricsResult struct {
+	Format  string `json:"format"`
+	Content string `json:"content"`
 }
 
 // ReviewResult is returned by atcr_review immediately after the review directory
@@ -164,6 +176,8 @@ const (
 		"Returns {base, head, commit_count, file_count}. Optional args: base, head, merge_commit (defaults to the current branch vs. the default branch)."
 	descStatus = "Report a review's fan-out progress. " +
 		"Returns {review_id, status, agent_count, agents_done, agents_pending, partial}. Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review)."
+	descMetrics = "Return the atcr in-process metrics (review/agent counts and latencies, API errors, findings) in Prometheus text exposition format, cumulative since the server started. " +
+		"Returns {format:\"prometheus\", content}. No arguments. Local-only: do not expose the server publicly."
 )
 
 // reportInputSchema builds the atcr_report input schema with the format property

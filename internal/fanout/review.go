@@ -12,6 +12,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
@@ -346,6 +347,17 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 // running them on an uncancelled child ctx — a deliberate engine change out of
 // scope here.
 func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) (*ReviewResult, error) {
+	// Review metrics (Epic 4.4): count this review and time the whole execution
+	// (fan-out + artifact persistence). The deferred Observe fires on every exit;
+	// the terminal succeeded/failed/interrupted classification is recorded at each
+	// return below. Instrumented here (not in the CLI) so the MCP server's
+	// background reviews are counted identically.
+	metrics.Counter(metrics.NameReviewsTotal).Inc()
+	reviewStart := time.Now()
+	defer func() {
+		metrics.Histogram(metrics.NameReviewDurationSeconds).Observe(time.Since(reviewStart).Seconds())
+	}()
+
 	poolDir := filepath.Join(p.Dir, "sources", "pool")
 
 	results, stage := runEngine(ctx, completer, p, poolDir)
@@ -377,6 +389,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 			p.manifest.Interrupted = interrupted
 			_ = WriteManifest(p.Dir, p.manifest) // best-effort; stale inference covers the `failed` outcome but manifest.Interrupted is lost if this write also fails
 		}
+		recordReviewOutcome(interrupted, true)
 		return nil, err
 	}
 
@@ -392,6 +405,7 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// agent ran with tools, so a pure 1.x roster's manifest is unchanged.
 	m.Review = stage
 	if err := WriteManifest(p.Dir, &m); err != nil {
+		recordReviewOutcome(interrupted, true)
 		return nil, err
 	}
 	p.manifest = &m
@@ -400,8 +414,10 @@ func ExecuteReview(ctx context.Context, completer Completer, p *PreparedReview) 
 	// The all-agents-failed gate runs after artifacts are on disk; the result is
 	// returned regardless so the caller knows where to look.
 	if _, outErr := Outcome(results); outErr != nil {
+		recordReviewOutcome(interrupted, true)
 		return res, outErr
 	}
+	recordReviewOutcome(interrupted, false)
 	return res, nil
 }
 
