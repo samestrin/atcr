@@ -45,9 +45,10 @@ func GitRef(ref string) error {
 }
 
 // FilePath validates a file path: non-empty, no path traversal (".."), and no
-// reference to the system directories /etc, /proc, or /sys. Callers that accept
-// relative paths should resolve them to an absolute, cleaned form (filepath.Abs)
-// before validating, so a legitimate relative path is not rejected for "..".
+// reference to the system directories /etc, /proc, /sys (and their macOS canonical
+// equivalents /private/etc and /private/var, since macOS /etc and /var are symlinks).
+// Callers that accept relative paths should resolve them to an absolute, cleaned form
+// (filepath.Abs) before validating, so a legitimate relative path is not rejected.
 //
 // The system-directory guard is oriented at Unix absolute paths. On Windows
 // (drive-letter/volume paths such as C:\Windows) it is inert; callers targeting
@@ -62,10 +63,10 @@ func FilePath(path string) error {
 		strings.Contains(path, "/../") || strings.HasSuffix(path, "/..") {
 		return &ValidationError{"file path", path, "must not contain .."}
 	}
-	// No paths under the system directories /etc, /proc, /sys. Match a directory
-	// boundary (the exact dir or a "<dir>/" prefix) so siblings like /etcd or
-	// /system are not falsely rejected by a bare prefix check.
-	for _, sysDir := range []string{"/etc", "/proc", "/sys"} {
+	// No paths under the system directories /etc, /proc, /sys or their macOS
+	// canonical paths (/private/etc, /private/var — macOS /etc and /var are symlinks).
+	// Match a directory boundary (exact dir or "<dir>/" prefix).
+	for _, sysDir := range []string{"/etc", "/proc", "/sys", "/private/etc", "/private/var"} {
 		if path == sysDir || strings.HasPrefix(path, sysDir+"/") {
 			return &ValidationError{"file path", path, "must not reference system directories"}
 		}
