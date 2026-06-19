@@ -132,6 +132,40 @@ func TestKeyEscapesCarriageReturn(t *testing.T) {
 	}
 }
 
+func TestHistogramSnapshotMatchesPerCallAccessors(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("snap")
+	for _, v := range []float64{5, 1, 4, 2, 3} {
+		h.Observe(v)
+	}
+	sum, count, pcts := h.snapshot(summaryQuantiles)
+	if sum != h.Sum() {
+		t.Errorf("snapshot sum = %v, want %v", sum, h.Sum())
+	}
+	if count != h.Count() {
+		t.Errorf("snapshot count = %d, want %d", count, h.Count())
+	}
+	for i, q := range summaryQuantiles {
+		if got, want := pcts[i], h.Percentile(q*100); got != want {
+			t.Errorf("snapshot percentile[%d] (q=%v) = %v, want %v", i, q, got, want)
+		}
+	}
+}
+
+func TestHistogramSnapshotEmpty(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("snap_empty")
+	sum, count, pcts := h.snapshot(summaryQuantiles)
+	if sum != 0 || count != 0 {
+		t.Errorf("empty snapshot sum/count = %v/%d, want 0/0", sum, count)
+	}
+	for i, p := range pcts {
+		if p != 0 {
+			t.Errorf("empty snapshot percentile[%d] = %v, want 0", i, p)
+		}
+	}
+}
+
 func TestMetricFamilyAndSplitLabels(t *testing.T) {
 	if got := metricFamily("m"); got != "m" {
 		t.Errorf("metricFamily(m) = %q, want m", got)
