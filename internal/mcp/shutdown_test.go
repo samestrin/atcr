@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -214,4 +216,59 @@ func TestWithShutdownCancel_NilShutdownCtxIsNoop(t *testing.T) {
 		t.Fatal("ctx unexpectedly cancelled with no shutdown context")
 	default:
 	}
+}
+
+// TestServeShutdown_LogsWarnOnInterrupt verifies a detached review cancelled by
+// server shutdown emits a structured Warn for greppability parity with the CLI
+// "review interrupted by signal" log (handlers.go:231 TD item).
+func TestServeShutdown_LogsWarnOnInterrupt(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	var logBuf bytes.Buffer
+	logger, err := log.New("warn", "text", &logBuf)
+	require.NoError(t, err)
+
+	bc := &blockingCompleter{entered: make(chan struct{})}
+	_, e, err := buildServer(root, bc, logger)
+	require.NoError(t, err)
+
+	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	require.Equal(t, runningStatus, res.Status)
+
+	select {
+	case <-bc.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detached fan-out never started")
+	}
+	t.Cleanup(func() {
+		if e.shutdownCancel != nil {
+			e.shutdownCancel()
+		}
+		e.drain(time.Second)
+	})
+
+	e.shutdownReviews(true, shutdownDrain)
+
+	assert.Contains(t, logBuf.String(), "review interrupted by server shutdown",
+		"shutdown-interrupted MCP review must emit structured Warn for log greppability")
+}
+
+// TestShutdownReviews_LogsWarnOnServerShutdown verifies shutdownReviews emits a
+// structured Warn when serverShutdown is true, making serve-side cancellation
+// diagnosable from logs (server.go:48 TD item).
+func TestShutdownReviews_LogsWarnOnServerShutdown(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger, err := log.New("warn", "text", &logBuf)
+	require.NoError(t, err)
+
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	e := &engine{log: logger, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel}
+
+	e.shutdownReviews(true, 0)
+
+	assert.Contains(t, logBuf.String(), "server shutdown: cancelling in-flight detached reviews",
+		"shutdownReviews(serverShutdown=true) must emit Warn for diagnosability")
 }
