@@ -83,65 +83,38 @@ func (r *Registry) WritePrometheus() string {
 
 	var b strings.Builder
 
-	// Counters, grouped by family so each family emits exactly one TYPE header
-	// even when keys with a shared family do not sort contiguously next to a
-	// neighbouring family's keys.
-	families := make(map[string][]string, len(counters))
+	ctrKeys := make([]string, 0, len(counters))
 	for k := range counters {
-		f := metricFamily(k)
-		families[f] = append(families[f], k)
+		ctrKeys = append(ctrKeys, k)
 	}
-	for _, fam := range sortedKeys(families) {
-		fmt.Fprintf(&b, "# TYPE %s counter\n", fam)
-		keys := families[fam]
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(&b, "%s %d\n", k, counters[k].Value())
-		}
-	}
+	writeFamily(&b, ctrKeys, "counter", func(_, k string) {
+		fmt.Fprintf(&b, "%s %d\n", k, counters[k].Value())
+	})
 
-	// Gauges, grouped by family so each family emits exactly one TYPE header.
-	// A gauge renders its current float value (shortest exact decimal), unlike a
-	// counter's integer total or a histogram's summary lines.
-	gaugeFamilies := make(map[string][]string, len(gauges))
+	gaugeKeys := make([]string, 0, len(gauges))
 	for k := range gauges {
-		f := metricFamily(k)
-		gaugeFamilies[f] = append(gaugeFamilies[f], k)
+		gaugeKeys = append(gaugeKeys, k)
 	}
-	for _, fam := range sortedKeys(gaugeFamilies) {
-		fmt.Fprintf(&b, "# TYPE %s gauge\n", fam)
-		keys := gaugeFamilies[fam]
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(&b, "%s %s\n", k, formatFloat(gauges[k].Value()))
-		}
-	}
+	writeFamily(&b, gaugeKeys, "gauge", func(_, k string) {
+		fmt.Fprintf(&b, "%s %s\n", k, formatFloat(gauges[k].Value()))
+	})
 
-	// Histograms as Prometheus summaries, grouped by family so each family emits
-	// exactly one TYPE header even when it has several labeled keyed variants
-	// (duplicate TYPE lines are invalid exposition format).
-	histFamilies := make(map[string][]string, len(histograms))
+	histKeys := make([]string, 0, len(histograms))
 	for k := range histograms {
-		f := metricFamily(k)
-		histFamilies[f] = append(histFamilies[f], k)
+		histKeys = append(histKeys, k)
 	}
-	for _, fam := range sortedKeys(histFamilies) {
-		fmt.Fprintf(&b, "# TYPE %s summary\n", fam)
-		keys := histFamilies[fam]
-		sort.Strings(keys)
-		for _, k := range keys {
-			_, inner := splitLabels(k)
-			// One lock + one sort per histogram per scrape: snapshot returns every
-			// quantile, the sum, and the count together, so a family's lines are also
-			// internally consistent against a concurrent Observe.
-			sum, count, pcts := histograms[k].snapshot(summaryQuantiles)
-			for i, q := range summaryQuantiles {
-				fmt.Fprintf(&b, "%s%s %s\n", fam, withQuantile(inner, q), formatFloat(pcts[i]))
-			}
-			fmt.Fprintf(&b, "%s_sum%s %s\n", fam, labelSuffix(inner), formatFloat(sum))
-			fmt.Fprintf(&b, "%s_count%s %d\n", fam, labelSuffix(inner), count)
+	// One lock + one sort per histogram per scrape: snapshot returns every
+	// quantile, the sum, and the count together, so a family's lines are also
+	// internally consistent against a concurrent Observe.
+	writeFamily(&b, histKeys, "summary", func(fam, k string) {
+		_, inner := splitLabels(k)
+		sum, count, pcts := histograms[k].snapshot(summaryQuantiles)
+		for i, q := range summaryQuantiles {
+			fmt.Fprintf(&b, "%s%s %s\n", fam, withQuantile(inner, q), formatFloat(pcts[i]))
 		}
-	}
+		fmt.Fprintf(&b, "%s_sum%s %s\n", fam, labelSuffix(inner), formatFloat(sum))
+		fmt.Fprintf(&b, "%s_count%s %d\n", fam, labelSuffix(inner), count)
+	})
 
 	return b.String()
 }
@@ -175,6 +148,25 @@ func (h *histogram) snapshot(quantiles []float64) (sum float64, count int64, per
 		percentiles[i] = h.sortedCache[rank-1]
 	}
 	return sum, count, percentiles
+}
+
+// writeFamily groups keys by Prometheus metric family, emits one TYPE header per
+// family, then calls renderKey(fam, key) for each key within the family. Keys and
+// families are both emitted in sorted order for stable output.
+func writeFamily(b *strings.Builder, keys []string, typeKeyword string, renderKey func(fam, key string)) {
+	families := make(map[string][]string, len(keys))
+	for _, k := range keys {
+		f := metricFamily(k)
+		families[f] = append(families[f], k)
+	}
+	for _, fam := range sortedKeys(families) {
+		fmt.Fprintf(b, "# TYPE %s %s\n", fam, typeKeyword)
+		ks := families[fam]
+		sort.Strings(ks)
+		for _, k := range ks {
+			renderKey(fam, k)
+		}
+	}
 }
 
 // sortedKeys returns the map keys in sorted order.
