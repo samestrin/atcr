@@ -499,13 +499,20 @@ func httpStatusError(status int, snippet string) error {
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
 	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
+	// fleetKeyPattern matches the distinctive key prefixes of the other
+	// OpenAI-compatible fleet providers (Google AIza…, Groq gsk_…, xAI xai-…) so a
+	// foreign key echoed in an error body is scrubbed like an sk-/Bearer token.
+	// This stays best-effort defense-in-depth: a generic JWT/hex/base64 secret
+	// with no known prefix is not covered (only the configured key is scrubbed by
+	// exact match for those).
+	fleetKeyPattern = regexp.MustCompile(`(?i)(?:AIza|gsk_|xai-)\S+`)
 )
 
 // redactErrorSnippet scrubs secrets from a provider error snippet. It removes
 // the configured key in both literal and URL-encoded form (an exact-match scrub
 // alone misses a key the provider echoes re-encoded), then redacts any
-// Bearer-prefixed or sk- shaped token generically so a foreign or transformed
-// secret cannot leak into HTTPStatusError.Snippet.
+// Bearer-, sk-, or known-fleet-prefixed (AIza/gsk_/xai-) token generically so a
+// foreign or transformed secret cannot leak into HTTPStatusError.Snippet.
 func redactErrorSnippet(snippet, key string) string {
 	if key != "" {
 		snippet = strings.ReplaceAll(snippet, key, "[redacted]")
@@ -515,6 +522,7 @@ func redactErrorSnippet(snippet, key string) string {
 	}
 	snippet = bearerTokenPattern.ReplaceAllString(snippet, "Bearer [redacted]")
 	snippet = skKeyPattern.ReplaceAllString(snippet, "[redacted]")
+	snippet = fleetKeyPattern.ReplaceAllString(snippet, "[redacted]")
 	return snippet
 }
 
