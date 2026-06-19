@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 15 | 0 |
-| LOW | 0 | 14 | 0 |
+| MEDIUM | 1 | 15 | 0 |
+| LOW | 3 | 14 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 0 | **Deferred Items:** 30 | **Resolved Items:** 0 | **Total Items:** 30
+**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 30 | **Resolved Items:** 0 | **Total Items:** 34
 
 ## Directory Structure
 
@@ -33,6 +33,15 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-18] From Sprint: epic-4.3
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | internal/validation/validation.go:51 | FilePath system-directory guard is Unix-only (forward-slash absolute prefixes /etc, /proc, /sys); on Windows drive-letter/volume paths (C:\Windows) it is inert so review --output-dir and report --output system-dir protection is a no-op there | Add volume-aware Windows system-path detection (e.g. C:\Windows, C:\Program Files) or formalize Unix-only support behind a platform guard | SECURITY | 60 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/validation/validation.go:58 | FilePath's ".." branch is dead at both production call sites (review.go and report.go call it post-filepath.Abs, which already cleans ..); only the system-dir denylist is live there | Document that .. is pre-resolved by Abs at those call sites, or call FilePath pre-Abs if raw-input traversal detection is desired | CORRECTNESS | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-06-18] From Sprint: epic-4.2
 
