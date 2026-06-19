@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,6 +68,12 @@ func TestFilePath(t *testing.T) {
 	for _, p := range []string{"/etcd/data", "/etc-backup", "/system/x", "/procession"} {
 		require.NoError(t, FilePath(p), p)
 	}
+
+	// Caller contract: callers invoke filepath.Abs before FilePath. A traversal
+	// that Clean collapses to a system dir is still rejected by the guard.
+	require.Error(t, FilePath(filepath.Clean("/foo/../etc/passwd")))
+	// A legitimate ".." -in-name path survives Clean unchanged and must be accepted.
+	require.NoError(t, FilePath(filepath.Clean("/home/user/my..file")))
 }
 
 func TestReviewID(t *testing.T) {
