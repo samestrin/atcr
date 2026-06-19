@@ -45,6 +45,13 @@ type engine struct {
 	// Interrupted=true, while a handler returning normally leaves them untouched
 	// (epic 4.1.2). nil when the engine is built outside buildServer (NewServer
 	// discards its engine; tests may construct &engine{} directly).
+	//
+	// Concurrency contract: both fields are assigned once in buildServer before the
+	// engine is shared with any goroutine and are only read thereafter — never
+	// reassigned. A context.Context and a CancelFunc are each safe for concurrent
+	// use, so the drain path firing shutdownCancel races no reader of shutdownCtx
+	// (withShutdownCancel, handleReview): access is data-race-free, not merely
+	// unlikely-to-collide.
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 }
