@@ -7,12 +7,13 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 1 | 0 |
-| MEDIUM | 1 | 14 | 0 |
-| LOW | 3 | 13 | 0 |
+| HIGH | 1 | 1 | 0 |
+| MEDIUM | 3 | 14 | 0 |
+| LOW | 4 | 13 | 3 |
+| SEVERITY | 1 | 0 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 28 | **Resolved Items:** 0 | **Total Items:** 32
+**Last Modified:** 2026-06-18 | **Open Items:** 9 | **Deferred Items:** 28 | **Resolved Items:** 3 | **Total Items:** 40
 
 ## Directory Structure
 
@@ -34,13 +35,26 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+### [2026-06-18] From Sprint: 4.1.2_mcp-detached-review-interrupt
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 2 | [ ] | HIGH | internal/mcp/handlers.go:230 | Potential race condition on shutdownCtx access | Ensure shutdownCancel is always called eventually, or document lifecycle contract | correctness | 30 | code-review | otto | MEDIUM |
+| 2 | [ ] | MEDIUM | internal/mcp/handlers.go:230 | goroutine leak if shutdownCancel never called and e.shutdownCtx is non-nil | Ensure shutdownCancel is always called eventually, or document lifecycle contract | correctness | 30 | code-review | bruce | MEDIUM |
+| 2 | [ ] | MEDIUM | internal/mcp/server.go:47 | The crux integration of epic 4.1.2 — Serve calling e.shutdownReviews(ctx.Err() != nil, shutdownDrain) after s.Run returns — has no test. All three shutdown_test.go tests invoke e.shutdownReviews(...) directly with a hand-picked boolean; none drives Serve end-to-end, so the ctx.Err() != nil expression that discriminates SIGINT-shutdown (AC1, interrupt) from clean stdio disconnect (AC3, leave running) is never exercised. A regression that inverts the boolean, drops the call, or reorders it before s.Run would pass every existing test. | Add a Serve-level test driving an in-memory/real transport: cancel the root ctx and assert the in-flight detached review lands interrupted; return from the transport with a non-cancelled ctx and assert it stays in_progress. Verify the test fails if the ctx.Err() != nil argument is replaced by a constant. cmd serve_test.go only checks logger threading, not shutdown semantics. | testing | 120 | code-review | claude | MEDIUM |
+| 2 | [ ] | LOW | internal/mcp/server.go:67 | shutdownReviews fires e.shutdownCancel() then e.drain(timeout) bounded at shutdownDrain (5s). The interrupted-marker flush (unwind blocked agents, WritePool, WriteManifest) must complete inside that window for AC1's on-disk interrupted status to persist before process exit. With a completer that does not promptly honor ctx.Done(), slow disk, or many agents, drain can return while the manifest write is still in flight. Bounded by the deliberately-unchanged 5s drain (AC3) and shared with the CLI SIGINT path, so degraded-but-safe (worst case left in_progress, never false completed), not a regression. | Document that shutdownDrain must comfortably exceed worst-case interrupt-flush latency; optionally let the SIGINT path block on e.bg.Wait() with a larger bound since the AC1 marker is the whole point. Verify with a completer whose ctx.Done() handler sleeps longer than shutdownDrain and assert on-disk status is still interrupted. | error-handling | 60 | code-review | claude | MEDIUM |
+| 2 | [ ] | LOW | internal/mcp/server.go:67 | shutdownReviews called unconditionally but e may be nil if buildServer fails | Document that shutdownDrain must comfortably exceed worst-case interrupt-flush latency; optionally let the SIGINT path block on e.bg.Wait() with a larger bound since the AC1 marker is the whole point. Verify with a completer whose ctx.Done() handler sleeps longer than shutdownDrain and assert on-disk status is still interrupted. | error-handling | 60 | code-review | bruce | MEDIUM |
+| 2 | [ ] | LOW | internal/mcp/shutdown_test.go:47 | blockingCompleter.Complete returns ctx.Err() as error string; may mask real error | Return a sentinel error or context.Canceled directly for clarity | maintainability | 5 | code-review | bruce | MEDIUM |
+| 2 | [ ] | LOW | internal/mcp/shutdown_test.go:90 | TestServeShutdown_ClientDisconnectDoesNotInterrupt asserts the review stays RunInProgress after a 200ms disconnect drain. That equality holds only because writeReviewConfig's timeout_secs + stale grace exceeds 200ms wall time; if the test config ever sets a sub-second timeout, ReadReviewStatus returns RunStale and the test fails for an unrelated reason, masking whether interrupt actually occurred. The behavioral intent (disconnect must not interrupt) is fully carried by the NotEqual(RunInterrupted) assertion on the prior line. | Pin the test config timeout well above the drain window with an explanatory comment, or treat the Equal(RunInProgress) line as secondary to the NotEqual(RunInterrupted) intent. Verify by lowering the config timeout and confirming the test intent survives. | testing | 15 | code-review | claude | MEDIUM |
+| U | [ ] | SEVERITY | FILE:LINE | PROBLEM | FIX | CATEGORY | 0 | SOURCE | REVIEWERS | CONFIDENCE |
+
 ### [2026-06-18] From Sprint: epic-4.1.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/mcp/handlers.go:231 | A detached MCP review cancelled by server shutdown records the interrupted marker on disk but emits no greppable structured Warn (the CLI path logs "review interrupted by signal" with review_id per epic 4.1/4.1.1); monitoring/CI grepping serve-mode logs for interrupted reviews finds nothing. | In handleReview's goroutine, when ExecuteReview returns and e.shutdownCtx.Err()!=nil, emit log.FromContext(rctx).Warn("review interrupted by server shutdown", review_id) for CLI/MCP observability parity. | OBSERVABILITY | 30 | execute-epic-cumulative |
-| 1 | [ ] | LOW | internal/mcp/server.go:48 | Serve cancels in-flight detached reviews on shutdown with no log line, so an interrupted serve-mode review is only evidenced by the on-disk manifest, nothing in stderr. | Emit a slog Warn (e.g. logger().Warn("server shutdown: cancelling in-flight detached reviews")) in shutdownReviews before firing shutdownCancel, for diagnosability. | OBSERVABILITY | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/mcp/handlers.go:120 | The cancel returned by withShutdownCancel runs stop() then cancel(); when shutdown already fired AfterFunc has concurrently invoked cancel and stop() returns false, so cancel runs twice - harmless (CancelFunc is idempotent) but the concurrent double-invoke is not noted at the call site. | Add a one-line note to the withShutdownCancel doc that cancel may already have run via AfterFunc and the second call is a deliberate idempotent no-op. | EDGE_CASES | 5 | execute-epic-independent |
+| 1 | [x] | LOW | internal/mcp/handlers.go:231 | A detached MCP review cancelled by server shutdown records the interrupted marker on disk but emits no greppable structured Warn (the CLI path logs "review interrupted by signal" with review_id per epic 4.1/4.1.1); monitoring/CI grepping serve-mode logs for interrupted reviews finds nothing. | In handleReview's goroutine, when ExecuteReview returns and e.shutdownCtx.Err()!=nil, emit log.FromContext(rctx).Warn("review interrupted by server shutdown", review_id) for CLI/MCP observability parity. | OBSERVABILITY | 30 | execute-epic-cumulative |
+| 1 | [x] | LOW | internal/mcp/server.go:48 | Serve cancels in-flight detached reviews on shutdown with no log line, so an interrupted serve-mode review is only evidenced by the on-disk manifest, nothing in stderr. | Emit a slog Warn (e.g. logger().Warn("server shutdown: cancelling in-flight detached reviews")) in shutdownReviews before firing shutdownCancel, for diagnosability. | OBSERVABILITY | 15 | execute-epic-independent |
+| 1 | [x] | LOW | internal/mcp/handlers.go:120 | The cancel returned by withShutdownCancel runs stop() then cancel(); when shutdown already fired AfterFunc has concurrently invoked cancel and stop() returns false, so cancel runs twice - harmless (CancelFunc is idempotent) but the concurrent double-invoke is not noted at the call site. | Add a one-line note to the withShutdownCancel doc that cancel may already have run via AfterFunc and the second call is a deliberate idempotent no-op. | EDGE_CASES | 5 | execute-epic-independent |
 | U | [ ] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. | CORRECTNESS | 30 | execute-epic-independent |
 
 ### [2026-06-17] From Sprint: epic-4.1
