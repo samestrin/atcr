@@ -1,0 +1,95 @@
+{
+  "reviewers": [
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 35919,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 46699,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 96912,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 26442,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 152452,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "ok",
+      "durationMs": 151450,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 278624,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "ok",
+      "durationMs": 219882,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 65295,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 98585,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 164143,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "timeout",
+      "durationMs": 300007,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    }
+  ],
+  "totalFindings": 5,
+  "partial": true,
+  "totalDurationMs": 452462,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-18T20:20:05-07:00"
+}

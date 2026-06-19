@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 1 | 1 | 0 |
-| MEDIUM | 0 | 15 | 2 |
-| LOW | 3 | 13 | 2 |
+| MEDIUM | 0 | 15 | 0 |
+| LOW | 3 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 29 | **Resolved Items:** 4 | **Total Items:** 37
+**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 29 | **Resolved Items:** 0 | **Total Items:** 33
 
 ## Directory Structure
 
@@ -38,11 +38,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 2 | [x] | LOW | internal/registry/attribution.go:48 | Unidiomatic type assertion for multi-error unwrapping | Use errors.As(err, &joined) instead of direct type assertion | maintainability | 5 | code-review | bruce | MEDIUM |
-| 2 | [x] | MEDIUM | internal/registry/config.go:233 | validateProvider may return empty error slice for valid providers | Add a check to skip appending if errs is empty | maintainability | 5 | code-review | bruce | MEDIUM |
-| 2 | [x] | LOW | internal/registry/config.go:248 | Redundant `strings.TrimSpace` in error message | Remove `strings.TrimSpace` since it is only used in the formatted error string and not for validation | maintainability | 2 | code-review | otto | MEDIUM |
 | 2 | [ ] | HIGH | internal/registry/graph.go:42 | walkFallbacks panics when accumulation continues past dangling fallbacks | Add color[name]=black after dangling error to skip cycle walk | correctness | 10 | code-review | bruce | MEDIUM |
-| 2 | [x] | MEDIUM | internal/registry/graph.go:67 | walkFallbacks now blackens lead-in nodes but comment says "Nothing to do here" | Remove dead comment or add a log statement | maintainability | 2 | code-review | bruce | MEDIUM |
 | 2 | [ ] | LOW | internal/registry/overlay.go:224 | validateMerged() and LoadRegistry() (config.go:193-197) call validate() then ValidateFallbacks() sequentially with an early return on the first non-nil result. A registry that has BOTH a settings/agent fault AND a fallback-chain fault reports only the validate() faults in one run; the user fixes those, re-runs, and only then discovers the fallback fault. Within each function accumulation works (AC6), but across the validate/fallback boundary it still behaves one-at-a-time. (intent_note: deferred per epic §Clarifications) | In validateMerged() and LoadRegistry(), run both validate() and ValidateFallbacks() unconditionally and combine via errors.Join(r.attribute(vErr), r.attribute(fbErr)) (errors.Join drops nils, preserving the valid path). Alternatively, if the staged order is intentional (fallback checks assume structurally-valid agents), document the limitation in the AC6 acceptance note. Deliberately scoped out per epic Clarifications — flagging so a human confirms close-vs-document. | completeness | 30 | code-review | claude | MEDIUM |
 | U | [ ] | LOW | cmd/atcr/review_test.go:386 | TestReviewCmd_InvalidConfigReportsAllErrors validates AC7 (validation before review-directory creation) only indirectly via exit code 2 and message substrings; it never asserts that NO review output directory / report was created on the invalid-config path. A future regression that validated late (after creating the review dir) but still exited 2 would pass this test, leaving AC7's fail-before-side-effects guarantee unguarded. | After execCmdCapture returns code 2, add an assertion that the review run/report output directory does not exist on disk, proving fail-fast occurred before any filesystem side effect. | testing | 20 | code-review | claude | MEDIUM |
 

@@ -1,0 +1,682 @@
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 83e903e..92b1a77 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -382,6 +382,41 @@ func TestBoolFlag_UndefinedFlagPanics(t *testing.T) {
+ // Observable: --require-verified --verify with project fail_on:HIGH must NOT
+ // fire the precondition error ("--require-verified requires --fail-on and
+ // --verify"), because the config-supplied threshold satisfies the gate check.
++// TestReviewCmd_InvalidConfigReportsAllErrors is the Epic 4.2 command-boundary
++// acceptance test: `atcr review` with an invalid registry fails fast as a usage
++// error (exit 2 — AC5) before any provider call or review-directory creation
++// (AC7), and the message lists every validation fault at once (AC6), so the user
++// fixes them in one edit (AC9 — fails fast with a clear error).
++func TestReviewCmd_InvalidConfigReportsAllErrors(t *testing.T) {
++	isolate(t)
++	initGitRepoWithChange(t)
++
++	home, err := os.UserHomeDir()
++	require.NoError(t, err)
++	regDir := filepath.Join(home, ".config", "atcr")
++	require.NoError(t, os.MkdirAll(regDir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(regDir, "registry.yaml"), []byte(`timeout_secs: -1
++payload_mode: bogus
++providers:
++  testprov:
++    api_key_env: ATCR_TEST_REVIEW_KEY
++agents:
++  bruce:
++    provider: testprov
++    min_severity: BOGUS
++`), 0o644))
++	require.NoError(t, os.MkdirAll(".atcr", 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(".atcr", "config.yaml"), []byte("agents: [bruce]\n"), 0o644))
++
++	code, out := execCmdCapture(t, "review", "--base", "HEAD^")
++	require.Equal(t, 2, code, "AC5: invalid config is a usage error (exit 2)")
++	// AC6: all faults reported together, not one-at-a-time.
++	assert.Contains(t, out, "timeout_secs", "AC3 fault must surface")
++	assert.Contains(t, out, "payload_mode", "AC2 fault must surface")
++	assert.Contains(t, out, "required field 'model'", "AC1 fault must surface")
++	assert.Contains(t, out, "min_severity", "AC2/AC4 fault must surface")
++}
++
+ func TestRunReview_ProjectConfigGateActivatedWithoutFlag(t *testing.T) {
+ 	isolate(t)
+ 	require.NoError(t, os.MkdirAll(".atcr", 0o755))
+diff --git a/docs/registry.md b/docs/registry.md
+index b14250c..43d512d 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -1,6 +1,6 @@
+ # Configuration Reference
+ 
+-atcr reads configuration from a user file, optional project files, and embedded defaults, resolved by a strict precedence chain. Every file is strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout.
++atcr reads configuration from a user file, optional project files, and embedded defaults, resolved by a strict precedence chain. Every file is strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout. All faults in a config are reported together (each naming the file that defined the offending entry), so you fix them in a single pass rather than one error per run.
+ 
+ | File | Scope | Holds |
+ |------|-------|-------|
+diff --git a/internal/registry/accumulate_test.go b/internal/registry/accumulate_test.go
+new file mode 100644
+index 0000000..a610b65
+--- /dev/null
++++ b/internal/registry/accumulate_test.go
+@@ -0,0 +1,258 @@
++package registry
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 4.2 (AC6): configuration validation reports every error at once rather
++// than short-circuiting on the first one, so a user fixes all config mistakes
++// in a single edit instead of one-per-run. These tests pin the accumulate-all
++// contract across the three validation surfaces: (*Registry).validate(),
++// ValidateFallbacks(), and the merged-registry attribution path.
++
++// TestValidate_AccumulatesAllErrors proves a single registry carrying multiple
++// independent faults surfaces all of them in one error, not just the first.
++func TestValidate_AccumulatesAllErrors(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
++		Agents: map[string]AgentConfig{
++			"alpha": {Provider: "openai", Model: ""},                        // missing model
++			"bravo": {Provider: "openai", Model: "m", MinSeverity: "BOGUS"}, // invalid enum
++		},
++		PayloadMode: "bogus",    // invalid enum
++		TimeoutSecs: intPtr(-1), // out of range
++	}
++
++	err := reg.validate()
++	require.Error(t, err)
++
++	msg := err.Error()
++	// Every distinct fault must appear — not just whichever the loop hit first.
++	assert.Contains(t, msg, "timeout_secs", "settings range error must be reported")
++	assert.Contains(t, msg, "payload_mode", "settings enum error must be reported")
++	assert.Contains(t, msg, "alpha", "missing-model agent error must be reported")
++	assert.Contains(t, msg, "model", "missing-model agent error must be reported")
++	assert.Contains(t, msg, "bravo", "invalid-enum agent error must be reported")
++	assert.Contains(t, msg, "min_severity", "invalid-enum agent error must be reported")
++}
++
++// TestValidate_DeterministicOrder proves accumulated output is stable across
++// runs despite Go map iteration being randomized — required so error messages
++// and any golden assertions don't flake.
++func TestValidate_DeterministicOrder(t *testing.T) {
++	build := func() *Registry {
++		return &Registry{
++			Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
++			Agents: map[string]AgentConfig{
++				"zulu":   {Provider: "openai", Model: ""},
++				"alpha":  {Provider: "openai", Model: ""},
++				"mike":   {Provider: "openai", Model: ""},
++				"bravo":  {Provider: "openai", Model: ""},
++				"yankee": {Provider: "openai", Model: ""},
++			},
++		}
++	}
++	first := build().validate().Error()
++	for i := 0; i < 20; i++ {
++		require.Equal(t, first, build().validate().Error(),
++			"accumulated validation output must be deterministic across runs")
++	}
++	// Agents reported in sorted name order.
++	idxAlpha := strings.Index(first, "alpha")
++	idxBravo := strings.Index(first, "bravo")
++	idxMike := strings.Index(first, "mike")
++	idxYankee := strings.Index(first, "yankee")
++	idxZulu := strings.Index(first, "zulu")
++	assert.True(t, idxAlpha < idxBravo && idxBravo < idxMike && idxMike < idxYankee && idxYankee < idxZulu,
++		"agent errors must be emitted in sorted order, got: %s", first)
++}
++
++// TestValidate_ValidRegistryReturnsNil guards the happy path: accumulation must
++// not manufacture an error when there are none (errors.Join(nil...) == nil).
++func TestValidate_ValidRegistryReturnsNil(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
++		Agents:    map[string]AgentConfig{"alpha": {Provider: "openai", Model: "m"}},
++	}
++	assert.NoError(t, reg.validate())
++}
++
++// TestValidateFallbacks_AccumulatesMultipleDangling proves two distinct dangling
++// references are both reported in one pass.
++func TestValidateFallbacks_AccumulatesMultipleDangling(t *testing.T) {
++	reg := agentsWithFallbacks(map[string]string{
++		"alpha": "ghost-a",
++		"bravo": "ghost-b",
++	})
++	err := reg.ValidateFallbacks()
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrDanglingFallback)
++	assert.Contains(t, err.Error(), "agent 'alpha' fallback references unknown agent 'ghost-a'")
++	assert.Contains(t, err.Error(), "agent 'bravo' fallback references unknown agent 'ghost-b'")
++}
++
++// TestValidateFallbacks_AccumulatesDanglingAndCycle proves an independent
++// dangling reference and a cycle are both reported, not just the first found.
++func TestValidateFallbacks_AccumulatesDanglingAndCycle(t *testing.T) {
++	reg := agentsWithFallbacks(map[string]string{
++		"dang":  "ghost",
++		"cycle": "loop",
++		"loop":  "cycle",
++	})
++	err := reg.ValidateFallbacks()
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrDanglingFallback)
++	assert.ErrorIs(t, err, ErrFallbackCycle)
++	assert.Contains(t, err.Error(), "agent 'dang' fallback references unknown agent 'ghost'")
++	assert.Contains(t, err.Error(), "fallback cycle detected")
++}
++
++// TestValidateFallbacks_LeadInIntoReportedCycleNoPanic guards the accumulation
++// hazard: after a cycle is detected, continuing the DFS must not re-walk a
++// lead-in node that points INTO the already-reported cycle (which would trip
++// walkFallbacks's "gray node must be on current path" invariant and panic).
++// {a:b, b:a} is a cycle; {c:a} is a lead-in that must NOT be reported as a
++// second cycle and must NOT panic.
++func TestValidateFallbacks_LeadInIntoReportedCycleNoPanic(t *testing.T) {
++	reg := agentsWithFallbacks(map[string]string{
++		"a": "b",
++		"b": "a",
++		"c": "a",
++	})
++	var err error
++	require.NotPanics(t, func() { err = reg.ValidateFallbacks() })
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrFallbackCycle)
++	// Exactly one cycle reported — the lead-in "c" is not a separate cycle.
++	assert.Equal(t, 1, strings.Count(err.Error(), "fallback cycle detected"),
++		"lead-in into an existing cycle must not be reported as a second cycle, got: %s", err.Error())
++}
++
++// TestValidateFallbacks_LeadInLeftGrayThenRevisited is the regression test for
++// the panic the independent reviewer reproduced: walkFallbacks colors a lead-in
++// node ("a") gray on the way INTO a cycle ("b"<->"c"), but "a" is not part of the
++// trimmed cycle path. If only the cycle path were blackened, a separate later
++// root ("d") whose edge points at the leftover-gray "a" would trip walkFallbacks's
++// "gray node not on current path" invariant and panic. Both reviewer repros are
++// covered: {a:b,b:c,c:b,d:a} and {a:x,x:y,y:z,z:y,w:x}.
++func TestValidateFallbacks_LeadInLeftGrayThenRevisited(t *testing.T) {
++	cases := []map[string]string{
++		{"a": "b", "b": "c", "c": "b", "d": "a"},
++		{"a": "x", "x": "y", "y": "z", "z": "y", "w": "x"},
++	}
++	for i, edges := range cases {
++		reg := agentsWithFallbacks(edges)
++		var err error
++		require.NotPanics(t, func() { err = reg.ValidateFallbacks() },
++			"case %d: a lead-in node left gray must not panic when revisited", i)
++		require.Error(t, err)
++		assert.ErrorIs(t, err, ErrFallbackCycle)
++		// The single real cycle is reported exactly once; lead-in chains are not
++		// re-reported as cycles.
++		assert.Equal(t, 1, strings.Count(err.Error(), "fallback cycle detected"),
++			"case %d: exactly one cycle expected, got: %s", i, err.Error())
++	}
++}
++
++// TestValidateFallbacks_TwoIndependentCycles proves two disjoint cycles are both
++// reported.
++func TestValidateFallbacks_TwoIndependentCycles(t *testing.T) {
++	reg := agentsWithFallbacks(map[string]string{
++		"a": "b", "b": "a",
++		"c": "d", "d": "c",
++	})
++	err := reg.ValidateFallbacks()
++	require.Error(t, err)
++	assert.Equal(t, 2, strings.Count(err.Error(), "fallback cycle detected"),
++		"two disjoint cycles must both be reported, got: %s", err.Error())
++}
++
++// TestValidateFallbacks_ValidReturnsNil guards the happy path.
++func TestValidateFallbacks_ValidReturnsNil(t *testing.T) {
++	reg := agentsWithFallbacks(map[string]string{"a": "b", "b": ""})
++	assert.NoError(t, reg.ValidateFallbacks())
++}
++
++// TestAttribute_MultiErrorPerEntryFiles proves that when accumulation produces
++// faults spanning both registry tiers, each fault is attributed to the file that
++// defined its entry — not the whole blob to whichever entry happened to be first.
++func TestAttribute_MultiErrorPerEntryFiles(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
++		Agents: map[string]AgentConfig{
++			"uagent": {Provider: "p", Model: "m", MinSeverity: "BOGUS"},
++			"pagent": {Provider: "p", Model: "m", MinSeverity: "BOGUS"},
++		},
++	}
++	reg.stampSource(SourceUser)                                                              // all entries user-tier...
++	reg.AgentSource["pagent"] = EntrySource{Tier: SourceProject, File: projectRegistryLabel} // ...except pagent
++
++	attributed := reg.attribute(reg.validate())
++	require.Error(t, attributed)
++	msg := attributed.Error()
++
++	assert.Contains(t, msg, "registry.yaml: agent 'uagent'",
++		"user-tier fault must be prefixed with the user registry file")
++	assert.Contains(t, msg, ".atcr/registry.yaml: agent 'pagent'",
++		"project-tier fault must be prefixed with the project registry file")
++}
++
++// TestAttribute_SingleEntryStillAttributed guards backward compatibility: a lone
++// fault (now wrapped in errors.Join of one) is still attributed to its file.
++func TestAttribute_SingleEntryStillAttributed(t *testing.T) {
++	reg := &Registry{
++		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
++		Agents:    map[string]AgentConfig{"solo": {Provider: "p", Model: "m", MinSeverity: "BOGUS"}},
++	}
++	reg.stampSource(SourceUser)
++
++	attributed := reg.attribute(reg.validate())
++	require.Error(t, attributed)
++	assert.True(t, strings.HasPrefix(attributed.Error(), "registry.yaml: agent 'solo'"),
++		"single fault must keep its file prefix, got: %s", attributed.Error())
++}
++
++// TestLoadRegistry_ReportsAllErrorsAtOnce is the Epic 4.2 acceptance test at the
++// load boundary: a registry carrying faults spanning every category — required
++// field (AC1), enum (AC2), type/range (AC3), and an enum/semantic agent fault
++// (AC4 intent) — surfaces them all in a single LoadRegistry error (AC6), not one
++// per run. This walks the real parse+validate path, not validate() in isolation.
++func TestLoadRegistry_ReportsAllErrorsAtOnce(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++timeout_secs: -1
++payload_mode: bogus
++providers:
++  openai:
++    api_key_env: OPENAI_API_KEY
++agents:
++  alpha: {provider: openai}
++  bravo: {provider: openai, model: m, min_severity: BOGUS}
++`))
++	require.Error(t, err)
++	msg := err.Error()
++	assert.Contains(t, msg, "timeout_secs", "AC3: type/range fault must be reported")
++	assert.Contains(t, msg, "payload_mode", "AC2: enum fault must be reported")
++	assert.Contains(t, msg, "agent 'alpha': required field 'model'", "AC1: required-field fault must be reported")
++	assert.Contains(t, msg, "agent 'bravo': min_severity", "AC2/AC4: agent enum fault must be reported")
++}
++
++// TestAttribute_SettingsFaultGetsUserLabel guards the non-entry branch: a
++// top-level settings fault (carried only by the user registry) is prefixed with
++// the user registry label even inside an accumulated join.
++func TestAttribute_SettingsFaultGetsUserLabel(t *testing.T) {
++	reg := &Registry{
++		Providers:   map[string]Provider{"p": {APIKeyEnv: "KEY"}},
++		Agents:      map[string]AgentConfig{"a": {Provider: "p", Model: "m"}},
++		PayloadMode: "bogus",
++	}
++	reg.stampSource(SourceUser)
++
++	attributed := reg.attribute(reg.validate())
++	require.Error(t, attributed)
++	assert.Contains(t, attributed.Error(), "registry.yaml: invalid payload_mode",
++		"settings fault must be prefixed with the user registry label")
++}
+diff --git a/internal/registry/attribution.go b/internal/registry/attribution.go
+index c6a4a8f..cfb6d3e 100644
+--- a/internal/registry/attribution.go
++++ b/internal/registry/attribution.go
+@@ -45,7 +45,21 @@ func agentSentinelErr(name string, sentinel error, msg string) error {
+ // attribute wraps an entry-specific validation error with the file that defined
+ // the offending entry, so a merged-view failure names project vs user. Plain
+ // (non-entry) errors and entries with no recorded source pass through unchanged.
++//
++// validate() and ValidateFallbacks() accumulate faults into an errors.Join
++// (Epic 4.2 / AC6), so a merged-view failure can carry entries from BOTH tiers
++// at once. A joined error is therefore attributed per child — each fault is
++// prefixed with its own defining file — rather than tagging the whole blob with
++// whichever entry errors.As happened to surface first.
+ func (r *Registry) attribute(err error) error {
++	if joined, ok := err.(interface{ Unwrap() []error }); ok {
++		children := joined.Unwrap()
++		out := make([]error, len(children))
++		for i, c := range children {
++			out[i] = r.attribute(c)
++		}
++		return errors.Join(out...)
++	}
+ 	var ee *entryError
+ 	if !errors.As(err, &ee) {
+ 		// Non-entry failures are top-level settings faults (payload_mode,
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index 52daaeb..9705c9e 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -1,11 +1,13 @@
+ package registry
+ 
+ import (
++	"errors"
+ 	"fmt"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
+ 	"regexp"
++	"sort"
+ 	"strings"
+ 
+ 	"github.com/samestrin/atcr/internal/stream"
+@@ -198,105 +200,141 @@ func LoadRegistry(path string) (*Registry, error) {
+ 	return reg, nil
+ }
+ 
+-// validate checks required fields and reference integrity.
++// validate checks required fields and reference integrity. It accumulates every
++// fault and reports them together via errors.Join (Epic 4.2 / AC6) rather than
++// short-circuiting on the first, so a user fixes all config mistakes in one
++// edit. Providers and agents are walked in sorted-name order so the joined
++// message is deterministic despite randomized map iteration. errors.Join
++// returns nil when no faults were collected, preserving the valid-config path.
+ func (r *Registry) validate() error {
++	var errs []error
++
++	// Settings-level checks, in fixed source order.
+ 	if r.TimeoutSecs != nil && (*r.TimeoutSecs <= 0 || *r.TimeoutSecs > MaxTimeoutSecs) {
+-		return fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs)
++		errs = append(errs, fmt.Errorf("timeout_secs must be within 1..%d", MaxTimeoutSecs))
+ 	}
+ 	if r.PayloadByteBudget != nil && *r.PayloadByteBudget < 0 {
+-		return fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget)
++		errs = append(errs, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", *r.PayloadByteBudget))
+ 	}
+ 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
+-		return fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel)
++		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
+ 	}
+ 	if !payloadModeValid(r.PayloadMode) {
+-		return fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode))
++		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode)))
+ 	}
+ 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
+ 	// any non-empty value must be a canonical review severity. Error wording lists
+ 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
+ 	if normalized := stream.NormalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+-		return fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity)
++		errs = append(errs, fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity))
+ 	}
+ 	if r.Verify.Votes < 0 {
+-		return fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes)
++		errs = append(errs, fmt.Errorf("verify.votes must be >= 0 (0 = default), got %d", r.Verify.Votes))
+ 	}
+ 	if r.Verify.MaxParallel < 0 {
+-		return fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel)
++		errs = append(errs, fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel))
+ 	}
+-	for name, p := range r.Providers {
+-		if strings.TrimSpace(name) == "" {
+-			return providerErrf(name, "providers.%s: provider name must not be empty", name)
+-		}
+-		if p.APIKeyEnv == "" {
+-			return providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name)
+-		}
+-		if !envVarName.MatchString(p.APIKeyEnv) {
+-			return providerErrf(name, "providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv)
+-		}
+-		if p.BaseURL != "" {
+-			u, err := url.Parse(p.BaseURL)
+-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+-				return providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name)
+-			}
+-			if u.User != nil {
+-				return providerErrf(name, "providers.%s: base_url must not embed credentials (userinfo)", name)
+-			}
+-		}
++
++	for _, name := range sortedKeys(r.Providers) {
++		errs = append(errs, validateProvider(name, r.Providers[name])...)
+ 	}
+-	for name, a := range r.Agents {
+-		if strings.TrimSpace(name) == "" {
+-			return agentErrf(name, "agent '%s': agent name must not be empty", name)
+-		}
+-		if a.Provider == "" {
+-			return agentErrf(name, "agent '%s': required field 'provider' is missing", name)
+-		}
+-		if a.Model == "" {
+-			return agentErrf(name, "agent '%s': required field 'model' is missing", name)
+-		}
+-		if _, ok := r.Providers[a.Provider]; !ok {
+-			return agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider)
+-		}
+-		if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
+-			return agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs)
+-		}
+-		if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
+-			return agentErrf(name, "agent '%s': temperature must be within [0, 2]", name)
+-		}
+-		if !payloadModeValid(a.Payload) {
+-			return agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload))
+-		}
+-		// role is still reserved (Stage 3/4) but validated at load; max_turns and
+-		// tool_budget_bytes are active in 2.0 and bound the tool loop.
+-		if !roleValid(a.Role) {
+-			return agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name)
+-		}
+-		if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
+-			return agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns)
+-		}
+-		if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
+-			return agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes)
+-		}
+-		// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
+-		// not validated. min_severity is checked case-insensitively against the
+-		// rubric, max_findings must be a positive cap, and every scope entry must
+-		// be a non-empty category (a blank entry is a YAML typo, not "all").
+-		if normalized := stream.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+-			return agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name)
+-		}
+-		if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
+-			return agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap)
++	for _, name := range sortedKeys(r.Agents) {
++		errs = append(errs, r.validateAgent(name, r.Agents[name])...)
++	}
++
++	return errors.Join(errs...)
++}
++
++// validateProvider returns every fault found in a single provider entry (Epic
++// 4.2 / AC6 — accumulate rather than short-circuit).
++func validateProvider(name string, p Provider) []error {
++	var errs []error
++	if strings.TrimSpace(name) == "" {
++		errs = append(errs, providerErrf(name, "providers.%s: provider name must not be empty", name))
++	}
++	if p.APIKeyEnv == "" {
++		errs = append(errs, providerErrf(name, "providers.%s: required field 'api_key_env' is missing", name))
++	} else if !envVarName.MatchString(p.APIKeyEnv) {
++		errs = append(errs, providerErrf(name, "providers.%s: api_key_env %q is not a valid environment variable name", name, p.APIKeyEnv))
++	}
++	if p.BaseURL != "" {
++		u, err := url.Parse(p.BaseURL)
++		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
++			errs = append(errs, providerErrf(name, "providers.%s: base_url must be a valid http or https URL", name))
++		} else if u.User != nil {
++			errs = append(errs, providerErrf(name, "providers.%s: base_url must not embed credentials (userinfo)", name))
+ 		}
+-		for _, s := range a.Scope {
+-			if strings.TrimSpace(s) == "" {
+-				return agentErrf(name, "agent '%s': scope entries must not be empty", name)
+-			}
+-			if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
+-				return agentErrf(name, "agent '%s': scope entries must not contain control characters", name)
+-			}
++	}
++	return errs
++}
++
++// validateAgent returns every fault found in a single agent entry (Epic 4.2 /
++// AC6 — accumulate rather than short-circuit). The unknown-provider reference
++// check is suppressed when provider is empty so a missing-provider agent reports
++// only the "required field" fault, not a spurious "references unknown provider ”".
++func (r *Registry) validateAgent(name string, a AgentConfig) []error {
++	var errs []error
++	if strings.TrimSpace(name) == "" {
++		errs = append(errs, agentErrf(name, "agent '%s': agent name must not be empty", name))
++	}
++	if a.Provider == "" {
++		errs = append(errs, agentErrf(name, "agent '%s': required field 'provider' is missing", name))
++	} else if _, ok := r.Providers[a.Provider]; !ok {
++		errs = append(errs, agentErrf(name, "agent '%s' references unknown provider '%s'", name, a.Provider))
++	}
++	if a.Model == "" {
++		errs = append(errs, agentErrf(name, "agent '%s': required field 'model' is missing", name))
++	}
++	if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
++		errs = append(errs, agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs))
++	}
++	if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
++		errs = append(errs, agentErrf(name, "agent '%s': temperature must be within [0, 2]", name))
++	}
++	if !payloadModeValid(a.Payload) {
++		errs = append(errs, agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload)))
++	}
++	// role is still reserved (Stage 3/4) but validated at load; max_turns and
++	// tool_budget_bytes are active in 2.0 and bound the tool loop.
++	if !roleValid(a.Role) {
++		errs = append(errs, agentErrf(name, "agent '%s': role must be one of reviewer, skeptic, judge", name))
++	}
++	if a.MaxTurns != nil && (*a.MaxTurns <= 0 || *a.MaxTurns > MaxAgentTurns) {
++		errs = append(errs, agentErrf(name, "agent '%s': max_turns must be within 1..%d", name, MaxAgentTurns))
++	}
++	if a.ToolBudgetBytes != nil && (*a.ToolBudgetBytes < 0 || *a.ToolBudgetBytes > MaxToolBudgetBytes) {
++		errs = append(errs, agentErrf(name, "agent '%s': tool_budget_bytes must be within 0..%d (0 = unlimited)", name, MaxToolBudgetBytes))
++	}
++	// Review-constraint guardrails (Epic 2.2). All optional; an unset field is
++	// not validated. min_severity is checked case-insensitively against the
++	// rubric, max_findings must be a positive cap, and every scope entry must
++	// be a non-empty category (a blank entry is a YAML typo, not "all").
++	if normalized := stream.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
++		errs = append(errs, agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name))
++	}
++	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
++		errs = append(errs, agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap))
++	}
++	for _, s := range a.Scope {
++		if strings.TrimSpace(s) == "" {
++			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not be empty", name))
++		} else if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
++			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not contain control characters", name))
+ 		}
+ 	}
+-	return nil
++	return errs
++}
++
++// sortedKeys returns a map's string keys in ascending order, so validation walks
++// providers and agents deterministically regardless of Go's randomized map
++// iteration.
++func sortedKeys[V any](m map[string]V) []string {
++	keys := make([]string, 0, len(m))
++	for k := range m {
++		keys = append(keys, k)
++	}
++	sort.Strings(keys)
++	return keys
+ }
+ 
+ // applyDefaults fills optional agent fields: persona defaults to the agent
+diff --git a/internal/registry/graph.go b/internal/registry/graph.go
+index c7df6e7..f36160b 100644
+--- a/internal/registry/graph.go
++++ b/internal/registry/graph.go
+@@ -3,7 +3,6 @@ package registry
+ import (
+ 	"errors"
+ 	"fmt"
+-	"sort"
+ 	"strings"
+ )
+ 
+@@ -25,15 +24,15 @@ const (
+ )
+ 
+ // ValidateFallbacks checks every agent's fallback chain at load time:
+-// dangling references and cycles (including self-references) are hard
+-// errors. Runs in O(V + E); each agent has at most one outgoing edge.
++// dangling references and cycles (including self-references) are hard errors.
++// Runs in O(V + E); each agent has at most one outgoing edge. It accumulates
++// every dangling reference and every disjoint cycle and reports them together
++// via errors.Join (Epic 4.2 / AC6) rather than returning the first found.
+ func (r *Registry) ValidateFallbacks() error {
+ 	// Deterministic iteration so error messages are stable.
+-	names := make([]string, 0, len(r.Agents))
+-	for name := range r.Agents {
+-		names = append(names, name)
+-	}
+-	sort.Strings(names)
++	names := sortedKeys(r.Agents)
++
++	var errs []error
+ 
+ 	for _, name := range names {
+ 		fb := r.Agents[name].Fallback
+@@ -41,8 +40,8 @@ func (r *Registry) ValidateFallbacks() error {
+ 			continue
+ 		}
+ 		if _, ok := r.Agents[fb]; !ok {
+-			return agentSentinelErr(name, ErrDanglingFallback,
+-				fmt.Sprintf("%s: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb))
++			errs = append(errs, agentSentinelErr(name, ErrDanglingFallback,
++				fmt.Sprintf("%s: agent '%s' fallback references unknown agent '%s'", ErrDanglingFallback, name, fb)))
+ 		}
+ 	}
+ 
+@@ -61,11 +60,14 @@ func (r *Registry) ValidateFallbacks() error {
+ 					break
+ 				}
+ 			}
+-			return agentSentinelErr(attributed, ErrFallbackCycle,
+-				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> ")))
++			errs = append(errs, agentSentinelErr(attributed, ErrFallbackCycle,
++				fmt.Sprintf("%s detected: %s", ErrFallbackCycle, strings.Join(path, " -> "))))
++			// walkFallbacks blackens every node it visited (cycle + lead-in) on
++			// detection, so the outer scan never re-walks a node left gray and
++			// never trips the gray-not-on-path invariant. Nothing to do here.
+ 		}
+ 	}
+-	return nil
++	return errors.Join(errs...)
+ }
+ 
+ // walkFallbacks follows the (single) fallback edge from start, coloring
+@@ -82,13 +84,27 @@ func (r *Registry) walkFallbacks(start string, color map[string]nodeColor) ([]st
+ 			break
+ 		}
+ 		if color[next] == gray {
+-			// Close the loop for the error message: trim the lead-in so the
+-			// path starts at the repeated node. Because ValidateFallbacks only
+-			// walks white roots and colors nodes gray on the current path, next
+-			// is always in path — the loop below cannot complete without matching.
++			// Trim the lead-in so the reported path starts at the repeated node.
++			// Build the cycle into a fresh slice BEFORE blackening so it never
++			// aliases path's backing array, then blacken EVERY node this walk
++			// visited — lead-in nodes included, not just the trimmed cycle. Under
++			// accumulation ValidateFallbacks keeps scanning, and a later root that
++			// edges into a leftover-gray lead-in node would otherwise reach the
++			// panic below. The single-outgoing-edge invariant makes this safe: a
++			// lead-in node has one edge (into this cycle) and cannot start another
++			// cycle, so marking it fully-explored loses no future detection.
++			// Because ValidateFallbacks only walks white roots and colors nodes
++			// gray on the current path, next is always in path — the loop cannot
++			// complete without matching.
+ 			for i, n := range path {
+ 				if n == next {
+-					return append(path[i:], next), true
++					cycle := make([]string, 0, len(path)-i+1)
++					cycle = append(cycle, path[i:]...)
++					cycle = append(cycle, next)
++					for _, visited := range path {
++						color[visited] = black
++					}
++					return cycle, true
+ 				}
+ 			}
+ 			// Unreachable: next is gray, hence already on the current path.
