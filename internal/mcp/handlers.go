@@ -234,6 +234,13 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
 		}
+		// Observability parity with the CLI's "review interrupted by signal"
+		// (epic 4.1/4.1.1): when server shutdown cut this detached review off,
+		// emit a greppable structured Warn so monitoring/CI finds interrupted
+		// serve-mode reviews in logs, not only via the on-disk manifest.
+		if e.shutdownCtx != nil && e.shutdownCtx.Err() != nil {
+			e.logger().Warn("review interrupted by server shutdown", "review_id", prep.ID)
+		}
 	}()
 
 	return nil, ReviewResult{
