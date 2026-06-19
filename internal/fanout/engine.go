@@ -450,6 +450,12 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// the per-provider circuit breaker without a Provider field on Invocation
 	// (Epic 4.5). One chokepoint: this covers single-shot, the tool loop, and the
 	// verify path (all run through here). Empty provider no-ops the breaker.
+	if a.Provider == "" && a.Tools {
+		// A tools-enabled agent with no provider is almost certainly a misconfiguration:
+		// the circuit breaker is silently bypassed. Doctor/direct-construction paths
+		// use Tools=false and are intentionally exempt.
+		agentLogger.Warn("tools-enabled agent has no provider set; circuit breaker bypassed", "agent", a.Name)
+	}
 	ctx = circuitbreaker.NewContext(ctx, a.Provider)
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
 
