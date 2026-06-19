@@ -90,7 +90,7 @@ func windowsSystemPath(path string) bool {
 	if len(path) < 2 || path[1] != ':' {
 		return false
 	}
-	if c := path[0]; !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+	if c := path[0]; (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 		return false
 	}
 	rest := strings.ToLower(strings.ReplaceAll(path[2:], "\\", "/"))
