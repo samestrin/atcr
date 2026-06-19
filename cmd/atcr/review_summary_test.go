@@ -88,3 +88,25 @@ func TestWriteReviewSummaryIsolatesThisReview(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteReviewSummaryDenominatorIsPerAttempt verifies the "Agents: X/Y" line
+// uses a per-attempt denominator (atcr_agents_total, incremented once per agent
+// invocation including every fallback) so numerator and denominator share one unit.
+// A slot whose primary fails and fallback succeeds is 2 attempts: the line must read
+// 1/2, never 1/1 (which mixes per-attempt successes against a per-slot denominator
+// and can print succeeded+failed greater than the denominator).
+func TestWriteReviewSummaryDenominatorIsPerAttempt(t *testing.T) {
+	reg := metrics.NewRegistry()
+	reg.Counter(metrics.NameAgentsTotal).Add(2)     // 2 attempts: primary + fallback
+	reg.Counter(metrics.NameAgentsSucceeded).Add(1) // fallback succeeded
+	reg.Counter(metrics.NameAgentsFailed).Add(1)    // primary failed
+	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
+
+	var buf bytes.Buffer
+	writeReviewSummary(&buf, snap, time.Second, 1) // caller's per-slot total is 1
+	out := buf.String()
+
+	if !strings.Contains(out, "Agents: 1/2 succeeded, 1 failed, 0 timed out") {
+		t.Errorf("denominator must be per-attempt agents_total (=2), got:\n%s", out)
+	}
+}
