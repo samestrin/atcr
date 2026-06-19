@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 15 | 0 |
-| LOW | 0 | 16 | 0 |
+| LOW | 6 | 16 | 0 |
 
 
-**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 32 | **Resolved Items:** 0 | **Total Items:** 32
+**Last Modified:** 2026-06-19 | **Open Items:** 6 | **Deferred Items:** 32 | **Resolved Items:** 0 | **Total Items:** 38
 
 ## Directory Structure
 
@@ -34,6 +34,17 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-19] From Sprint: epic-4.4
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | cmd/atcr/review.go:226 | The end-of-review metrics summary (Epic 4.4 AC3) prints only on the fresh-review path; atcr review --resume returns via runResume before the summary block, so a resumed review completes without printing the summary | Factor the summary into a shared completion helper that both runReview and runResume call, so resumed reviews also print it | CORRECTNESS | 15 | execute-epic-stage3 |
+| 1 | [ ] | LOW | cmd/atcr/review_summary.go:22 | The CLI summary reads agent succeeded/failed/timeout counts from the cumulative process-global DefaultRegistry while taking the agent total from this review's result.Summary.Total; correct today (one review per CLI process) but a future multi-review process could report succeeded greater than total | Source the agent outcome counts from this review's result/Summary, or snapshot and diff the registry around the single review | REGRESSION_RISK | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/review.go:226 | The summary's "Review completed in" uses CLI-level time.Since(now) while atcr_review_duration_seconds uses engine-level reviewStart, so the printed duration and the exported metric measure slightly different spans | Document the divergence, or have the summary read the histogram's last observation so the printed value and the scrape agree | INTEGRATION | 20 | execute-epic-independent |
+| U | [ ] | LOW | docs/metrics.md:1 | Epic 4.4 adds the atcr_metrics MCP tool, the end-of-review CLI summary, and a catalog of metrics, but there is no user-facing documentation for any of it | Add docs/metrics.md documenting the metric catalog (counters/histograms), the CLI summary output, and the atcr_metrics tool (Prometheus text, local-only), and link it from README.md | DOCS | 30 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/metrics/prometheus.go:90 | WritePrometheus holds the registry mutex for the whole render and re-sorts each histogram's up-to-10k-sample buffer once per quantile (4x), blocking metric registration during a scrape | Snapshot histogram pointers under the registry lock then release it, and compute all quantiles from a single sorted copy per histogram | PERFORMANCE | 45 | execute-epic-independent |
+| U | [ ] | LOW | internal/fanout/metrics.go:45 | recordFindingMetrics keys the severity label on NormalizeSeverity with no allowlist; bounded today only by the upstream parser regex (CRITICAL/HIGH/MEDIUM/LOW), so a future parser change could reintroduce unbounded label cardinality from model output | Validate severity against stream.SeverityRank before using it as a label and bucket anything else under a fixed UNKNOWN value | EDGE_CASES | 20 | execute-epic-independent |
 
 ### [2026-06-18] From Sprint: epic-4.3
 
