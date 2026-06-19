@@ -1,3 +1,17 @@
+## [4.4.0] - 2026-06-19
+
+In-process metrics and observability: a new `internal/metrics` package collects counters and histograms with no external dependencies, the fan-out engine and review flow are instrumented, `atcr review` prints an end-of-review summary, and the MCP server exposes metrics in Prometheus text format.
+
+### Added
+
+- New `internal/metrics` package: monotonic counters and bounded histograms (10k-sample window) in a registry with a process-wide `DefaultRegistry`, plus Prometheus text exposition with label-value escaping
+- Fan-out engine records agent invocation counts, per-agent latency, API calls (one per provider round-trip), API errors by HTTP status, and tool-call totals
+- Review flow records review counts, total duration, and findings (total and by severity)
+- `atcr review` prints an end-of-review summary: duration, agent success/failure/timeout counts, API calls, and findings by severity
+- New `atcr_metrics` MCP tool returns the in-process metrics in Prometheus text format (cumulative since server start; local-only — do not expose the server publicly)
+
+*Shipped via /execute-epic (epic 4.4)*
+
 ## [Technical Debt] - 2026-06-19
 
 ### Fixed
