@@ -68,3 +68,20 @@ func TestRecordAgentOutcome(t *testing.T) {
 	check(metrics.Key("atcr_api_errors_total", "status", "500"), 1)
 	check("atcr_tool_calls_total", 4)
 }
+
+// TestRecordAgentOutcomeContextCancelledBeforeRequest verifies that a single-shot
+// agent whose context was cancelled before any HTTP request does not inflate
+// atcr_api_calls_total.
+func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	// context.DeadlineExceeded: cancelled before first HTTP round-trip, Turns==0
+	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded})
+	// context.Canceled: same scenario via SIGINT path
+	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.Canceled})
+
+	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 0 {
+		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count)", got)
+	}
+}
