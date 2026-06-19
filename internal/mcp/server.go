@@ -18,6 +18,16 @@ const Version = "1.0.0"
 // finish their on-disk writes after the client disconnects, so a near-complete
 // review is not orphaned mid-write. A review still running past this is
 // abandoned (the process exits); clients re-run with a fresh id.
+//
+// On the SIGINT path (epic 4.1.2 AC1) this same bound also caps the
+// interrupted-marker flush: after shutdownCancel unwinds blocked agents,
+// ExecuteReview must complete WritePool + WriteManifest within this window for the
+// on-disk interrupted status to persist before process exit. It must therefore
+// comfortably exceed worst-case flush latency (slow disk, many agents, a completer
+// slow to honor ctx.Done()); if it does not, a genuinely-interrupted review can be
+// left in_progress — degraded-but-safe (never a false completed), but the AC1
+// marker is lost. Raise this (or block the SIGINT path on e.bg.Wait() with a
+// larger bound) before trusting the marker under heavier flush load.
 const shutdownDrain = 5 * time.Second
 
 // NewServer constructs the atcr MCP server with all five tools registered
