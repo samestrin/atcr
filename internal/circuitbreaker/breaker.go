@@ -80,6 +80,10 @@ type Breaker struct {
 	// now is the clock, injectable so tests drive cooldown transitions without
 	// real sleeps. Production uses time.Now.
 	now func() time.Time
+	// gauge is cached at construction time so setMetric never needs to re-acquire
+	// the metrics registry lock while already holding b.mu (the key is fixed per
+	// provider for the life of the Breaker).
+	gauge interface{ Set(float64) }
 }
 
 // New builds a closed breaker for provider with the given failure threshold and
@@ -98,8 +102,9 @@ func New(provider string, threshold int, cooldown time.Duration) *Breaker {
 		threshold: threshold,
 		cooldown:  cooldown,
 		now:       time.Now,
+		gauge:     metrics.Gauge(metrics.Key(metrics.NameCircuitBreakerState, metrics.LabelProvider, provider)),
 	}
-	b.setMetric(StateClosed)
+	b.gauge.Set(float64(StateClosed))
 	return b
 }
 
@@ -233,7 +238,8 @@ func (b *Breaker) transition(s State) {
 }
 
 // setMetric writes the state's numeric value (0/1/2) to the provider-labelled
-// gauge. Caller must hold b.mu.
+// gauge. Caller must hold b.mu. The gauge pointer was cached at construction
+// time so this call is lock-free (gauge.Set is an atomic store).
 func (b *Breaker) setMetric(s State) {
-	metrics.Gauge(metrics.Key(metrics.NameCircuitBreakerState, metrics.LabelProvider, b.provider)).Set(float64(s))
+	b.gauge.Set(float64(s))
 }
