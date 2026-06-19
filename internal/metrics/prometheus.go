@@ -24,10 +24,12 @@ func Key(name, label, value string) string {
 
 // escapeLabelValue applies the Prometheus text-format label-value escapes.
 // Backslash MUST be replaced first so the escapes it introduces are not
-// re-escaped.
+// re-escaped. Carriage return and newline are both escaped so no label value can
+// inject a line break into the exposition stream.
 func escapeLabelValue(v string) string {
 	v = strings.ReplaceAll(v, `\`, `\\`)
 	v = strings.ReplaceAll(v, `"`, `\"`)
+	v = strings.ReplaceAll(v, "\r", `\r`)
 	v = strings.ReplaceAll(v, "\n", `\n`)
 	return v
 }
