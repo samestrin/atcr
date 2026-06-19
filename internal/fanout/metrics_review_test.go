@@ -7,6 +7,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/metrics"
+	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,4 +92,27 @@ func TestRecordReviewOutcome(t *testing.T) {
 	check("atcr_reviews_succeeded", 1)
 	check("atcr_reviews_failed", 1)
 	check("atcr_reviews_interrupted", 1)
+}
+
+// TestRecordFindingMetricsUnknownSeverity verifies that a finding with a junk or
+// empty severity is bucketed under {severity="UNKNOWN"} rather than emitting an
+// unbounded label that would corrupt the severity breakdown.
+func TestRecordFindingMetricsUnknownSeverity(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	recordFindingMetrics([]stream.Finding{
+		{Severity: "BANANA", File: "a.go", Line: 1},
+		{Severity: "", File: "b.go", Line: 2},
+	})
+
+	check := func(name string, want int64) {
+		t.Helper()
+		if got := metrics.Counter(name).Value(); got != want {
+			t.Errorf("%s = %d, want %d", name, got, want)
+		}
+	}
+	check("atcr_findings_total", 2)
+	check(metrics.Key("atcr_findings_by_severity", "severity", "UNKNOWN"), 2)
+	check(metrics.Key("atcr_findings_by_severity", "severity", "BANANA"), 0)
 }

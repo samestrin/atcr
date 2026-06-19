@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"math"
 	"sync"
 	"testing"
 )
@@ -131,6 +132,53 @@ func TestRegistryHistogramGetOrCreate(t *testing.T) {
 	}
 }
 
+func TestHistogramPercentileCacheInvalidatedOnObserve(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("cache_invalidation")
+	h.Observe(1)
+	if got := h.Percentile(100); got != 1 {
+		t.Fatalf("Percentile(100) after Observe(1) = %v, want 1", got)
+	}
+	h.Observe(9)
+	// After second Observe the cache must be invalidated; p100 must reflect 9.
+	if got := h.Percentile(100); got != 9 {
+		t.Fatalf("Percentile(100) after Observe(9) = %v, want 9 (stale cache?)", got)
+	}
+}
+
+func TestHistogramWrapBoundary(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("wrap_boundary")
+	for i := 0; i < maxHistogramSamples+1; i++ {
+		h.Observe(float64(i))
+	}
+	if !h.full {
+		t.Fatal("h.full should be true after maxHistogramSamples+1 observations")
+	}
+	if got := len(h.values); got != maxHistogramSamples {
+		t.Fatalf("len(values) = %d, want %d", got, maxHistogramSamples)
+	}
+	if got := h.Count(); got != int64(maxHistogramSamples+1) {
+		t.Fatalf("Count() = %d, want %d", got, maxHistogramSamples+1)
+	}
+}
+
+func TestHistogramPercentileNearestRank(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("nearest_rank")
+	for _, v := range []float64{1, 2, 3} {
+		h.Observe(v)
+	}
+	// p=0: ceil(0/100*3)=0 → clamped to rank 1 → value 1
+	if got := h.Percentile(0); got != 1 {
+		t.Errorf("Percentile(0) = %v, want 1", got)
+	}
+	// p=100: ceil(100/100*3)=3 → rank 3 → value 3
+	if got := h.Percentile(100); got != 3 {
+		t.Errorf("Percentile(100) = %v, want 3", got)
+	}
+}
+
 func TestRegistryReset(t *testing.T) {
 	r := NewRegistry()
 	r.Counter("c").Add(3)
@@ -155,6 +203,29 @@ func TestPackageLevelAccessorsUseDefaultRegistry(t *testing.T) {
 	Histogram("pkg_hist").Observe(7)
 	if got := DefaultRegistry.Histogram("pkg_hist").Count(); got != 1 {
 		t.Fatalf("package Histogram did not write DefaultRegistry: got %d", got)
+	}
+}
+
+func TestHistogramObserveNonFiniteIgnored(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("nan_inf_test")
+	h.Observe(1.0)
+	h.Observe(math.NaN())
+	h.Observe(math.Inf(1))
+	h.Observe(math.Inf(-1))
+	h.Observe(2.0)
+
+	if got := h.Count(); got != 2 {
+		t.Fatalf("Count() = %d, want 2 (NaN/Inf must be discarded)", got)
+	}
+	if got := h.Sum(); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Fatalf("Sum() = %v, want finite", got)
+	}
+	if got := h.Mean(); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Fatalf("Mean() = %v, want finite", got)
+	}
+	if got := h.Percentile(50); math.IsNaN(got) || math.IsInf(got, 0) {
+		t.Fatalf("Percentile(50) = %v, want finite", got)
 	}
 }
 

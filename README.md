@@ -181,6 +181,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/disagreement-radar.md](docs/disagreement-radar.md) — the disagreement radar, `--disagreements` view, and `disagreements.json` handoff schema
 - [docs/ci-integration.md](docs/ci-integration.md) — exit codes and PR gates
 - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
+- [docs/metrics.md](docs/metrics.md) — metric catalog, end-of-review CLI summary, and the `atcr_metrics` MCP tool
 
 ## Repository layout
 

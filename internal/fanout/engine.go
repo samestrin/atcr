@@ -255,6 +255,20 @@ func resultFromPanic(s Slot, start time.Time, r any) Result {
 	}
 }
 
+// recordRecoveredPanic records the metrics a recovered agent panic would
+// otherwise skip. invokeAgent increments atcr_agents_total (engine.go:430)
+// before dispatchAgent runs, so a panic there leaves the agent counted in the
+// total but never in an outcome counter or the duration histogram (433-434 are
+// unwound past). Recording the outcome + duration here — and deliberately NOT
+// re-incrementing atcr_agents_total — counts the panicked agent exactly once and
+// preserves the invariant agents_total == succeeded + failed + timed_out. The
+// duration uses the recover wrapper's start, matching resultFromPanic's own
+// DurationMS for the same result.
+func recordRecoveredPanic(res Result, start time.Time) {
+	metrics.Histogram(metrics.NameAgentDurationSeconds).Observe(time.Since(start).Seconds())
+	recordAgentOutcome(res)
+}
+
 // Run executes every slot and returns one Result per slot in input order.
 // Parallel-lane slots run concurrently via a WaitGroup; serial-lane slots run
 // sequentially in a single goroutine (ctx checked before each invocation),
@@ -290,7 +304,9 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					results[i] = resultFromPanic(s, start, r)
+					res := resultFromPanic(s, start, r)
+					results[i] = res
+					recordRecoveredPanic(res, start)
 				}
 			}()
 			// Acquire a slot before invoking. The acquire is ctx-aware so a
@@ -322,7 +338,9 @@ func (e *Engine) Run(ctx context.Context, slots []Slot) []Result {
 				func(i int) {
 					defer func() {
 						if r := recover(); r != nil {
-							results[i] = resultFromPanic(slots[i], start, r)
+							res := resultFromPanic(slots[i], start, r)
+							results[i] = res
+							recordRecoveredPanic(res, start)
 						}
 					}()
 					s := slots[i]

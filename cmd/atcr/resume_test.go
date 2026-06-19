@@ -342,3 +342,23 @@ func TestResume_InterruptEmitsStructuredWarn(t *testing.T) {
 	// for interrupted resumes by review_id.
 	require.Contains(t, out, "review interrupted by signal", "runResume must emit structured Warn on interrupt, mirroring review.go")
 }
+
+// TestResume_PrintsReviewSummary verifies a resumed run prints the end-of-review
+// metrics summary on completion (Epic 4.4 AC3), closing the gap where --resume
+// reconciled but never emitted the duration/agents/API/findings breakdown.
+func TestResume_PrintsReviewSummary(t *testing.T) {
+	isolate(t)
+	t.Setenv(testReviewKeyEnv, "secret")
+	initGitRepoWithChange(t)
+	srv := liveMockProvider(t)
+	liveReviewConfig(t, srv.URL, "bruce", "robin")
+	base := gitRevParse(t, "HEAD^")
+	head := gitRevParse(t, "HEAD")
+	// bruce completed; robin pending. Resume runs robin then reconciles.
+	writeResumeReviewFixture(t, "2026-06-18_demo", base, head, []string{"bruce", "robin"}, []string{"bruce"})
+
+	code, out := execResume(t, "review", "--resume", "latest", "--base", "HEAD^")
+	require.Equal(t, 0, code, "resume completes -> exit 0")
+	require.Contains(t, out, "Total elapsed:", "resume completion must print the end-of-review summary")
+	require.Contains(t, out, "Agents:", "resume summary includes the per-attempt agent line")
+}
