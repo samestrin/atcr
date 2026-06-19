@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 14 | 0 |
-| LOW | 0 | 13 | 0 |
+| MEDIUM | 1 | 14 | 0 |
+| LOW | 3 | 13 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 0 | **Deferred Items:** 28 | **Resolved Items:** 0 | **Total Items:** 28
+**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 28 | **Resolved Items:** 0 | **Total Items:** 32
 
 ## Directory Structure
 
@@ -33,6 +33,15 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+
+### [2026-06-18] From Sprint: epic-4.1.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/mcp/handlers.go:231 | A detached MCP review cancelled by server shutdown records the interrupted marker on disk but emits no greppable structured Warn (the CLI path logs "review interrupted by signal" with review_id per epic 4.1/4.1.1); monitoring/CI grepping serve-mode logs for interrupted reviews finds nothing. | In handleReview's goroutine, when ExecuteReview returns and e.shutdownCtx.Err()!=nil, emit log.FromContext(rctx).Warn("review interrupted by server shutdown", review_id) for CLI/MCP observability parity. | OBSERVABILITY | 30 | execute-epic-cumulative |
+| 1 | [ ] | LOW | internal/mcp/server.go:48 | Serve cancels in-flight detached reviews on shutdown with no log line, so an interrupted serve-mode review is only evidenced by the on-disk manifest, nothing in stderr. | Emit a slog Warn (e.g. logger().Warn("server shutdown: cancelling in-flight detached reviews")) in shutdownReviews before firing shutdownCancel, for diagnosability. | OBSERVABILITY | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/mcp/handlers.go:120 | The cancel returned by withShutdownCancel runs stop() then cancel(); when shutdown already fired AfterFunc has concurrently invoked cancel and stop() returns false, so cancel runs twice - harmless (CancelFunc is idempotent) but the concurrent double-invoke is not noted at the call site. | Add a one-line note to the withShutdownCancel doc that cancel may already have run via AfterFunc and the second call is a deliberate idempotent no-op. | EDGE_CASES | 5 | execute-epic-independent |
+| U | [ ] | MEDIUM | internal/fanout/review.go:361 | If a server shutdown (or CLI SIGINT) fires after all agents already succeeded but before ExecuteReview's interrupted := errors.Is(ctx.Err(), context.Canceled) check, a fully-completed run is stamped Interrupted=true and status.go:216 overrides RunCompleted to RunInterrupted (a false interrupted; inverse of AC4). Pre-existing in the CLI-shared path, newly reachable via MCP shutdown. | Gate the interrupted marker on at least one agent ending in StatusTimeout/cancelled rather than purely on parent ctx.Err()==Canceled. NOTE: touches CLI-shared review.go (out of scope for epic 4.1.2's MCP-only change); window is microscopic and outcome benign (resume no-ops a complete run) - separate design. | CORRECTNESS | 30 | execute-epic-independent |
 
 ### [2026-06-17] From Sprint: epic-4.1
 
