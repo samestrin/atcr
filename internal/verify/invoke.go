@@ -103,6 +103,7 @@ func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
 	c := skeptic.Config
 	return fanout.Agent{
 		Name:            skeptic.Name,
+		Provider:        c.Provider,
 		Prompt:          prompt,
 		TimeoutSecs:     derefInt(c.TimeoutSecs),
 		Tools:           true,

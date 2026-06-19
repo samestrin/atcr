@@ -71,6 +71,10 @@ func (r *Registry) WritePrometheus() string {
 	for k, c := range r.counters {
 		counters[k] = c
 	}
+	gauges := make(map[string]*gauge, len(r.gauges))
+	for k, g := range r.gauges {
+		gauges[k] = g
+	}
 	histograms := make(map[string]*histogram, len(r.histograms))
 	for k, h := range r.histograms {
 		histograms[k] = h
@@ -93,6 +97,23 @@ func (r *Registry) WritePrometheus() string {
 		sort.Strings(keys)
 		for _, k := range keys {
 			fmt.Fprintf(&b, "%s %d\n", k, counters[k].Value())
+		}
+	}
+
+	// Gauges, grouped by family so each family emits exactly one TYPE header.
+	// A gauge renders its current float value (shortest exact decimal), unlike a
+	// counter's integer total or a histogram's summary lines.
+	gaugeFamilies := make(map[string][]string, len(gauges))
+	for k := range gauges {
+		f := metricFamily(k)
+		gaugeFamilies[f] = append(gaugeFamilies[f], k)
+	}
+	for _, fam := range sortedKeys(gaugeFamilies) {
+		fmt.Fprintf(&b, "# TYPE %s gauge\n", fam)
+		keys := gaugeFamilies[fam]
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&b, "%s %s\n", k, formatFloat(gauges[k].Value()))
 		}
 	}
 
