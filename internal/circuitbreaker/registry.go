@@ -61,6 +61,16 @@ func (r *Registry) Reset() {
 	r.breakers = make(map[string]*Breaker)
 }
 
+// Set installs b as the breaker for provider, replacing any existing entry. It
+// exists for test isolation so tests can inject a pre-configured breaker without
+// triggering real HTTP failures. Production breakers are always created on first
+// use by Get. Not for production use.
+func (r *Registry) Set(provider string, b *Breaker) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.breakers[provider] = b
+}
+
 // DefaultRegistry is the process-wide registry the llmclient integration reads
 // to find each provider's circuit.
 var DefaultRegistry = NewRegistry()

@@ -341,6 +341,43 @@ func TestBreaker_CallerDeadlineDoesNotTrip(t *testing.T) {
 		"a caller-side deadline expiry must not trip the breaker")
 }
 
+// Probe-leak on panic: a panic inside dispatch must not leave probeInFlight=true.
+// Without a defer guard in send(), the panic bypasses the breaker outcome switch
+// and the half-open probe slot is never freed, wedging the circuit forever.
+func TestBreaker_PanicInDispatch_ProbeNotLeaked(t *testing.T) {
+	resetBreakers(t)
+	t.Setenv("TEST_KEY", testKey)
+
+	// Inject a half-open breaker so the next Allow() wins the probe slot.
+	b := circuitbreaker.New("panic-provider", 1, time.Millisecond)
+	b.ForceHalfOpen()
+	circuitbreaker.DefaultRegistry.Set("panic-provider", b)
+	require.Equal(t, circuitbreaker.StateHalfOpen, b.State())
+
+	c := New(WithHTTPClient(&http.Client{Transport: panicRoundTripper{}}), WithRetry(0, time.Millisecond, 1.5))
+	inv := Invocation{BaseURL: "http://panic-host/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
+	ctx := breakerCtx("panic-provider")
+
+	func() {
+		defer func() { recover() }()
+		_, _ = c.Complete(ctx, inv)
+	}()
+
+	// Without the defer fix in send(), probeInFlight stays true and Allow returns
+	// false (probe leaked). With the fix, ReleaseProbe clears it and the next
+	// caller can probe again.
+	assert.True(t, b.Allow(),
+		"a panic in dispatch must not leak the half-open probe slot")
+}
+
+// panicRoundTripper is an http.RoundTripper that panics unconditionally, used to
+// simulate a dispatch panic without a real server.
+type panicRoundTripper struct{}
+
+func (panicRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("simulated panic in dispatch")
+}
+
 // AC10 discriminator guard: a genuine provider stall — the HTTP client's own
 // timeout fires while the caller's context is NOT done — is a real outage and
 // must still trip the breaker. This is the load-bearing other side of the

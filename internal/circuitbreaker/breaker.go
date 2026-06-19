@@ -195,6 +195,16 @@ func (b *Breaker) ReleaseProbe() {
 	b.probeInFlight = false
 }
 
+// ForceHalfOpen puts the breaker directly into half-open state with no probe in
+// flight. It exists for test isolation so tests can reach half-open without
+// waiting for the real cooldown. Not for production use.
+func (b *Breaker) ForceHalfOpen() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.state = StateHalfOpen
+	b.probeInFlight = false
+}
+
 // State returns the current state, rolling a cooldown-elapsed open circuit
 // forward to half-open first so the reported state never lags the clock.
 func (b *Breaker) State() State {
