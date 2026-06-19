@@ -85,6 +85,12 @@ type Breaker struct {
 // cooldown. It seeds the per-provider gauge to closed (0) so the series exists
 // before the first transition.
 func New(provider string, threshold int, cooldown time.Duration) *Breaker {
+	if threshold <= 0 {
+		threshold = DefaultThreshold
+	}
+	if cooldown <= 0 {
+		cooldown = DefaultCooldown
+	}
 	b := &Breaker{
 		provider:  provider,
 		state:     StateClosed,
