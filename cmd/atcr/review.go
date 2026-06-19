@@ -222,6 +222,10 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// calls, and findings. Reads the process-global registry, which holds this
 	// review's totals (a CLI process runs one review). Printed after the one-line
 	// status above and before any one-shot reconcile/verify output.
+	// Note: time.Since(now) is CLI-level elapsed time (includes range resolution,
+	// config load, and scaffolding overhead); atcr_review_duration_seconds is
+	// engine-level (starts inside fanout.ExecuteReview). The two values measure
+	// slightly different spans and will rarely agree exactly — this is intentional.
 	if result != nil {
 		writeReviewSummary(cmd.OutOrStdout(), metrics.DefaultRegistry, time.Since(now), result.Summary.Total)
 	}
