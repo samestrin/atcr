@@ -23,24 +23,25 @@ const modulePath = "github.com/samestrin/atcr"
 // internal packages it may import (subpackages inherit their top-level
 // entry). Absence of a directory here fails the completeness check.
 var allowedInternalImports = map[string][]string{
-	"atomicfs":   {},
-	"stream":     {},
-	"gitrange":   {},
-	"log":        {},         // single diagnostic sink; stdlib-only (epic 4.0)
-	"errors":     {},         // error-classification taxonomy; stdlib-only (epic 4.0)
-	"registry":   {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
-	"tools":      {},
-	"metrics":    {},                              // in-process metrics collector; stdlib-only leaf (epic 4.4)
-	"validation": {},                              // user-input validators; stdlib-only leaf (epic 4.3)
-	"payload":    {"gitrange", "atomicfs", "log"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
-	"llmclient":  {"registry", "errors"},          // errors: HTTP failures wrapped in ClassifiedError (epic 4.0 phase 4.3)
-	"doctor":     {"llmclient", "registry"},
-	"fanout":     {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4)
-	"reconcile":  {"stream", "atomicfs"},
-	"scorecard":  {"llmclient", "reconcile", "fanout"},
-	"report":     {"stream", "reconcile"},
-	"verify":     {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
-	"mcp":        {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log", "metrics"},
+	"atomicfs":       {},
+	"stream":         {},
+	"gitrange":       {},
+	"log":            {},         // single diagnostic sink; stdlib-only (epic 4.0)
+	"errors":         {},         // error-classification taxonomy; stdlib-only (epic 4.0)
+	"registry":       {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
+	"tools":          {},
+	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
+	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
+	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+	"doctor":         {"llmclient", "registry"},
+	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4)
+	"reconcile":      {"stream", "atomicfs"},
+	"scorecard":      {"llmclient", "reconcile", "fanout"},
+	"report":         {"stream", "reconcile"},
+	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
+	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log", "metrics"},
 	// integration holds only end-to-end _test.go files (no production code).
 	// The dependency-direction walk skips _test.go, so this entry exists to
 	// satisfy the allowlist-completeness check; it records the packages those
