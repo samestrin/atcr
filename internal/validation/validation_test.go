@@ -74,6 +74,13 @@ func TestFilePath(t *testing.T) {
 	require.Error(t, FilePath(filepath.Clean("/foo/../etc/passwd")))
 	// A legitimate ".." -in-name path survives Clean unchanged and must be accepted.
 	require.NoError(t, FilePath(filepath.Clean("/home/user/my..file")))
+
+	// macOS symlink bypass: /etc and /var are symlinks to /private/etc and /private/var.
+	// A caller-resolved (post-EvalSymlinks) path reaches the same files via the /private prefix.
+	assert.EqualError(t, FilePath("/private/etc/passwd"),
+		`invalid file path "/private/etc/passwd": must not reference system directories`)
+	assert.EqualError(t, FilePath("/private/var/db/something"),
+		`invalid file path "/private/var/db/something": must not reference system directories`)
 }
 
 func TestReviewID(t *testing.T) {
