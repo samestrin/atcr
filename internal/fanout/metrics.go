@@ -36,12 +36,13 @@ func recordAgentOutcome(r Result) {
 
 	apiCalls := r.Turns
 	if apiCalls < 1 {
-		// Single-shot path normally makes exactly one provider round-trip, but a
-		// context cancellation/deadline that fires before the first HTTP call leaves
-		// Turns at 0 with no actual request — don't inflate the counter. Negative
-		// Turns from a corrupt Result are also clamped here rather than decrementing
-		// the monotonic counter.
-		if !errors.Is(r.Err, context.DeadlineExceeded) && !errors.Is(r.Err, context.Canceled) {
+		// Turns < 1 covers both the single-shot path (Turns==0, one provider
+		// round-trip) and a corrupt negative value. Context cancellation/deadline
+		// before the first HTTP call means no actual request was made; in that case
+		// keep apiCalls at 0. Otherwise treat as a single-shot: 1 call.
+		if errors.Is(r.Err, context.DeadlineExceeded) || errors.Is(r.Err, context.Canceled) {
+			apiCalls = 0
+		} else {
 			apiCalls = 1
 		}
 	}

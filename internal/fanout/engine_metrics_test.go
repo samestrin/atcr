@@ -98,7 +98,8 @@ func TestRecordAgentOutcomeZeroHTTPStatus(t *testing.T) {
 
 // TestRecordAgentOutcomeContextCancelledBeforeRequest verifies that a single-shot
 // agent whose context was cancelled before any HTTP request does not inflate
-// atcr_api_calls_total.
+// atcr_api_calls_total. Also covers negative Turns + context error to ensure the
+// counter is never decremented.
 func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
 	metrics.DefaultRegistry.Reset()
 	t.Cleanup(metrics.DefaultRegistry.Reset)
@@ -107,8 +108,10 @@ func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
 	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded})
 	// context.Canceled: same scenario via SIGINT path
 	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.Canceled})
+	// negative Turns + context error: must not decrement the monotonic counter
+	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded, Turns: -1})
 
 	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 0 {
-		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count)", got)
+		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count or decrement)", got)
 	}
 }
