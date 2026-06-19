@@ -1,0 +1,1 @@
+MEDIUM|internal/validation/validation.go:56|FilePath rejects "/etc" but allows "/etc/passwd"|The guard path == sysDir handles bare "/etc"; the HasPrefix guard handles "/etc/". Both are covered.|maintainability|5|for _, sysDir := range []string{"/etc", "/proc", "/sys"} { if path == sysDir |dax| strings.HasPrefix(path, sysDir+"/") {

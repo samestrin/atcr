@@ -1,0 +1,2 @@
+LOW|internal/validation/validation.go:49|Contains("..") falsely matches paths with "..."|Use boundary-aware check like strings.Contains(path, "/../")|correctness|3|strings.Contains(path, "..") triggers on ...|bruce
+LOW|internal/validation/validation.go:83|Map allocated on every Severity invocation|Hoist valid map to package-level var|maintainability|2|valid := map[string]bool{...} inside func|bruce
