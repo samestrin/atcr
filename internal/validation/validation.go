@@ -52,7 +52,10 @@ func FilePath(path string) error {
 	if path == "" {
 		return &ValidationError{"file path", path, "must not be empty"}
 	}
-	// No path traversal.
+	// No path traversal. This branch guards callers that validate raw,
+	// unresolved input; the production call sites (cmd/atcr review.go and
+	// report.go) call FilePath after filepath.Abs, which Cleans the path and so
+	// already resolves "..", leaving this check as defense-in-depth there.
 	if strings.Contains(path, "..") {
 		return &ValidationError{"file path", path, "must not contain .."}
 	}
