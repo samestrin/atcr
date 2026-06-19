@@ -220,7 +220,7 @@ func (r *Registry) validate() error {
 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
 	}
 	if !payloadModeValid(r.PayloadMode) {
-		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(r.PayloadMode)))
+		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
 	}
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
@@ -271,7 +271,7 @@ func validateProvider(name string, p Provider) []error {
 // validateAgent returns every fault found in a single agent entry (Epic 4.2 /
 // AC6 — accumulate rather than short-circuit). The unknown-provider reference
 // check is suppressed when provider is empty so a missing-provider agent reports
-// only the "required field" fault, not a spurious "references unknown provider ”".
+// only the "required field" fault, not a spurious "references unknown provider "".
 func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	var errs []error
 	if strings.TrimSpace(name) == "" {
@@ -292,7 +292,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 		errs = append(errs, agentErrf(name, "agent '%s': temperature must be within [0, 2]", name))
 	}
 	if !payloadModeValid(a.Payload) {
-		errs = append(errs, agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, strings.TrimSpace(a.Payload)))
+		errs = append(errs, agentErrf(name, "agent '%s': invalid payload '%s': must be one of diff, blocks, files", name, a.Payload))
 	}
 	// role is still reserved (Stage 3/4) but validated at load; max_turns and
 	// tool_budget_bytes are active in 2.0 and bound the tool loop.
