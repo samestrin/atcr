@@ -18,6 +18,16 @@ const Version = "1.0.0"
 // finish their on-disk writes after the client disconnects, so a near-complete
 // review is not orphaned mid-write. A review still running past this is
 // abandoned (the process exits); clients re-run with a fresh id.
+//
+// On the SIGINT path (epic 4.1.2 AC1) this same bound also caps the
+// interrupted-marker flush: after shutdownCancel unwinds blocked agents,
+// ExecuteReview must complete WritePool + WriteManifest within this window for the
+// on-disk interrupted status to persist before process exit. It must therefore
+// comfortably exceed worst-case flush latency (slow disk, many agents, a completer
+// slow to honor ctx.Done()); if it does not, a genuinely-interrupted review can be
+// left in_progress — degraded-but-safe (never a false completed), but the AC1
+// marker is lost. Raise this (or block the SIGINT path on e.bg.Wait() with a
+// larger bound) before trusting the marker under heavier flush load.
 const shutdownDrain = 5 * time.Second
 
 // NewServer constructs the atcr MCP server with all five tools registered
@@ -44,11 +54,23 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger 
 	if err != nil {
 		return err
 	}
-	runErr := s.Run(ctx, &mcpsdk.StdioTransport{})
-	// s.Run returns for two distinct reasons that must NOT be treated alike: a
-	// cancelled root ctx (SIGINT/SIGTERM via the CLI signal handler) means the
-	// server itself is shutting down, while ctx.Err()==nil means a clean client
-	// stdio disconnect. Only the former interrupts in-flight detached reviews.
+	return serveOver(ctx, s, e, &mcpsdk.StdioTransport{})
+}
+
+// serveOver runs s over transport until the transport loop returns, then shuts
+// down in-flight detached reviews according to WHY it returned. Split from Serve
+// solely so a test can exercise this post-transport discrimination over an
+// in-memory transport — the StdioTransport Serve passes in production binds
+// os.Stdin/os.Stdout and is not drivable from a test, so the crux epic-4.1.2
+// wiring (the ctx.Err() != nil argument below) would otherwise be untested
+// end-to-end.
+//
+// s.Run returns for two distinct reasons that must NOT be treated alike: a
+// cancelled root ctx (SIGINT/SIGTERM via the CLI signal handler) means the
+// server itself is shutting down, while ctx.Err()==nil means a clean client
+// stdio disconnect. Only the former interrupts in-flight detached reviews.
+func serveOver(ctx context.Context, s *mcpsdk.Server, e *engine, transport mcpsdk.Transport) error {
+	runErr := s.Run(ctx, transport)
 	e.shutdownReviews(ctx.Err() != nil, shutdownDrain)
 	if runErr != nil {
 		return fmt.Errorf("serve stdio: %w", runErr)
@@ -66,6 +88,7 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger 
 // FINISH its writes rather than orphan or force-interrupt it (AC3).
 func (e *engine) shutdownReviews(serverShutdown bool, timeout time.Duration) {
 	if serverShutdown && e.shutdownCancel != nil {
+		e.logger().Warn("server shutdown: cancelling in-flight detached reviews")
 		e.shutdownCancel()
 	}
 	e.drain(timeout)
