@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"errors"
 	"strconv"
 
@@ -34,13 +35,21 @@ func recordAgentOutcome(r Result) {
 	}
 
 	apiCalls := r.Turns
-	if apiCalls == 0 {
-		apiCalls = 1 // single-shot/degraded path: one provider call, Turns unset
+	if apiCalls < 1 {
+		// Turns < 1 covers both the single-shot path (Turns==0, one provider
+		// round-trip) and a corrupt negative value. Context cancellation/deadline
+		// before the first HTTP call means no actual request was made; in that case
+		// keep apiCalls at 0. Otherwise treat as a single-shot: 1 call.
+		if errors.Is(r.Err, context.DeadlineExceeded) || errors.Is(r.Err, context.Canceled) {
+			apiCalls = 0
+		} else {
+			apiCalls = 1
+		}
 	}
 	metrics.Counter(metrics.NameAPICallsTotal).Add(int64(apiCalls))
 
 	var he *llmclient.HTTPStatusError
-	if errors.As(r.Err, &he) {
+	if errors.As(r.Err, &he) && he.Status > 0 {
 		metrics.Counter(metrics.Key(metrics.NameAPIErrorsTotal, metrics.LabelStatus, strconv.Itoa(he.Status))).Inc()
 	}
 
@@ -49,10 +58,11 @@ func recordAgentOutcome(r Result) {
 	}
 }
 
-// recordFindingMetrics counts the findings emitted by the agents of one review:
-// the total and a per-severity breakdown. These are raw per-agent findings (the
-// metric definition is "emitted by agents"), recorded once in WritePool so both
-// the CLI and the MCP server observe the same numbers.
+// recordFindingMetrics counts findings from one review: the total and a
+// per-severity breakdown. The caller (WritePool) passes the post-guardrail set
+// produced by enforceConstraints (min_severity floor + max_findings cap), so
+// these counts reflect kept findings, not raw agent output. Recorded once in
+// WritePool so both the CLI and the MCP server observe the same numbers.
 func recordFindingMetrics(findings []stream.Finding) {
 	if len(findings) == 0 {
 		return
@@ -60,6 +70,9 @@ func recordFindingMetrics(findings []stream.Finding) {
 	metrics.Counter(metrics.NameFindingsTotal).Add(int64(len(findings)))
 	for _, f := range findings {
 		sev := stream.NormalizeSeverity(f.Severity)
+		if _, ok := stream.SeverityRank[sev]; !ok {
+			sev = "UNKNOWN"
+		}
 		metrics.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, sev)).Inc()
 	}
 }

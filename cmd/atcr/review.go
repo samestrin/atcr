@@ -197,6 +197,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return err // no slot can authenticate → exit 2 before any provider call
 	}
 
+	// Snapshot the summary counters before fan-out so the end-of-review summary can
+	// diff against this baseline and report only this review's contribution, not the
+	// process-cumulative registry totals (correct even if a future process runs more
+	// than one review against the shared DefaultRegistry).
+	metricsBaseline := snapshotSummaryMetrics(metrics.DefaultRegistry)
+
 	result, err := fanout.ExecuteReview(ctx, llmclient.New(), prep)
 
 	// Graceful interrupt (SIGINT/SIGTERM cancelled the root context): completed
@@ -210,20 +216,24 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return reportInterrupt(cmd, ctx, result, prep)
 	}
 
+	// End-of-review status + metrics summary (Epic 4.4 AC3): the one-line outcome
+	// plus duration, agent outcome, API calls, and findings. Both are emitted before
+	// the all-agents-failed error guard below, so an exit-1 review (every agent
+	// failed, artifacts preserved) still prints the breakdown an operator most needs
+	// on a failure. The summary diffs the post-review registry against metricsBaseline
+	// so the counts reflect this review alone — the same metrics the MCP server exports.
+	// Note: time.Since(now) is CLI-level elapsed time (includes range resolution,
+	// config load, and scaffolding overhead); atcr_review_duration_seconds is
+	// engine-level (starts inside fanout.ExecuteReview). The two values measure
+	// slightly different spans and will rarely agree exactly — this is intentional.
 	if result != nil {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "review %s: %d/%d agents succeeded (%s)\n",
 			result.ID, result.Summary.Succeeded, result.Summary.Total, result.Dir)
+		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
+		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
 	}
 	if err != nil {
 		return err // all-agents-failed → exit 1, artifacts preserved
-	}
-
-	// End-of-review metrics summary (Epic 4.4 AC3): duration, agent outcome, API
-	// calls, and findings. Reads the process-global registry, which holds this
-	// review's totals (a CLI process runs one review). Printed after the one-line
-	// status above and before any one-shot reconcile/verify output.
-	if result != nil {
-		writeReviewSummary(cmd.OutOrStdout(), metrics.DefaultRegistry, time.Since(now), result.Summary.Total)
 	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review

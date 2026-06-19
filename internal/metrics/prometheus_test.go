@@ -117,6 +117,55 @@ func TestKeyEscapesLabelValue(t *testing.T) {
 	}
 }
 
+func TestKeyEscapesCarriageReturn(t *testing.T) {
+	// A carriage return must be escaped to \r so a label value cannot inject a
+	// line break into the exposition stream (escapeLabelValue's doc comment calls
+	// the escaping a security boundary).
+	k := Key("m", "label", "a\rb")
+	want := `m{label="a\rb"}`
+	if k != want {
+		t.Fatalf("Key escaping of CR = %q, want %q", k, want)
+	}
+	// A CRLF must produce \r\n, not a raw CR followed by escaped \n.
+	if got := Key("m", "label", "x\r\ny"); got != `m{label="x\r\ny"}` {
+		t.Fatalf("Key escaping of CRLF = %q, want %q", got, `m{label="x\r\ny"}`)
+	}
+}
+
+func TestHistogramSnapshotMatchesPerCallAccessors(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("snap")
+	for _, v := range []float64{5, 1, 4, 2, 3} {
+		h.Observe(v)
+	}
+	sum, count, pcts := h.snapshot(summaryQuantiles)
+	if sum != h.Sum() {
+		t.Errorf("snapshot sum = %v, want %v", sum, h.Sum())
+	}
+	if count != h.Count() {
+		t.Errorf("snapshot count = %d, want %d", count, h.Count())
+	}
+	for i, q := range summaryQuantiles {
+		if got, want := pcts[i], h.Percentile(q*100); got != want {
+			t.Errorf("snapshot percentile[%d] (q=%v) = %v, want %v", i, q, got, want)
+		}
+	}
+}
+
+func TestHistogramSnapshotEmpty(t *testing.T) {
+	r := NewRegistry()
+	h := r.Histogram("snap_empty")
+	sum, count, pcts := h.snapshot(summaryQuantiles)
+	if sum != 0 || count != 0 {
+		t.Errorf("empty snapshot sum/count = %v/%d, want 0/0", sum, count)
+	}
+	for i, p := range pcts {
+		if p != 0 {
+			t.Errorf("empty snapshot percentile[%d] = %v, want 0", i, p)
+		}
+	}
+}
+
 func TestMetricFamilyAndSplitLabels(t *testing.T) {
 	if got := metricFamily("m"); got != "m" {
 		t.Errorf("metricFamily(m) = %q, want m", got)

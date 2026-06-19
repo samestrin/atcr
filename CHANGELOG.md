@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-19
+
+### Fixed
+
+- The end-of-review summary now prints on the all-agents-failed and `--resume` paths, not only on a fresh successful review
+- `Agents X/Y` summary line now sources its denominator from the per-attempt `agents_total` registry so numerator and denominator share one granularity; counts are taken from a per-review registry diff rather than the process-global registry
+- `WritePrometheus` snapshots registry pointers and renders lock-free, sorting each histogram once instead of per-quantile
+- `escapeLabelValue` now escapes carriage returns, closing the Prometheus exposition-injection gap its doc comment claimed
+- Unknown/empty finding severities are clamped to an `UNKNOWN` bucket instead of adding unbounded label cardinality
+- `histogram.Percentile` caches its sorted snapshot and invalidates on each `Observe`, avoiding a full re-sort per call
+- `histogram.Observe` drops NaN/Inf inputs so a single bad sample can no longer poison the sum or sort order
+- API call counting no longer inflates for context-cancelled single-shot agents, and negative `Turns` / non-positive HTTP status codes can no longer corrupt the monotonic counters
+- Recovered agent panics now record a terminal outcome and duration, preserving the `reviews_total == succeeded+failed+interrupted` invariant
+- Review-duration output relabeled `Total elapsed` to reflect that it is wall-clock, not the fan-out window the histogram measures
+- Ring-buffer full check uses `>=` and percentile ranking uses `math.Ceil` for clarity and boundary correctness
+- Added `docs/metrics.md` cataloging counters/histograms, the CLI summary, and the `atcr_metrics` tool (local-only), linked from the README; documented the no-schema `atcr_metrics` registration and its accepted local-only security posture
+
 ## [4.4.0] - 2026-06-19
 
 In-process metrics and observability: a new `internal/metrics` package collects counters and histograms with no external dependencies, the fan-out engine and review flow are instrumented, `atcr review` prints an end-of-review summary, and the MCP server exposes metrics in Prometheus text format.

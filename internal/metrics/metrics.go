@@ -16,6 +16,7 @@
 package metrics
 
 import (
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -63,19 +64,28 @@ type histogram struct {
 	full   bool // true once values reached maxHistogramSamples
 	sum    float64
 	count  int64
+	// sortedCache holds the last sorted snapshot of values; rebuilt only when
+	// cacheDirty is true so multiple Percentile calls between Observe calls pay
+	// the O(n log n) sort cost at most once.
+	sortedCache []float64
+	cacheDirty  bool
 }
 
 // Observe records one value. sum and count are updated for every observation;
 // the retained sample window is bounded to maxHistogramSamples, overwriting the
 // oldest sample once full so memory stays bounded.
 func (h *histogram) Observe(v float64) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.sum += v
 	h.count++
+	h.cacheDirty = true
 	if !h.full {
 		h.values = append(h.values, v)
-		if len(h.values) == maxHistogramSamples {
+		if len(h.values) >= maxHistogramSamples {
 			h.full = true
 			h.next = 0
 		}
@@ -94,25 +104,14 @@ func (h *histogram) Percentile(p float64) float64 {
 		return 0
 	}
 	p = min(max(p, 0), 100)
-	sorted := make([]float64, len(h.values))
-	copy(sorted, h.values)
-	sort.Float64s(sorted)
-	// Nearest-rank: rank = ceil(p/100 * N), 1-indexed, clamped to [1, N]. The
-	// clamp is defensive — with p in [0,100] the rank is already in range — and
-	// uses builtins so it adds no uncoverable branch.
-	rank := min(max(int(ceilDiv(p, float64(len(sorted)))), 1), len(sorted))
-	return sorted[rank-1]
-}
-
-// ceilDiv returns ceil(p/100 * n) without importing math: the nearest-rank index
-// for percentile p over n samples.
-func ceilDiv(p, n float64) float64 {
-	x := p / 100 * n
-	t := float64(int64(x))
-	if x > t {
-		return t + 1
+	if h.cacheDirty || h.sortedCache == nil {
+		h.sortedCache = make([]float64, len(h.values))
+		copy(h.sortedCache, h.values)
+		sort.Float64s(h.sortedCache)
+		h.cacheDirty = false
 	}
-	return t
+	rank := min(max(int(math.Ceil(p/100*float64(len(h.sortedCache)))), 1), len(h.sortedCache))
+	return h.sortedCache[rank-1]
 }
 
 // Mean returns the arithmetic mean of every observed value (exact, not windowed),

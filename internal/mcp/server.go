@@ -125,6 +125,10 @@ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (
 
 	registerTool(r, &mcpsdk.Tool{Name: ToolRange, Description: descRange}, e.handleRange)
 	registerTool(r, &mcpsdk.Tool{Name: ToolStatus, Description: descStatus}, e.handleStatus)
+	// atcr_metrics takes no arguments (MetricsArgs is an empty struct), so unlike
+	// atcr_report it needs no explicit input schema — the SDK infers an empty one.
+	// handleMetrics checks ctx once up front; revisit mid-render ctx handling only
+	// if labeled-metric cardinality grows enough to make a render non-trivial.
 	registerTool(r, &mcpsdk.Tool{Name: ToolMetrics, Description: descMetrics}, e.handleMetrics)
 
 	if r.err != nil {

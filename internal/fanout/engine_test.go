@@ -14,6 +14,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -434,6 +435,35 @@ func TestRun_SerialSlotPanicRecovers(t *testing.T) {
 	assert.Equal(t, StatusOK, results[0].Status)
 	assert.Equal(t, StatusFailed, results[1].Status)
 	assert.ErrorContains(t, results[1].Err, "panic")
+}
+
+// A recovered agent panic must still record the agent's terminal metrics. The
+// panic unwinds past invokeAgent's duration Observe + recordAgentOutcome
+// (engine.go:433-434), so without recover-site instrumentation the agent is
+// counted in atcr_agents_total but in no outcome counter — silently breaking the
+// invariant agents_total == succeeded + failed + timed_out. It must be counted
+// exactly once (agents_total must not double-count).
+func TestRun_RecoveredPanicRecordsAgentMetrics(t *testing.T) {
+	f := newFake()
+	p := &panicCompleter{f: f, panicFor: map[string]bool{"boom": true}}
+	e := NewEngine(p)
+
+	total0 := metrics.Counter(metrics.NameAgentsTotal).Value()
+	failed0 := metrics.Counter(metrics.NameAgentsFailed).Value()
+	durCount0 := metrics.Histogram(metrics.NameAgentDurationSeconds).Count()
+
+	results := e.Run(context.Background(), []Slot{agentSlot("boom")})
+
+	require.Len(t, results, 1)
+	require.Equal(t, StatusFailed, results[0].Status)
+	require.ErrorContains(t, results[0].Err, "panic")
+
+	assert.Equal(t, int64(1), metrics.Counter(metrics.NameAgentsTotal).Value()-total0,
+		"panicking agent must be counted in agents_total exactly once")
+	assert.Equal(t, int64(1), metrics.Counter(metrics.NameAgentsFailed).Value()-failed0,
+		"recovered panic must record a failed outcome so the agents_total invariant holds")
+	assert.Equal(t, int64(1), metrics.Histogram(metrics.NameAgentDurationSeconds).Count()-durCount0,
+		"recovered panic must observe agent duration")
 }
 
 func parallelSlots(n int) []Slot {

@@ -422,6 +422,13 @@ func (e *engine) handleStatus(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 // but atcr serve is a stdio JSON-RPC server with no HTTP listener, so metrics
 // are surfaced as this tool instead (see the epic Clarifications). Metrics are
 // cumulative since the server started.
+//
+// Security posture: this tool is unauthenticated by design. atcr serve binds
+// only a stdio transport (server.go) — there is no network listener to reach it
+// over — so process-local access IS the accepted control (epic Risk table +
+// 2026-06-19 Clarification, which mark an HTTP /metrics listener out of scope).
+// Token validation presupposes a networked transport that does not exist; add it
+// only if such a transport is ever introduced.
 func (e *engine) handleMetrics(ctx context.Context, _ *mcpsdk.CallToolRequest, _ MetricsArgs) (*mcpsdk.CallToolResult, MetricsResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, MetricsResult{}, err
