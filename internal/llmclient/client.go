@@ -527,12 +527,24 @@ func redactErrorSnippet(snippet, key string) string {
 }
 
 // readErrorSnippet reads a bounded prefix of a non-200 response body and
-// collapses it to a single whitespace-normalized line. The remainder of the
-// body is drained so the connection can be reused.
+// collapses it to a single whitespace-normalized line. A bounded remainder is
+// then drained so a normally-sized error body's connection can be reused.
+//
+// The drain is deliberately capped (total read ≤ 2×maxErrorBodyBytes, ~8KB), NOT
+// drained in full: a hostile or malfunctioning endpoint streaming a huge error
+// body on the error path must not be read to completion (a full io.Copy drain
+// would spend time bounded only by the HTTP/context timeout on attacker-supplied
+// bytes). The accepted trade-off is that an error body larger than ~8KB is left
+// undrained, so its connection is closed rather than returned to the keep-alive
+// pool — costing one extra TCP+TLS handshake on the next retry. Real provider
+// error bodies are far smaller than 8KB, so bounding the read against abuse is
+// worth more than saving that handshake on the rare oversized body. The bound is
+// guarded by TestReadErrorSnippet_DrainIsBounded.
 func readErrorSnippet(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
-	// Drain a bounded remainder so the connection can be reused, without reading
-	// an unbounded body from a hostile/malfunctioning endpoint on the error path.
+	// Drain only a bounded remainder (see the function doc): enough to reuse the
+	// connection for a normal error body, without reading an unbounded body from a
+	// hostile/malfunctioning endpoint on the error path.
 	_, _ = io.CopyN(io.Discard, r, maxErrorBodyBytes)
 	return strings.Join(strings.Fields(string(b)), " ")
 }
