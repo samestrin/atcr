@@ -190,6 +190,11 @@ func LoadRegistry(path string) (*Registry, error) {
 	}
 
 	base := filepath.Base(path)
+	// Staged intentionally: validate() runs before ValidateFallbacks() and an early
+	// return short-circuits on structural faults. Epic 4.2 AC6 accumulation is scoped
+	// to within each check, not across this boundary — fallback-chain checks assume
+	// structurally-valid agents, so running them against a malformed registry would
+	// surface misleading errors. The user fixes structural faults first, then re-runs.
 	if err := reg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}

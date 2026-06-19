@@ -415,6 +415,14 @@ agents:
 	assert.Contains(t, out, "payload_mode", "AC2 fault must surface")
 	assert.Contains(t, out, "required field 'model'", "AC1 fault must surface")
 	assert.Contains(t, out, "min_severity", "AC2/AC4 fault must surface")
+	// AC7: validation must fail BEFORE any review directory is scaffolded. Exit 2
+	// above only proves the run aborted; assert no filesystem side effect by
+	// proving the managed reviews root was never created on the invalid path. A
+	// future regression that validated late (after scaffolding) but still exited 2
+	// would pass the checks above yet leave this directory behind.
+	_, statErr := os.Stat(filepath.Join(".atcr", "reviews"))
+	assert.True(t, os.IsNotExist(statErr),
+		"AC7: no review output directory may be created on the invalid-config fail-fast path")
 }
 
 func TestRunReview_ProjectConfigGateActivatedWithoutFlag(t *testing.T) {

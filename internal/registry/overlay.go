@@ -221,6 +221,10 @@ func (r *Registry) mergeProject(pr *ProjectRegistry) {
 // the merged registry, attributing any entry-specific failure to the file that
 // defined the offending entry (project vs user).
 func (r *Registry) validateMerged() error {
+	// Staged intentionally (see LoadRegistry): validate() precedes ValidateFallbacks()
+	// with an early return. Epic 4.2 AC6 accumulation is within-check, not across this
+	// boundary — fallback-chain checks assume structurally-valid agents, so running
+	// them on a malformed registry would surface misleading errors.
 	if err := r.validate(); err != nil {
 		return r.attribute(err)
 	}

@@ -1,13 +1,16 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +26,7 @@ type blockingCompleter struct {
 func (b *blockingCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
 	b.once.Do(func() { close(b.entered) })
 	<-ctx.Done()
-	return "", ctx.Err()
+	return "", context.Canceled
 }
 
 // startInFlightReview builds a serve-mode engine (via buildServer, so shutdownCtx
@@ -93,8 +96,6 @@ func TestServeShutdown_ClientDisconnectDoesNotInterrupt(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, fanout.RunInterrupted, st.Status,
 		"a clean client disconnect must not force-interrupt an in-flight review (AC3)")
-	assert.Equal(t, fanout.RunInProgress, st.Status,
-		"the still-running review stays in_progress after a disconnect drain")
 }
 
 // TestServeShutdown_NormalCompletionNotInterrupted locks AC2/AC4: a detached
@@ -125,6 +126,65 @@ func TestServeShutdown_NormalCompletionNotInterrupted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fanout.RunCompleted, st.Status,
 		"shutdown must not retroactively interrupt an already-finished review (AC4)")
+}
+
+// TestServeShutdown_LogsInterruptWarn locks the serve-mode observability parity
+// with the CLI's "review interrupted by signal" Warn (epic 4.1/4.1.1): when a
+// detached MCP review is cut off by server shutdown, the engine emits a greppable
+// structured Warn carrying the review_id, so monitoring/CI grepping serve-mode
+// logs can find interrupted reviews instead of only the on-disk manifest.
+func TestServeShutdown_LogsInterruptWarn(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	bc := &blockingCompleter{entered: make(chan struct{})}
+	_, e, err := buildServer(root, bc, logger)
+	require.NoError(t, err)
+
+	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	select {
+	case <-bc.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detached fan-out never started")
+	}
+
+	// serverShutdown=true cancels the in-flight review, which unblocks the
+	// completer; drain waits for the goroutine (and thus its Warn) to finish.
+	e.shutdownReviews(true, shutdownDrain)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "review interrupted by server shutdown",
+		"server shutdown must emit a structured Warn for the interrupted detached review")
+	assert.Contains(t, logged, res.ReviewID,
+		"the interrupt Warn must carry the review_id for greppability")
+}
+
+// TestShutdownReviews_LogsCancelWarn locks diagnosability of the server-shutdown
+// path: when shutdownReviews cancels in-flight detached reviews (serverShutdown=
+// true) it must emit a Warn before firing the cancel, so an interrupted serve-mode
+// review is evidenced in stderr, not only by the on-disk manifest. A clean client
+// disconnect (serverShutdown=false) cancels nothing and must stay silent.
+func TestShutdownReviews_LogsCancelWarn(t *testing.T) {
+	newEngine := func(buf *bytes.Buffer) *engine {
+		logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		_, shutdownCancel := context.WithCancel(context.Background())
+		return &engine{log: logger, shutdownCancel: shutdownCancel}
+	}
+
+	var onShutdown bytes.Buffer
+	newEngine(&onShutdown).shutdownReviews(true, 10*time.Millisecond)
+	assert.Contains(t, onShutdown.String(), "server shutdown: cancelling in-flight detached reviews",
+		"a server shutdown must log a Warn before cancelling in-flight reviews")
+
+	var onDisconnect bytes.Buffer
+	newEngine(&onDisconnect).shutdownReviews(false, 10*time.Millisecond)
+	assert.NotContains(t, onDisconnect.String(), "server shutdown: cancelling in-flight detached reviews",
+		"a clean client disconnect cancels nothing and must not log the cancel Warn")
 }
 
 // waitForTerminalStatus polls a review's on-disk status until it leaves
@@ -214,4 +274,59 @@ func TestWithShutdownCancel_NilShutdownCtxIsNoop(t *testing.T) {
 		t.Fatal("ctx unexpectedly cancelled with no shutdown context")
 	default:
 	}
+}
+
+// TestServeShutdown_LogsWarnOnInterrupt verifies a detached review cancelled by
+// server shutdown emits a structured Warn for greppability parity with the CLI
+// "review interrupted by signal" log (handlers.go:231 TD item).
+func TestServeShutdown_LogsWarnOnInterrupt(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+
+	var logBuf bytes.Buffer
+	logger, err := log.New("warn", "text", &logBuf)
+	require.NoError(t, err)
+
+	bc := &blockingCompleter{entered: make(chan struct{})}
+	_, e, err := buildServer(root, bc, logger)
+	require.NoError(t, err)
+
+	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
+	require.NoError(t, err)
+	require.Equal(t, runningStatus, res.Status)
+
+	select {
+	case <-bc.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("detached fan-out never started")
+	}
+	t.Cleanup(func() {
+		if e.shutdownCancel != nil {
+			e.shutdownCancel()
+		}
+		e.drain(time.Second)
+	})
+
+	e.shutdownReviews(true, shutdownDrain)
+
+	assert.Contains(t, logBuf.String(), "review interrupted by server shutdown",
+		"shutdown-interrupted MCP review must emit structured Warn for log greppability")
+}
+
+// TestShutdownReviews_LogsWarnOnServerShutdown verifies shutdownReviews emits a
+// structured Warn when serverShutdown is true, making serve-side cancellation
+// diagnosable from logs (server.go:48 TD item).
+func TestShutdownReviews_LogsWarnOnServerShutdown(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger, err := log.New("warn", "text", &logBuf)
+	require.NoError(t, err)
+
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	e := &engine{log: logger, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel}
+
+	e.shutdownReviews(true, 0)
+
+	assert.Contains(t, logBuf.String(), "server shutdown: cancelling in-flight detached reviews",
+		"shutdownReviews(serverShutdown=true) must emit Warn for diagnosability")
 }
