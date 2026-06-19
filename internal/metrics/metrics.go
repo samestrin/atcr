@@ -231,7 +231,7 @@ func (r *Registry) Gauge(name string) *gauge {
 	return g
 }
 
-// Reset drops every counter and histogram. It exists for test isolation (and a
+// Reset drops every counter, gauge, and histogram. It exists for test isolation (and a
 // hypothetical operator reset); production never calls it — serve-mode metrics
 // are cumulative since process start.
 func (r *Registry) Reset() {
