@@ -1,0 +1,2 @@
+MEDIUM|internal/validation/validation.go:53|Dead path traversal check after filepath.Abs|Remove strings.Contains("..") check or validate against a canonical safe root|correctness|5|filepath.Abs calls Clean internally; ".." check never triggers post-Abs|greta
+MEDIUM|cmd/atcr/report.go:41|Validation relies on dead ".." string check|Update validator to use filepath.Clean + boundary checks instead of string matching|security|10|strings.Contains("..") is bypassable and redundant after Abs resolution|greta

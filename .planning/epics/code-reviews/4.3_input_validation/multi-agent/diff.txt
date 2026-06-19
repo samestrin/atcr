@@ -1,0 +1,359 @@
+diff --git a/cmd/atcr/report.go b/cmd/atcr/report.go
+index 995ff85..4a6219b 100644
+--- a/cmd/atcr/report.go
++++ b/cmd/atcr/report.go
+@@ -5,9 +5,11 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"os"
++	"path/filepath"
+ 
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/report"
++	"github.com/samestrin/atcr/internal/validation"
+ 	"github.com/spf13/cobra"
+ )
+ 
+@@ -34,6 +36,19 @@ func runReport(cmd *cobra.Command, args []string) error {
+ 		return usageError(fmt.Errorf("unknown format %q: supported formats are %s", format, report.Formats()))
+ 	}
+ 
++	// Validate --output (when set) before any rendering: a path under a system
++	// directory is rejected at the input layer (exit 2). Validate the resolved
++	// absolute form so a legitimate relative path (e.g. ../report.md) is preserved.
++	if output, _ := cmd.Flags().GetString("output"); output != "" {
++		abs, err := filepath.Abs(output)
++		if err != nil {
++			return usageError(fmt.Errorf("resolving --output: %w", err))
++		}
++		if err := validation.FilePath(abs); err != nil {
++			return usageError(err)
++		}
++	}
++
+ 	arg := ""
+ 	if len(args) == 1 {
+ 		arg = args[0]
+diff --git a/cmd/atcr/report_test.go b/cmd/atcr/report_test.go
+index 1cb1e8b..936736e 100644
+--- a/cmd/atcr/report_test.go
++++ b/cmd/atcr/report_test.go
+@@ -128,6 +128,17 @@ func TestReportCmd_OutputWriteFailureIsUsageError(t *testing.T) {
+ 	require.Equal(t, 2, execCmd(t, "report", "--output", filepath.Join(ro, "report.md"), "r"))
+ }
+ 
++func TestReportCmd_SystemDirOutputIsUsageError(t *testing.T) {
++	// Epic 4.3: a --output path under a system directory is rejected by the
++	// input-validation layer (exit 2) before any rendering — not left to the
++	// filesystem to refuse on write.
++	isolate(t)
++	fixtureReconciled(t, "r", oneFinding)
++	code, out := execCmdCapture(t, "report", "--output", "/etc/atcr-report.md", "r")
++	require.Equal(t, 2, code)
++	require.Contains(t, out, "must not reference system directories")
++}
++
+ func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
+ 	isolate(t)
+ 	fixtureReconciled(t, "r", "") // 0-byte findings.json → malformed, not "no findings"
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 36b63a3..97941ad 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -15,6 +15,7 @@ import (
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/validation"
+ 	"github.com/samestrin/atcr/internal/verify"
+ 	"github.com/spf13/cobra"
+ )
+@@ -66,6 +67,13 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
+ 	if err != nil {
+ 		return "", usageError(fmt.Errorf("resolving --output-dir: %w", err))
+ 	}
++	// Validate the resolved (absolute, cleaned) path, not the raw value: a
++	// legitimate relative path like ../reviews resolves clean and passes, while
++	// a path under a system directory (/etc, /proc, /sys) is rejected by the
++	// input-validation layer (exit 2) before any review work begins.
++	if err := validation.FilePath(abs); err != nil {
++		return "", usageError(err)
++	}
+ 	return abs, nil
+ }
+ 
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 0e478c2..d4d3d04 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -329,6 +329,18 @@ func TestOutputDirFromFlags_WhitespacePaddedResolvesTrimmed(t *testing.T) {
+ 	require.Equal(t, filepath.Join(cwd, "out"), dir, "leading spaces must be trimmed before filepath.Abs")
+ }
+ 
++func TestOutputDirFromFlags_SystemDirRejected(t *testing.T) {
++	// Epic 4.3: --output-dir resolving to a system directory is rejected by the
++	// input-validation layer (usage error, exit 2) before any review work — not
++	// left to the filesystem to refuse mid-run.
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags([]string{"--output-dir", "/etc/atcr"}))
++	_, err := outputDirFromFlags(cmd)
++	require.Error(t, err)
++	require.Equal(t, 2, exitCode(err))
++	require.Contains(t, err.Error(), "must not reference system directories")
++}
++
+ // TestReviewCmd_VerifyFlagsRegistered verifies the --verify chaining flags exist
+ // on reviewCmd with the documented defaults (AC 04-02).
+ func TestReviewCmd_VerifyFlagsRegistered(t *testing.T) {
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 38129ba..c5d7ad1 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -23,22 +23,23 @@ const modulePath = "github.com/samestrin/atcr"
+ // internal packages it may import (subpackages inherit their top-level
+ // entry). Absence of a directory here fails the completeness check.
+ var allowedInternalImports = map[string][]string{
+-	"atomicfs":  {},
+-	"stream":    {},
+-	"gitrange":  {},
+-	"log":       {},         // single diagnostic sink; stdlib-only (epic 4.0)
+-	"errors":    {},         // error-classification taxonomy; stdlib-only (epic 4.0)
+-	"registry":  {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
+-	"tools":     {},
+-	"payload":   {"gitrange", "atomicfs", "log"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+-	"llmclient": {"registry", "errors"},          // errors: HTTP failures wrapped in ClassifiedError (epic 4.0 phase 4.3)
+-	"doctor":    {"llmclient", "registry"},
+-	"fanout":    {"llmclient", "registry", "stream", "payload", "tools", "log"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2)
+-	"reconcile": {"stream", "atomicfs"},
+-	"scorecard": {"llmclient", "reconcile", "fanout"},
+-	"report":    {"stream", "reconcile"},
+-	"verify":    {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
+-	"mcp":       {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log"},
++	"atomicfs":   {},
++	"stream":     {},
++	"gitrange":   {},
++	"log":        {},         // single diagnostic sink; stdlib-only (epic 4.0)
++	"errors":     {},         // error-classification taxonomy; stdlib-only (epic 4.0)
++	"registry":   {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
++	"tools":      {},
++	"validation": {},                              // user-input validators; stdlib-only leaf (epic 4.3)
++	"payload":    {"gitrange", "atomicfs", "log"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
++	"llmclient":  {"registry", "errors"},          // errors: HTTP failures wrapped in ClassifiedError (epic 4.0 phase 4.3)
++	"doctor":     {"llmclient", "registry"},
++	"fanout":     {"llmclient", "registry", "stream", "payload", "tools", "log"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2)
++	"reconcile":  {"stream", "atomicfs"},
++	"scorecard":  {"llmclient", "reconcile", "fanout"},
++	"report":     {"stream", "reconcile"},
++	"verify":     {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
++	"mcp":        {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log"},
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+diff --git a/internal/validation/validation.go b/internal/validation/validation.go
+new file mode 100644
+index 0000000..be952c8
+--- /dev/null
++++ b/internal/validation/validation.go
+@@ -0,0 +1,104 @@
++// Package validation centralizes user-input validation for the atcr CLI: git
++// refs, file paths, review IDs, severities, and arbitrary enums. Each validator
++// performs no I/O and returns a *ValidationError so callers can wrap it in a
++// usage error (exit 2) for a consistent, field-aware message across commands.
++package validation
++
++import (
++	"fmt"
++	"regexp"
++	"strings"
++)
++
++// ValidationError is a user-facing input validation error. It names the field,
++// echoes the offending value, and explains the expected format.
++type ValidationError struct {
++	Field   string
++	Value   string
++	Message string
++}
++
++func (e *ValidationError) Error() string {
++	return fmt.Sprintf("invalid %s %q: %s", e.Field, e.Value, e.Message)
++}
++
++// GitRef validates a git ref name (branch, tag, or SHA). It applies a subset of
++// git-check-ref-format rules — no "..", no "~^: " or control chars, and a length
++// bound. It is intentionally NOT applied to the --base/--head flags, which take
++// git *revisions* (HEAD^, HEAD~3, @{...}) that legitimately use these characters.
++func GitRef(ref string) error {
++	if ref == "" {
++		return &ValidationError{"git ref", ref, "must not be empty"}
++	}
++	// Git ref rules: no .., no ~, no ^, no :, no space, no control chars.
++	if strings.Contains(ref, "..") || strings.ContainsAny(ref, "~^: \t\n") {
++		return &ValidationError{"git ref", ref, "contains invalid characters"}
++	}
++	if len(ref) > 255 {
++		return &ValidationError{"git ref", ref, "must be <= 255 characters"}
++	}
++	return nil
++}
++
++// FilePath validates a file path: non-empty, no path traversal (".."), and no
++// reference to the system directories /etc, /proc, or /sys. Callers that accept
++// relative paths should resolve them to an absolute, cleaned form (filepath.Abs)
++// before validating, so a legitimate relative path is not rejected for "..".
++//
++// The system-directory guard is oriented at Unix absolute paths. On Windows
++// (drive-letter/volume paths such as C:\Windows) it is inert; callers targeting
++// Windows need volume-aware system-path detection (tracked as technical debt).
++func FilePath(path string) error {
++	if path == "" {
++		return &ValidationError{"file path", path, "must not be empty"}
++	}
++	// No path traversal.
++	if strings.Contains(path, "..") {
++		return &ValidationError{"file path", path, "must not contain .."}
++	}
++	// No paths under the system directories /etc, /proc, /sys. Match a directory
++	// boundary (the exact dir or a "<dir>/" prefix) so siblings like /etcd or
++	// /system are not falsely rejected by a bare prefix check.
++	for _, sysDir := range []string{"/etc", "/proc", "/sys"} {
++		if path == sysDir || strings.HasPrefix(path, sysDir+"/") {
++			return &ValidationError{"file path", path, "must not reference system directories"}
++		}
++	}
++	return nil
++}
++
++// reviewIDPattern is the review-ID allowlist: alphanumerics, dash, underscore.
++var reviewIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
++
++// ReviewID validates a review ID (alphanumeric, dash, underscore; <= 100 chars).
++func ReviewID(id string) error {
++	if id == "" {
++		return &ValidationError{"review ID", id, "must not be empty"}
++	}
++	if !reviewIDPattern.MatchString(id) {
++		return &ValidationError{"review ID", id, "must contain only alphanumeric characters, dash, and underscore"}
++	}
++	if len(id) > 100 {
++		return &ValidationError{"review ID", id, "must be <= 100 characters"}
++	}
++	return nil
++}
++
++// Severity validates a severity level (case-insensitive).
++func Severity(s string) error {
++	valid := map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
++	if !valid[strings.ToUpper(s)] {
++		return &ValidationError{"severity", s, "must be one of: LOW, MEDIUM, HIGH, CRITICAL"}
++	}
++	return nil
++}
++
++// Enum validates a value against a set of allowed values.
++func Enum(field, value string, allowed []string) error {
++	for _, a := range allowed {
++		if value == a {
++			return nil
++		}
++	}
++	return &ValidationError{field, value, fmt.Sprintf("must be one of: %s", strings.Join(allowed, ", "))}
++}
+diff --git a/internal/validation/validation_test.go b/internal/validation/validation_test.go
+new file mode 100644
+index 0000000..3c83ffd
+--- /dev/null
++++ b/internal/validation/validation_test.go
+@@ -0,0 +1,92 @@
++package validation
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestValidationError_Error(t *testing.T) {
++	err := &ValidationError{Field: "git ref", Value: "bad..ref", Message: "contains invalid characters"}
++	assert.Equal(t, `invalid git ref "bad..ref": contains invalid characters`, err.Error())
++}
++
++func TestGitRef(t *testing.T) {
++	// AC1: a plain branch name is valid.
++	require.NoError(t, GitRef("main"))
++	require.NoError(t, GitRef(strings.Repeat("a", 255))) // exactly the max length is allowed
++
++	// AC2: ".." is rejected with the documented message.
++	err := GitRef("invalid..ref")
++	require.Error(t, err)
++	assert.Equal(t, `invalid git ref "invalid..ref": contains invalid characters`, err.Error())
++
++	// Each invalid-character class trips the same guard.
++	for _, ref := range []string{"has space", "has\ttab", "has\nnewline", "tilde~", "caret^", "colon:"} {
++		assert.Error(t, GitRef(ref), ref)
++	}
++
++	// Empty and over-length are distinct messages.
++	assert.EqualError(t, GitRef(""), `invalid git ref "": must not be empty`)
++	long := strings.Repeat("a", 256)
++	assert.EqualError(t, GitRef(long), `invalid git ref "`+long+`": must be <= 255 characters`)
++}
++
++func TestFilePath(t *testing.T) {
++	require.NoError(t, FilePath("reviews/out"))
++	require.NoError(t, FilePath("/home/user/reviews"))
++
++	assert.EqualError(t, FilePath(""), `invalid file path "": must not be empty`)
++	assert.EqualError(t, FilePath("../escape"), `invalid file path "../escape": must not contain ..`)
++
++	// AC3: system directories are rejected with the documented message.
++	assert.EqualError(t, FilePath("/etc/passwd"),
++		`invalid file path "/etc/passwd": must not reference system directories`)
++	for _, p := range []string{"/proc/self", "/sys/kernel", "/etc", "/proc", "/sys"} {
++		err := FilePath(p)
++		require.Error(t, err, p)
++		assert.Contains(t, err.Error(), "must not reference system directories", p)
++	}
++
++	// Directory-boundary match: siblings of the system dirs are NOT system
++	// directories and must pass (no bare-prefix false positives).
++	for _, p := range []string{"/etcd/data", "/etc-backup", "/system/x", "/procession"} {
++		require.NoError(t, FilePath(p), p)
++	}
++}
++
++func TestReviewID(t *testing.T) {
++	require.NoError(t, ReviewID("2026-06-18_my-branch"))
++	require.NoError(t, ReviewID(strings.Repeat("a", 100))) // exactly the max length is allowed
++
++	assert.EqualError(t, ReviewID(""), `invalid review ID "": must not be empty`)
++
++	// AC4: path-traversal input fails the alphanumeric/dash/underscore allowlist.
++	assert.EqualError(t, ReviewID("../../../etc/passwd"),
++		`invalid review ID "../../../etc/passwd": must contain only alphanumeric characters, dash, and underscore`)
++
++	long := strings.Repeat("a", 101)
++	assert.EqualError(t, ReviewID(long), `invalid review ID "`+long+`": must be <= 100 characters`)
++}
++
++func TestSeverity(t *testing.T) {
++	for _, s := range []string{"low", "MEDIUM", "High", "critical"} {
++		require.NoError(t, Severity(s), s) // case-insensitive
++	}
++
++	// AC5: an unknown value is rejected with the documented message.
++	assert.EqualError(t, Severity("INVALID"),
++		`invalid severity "INVALID": must be one of: LOW, MEDIUM, HIGH, CRITICAL`)
++	assert.Error(t, Severity("")) // empty is not a valid severity
++}
++
++func TestEnum(t *testing.T) {
++	allowed := []string{"md", "json", "checklist"}
++	require.NoError(t, Enum("format", "json", allowed))
++
++	err := Enum("format", "xml", allowed)
++	require.Error(t, err)
++	assert.Equal(t, `invalid format "xml": must be one of: md, json, checklist`, err.Error())
++}

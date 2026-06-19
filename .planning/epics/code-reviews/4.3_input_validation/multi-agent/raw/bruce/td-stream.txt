@@ -1,0 +1,1 @@
+MEDIUM|internal/validation/validation.go:60|FilePath rejects legitimate filenames containing ".."|Use filepath.Split-based component check or drop check (post-filepath.Abs callers have already resolved path traversal)|correctness|10|strings.Contains(path, "..") rejects /cwd/foo..bar, ..hidden, etc. — false positive|bruce

@@ -1,0 +1,17 @@
+{
+  "claude_role": "intent_verifier",
+  "clusters_collapsed": {
+    "input_rows": 14,
+    "merged_rows": 7,
+    "reduction": 7
+  },
+  "intent_annotations": 0,
+  "merged_count": 7,
+  "raw_count": 14,
+  "severity_disagreements": 0,
+  "sources": [
+    "claude",
+    "multi-agent"
+  ],
+  "timestamp": "2026-06-19T07:44:00Z"
+}
