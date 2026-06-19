@@ -165,6 +165,29 @@ func TestServeShutdown_LogsInterruptWarn(t *testing.T) {
 		"the interrupt Warn must carry the review_id for greppability")
 }
 
+// TestShutdownReviews_LogsCancelWarn locks diagnosability of the server-shutdown
+// path: when shutdownReviews cancels in-flight detached reviews (serverShutdown=
+// true) it must emit a Warn before firing the cancel, so an interrupted serve-mode
+// review is evidenced in stderr, not only by the on-disk manifest. A clean client
+// disconnect (serverShutdown=false) cancels nothing and must stay silent.
+func TestShutdownReviews_LogsCancelWarn(t *testing.T) {
+	newEngine := func(buf *bytes.Buffer) *engine {
+		logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		_, shutdownCancel := context.WithCancel(context.Background())
+		return &engine{log: logger, shutdownCancel: shutdownCancel}
+	}
+
+	var onShutdown bytes.Buffer
+	newEngine(&onShutdown).shutdownReviews(true, 10*time.Millisecond)
+	assert.Contains(t, onShutdown.String(), "server shutdown: cancelling in-flight detached reviews",
+		"a server shutdown must log a Warn before cancelling in-flight reviews")
+
+	var onDisconnect bytes.Buffer
+	newEngine(&onDisconnect).shutdownReviews(false, 10*time.Millisecond)
+	assert.NotContains(t, onDisconnect.String(), "server shutdown: cancelling in-flight detached reviews",
+		"a clean client disconnect cancels nothing and must not log the cancel Warn")
+}
+
 // waitForTerminalStatus polls a review's on-disk status until it leaves
 // in_progress, failing with a clear message on timeout rather than asserting
 // against a transient in_progress under CI load (a generous 10s budget for a
