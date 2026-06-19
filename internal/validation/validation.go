@@ -90,10 +90,12 @@ func ReviewID(id string) error {
 	return nil
 }
 
+// validSeverities is the set of accepted severity levels (case-normalized).
+var validSeverities = map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
+
 // Severity validates a severity level (case-insensitive).
 func Severity(s string) error {
-	valid := map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
-	if !valid[strings.ToUpper(s)] {
+	if !validSeverities[strings.ToUpper(s)] {
 		return &ValidationError{"severity", s, "must be one of: LOW, MEDIUM, HIGH, CRITICAL"}
 	}
 	return nil
