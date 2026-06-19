@@ -50,6 +50,9 @@ func TestFilePath(t *testing.T) {
 	assert.EqualError(t, FilePath(""), `invalid file path "": must not be empty`)
 	assert.EqualError(t, FilePath("../escape"), `invalid file path "../escape": must not contain ..`)
 
+	// A filename that contains ".." as a substring (not a traversal segment) must not be rejected.
+	require.NoError(t, FilePath("/home/user/my..file"), "FilePath should accept '..'' in a filename component")
+
 	// AC3: system directories are rejected with the documented message.
 	assert.EqualError(t, FilePath("/etc/passwd"),
 		`invalid file path "/etc/passwd": must not reference system directories`)
