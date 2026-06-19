@@ -1,6 +1,6 @@
 # Configuration Reference
 
-atcr reads configuration from a user file, optional project files, and embedded defaults, resolved by a strict precedence chain. Every file is strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout.
+atcr reads configuration from a user file, optional project files, and embedded defaults, resolved by a strict precedence chain. Every file is strictly parsed: **unknown keys are load errors**, so configs stay typo-safe, and every validation failure surfaces in a second at load time — not after a 10-minute timeout. All faults in a config are reported together (each naming the file that defined the offending entry), so you fix them in a single pass rather than one error per run.
 
 | File | Scope | Holds |
 |------|-------|-------|
