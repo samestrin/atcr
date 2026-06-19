@@ -153,8 +153,14 @@ type gauge struct {
 	bits atomic.Uint64
 }
 
-// Set replaces the gauge's current value.
-func (g *gauge) Set(v float64) { g.bits.Store(math.Float64bits(v)) }
+// Set replaces the gauge's current value. NaN and ±Inf are silently dropped,
+// matching the guard in histogram.Observe.
+func (g *gauge) Set(v float64) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return
+	}
+	g.bits.Store(math.Float64bits(v))
+}
 
 // Value returns the current value.
 func (g *gauge) Value() float64 { return math.Float64frombits(g.bits.Load()) }
