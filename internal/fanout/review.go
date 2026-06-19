@@ -586,6 +586,7 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 	}
 	return Agent{
 		Name:            name,
+		Provider:        ac.Provider,
 		Prompt:          prompt,
 		PayloadMode:     mode,
 		Truncation:      mp.Truncation,
@@ -647,7 +648,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		fmt.Fprintf(os.Stderr, "warn: fallback agent %q sets its own min_severity/max_findings/scope; these are ignored — the primary lane's constraints govern\n", name)
 	}
 	return Agent{
-		Name:        name,
+		Name: name,
+		// A fallback keys on its OWN provider: if it uses a different provider than
+		// the primary, it gets that provider's breaker (so a fallback can succeed
+		// while the primary's circuit is open).
+		Provider:    ac.Provider,
 		Prompt:      primary.Prompt,
 		PayloadMode: primary.PayloadMode,
 		Truncation:  primary.Truncation,

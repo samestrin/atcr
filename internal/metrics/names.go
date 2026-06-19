@@ -29,7 +29,13 @@ const (
 	NameFindingsTotal      = "atcr_findings_total"
 	NameFindingsBySeverity = "atcr_findings_by_severity"
 
+	// Circuit breaker (Epic 4.5). A per-provider gauge whose value is the current
+	// circuit state: 0 closed / 1 open / 2 half-open. Recorded by
+	// internal/circuitbreaker on every state transition.
+	NameCircuitBreakerState = "atcr_circuit_breaker_state"
+
 	// Label names used with Key.
 	LabelStatus   = "status"
 	LabelSeverity = "severity"
+	LabelProvider = "provider"
 )

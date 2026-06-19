@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
@@ -57,6 +58,14 @@ func initRepo(t *testing.T) (dir, base, head string) {
 // shape. It returns 500 for any model in failModels, else a findings payload.
 func mockProvider(t *testing.T, failModels ...string) *httptest.Server {
 	t.Helper()
+	// The circuit breaker keys on the registry provider name ("p"), which every
+	// review test shares, and lives in a process-global registry (correct for
+	// serve mode, where a provider outage in one review should fail-fast the next).
+	// In the test binary that global is shared across tests, so a failing-provider
+	// test would trip "p" for an unrelated later test. Isolate per test: start
+	// clean and reset on cleanup.
+	circuitbreaker.DefaultRegistry.Reset()
+	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
 	fail := map[string]bool{}
 	for _, m := range failModels {
 		fail[m] = true

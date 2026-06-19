@@ -189,3 +189,39 @@ func TestFormatFloat(t *testing.T) {
 		}
 	}
 }
+
+func TestWritePrometheusGauge(t *testing.T) {
+	r := NewRegistry()
+	// Labeled family: two provider variants must share one # TYPE header.
+	r.Gauge(Key("atcr_circuit_breaker_state", "provider", "openai")).Set(1)
+	r.Gauge(Key("atcr_circuit_breaker_state", "provider", "anthropic")).Set(0)
+
+	out := r.WritePrometheus()
+	for _, w := range []string{
+		"# TYPE atcr_circuit_breaker_state gauge",
+		`atcr_circuit_breaker_state{provider="openai"} 1`,
+		`atcr_circuit_breaker_state{provider="anthropic"} 0`,
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("gauge output missing %q\n---\n%s", w, out)
+		}
+	}
+	// Exactly one TYPE header per family (duplicate TYPE lines are invalid).
+	if n := strings.Count(out, "# TYPE atcr_circuit_breaker_state gauge"); n != 1 {
+		t.Errorf("gauge TYPE header appeared %d times, want 1\n%s", n, out)
+	}
+}
+
+func TestWritePrometheusGaugeUnlabeled(t *testing.T) {
+	r := NewRegistry()
+	r.Gauge("atcr_circuit_breaker_state").Set(2)
+	out := r.WritePrometheus()
+	for _, w := range []string{
+		"# TYPE atcr_circuit_breaker_state gauge",
+		"atcr_circuit_breaker_state 2",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("unlabeled gauge output missing %q\n---\n%s", w, out)
+		}
+	}
+}

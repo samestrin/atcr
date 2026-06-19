@@ -1,3 +1,17 @@
+## [4.5.0] - 2026-06-19
+
+### Added
+
+- Per-provider circuit breaker: after 3 consecutive provider failures (5xx, timeouts, or connection-level transport errors) a provider's circuit opens and subsequent agents fail fast without wasted API calls, then recovers automatically via a 60-second half-open probe
+- `CircuitOpenError` makes the fan-out engine treat an open circuit as a permanent failure and fall straight through to an agent's fallback chain
+- `atcr_circuit_breaker_state{provider}` gauge (0 closed / 1 open / 2 half-open), documented in `docs/metrics.md`; adds a settable gauge primitive to the in-process metrics collector
+
+### Changed
+
+- 4xx provider responses — including 429 rate-limits and 401 auth errors — never trip the breaker; only outages do, and `atcr_api_calls_total` no longer counts a fail-fast circuit-open as a provider round-trip
+
+*Shipped via /execute-epic (epic 4.5)*
+
 ## [Technical Debt] - 2026-06-19
 
 ### Fixed

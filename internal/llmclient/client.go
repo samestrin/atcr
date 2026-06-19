@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	atcrerrors "github.com/samestrin/atcr/internal/errors"
 )
 
@@ -289,12 +291,92 @@ func resolveEndpoint(baseURL string) string {
 	return endpoint
 }
 
-// send performs the request with the retry/backoff schedule and returns the raw
-// 200 response body for the caller to parse. It is shared by Complete (single
+// send wraps the retry loop (dispatch) with the per-provider circuit breaker
+// (Epic 4.5). The provider name travels on the context (set by the fan-out
+// engine), not on the Invocation, so the breaker keys on the logical provider
+// rather than a lossy BaseURL. When no provider is attached — e.g. the doctor
+// self-test, which must probe every endpoint regardless of circuit state — the
+// breaker is skipped entirely. An open circuit fails fast with no HTTP request
+// (AC2). After the call, only a breaker-failure (5xx / timeout / transport)
+// records a failure; a 4xx (incl. 429/401) or a caller cancellation records
+// nothing (AC10).
+func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
+	provider := circuitbreaker.ProviderFromContext(ctx)
+	if provider == "" {
+		return c.dispatch(ctx, endpoint, key, body)
+	}
+	breaker := circuitbreaker.DefaultRegistry.Get(provider)
+	if !breaker.Allow() {
+		return nil, &CircuitOpenError{Provider: provider}
+	}
+	raw, err := c.dispatch(ctx, endpoint, key, body)
+	// Every branch reports the outcome to the breaker exactly once: a half-open
+	// probe MUST be resolved (RecordSuccess/RecordFailure/ReleaseProbe) or the
+	// probe slot leaks and the circuit wedges half-open forever.
+	switch {
+	case err == nil:
+		// A successful round-trip: closes a half-open probe, resets the run.
+		breaker.RecordSuccess()
+	case isBreakerFailure(err):
+		// 5xx, timeout, or transport failure: trips/advances the failure run.
+		breaker.RecordFailure()
+	case errors.Is(err, context.Canceled):
+		// The caller cancelled mid-call — nothing was learned about the provider.
+		// Release any half-open probe without a verdict (do not count it).
+		breaker.ReleaseProbe()
+	default:
+		// A non-tripping HTTP response (4xx incl. 429/401): the provider replied,
+		// so it is reachable. The breaker tracks outages, not auth/rate-limit
+		// correctness, so a reply counts as a healthy round-trip — which also
+		// closes a half-open probe instead of wedging it.
+		breaker.RecordSuccess()
+	}
+	return raw, err
+}
+
+// CircuitOpenError is returned when a provider's circuit breaker is open: the
+// request fails fast with no HTTP call (AC2). It is a permanent failure — the
+// fan-out engine classifies it as a non-timeout failure and moves straight to
+// the fallback chain (AC6). Provider names the tripped provider for diagnostics.
+type CircuitOpenError struct {
+	Provider string
+}
+
+func (e *CircuitOpenError) Error() string {
+	return fmt.Sprintf("circuit breaker open for provider %q: failing fast without an API call", e.Provider)
+}
+
+// isBreakerFailure reports whether err should count as a circuit-breaker failure
+// (Epic 4.5, AC10 as clarified by the rubber-duck gate): a 5xx response, a
+// timeout, or a connection-level transport error (connection refused/reset, EOF,
+// DNS) — all signal the provider is unavailable. A 4xx response (including 429
+// rate-limits, owned by Epic 4.6's backoff, and 401 auth errors) does NOT count:
+// the server replied, so the provider is reachable. A caller-initiated
+// cancellation does not count either — the call was aborted, which says nothing
+// about provider health.
+func isBreakerFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var he *HTTPStatusError
+	if errors.As(err, &he) {
+		return he.Status >= 500
+	}
+	// No HTTP response reached us: a transport-level failure or a timeout. Both
+	// mean the provider is effectively unavailable → count as a breaker failure.
+	return true
+}
+
+// dispatch performs the request with the retry/backoff schedule and returns the
+// raw 200 response body for the caller to parse. It is the inner retry loop
+// wrapped by send (which adds the circuit breaker), shared by Complete (single
 // message) and Chat (multi-turn with tools): both feed it a pre-marshalled body
 // and decode the bytes themselves, so the retry, redirect, key-redaction, and
 // size-cap semantics stay identical across the two call shapes.
-func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
+func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
 	var lastErr error
 	delay := c.initialBackoff
 	// honorExact is set when the next sleep is a server-advertised Retry-After
