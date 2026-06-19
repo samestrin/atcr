@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -58,7 +59,14 @@ type toolDispatcher interface {
 // the rendered persona prompt, the payload mode it saw, and any byte-budget
 // truncation recorded for its status.json.
 type Agent struct {
-	Name        string
+	Name string
+	// Provider is the logical provider name (the registry Providers map key). The
+	// engine threads it onto the request context in invokeAgent so llmclient.send
+	// can key the per-provider circuit breaker (Epic 4.5). It is intentionally NOT
+	// a field on Invocation: BaseURL is a lossy proxy for provider identity (two
+	// providers can share a base_url; trailing-slash variants splinter one). Empty
+	// (direct construction / a fallback that did not set it) no-ops the breaker.
+	Provider    string
 	Invocation  llmclient.Invocation
 	Prompt      string
 	PayloadMode string
@@ -438,6 +446,11 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// calls (tool loop, llmclient) inherit the agent scope via log.FromContext.
 	agentLogger := log.WithAgent(e.logger(), a.Name)
 	ctx = log.NewContext(ctx, agentLogger)
+	// Thread the logical provider name onto the context so llmclient.send can key
+	// the per-provider circuit breaker without a Provider field on Invocation
+	// (Epic 4.5). One chokepoint: this covers single-shot, the tool loop, and the
+	// verify path (all run through here). Empty provider no-ops the breaker.
+	ctx = circuitbreaker.NewContext(ctx, a.Provider)
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
 
 	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch

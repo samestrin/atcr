@@ -36,7 +36,7 @@ var allowedInternalImports = map[string][]string{
 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
 	"doctor":         {"llmclient", "registry"},
-	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4)
+	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5)
 	"reconcile":      {"stream", "atomicfs"},
 	"scorecard":      {"llmclient", "reconcile", "fanout"},
 	"report":         {"stream", "reconcile"},
