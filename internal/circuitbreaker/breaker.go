@@ -180,7 +180,9 @@ func (b *Breaker) RecordFailure() {
 // cancellation that cut the probe short before any response. The circuit stays
 // half-open so the next caller can retry the probe; no failure is counted (the
 // provider did not actually fail) and the circuit is not closed (no success was
-// observed). Outside half-open it is a no-op (there is no probe to release).
+// observed). The method unconditionally clears probeInFlight regardless of
+// state; outside half-open probeInFlight is always false, so the clear is a
+// harmless no-op in practice.
 func (b *Breaker) ReleaseProbe() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
