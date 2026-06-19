@@ -1,3 +1,13 @@
+## [4.1.2] - 2026-06-18
+
+Serve-mode detached reviews are now marked `interrupted` on server shutdown, matching CLI semantics.
+
+### Fixed
+
+- A background MCP review still in flight when the server shuts down (SIGINT/SIGTERM) is now cancelled like the CLI's interrupt path and recorded `interrupted` on disk, instead of being left `in_progress` with no signal — a clean client disconnect still lets a near-complete review finish and be recorded `completed`
+
+*Shipped via /execute-epic (epic 4.1.2)*
+
 ## [Technical Debt] - 2026-06-18
 
 ### Fixed
