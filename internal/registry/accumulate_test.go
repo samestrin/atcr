@@ -1,0 +1,258 @@
+package registry
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Epic 4.2 (AC6): configuration validation reports every error at once rather
+// than short-circuiting on the first one, so a user fixes all config mistakes
+// in a single edit instead of one-per-run. These tests pin the accumulate-all
+// contract across the three validation surfaces: (*Registry).validate(),
+// ValidateFallbacks(), and the merged-registry attribution path.
+
+// TestValidate_AccumulatesAllErrors proves a single registry carrying multiple
+// independent faults surfaces all of them in one error, not just the first.
+func TestValidate_AccumulatesAllErrors(t *testing.T) {
+	reg := &Registry{
+		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
+		Agents: map[string]AgentConfig{
+			"alpha": {Provider: "openai", Model: ""},                        // missing model
+			"bravo": {Provider: "openai", Model: "m", MinSeverity: "BOGUS"}, // invalid enum
+		},
+		PayloadMode: "bogus",    // invalid enum
+		TimeoutSecs: intPtr(-1), // out of range
+	}
+
+	err := reg.validate()
+	require.Error(t, err)
+
+	msg := err.Error()
+	// Every distinct fault must appear — not just whichever the loop hit first.
+	assert.Contains(t, msg, "timeout_secs", "settings range error must be reported")
+	assert.Contains(t, msg, "payload_mode", "settings enum error must be reported")
+	assert.Contains(t, msg, "alpha", "missing-model agent error must be reported")
+	assert.Contains(t, msg, "model", "missing-model agent error must be reported")
+	assert.Contains(t, msg, "bravo", "invalid-enum agent error must be reported")
+	assert.Contains(t, msg, "min_severity", "invalid-enum agent error must be reported")
+}
+
+// TestValidate_DeterministicOrder proves accumulated output is stable across
+// runs despite Go map iteration being randomized — required so error messages
+// and any golden assertions don't flake.
+func TestValidate_DeterministicOrder(t *testing.T) {
+	build := func() *Registry {
+		return &Registry{
+			Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
+			Agents: map[string]AgentConfig{
+				"zulu":   {Provider: "openai", Model: ""},
+				"alpha":  {Provider: "openai", Model: ""},
+				"mike":   {Provider: "openai", Model: ""},
+				"bravo":  {Provider: "openai", Model: ""},
+				"yankee": {Provider: "openai", Model: ""},
+			},
+		}
+	}
+	first := build().validate().Error()
+	for i := 0; i < 20; i++ {
+		require.Equal(t, first, build().validate().Error(),
+			"accumulated validation output must be deterministic across runs")
+	}
+	// Agents reported in sorted name order.
+	idxAlpha := strings.Index(first, "alpha")
+	idxBravo := strings.Index(first, "bravo")
+	idxMike := strings.Index(first, "mike")
+	idxYankee := strings.Index(first, "yankee")
+	idxZulu := strings.Index(first, "zulu")
+	assert.True(t, idxAlpha < idxBravo && idxBravo < idxMike && idxMike < idxYankee && idxYankee < idxZulu,
+		"agent errors must be emitted in sorted order, got: %s", first)
+}
+
+// TestValidate_ValidRegistryReturnsNil guards the happy path: accumulation must
+// not manufacture an error when there are none (errors.Join(nil...) == nil).
+func TestValidate_ValidRegistryReturnsNil(t *testing.T) {
+	reg := &Registry{
+		Providers: map[string]Provider{"openai": {APIKeyEnv: "OPENAI_API_KEY"}},
+		Agents:    map[string]AgentConfig{"alpha": {Provider: "openai", Model: "m"}},
+	}
+	assert.NoError(t, reg.validate())
+}
+
+// TestValidateFallbacks_AccumulatesMultipleDangling proves two distinct dangling
+// references are both reported in one pass.
+func TestValidateFallbacks_AccumulatesMultipleDangling(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"alpha": "ghost-a",
+		"bravo": "ghost-b",
+	})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDanglingFallback)
+	assert.Contains(t, err.Error(), "agent 'alpha' fallback references unknown agent 'ghost-a'")
+	assert.Contains(t, err.Error(), "agent 'bravo' fallback references unknown agent 'ghost-b'")
+}
+
+// TestValidateFallbacks_AccumulatesDanglingAndCycle proves an independent
+// dangling reference and a cycle are both reported, not just the first found.
+func TestValidateFallbacks_AccumulatesDanglingAndCycle(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"dang":  "ghost",
+		"cycle": "loop",
+		"loop":  "cycle",
+	})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrDanglingFallback)
+	assert.ErrorIs(t, err, ErrFallbackCycle)
+	assert.Contains(t, err.Error(), "agent 'dang' fallback references unknown agent 'ghost'")
+	assert.Contains(t, err.Error(), "fallback cycle detected")
+}
+
+// TestValidateFallbacks_LeadInIntoReportedCycleNoPanic guards the accumulation
+// hazard: after a cycle is detected, continuing the DFS must not re-walk a
+// lead-in node that points INTO the already-reported cycle (which would trip
+// walkFallbacks's "gray node must be on current path" invariant and panic).
+// {a:b, b:a} is a cycle; {c:a} is a lead-in that must NOT be reported as a
+// second cycle and must NOT panic.
+func TestValidateFallbacks_LeadInIntoReportedCycleNoPanic(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"a": "b",
+		"b": "a",
+		"c": "a",
+	})
+	var err error
+	require.NotPanics(t, func() { err = reg.ValidateFallbacks() })
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFallbackCycle)
+	// Exactly one cycle reported — the lead-in "c" is not a separate cycle.
+	assert.Equal(t, 1, strings.Count(err.Error(), "fallback cycle detected"),
+		"lead-in into an existing cycle must not be reported as a second cycle, got: %s", err.Error())
+}
+
+// TestValidateFallbacks_LeadInLeftGrayThenRevisited is the regression test for
+// the panic the independent reviewer reproduced: walkFallbacks colors a lead-in
+// node ("a") gray on the way INTO a cycle ("b"<->"c"), but "a" is not part of the
+// trimmed cycle path. If only the cycle path were blackened, a separate later
+// root ("d") whose edge points at the leftover-gray "a" would trip walkFallbacks's
+// "gray node not on current path" invariant and panic. Both reviewer repros are
+// covered: {a:b,b:c,c:b,d:a} and {a:x,x:y,y:z,z:y,w:x}.
+func TestValidateFallbacks_LeadInLeftGrayThenRevisited(t *testing.T) {
+	cases := []map[string]string{
+		{"a": "b", "b": "c", "c": "b", "d": "a"},
+		{"a": "x", "x": "y", "y": "z", "z": "y", "w": "x"},
+	}
+	for i, edges := range cases {
+		reg := agentsWithFallbacks(edges)
+		var err error
+		require.NotPanics(t, func() { err = reg.ValidateFallbacks() },
+			"case %d: a lead-in node left gray must not panic when revisited", i)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFallbackCycle)
+		// The single real cycle is reported exactly once; lead-in chains are not
+		// re-reported as cycles.
+		assert.Equal(t, 1, strings.Count(err.Error(), "fallback cycle detected"),
+			"case %d: exactly one cycle expected, got: %s", i, err.Error())
+	}
+}
+
+// TestValidateFallbacks_TwoIndependentCycles proves two disjoint cycles are both
+// reported.
+func TestValidateFallbacks_TwoIndependentCycles(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{
+		"a": "b", "b": "a",
+		"c": "d", "d": "c",
+	})
+	err := reg.ValidateFallbacks()
+	require.Error(t, err)
+	assert.Equal(t, 2, strings.Count(err.Error(), "fallback cycle detected"),
+		"two disjoint cycles must both be reported, got: %s", err.Error())
+}
+
+// TestValidateFallbacks_ValidReturnsNil guards the happy path.
+func TestValidateFallbacks_ValidReturnsNil(t *testing.T) {
+	reg := agentsWithFallbacks(map[string]string{"a": "b", "b": ""})
+	assert.NoError(t, reg.ValidateFallbacks())
+}
+
+// TestAttribute_MultiErrorPerEntryFiles proves that when accumulation produces
+// faults spanning both registry tiers, each fault is attributed to the file that
+// defined its entry — not the whole blob to whichever entry happened to be first.
+func TestAttribute_MultiErrorPerEntryFiles(t *testing.T) {
+	reg := &Registry{
+		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents: map[string]AgentConfig{
+			"uagent": {Provider: "p", Model: "m", MinSeverity: "BOGUS"},
+			"pagent": {Provider: "p", Model: "m", MinSeverity: "BOGUS"},
+		},
+	}
+	reg.stampSource(SourceUser)                                                              // all entries user-tier...
+	reg.AgentSource["pagent"] = EntrySource{Tier: SourceProject, File: projectRegistryLabel} // ...except pagent
+
+	attributed := reg.attribute(reg.validate())
+	require.Error(t, attributed)
+	msg := attributed.Error()
+
+	assert.Contains(t, msg, "registry.yaml: agent 'uagent'",
+		"user-tier fault must be prefixed with the user registry file")
+	assert.Contains(t, msg, ".atcr/registry.yaml: agent 'pagent'",
+		"project-tier fault must be prefixed with the project registry file")
+}
+
+// TestAttribute_SingleEntryStillAttributed guards backward compatibility: a lone
+// fault (now wrapped in errors.Join of one) is still attributed to its file.
+func TestAttribute_SingleEntryStillAttributed(t *testing.T) {
+	reg := &Registry{
+		Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents:    map[string]AgentConfig{"solo": {Provider: "p", Model: "m", MinSeverity: "BOGUS"}},
+	}
+	reg.stampSource(SourceUser)
+
+	attributed := reg.attribute(reg.validate())
+	require.Error(t, attributed)
+	assert.True(t, strings.HasPrefix(attributed.Error(), "registry.yaml: agent 'solo'"),
+		"single fault must keep its file prefix, got: %s", attributed.Error())
+}
+
+// TestLoadRegistry_ReportsAllErrorsAtOnce is the Epic 4.2 acceptance test at the
+// load boundary: a registry carrying faults spanning every category — required
+// field (AC1), enum (AC2), type/range (AC3), and an enum/semantic agent fault
+// (AC4 intent) — surfaces them all in a single LoadRegistry error (AC6), not one
+// per run. This walks the real parse+validate path, not validate() in isolation.
+func TestLoadRegistry_ReportsAllErrorsAtOnce(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+timeout_secs: -1
+payload_mode: bogus
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  alpha: {provider: openai}
+  bravo: {provider: openai, model: m, min_severity: BOGUS}
+`))
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "timeout_secs", "AC3: type/range fault must be reported")
+	assert.Contains(t, msg, "payload_mode", "AC2: enum fault must be reported")
+	assert.Contains(t, msg, "agent 'alpha': required field 'model'", "AC1: required-field fault must be reported")
+	assert.Contains(t, msg, "agent 'bravo': min_severity", "AC2/AC4: agent enum fault must be reported")
+}
+
+// TestAttribute_SettingsFaultGetsUserLabel guards the non-entry branch: a
+// top-level settings fault (carried only by the user registry) is prefixed with
+// the user registry label even inside an accumulated join.
+func TestAttribute_SettingsFaultGetsUserLabel(t *testing.T) {
+	reg := &Registry{
+		Providers:   map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+		Agents:      map[string]AgentConfig{"a": {Provider: "p", Model: "m"}},
+		PayloadMode: "bogus",
+	}
+	reg.stampSource(SourceUser)
+
+	attributed := reg.attribute(reg.validate())
+	require.Error(t, attributed)
+	assert.Contains(t, attributed.Error(), "registry.yaml: invalid payload_mode",
+		"settings fault must be prefixed with the user registry label")
+}

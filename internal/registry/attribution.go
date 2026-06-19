@@ -45,7 +45,21 @@ func agentSentinelErr(name string, sentinel error, msg string) error {
 // attribute wraps an entry-specific validation error with the file that defined
 // the offending entry, so a merged-view failure names project vs user. Plain
 // (non-entry) errors and entries with no recorded source pass through unchanged.
+//
+// validate() and ValidateFallbacks() accumulate faults into an errors.Join
+// (Epic 4.2 / AC6), so a merged-view failure can carry entries from BOTH tiers
+// at once. A joined error is therefore attributed per child — each fault is
+// prefixed with its own defining file — rather than tagging the whole blob with
+// whichever entry errors.As happened to surface first.
 func (r *Registry) attribute(err error) error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		out := make([]error, len(children))
+		for i, c := range children {
+			out[i] = r.attribute(c)
+		}
+		return errors.Join(out...)
+	}
 	var ee *entryError
 	if !errors.As(err, &ee) {
 		// Non-entry failures are top-level settings faults (payload_mode,
