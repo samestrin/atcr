@@ -1,3 +1,14 @@
+## [Technical Debt] - 2026-06-19
+
+### Fixed
+
+- `validation.FilePath` now rejects Windows volume/system paths (`C:\Windows`, `C:\Program Files`) in addition to Unix system dirs
+- `report --output` resolves symlinks before validation and threads the validated absolute path to the write call, closing the symlink bypass
+- Extended FilePath deny list to include macOS `/private/etc` and `/private/var` (symlink targets of `/etc` and `/var`) to prevent bypass on macOS
+- `FilePath` traversal check is now segment-aware: rejects `/../` components but accepts legitimate `..`-in-filename paths (e.g. `my..file`)
+- `GitRef` tightened to reject all control characters, shell/git metacharacters (`\ ? * [`), and a leading `-`, matching the doc comment guarantee
+- Hoisted `Severity` valid-set map to package-level var to avoid a map allocation on every call
+
 ## [4.3.0] - 2026-06-18
 
 Centralized input validation: a new `internal/validation` package gives the CLI consistent, field-aware validation errors, and path inputs are now rejected at the input layer before any work begins.

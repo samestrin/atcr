@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 1 | 15 | 0 |
-| LOW | 3 | 14 | 0 |
+| MEDIUM | 0 | 15 | 0 |
+| LOW | 0 | 16 | 0 |
 
 
-**Last Modified:** 2026-06-18 | **Open Items:** 4 | **Deferred Items:** 30 | **Resolved Items:** 0 | **Total Items:** 34
+**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 32 | **Resolved Items:** 0 | **Total Items:** 32
 
 ## Directory Structure
 
@@ -34,26 +34,13 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
-### [2026-06-19] From Sprint: 4.3_input_validation
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 2 | [ ] | MEDIUM | internal/validation/validation.go:31 | GitRef's doc comment claims it rejects \"control chars\" but it only blocks tab, newline, and space -- it accepts carriage return, vertical tab, form feed, DEL (0x7f), the metacharacters \\ ? * [, and a leading \"-\" (option injection), all of which git check-ref-format rejects. GitRef currently has no live callers (only FilePath is wired), so impact is dormant, but the comment overstates the guarantee. | Either narrow the doc comment to the actual subset checked, or tighten the guard to reject all bytes < 0x20, 0x7f, the shell/git metacharacters, and a leading \"-\". Add a test enumerating the control/metachar cases. Lowest priority -- zero live callers. | maintainability | 30 | code-review | bruce, claude | HIGH |
-| 2 | [ ] | LOW | internal/validation/validation.go:49 | Contains(\"..\") falsely matches paths with \"...\" | Use boundary-aware check like strings.Contains(path, \"/../\") | correctness | 3 | code-review | bruce | MEDIUM |
-| 2 | [ ] | MEDIUM | internal/validation/validation.go:53 | FilePath's traversal guard uses strings.Contains(path, \"..\") -- a substring test, not a path-segment test. It false-rejects legitimate paths where \"..\" is part of a name: my..file, release-1..2/out, a..b.md all return the \"must not contain ..\" error. Because both callers validate the post-Abs/Clean absolute path (review.go:74, report.go:47) where Clean has already collapsed real traversal segments, this substring check at that point only catches innocent literal dots -- the real traversal protection comes from Clean, making the check pure false-positive surface. The system-dir guard also compares against literal /etc, /proc, /sys strings, but on macOS /etc and /var are symlinks to /private/etc and /private/var, so a caller-resolved absolute path of /private/etc/passwd reaches the same protected files yet passes the guard. | In validation.go FilePath, either drop the \"..\" substring check on the post-Clean path (Clean already neutralizes traversal), or make it segment-aware: split on the path separator and compare each segment == \"..\". Resolve symlinks before comparison with the system-dir deny list, or canonicalize the deny list to include macOS /private/etc, /private/var equivalents. Add a test asserting FilePath(\"/home/user/my..file\") returns nil and FilePath(\"/private/etc/passwd\") errors. | correctness | 60 | code-review | greta, claude, bruce | HIGH |
-| 2 | [ ] | LOW | internal/validation/validation.go:83 | Map allocated on every Severity invocation | Hoist valid map to package-level var | maintainability | 2 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/validation/validation_test.go:37 | TestFilePath exercises only raw inputs and never asserts the contract the callers depend on -- that a post-Abs/Clean path validates correctly. No case for /private/etc (the macOS symlink bypass), no case for a legitimate \"..\"-in-name path being accepted, and no case for an absolute path with a collapsed traversal (/foo/../etc -> /etc) caught after cleaning. The suite passes while both FilePath defects are live, giving false confidence. | Add table cases to TestFilePath covering the symlink real-path (/private/etc/passwd), a benign \"..\"-substring filename, and the Clean-then-validate caller flow. The symlink case should fail before the validation.go fix and pass after. | testing | 30 | code-review | claude | MEDIUM |
-| U | [ ] | MEDIUM | cmd/atcr/report.go:41 | Two validation gaps at the report.go:41 call site: (a) validation checks the path string after filepath.Abs but does not resolve symbolic links -- a user could provide a symlink pointing to /etc/passwd, bypassing the prefix check; (b) the `..` string check validated here is dead after Abs resolution (greta). | Add filepath.EvalSymlinks before calling validation.FilePath; drop or segment-check the `..` substring check. | security | 10 | code-review | otto, greta | HIGH |
-| U | [ ] | LOW | cmd/atcr/report.go:111 | runReport computes abs from --output and validates abs (line 47), then discards it: line 106 re-reads the raw output flag and line 111 writes to the raw path, not the validated abs. The two strings target the same inode today so it is not a live bypass, but the value validated is not the value used -- fragile. Contrast review.go:77 which returns and threads the validated abs downstream. | Thread the validated abs to the write call: capture abs from the validation block and pass it to os.WriteFile at report.go:111 instead of the raw output string. Verify existing report tests pass and add one asserting the written file location matches the validated absolute path. | maintainability | 15 | code-review | claude | MEDIUM |
 
 ### [2026-06-18] From Sprint: epic-4.3
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | MEDIUM | internal/validation/validation.go:51 | FilePath system-directory guard is Unix-only (forward-slash absolute prefixes /etc, /proc, /sys); on Windows drive-letter/volume paths (C:\Windows) it is inert so review --output-dir and report --output system-dir protection is a no-op there | Add volume-aware Windows system-path detection (e.g. C:\Windows, C:\Program Files) or formalize Unix-only support behind a platform guard | SECURITY | 60 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/validation/validation.go:58 | FilePath's ".." branch is dead at both production call sites (review.go and report.go call it post-filepath.Abs, which already cleans ..); only the system-dir denylist is live there | Document that .. is pre-resolved by Abs at those call sites, or call FilePath pre-Abs if raw-input traversal detection is desired | CORRECTNESS | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
+| 1 | [/] | LOW | internal/validation/validation.go:62 | System-dir denylist covers only /etc, /proc, /sys, leaving /boot, /dev, /root, /var and ~/.ssh writable via --output-dir / --output (deliberate Option-B permissive choice) (Won't-fix: intended Option-B policy per epic 4.3 clarifications 2026-06-18; revisit only on a concrete isolation requirement) | If stronger isolation is later required, switch to an allowlist anchored at the repo/.atcr root instead of a denylist | SECURITY | 30 | execute-epic-independent |
+| 1 | [/] | LOW | internal/validation/validation.go:86 | Severity and Enum validators are shipped but wired to nothing (ParseSeverity/ValidFormat remain the live paths); they exist only to satisfy AC5/AC7 and future use (Won't-fix: intentionally public for AC5/AC7 per epic 4.3 clarifications; deletion breaks ACs, wire-in out of scope) | Revisit and delete if no caller adopts them within a release, or wire them in where duplication can be removed | OVER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-06-18] From Sprint: epic-4.2
 
