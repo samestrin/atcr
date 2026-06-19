@@ -50,9 +50,10 @@ func GitRef(ref string) error {
 // Callers that accept relative paths should resolve them to an absolute, cleaned form
 // (filepath.Abs) before validating, so a legitimate relative path is not rejected.
 //
-// The system-directory guard is oriented at Unix absolute paths. On Windows
-// (drive-letter/volume paths such as C:\Windows) it is inert; callers targeting
-// Windows need volume-aware system-path detection (tracked as technical debt).
+// The Unix guard covers forward-slash absolute paths; Windows volume paths
+// (drive-letter system dirs such as C:\Windows or C:\Program Files) are rejected
+// separately via a host-independent string check, so the protection holds on
+// Windows as well as Unix.
 func FilePath(path string) error {
 	if path == "" {
 		return &ValidationError{"file path", path, "must not be empty"}
@@ -71,7 +72,34 @@ func FilePath(path string) error {
 			return &ValidationError{"file path", path, "must not reference system directories"}
 		}
 	}
+	// Windows volume/drive-letter system paths (C:\Windows, C:\Program Files).
+	// The Unix guard above does not see these, so on Windows the system-dir
+	// protection would otherwise be inert. Matched by host-independent string
+	// comparison so the guard holds regardless of the running OS.
+	if windowsSystemPath(path) {
+		return &ValidationError{"file path", path, "must not reference system directories"}
+	}
 	return nil
+}
+
+// windowsSystemPath reports whether path is a Windows volume path under a system
+// directory (\Windows, \Program Files). It requires a drive-letter prefix (C:)
+// so a Unix path that merely contains "/windows" is not falsely rejected, and it
+// is case-insensitive and separator-agnostic to match Windows path semantics.
+func windowsSystemPath(path string) bool {
+	if len(path) < 2 || path[1] != ':' {
+		return false
+	}
+	if c := path[0]; !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+		return false
+	}
+	rest := strings.ToLower(strings.ReplaceAll(path[2:], "\\", "/"))
+	for _, sysDir := range []string{"/windows", "/program files", "/program files (x86)"} {
+		if rest == sysDir || strings.HasPrefix(rest, sysDir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // reviewIDPattern is the review-ID allowlist: alphanumerics, dash, underscore.
