@@ -16,6 +16,7 @@
 package metrics
 
 import (
+	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -69,6 +70,9 @@ type histogram struct {
 // the retained sample window is bounded to maxHistogramSamples, overwriting the
 // oldest sample once full so memory stays bounded.
 func (h *histogram) Observe(v float64) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.sum += v
