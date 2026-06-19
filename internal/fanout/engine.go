@@ -565,7 +565,8 @@ func (r *Result) addTripped(name string) {
 
 // classifyStatus maps an error to a status code. A context deadline or
 // cancellation (anywhere in the wrap chain) is a timeout; everything else is a
-// genuine failure.
+// genuine failure — including CircuitOpenError, which deliberately lands here so
+// invokeSlot advances the fallback chain (AC6).
 func classifyStatus(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return StatusTimeout
