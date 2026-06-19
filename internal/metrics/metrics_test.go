@@ -251,3 +251,76 @@ func TestConcurrentCounterAndHistogram(t *testing.T) {
 		t.Fatalf("concurrent histogram Count() = %d, want %d", got, goroutines*iters)
 	}
 }
+
+func TestGaugeSetValue(t *testing.T) {
+	r := NewRegistry()
+	g := r.Gauge("atcr_circuit_breaker_state")
+	if got := g.Value(); got != 0 {
+		t.Fatalf("fresh gauge Value() = %v, want 0", got)
+	}
+	g.Set(1)
+	if got := g.Value(); got != 1 {
+		t.Fatalf("after Set(1) Value() = %v, want 1", got)
+	}
+	g.Set(2)
+	if got := g.Value(); got != 2 {
+		t.Fatalf("after Set(2) Value() = %v, want 2", got)
+	}
+	// A gauge can decrease (unlike a monotonic counter).
+	g.Set(0)
+	if got := g.Value(); got != 0 {
+		t.Fatalf("after Set(0) Value() = %v, want 0", got)
+	}
+	if got := g.Name(); got != "atcr_circuit_breaker_state" {
+		t.Fatalf("Name() = %q, want %q", got, "atcr_circuit_breaker_state")
+	}
+}
+
+func TestRegistryGaugeGetOrCreate(t *testing.T) {
+	r := NewRegistry()
+	a := r.Gauge("g")
+	a.Set(3)
+	b := r.Gauge("g")
+	if a != b {
+		t.Fatalf("Gauge(%q) returned different instances", "g")
+	}
+	if got := b.Value(); got != 3 {
+		t.Fatalf("shared gauge Value() = %v, want 3", got)
+	}
+}
+
+func TestRegistryResetGauge(t *testing.T) {
+	r := NewRegistry()
+	r.Gauge("g").Set(5)
+	r.Reset()
+	if got := r.Gauge("g").Value(); got != 0 {
+		t.Fatalf("after Reset() gauge Value() = %v, want 0", got)
+	}
+}
+
+func TestPackageLevelGaugeUsesDefaultRegistry(t *testing.T) {
+	DefaultRegistry.Reset()
+	t.Cleanup(DefaultRegistry.Reset)
+	Gauge("pkg_gauge").Set(2)
+	if got := DefaultRegistry.Gauge("pkg_gauge").Value(); got != 2 {
+		t.Fatalf("package Gauge did not write DefaultRegistry: got %v", got)
+	}
+}
+
+func TestConcurrentGauge(t *testing.T) {
+	r := NewRegistry()
+	var wg sync.WaitGroup
+	wg.Add(8)
+	for g := 0; g < 8; g++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				r.Gauge("g").Set(float64(j))
+			}
+		}()
+	}
+	wg.Wait()
+	if got := r.Gauge("g").Value(); got < 0 || got > 999 {
+		t.Fatalf("concurrent gauge Value() = %v, out of range [0,999]", got)
+	}
+}
