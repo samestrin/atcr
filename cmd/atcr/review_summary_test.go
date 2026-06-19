@@ -11,6 +11,7 @@ import (
 
 func TestWriteReviewSummary(t *testing.T) {
 	reg := metrics.NewRegistry()
+	reg.Counter(metrics.NameAgentsTotal).Add(10) // 8 succeeded + 1 failed + 1 timed out
 	reg.Counter(metrics.NameAgentsSucceeded).Add(8)
 	reg.Counter(metrics.NameAgentsFailed).Add(1)
 	reg.Counter(metrics.NameAgentsTimedOut).Add(1)
@@ -24,7 +25,7 @@ func TestWriteReviewSummary(t *testing.T) {
 	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
 
 	var buf bytes.Buffer
-	writeReviewSummary(&buf, snap, 142300*time.Millisecond, 10)
+	writeReviewSummary(&buf, snap, 142300*time.Millisecond)
 	out := buf.String()
 
 	for _, want := range []string{
@@ -45,7 +46,7 @@ func TestWriteReviewSummaryNoFindings(t *testing.T) {
 	reg := metrics.NewRegistry()
 	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
 	var buf bytes.Buffer
-	writeReviewSummary(&buf, snap, time.Second, 3)
+	writeReviewSummary(&buf, snap, time.Second)
 	out := buf.String()
 	if !strings.Contains(out, "Findings: 0\n") {
 		t.Errorf("expected bare 'Findings: 0' line, got:\n%s", out)
@@ -66,6 +67,7 @@ func TestWriteReviewSummaryIsolatesThisReview(t *testing.T) {
 	baseline := snapshotSummaryMetrics(reg)
 
 	// This review contributes 2 succeeded, 1 failed, 3 API calls, 1 HIGH finding.
+	reg.Counter(metrics.NameAgentsTotal).Add(3) // 2 succeeded + 1 failed
 	reg.Counter(metrics.NameAgentsSucceeded).Add(2)
 	reg.Counter(metrics.NameAgentsFailed).Add(1)
 	reg.Counter(metrics.NameAPICallsTotal).Add(3)
@@ -75,7 +77,7 @@ func TestWriteReviewSummaryIsolatesThisReview(t *testing.T) {
 	delta := snapshotSummaryMetrics(reg).sub(baseline)
 
 	var buf bytes.Buffer
-	writeReviewSummary(&buf, delta, time.Second, 3)
+	writeReviewSummary(&buf, delta, time.Second)
 	out := buf.String()
 
 	for _, want := range []string{
@@ -103,7 +105,7 @@ func TestWriteReviewSummaryDenominatorIsPerAttempt(t *testing.T) {
 	snap := snapshotSummaryMetrics(reg).sub(snapshotSummaryMetrics(metrics.NewRegistry()))
 
 	var buf bytes.Buffer
-	writeReviewSummary(&buf, snap, time.Second, 1) // caller's per-slot total is 1
+	writeReviewSummary(&buf, snap, time.Second)
 	out := buf.String()
 
 	if !strings.Contains(out, "Agents: 1/2 succeeded, 1 failed, 0 timed out") {

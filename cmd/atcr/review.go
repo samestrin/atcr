@@ -235,7 +235,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// slightly different spans and will rarely agree exactly — this is intentional.
 	if result != nil {
 		summaryDelta := snapshotSummaryMetrics(metrics.DefaultRegistry).sub(metricsBaseline)
-		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now), result.Summary.Total)
+		writeReviewSummary(cmd.OutOrStdout(), summaryDelta, time.Since(now))
 	}
 
 	// One-shot mode: reconcile in-process and gate on the threshold. Review

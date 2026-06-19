@@ -17,10 +17,13 @@ var severityOrder = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 // pre-review baseline (snapshotSummaryMetrics before fan-out, sub after) isolates a
 // single review's contribution. That keeps the summary correct even in a long-lived
 // process where DefaultRegistry accumulates across reviews (serve mode) instead of
-// holding one review's totals — so the line can never report succeeded greater than
-// totalAgents. Sourcing timed-out from atcr_agents_timed_out here preserves the
-// "timed out" breakdown without adding a TimedOut field to fanout.Summary.
+// holding one review's totals. Every agent count here is per-attempt — each
+// invocation, including each fallback in a slot's chain, increments these counters
+// once (see engine.invokeAgent), matching atcr_agents_total and the MCP export. The
+// "Agents: X/Y" line therefore draws numerator and denominator from one unit, so a
+// slot whose primary fails and fallback succeeds reads 1/2, not 1/1.
 type summarySnapshot struct {
+	agentsTotal        int64
 	agentsSucceeded    int64
 	agentsFailed       int64
 	agentsTimedOut     int64
@@ -38,6 +41,7 @@ func snapshotSummaryMetrics(reg *metrics.Registry) summarySnapshot {
 		bySeverity[sev] = reg.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, sev)).Value()
 	}
 	return summarySnapshot{
+		agentsTotal:        reg.Counter(metrics.NameAgentsTotal).Value(),
 		agentsSucceeded:    reg.Counter(metrics.NameAgentsSucceeded).Value(),
 		agentsFailed:       reg.Counter(metrics.NameAgentsFailed).Value(),
 		agentsTimedOut:     reg.Counter(metrics.NameAgentsTimedOut).Value(),
@@ -51,6 +55,7 @@ func snapshotSummaryMetrics(reg *metrics.Registry) summarySnapshot {
 // counter when s is the post-review snapshot and baseline the pre-review one.
 func (s summarySnapshot) sub(baseline summarySnapshot) summarySnapshot {
 	out := summarySnapshot{
+		agentsTotal:        s.agentsTotal - baseline.agentsTotal,
 		agentsSucceeded:    s.agentsSucceeded - baseline.agentsSucceeded,
 		agentsFailed:       s.agentsFailed - baseline.agentsFailed,
 		agentsTimedOut:     s.agentsTimedOut - baseline.agentsTimedOut,
@@ -69,13 +74,15 @@ func (s summarySnapshot) sub(baseline summarySnapshot) summarySnapshot {
 // severity breakdown. m holds this review's deltas (post-review snapshot minus the
 // pre-review baseline), so the counts reflect this review alone rather than the
 // process-cumulative registry — these are the same metrics the MCP server exports.
-// m is a parameter so the helper is unit testable against a seeded snapshot.
-func writeReviewSummary(w io.Writer, m summarySnapshot, elapsed time.Duration, totalAgents int) {
+// The "Agents: X/Y" denominator is m.agentsTotal (per-attempt), the same unit as the
+// numerator, so the two never disagree on granularity. m is a parameter so the helper
+// is unit testable against a seeded snapshot.
+func writeReviewSummary(w io.Writer, m summarySnapshot, elapsed time.Duration) {
 	// elapsed is total wall-clock from before config load to review completion,
 	// not just the agent fan-out window the atcr_review_duration_seconds histogram measures.
 	_, _ = fmt.Fprintf(w, "Total elapsed: %.1fs\n", elapsed.Seconds())
 	_, _ = fmt.Fprintf(w, "Agents: %d/%d succeeded, %d failed, %d timed out\n",
-		m.agentsSucceeded, totalAgents, m.agentsFailed, m.agentsTimedOut)
+		m.agentsSucceeded, m.agentsTotal, m.agentsFailed, m.agentsTimedOut)
 	_, _ = fmt.Fprintf(w, "API calls: %d\n", m.apiCalls)
 	_, _ = fmt.Fprintf(w, "Findings: %d%s\n", m.findingsTotal, severityBreakdown(m))
 }
