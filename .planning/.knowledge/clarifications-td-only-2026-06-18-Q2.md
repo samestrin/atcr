@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-18-d6ba4e
-question: "When a resolve-td group scope excludes a file required by a cross-file refactor, should you expand the group or re-run without --group?"
+id: mem-2026-06-18-33ffb3
+question: "For a drain test asserting a review is not interrupted, is NotEqual(RunInterrupted) sufficient or should Equal(RunInProgress) also be asserted?"
 created: 2026-06-18
 last_retrieved: ""
 sprints: []
-files: [internal/fanout/resume.go, internal/fanout/review.go]
-tags: [td-clarification, td-only, process, resolve-td, group-scope, refactoring, maintainability]
+files: [internal/mcp/shutdown_test.go, internal/fanout/status.go, internal/mcp/handlers_test.go, internal/registry/config.go]
+tags: [td-clarification, td-only, testing, stale-inference, drain-test, assertion-design]
 retrievals: 0
 status: active
-type: clarifications/td-only/2026-06-18
+type: td-clarification
 ---
 
-# When a resolve-td group scope excludes a file required by a 
+# For a drain test asserting a review is not interrupted, is N
 
 ## Decision
 
-Re-run without --group (or with a new group scoped to both files) rather than expanding an existing group's scope mid-pass. Expanding an existing group risks scope creep and can conflict with other in-progress group items. A cross-file refactor (e.g. deduplicating two near-identical functions across resume.go and review.go by introducing a shared interface) needs both files in scope at once — if the current group doesn't cover both, the cleanest path is a standalone ungrouped pass targeting only that item. The group assignment is a routing decision, not a technical constraint; re-routing is always safe.
+NotEqual(RunInterrupted) is the semantically correct and sufficient assertion for an AC that says "client disconnect must NOT interrupt the review." Equal(RunInProgress) overconstains: it fails for RunStale if timeout_secs + staleGraceSecs has elapsed. In the MCP shutdown tests, stale fires only after StartedAt + timeout_secs + staleGraceSecs (staleGraceSecs=60, status.go:73; default timeout_secs=600, registry/config.go:22) — a 660-second window, impossible in a 200ms drain test. RunCompleted is also impossible when blockingCompleter blocks until context cancellation and serverShutdown=false. If Equal(RunInProgress) is retained for extra specificity, pin timeout_secs: 3600 in the project config written by writeReviewConfig (handlers_test.go:114) with a comment that it must stay >> shutdownDrain to prevent false stale failures.
 
 ## Rationale
 
@@ -27,5 +27,7 @@ Re-run without --group (or with a new group scoped to both files) rather than ex
 
 ## Code Reference
 
-- internal/fanout/resume.go
-- internal/fanout/review.go
+- internal/mcp/shutdown_test.go
+- internal/fanout/status.go
+- internal/mcp/handlers_test.go
+- internal/registry/config.go

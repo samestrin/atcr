@@ -1,0 +1,341 @@
+diff --git a/internal/mcp/handlers.go b/internal/mcp/handlers.go
+index 6375609..4714866 100644
+--- a/internal/mcp/handlers.go
++++ b/internal/mcp/handlers.go
+@@ -38,6 +38,15 @@ type engine struct {
+ 	log       *slog.Logger
+ 	diag      io.Writer
+ 	bg        sync.WaitGroup
++	// shutdownCtx is cancelled (via shutdownCancel) when the server begins
++	// shutdown — Serve fires it after the transport loop returns, before drain.
++	// Detached background reviews tie their cancellation to it (withShutdownCancel)
++	// so a server shutdown cuts them off like the CLI's SIGINT path and they record
++	// Interrupted=true, while a handler returning normally leaves them untouched
++	// (epic 4.1.2). nil when the engine is built outside buildServer (NewServer
++	// discards its engine; tests may construct &engine{} directly).
++	shutdownCtx    context.Context
++	shutdownCancel context.CancelFunc
+ }
+ 
+ // diagWriter resolves the engine's scorecard-diagnostics sink: the injected
+@@ -88,6 +97,29 @@ func (e *engine) reviewContext(ctx context.Context, reviewID string) context.Con
+ 	return log.NewContext(context.WithoutCancel(ctx), logger)
+ }
+ 
++// withShutdownCancel derives a child of ctx that is cancelled when the server
++// begins shutdown — and ONLY then. The server-lifecycle signal (e.shutdownCtx,
++// fired by Serve after the transport loop returns) is the sole cancellation
++// source; the request handler returning never reaches it, because the ctx passed
++// here is already detached via reviewContext's context.WithoutCancel. So a
++// detached review stays detached across a normal handler return (AC2) but is cut
++// off like the CLI's SIGINT path on server shutdown (AC1), letting ExecuteReview's
++// existing ctx.Err()==Canceled marker record Interrupted=true with no out-of-band
++// manifest write (no race with the fan-out's own write).
++//
++// The returned cancel MUST be deferred by the caller for the lifetime of the
++// review: it stops the AfterFunc registration so a completed review does not
++// retain its cancelCtx on e.shutdownCtx until process exit. When e.shutdownCtx is
++// nil (engine built outside buildServer), it is a no-op passthrough.
++func (e *engine) withShutdownCancel(ctx context.Context) (context.Context, context.CancelFunc) {
++	if e.shutdownCtx == nil {
++		return ctx, func() {}
++	}
++	cctx, cancel := context.WithCancel(ctx)
++	stop := context.AfterFunc(e.shutdownCtx, cancel)
++	return cctx, func() { stop(); cancel() }
++}
++
+ // drain waits up to timeout for in-flight background reviews to finish, so a
+ // near-complete run is not abandoned mid-write when the client disconnects. A
+ // review still running past timeout is left to the process exit.
+@@ -194,7 +226,12 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
+ 				e.logger().Error("review fan-out panicked", "review_id", prep.ID, "panic", r)
+ 			}
+ 		}()
+-		if _, err := fanout.ExecuteReview(e.reviewContext(ctx, prep.ID), e.completer, prep); err != nil {
++		// Detach for handler-return (reviewContext: WithoutCancel), then re-attach a
++		// cancellation tied to server shutdown only. cancel is deferred so a review
++		// that finishes before any shutdown releases its AfterFunc registration.
++		rctx, cancel := e.withShutdownCancel(e.reviewContext(ctx, prep.ID))
++		defer cancel()
++		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
+ 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)
+ 		}
+ 	}()
+diff --git a/internal/mcp/server.go b/internal/mcp/server.go
+index f8cb04f..8d265d1 100644
+--- a/internal/mcp/server.go
++++ b/internal/mcp/server.go
+@@ -45,20 +45,47 @@ func Serve(ctx context.Context, root string, completer fanout.Completer, logger
+ 		return err
+ 	}
+ 	runErr := s.Run(ctx, &mcpsdk.StdioTransport{})
+-	e.drain(shutdownDrain)
++	// s.Run returns for two distinct reasons that must NOT be treated alike: a
++	// cancelled root ctx (SIGINT/SIGTERM via the CLI signal handler) means the
++	// server itself is shutting down, while ctx.Err()==nil means a clean client
++	// stdio disconnect. Only the former interrupts in-flight detached reviews.
++	e.shutdownReviews(ctx.Err() != nil, shutdownDrain)
+ 	if runErr != nil {
+ 		return fmt.Errorf("serve stdio: %w", runErr)
+ 	}
+ 	return nil
+ }
+ 
++// shutdownReviews ends in-flight detached reviews according to WHY the transport
++// loop returned, then drains. serverShutdown is true only when the root context
++// was cancelled (SIGINT/SIGTERM): the server is going down, so in-flight detached
++// reviews are cancelled BEFORE the drain and record interrupted (epic 4.1.2 AC1),
++// mirroring the CLI's SIGINT path; the drain then waits for those flush writes.
++// On a clean client/stdio disconnect (serverShutdown false) the reviews are left
++// running so the drain keeps its original contract — let a near-complete review
++// FINISH its writes rather than orphan or force-interrupt it (AC3).
++func (e *engine) shutdownReviews(serverShutdown bool, timeout time.Duration) {
++	if serverShutdown && e.shutdownCancel != nil {
++		e.shutdownCancel()
++	}
++	e.drain(timeout)
++}
++
+ // buildServer wires the engine and registers the five tools, returning both the
+ // SDK server and the engine (so Serve can drain its background reviews).
+ func buildServer(root string, completer fanout.Completer, logger *slog.Logger) (*mcpsdk.Server, *engine, error) {
+ 	if logger == nil {
+ 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+ 	}
+-	e := &engine{root: root, completer: completer, log: logger}
++	// Server-lifecycle cancellation: cancelled by Serve once the transport loop
++	// returns (client disconnect or SIGINT-cancelled ctx). Detached reviews tie
++	// their cancellation to shutdownCtx via withShutdownCancel, so a server
++	// shutdown marks in-flight reviews interrupted without a handler return ever
++	// aborting them (epic 4.1.2). The NewServer path discards the engine and never
++	// fires shutdownCancel; context.WithCancel(Background) spawns no goroutine, so
++	// the unfired cancel is reclaimed with the engine.
++	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
++	e := &engine{root: root, completer: completer, log: logger, shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel}
+ 
+ 	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "atcr", Version: Version}, nil)
+ 	r := &registrar{server: s, seen: map[string]bool{}}
+diff --git a/internal/mcp/shutdown_test.go b/internal/mcp/shutdown_test.go
+new file mode 100644
+index 0000000..6af085f
+--- /dev/null
++++ b/internal/mcp/shutdown_test.go
+@@ -0,0 +1,217 @@
++package mcp
++
++import (
++	"context"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/fanout"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// blockingCompleter blocks each agent inside Complete until the review context is
++// cancelled, closing entered the first time an agent runs so a test can guarantee
++// the detached fan-out is actually in flight before it triggers shutdown.
++type blockingCompleter struct {
++	once    sync.Once
++	entered chan struct{}
++}
++
++func (b *blockingCompleter) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
++	b.once.Do(func() { close(b.entered) })
++	<-ctx.Done()
++	return "", ctx.Err()
++}
++
++// startInFlightReview builds a serve-mode engine (via buildServer, so shutdownCtx
++// is wired exactly as production), starts a detached review whose agents block
++// until cancelled, and waits until the fan-out is in flight. Returns the engine,
++// the review dir, and the review id.
++func startInFlightReview(t *testing.T) (e *engine, dir, id string) {
++	t.Helper()
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	root, base, head := gitRepo(t)
++	writeReviewConfig(t, root)
++
++	bc := &blockingCompleter{entered: make(chan struct{})}
++	_, e, err := buildServer(root, bc, nil)
++	require.NoError(t, err)
++
++	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
++	require.NoError(t, err)
++	require.Equal(t, runningStatus, res.Status)
++
++	select {
++	case <-bc.entered:
++	case <-time.After(5 * time.Second):
++		t.Fatal("detached fan-out never started")
++	}
++	// Unblock the parked fan-out at test end (before t.TempDir cleanup, which is
++	// registered earlier and so runs after this) so a test that does NOT trigger a
++	// server shutdown does not leak the blocked review goroutine.
++	t.Cleanup(func() {
++		if e.shutdownCancel != nil {
++			e.shutdownCancel()
++		}
++		e.drain(time.Second)
++	})
++	return e, res.ReviewPath, res.ReviewID
++}
++
++// TestServeShutdown_MarksInFlightDetachedReviewInterrupted is the core epic 4.1.2
++// guarantee (AC1/AC4): a detached MCP review in flight when the server is shutting
++// down — the exact sequence Serve runs after a SIGINT-cancelled transport loop
++// returns — is marked interrupted on disk, never left in_progress and never
++// reported as a clean completion.
++func TestServeShutdown_MarksInFlightDetachedReviewInterrupted(t *testing.T) {
++	e, dir, id := startInFlightReview(t)
++
++	e.shutdownReviews(true, shutdownDrain) // serverShutdown=true: SIGINT path
++
++	st, err := fanout.ReadReviewStatus(dir, id)
++	require.NoError(t, err)
++	assert.Equal(t, fanout.RunInterrupted, st.Status,
++		"a detached review in flight at server shutdown must be marked interrupted (AC1/AC4)")
++}
++
++// TestServeShutdown_ClientDisconnectDoesNotInterrupt locks AC3 and the
++// independent-review regression: a clean client/stdio disconnect (ctx NOT
++// cancelled) must NOT force-cancel an in-flight detached review. The drain keeps
++// its original contract — the review is left running, so it is never flipped to
++// interrupted by a mere disconnect.
++func TestServeShutdown_ClientDisconnectDoesNotInterrupt(t *testing.T) {
++	e, dir, id := startInFlightReview(t)
++
++	// serverShutdown=false: client disconnect. Short drain — the blocked review
++	// stays running, so it must remain in_progress, never interrupted.
++	e.shutdownReviews(false, 200*time.Millisecond)
++
++	st, err := fanout.ReadReviewStatus(dir, id)
++	require.NoError(t, err)
++	assert.NotEqual(t, fanout.RunInterrupted, st.Status,
++		"a clean client disconnect must not force-interrupt an in-flight review (AC3)")
++	assert.Equal(t, fanout.RunInProgress, st.Status,
++		"the still-running review stays in_progress after a disconnect drain")
++}
++
++// TestServeShutdown_NormalCompletionNotInterrupted locks AC2/AC4: a detached
++// review that finishes on its own (handler already returned, no shutdown) is
++// recorded completed, and a later server shutdown does not retroactively flip a
++// finished review to interrupted.
++func TestServeShutdown_NormalCompletionNotInterrupted(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	root, base, head := gitRepo(t)
++	writeReviewConfig(t, root)
++
++	_, e, err := buildServer(root, fakeCompleter{resp: validFindings}, nil)
++	require.NoError(t, err)
++
++	_, res, err := e.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head})
++	require.NoError(t, err)
++
++	st := waitForTerminalStatus(t, res.ReviewPath, res.ReviewID)
++	require.Equal(t, fanout.RunCompleted, st.Status,
++		"a detached review that finished before any shutdown must be completed (AC2)")
++
++	if e.shutdownCancel != nil {
++		e.shutdownCancel()
++	}
++	e.drain(shutdownDrain)
++
++	st, err = fanout.ReadReviewStatus(res.ReviewPath, res.ReviewID)
++	require.NoError(t, err)
++	assert.Equal(t, fanout.RunCompleted, st.Status,
++		"shutdown must not retroactively interrupt an already-finished review (AC4)")
++}
++
++// waitForTerminalStatus polls a review's on-disk status until it leaves
++// in_progress, failing with a clear message on timeout rather than asserting
++// against a transient in_progress under CI load (a generous 10s budget for a
++// hermetic fake completer that performs no network I/O).
++func waitForTerminalStatus(t *testing.T, dir, id string) *fanout.ReviewStatus {
++	t.Helper()
++	deadline := time.Now().Add(10 * time.Second)
++	for {
++		st, err := fanout.ReadReviewStatus(dir, id)
++		require.NoError(t, err)
++		if st.Status != fanout.RunInProgress {
++			return st
++		}
++		if time.Now().After(deadline) {
++			t.Fatalf("review %s did not reach a terminal status within 10s (last: %s)", id, st.Status)
++		}
++		time.Sleep(5 * time.Millisecond)
++	}
++}
++
++// TestWithShutdownCancel_CancelsDetachedCtxOnServerShutdown verifies the engine
++// derives a review context that is cancelled when the server-lifecycle context is
++// cancelled (Serve fires e.shutdownCancel on shutdown). This is what lets
++// ExecuteReview's existing ctx.Err()==Canceled marker record Interrupted=true for
++// a detached MCP review (epic 4.1.2 AC1).
++func TestWithShutdownCancel_CancelsDetachedCtxOnServerShutdown(t *testing.T) {
++	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
++	e := &engine{shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel}
++
++	rctx, cancel := e.withShutdownCancel(context.Background())
++	defer cancel()
++
++	select {
++	case <-rctx.Done():
++		t.Fatal("review ctx cancelled before server shutdown")
++	default:
++	}
++
++	shutdownCancel()
++
++	select {
++	case <-rctx.Done():
++		assert.ErrorIs(t, rctx.Err(), context.Canceled)
++	case <-time.After(time.Second):
++		t.Fatal("review ctx not cancelled after server shutdown")
++	}
++}
++
++// TestWithShutdownCancel_ParentReturnDoesNotCancel verifies a normal handler
++// return — the request context being cancelled — does NOT cancel the detached
++// review context (epic 4.1.2 AC2: detachment preserved). The detached base is
++// derived via context.WithoutCancel, so request cancellation must not propagate
++// to the running fan-out.
++func TestWithShutdownCancel_ParentReturnDoesNotCancel(t *testing.T) {
++	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
++	defer shutdownCancel()
++	e := &engine{shutdownCtx: shutdownCtx, shutdownCancel: shutdownCancel}
++
++	reqCtx, reqCancel := context.WithCancel(context.Background())
++	base := context.WithoutCancel(reqCtx) // mirrors reviewContext's detachment
++	rctx, cancel := e.withShutdownCancel(base)
++	defer cancel()
++
++	reqCancel() // the request handler returns
++
++	select {
++	case <-rctx.Done():
++		t.Fatal("detached review ctx cancelled by handler return (AC2 violated)")
++	case <-time.After(50 * time.Millisecond):
++		// still alive — correct
++	}
++}
++
++// TestWithShutdownCancel_NilShutdownCtxIsNoop verifies the guard for engines
++// constructed without buildServer (direct &engine{} in tests, or the NewServer
++// path that discards the engine): withShutdownCancel returns the context
++// unchanged and a no-op cancel, never panicking on a nil shutdownCtx.
++func TestWithShutdownCancel_NilShutdownCtxIsNoop(t *testing.T) {
++	e := &engine{} // no shutdownCtx
++	rctx, cancel := e.withShutdownCancel(context.Background())
++	defer cancel()
++
++	select {
++	case <-rctx.Done():
++		t.Fatal("ctx unexpectedly cancelled with no shutdown context")
++	default:
++	}
++}

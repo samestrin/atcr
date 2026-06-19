@@ -1,0 +1,1 @@
+HIGH|internal/mcp/handlers.go:231|Potential race condition on shutdownCtx access|Ensure shutdownCtx is initialized before handleReview is called or use a mutex|correctness|30|e.shutdownCtx is accessed in withShutdownCancel without synchronization while being set in buildServer|otto

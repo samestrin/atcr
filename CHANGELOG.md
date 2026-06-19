@@ -8,6 +8,15 @@
 - Added assertion that config-validation failure exits before creating any review output directory, guarding the AC7 fail-fast guarantee against silent regression (`cmd/atcr/review_test.go:386`)
 - Documented that the staged `validate → ValidateFallbacks` call order in `validateMerged` and `LoadRegistry` is intentional (`internal/registry/overlay.go:224`)
 
+## [Technical Debt] - 2026-06-18
+
+### Fixed
+
+- Removed redundant `strings.TrimSpace` call from payload error string formatting (`internal/registry/config.go:248`)
+- Replaced unidiomatic type assertion with `errors.As` for multi-error unwrapping in attribution (`internal/registry/attribution.go:48`)
+- Fixed `validateProvider` silently appending an empty error slice for valid providers (`internal/registry/config.go:233`)
+- Removed stale "Nothing to do here" comment from `walkFallbacks` after lead-in node blackening was added (`internal/registry/graph.go:67`)
+
 ## [4.2.0] - 2026-06-18
 
 Configuration validation now reports every error at once, so a bad `registry.yaml` is fixed in a single pass instead of one error per run.
@@ -19,10 +28,6 @@ Configuration validation now reports every error at once, so a bad `registry.yam
 ### Fixed
 
 - A fallback graph with a lead-in chain feeding a cycle (e.g. `a→b`, `b↔c`, `d→a`) no longer panics `atcr` at config-load time; the cycle is reported as a clean validation error
-- Removed redundant `strings.TrimSpace` call from payload error string formatting (`internal/registry/config.go:248`)
-- Replaced unidiomatic type assertion with `errors.As` for multi-error unwrapping in attribution (`internal/registry/attribution.go:48`)
-- Fixed `validateProvider` silently appending an empty error slice for valid providers (`internal/registry/config.go:233`)
-- Removed stale "Nothing to do here" comment from `walkFallbacks` after lead-in node blackening was added (`internal/registry/graph.go:67`)
 
 *Shipped via /execute-epic (epic 4.2)*
 
