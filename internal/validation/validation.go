@@ -56,11 +56,10 @@ func FilePath(path string) error {
 	if path == "" {
 		return &ValidationError{"file path", path, "must not be empty"}
 	}
-	// No path traversal. This branch guards callers that validate raw,
-	// unresolved input; the production call sites (cmd/atcr review.go and
-	// report.go) call FilePath after filepath.Abs, which Cleans the path and so
-	// already resolves "..", leaving this check as defense-in-depth there.
-	if strings.Contains(path, "..") {
+	// No path traversal: match only path segments that are exactly "..", not
+	// filenames that happen to contain ".." as a substring (e.g. my..file).
+	if path == ".." || strings.HasPrefix(path, "../") ||
+		strings.Contains(path, "/../") || strings.HasSuffix(path, "/..") {
 		return &ValidationError{"file path", path, "must not contain .."}
 	}
 	// No paths under the system directories /etc, /proc, /sys. Match a directory
