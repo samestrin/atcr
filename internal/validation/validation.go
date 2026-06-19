@@ -23,15 +23,19 @@ func (e *ValidationError) Error() string {
 }
 
 // GitRef validates a git ref name (branch, tag, or SHA). It applies a subset of
-// git-check-ref-format rules — no "..", no "~^: " or control chars, and a length
-// bound. It is intentionally NOT applied to the --base/--head flags, which take
+// git-check-ref-format rules — no "..", no ASCII control chars (0x00–0x1f, 0x7f),
+// no metacharacters (~^: space \ ? * [), and no leading "-". Length bound ≤ 255.
+// It is intentionally NOT applied to the --base/--head flags, which take
 // git *revisions* (HEAD^, HEAD~3, @{...}) that legitimately use these characters.
 func GitRef(ref string) error {
 	if ref == "" {
 		return &ValidationError{"git ref", ref, "must not be empty"}
 	}
-	// Git ref rules: no .., no ~, no ^, no :, no space, no control chars.
-	if strings.Contains(ref, "..") || strings.ContainsAny(ref, "~^: \t\n") {
+	// No .., no ASCII control chars (0x00–0x1f/0x7f), no shell/git metacharacters, no leading dash.
+	if strings.Contains(ref, "..") || strings.HasPrefix(ref, "-") ||
+		strings.IndexFunc(ref, func(r rune) bool {
+			return r < 0x20 || r == 0x7f || strings.ContainsRune("~^: \\?*[", r)
+		}) >= 0 {
 		return &ValidationError{"git ref", ref, "contains invalid characters"}
 	}
 	if len(ref) > 255 {
