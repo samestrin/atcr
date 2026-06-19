@@ -422,14 +422,12 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	ctx = log.NewContext(ctx, agentLogger)
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
 
-	// Metrics (Epic 4.4): one invokeAgent call is one agent invocation and one
-	// API call at the fan-out boundary. In-client retries are invisible here, but
-	// slot-level fallbacks are separate invokeAgent calls and so are counted,
-	// satisfying "API calls (including retries)" at the granularity the fan-out
-	// can observe. Duration spans the whole dispatch (including any tool loop);
-	// the outcome tally is recorded from the returned Result.
+	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch
+	// (including any tool loop). The per-agent API-call count and outcome tally
+	// are derived from the returned Result in recordAgentOutcome — a tool-loop
+	// agent makes one provider call per turn, so counting from Result.Turns there
+	// reflects real round-trips rather than a flat one-per-invocation.
 	metrics.Counter(metrics.NameAgentsTotal).Inc()
-	metrics.Counter(metrics.NameAPICallsTotal).Inc()
 	start := time.Now()
 	r := e.dispatchAgent(ctx, a)
 	metrics.Histogram(metrics.NameAgentDurationSeconds).Observe(time.Since(start).Seconds())

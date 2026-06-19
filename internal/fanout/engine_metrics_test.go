@@ -50,10 +50,10 @@ func TestRecordAgentOutcome(t *testing.T) {
 	metrics.DefaultRegistry.Reset()
 	t.Cleanup(metrics.DefaultRegistry.Reset)
 
-	recordAgentOutcome(Result{Status: StatusOK})
-	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.HTTPStatusError{Status: 500}})
-	recordAgentOutcome(Result{Status: StatusTimeout, ToolCalls: 4})
-	recordAgentOutcome(Result{Status: StatusFailed, Err: errors.New("non-http failure")})
+	recordAgentOutcome(Result{Status: StatusOK})                                                   // 1 API call (Turns 0)
+	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.HTTPStatusError{Status: 500}}) // 1 API call
+	recordAgentOutcome(Result{Status: StatusTimeout, ToolCalls: 4, Turns: 3})                      // 3 API calls (tool loop)
+	recordAgentOutcome(Result{Status: StatusFailed, Err: errors.New("non-http failure")})          // 1 API call
 
 	check := func(name string, want int64) {
 		t.Helper()
@@ -64,6 +64,7 @@ func TestRecordAgentOutcome(t *testing.T) {
 	check("atcr_agents_succeeded", 1)
 	check("atcr_agents_failed", 2)
 	check("atcr_agents_timed_out", 1)
+	check("atcr_api_calls_total", 6) // 1 + 1 + 3 (tool loop) + 1
 	check(metrics.Key("atcr_api_errors_total", "status", "500"), 1)
 	check("atcr_tool_calls_total", 4)
 }

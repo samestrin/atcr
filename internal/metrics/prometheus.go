@@ -81,21 +81,27 @@ func (r *Registry) WritePrometheus() string {
 		}
 	}
 
-	// Histograms as Prometheus summaries.
-	histKeys := make([]string, 0, len(r.histograms))
+	// Histograms as Prometheus summaries, grouped by family so each family emits
+	// exactly one TYPE header even when it has several labeled keyed variants
+	// (duplicate TYPE lines are invalid exposition format).
+	histFamilies := make(map[string][]string, len(r.histograms))
 	for k := range r.histograms {
-		histKeys = append(histKeys, k)
+		f := metricFamily(k)
+		histFamilies[f] = append(histFamilies[f], k)
 	}
-	sort.Strings(histKeys)
-	for _, k := range histKeys {
-		h := r.histograms[k]
-		fam, inner := splitLabels(k)
+	for _, fam := range sortedKeys(histFamilies) {
 		fmt.Fprintf(&b, "# TYPE %s summary\n", fam)
-		for _, q := range summaryQuantiles {
-			fmt.Fprintf(&b, "%s%s %s\n", fam, withQuantile(inner, q), formatFloat(h.Percentile(q*100)))
+		keys := histFamilies[fam]
+		sort.Strings(keys)
+		for _, k := range keys {
+			h := r.histograms[k]
+			_, inner := splitLabels(k)
+			for _, q := range summaryQuantiles {
+				fmt.Fprintf(&b, "%s%s %s\n", fam, withQuantile(inner, q), formatFloat(h.Percentile(q*100)))
+			}
+			fmt.Fprintf(&b, "%s_sum%s %s\n", fam, labelSuffix(inner), formatFloat(h.Sum()))
+			fmt.Fprintf(&b, "%s_count%s %d\n", fam, labelSuffix(inner), h.Count())
 		}
-		fmt.Fprintf(&b, "%s_sum%s %s\n", fam, labelSuffix(inner), formatFloat(h.Sum()))
-		fmt.Fprintf(&b, "%s_count%s %d\n", fam, labelSuffix(inner), h.Count())
 	}
 
 	return b.String()

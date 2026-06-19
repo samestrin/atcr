@@ -79,6 +79,27 @@ func TestWritePrometheusHistogramLabeled(t *testing.T) {
 	}
 }
 
+func TestWritePrometheusHistogramSameFamilyOneTypeHeader(t *testing.T) {
+	r := NewRegistry()
+	// Two labeled histograms sharing a family must emit exactly one TYPE header
+	// (duplicate TYPE lines are invalid Prometheus exposition format).
+	r.Histogram(Key("atcr_agent_duration_seconds", "persona", "a")).Observe(1)
+	r.Histogram(Key("atcr_agent_duration_seconds", "persona", "b")).Observe(2)
+
+	out := r.WritePrometheus()
+	if n := strings.Count(out, "# TYPE atcr_agent_duration_seconds summary"); n != 1 {
+		t.Errorf("same-family histograms emitted %d TYPE headers, want 1\n%s", n, out)
+	}
+	for _, w := range []string{
+		`atcr_agent_duration_seconds{persona="a",quantile="0.5"} `,
+		`atcr_agent_duration_seconds{persona="b",quantile="0.5"} `,
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output missing %q\n%s", w, out)
+		}
+	}
+}
+
 func TestKeyEscapesLabelValue(t *testing.T) {
 	// A value with a quote, backslash, and newline must be escaped so it cannot
 	// break out of the label and inject extra Prometheus series.

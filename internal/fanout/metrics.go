@@ -10,14 +10,19 @@ import (
 )
 
 // recordAgentOutcome translates one finished agent Result into metric updates:
-// the success/failure/timeout tally, the per-HTTP-status API-error counter
-// (when the error unwraps to *llmclient.HTTPStatusError — the public type the
-// clarification settled on, so no internal/llmclient edits are needed), and the
-// tool-call total. API call latency is intentionally not recorded here: the
-// per-call start time lives inside the client and is not surfaced on Result, so
-// the histogram is deferred (Epic 4.4 clarification; AC7 needs only the error
-// counter). errors.As tolerates a nil Result.Err, so non-error results skip the
-// API-error counter without a guard.
+// the success/failure/timeout tally, the API-call count, the per-HTTP-status
+// API-error counter (when the error unwraps to *llmclient.HTTPStatusError — the
+// public type the clarification settled on, so no internal/llmclient edits are
+// needed), and the tool-call total. API calls are counted as provider
+// round-trips: a tool-loop agent makes one Chat call per turn (Result.Turns),
+// while the single-shot path leaves Turns at 0 and makes exactly one call, so
+// max(1, Turns) is the round-trip count. Slot-level fallbacks are separate
+// invokeAgent calls and so are counted independently, covering "API calls
+// (including retries)" at the granularity the fan-out can observe. API call
+// latency is intentionally not recorded: the per-call start time lives inside the
+// client and is not surfaced on Result, so the histogram is deferred (Epic 4.4
+// clarification; AC7 needs only the error counter). errors.As tolerates a nil
+// Result.Err, so non-error results skip the API-error counter without a guard.
 func recordAgentOutcome(r Result) {
 	switch r.Status {
 	case StatusOK:
@@ -27,6 +32,12 @@ func recordAgentOutcome(r Result) {
 	case StatusTimeout:
 		metrics.Counter(metrics.NameAgentsTimedOut).Inc()
 	}
+
+	apiCalls := r.Turns
+	if apiCalls == 0 {
+		apiCalls = 1 // single-shot/degraded path: one provider call, Turns unset
+	}
+	metrics.Counter(metrics.NameAPICallsTotal).Add(int64(apiCalls))
 
 	var he *llmclient.HTTPStatusError
 	if errors.As(r.Err, &he) {
