@@ -317,13 +317,24 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 	case err == nil:
 		// A successful round-trip: closes a half-open probe, resets the run.
 		breaker.RecordSuccess()
-	case isBreakerFailure(err):
-		// 5xx, timeout, or transport failure: trips/advances the failure run.
-		breaker.RecordFailure()
 	case errors.Is(err, context.Canceled):
 		// The caller cancelled mid-call — nothing was learned about the provider.
-		// Release any half-open probe without a verdict (do not count it).
+		// Release any half-open probe without a verdict (do not count it). Checked
+		// before isBreakerFailure so the classification is explicit rather than
+		// resting on isBreakerFailure happening to return false for cancellation.
 		breaker.ReleaseProbe()
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded:
+		// The caller's OWN deadline expired (the per-agent TimeoutSecs or the
+		// global fan-out deadline), not a provider stall: ctx is Done, so this
+		// says nothing about provider health — release any half-open probe without
+		// a verdict. A genuine provider stall trips the HTTP client's timeout while
+		// the caller ctx is NOT done; that falls through to isBreakerFailure below
+		// and counts as an outage (AC10). The ctx.Err() guard is the load-bearing
+		// discriminator between the two.
+		breaker.ReleaseProbe()
+	case isBreakerFailure(err):
+		// 5xx, provider-stall timeout, or transport failure: trips/advances the run.
+		breaker.RecordFailure()
 	default:
 		// A non-tripping HTTP response (3xx redirect surfaced by noRedirect, or
 		// 4xx incl. 429/401): the provider replied, so it is reachable. The
@@ -355,6 +366,13 @@ func (e *CircuitOpenError) Error() string {
 // the server replied, so the provider is reachable. A caller-initiated
 // cancellation does not count either — the call was aborted, which says nothing
 // about provider health.
+//
+// A context.DeadlineExceeded counts as a failure here because it is the
+// provider-stall signal (the HTTP client's own timeout firing). The send switch
+// filters out the OTHER source of DeadlineExceeded first — the caller's own ctx
+// deadline (ctx.Err()==DeadlineExceeded) — and releases the probe for it, so by
+// the time this function is consulted a DeadlineExceeded means the provider
+// stalled, not that the caller's budget ran out.
 func isBreakerFailure(err error) bool {
 	if err == nil {
 		return false
