@@ -9,8 +9,23 @@ Configuration validation now reports every error at once, so a bad `registry.yam
 ### Fixed
 
 - A fallback graph with a lead-in chain feeding a cycle (e.g. `a→b`, `b↔c`, `d→a`) no longer panics `atcr` at config-load time; the cycle is reported as a clean validation error
+- Removed redundant `strings.TrimSpace` call from payload error string formatting (`internal/registry/config.go:248`)
+- Replaced unidiomatic type assertion with `errors.As` for multi-error unwrapping in attribution (`internal/registry/attribution.go:48`)
+- Fixed `validateProvider` silently appending an empty error slice for valid providers (`internal/registry/config.go:233`)
+- Removed stale "Nothing to do here" comment from `walkFallbacks` after lead-in node blackening was added (`internal/registry/graph.go:67`)
 
 *Shipped via /execute-epic (epic 4.2)*
+
+## [Technical Debt] - 2026-06-18
+
+### Fixed
+
+- Added structured Warn log when MCP server shutdown interrupts an in-flight detached review (`review interrupted by server shutdown`) and when `shutdownReviews` begins cancelling in-flight reviews
+- Documented that `withShutdownCancel`'s cancel function may run twice concurrently via AfterFunc — the second call is an intentional idempotent no-op
+- Fixed `blockingCompleter` to return `context.Canceled` directly instead of `ctx.Err()` string; removed a timing-sensitive `RunInProgress` assertion in the disconnect shutdown test
+- Documented that `shutdownCtx` is immutable after construction, clarifying concurrent access safety at `handlers.go:230`
+- Added a Serve-level shutdown integration test exercising the `ctx.Err() != nil` discriminator through a transport seam, preventing regressions from boolean inversions or call-order changes
+- Documented that `shutdownDrain` must comfortably exceed worst-case interrupt-flush latency to guarantee the on-disk interrupted status persists before process exit
 
 ## [4.1.2] - 2026-06-18
 
