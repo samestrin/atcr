@@ -22,12 +22,12 @@ var severityOrder = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
 func writeReviewSummary(w io.Writer, reg *metrics.Registry, elapsed time.Duration, totalAgents int) {
 	val := func(name string) int64 { return reg.Counter(name).Value() }
 
-	fmt.Fprintf(w, "Review completed in %.1fs\n", elapsed.Seconds())
-	fmt.Fprintf(w, "Agents: %d/%d succeeded, %d failed, %d timed out\n",
+	_, _ = fmt.Fprintf(w, "Review completed in %.1fs\n", elapsed.Seconds())
+	_, _ = fmt.Fprintf(w, "Agents: %d/%d succeeded, %d failed, %d timed out\n",
 		val(metrics.NameAgentsSucceeded), totalAgents,
 		val(metrics.NameAgentsFailed), val(metrics.NameAgentsTimedOut))
-	fmt.Fprintf(w, "API calls: %d\n", val(metrics.NameAPICallsTotal))
-	fmt.Fprintf(w, "Findings: %d%s\n", val(metrics.NameFindingsTotal), severityBreakdown(reg))
+	_, _ = fmt.Fprintf(w, "API calls: %d\n", val(metrics.NameAPICallsTotal))
+	_, _ = fmt.Fprintf(w, "Findings: %d%s\n", val(metrics.NameFindingsTotal), severityBreakdown(reg))
 }
 
 // severityBreakdown renders " (2 HIGH, 3 MEDIUM)" for the non-zero severities in
