@@ -69,6 +69,33 @@ func TestRecordAgentOutcome(t *testing.T) {
 	check("atcr_tool_calls_total", 4)
 }
 
+// TestRecordAgentOutcomeNegativeTurns verifies a corrupt Result with negative
+// Turns does not decrement atcr_api_calls_total; it should be treated as a
+// single-shot (1 call) per the documented max(1,Turns) semantics.
+func TestRecordAgentOutcomeNegativeTurns(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	recordAgentOutcome(Result{Status: StatusFailed, Turns: -1})
+
+	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 1 {
+		t.Errorf("atcr_api_calls_total = %d, want 1 (negative Turns must be treated as single-shot)", got)
+	}
+}
+
+// TestRecordAgentOutcomeZeroHTTPStatus verifies that an HTTPStatusError with
+// Status==0 does not emit an uninformative {status="0"} error bucket.
+func TestRecordAgentOutcomeZeroHTTPStatus(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.HTTPStatusError{Status: 0}})
+
+	if got := metrics.Counter(metrics.Key("atcr_api_errors_total", "status", "0")).Value(); got != 0 {
+		t.Errorf("atcr_api_errors_total{status=0} = %d, want 0 (non-positive status must not be recorded)", got)
+	}
+}
+
 // TestRecordAgentOutcomeContextCancelledBeforeRequest verifies that a single-shot
 // agent whose context was cancelled before any HTTP request does not inflate
 // atcr_api_calls_total.
