@@ -17,6 +17,7 @@
 package circuitbreaker
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -220,7 +221,14 @@ func (b *Breaker) open() {
 // takes the registry's own lock briefly; metrics never calls back into this
 // package, so there is no lock-ordering cycle.
 func (b *Breaker) transition(s State) {
+	prev := b.state
 	b.state = s
+	slog.Info("circuit breaker state change",
+		"provider", b.provider,
+		"from", prev.String(),
+		"to", s.String(),
+		"failures", b.failureCount,
+	)
 	b.setMetric(s)
 }
 
