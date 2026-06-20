@@ -292,6 +292,24 @@ func TestForceBackupOutputDir_RefusesForeignBak(t *testing.T) {
 	assert.Equal(t, "do not delete", string(data), "foreign backup must not be destroyed")
 }
 
+// TestForceBackupOutputDir_RefusesFileBak verifies that a regular file at the
+// backup path is rejected with a specific, actionable error rather than the
+// generic "not created by atcr" message.
+func TestForceBackupOutputDir_RefusesFileBak(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "myreview")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
+
+	// A regular file where the backup directory should go.
+	require.NoError(t, os.WriteFile(dir+".bak", []byte("not a dir"), 0o644))
+
+	_, err := forceBackupOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "regular file")
+	assert.Contains(t, err.Error(), "not a directory")
+}
+
 // TestForceBackupOutputDir_ReplacesPriorAtcrBak verifies that a genuine prior
 // atcr backup (one carrying the scaffolded review-tree markers) is still
 // replaced, preserving the one-generation --force contract for managed trees.
