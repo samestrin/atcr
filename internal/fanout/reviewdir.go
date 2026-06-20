@@ -431,8 +431,10 @@ func forceBackupOutputDir(dir string) (string, error) {
 	if len(entries) == 0 {
 		return "", nil
 	}
-	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
-	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
+	// backupExisting ultimately replaces (and, on success, removes) the prior
+	// <dir>.bak generation — and its crash-safe staging also RemoveAll()s any
+	// <dir>.bak.old/<dir>.bak.new sibling at entry (Epic 4.7.1). Inside the managed
+	// reviews tree those siblings are atcr-owned, but an arbitrary --output-dir may
 	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
 	// backup atcr did not create (Epic 4.7: never silently delete user data).
 	if err := guardForeignBackup(dir + ".bak"); err != nil {
