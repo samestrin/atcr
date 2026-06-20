@@ -21,10 +21,11 @@ import (
 // is an assistant tool-call turn (content null); otherwise it is a final message
 // carrying content.
 type chatTurn struct {
-	toolCalls []llmclient.ToolCall
-	content   string
-	err       error
-	delay     time.Duration
+	toolCalls   []llmclient.ToolCall
+	content     string
+	err         error
+	delay       time.Duration
+	callRecords []llmclient.CallRecord // per-turn HTTP attempt telemetry (Epic 4.11)
 }
 
 // scriptedChat implements both Completer (single-shot) and ChatCompleter
@@ -99,7 +100,7 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 		c := turn.content
 		msg.Content = &c
 	}
-	return &llmclient.ChatResponse{Message: msg, FinishReason: fr}, nil
+	return &llmclient.ChatResponse{Message: msg, FinishReason: fr, CallRecords: turn.callRecords}, nil
 }
 
 // assertToolCallsAnswered returns an error when any assistant tool_call lacks a

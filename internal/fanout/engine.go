@@ -167,6 +167,16 @@ type Result struct {
 	Model     string
 	TokensIn  int
 	TokensOut int
+
+	// Per-call client telemetry (Epic 4.11). CallRecords holds one entry per HTTP
+	// attempt the client made for this agent — retries included, accumulated across
+	// every Chat() turn on the tool-loop path and taken from the single
+	// CompleteWithUsage() call on the single-shot path. recordAgentOutcome derives
+	// the API-call count (records that ReachedWire) and the per-call latency
+	// histogram from it. Nil when the completer surfaces no per-call data (a
+	// Complete-only test double, or a circuit-open fail-fast), in which case
+	// recordAgentOutcome falls back to the Turns-based count.
+	CallRecords []llmclient.CallRecord
 }
 
 // Engine fans a review out to a roster across a parallel lane (default) and a
