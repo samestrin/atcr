@@ -54,7 +54,9 @@ func WriteJSON(path string, v interface{}) error {
 // tree; a missing src is a no-op (returns "", nil) so callers need not pre-check
 // existence. The copy is made in place — src is left untouched — so callers can
 // still read the live tree after backing it up. Returns the backup path on
-// success. Garbage-collecting older .bak state is the caller's/user's job.
+// success. Only regular files and directories are copied; symlinks and other
+// non-regular entries are skipped. Garbage-collecting older .bak state is the
+// caller's/user's job.
 func BackupToDotBak(src string) (string, error) {
 	info, err := os.Stat(src)
 	if errors.Is(err, fs.ErrNotExist) {
