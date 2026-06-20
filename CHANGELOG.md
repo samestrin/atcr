@@ -1,3 +1,14 @@
+## [4.7.1] - 2026-06-20
+
+### Fixed
+
+- `--force` re-run backups are now crash-safe at both backup sites: a failed or interrupted swap (cross-filesystem `EXDEV`, disk-full, or `SIGKILL`) no longer destroys the prior `.bak` generation.
+- `backupExisting` (review-dir move path) stages the prior `.bak` aside before swapping, restores it on failure, and falls back to copy-then-vacate on cross-filesystem `EXDEV`.
+- `BackupToDotBak` (copy path) stages the prior generation to `.bak.old` and restores it if the staged-temp swap fails, closing the rename-window backup loss the prior implementation left open.
+- Stale atcr-owned staging artifacts (`.bak.old`/`.bak.new`) from an interrupted run are reconciled away on the next `--force`, preserving the one-generation contract across a crash-then-retry sequence.
+
+*Shipped via /execute-epic (epic 4.7.1)*
+
 ## [Technical Debt] - 2026-06-19
 
 ### Fixed
