@@ -92,9 +92,16 @@ func BackupToDotBak(src string) (string, error) {
 	bakOld := src + ".bak.old"
 	dir := filepath.Dir(src)
 
+	// Clean up any .bak.tmp-* staging temps a prior SIGKILL'd run may have left.
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*"+filepath.Base(bak)+".tmp-*")); len(matches) > 0 {
+		for _, m := range matches {
+			_ = os.RemoveAll(m)
+		}
+	}
+
 	// Reconcile a stale .bak.old a prior crashed swap may have left, so a retry
 	// starts clean and the one-generation contract holds across crash-then-retry.
-	if err := os.RemoveAll(bakOld); err != nil {
+	if err := os.RemoveAll(bakOld); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("clearing stale staging backup %s: %w", bakOld, err)
 	}
 
@@ -112,7 +119,7 @@ func BackupToDotBak(src string) (string, error) {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
 		staged = tmpDir
-	} else {
+	} else if info.Mode().IsRegular() {
 		tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(bak)+".tmp-*")
 		if err != nil {
 			return "", fmt.Errorf("creating backup staging file: %w", err)
@@ -128,6 +135,8 @@ func BackupToDotBak(src string) (string, error) {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
 		staged = tmpName
+	} else {
+		return "", fmt.Errorf("backup %s: not a regular file or directory", src)
 	}
 
 	if err := swapStagedBackup(staged, bak, bakOld); err != nil {
@@ -158,10 +167,11 @@ func swapStagedBackup(staged, bak, bakOld string) error {
 
 	if err := renameFn(staged, bak); err != nil {
 		if priorStaged {
-			// Best-effort restore. A restore failure cannot un-fail the swap, but
-			// the prior data still survives under bakOld for the next entry-time
-			// reconcile / manual recovery, so the swap error is what propagates.
-			_ = os.Rename(bakOld, bak)
+			// Best-effort restore. Even when restore also fails, the prior
+			// generation survives under bakOld for the next entry-time reconcile.
+			if restoreErr := os.Rename(bakOld, bak); restoreErr != nil {
+				return fmt.Errorf("renaming staged backup to %s: %w (restore of prior also failed: %v)", bak, err, restoreErr)
+			}
 		}
 		return fmt.Errorf("renaming staged backup to %s: %w", bak, err)
 	}
@@ -177,6 +187,14 @@ func swapStagedBackup(staged, bak, bakOld string) error {
 // renameFn is the swap primitive swapStagedBackup uses, indirected through a
 // package var so fault-injection tests can drive the failed-swap branch
 // deterministically. In production it is os.Rename.
+//
+// A second, independent renameFn seam lives in the fanout package
+// (reviewdir.go), guarding backupExisting's move-based swap. Despite the shared
+// name and doc shape the two vars are unrelated: patching fault-injection in
+// one does not affect the other. Neither covers fanout's backupCrossDevice
+// inner swap, which renames the staged copy into place via a direct os.Rename
+// that bypasses both seams — so cross-device inner-swap atomicity is not
+// fault-injectable through either var.
 var renameFn = os.Rename
 
 // CopyPath copies the regular file or directory tree at src to dst, preserving

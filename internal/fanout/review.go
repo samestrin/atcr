@@ -230,7 +230,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// --force backs up a non-empty target to <dir>.bak before scaffolding;
 		// without it, ScaffoldOutputDir rejects a non-empty dir (Epic 4.7 AC2).
 		if req.Force {
-			backupPath, err := forceBackupOutputDir(req.OutputDir)
+			backupPath, err := forceBackupOutputDir(ctx, req.OutputDir)
 			if err != nil {
 				return nil, err
 			}
@@ -247,7 +247,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// instead backs up the existing tree to <dir>.bak and scaffolds fresh
 		// (Epic 4.7 AC2).
 		if req.Force {
-			backupPath, err := forceBackupReviewDir(req.Root, id)
+			backupPath, err := forceBackupReviewDir(ctx, req.Root, id)
 			if err != nil {
 				return nil, err
 			}

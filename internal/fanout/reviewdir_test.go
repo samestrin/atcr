@@ -1,8 +1,11 @@
 package fanout
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -305,7 +309,7 @@ func TestBackupExisting_MovesAsideReplacingStaleBak(t *testing.T) {
 	require.NoError(t, os.MkdirAll(stale, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(stale, "old.txt"), []byte("old"), 0o644))
 
-	bak, err := backupExisting(src)
+	bak, err := backupExisting(context.Background(), src)
 	require.NoError(t, err)
 	assert.Equal(t, stale, bak)
 	// Source is now vacant.
@@ -334,7 +338,7 @@ func TestForceBackupOutputDir_RefusesForeignBak(t *testing.T) {
 	require.NoError(t, os.MkdirAll(foreign, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(foreign, "important.txt"), []byte("do not delete"), 0o644))
 
-	_, err := forceBackupOutputDir(dir)
+	_, err := forceBackupOutputDir(context.Background(), dir)
 	require.Error(t, err, "must refuse to clobber a foreign <dir>.bak")
 	assert.Contains(t, err.Error(), "atcr")
 	// The foreign backup and its contents survive untouched.
@@ -355,7 +359,7 @@ func TestForceBackupOutputDir_RefusesFileBak(t *testing.T) {
 	// A regular file where the backup directory should go.
 	require.NoError(t, os.WriteFile(dir+".bak", []byte("not a dir"), 0o644))
 
-	_, err := forceBackupOutputDir(dir)
+	_, err := forceBackupOutputDir(context.Background(), dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "regular file")
 	assert.Contains(t, err.Error(), "not a directory")
@@ -379,7 +383,7 @@ func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(prior, "manifest.json"), []byte("{}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("old"), 0o644))
 
-	_, err := forceBackupOutputDir(dir)
+	_, err := forceBackupOutputDir(context.Background(), dir)
 	require.NoError(t, err)
 	// dir was moved aside to .bak; the prior generation is gone.
 	data, err := os.ReadFile(filepath.Join(prior, "report.json"))
@@ -408,7 +412,7 @@ func TestForceBackupOutputDir_RefusesStructuralLookalike(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(lookalike, "important.txt"), []byte("do not delete"), 0o644))
 
-	_, err := forceBackupOutputDir(dir)
+	_, err := forceBackupOutputDir(context.Background(), dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not look like an atcr backup")
 	// The foreign data must survive — the guard refused rather than destroying it.
@@ -427,6 +431,24 @@ func withRenameStub(t *testing.T, stub func(oldpath, newpath string) error) {
 	t.Cleanup(func() { renameFn = orig })
 }
 
+// withCopyPathStub swaps the copyPathFn seam so tests can inject copy failures
+// or partial copies into backupCrossDevice without a real cross-mount in CI.
+func withCopyPathStub(t *testing.T, stub func(src, dst string) error) {
+	t.Helper()
+	orig := copyPathFn
+	copyPathFn = stub
+	t.Cleanup(func() { copyPathFn = orig })
+}
+
+// withRemovePathStub swaps the removePathFn seam so tests can inject vacate
+// failures into backupCrossDevice without a real cross-mount in CI.
+func withRemovePathStub(t *testing.T, stub func(path string) error) {
+	t.Helper()
+	orig := removePathFn
+	removePathFn = stub
+	t.Cleanup(func() { removePathFn = orig })
+}
+
 // TestBackupExisting_FailedSwapPreservesPriorBak verifies AC1: when the swap of
 // the live tree onto <dir>.bak fails (non-EXDEV), the prior <dir>.bak generation
 // is restored intact rather than left destroyed, and the live tree is untouched —
@@ -443,7 +465,7 @@ func TestBackupExisting_FailedSwapPreservesPriorBak(t *testing.T) {
 
 	withRenameStub(t, func(_, _ string) error { return errors.New("simulated swap failure") })
 
-	_, err := backupExisting(src)
+	_, err := backupExisting(context.Background(), src)
 	require.Error(t, err, "a failed swap must surface an error")
 
 	// AC1: the prior backup survives the failed swap.
@@ -456,6 +478,44 @@ func TestBackupExisting_FailedSwapPreservesPriorBak(t *testing.T) {
 	assert.Equal(t, "current", string(live))
 	// No staging straggler left behind.
 	assert.NoDirExists(t, src+".bak.old", "staging artifact must not leak after a failed swap")
+}
+
+// TestRestorePriorBackup_LogsRestoreFailure verifies that when the prior-backup
+// restore after a failed swap cannot itself complete (its rename fails), the
+// failure is logged via the context logger naming the stranded .bak.old path —
+// not silently dropped. A crash-recovery failure leaves the user's only
+// surviving copy stranded under .bak.old; if that is swallowed, the loss is
+// invisible in production. The swap error is still the returned error.
+func TestRestorePriorBackup_LogsRestoreFailure(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	prior := src + ".bak"
+	require.NoError(t, os.MkdirAll(prior, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("prior-backup"), 0o644))
+
+	// Drive the swap into its failure leg AND leave a conflicting non-empty
+	// directory at <src>.bak, so the subsequent restore rename (.bak.old → .bak)
+	// also fails: POSIX rejects renaming a directory onto a non-empty directory
+	// (ENOTEMPTY), deterministically across macOS and Linux.
+	withRenameStub(t, func(_, newpath string) error {
+		require.NoError(t, os.MkdirAll(filepath.Join(newpath, "blocker"), 0o755))
+		return errors.New("simulated swap failure")
+	})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	_, err := backupExisting(ctx, src)
+	require.Error(t, err, "a failed swap must still surface an error")
+
+	logged := buf.String()
+	assert.NotEmpty(t, logged, "a failed restore must be logged, not silently dropped")
+	assert.Contains(t, logged, src+".bak.old",
+		"the log must name the stranded .bak.old path the user must recover manually")
 }
 
 // TestBackupExisting_CrossDeviceFallback verifies AC3: an EXDEV (cross-filesystem)
@@ -475,7 +535,7 @@ func TestBackupExisting_CrossDeviceFallback(t *testing.T) {
 	// Force the live-tree swap to report EXDEV so the copy fallback runs.
 	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
 
-	bak, err := backupExisting(src)
+	bak, err := backupExisting(context.Background(), src)
 	require.NoError(t, err, "EXDEV must fall back to copy+remove, not error out")
 	assert.Equal(t, stale, bak)
 
@@ -490,6 +550,37 @@ func TestBackupExisting_CrossDeviceFallback(t *testing.T) {
 	// Staging artifacts cleaned up.
 	assert.NoDirExists(t, src+".bak.new", "staging copy must not leak after a cross-device backup")
 	assert.NoDirExists(t, src+".bak.old", "prior-generation staging must not leak after success")
+}
+
+// TestBackupCrossDevice_VacateFailureReportsDurableBackup verifies that when the
+// cross-device swap succeeds but vacating the live path fails (e.g. path is a
+// mountpoint root that cannot be unlinked), the returned error states the backup
+// completed durably and names the backup holding the preserved data — so a caller
+// hitting this knows no data was lost and only the live path needs manual cleanup.
+// This honors clarification Q2's RemoveAll(path) choice; a content-only vacate
+// that tolerates an unremovable mountpoint root is a deferred refinement (TD
+// reviewdir.go:342).
+func TestBackupCrossDevice_VacateFailureReportsDurableBackup(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// Force the live-tree swap onto EXDEV so the copy+swap+vacate fallback runs,
+	// then make the final vacate fail to simulate an unremovable mountpoint root.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	withRemovePathStub(t, func(_ string) error { return errors.New("device or resource busy") })
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err, "a failed vacate must still surface an error (Q2: RemoveAll(path))")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "backup completed", "must state the backup is durable")
+	assert.Contains(t, msg, src+".bak", "must name the backup path holding the preserved data")
+	// The backup really is durable on disk.
+	data, readErr := os.ReadFile(filepath.Join(src+".bak", "marker.txt"))
+	require.NoError(t, readErr, "the new backup must be in place despite the vacate failure")
+	assert.Equal(t, "current", string(data))
 }
 
 // TestBackupExisting_CleansStaleStagingStragglers verifies the reconcile-on-retry
@@ -508,7 +599,7 @@ func TestBackupExisting_CleansStaleStagingStragglers(t *testing.T) {
 	require.NoError(t, os.MkdirAll(src+".bak.new", 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(src+".bak.new", "junk.txt"), []byte("y"), 0o644))
 
-	bak, err := backupExisting(src)
+	bak, err := backupExisting(context.Background(), src)
 	require.NoError(t, err)
 	assert.Equal(t, src+".bak", bak)
 	// Stragglers gone.
@@ -518,6 +609,96 @@ func TestBackupExisting_CleansStaleStagingStragglers(t *testing.T) {
 	data, readErr := os.ReadFile(filepath.Join(bak, "marker.txt"))
 	require.NoError(t, readErr)
 	assert.Equal(t, "current", string(data))
+}
+
+// TestBackupCrossDevice_CopyFailureCleansBackupNew verifies that backupCrossDevice
+// removes .bak.new when the copy step fails, so a partial copy does not leave a
+// stale staging artifact for the next run's entry-time reconcile to clean up.
+func TestBackupCrossDevice_CopyFailureCleansBackupNew(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// Trigger the EXDEV branch so backupCrossDevice is invoked.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	// Simulate a partial copy: create a directory at dst then fail.
+	withCopyPathStub(t, func(_, dst string) error {
+		require.NoError(t, os.MkdirAll(dst, 0o755))
+		return errors.New("simulated copy failure")
+	})
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err)
+	assert.NoDirExists(t, src+".bak.new", "backupCrossDevice must clean up .bak.new on copy failure")
+}
+
+// TestBackupCrossDevice_CopyFailureRestoresPriorBak proves the "EXDEV falls back
+// without data loss" AC on its failure leg: when the cross-device copy fails with a
+// prior .bak staged aside, the prior generation is restored intact, the live tree
+// survives, and the .bak.new staging artifact is cleaned up. The success path was
+// already covered (TestBackupExisting_CrossDeviceFallback); this locks the
+// restore-on-copy-failure path the prior tests left unproven (TD reviewdir.go:388).
+func TestBackupCrossDevice_CopyFailureRestoresPriorBak(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// A prior backup generation that must survive a failed cross-device backup.
+	prior := src + ".bak"
+	require.NoError(t, os.MkdirAll(prior, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "marker.txt"), []byte("prior"), 0o644))
+
+	// Trigger the EXDEV branch, then fail the copy step (after a partial dst).
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	withCopyPathStub(t, func(_, dst string) error {
+		require.NoError(t, os.MkdirAll(dst, 0o755))
+		return errors.New("simulated copy failure")
+	})
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err, "a failed cross-device copy must surface an error")
+
+	// Prior generation restored intact: .bak holds the prior content, not the live.
+	data, readErr := os.ReadFile(filepath.Join(prior, "marker.txt"))
+	require.NoError(t, readErr, "prior .bak must be restored after a failed cross-device copy")
+	assert.Equal(t, "prior", string(data), "restored backup must hold the prior generation")
+	// Live tree untouched: the copy never moves or removes path.
+	live, readErr := os.ReadFile(filepath.Join(src, "marker.txt"))
+	require.NoError(t, readErr, "live tree must survive a failed cross-device copy")
+	assert.Equal(t, "current", string(live))
+	// Staging artifacts cleaned up.
+	assert.NoDirExists(t, src+".bak.new", "staging copy must not leak after a failed cross-device copy")
+	assert.NoDirExists(t, src+".bak.old", "prior-generation staging must not leak after restore")
+}
+
+// TestBackupExisting_CrossDeviceVacateFailurePreservesNewBackup verifies that when
+// the copy+rename to .bak succeeds but the vacate of the live path fails, the new
+// backup is not overwritten by restoring the prior .bak.old generation — the live
+// path remains intact (user data safe) and the new backup is preserved.
+func TestBackupExisting_CrossDeviceVacateFailurePreservesNewBackup(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	prior := src + ".bak"
+	require.NoError(t, os.MkdirAll(prior, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "marker.txt"), []byte("prior"), 0o644))
+
+	// Trigger EXDEV so backupCrossDevice runs; fail only the vacate step.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	withRemovePathStub(t, func(_ string) error { return errors.New("simulated vacate failure") })
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err)
+
+	// The new backup must survive: copy+rename to .bak placed new content there;
+	// restoring .bak.old over it would destroy the new backup.
+	data, readErr := os.ReadFile(filepath.Join(src+".bak", "marker.txt"))
+	require.NoError(t, readErr, "new backup must be preserved after vacate failure")
+	assert.Equal(t, "current", string(data), "new backup must hold new content, not prior")
 }
 
 func TestReviewExists_AndCollisionProbe(t *testing.T) {

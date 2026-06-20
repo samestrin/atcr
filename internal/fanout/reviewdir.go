@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 )
 
@@ -308,13 +310,15 @@ func ScaffoldOutputDir(dir string) (string, error) {
 // postcondition. Stale atcr-owned staging artifacts (.bak.old/.bak.new) from a
 // prior crashed run are reconciled away at entry, so retries start clean and the
 // one-generation contract holds across a crash-then-retry sequence.
-func backupExisting(path string) (string, error) {
+func backupExisting(ctx context.Context, path string) (string, error) {
 	backup := path + ".bak"
 	backupOld := path + ".bak.old"
 	backupNew := path + ".bak.new"
 
 	// Reconcile stragglers a prior crashed swap may have left, so a retry starts
 	// from a clean slate and no atcr-owned staging artifact accumulates.
+	// .bak.tmp-* sibling names are produced only by atomicfs.BackupToDotBak, not
+	// by backupExisting — only .bak.old and .bak.new need clearing here.
 	if err := os.RemoveAll(backupOld); err != nil {
 		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupOld, err)
 	}
@@ -324,6 +328,15 @@ func backupExisting(path string) (string, error) {
 
 	// Stage the prior generation aside instead of destroying it: a failed swap
 	// below restores it from .bak.old.
+	//
+	// Accepted TOCTOU window: between the os.Lstat(backup) probe and the
+	// os.Rename(backup, backupOld) below, another process or a symlink swap could
+	// change what `backup` refers to between check and use. The window is tiny and
+	// atcr is a single-user developer tool whose trust model assumes the user owns
+	// the reviews tree, so this race is an accepted risk rather than a guarded one:
+	// POSIX offers no portable rename-if-unchanged primitive (renameat2's
+	// RENAME_NOREPLACE is Linux-only), and the same accepted window exists at the
+	// atomicfs swap site.
 	priorStaged := false
 	if _, err := os.Lstat(backup); err == nil {
 		if err := os.Rename(backup, backupOld); err != nil {
@@ -340,11 +353,19 @@ func backupExisting(path string) (string, error) {
 			// path is on a different filesystem from its .bak sibling (path is a
 			// mountpoint): replicate the move with a same-fs copy + vacate.
 			if cerr := backupCrossDevice(path, backup, backupNew); cerr != nil {
-				restorePriorBackup(priorStaged, backupOld, backup)
+				// Only restore the prior backup if the new backup was never placed.
+				// When copy+rename succeeded but the final vacate failed, backup
+				// already holds the new generation — restoring .bak.old over it
+				// would destroy it. POSIX rename of a non-empty directory over
+				// another non-empty directory fails (ENOTEMPTY), so this Lstat
+				// guard is belt-and-suspenders that also makes the intent explicit.
+				if _, statErr := os.Lstat(backup); statErr != nil {
+					restorePriorBackup(ctx, priorStaged, backupOld, backup)
+				}
 				return "", cerr
 			}
 		} else {
-			restorePriorBackup(priorStaged, backupOld, backup)
+			restorePriorBackup(ctx, priorStaged, backupOld, backup)
 			return "", fmt.Errorf("backing up %q: %w", path, err)
 		}
 	}
@@ -365,38 +386,75 @@ func backupExisting(path string) (string, error) {
 // os.Rename.
 var renameFn = os.Rename
 
+// copyPathFn is the copy primitive backupCrossDevice uses, indirected so tests
+// can inject copy failures without a real cross-mount in CI.
+var copyPathFn = atomicfs.CopyPath
+
+// removePathFn is the vacate primitive backupCrossDevice uses for the final
+// os.RemoveAll(path) step, indirected so tests can inject vacate failures.
+var removePathFn = os.RemoveAll
+
 // restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
 // after a failed swap, so a failure leaves the user with the prior backup intact.
-// Best-effort: a restore failure cannot un-fail the swap, but the prior data
-// still survives under .bak.old for manual recovery, so the error is not
-// propagated over the swap failure that is the caller's real concern.
-func restorePriorBackup(staged bool, backupOld, backup string) {
+// Best-effort: a restore failure cannot un-fail the swap, so the error is not
+// propagated over the swap failure that is the caller's real concern. It is not
+// silently dropped either — a failed restore strands the only surviving copy
+// under .bak.old, so it is logged at Warn naming that path for manual recovery,
+// making a crash-recovery failure visible in production instead of invisible.
+func restorePriorBackup(ctx context.Context, staged bool, backupOld, backup string) {
 	if !staged {
 		return
 	}
-	_ = os.Rename(backupOld, backup)
+	if err := os.Rename(backupOld, backup); err != nil {
+		log.FromContext(ctx).Warn("failed to restore prior backup after a failed swap",
+			"backup_old", backupOld, "backup", backup, "err", err,
+			"recovery", "the prior backup is stranded at backup_old; move it back to backup manually")
+	}
 }
 
 // backupCrossDevice replicates backupExisting's move across a filesystem boundary
 // (hit when path is a mountpoint, so os.Rename(path, backup) returns EXDEV): it
 // copies path's tree into a fresh same-fs staging sibling (backupNew, next to
 // backup on the parent filesystem), renames that over backup as an atomic same-fs
-// swap, then removes path to leave it vacant — matching os.Rename(path, backup)'s
-// postcondition. The prior .bak (if any) has already been staged to .bak.old by
-// the caller, so backup is absent here; a failure leaves backupNew for the
-// entry-time reconcile to clean on the next run.
+// swap, then removes path to leave it vacant.
+//
+// Unlike the os.Rename(path, backup) it stands in for, this fallback is NOT
+// atomic: the rename-swap and the RemoveAll(path) vacate are two distinct steps,
+// so a crash between them leaves the tree duplicated at both path and backup
+// (path.bak). Entry-time reconcile only clears .bak.old/.bak.new, not a leftover
+// live path, so such a duplicate persists until the next --force run overwrites
+// path. The fallback reaches the same end state os.Rename guarantees but cannot
+// match the move's all-or-nothing crash semantics.
+//
+// The prior .bak (if any) has already been staged to .bak.old by the caller, so
+// backup is absent here; a failure leaves backupNew for the entry-time reconcile
+// to clean on the next run.
 func backupCrossDevice(path, backup, backupNew string) error {
 	if err := os.RemoveAll(backupNew); err != nil {
 		return fmt.Errorf("clearing staging backup %q: %w", backupNew, err)
 	}
-	if err := atomicfs.CopyPath(path, backupNew); err != nil {
+	// CopyPath skips symlinks and non-regular entries — this fallback is lossy
+	// if the live tree contains symlinks. Review trees hold only regular files
+	// (WritePool never creates symlinks), so the divergence is immaterial for
+	// managed reviews; --output-dir callers with symlinks in their tree will
+	// silently lose them on this path.
+	if err := copyPathFn(path, backupNew); err != nil {
+		_ = os.RemoveAll(backupNew) // clean up any partial copy
 		return fmt.Errorf("backing up %q across filesystems: %w", path, err)
 	}
 	if err := os.Rename(backupNew, backup); err != nil {
 		return fmt.Errorf("swapping staged backup %q into place: %w", backupNew, err)
 	}
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("vacating %q after cross-device backup: %w", path, err)
+	if err := removePathFn(path); err != nil {
+		// The same-fs swap above already placed the new generation durably at
+		// backup; only vacating the live path failed (e.g. path is a mountpoint
+		// root that cannot be unlinked). The live tree's contents are preserved in
+		// the backup, so no data is lost — say so explicitly, and name the backup,
+		// so a caller hitting this knows the backup is safe and only the live path
+		// needs manual cleanup. A content-only vacate that tolerates an unremovable
+		// mountpoint root (so this stops being a hard failure) is a deferred
+		// refinement: clarification Q2 chose RemoveAll(path).
+		return fmt.Errorf("backup completed at %q but vacating live path %q failed (its contents are preserved in the backup; remove the live path manually): %w", backup, path, err)
 	}
 	return nil
 }
@@ -406,21 +464,21 @@ func backupCrossDevice(path, backup, backupNew string) error {
 // is a no-op, so --force is harmless when there is nothing to overwrite. Returns
 // the backup path when a backup was created, or "" when there was nothing to
 // back up.
-func forceBackupReviewDir(root, id string) (string, error) {
+func forceBackupReviewDir(ctx context.Context, root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	} else if err != nil {
 		return "", fmt.Errorf("checking review directory before --force backup: %w", err)
 	}
-	return backupExisting(dir)
+	return backupExisting(ctx, dir)
 }
 
 // forceBackupOutputDir backs up a non-empty --output-dir before --force scaffolds
 // into it (Epic 4.7 AC2). An absent or empty target is a no-op: ScaffoldOutputDir
 // already accepts those, so there is nothing to preserve. Returns the backup path
 // when a backup was created, or "" when there was nothing to back up.
-func forceBackupOutputDir(dir string) (string, error) {
+func forceBackupOutputDir(ctx context.Context, dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
@@ -440,7 +498,7 @@ func forceBackupOutputDir(dir string) (string, error) {
 	if err := guardForeignBackup(dir + ".bak"); err != nil {
 		return "", err
 	}
-	return backupExisting(dir)
+	return backupExisting(ctx, dir)
 }
 
 // guardForeignBackup returns an error if backup exists but was not created by
