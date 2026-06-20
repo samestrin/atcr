@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -55,6 +56,24 @@ const (
 	// clamped anyway.
 	MaxInitialBackoffMs = 30000
 )
+
+// validateRetryBounds checks the Epic 4.6 retry budget fields against their shared
+// caps and returns one message per out-of-range field (empty when both are valid).
+// maxRetries and backoffMs are pointers so a nil (unset) field is skipped rather
+// than rejected. It returns bare messages — not finished errors — so each tier can
+// wrap them in its own error type (entryError attribution for the per-agent
+// load-time tier, plain errors for the global and resolve-time tiers) while sharing
+// one definition of the bounds, which is the actual drift risk this consolidates.
+func validateRetryBounds(maxRetries, backoffMs *int) []string {
+	var msgs []string
+	if maxRetries != nil && (*maxRetries < 0 || *maxRetries > MaxRetriesCap) {
+		msgs = append(msgs, fmt.Sprintf("max_retries must be within 0..%d", MaxRetriesCap))
+	}
+	if backoffMs != nil && (*backoffMs <= 0 || *backoffMs > MaxInitialBackoffMs) {
+		msgs = append(msgs, fmt.Sprintf("initial_backoff_ms must be within 1..%d", MaxInitialBackoffMs))
+	}
+	return msgs
+}
 
 // Settings are the effective shared review settings after precedence
 // resolution: CLI flag > project config > registry > embedded default.
@@ -174,11 +193,8 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// loader) can carry out-of-range values; catch them so the engine never
 	// receives them. 0 retries is valid (single attempt); the base delay must be
 	// positive so the exponential schedule has a non-zero starting point.
-	if s.MaxRetries < 0 || s.MaxRetries > MaxRetriesCap {
-		return Settings{}, fmt.Errorf("max_retries must be within 0..%d, got %d", MaxRetriesCap, s.MaxRetries)
-	}
-	if s.InitialBackoffMs <= 0 || s.InitialBackoffMs > MaxInitialBackoffMs {
-		return Settings{}, fmt.Errorf("initial_backoff_ms must be within 1..%d, got %d", MaxInitialBackoffMs, s.InitialBackoffMs)
+	if msgs := validateRetryBounds(&s.MaxRetries, &s.InitialBackoffMs); len(msgs) > 0 {
+		return Settings{}, errors.New(msgs[0])
 	}
 	// Per-agent retry overrides are read directly by EffectiveMaxRetries /
 	// EffectiveInitialBackoffMs, bypassing the global resolution above, so a
@@ -189,11 +205,8 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	if reg != nil {
 		for _, name := range sortedKeys(reg.Agents) {
 			a := reg.Agents[name]
-			if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
-				return Settings{}, fmt.Errorf("agent %q: max_retries must be within 0..%d, got %d", name, MaxRetriesCap, *a.MaxRetries)
-			}
-			if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
-				return Settings{}, fmt.Errorf("agent %q: initial_backoff_ms must be within 1..%d, got %d", name, MaxInitialBackoffMs, *a.InitialBackoffMs)
+			if msgs := validateRetryBounds(a.MaxRetries, a.InitialBackoffMs); len(msgs) > 0 {
+				return Settings{}, fmt.Errorf("agent '%s': %s", name, msgs[0])
 			}
 		}
 	}
