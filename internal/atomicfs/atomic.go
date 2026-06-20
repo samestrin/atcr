@@ -167,10 +167,11 @@ func swapStagedBackup(staged, bak, bakOld string) error {
 
 	if err := renameFn(staged, bak); err != nil {
 		if priorStaged {
-			// Best-effort restore. A restore failure cannot un-fail the swap, but
-			// the prior data still survives under bakOld for the next entry-time
-			// reconcile / manual recovery, so the swap error is what propagates.
-			_ = os.Rename(bakOld, bak)
+			// Best-effort restore. Even when restore also fails, the prior
+			// generation survives under bakOld for the next entry-time reconcile.
+			if restoreErr := os.Rename(bakOld, bak); restoreErr != nil {
+				return fmt.Errorf("renaming staged backup to %s: %w (restore of prior also failed: %v)", bak, err, restoreErr)
+			}
 		}
 		return fmt.Errorf("renaming staged backup to %s: %w", bak, err)
 	}
