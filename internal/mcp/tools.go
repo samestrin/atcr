@@ -187,6 +187,10 @@ const (
 func reportInputSchema() (*jsonschema.Schema, error) {
 	s, err := jsonschema.For[ReportArgs](nil)
 	if err != nil {
+		// Coverage exclusion: jsonschema.For cannot fail for the statically-known,
+		// JSON-representable ReportArgs struct, so this guard is unreachable defense
+		// in depth; it exists only to keep buildServer fail-fast if ReportArgs ever
+		// gains an inference-hostile field.
 		return nil, fmt.Errorf("inferring atcr_report schema: %w", err)
 	}
 	if p := s.Properties["format"]; p != nil {

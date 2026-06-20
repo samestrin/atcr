@@ -49,6 +49,12 @@ func NewServer(root string, completer fanout.Completer, logger *slog.Logger) (*m
 // ctx is cancelled, then drains in-flight background reviews (bounded) so a
 // disconnecting client does not orphan a review mid-write. It is the single
 // entry the `atcr serve` command calls.
+//
+// Coverage exclusion: Serve binds os.Stdin/os.Stdout via StdioTransport, which is
+// not drivable from a unit test, so it carries no unit coverage by design. Its
+// substance is the post-transport shutdown discrimination, factored into serveOver
+// and covered in-memory (serve_integration_test.go); end-to-end stdio behavior is
+// exercised by the serve command's integration tests.
 func Serve(ctx context.Context, root string, completer fanout.Completer, logger *slog.Logger) error {
 	s, e, err := buildServer(root, completer, logger)
 	if err != nil {
