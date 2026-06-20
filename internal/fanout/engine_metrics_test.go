@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -96,22 +97,105 @@ func TestRecordAgentOutcomeZeroHTTPStatus(t *testing.T) {
 	}
 }
 
-// TestRecordAgentOutcomeContextCancelledBeforeRequest verifies that a single-shot
-// agent whose context was cancelled before any HTTP request does not inflate
-// atcr_api_calls_total. Also covers negative Turns + context error to ensure the
-// counter is never decremented.
+// TestRecordAgentOutcomeContextCancelledBeforeRequest verifies, with per-record
+// semantics (Epic 4.11), that an agent which never completed an HTTP round-trip
+// does not inflate atcr_api_calls_total — covering both the per-record path (a
+// cancel-before-send record that did not reach the wire) and the nil fallback
+// (circuit-open fail-fast and a corrupt negative Turns, which must never
+// decrement the monotonic counter). All cases must total 0 (AC2, AC5).
 func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
 	metrics.DefaultRegistry.Reset()
 	t.Cleanup(metrics.DefaultRegistry.Reset)
 
-	// context.DeadlineExceeded: cancelled before first HTTP round-trip, Turns==0
-	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded})
-	// context.Canceled: same scenario via SIGINT path
-	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.Canceled})
-	// negative Turns + context error: must not decrement the monotonic counter
+	// Per-record path: cancel-before-send via a deadline — the attempt was entered
+	// but the bytes were never written, so its one record did not reach the wire.
+	recordAgentOutcome(Result{
+		Status:      StatusTimeout,
+		Err:         context.DeadlineExceeded,
+		CallRecords: []llmclient.CallRecord{{ReachedWire: false, Duration: time.Millisecond}},
+	})
+	// Per-record path: same scenario via the SIGINT (context.Canceled) path.
+	recordAgentOutcome(Result{
+		Status:      StatusTimeout,
+		Err:         context.Canceled,
+		CallRecords: []llmclient.CallRecord{{ReachedWire: false}},
+	})
+	// Nil fallback: circuit-open fail-fast makes no request and surfaces nil records.
+	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.CircuitOpenError{Provider: "groq"}})
+	// Nil fallback: a corrupt negative Turns + context error must not decrement.
 	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded, Turns: -1})
 
 	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 0 {
-		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count or decrement)", got)
+		t.Errorf("atcr_api_calls_total = %d, want 0 (no completed HTTP round-trip must count or decrement)", got)
+	}
+	if got := metrics.Histogram(metrics.NameAPICallDurationSeconds).Count(); got != 0 {
+		t.Errorf("%s count = %d, want 0 (no attempt reached the wire)", metrics.NameAPICallDurationSeconds, got)
+	}
+}
+
+// TestRecordAgentOutcome_PerAttemptCountsAndTimes verifies the per-record path:
+// atcr_api_calls_total counts CallRecords that reached the wire (retries
+// included), and the duration histogram observes exactly one sample per wire
+// record — so the histogram's count always equals the call count (AC1, AC3).
+func TestRecordAgentOutcome_PerAttemptCountsAndTimes(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	// AC1: a single-shot whose context expired after one real round-trip has one
+	// wire record and must count 1 (the Turns-based heuristic counts it 0 today).
+	recordAgentOutcome(Result{
+		Status: StatusTimeout,
+		Err:    context.DeadlineExceeded,
+		CallRecords: []llmclient.CallRecord{
+			{ReachedWire: true, Duration: 100 * time.Millisecond},
+		},
+	})
+	// Per-attempt counting: three wire attempts (two retries + a success) count 3.
+	recordAgentOutcome(Result{
+		Status: StatusOK,
+		CallRecords: []llmclient.CallRecord{
+			{ReachedWire: true, Duration: 10 * time.Millisecond},
+			{ReachedWire: true, Duration: 20 * time.Millisecond},
+			{ReachedWire: true, Duration: 30 * time.Millisecond},
+		},
+	})
+
+	if got := metrics.Counter(metrics.NameAPICallsTotal).Value(); got != 4 {
+		t.Errorf("atcr_api_calls_total = %d, want 4 (1 + 3 wire attempts)", got)
+	}
+	h := metrics.Histogram(metrics.NameAPICallDurationSeconds)
+	if got := h.Count(); got != 4 {
+		t.Errorf("%s count = %d, want 4 (one sample per wire record == call count)", metrics.NameAPICallDurationSeconds, got)
+	}
+	// 100 + 10 + 20 + 30 = 160ms total observed.
+	if got := h.Sum(); got < 0.159 || got > 0.161 {
+		t.Errorf("%s sum = %f, want ~0.160 seconds", metrics.NameAPICallDurationSeconds, got)
+	}
+}
+
+// TestRecordAgentOutcome_NonWireRecordsCountZero verifies cancel-before-send (a
+// record that never reached the wire) and circuit-open fail-fast (nil records +
+// CircuitOpenError) both count zero API calls and emit no latency sample (AC2).
+func TestRecordAgentOutcome_NonWireRecordsCountZero(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	// cancel-before-send: an attempt was entered but no bytes were written.
+	recordAgentOutcome(Result{
+		Status:      StatusTimeout,
+		Err:         context.Canceled,
+		CallRecords: []llmclient.CallRecord{{ReachedWire: false, Duration: time.Millisecond}},
+	})
+	// circuit-open fail-fast: no HTTP attempt made at all, nil records.
+	recordAgentOutcome(Result{
+		Status: StatusFailed,
+		Err:    &llmclient.CircuitOpenError{Provider: "groq"},
+	})
+
+	if got := metrics.Counter(metrics.NameAPICallsTotal).Value(); got != 0 {
+		t.Errorf("atcr_api_calls_total = %d, want 0 (no attempt reached the wire)", got)
+	}
+	if got := metrics.Histogram(metrics.NameAPICallDurationSeconds).Count(); got != 0 {
+		t.Errorf("%s count = %d, want 0 (no completed HTTP attempt)", metrics.NameAPICallDurationSeconds, got)
 	}
 }

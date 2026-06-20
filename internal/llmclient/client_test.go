@@ -673,7 +673,7 @@ func TestCompleteWithUsage_TokensFromUsage(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TEST_KEY", testKey)
 
-	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+	out, usage, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "review this",
 	})
 	require.NoError(t, err)
@@ -690,7 +690,7 @@ func TestCompleteWithUsage_AbsentUsageIsZero(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TEST_KEY", testKey)
 
-	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+	out, usage, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
 	})
 	require.NoError(t, err)
@@ -824,7 +824,7 @@ func TestCompleteWithUsage_PartialUsage(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TEST_KEY", testKey)
 
-	_, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+	_, usage, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
 	})
 	require.NoError(t, err)
@@ -842,7 +842,7 @@ func TestCompleteWithUsage_FloatUsageDoesNotFailDecode(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TEST_KEY", testKey)
 
-	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+	out, usage, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
 	})
 	require.NoError(t, err)
@@ -871,7 +871,7 @@ func TestCompleteWithUsage_MalformedUsageDegradesToZero(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TEST_KEY", testKey)
 
-	out, usage, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+	out, usage, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
 	})
 	require.NoError(t, err)
@@ -949,7 +949,7 @@ func TestCompleteWithUsage_EmptyCompletionReturnsError(t *testing.T) {
 	defer srv.Close()
 	t.Setenv("TEST_KEY", testKey)
 
-	out, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
+	out, _, _, err := fastRetry(srv.Client()).CompleteWithUsage(context.Background(), Invocation{
 		BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m",
 	})
 	require.Error(t, err)

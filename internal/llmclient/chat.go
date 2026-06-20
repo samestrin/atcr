@@ -100,6 +100,14 @@ type ChatResponse struct {
 	// diff successive turns instead of summing; until then the assumption is a
 	// documented hard contract, pinned by TestChat_UsageIsPerTurnNotCumulative.
 	Usage UsageData
+
+	// CallRecords is the per-attempt telemetry for THIS turn's dispatch (one
+	// record per HTTP attempt, retries included). Like Usage, it is per-turn and
+	// the fanout loop accumulates it across turns. Surfaced only on the success
+	// path: a turn that errors returns a nil *ChatResponse, so its records are
+	// dropped — the same accepted limitation that already applies to Usage on an
+	// errored turn (see the no-choices note below).
+	CallRecords []CallRecord
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
@@ -149,13 +157,19 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	if err != nil {
 		return nil, fmt.Errorf("encoding request: %w", err)
 	}
-	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
+	raw, records, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
 	if err != nil {
-		return nil, err
+		// Surface the dispatch's per-attempt telemetry even on error (Epic 4.11):
+		// a mid-flight timeout reached the wire, and the fanout loop must still
+		// count that attempt — otherwise the AC1 undercount the epic fixed for the
+		// single-shot path would persist on the tool-loop path. Only CallRecords is
+		// carried here; Usage stays dropped on an errored turn (see the no-choices
+		// note below), since token accounting is out of scope for this change.
+		return &ChatResponse{CallRecords: records}, err
 	}
 	var parsed chatToolResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
+		return &ChatResponse{CallRecords: records}, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
 		// KNOWN LIMITATION (accepted): a provider may return an error-shaped 200
@@ -165,8 +179,9 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 		// ChatResponse alongside this error and teaching the fanout loop to read
 		// usage off an errored turn — a cross-package contract change in
 		// internal/fanout. Billed-but-empty turns are rare, so the understatement
-		// is accepted rather than complicating the error contract.
-		return nil, fmt.Errorf("failed to parse response: no choices returned")
+		// is accepted rather than complicating the error contract. (CallRecords IS
+		// surfaced — counting the wire attempt is the point of Epic 4.11.)
+		return &ChatResponse{CallRecords: records}, fmt.Errorf("failed to parse response: no choices returned")
 	}
 	ch := parsed.Choices[0]
 	// Guard against truncated or filtered completions that leave an empty turn:
@@ -174,10 +189,10 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	// silently returned as a successful empty review.
 	if ch.FinishReason != "stop" && ch.FinishReason != "tool_calls" && ch.FinishReason != "" {
 		if (ch.Message.Content == nil || *ch.Message.Content == "") && len(ch.Message.ToolCalls) == 0 {
-			return nil, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
+			return &ChatResponse{CallRecords: records}, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage}
+	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}
