@@ -300,3 +300,29 @@ func TestBackupToDotBak_MissingSourceIsNoop(t *testing.T) {
 		t.Errorf("no backup may be created for a missing source, stat err = %v", err)
 	}
 }
+
+func TestBackupToDotBak_SymlinkSourceIsSkipped(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	if err := os.WriteFile(target, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	src := filepath.Join(dir, "link.json")
+	if err := os.Symlink(target, src); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	// A symlinked source must be skipped (not followed via its target), matching
+	// the regular-file/directory-only contract; otherwise the target's bytes are
+	// silently backed up under the link's name.
+	bak, err := BackupToDotBak(src)
+	if err != nil {
+		t.Fatalf("BackupToDotBak: %v", err)
+	}
+	if bak != "" {
+		t.Errorf("expected empty backup path for a symlink source, got %q", bak)
+	}
+	if _, err := os.Lstat(src + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("no backup may be created for a symlink source, lstat err = %v", err)
+	}
+}
