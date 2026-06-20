@@ -97,23 +97,39 @@ func TestRecordAgentOutcomeZeroHTTPStatus(t *testing.T) {
 	}
 }
 
-// TestRecordAgentOutcomeContextCancelledBeforeRequest verifies that a single-shot
-// agent whose context was cancelled before any HTTP request does not inflate
-// atcr_api_calls_total. Also covers negative Turns + context error to ensure the
-// counter is never decremented.
+// TestRecordAgentOutcomeContextCancelledBeforeRequest verifies, with per-record
+// semantics (Epic 4.11), that an agent which never completed an HTTP round-trip
+// does not inflate atcr_api_calls_total — covering both the per-record path (a
+// cancel-before-send record that did not reach the wire) and the nil fallback
+// (circuit-open fail-fast and a corrupt negative Turns, which must never
+// decrement the monotonic counter). All cases must total 0 (AC2, AC5).
 func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
 	metrics.DefaultRegistry.Reset()
 	t.Cleanup(metrics.DefaultRegistry.Reset)
 
-	// context.DeadlineExceeded: cancelled before first HTTP round-trip, Turns==0
-	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded})
-	// context.Canceled: same scenario via SIGINT path
-	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.Canceled})
-	// negative Turns + context error: must not decrement the monotonic counter
+	// Per-record path: cancel-before-send via a deadline — the attempt was entered
+	// but the bytes were never written, so its one record did not reach the wire.
+	recordAgentOutcome(Result{
+		Status:      StatusTimeout,
+		Err:         context.DeadlineExceeded,
+		CallRecords: []llmclient.CallRecord{{ReachedWire: false, Duration: time.Millisecond}},
+	})
+	// Per-record path: same scenario via the SIGINT (context.Canceled) path.
+	recordAgentOutcome(Result{
+		Status:      StatusTimeout,
+		Err:         context.Canceled,
+		CallRecords: []llmclient.CallRecord{{ReachedWire: false}},
+	})
+	// Nil fallback: circuit-open fail-fast makes no request and surfaces nil records.
+	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.CircuitOpenError{Provider: "groq"}})
+	// Nil fallback: a corrupt negative Turns + context error must not decrement.
 	recordAgentOutcome(Result{Status: StatusTimeout, Err: context.DeadlineExceeded, Turns: -1})
 
 	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 0 {
-		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count or decrement)", got)
+		t.Errorf("atcr_api_calls_total = %d, want 0 (no completed HTTP round-trip must count or decrement)", got)
+	}
+	if got := metrics.Histogram(metrics.NameAPICallDurationSeconds).Count(); got != 0 {
+		t.Errorf("%s count = %d, want 0 (no attempt reached the wire)", metrics.NameAPICallDurationSeconds, got)
 	}
 }
 
