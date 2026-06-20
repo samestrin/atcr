@@ -49,6 +49,38 @@ func TestWriteVerification_RoundTrip(t *testing.T) {
 	assert.NotEmpty(t, got.VerifiedAt)
 }
 
+// TestWriteVerification_BacksUpPriorOnReWrite locks Epic 4.7 AC5: a re-verify
+// backs up the prior reconciled/verification.json to verification.json.bak before
+// overwriting it, and the first verify (no prior file) creates no backup.
+func TestWriteVerification_BacksUpPriorOnReWrite(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+
+	gen1 := []VerificationResult{
+		{File: "a.go", Line: 1, Problem: "first issue", Verdict: "confirmed", Skeptic: "s", Model: "m"},
+	}
+	require.NoError(t, WriteVerification(dir, gen1))
+	assert.NoFileExists(t, filepath.Join(dir, "reconciled", "verification.json.bak"),
+		"first verify must not create a backup (nothing to overwrite)")
+
+	first, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json"))
+	require.NoError(t, err)
+
+	gen2 := []VerificationResult{
+		{File: "b.go", Line: 2, Problem: "second issue", Verdict: "refuted", Skeptic: "s", Model: "m"},
+	}
+	require.NoError(t, WriteVerification(dir, gen2))
+
+	bak, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json.bak"))
+	require.NoError(t, err, "AC5: prior verification.json must be backed up before overwrite")
+	assert.Equal(t, string(first), string(bak), "backup must hold the pre-overwrite generation")
+
+	live, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(live), "second issue", "live file holds the new generation")
+	assert.NotContains(t, string(live), "first issue", "live file no longer holds the prior generation")
+}
+
 func TestWriteVerification_VerifiedAtHasNanosecondPrecision(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))

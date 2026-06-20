@@ -278,6 +278,26 @@ func TestReviewCmd_MissingAPIKeyIsUsageError(t *testing.T) {
 	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
 }
 
+// TestReviewCmd_ForceFlagRegistered verifies the --force flag exists on the
+// review command and defaults to false (Epic 4.7 AC2).
+func TestReviewCmd_ForceFlagRegistered(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NotNil(t, cmd.Flags().Lookup("force"), "review must define --force")
+	v, err := cmd.Flags().GetBool("force")
+	require.NoError(t, err)
+	require.False(t, v, "--force defaults to false")
+}
+
+// TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
+// --resume and --force is a usage error (exit 2) regardless of a git repo,
+// because the guard fires at the resume branch before any range resolution.
+func TestReviewCmd_ResumeAndForceMutuallyExclusive(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--resume", "latest", "--force")
+	require.Equal(t, 2, code, "AC1b: --resume + --force is a usage error (exit 2)")
+	require.Contains(t, out, "--resume and --force are mutually exclusive")
+}
+
 func TestOutputDirFromFlags_Unset(t *testing.T) {
 	cmd := newReviewCmd()
 	require.NoError(t, cmd.ParseFlags(nil))

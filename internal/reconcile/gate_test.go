@@ -71,6 +71,38 @@ func TestRunReconcile_EndToEnd(t *testing.T) {
 	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevCritical, false))
 }
 
+// TestRunReconcile_BacksUpPriorReconciledOnReRun locks Epic 4.7 AC4: a second
+// reconcile of the same review backs up the prior reconciled/ artifacts to
+// reconciled.bak/ before overwriting them, and the first run (no prior output)
+// creates no backup.
+func TestRunReconcile_BacksUpPriorReconciledOnReRun(t *testing.T) {
+	reviewDir := t.TempDir()
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
+		"HIGH|a.go:1|first issue|fix|security|10|ev|host\n")
+
+	_, err := RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
+	require.NoError(t, err)
+	// First run: no prior output existed, so no backup is created.
+	assert.NoDirExists(t, filepath.Join(reviewDir, "reconciled.bak"),
+		"first reconcile must not create a backup (nothing to overwrite)")
+
+	// Capture the first generation's findings.json bytes, then re-run with a
+	// different finding so the live artifact provably changes.
+	firstFindings, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", FindingsJSON))
+	require.NoError(t, err)
+
+	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
+		"CRITICAL|b.go:2|second issue|fix|security|10|ev|host\n")
+	_, err = RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(2, 0).UTC()})
+	require.NoError(t, err)
+
+	// The prior generation is preserved under reconciled.bak/.
+	bakFindings, err := os.ReadFile(filepath.Join(reviewDir, "reconciled.bak", FindingsJSON))
+	require.NoError(t, err, "AC4: prior reconciled output must be backed up before overwrite")
+	assert.Equal(t, string(firstFindings), string(bakFindings),
+		"backup must hold the pre-overwrite generation")
+}
+
 // --- ValidateRequireVerified (TD-004) ---
 
 func TestValidateRequireVerified_NoVerifyRan(t *testing.T) {
