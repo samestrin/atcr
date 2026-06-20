@@ -7,12 +7,12 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 3 | 1 | 0 |
-| MEDIUM | 9 | 17 | 7 |
-| LOW | 10 | 16 | 5 |
+| HIGH | 1 | 1 | 2 |
+| MEDIUM | 7 | 17 | 9 |
+| LOW | 8 | 16 | 7 |
 
 
-**Last Modified:** 2026-06-20 | **Open Items:** 22 | **Deferred Items:** 34 | **Resolved Items:** 12 | **Total Items:** 68
+**Last Modified:** 2026-06-20 | **Open Items:** 16 | **Deferred Items:** 34 | **Resolved Items:** 18 | **Total Items:** 68
 
 ## Directory Structure
 
@@ -37,18 +37,18 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 2 | [ ] | HIGH | internal/atomicfs/atomic.go:75 | Missing error check on Lstat result | Check errors.Is for fs.ErrNotExist | correctness | 5 | code-review | REVIEWER | MEDIUM |
-| 2 | [ ] | HIGH | internal/atomicfs/atomic.go:85 | Unsafe error handling | Check errors.Is for syscall.EXDEV | correctness | 5 | code-review | REVIEWER | MEDIUM |
+| 2 | [x] | HIGH | internal/atomicfs/atomic.go:75 | Missing error check on Lstat result | Check errors.Is for fs.ErrNotExist | correctness | 5 | code-review | REVIEWER | MEDIUM |
+| 2 | [x] | HIGH | internal/atomicfs/atomic.go:85 | Unsafe error handling | Check errors.Is for syscall.EXDEV | correctness | 5 | code-review | REVIEWER | MEDIUM |
 | 2 | [x] | LOW | internal/atomicfs/atomic.go:89 | bakOld RemoveAll error aborts entire backup even if prior .bak.old doesn't exist | Skip RemoveAll error when bakOld doesn't exist (ENOENT) to avoid unnecessary failure | error-handling | 5 | code-review | bruce | MEDIUM |
 | 2 | [x] | MEDIUM | internal/atomicfs/atomic.go:94 | Missing entry-time cleanup of .bak.tmp-* stragglers | Add glob/read-dir to remove .bak.tmp-* siblings at start | correctness | 10 | code-review | bruce | MEDIUM |
 | 2 | [x] | LOW | internal/atomicfs/atomic.go:110 | Unused error variable | Add explicit else branch that sets staged or returns error for non-regular/non-directory | maintainability | 10 | code-review | REVIEWER | MEDIUM |
 | 2 | [x] | MEDIUM | internal/atomicfs/atomic.go:110 | staged variable may be used uninitialized if info.IsDir() and info.Mode().IsRegular() are both false | Add explicit else branch that sets staged or returns error for non-regular/non-directory | maintainability | 10 | code-review | bruce | MEDIUM |
 | 2 | [x] | LOW | internal/atomicfs/atomic.go:120 | Unused variable in error message | Remove unused 'got' variable | maintainability | 5 | code-review | REVIEWER | MEDIUM |
-| 2 | [ ] | LOW | internal/atomicfs/atomic.go:135 | Redundant error check | Log or return error if restore fails | maintainability | 15 | code-review | REVIEWER | MEDIUM |
+| 2 | [x] | LOW | internal/atomicfs/atomic.go:135 | Redundant error check | Log or return error if restore fails | maintainability | 15 | code-review | REVIEWER | MEDIUM |
 | 2 | [x] | MEDIUM | internal/atomicfs/atomic.go:135 | Potential data loss on restore failure | Log or return error if restore fails | maintainability | 15 | code-review | otto | MEDIUM |
 | 2 | [x] | MEDIUM | internal/atomicfs/atomic.go:149 | swapStagedBackup does not clean up the staged temp file/dir on failure | Remove staged temp on failed swap to avoid leaking .bak.tmp-* artifacts | correctness | 15 | code-review | bruce | MEDIUM |
-| 2 | [ ] | MEDIUM | internal/atomicfs/atomic.go:155 | Staged temp file/dir leaks on swap failure | Add os.RemoveAll(staged) before returning error | error-handling | 5 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/atomicfs/atomic.go:180 | Two independent package-level vars named renameFn with identical doc comments now exist — one in atomicfs (atomic.go:180), one in fanout (reviewdir.go:366). A maintainer patching fault-injection in one may assume it affects the other; worse, backupCrossDevice's inner os.Rename (reviewdir.go:395) bypasses BOTH seams, so cross-device inner-swap atomicity is not test-injectable through either var. The asymmetry is undocumented. | Rename one var (e.g. fanoutRenameFn) or add a comment noting the two are independent and that backupCrossDevice's inner os.Rename bypasses both seams. | maintainability | 15 | code-review | claude | MEDIUM |
+| 2 | [x] | MEDIUM | internal/atomicfs/atomic.go:155 | Staged temp file/dir leaks on swap failure | Add os.RemoveAll(staged) before returning error | error-handling | 5 | code-review | bruce | MEDIUM |
+| 2 | [x] | LOW | internal/atomicfs/atomic.go:180 | Two independent package-level vars named renameFn with identical doc comments now exist — one in atomicfs (atomic.go:180), one in fanout (reviewdir.go:366). A maintainer patching fault-injection in one may assume it affects the other; worse, backupCrossDevice's inner os.Rename (reviewdir.go:395) bypasses BOTH seams, so cross-device inner-swap atomicity is not test-injectable through either var. The asymmetry is undocumented. | Rename one var (e.g. fanoutRenameFn) or add a comment noting the two are independent and that backupCrossDevice's inner os.Rename bypasses both seams. | maintainability | 15 | code-review | claude | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/fanout/reviewdir.go:280 | Missing error validation | Validate path before Rename | error-handling | 5 | code-review | REVIEWER | MEDIUM |
 | 3 | [ ] | HIGH | internal/fanout/reviewdir.go:295 | Unsafe path concatenation | Use filepath.Join for backup paths | security | 5 | code-review | REVIEWER | MEDIUM |
 | 3 | [ ] | LOW | internal/fanout/reviewdir.go:300 | Inefficient string operations | Use fmt.Sprintf for error messages | maintainability | 4 | code-review | REVIEWER | MEDIUM |
@@ -71,7 +71,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | MEDIUM | internal/fanout/reviewdir.go:342 | backupCrossDevice post-swap handling: when the path-to-.bak rename succeeds but RemoveAll(path) fails (a mountpoint root cannot be removed and its contents are partially deleted), the function returns a hard error and backupExisting then runs restorePriorBackup, which races the now-present new .bak (no-op via ENOTEMPTY for dirs but leaks .bak.old) — so a durably-completed backup is reported as a failure. Recorded clarification Q2 explicitly chose RemoveAll(path), so this is a deferred design refinement rather than an in-epic fix. | Signal pre- vs post-swap progress from backupCrossDevice so restore only fires before the swap completes, and use a content-only vacate that tolerates an unremovable mountpoint dir. | ERROR_PATHS | 60 | execute-epic-independent |
+| 1 | [x] | MEDIUM | internal/fanout/reviewdir.go:342 | backupCrossDevice post-swap handling: when the path-to-.bak rename succeeds but RemoveAll(path) fails (a mountpoint root cannot be removed and its contents are partially deleted), the function returns a hard error and backupExisting then runs restorePriorBackup, which races the now-present new .bak (no-op via ENOTEMPTY for dirs but leaks .bak.old) — so a durably-completed backup is reported as a failure. Recorded clarification Q2 explicitly chose RemoveAll(path), so this is a deferred design refinement rather than an in-epic fix. RESOLVED 2026-06-20: the data-loss half is already neutralized by the Lstat-guard at reviewdir.go:353 (restore is skipped once the new backup is placed, so the durable backup is never clobbered). The remaining harm was a confusing false-failure report; the vacate-failure error now states the backup completed durably and names the backup path holding the preserved data, so a caller hitting this on a mountpoint root knows no data was lost and only the live path needs manual cleanup (test: TestBackupCrossDevice_VacateFailureReportsDurableBackup). The full content-only-vacate redesign is intentionally NOT done: it would reverse clarification Q2 (RemoveAll(path)) and cascade into ScaffoldReviewDir's existing-dir rejection, adding risk to a common path for a no-data-loss, rare-inside-rare scenario (path must itself be a mountpoint). Revisit only on a concrete reported case. | Signal pre- vs post-swap progress from backupCrossDevice so restore only fires before the swap completes, and use a content-only vacate that tolerates an unremovable mountpoint dir. | ERROR_PATHS | 60 | execute-epic-independent |
 | U | [x] | MEDIUM | internal/fanout/reviewdir.go:373 | restorePriorBackup silently discards its os.Rename error and the package emits no log on any backup-swap failure, so a crash-recovery failure is invisible in production even though sibling fanout files already import internal/log. | Emit a diagnostic log when restorePriorBackup's rename fails, naming the .bak.old path the user must recover manually. | OBSERVABILITY | 15 | execute-epic-independent |
 | 1 | [x] | LOW | internal/fanout/reviewdir.go:316 | backupExisting entry-time reconcile clears .bak.old and .bak.new but not .bak.tmp-* named by clarification Q3; backupExisting never produces .bak.tmp-* (only BackupToDotBak does), so the omission is harmless but inconsistent with the stated contract. | Either sweep .bak.tmp-* siblings at entry for consistency, or document that backupExisting never produces them. | INTEGRATION | 15 | execute-epic-independent |
 | 1 | [x] | LOW | internal/fanout/reviewdir.go:392 | backupCrossDevice's EXDEV fallback uses atomicfs.CopyPath, which skips symlinks and non-regular entries, so it silently drops any symlinks a same-fs os.Rename would have preserved — non-equivalent to the move it replaces. | Document that the EXDEV fallback is lossy for non-regular entries, or note that review trees contain only regular files so the divergence is immaterial. | EDGE_CASES | 15 | execute-epic-independent |
