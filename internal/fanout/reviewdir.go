@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 )
 
@@ -386,14 +387,20 @@ var removePathFn = os.RemoveAll
 
 // restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
 // after a failed swap, so a failure leaves the user with the prior backup intact.
-// Best-effort: a restore failure cannot un-fail the swap, but the prior data
-// still survives under .bak.old for manual recovery, so the error is not
-// propagated over the swap failure that is the caller's real concern.
+// Best-effort: a restore failure cannot un-fail the swap, so the error is not
+// propagated over the swap failure that is the caller's real concern. It is not
+// silently dropped either — a failed restore strands the only surviving copy
+// under .bak.old, so it is logged at Warn naming that path for manual recovery,
+// making a crash-recovery failure visible in production instead of invisible.
 func restorePriorBackup(ctx context.Context, staged bool, backupOld, backup string) {
 	if !staged {
 		return
 	}
-	_ = os.Rename(backupOld, backup)
+	if err := os.Rename(backupOld, backup); err != nil {
+		log.FromContext(ctx).Warn("failed to restore prior backup after a failed swap",
+			"backup_old", backupOld, "backup", backup, "err", err,
+			"recovery", "the prior backup is stranded at backup_old; move it back to backup manually")
+	}
 }
 
 // backupCrossDevice replicates backupExisting's move across a filesystem boundary
