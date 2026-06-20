@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/reviewdir.go:340|backupCrossDevice vacate failure triggers rollback, overwriting successful new backup|Skip restore if swap succeeded or handle vacate error separately|correctness|15|restorePriorBackup called after backupCrossDevice fails on RemoveAll(path)|greta
