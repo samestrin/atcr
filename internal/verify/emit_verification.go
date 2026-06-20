@@ -162,10 +162,14 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
 
 // backupExistingVerification snapshots an existing reconciled/verification.json to
 // verification.json.bak before a re-verify (e.g. --fresh) overwrites it (Epic 4.7
-// AC5). A first-ever verify has no prior file, so it is a no-op. Only
-// verification.json — the verify stage's exclusive output — is backed up here;
-// the reconcile-owned findings.json/summary.json the stage annotates in place are
-// already covered by reconciled.bak/ (AC4), so they are not re-backed-up.
+// AC5). A first-ever verify has no prior file, so it is a no-op. By deliberate
+// design (Epic 4.7 Clarifications) the verify stage backs up ONLY verification.json,
+// its own exclusive output. The reconcile-owned findings.json/summary.json that the
+// same flush also re-writes are NOT snapshotted here: their prior state is captured
+// in reconciled.bak/ only by RunReconcile, never by runVerify. So on a standalone
+// re-verify (atcr verify --fresh on an already-reconciled review, with no reconcile
+// re-run in the same command) findings.json/summary.json are overwritten in place
+// with no verify-stage backup — re-run reconcile to snapshot their prior state.
 func backupExistingVerification(reviewDir string) error {
 	path := filepath.Join(reviewDir, reconciledSubdir, "verification.json")
 	if _, err := atomicfs.BackupToDotBak(path); err != nil {

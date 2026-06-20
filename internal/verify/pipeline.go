@@ -346,10 +346,13 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if !mfNoOp {
 		artifacts = append(artifacts, stagingEntry{path: mfPath, data: mfData})
 	}
-	// Idempotency (Epic 4.7 AC5): a re-verify (e.g. --fresh) overwrites
-	// verification.json as part of this atomic group. Snapshot the prior verdicts
-	// to verification.json.bak before the flush so the previous run is recoverable;
-	// a first-ever verify has no prior file and this is a no-op.
+	// Idempotency (Epic 4.7 AC5): this flush overwrites verification.json AND
+	// re-writes the reconcile-owned findings.json/summary.json as one atomic group.
+	// By deliberate design the verify stage snapshots only its own verification.json
+	// to verification.json.bak before the flush; findings.json/summary.json are
+	// reconcile-owned and are overwritten in place here with no verify-stage backup
+	// (their prior state is captured in reconciled.bak/ only by RunReconcile, never
+	// here). A first-ever verify has no prior verification.json and this is a no-op.
 	if err := backupExistingVerification(reviewDir); err != nil {
 		return Result{}, err
 	}
