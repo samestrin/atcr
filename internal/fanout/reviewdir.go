@@ -263,7 +263,11 @@ func ScaffoldOutputDir(dir string) (string, error) {
 			return "", fmt.Errorf("failed to create review directory: %w", readErr)
 		}
 		if len(entries) > 0 {
-			return "", fmt.Errorf("output directory %q already exists and is not empty; use --force to overwrite (or point --output-dir at a new or empty path)", dir)
+			// Name only the leaf, not the full resolved path: the collision error is
+			// surfaced to MCP clients that never see the server's filesystem layout,
+			// and the caller already supplied the path so the basename is enough to
+			// identify the target without leaking the parent directory structure.
+			return "", fmt.Errorf("output directory %q already exists and is not empty; use --force to overwrite (or point --output-dir at a new or empty path)", filepath.Base(dir))
 		}
 	}
 	for _, sub := range reviewSubdirs {
