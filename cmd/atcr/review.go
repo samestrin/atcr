@@ -261,6 +261,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reconcile.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
+			Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 		})
 		if rerr != nil {
 			return usageError(fmt.Errorf("review failed: %w", rerr))

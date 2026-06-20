@@ -17,6 +17,13 @@ type Options struct {
 	ReconciledAt time.Time
 	Partial      bool
 	Merges       map[string]bool
+	// Root is the base directory file-existence validation resolves finding
+	// paths against (Epic 5.0). It is the reviewed repo root — "." for every
+	// production entry point, since atcr runs from inside the repo under review.
+	// Empty disables validation (no base dir configured): unit tests that build
+	// synthetic findings against paths not on disk leave it empty so they are
+	// never falsely flagged.
+	Root string
 }
 
 // Result is a completed reconciliation: the merged findings (sorted for
