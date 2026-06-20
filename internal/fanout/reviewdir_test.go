@@ -228,6 +228,21 @@ func TestScaffoldReviewDir_CollisionMessageNamesResumeAndForce(t *testing.T) {
 	assert.Contains(t, err.Error(), "--force", "AC1: must name the destructive overwrite path")
 }
 
+// TestScaffoldReviewDir_CollisionErrorDoesNotLeakPath verifies the collision
+// error names only the review id, not the resolved filesystem path, so an MCP
+// client (which never sees the server's .atcr/reviews/ layout) does not learn
+// the absolute path of the reviews directory.
+func TestScaffoldReviewDir_CollisionErrorDoesNotLeakPath(t *testing.T) {
+	root := t.TempDir()
+	_, err := ScaffoldReviewDir(root, "2026-06-10_leak")
+	require.NoError(t, err)
+
+	_, err = ScaffoldReviewDir(root, "2026-06-10_leak")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2026-06-10_leak", "must still name the review id")
+	assert.NotContains(t, err.Error(), root, "must not leak the resolved filesystem path")
+}
+
 // TestScaffoldOutputDir_CollisionMessageNamesForce locks the AC1 parity for the
 // --output-dir path: a non-empty target is rejected with a message that names
 // --force as the overwrite opt-in.
