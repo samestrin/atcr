@@ -1,3 +1,17 @@
+## [4.11.0] - 2026-06-20
+
+Per-call client telemetry now backs accurate API-call counting and per-call latency: the LLM client surfaces one record per HTTP attempt — retries included, with a precise wire-reached signal — up through the fan-out engine, fixing a counter undercount during provider degradation and populating a latency histogram.
+
+### Added
+
+- `atcr_api_call_duration_seconds` histogram recording the wall-clock latency of every completed HTTP attempt that reached the wire
+
+### Changed
+
+- `atcr_api_calls_total` now counts provider round-trips per HTTP attempt (retries included) and correctly counts a single-shot agent whose context expires mid-flight as 1 (previously 0); a request cancelled before any bytes were sent — or a circuit-open fail-fast — still counts 0. Dashboards comparing values across this change will see a one-time step up as retries begin to count.
+
+*Shipped via /execute-epic (epic 4.11)*
+
 ## [4.9.0] - 2026-06-20
 
 Exact-value secret redaction is now live in production: resolved registry API key values are threaded into the log redactor at both per-review construction sites, so provider keys are scrubbed by their actual value rather than relying solely on the `sk-`/`Bearer` token-shape patterns.
