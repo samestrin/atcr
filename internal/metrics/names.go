@@ -25,6 +25,12 @@ const (
 	NameAPIErrorsTotal = "atcr_api_errors_total"
 	NameToolCallsTotal = "atcr_tool_calls_total"
 
+	// Per-call latency (Epic 4.11). Observed once per completed HTTP attempt
+	// (every CallRecord that reached the wire) in recordAgentOutcome, so the
+	// observation count equals atcr_api_calls_total on the per-record path (the
+	// rare Turns-based fallback counts without emitting a sample).
+	NameAPICallDurationSeconds = "atcr_api_call_duration_seconds"
+
 	// Findings (recorded in fanout.WritePool from the agents' parsed findings).
 	NameFindingsTotal      = "atcr_findings_total"
 	NameFindingsBySeverity = "atcr_findings_by_severity"

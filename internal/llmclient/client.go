@@ -10,11 +10,13 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
@@ -215,23 +217,40 @@ type chatResponse struct {
 	Usage UsageData `json:"usage"`
 }
 
+// CallRecord is per-attempt telemetry for one c.attempt() invocation. dispatch
+// accumulates one record per attempt — retries included — so callers can count
+// real HTTP round-trips and observe per-attempt latency. ReachedWire reports
+// whether the request was written to the wire (detected via httptrace): it is
+// false when the call never left the process (a context cancel before the bytes
+// were sent, or a request-construction failure) and true once any bytes were
+// written, even if the attempt then failed mid-flight. Duration is the wall-clock
+// time the attempt took, recorded for every attempt regardless of ReachedWire.
+type CallRecord struct {
+	ReachedWire bool
+	Duration    time.Duration
+}
+
 // Complete invokes the provider and returns the assistant message content.
 // Retries on 429/5xx and transport-level errors with tuned backoff; other
 // non-2xx statuses and parse failures fail immediately. The API key value
 // never appears in any error. Existing callers that do not need token usage
 // keep this two-value signature; CompleteWithUsage exposes the usage block.
 func (c *Client) Complete(ctx context.Context, inv Invocation) (string, error) {
-	content, _, err := c.CompleteWithUsage(ctx, inv)
+	content, _, _, err := c.CompleteWithUsage(ctx, inv)
 	return content, err
 }
 
-// CompleteWithUsage is Complete plus the provider's token usage. Usage is the
-// zero value when the provider omits the `usage` block. All error paths return
-// an empty UsageData, never partial counts.
-func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, error) {
+// CompleteWithUsage is Complete plus the provider's token usage and the per-call
+// telemetry for the dispatch (one CallRecord per HTTP attempt, retries included).
+// Usage is the zero value when the provider omits the `usage` block. All error
+// paths return an empty UsageData, never partial counts. The CallRecord slice is
+// surfaced on every path that reached dispatch — including error paths — so a
+// mid-flight timeout still reports its wire attempt; it is nil only when no HTTP
+// attempt was made (key/marshal failure, or a circuit-open fail-fast).
+func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string, UsageData, []CallRecord, error) {
 	key, err := resolveKey(inv)
 	if err != nil {
-		return "", UsageData{}, err
+		return "", UsageData{}, nil, err
 	}
 	body, err := json.Marshal(chatRequest{
 		Model:       inv.Model,
@@ -240,18 +259,18 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 		MaxTokens:   inv.MaxTokens,
 	})
 	if err != nil {
-		return "", UsageData{}, fmt.Errorf("encoding request: %w", err)
+		return "", UsageData{}, nil, fmt.Errorf("encoding request: %w", err)
 	}
-	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
+	raw, records, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
 	if err != nil {
-		return "", UsageData{}, err
+		return "", UsageData{}, records, err
 	}
 	var parsed chatResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", UsageData{}, fmt.Errorf("failed to parse response: %w", err)
+		return "", UsageData{}, records, fmt.Errorf("failed to parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", UsageData{}, fmt.Errorf("failed to parse response: no choices returned")
+		return "", UsageData{}, records, fmt.Errorf("failed to parse response: no choices returned")
 	}
 	msg := parsed.Choices[0].Message
 	content := msg.Content
@@ -265,9 +284,9 @@ func (c *Client) CompleteWithUsage(ctx context.Context, inv Invocation) (string,
 		// Both content and reasoning_content are empty: the provider said nothing.
 		// Fail loudly so callers cannot mistake silence for a clean/empty review.
 		// Non-retryable — a re-request with the same budget would repeat the result.
-		return "", UsageData{}, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
+		return "", UsageData{}, records, atcrerrors.NewSystemError(fmt.Errorf("provider returned an empty completion (no content or reasoning_content)"))
 	}
-	return content, parsed.Usage, nil
+	return content, parsed.Usage, records, nil
 }
 
 // resolveKey reads the invocation's API key env var; the value is never logged.
@@ -300,14 +319,16 @@ func resolveEndpoint(baseURL string) string {
 // (AC2). After the call, only a breaker-failure (5xx / timeout / transport)
 // records a failure; a 4xx (incl. 429/401) or a caller cancellation records
 // nothing (AC10).
-func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
+func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, []CallRecord, error) {
 	provider := circuitbreaker.ProviderFromContext(ctx)
 	if provider == "" {
 		return c.dispatch(ctx, endpoint, key, body)
 	}
 	breaker := circuitbreaker.DefaultRegistry.Get(provider)
 	if !breaker.Allow() {
-		return nil, &CircuitOpenError{Provider: provider}
+		// Fail fast with no HTTP attempt (AC2): nil records signals "no call made"
+		// so the metrics layer counts zero rather than a phantom round-trip.
+		return nil, nil, &CircuitOpenError{Provider: provider}
 	}
 	// resolved is set to true once the switch below records a verdict. The defer
 	// fires on both normal return and panic; if resolved is still false when it
@@ -318,7 +339,7 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 			breaker.ReleaseProbe()
 		}
 	}()
-	raw, err := c.dispatch(ctx, endpoint, key, body)
+	raw, records, err := c.dispatch(ctx, endpoint, key, body)
 	resolved = true
 	// Every branch reports the outcome to the breaker exactly once: a half-open
 	// probe MUST be resolved (RecordSuccess/RecordFailure/ReleaseProbe) or the
@@ -353,7 +374,7 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 		// a half-open probe instead of wedging it.
 		breaker.RecordSuccess()
 	}
-	return raw, err
+	return raw, records, err
 }
 
 // CircuitOpenError is returned when a provider's circuit breaker is open: the
@@ -405,7 +426,7 @@ func isBreakerFailure(err error) bool {
 // message) and Chat (multi-turn with tools): both feed it a pre-marshalled body
 // and decode the bytes themselves, so the retry, redirect, key-redaction, and
 // size-cap semantics stay identical across the two call shapes.
-func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
+func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, []CallRecord, error) {
 	var lastErr error
 	// The retry budget and base delay come from the client by default, but a
 	// per-call override on the context (Epic 4.6: the fan-out's resolved
@@ -417,6 +438,10 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 		maxRetries = o.maxRetries
 		delay = o.initialBackoff
 	}
+	// One CallRecord per attempt (retries included), so a caller can count real
+	// HTTP round-trips and observe per-attempt latency. Sized to the worst-case
+	// attempt count (initial try + maxRetries) so the common path never re-grows.
+	records := make([]CallRecord, 0, maxRetries+1)
 	// Clamp the starting delay so even the FIRST retry sleep respects maxBackoff:
 	// every subsequent delay is clamped after the ×factor step, but without this
 	// an out-of-range base would sleep its full unclamped duration on attempt 1.
@@ -434,13 +459,14 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 				sleepFor = jitter(delay)
 			}
 			if err := sleepCtx(ctx, sleepFor); err != nil {
-				return nil, err
+				return nil, records, err
 			}
 			honorExact = false
 			delay = clampBackoff(time.Duration(float64(delay) * c.backoffFactor))
 		}
 
-		payload, status, retryAfter, err := c.attempt(ctx, endpoint, key, body)
+		payload, status, retryAfter, rec, err := c.attempt(ctx, endpoint, key, body)
+		records = append(records, rec)
 		switch {
 		case status == 0:
 			// Context cancellation/deadline must return immediately so timeout
@@ -448,7 +474,7 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 			// (connection reset, EOF, DNS blip) are as transient as a 5xx and
 			// get the same backoff schedule.
 			if ctx.Err() != nil {
-				return nil, err
+				return nil, records, err
 			}
 			lastErr = err
 			if attempt < maxRetries {
@@ -456,13 +482,13 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 			}
 			// Transport-level exhaustion (connection reset, EOF, DNS) is transient:
 			// the same class as a 5xx, so callers can retry at a higher layer (AC11).
-			return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
+			return nil, records, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 		case status == http.StatusOK:
 			// A 200 with an unreadable/oversized body is a hard failure, not a retry.
 			if err != nil {
-				return nil, err
+				return nil, records, err
 			}
-			return payload, nil
+			return payload, records, nil
 		case retryableStatus[status]:
 			lastErr = httpStatusError(status, string(payload))
 			if attempt < maxRetries {
@@ -477,19 +503,19 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 			// Last attempt still retryable (429/5xx): report the exhausted budget as
 			// transient. The wrapped *HTTPStatusError stays errors.As-reachable
 			// through ClassifiedError.Unwrap → the exhausted-retries wrapper (AC11).
-			return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
+			return nil, records, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 		default:
 			if err != nil {
-				return nil, err
+				return nil, records, err
 			}
 			// Non-retryable status (401/403/404/...): a permanent failure. Wrapping
 			// preserves errors.As reachability to *HTTPStatusError (AC11, AC12).
-			return nil, atcrerrors.NewPermanent(httpStatusError(status, string(payload)))
+			return nil, records, atcrerrors.NewPermanent(httpStatusError(status, string(payload)))
 		}
 	}
 	// Defensive loop-exit fallback (the switch always returns or continues): the
 	// budget is exhausted, so classify transient like the other exhaustion paths.
-	return nil, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
+	return nil, records, atcrerrors.NewTransient(fmt.Errorf("exhausted retries: %w", lastErr))
 }
 
 // HTTPStatusError is a non-2xx provider response surfaced to callers so they
@@ -581,26 +607,43 @@ func readErrorSnippet(r io.Reader) string {
 // duration is the server-advertised Retry-After cooldown for a retryable
 // status (0 when absent/malformed). A 200 whose body exceeds the size cap
 // returns the size error with status 200.
-func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, time.Duration, error) {
+func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, time.Duration, CallRecord, error) {
+	// Stamp the attempt's wall-clock start and detect whether the request bytes
+	// were actually written to the wire (httptrace WroteRequest). The flag is the
+	// load-bearing discriminator for ReachedWire on the transport-error path: a
+	// mid-flight cancel/timeout fires WroteRequest (counts as a real round-trip),
+	// while a cancel before the bytes are sent does not (must not count, AC2).
+	// The flag is an atomic.Bool: net/http writes the request from a separate
+	// transport goroutine, so on the Do-returns-error path there is no guaranteed
+	// happens-before between the callback's store and this read — the atomic makes
+	// the read well-defined rather than a data race.
+	start := time.Now()
+	var wroteRequest atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) { wroteRequest.Store(true) },
+	})
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("creating request: %w", err)
+		return nil, 0, 0, CallRecord{ReachedWire: false, Duration: time.Since(start)}, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("request failed: %w", err)
+		return nil, 0, 0, CallRecord{ReachedWire: wroteRequest.Load(), Duration: time.Since(start)}, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A provider response was received, so the request reached the wire — every
+	// status (200, 4xx, 5xx) is a completed HTTP attempt for telemetry.
 	if resp.StatusCode != http.StatusOK {
 		// Capture a bounded snippet for error reporting; the provider's JSON
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
 		snippet := redactErrorSnippet(readErrorSnippet(resp.Body), key)
-		return []byte(snippet), resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), nil
+		return []byte(snippet), resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), CallRecord{ReachedWire: true, Duration: time.Since(start)}, nil
 	}
 
 	// N is cap+1 so crossing the cap is distinguishable from a body that is
@@ -609,12 +652,12 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 	limited := &io.LimitedReader{R: resp.Body, N: maxResponseBodyBytes + 1}
 	raw, rerr := io.ReadAll(limited)
 	if rerr != nil {
-		return nil, resp.StatusCode, 0, fmt.Errorf("reading response: %w", rerr)
+		return nil, resp.StatusCode, 0, CallRecord{ReachedWire: true, Duration: time.Since(start)}, fmt.Errorf("reading response: %w", rerr)
 	}
 	if limited.N <= 0 {
-		return nil, resp.StatusCode, 0, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
+		return nil, resp.StatusCode, 0, CallRecord{ReachedWire: true, Duration: time.Since(start)}, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
 	}
-	return raw, resp.StatusCode, 0, nil
+	return raw, resp.StatusCode, 0, CallRecord{ReachedWire: true, Duration: time.Since(start)}, nil
 }
 
 // parseRetryAfter interprets a Retry-After header value per RFC 7231: either

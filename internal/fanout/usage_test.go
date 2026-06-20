@@ -15,15 +15,16 @@ import (
 // usageCompleter is a Completer that also reports token usage (UsageCompleter),
 // so the single-shot path captures model + tokens onto the Result.
 type usageCompleter struct {
-	usage llmclient.UsageData
+	usage   llmclient.UsageData
+	records []llmclient.CallRecord
 }
 
 func (u *usageCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
 	return "review by " + inv.Model, nil
 }
 
-func (u *usageCompleter) CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, error) {
-	return "review by " + inv.Model, u.usage, nil
+func (u *usageCompleter) CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error) {
+	return "review by " + inv.Model, u.usage, u.records, nil
 }
 
 func TestSingleShot_CapturesModelAndUsage(t *testing.T) {
