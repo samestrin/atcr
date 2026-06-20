@@ -8,6 +8,28 @@
 - Documented the three-state retry-override sentinel contract in the Agent struct comment
 - Added test coverage for MCP handler error paths (handleVerify, parseOptionalSeverity, rangeError, loadVerifyRegistry, handleReport, handleStatus, registerTool); raised `internal/mcp` coverage to 91.6%
 
+## [4.7.0] - 2026-06-19
+
+Idempotency and safe retry: retrying a failed review no longer silently duplicates or overwrites artifacts. Existing review/reconcile/verify outputs are backed up before being overwritten, and atomic writes prevent partial writes from corrupting existing files.
+
+### Added
+
+- `--force` flag on `atcr review` that backs up an existing review directory to `<dir>.bak` and scaffolds a fresh one.
+- `atomicfs.WriteJSON`, an atomic JSON writer (marshal + write-to-temp + rename) wrapping the existing `WriteFileAtomic`.
+
+### Changed
+
+- The review-directory-already-exists error now names both recovery paths: `--resume` to continue the prior run or `--force` to overwrite. Passing both `--resume` and `--force` is a usage error.
+- `atcr reconcile` backs up an existing `reconciled/` directory to `reconciled.bak/` before re-emitting.
+- `atcr verify` backs up an existing `verification.json` to `verification.json.bak` before re-writing.
+
+### Fixed
+
+- Atomic writes prevent a partial or aborted write from corrupting an existing file.
+- `--force` on an arbitrary `--output-dir` refuses to clobber a foreign sibling `<dir>.bak` it did not create, instead of silently deleting it.
+
+*Shipped via /execute-epic (epic 4.7)*
+
 ## [4.6.0] - 2026-06-19
 
 Robust rate-limit & backoff handling: exposed the existing LLM retry engine (exponential backoff with jitter + `Retry-After` honoring) through configuration and raised the default retry budget so transient 429/5xx rate-limits are absorbed before a review chunk fails.
