@@ -207,7 +207,7 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return "", fmt.Errorf("review directory %s already exists; use --resume %s to continue it or --force to overwrite", dir, id)
+			return "", fmt.Errorf("review %s already exists; use --resume %s to continue it or --force to overwrite", id, id)
 		}
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}
