@@ -367,6 +367,14 @@ func backupExisting(path string) (string, error) {
 // os.Rename.
 var renameFn = os.Rename
 
+// copyPathFn is the copy primitive backupCrossDevice uses, indirected so tests
+// can inject copy failures without a real cross-mount in CI.
+var copyPathFn = atomicfs.CopyPath
+
+// removePathFn is the vacate primitive backupCrossDevice uses for the final
+// os.RemoveAll(path) step, indirected so tests can inject vacate failures.
+var removePathFn = os.RemoveAll
+
 // restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
 // after a failed swap, so a failure leaves the user with the prior backup intact.
 // Best-effort: a restore failure cannot un-fail the swap, but the prior data
@@ -396,13 +404,13 @@ func backupCrossDevice(path, backup, backupNew string) error {
 	// (WritePool never creates symlinks), so the divergence is immaterial for
 	// managed reviews; --output-dir callers with symlinks in their tree will
 	// silently lose them on this path.
-	if err := atomicfs.CopyPath(path, backupNew); err != nil {
+	if err := copyPathFn(path, backupNew); err != nil {
 		return fmt.Errorf("backing up %q across filesystems: %w", path, err)
 	}
 	if err := os.Rename(backupNew, backup); err != nil {
 		return fmt.Errorf("swapping staged backup %q into place: %w", backupNew, err)
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := removePathFn(path); err != nil {
 		return fmt.Errorf("vacating %q after cross-device backup: %w", path, err)
 	}
 	return nil

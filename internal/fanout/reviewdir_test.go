@@ -427,6 +427,24 @@ func withRenameStub(t *testing.T, stub func(oldpath, newpath string) error) {
 	t.Cleanup(func() { renameFn = orig })
 }
 
+// withCopyPathStub swaps the copyPathFn seam so tests can inject copy failures
+// or partial copies into backupCrossDevice without a real cross-mount in CI.
+func withCopyPathStub(t *testing.T, stub func(src, dst string) error) {
+	t.Helper()
+	orig := copyPathFn
+	copyPathFn = stub
+	t.Cleanup(func() { copyPathFn = orig })
+}
+
+// withRemovePathStub swaps the removePathFn seam so tests can inject vacate
+// failures into backupCrossDevice without a real cross-mount in CI.
+func withRemovePathStub(t *testing.T, stub func(path string) error) {
+	t.Helper()
+	orig := removePathFn
+	removePathFn = stub
+	t.Cleanup(func() { removePathFn = orig })
+}
+
 // TestBackupExisting_FailedSwapPreservesPriorBak verifies AC1: when the swap of
 // the live tree onto <dir>.bak fails (non-EXDEV), the prior <dir>.bak generation
 // is restored intact rather than left destroyed, and the live tree is untouched —
@@ -518,6 +536,56 @@ func TestBackupExisting_CleansStaleStagingStragglers(t *testing.T) {
 	data, readErr := os.ReadFile(filepath.Join(bak, "marker.txt"))
 	require.NoError(t, readErr)
 	assert.Equal(t, "current", string(data))
+}
+
+// TestBackupCrossDevice_CopyFailureCleansBackupNew verifies that backupCrossDevice
+// removes .bak.new when the copy step fails, so a partial copy does not leave a
+// stale staging artifact for the next run's entry-time reconcile to clean up.
+func TestBackupCrossDevice_CopyFailureCleansBackupNew(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// Trigger the EXDEV branch so backupCrossDevice is invoked.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	// Simulate a partial copy: create a directory at dst then fail.
+	withCopyPathStub(t, func(_, dst string) error {
+		require.NoError(t, os.MkdirAll(dst, 0o755))
+		return errors.New("simulated copy failure")
+	})
+
+	_, err := backupExisting(src)
+	require.Error(t, err)
+	assert.NoDirExists(t, src+".bak.new", "backupCrossDevice must clean up .bak.new on copy failure")
+}
+
+// TestBackupExisting_CrossDeviceVacateFailurePreservesNewBackup verifies that when
+// the copy+rename to .bak succeeds but the vacate of the live path fails, the new
+// backup is not overwritten by restoring the prior .bak.old generation — the live
+// path remains intact (user data safe) and the new backup is preserved.
+func TestBackupExisting_CrossDeviceVacateFailurePreservesNewBackup(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	prior := src + ".bak"
+	require.NoError(t, os.MkdirAll(prior, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "marker.txt"), []byte("prior"), 0o644))
+
+	// Trigger EXDEV so backupCrossDevice runs; fail only the vacate step.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	withRemovePathStub(t, func(_ string) error { return errors.New("simulated vacate failure") })
+
+	_, err := backupExisting(src)
+	require.Error(t, err)
+
+	// The new backup must survive: copy+rename to .bak placed new content there;
+	// restoring .bak.old over it would destroy the new backup.
+	data, readErr := os.ReadFile(filepath.Join(src+".bak", "marker.txt"))
+	require.NoError(t, readErr, "new backup must be preserved after vacate failure")
+	assert.Equal(t, "current", string(data), "new backup must hold new content, not prior")
 }
 
 func TestReviewExists_AndCollisionProbe(t *testing.T) {
