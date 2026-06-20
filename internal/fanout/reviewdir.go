@@ -416,10 +416,19 @@ func restorePriorBackup(ctx context.Context, staged bool, backupOld, backup stri
 // (hit when path is a mountpoint, so os.Rename(path, backup) returns EXDEV): it
 // copies path's tree into a fresh same-fs staging sibling (backupNew, next to
 // backup on the parent filesystem), renames that over backup as an atomic same-fs
-// swap, then removes path to leave it vacant — matching os.Rename(path, backup)'s
-// postcondition. The prior .bak (if any) has already been staged to .bak.old by
-// the caller, so backup is absent here; a failure leaves backupNew for the
-// entry-time reconcile to clean on the next run.
+// swap, then removes path to leave it vacant.
+//
+// Unlike the os.Rename(path, backup) it stands in for, this fallback is NOT
+// atomic: the rename-swap and the RemoveAll(path) vacate are two distinct steps,
+// so a crash between them leaves the tree duplicated at both path and backup
+// (path.bak). Entry-time reconcile only clears .bak.old/.bak.new, not a leftover
+// live path, so such a duplicate persists until the next --force run overwrites
+// path. The fallback reaches the same end state os.Rename guarantees but cannot
+// match the move's all-or-nothing crash semantics.
+//
+// The prior .bak (if any) has already been staged to .bak.old by the caller, so
+// backup is absent here; a failure leaves backupNew for the entry-time reconcile
+// to clean on the next run.
 func backupCrossDevice(path, backup, backupNew string) error {
 	if err := os.RemoveAll(backupNew); err != nil {
 		return fmt.Errorf("clearing staging backup %q: %w", backupNew, err)
