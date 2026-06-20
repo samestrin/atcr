@@ -129,6 +129,27 @@ func BackupToDotBak(src string) (string, error) {
 	return bak, nil
 }
 
+// CopyPath copies the regular file or directory tree at src to dst, preserving
+// per-entry permissions; non-regular entries (symlinks, devices) are skipped, as
+// in BackupToDotBak. For a directory, dst is created by the copy (it must not
+// already exist). This is the copy primitive a caller uses to replicate a move
+// across a filesystem boundary when os.Rename returns EXDEV — the destination is
+// expected to be a fresh same-filesystem staging path that is then renamed into
+// place. A missing or non-regular/non-directory src is an error.
+func CopyPath(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return copyTree(src, dst)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("copy %s: not a regular file or directory", src)
+	}
+	return copyFile(src, dst, info.Mode().Perm())
+}
+
 // copyFile copies a single regular file's bytes from src to dst with perm.
 func copyFile(src, dst string, perm os.FileMode) error {
 	srcFile, err := os.Open(src)
