@@ -365,6 +365,35 @@ func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(prior, "old.txt"), "prior atcr backup must be replaced")
 }
 
+// TestForceBackupOutputDir_RefusesStructuralLookalike verifies that a sibling
+// <dir>.bak which merely mirrors the review subdir layout (payload/, sources/,
+// reconciled/) but carries no atcr provenance (no manifest.json) is NOT
+// classified as an atcr backup and is therefore refused, not silently
+// destroyed. Structural directory names alone are too weak a signal — the
+// never-destroy-user-data guard must require a manifest.json provenance marker.
+func TestForceBackupOutputDir_RefusesStructuralLookalike(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "myreview")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
+
+	// A foreign sibling that happens to contain the review subdir names but is
+	// user data, not an atcr backup (no manifest.json at its root).
+	lookalike := dir + ".bak"
+	for _, sub := range reviewSubdirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(lookalike, sub), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(lookalike, "important.txt"), []byte("do not delete"), 0o644))
+
+	_, err := forceBackupOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not look like an atcr backup")
+	// The foreign data must survive — the guard refused rather than destroying it.
+	data, readErr := os.ReadFile(filepath.Join(lookalike, "important.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "do not delete", string(data))
+}
+
 func TestReviewExists_AndCollisionProbe(t *testing.T) {
 	root := t.TempDir()
 	assert.False(t, ReviewExists(root, "2026-06-10_x"))
