@@ -110,3 +110,47 @@ func TestReportInputSchema_Enum(t *testing.T) {
 	require.NotNil(t, s.Properties["format"])
 	assert.ElementsMatch(t, []any{"md", "json", "checklist"}, s.Properties["format"].Enum)
 }
+
+// TestRegisterTool_NoOpAfterError verifies that once an error is recorded, later
+// registrations are no-ops and do not overwrite the first failure (fail-fast: the
+// first error is the one NewServer surfaces).
+func TestRegisterTool_NoOpAfterError(t *testing.T) {
+	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "atcr", Version: Version}, nil)
+	r := &registrar{server: s, seen: map[string]bool{}}
+	h := func(_ context.Context, _ *mcpsdk.CallToolRequest, _ RangeArgs) (*mcpsdk.CallToolResult, RangeResult, error) {
+		return nil, RangeResult{}, nil
+	}
+	registerTool(r, &mcpsdk.Tool{Name: "dup", Description: "x"}, h)
+	registerTool(r, &mcpsdk.Tool{Name: "dup", Description: "y"}, h) // records duplicate error
+	require.Error(t, r.err)
+	first := r.err
+
+	// A subsequent registration of a brand-new tool must be a no-op and leave the
+	// first error intact.
+	registerTool(r, &mcpsdk.Tool{Name: "fresh", Description: "z"}, h)
+	assert.Equal(t, first, r.err, "registration after an error must not overwrite it")
+	assert.False(t, r.seen["fresh"], "no-op registration must not mark the tool seen")
+}
+
+// schemaUnfriendlyArgs has a field jsonschema inference cannot represent (a
+// channel), so mcpsdk.AddTool panics during schema generation. registerTool must
+// convert that panic into a recorded error rather than letting it escape.
+type schemaUnfriendlyArgs struct {
+	Ch chan int `json:"ch"`
+}
+
+// TestRegisterTool_RecoversSchemaPanic verifies the deferred recover turns an
+// AddTool panic (bad schema) into a fail-fast error naming the tool, so
+// NewServer exits cleanly instead of panicking (AC 04-02 Error Scenario 1).
+func TestRegisterTool_RecoversSchemaPanic(t *testing.T) {
+	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "atcr", Version: Version}, nil)
+	r := &registrar{server: s, seen: map[string]bool{}}
+	h := func(_ context.Context, _ *mcpsdk.CallToolRequest, _ schemaUnfriendlyArgs) (*mcpsdk.CallToolResult, RangeResult, error) {
+		return nil, RangeResult{}, nil
+	}
+	require.NotPanics(t, func() {
+		registerTool(r, &mcpsdk.Tool{Name: "bad", Description: "x"}, h)
+	}, "a schema-generation panic must be recovered, not propagated")
+	require.Error(t, r.err)
+	assert.Contains(t, r.err.Error(), "bad", "the recorded error must name the failing tool")
+}

@@ -419,8 +419,10 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 	}
 	// Clamp the starting delay so even the FIRST retry sleep respects maxBackoff:
 	// every subsequent delay is clamped after the ×factor step, but without this
-	// an out-of-range base (a misconfigured initial_backoff or a direct
-	// WithRetryOverride) would sleep its full unclamped duration on attempt 1.
+	// an out-of-range base would sleep its full unclamped duration on attempt 1.
+	// In practice a config-sourced base can never trigger this — the registry
+	// caps initial_backoff_ms at exactly maxBackoff (30s) — so the only input it
+	// actually clamps is a direct WithRetryOverride exceeding 30s.
 	delay = clampBackoff(delay)
 	// honorExact is set when the next sleep is a server-advertised Retry-After
 	// cooldown, which must be slept verbatim (neither jittered down nor clamped).
@@ -662,8 +664,11 @@ func jitter(d time.Duration) time.Duration {
 	return half + time.Duration(rand.Int63n(int64(half)))
 }
 
-// sleepCtx waits for d or until ctx is cancelled, whichever comes first.
-func sleepCtx(ctx context.Context, d time.Duration) error {
+// sleepCtx waits for d or until ctx is cancelled, whichever comes first. It is a
+// package var rather than a plain func so tests can substitute a recorder and
+// assert the backoff schedule (e.g. that a direct WithRetryOverride base above
+// maxBackoff is clamped on the first sleep) without spending real wall-clock time.
+var sleepCtx = func(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {

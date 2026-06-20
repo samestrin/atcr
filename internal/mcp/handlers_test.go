@@ -571,3 +571,62 @@ func TestEngine_LoggerNilSafe(t *testing.T) {
 	e := &engine{}
 	require.NotPanics(t, func() { e.logger().Info("nil-log probe") })
 }
+
+// TestReportHandler_PreCancelledContext verifies handleReport honors ctx
+// cancellation up front: a pre-cancelled context aborts before any report work.
+func TestReportHandler_PreCancelledContext(t *testing.T) {
+	e := &engine{root: t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := e.handleReport(ctx, nil, ReportArgs{})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestReportHandler_InvalidFormatInProcess verifies the handler's own enum check
+// (defense in depth for in-process/programmatic callers that bypass the JSON
+// Schema enum the transport enforces): an unknown format is a structured error.
+func TestReportHandler_InvalidFormatInProcess(t *testing.T) {
+	e := &engine{root: t.TempDir()}
+	_, _, err := e.handleReport(context.Background(), nil, ReportArgs{Format: "xml"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid format")
+}
+
+// TestReportHandler_InvalidReviewID verifies a path-traversal id_or_path is
+// rejected by resolveReviewDir before any report work (path-containment).
+func TestReportHandler_InvalidReviewID(t *testing.T) {
+	root := t.TempDir()
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolReport, map[string]any{"id_or_path": "../../etc/passwd"})
+	assert.Contains(t, msg, "invalid review id")
+}
+
+// TestStatusHandler_NotFound verifies a well-formed review id that resolves to no
+// on-disk review is the "review not found" error (the os.ErrNotExist branch),
+// distinct from the corrupt-pointer and corrupt-manifest cases.
+func TestStatusHandler_NotFound(t *testing.T) {
+	root := t.TempDir()
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolStatus, map[string]any{"id_or_path": "2026-06-10_ghost"})
+	assert.Contains(t, msg, "review not found")
+}
+
+// TestStatusHandler_PreCancelledContext verifies handleStatus honors ctx
+// cancellation before resolving any review directory.
+func TestStatusHandler_PreCancelledContext(t *testing.T) {
+	e := &engine{root: t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := e.handleStatus(ctx, nil, StatusArgs{IDOrPath: "2026-06-10_x"})
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestRangeHandler_InvalidBaseRef verifies a resolution failure that is NOT
+// "not a git repository" (here: an unresolvable base ref in a real repo) maps to
+// the generic "failed to resolve range" client error via rangeError.
+func TestRangeHandler_InvalidBaseRef(t *testing.T) {
+	root, _, _ := gitRepo(t)
+	cs := connectTest(t, root, fakeCompleter{})
+	msg := callErr(t, cs, ToolRange, map[string]any{"base": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"})
+	assert.Contains(t, msg, "failed to resolve range")
+}

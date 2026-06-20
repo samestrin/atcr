@@ -240,11 +240,8 @@ func (r *Registry) validate() error {
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive so the exponential schedule has a starting point.
-	if r.MaxRetries != nil && (*r.MaxRetries < 0 || *r.MaxRetries > MaxRetriesCap) {
-		errs = append(errs, fmt.Errorf("max_retries must be within 0..%d", MaxRetriesCap))
-	}
-	if r.InitialBackoffMs != nil && (*r.InitialBackoffMs <= 0 || *r.InitialBackoffMs > MaxInitialBackoffMs) {
-		errs = append(errs, fmt.Errorf("initial_backoff_ms must be within 1..%d", MaxInitialBackoffMs))
+	for _, m := range validateRetryBounds(r.MaxRetries, r.InitialBackoffMs) {
+		errs = append(errs, errors.New(m))
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
@@ -344,11 +341,8 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive. Same range as the registry tier.
-	if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
-		errs = append(errs, agentErrf(name, "agent '%s': max_retries must be within 0..%d", name, MaxRetriesCap))
-	}
-	if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
-		errs = append(errs, agentErrf(name, "agent '%s': initial_backoff_ms must be within 1..%d", name, MaxInitialBackoffMs))
+	for _, m := range validateRetryBounds(a.MaxRetries, a.InitialBackoffMs) {
+		errs = append(errs, agentErrf(name, "agent '%s': %s", name, m))
 	}
 	for _, s := range a.Scope {
 		if strings.TrimSpace(s) == "" {

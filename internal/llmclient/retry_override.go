@@ -21,11 +21,16 @@ type retryOverrideKey struct{}
 
 // WithRetryOverride returns a context carrying a per-call retry budget that
 // dispatch prefers over the client's own fields. A negative maxRetries is
-// clamped to 0 (a single attempt) — the same guard WithRetry applies — so the
-// retry loop never falls through to a nil-cause "exhausted retries" error.
+// clamped to 0 (a single attempt) and a negative initialBackoff is floored to 0
+// — the same guards WithRetry applies — so the retry loop never falls through to
+// a nil-cause "exhausted retries" error and a bogus base never reaches the
+// backoff schedule as a negative (fire-immediately) duration.
 func WithRetryOverride(ctx context.Context, maxRetries int, initialBackoff time.Duration) context.Context {
 	if maxRetries < 0 {
 		maxRetries = 0
+	}
+	if initialBackoff < 0 {
+		initialBackoff = 0
 	}
 	return context.WithValue(ctx, retryOverrideKey{}, retryOverride{
 		maxRetries:     maxRetries,

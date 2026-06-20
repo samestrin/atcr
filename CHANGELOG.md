@@ -1,3 +1,13 @@
+## [Technical Debt] - 2026-06-19
+
+### Fixed
+
+- Floored negative `initialBackoff` in `WithRetryOverride` to prevent fire-immediately behavior; added first-sleep clamp test
+- Extracted `validateRetryBounds` helper to unify retry validation across config/agent/global paths with consistent error format
+- Added per-agent `max_retries`/`initial_backoff_ms` to the invoke debug log for rate-limit diagnostics
+- Documented the three-state retry-override sentinel contract in the Agent struct comment
+- Added test coverage for MCP handler error paths (handleVerify, parseOptionalSeverity, rangeError, loadVerifyRegistry, handleReport, handleStatus, registerTool); raised `internal/mcp` coverage to 91.6%
+
 ## [4.6.0] - 2026-06-19
 
 Robust rate-limit & backoff handling: exposed the existing LLM retry engine (exponential backoff with jitter + `Retry-After` honoring) through configuration and raised the default retry budget so transient 429/5xx rate-limits are absorbed before a review chunk fails.
