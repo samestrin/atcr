@@ -444,3 +444,163 @@ func TestBackupToDotBak_NoStagingLeakAfterSuccess(t *testing.T) {
 		}
 	}
 }
+
+// TestBackupToDotBak_RenameFailurePreservesPriorBak is the Epic 4.7.1 AC4
+// rename-step fault test for the copy-based site: the copy succeeds but the swap
+// (staged->bak rename) fails, and the prior .bak must survive intact with no
+// staging artifacts left behind. The failure is injected through the renameFn
+// seam so the otherwise-microsecond same-dir rename window is deterministic.
+func TestBackupToDotBak_RenameFailurePreservesPriorBak(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		isDir bool
+	}{
+		{"directory", true},
+		{"file", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "review")
+			bak := src + ".bak"
+
+			if tc.isDir {
+				if err := os.MkdirAll(src, 0o755); err != nil {
+					t.Fatalf("seed src dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(src, "new.txt"), []byte("new\n"), 0o644); err != nil {
+					t.Fatalf("seed src content: %v", err)
+				}
+				if err := os.MkdirAll(bak, 0o755); err != nil {
+					t.Fatalf("seed prior .bak dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(bak, "prior.txt"), []byte("prior\n"), 0o644); err != nil {
+					t.Fatalf("seed prior .bak content: %v", err)
+				}
+			} else {
+				if err := os.WriteFile(src, []byte("new\n"), 0o644); err != nil {
+					t.Fatalf("seed src file: %v", err)
+				}
+				if err := os.WriteFile(bak, []byte("prior\n"), 0o644); err != nil {
+					t.Fatalf("seed prior .bak file: %v", err)
+				}
+			}
+
+			orig := renameFn
+			renameFn = func(_, _ string) error { return os.ErrPermission }
+			defer func() { renameFn = orig }()
+
+			if _, err := BackupToDotBak(src); err == nil {
+				t.Fatal("expected error on injected swap-rename failure, got nil")
+			}
+
+			// AC4: the prior .bak must survive the failed swap.
+			priorPath := bak
+			if tc.isDir {
+				priorPath = filepath.Join(bak, "prior.txt")
+			}
+			got, err := os.ReadFile(priorPath)
+			if err != nil {
+				t.Fatalf("prior .bak did not survive failed swap: %v", err)
+			}
+			if string(got) != "prior\n" {
+				t.Errorf("prior .bak corrupted after failed swap: %q", got)
+			}
+
+			// No atcr-owned staging artifact may leak.
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("ReadDir: %v", err)
+			}
+			for _, e := range entries {
+				if strings.Contains(e.Name(), ".bak.tmp-") {
+					t.Errorf("staging temp leaked after failed swap: %s", e.Name())
+				}
+				if strings.HasSuffix(e.Name(), ".bak.old") {
+					t.Errorf(".bak.old straggler leaked after failed swap: %s", e.Name())
+				}
+			}
+		})
+	}
+}
+
+// TestCopyPath_File verifies CopyPath copies a regular file's bytes and perms to
+// a fresh destination.
+func TestCopyPath_File(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	if err := os.WriteFile(src, []byte("payload"), 0o640); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	dst := filepath.Join(dir, "dst.txt")
+	if err := CopyPath(src, dst); err != nil {
+		t.Fatalf("CopyPath: %v", err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(data) != "payload" {
+		t.Errorf("content = %q, want payload", data)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if fi.Mode().Perm() != 0o640 {
+		t.Errorf("perm = %v, want 0640", fi.Mode().Perm())
+	}
+}
+
+// TestCopyPath_Directory verifies CopyPath recreates a directory tree at a fresh
+// destination, preserving nested content.
+func TestCopyPath_Directory(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "f.txt"), []byte("nested"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	dst := filepath.Join(dir, "dst")
+	if err := CopyPath(src, dst); err != nil {
+		t.Fatalf("CopyPath: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dst, "sub", "f.txt"))
+	if err != nil {
+		t.Fatalf("read nested: %v", err)
+	}
+	if string(data) != "nested" {
+		t.Errorf("nested content = %q, want nested", data)
+	}
+}
+
+// TestCopyPath_MissingSourceErrors verifies CopyPath surfaces the Lstat error for
+// an absent source rather than silently succeeding.
+func TestCopyPath_MissingSourceErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := CopyPath(filepath.Join(dir, "nope"), filepath.Join(dir, "dst")); err == nil {
+		t.Fatal("expected error for missing source, got nil")
+	}
+}
+
+// TestCopyPath_NonRegularSourceErrors verifies CopyPath refuses a non-regular,
+// non-directory source (e.g. a symlink) instead of dereferencing it.
+func TestCopyPath_NonRegularSourceErrors(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	err := CopyPath(link, filepath.Join(dir, "dst"))
+	if err == nil {
+		t.Fatal("expected error for symlink source, got nil")
+	}
+	if !strings.Contains(err.Error(), "not a regular file or directory") {
+		t.Errorf("error = %v, want 'not a regular file or directory'", err)
+	}
+}
