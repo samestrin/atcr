@@ -16,6 +16,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
+	"github.com/samestrin/atcr/internal/validation"
 )
 
 // ErrPayloadFullyDropped is returned by buildPayloads when a non-empty input
@@ -217,11 +218,24 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
 			return nil, err
 		}
+		// Defense-in-depth: reject system-directory output paths (/etc, /proc, /sys)
+		// in the engine, not only the CLI flag parser. PrepareReview is public API
+		// reachable by the MCP handler and direct callers; enforcing here means a
+		// caller that sets OutputDir to a system path with Force=true is rejected
+		// before forceBackupOutputDir performs any destructive backup. The CLI keeps
+		// its own check too (exit 2), so this is additive, not a relocation.
+		if err = validation.FilePath(req.OutputDir); err != nil {
+			return nil, err
+		}
 		// --force backs up a non-empty target to <dir>.bak before scaffolding;
 		// without it, ScaffoldOutputDir rejects a non-empty dir (Epic 4.7 AC2).
 		if req.Force {
-			if err = forceBackupOutputDir(req.OutputDir); err != nil {
+			backupPath, err := forceBackupOutputDir(req.OutputDir)
+			if err != nil {
 				return nil, err
+			}
+			if backupPath != "" {
+				fmt.Fprintf(os.Stderr, "backed up prior review to %s\n", backupPath)
 			}
 		}
 		dir, err = ScaffoldOutputDir(req.OutputDir)
@@ -233,8 +247,12 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// instead backs up the existing tree to <dir>.bak and scaffolds fresh
 		// (Epic 4.7 AC2).
 		if req.Force {
-			if err = forceBackupReviewDir(req.Root, id); err != nil {
+			backupPath, err := forceBackupReviewDir(req.Root, id)
+			if err != nil {
 				return nil, err
+			}
+			if backupPath != "" {
+				fmt.Fprintf(os.Stderr, "backed up prior review to %s\n", backupPath)
 			}
 		}
 		dir, err = ScaffoldReviewDir(req.Root, id)
@@ -242,6 +260,9 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// Derived ids claim their directory atomically: creation is the
 		// collision check, so two reviews of the same branch in the same second
 		// get distinct dirs instead of interleaving writes in one.
+		if req.Force {
+			fmt.Fprintf(os.Stderr, "--force has no effect without --id or --output-dir; a new review directory was created\n")
+		}
 		id, dir, err = claimReviewDir(req.Root, id, req.TimeSuffix)
 	}
 	if err != nil {

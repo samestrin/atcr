@@ -128,6 +128,25 @@ func TestScaffoldOutputDir_TwoCallsSamePathSecondFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "not empty")
 }
 
+// TestScaffoldReviewDir_CollisionReturnsTypedError pins the seam non-CLI callers
+// rely on: an explicit-id collision is a *ReviewDirExistsError (so the MCP handler
+// can substitute a flag-neutral message via errors.As), while its default Error()
+// still names both CLI recovery flags for the CLI path (Epic 4.7 AC1).
+func TestScaffoldReviewDir_CollisionReturnsTypedError(t *testing.T) {
+	root := t.TempDir()
+	_, err := ScaffoldReviewDir(root, "dup")
+	require.NoError(t, err)
+
+	_, err = ScaffoldReviewDir(root, "dup")
+	require.Error(t, err)
+	var exists *ReviewDirExistsError
+	require.ErrorAs(t, err, &exists,
+		"collision must be a typed ReviewDirExistsError so non-CLI callers can re-message it")
+	assert.Equal(t, "dup", exists.ID)
+	assert.Contains(t, err.Error(), "--resume", "default (CLI) message names --resume (AC1)")
+	assert.Contains(t, err.Error(), "--force", "default (CLI) message names --force (AC1)")
+}
+
 func TestSlugifyBranch(t *testing.T) {
 	cases := map[string]string{
 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",
@@ -228,6 +247,21 @@ func TestScaffoldReviewDir_CollisionMessageNamesResumeAndForce(t *testing.T) {
 	assert.Contains(t, err.Error(), "--force", "AC1: must name the destructive overwrite path")
 }
 
+// TestScaffoldReviewDir_CollisionErrorDoesNotLeakPath verifies the collision
+// error names only the review id, not the resolved filesystem path, so an MCP
+// client (which never sees the server's .atcr/reviews/ layout) does not learn
+// the absolute path of the reviews directory.
+func TestScaffoldReviewDir_CollisionErrorDoesNotLeakPath(t *testing.T) {
+	root := t.TempDir()
+	_, err := ScaffoldReviewDir(root, "2026-06-10_leak")
+	require.NoError(t, err)
+
+	_, err = ScaffoldReviewDir(root, "2026-06-10_leak")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2026-06-10_leak", "must still name the review id")
+	assert.NotContains(t, err.Error(), root, "must not leak the resolved filesystem path")
+}
+
 // TestScaffoldOutputDir_CollisionMessageNamesForce locks the AC1 parity for the
 // --output-dir path: a non-empty target is rejected with a message that names
 // --force as the overwrite opt-in.
@@ -237,6 +271,21 @@ func TestScaffoldOutputDir_CollisionMessageNamesForce(t *testing.T) {
 	_, err := ScaffoldOutputDir(dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--force", "must name --force as the overwrite opt-in")
+}
+
+// TestScaffoldOutputDir_CollisionErrorSanitizesPath verifies the non-empty
+// collision error names only the sanitized leaf, not the full resolved path, so
+// the error does not leak the server's filesystem layout to an MCP client.
+func TestScaffoldOutputDir_CollisionErrorSanitizesPath(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "myoutput")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prior.txt"), []byte("x"), 0o644))
+
+	_, err := ScaffoldOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "myoutput", "must still name the sanitized output dir")
+	assert.NotContains(t, err.Error(), parent, "must not leak the full resolved parent path")
 }
 
 // TestBackupExisting_MovesAsideReplacingStaleBak verifies backupExisting renames
@@ -283,13 +332,31 @@ func TestForceBackupOutputDir_RefusesForeignBak(t *testing.T) {
 	require.NoError(t, os.MkdirAll(foreign, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(foreign, "important.txt"), []byte("do not delete"), 0o644))
 
-	err := forceBackupOutputDir(dir)
+	_, err := forceBackupOutputDir(dir)
 	require.Error(t, err, "must refuse to clobber a foreign <dir>.bak")
 	assert.Contains(t, err.Error(), "atcr")
 	// The foreign backup and its contents survive untouched.
 	data, readErr := os.ReadFile(filepath.Join(foreign, "important.txt"))
 	require.NoError(t, readErr)
 	assert.Equal(t, "do not delete", string(data), "foreign backup must not be destroyed")
+}
+
+// TestForceBackupOutputDir_RefusesFileBak verifies that a regular file at the
+// backup path is rejected with a specific, actionable error rather than the
+// generic "not created by atcr" message.
+func TestForceBackupOutputDir_RefusesFileBak(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "myreview")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
+
+	// A regular file where the backup directory should go.
+	require.NoError(t, os.WriteFile(dir+".bak", []byte("not a dir"), 0o644))
+
+	_, err := forceBackupOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "regular file")
+	assert.Contains(t, err.Error(), "not a directory")
 }
 
 // TestForceBackupOutputDir_ReplacesPriorAtcrBak verifies that a genuine prior
@@ -301,19 +368,51 @@ func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
 
-	// A prior atcr backup carries the review subdirs — safe to replace.
+	// A prior atcr backup carries the review subdirs AND a manifest.json
+	// provenance marker — safe to replace.
 	prior := dir + ".bak"
 	for _, sub := range reviewSubdirs {
 		require.NoError(t, os.MkdirAll(filepath.Join(prior, sub), 0o755))
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "manifest.json"), []byte("{}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("old"), 0o644))
 
-	require.NoError(t, forceBackupOutputDir(dir))
+	_, err := forceBackupOutputDir(dir)
+	require.NoError(t, err)
 	// dir was moved aside to .bak; the prior generation is gone.
 	data, err := os.ReadFile(filepath.Join(prior, "report.json"))
 	require.NoError(t, err)
 	assert.Equal(t, "current", string(data))
 	assert.NoFileExists(t, filepath.Join(prior, "old.txt"), "prior atcr backup must be replaced")
+}
+
+// TestForceBackupOutputDir_RefusesStructuralLookalike verifies that a sibling
+// <dir>.bak which merely mirrors the review subdir layout (payload/, sources/,
+// reconciled/) but carries no atcr provenance (no manifest.json) is NOT
+// classified as an atcr backup and is therefore refused, not silently
+// destroyed. Structural directory names alone are too weak a signal — the
+// never-destroy-user-data guard must require a manifest.json provenance marker.
+func TestForceBackupOutputDir_RefusesStructuralLookalike(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "myreview")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
+
+	// A foreign sibling that happens to contain the review subdir names but is
+	// user data, not an atcr backup (no manifest.json at its root).
+	lookalike := dir + ".bak"
+	for _, sub := range reviewSubdirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(lookalike, sub), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(lookalike, "important.txt"), []byte("do not delete"), 0o644))
+
+	_, err := forceBackupOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not look like an atcr backup")
+	// The foreign data must survive — the guard refused rather than destroying it.
+	data, readErr := os.ReadFile(filepath.Join(lookalike, "important.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "do not delete", string(data))
 }
 
 func TestReviewExists_AndCollisionProbe(t *testing.T) {

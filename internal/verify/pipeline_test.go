@@ -466,6 +466,45 @@ func TestRunVerify_SkipPreservesPriorMetadata(t *testing.T) {
 	assert.Equal(t, []string{"max_turns"}, vf.Findings[0].TrippedBudgets, "skip path must carry prior tripped budgets")
 }
 
+// TestRunVerify_StandaloneReVerifyBacksUpVerificationJSONOnly locks Epic 4.7's
+// deliberate backup scope (recorded Clarifications: per-file .bak for the
+// reconcile-owned findings.json/summary.json is OUT of scope — verify only
+// annotates them). A standalone re-verify (atcr verify on an already-reconciled
+// review, no reconcile re-run in the same command, so reconciled.bak/ from
+// RunReconcile may not exist) rewrites all three reconciled files as one atomic
+// group but snapshots ONLY verification.json to verification.json.bak before the
+// flush; findings.json/summary.json are overwritten in place with no .bak.
+func TestRunVerify_StandaloneReVerifyBacksUpVerificationJSONOnly(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
+		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+	}})
+	// Seed a prior verification.json so the re-verify has something to snapshot.
+	// A first-ever write has no prior file, so it leaves no .bak.
+	require.NoError(t, WriteVerification(dir, []VerificationResult{{
+		File: "a.go", Line: 1, Problem: "boom", Verdict: "confirmed", Skeptic: "s1",
+	}}))
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoFileExists(t, filepath.Join(recon, "verification.json.bak"))
+
+	// Standalone re-verify: the already-verified finding is skipped (the harness must
+	// never build), but runVerify still rewrites the full reconciled artifact group.
+	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		t.Fatal("already-verified finding must not invoke the harness")
+		return nil, nil, nil, nil
+	})
+	require.NoError(t, err)
+
+	// Only verification.json — the verify stage's own output — is snapshotted.
+	assert.FileExists(t, filepath.Join(recon, "verification.json.bak"),
+		"re-verify must snapshot prior verification.json to verification.json.bak")
+	// The reconcile-owned files are overwritten in place with no verify-stage backup.
+	assert.NoFileExists(t, filepath.Join(recon, reconcile.FindingsJSON+".bak"),
+		"verify must NOT back up reconcile-owned findings.json (Epic 4.7: out of scope)")
+	assert.NoFileExists(t, filepath.Join(recon, reconcile.SummaryJSON+".bak"),
+		"verify must NOT back up reconcile-owned summary.json (Epic 4.7: out of scope)")
+}
+
 // TestRunVerify_MissingReconciledFindings: a review with no findings.json returns
 // ErrNoReconciledFindings (the caller renders the reconcile-first guidance).
 func TestRunVerify_MissingReconciledFindings(t *testing.T) {

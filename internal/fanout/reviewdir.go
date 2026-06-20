@@ -192,6 +192,17 @@ func claimReviewDir(root, id, suffix string) (string, string, error) {
 	return "", "", fmt.Errorf("failed to create review directory: too many collisions for id %q", id)
 }
 
+// ReviewDirExistsError is returned by ScaffoldReviewDir when an explicit id's
+// review directory already exists. Its Error() names the CLI recovery flags
+// (--resume/--force) for the common CLI path; non-CLI callers (the MCP handler)
+// detect it with errors.As and substitute a flag-neutral message, since MCP
+// clients have no such flags.
+type ReviewDirExistsError struct{ ID string }
+
+func (e *ReviewDirExistsError) Error() string {
+	return fmt.Sprintf("review %s already exists; use --resume %s to continue it or --force to overwrite", e.ID, e.ID)
+}
+
 // ScaffoldReviewDir creates .atcr/reviews/<id>/ and its top-level subdirs (0755),
 // returning the review-dir path. Parent directories are created as needed
 // (AC 01-03 Edge Case 3). A creation failure carries the AC 01-03 message.
@@ -207,7 +218,7 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return "", fmt.Errorf("review directory %s already exists; use --resume %s to continue it or --force to overwrite", dir, id)
+			return "", &ReviewDirExistsError{ID: id}
 		}
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}
@@ -263,7 +274,11 @@ func ScaffoldOutputDir(dir string) (string, error) {
 			return "", fmt.Errorf("failed to create review directory: %w", readErr)
 		}
 		if len(entries) > 0 {
-			return "", fmt.Errorf("output directory %q already exists and is not empty; use --force to overwrite (or point --output-dir at a new or empty path)", dir)
+			// Name only the leaf, not the full resolved path: the collision error is
+			// surfaced to MCP clients that never see the server's filesystem layout,
+			// and the caller already supplied the path so the basename is enough to
+			// identify the target without leaking the parent directory structure.
+			return "", fmt.Errorf("output directory %q already exists and is not empty; use --force to overwrite (or point --output-dir at a new or empty path)", filepath.Base(dir))
 		}
 	}
 	for _, sub := range reviewSubdirs {
@@ -293,41 +308,42 @@ func backupExisting(path string) (string, error) {
 
 // forceBackupReviewDir backs up an existing managed review directory for id
 // before --force scaffolds a fresh one (Epic 4.7 AC2). A non-existent directory
-// is a no-op, so --force is harmless when there is nothing to overwrite.
-func forceBackupReviewDir(root, id string) error {
+// is a no-op, so --force is harmless when there is nothing to overwrite. Returns
+// the backup path when a backup was created, or "" when there was nothing to
+// back up.
+func forceBackupReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return "", nil
 	} else if err != nil {
-		return fmt.Errorf("checking review directory before --force backup: %w", err)
+		return "", fmt.Errorf("checking review directory before --force backup: %w", err)
 	}
-	_, err := backupExisting(dir)
-	return err
+	return backupExisting(dir)
 }
 
 // forceBackupOutputDir backs up a non-empty --output-dir before --force scaffolds
 // into it (Epic 4.7 AC2). An absent or empty target is a no-op: ScaffoldOutputDir
-// already accepts those, so there is nothing to preserve.
-func forceBackupOutputDir(dir string) error {
+// already accepts those, so there is nothing to preserve. Returns the backup path
+// when a backup was created, or "" when there was nothing to back up.
+func forceBackupOutputDir(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return fmt.Errorf("checking output directory before --force backup: %w", err)
+		return "", fmt.Errorf("checking output directory before --force backup: %w", err)
 	}
 	if len(entries) == 0 {
-		return nil
+		return "", nil
 	}
 	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
 	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
 	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
 	// backup atcr did not create (Epic 4.7: never silently delete user data).
 	if err := guardForeignBackup(dir + ".bak"); err != nil {
-		return err
+		return "", err
 	}
-	_, err = backupExisting(dir)
-	return err
+	return backupExisting(dir)
 }
 
 // guardForeignBackup returns an error if backup exists but was not created by
@@ -335,13 +351,18 @@ func forceBackupOutputDir(dir string) error {
 // non-existent or empty backup, or one carrying the scaffolded review-tree
 // markers (a genuine prior atcr backup), is allowed through to be replaced.
 func guardForeignBackup(backup string) error {
-	entries, err := os.ReadDir(backup)
+	fi, err := os.Lstat(backup)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		// Exists but is not a readable directory (e.g. a regular file): treat as
-		// foreign and refuse rather than RemoveAll it.
+		return fmt.Errorf("checking backup path %q: %w", backup, err)
+	}
+	if fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing --force: %q is a regular file, not a directory; move or remove it first", backup)
+	}
+	entries, err := os.ReadDir(backup)
+	if err != nil {
 		return fmt.Errorf("refusing --force: %q exists and was not created by atcr; move or remove it first", backup)
 	}
 	if len(entries) == 0 || looksLikeReviewTree(backup) {
@@ -350,15 +371,24 @@ func guardForeignBackup(backup string) error {
 	return fmt.Errorf("refusing --force: %q already exists and does not look like an atcr backup; move or remove it first", backup)
 }
 
-// looksLikeReviewTree reports whether dir contains every scaffolded review
-// subdirectory, the marker that distinguishes an atcr-created tree (or a prior
-// atcr backup) from arbitrary user data.
+// looksLikeReviewTree reports whether dir carries the atcr provenance markers
+// that distinguish an atcr-created tree (or a prior atcr backup) from arbitrary
+// user data: every scaffolded review subdirectory AND a manifest.json at the
+// root. The subdir names alone are too weak a signal — any directory containing
+// payload/, sources/, and reconciled/ would qualify and be eligible for
+// destruction by --force. manifest.json is written by every scaffolded review
+// (WriteManifest), so a genuine backup always has it while a coincidental
+// structural lookalike of user data does not.
 func looksLikeReviewTree(dir string) bool {
 	for _, sub := range reviewSubdirs {
 		fi, err := os.Stat(filepath.Join(dir, sub))
 		if err != nil || !fi.IsDir() {
 			return false
 		}
+	}
+	fi, err := os.Stat(filepath.Join(dir, manifestFile))
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
 	}
 	return true
 }

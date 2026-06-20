@@ -178,18 +178,6 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 
 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
 
-	// Idempotency (Epic 4.7 AC4): a re-run re-emits every reconciled/ artifact.
-	// Snapshot the prior generation to reconciled.bak/ first so a failed or
-	// unwanted re-reconcile can be recovered. Copy (not move) so the live dir
-	// stays intact for the adjudication reads and Emit below. Only a directory
-	// that already holds reconcile output (findings.json) is backed up — the
-	// empty scaffolded dir on a first run is skipped.
-	if _, statErr := os.Stat(filepath.Join(reconDir, FindingsJSON)); statErr == nil {
-		if _, err := atomicfs.BackupToDotBak(reconDir); err != nil {
-			return Result{}, fmt.Errorf("backing up prior reconciled output: %w", err)
-		}
-	}
-
 	adjudicating := false
 	if _, statErr := os.Stat(filepath.Join(reconDir, AdjudicationJSON)); statErr == nil {
 		adj, err := LoadAdjudication(filepath.Join(reconDir, AdjudicationJSON))
@@ -242,6 +230,23 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 			return Result{}, err
 		}
 	}
+
+	// Idempotency (Epic 4.7 AC4): snapshot the prior generation to reconciled.bak/
+	// before Emit overwrites it, so a failed or unwanted re-reconcile can be
+	// recovered. Taken here — after adjudication validation has succeeded and only
+	// when an overwrite is actually imminent — so a re-invocation that fails
+	// validation never pays a full-tree copy and never leaves a reconciled.bak/ of
+	// state that was never changed. It also keeps the un-cancellable copy as a
+	// tight tail with Emit (ctx is checked above, before Reconcile). Copy (not
+	// move) so the live dir stays intact for Emit below. Only a directory that
+	// already holds reconcile output (findings.json) is backed up — the empty
+	// scaffolded dir on a first run is skipped.
+	if _, statErr := os.Stat(filepath.Join(reconDir, FindingsJSON)); statErr == nil {
+		if _, err := atomicfs.BackupToDotBak(reconDir); err != nil {
+			return Result{}, fmt.Errorf("backing up prior reconciled output: %w", err)
+		}
+	}
+
 	if err := Emit(reconDir, res); err != nil {
 		return Result{}, err
 	}

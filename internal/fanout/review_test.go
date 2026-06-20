@@ -478,6 +478,82 @@ func TestPrepareReview_RejectsExistingOverrideID(t *testing.T) {
 	assert.Contains(t, err.Error(), "custom-review-id")
 }
 
+// TestPrepareReview_ForceWithDerivedIdWarnsStderr verifies that --force without
+// --id or --output-dir emits a stderr notice because the derived id path never
+// collides and Force is a silent no-op there.
+func TestPrepareReview_ForceWithDerivedIdWarnsStderr(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	req := reviewReq(repo, repo, base, head)
+	req.Force = true
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_, err = PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Close())
+	os.Stderr = oldStderr
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "--force has no effect without --id or --output-dir")
+}
+
+// TestPrepareReview_ForceBackupEmitsStderrNotice verifies that a --force
+// overwrite of an existing explicit-id review emits a stderr breadcrumb naming
+// the .bak directory, so an operator who forced by mistake knows where the
+// prior tree was preserved.
+func TestPrepareReview_ForceBackupEmitsStderrNotice(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+
+	req := reviewReq(repo, repo, base, head)
+	req.IDOverride = "2026-06-10_backed"
+
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	req.Force = true
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_, err = PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Close())
+	os.Stderr = oldStderr
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "backed up prior review to")
+	assert.Contains(t, string(out), "2026-06-10_backed.bak")
+}
+
+// TestPrepareReview_RejectsSystemOutputDir verifies the engine itself rejects an
+// --output-dir under a system directory (/etc, /proc, /sys), not only the CLI
+// flag parser. PrepareReview is public API reachable by the MCP handler and
+// direct callers, so the system-path reject must fire for every caller, before
+// any --force backup or scaffold touches the filesystem.
+func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+
+	req := reviewReq(repo, repo, base, head)
+	req.OutputDir = "/etc/atcr-td-output"
+	req.Force = true
+
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "system directories")
+}
+
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.

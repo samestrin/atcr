@@ -198,6 +198,31 @@ func TestReviewHandler_ExplicitBaseHead(t *testing.T) {
 	assert.FileExists(t, filepath.Join(out.ReviewPath, "sources", "pool", "raw", "agent", "greta", "findings.txt"))
 }
 
+// TestReviewHandler_ExplicitIDCollisionUsesFlagNeutralMessage verifies that when
+// an MCP client re-sends atcr_review with an explicit id whose review directory
+// already exists, the collision error does NOT name the CLI-only --resume/--force
+// flags (MCP clients have none) but still names the id so the client can recover.
+func TestReviewHandler_ExplicitIDCollisionUsesFlagNeutralMessage(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	root, base, head := gitRepo(t)
+	writeReviewConfig(t, root)
+	_, eng, err := buildServer(root, fakeCompleter{resp: validFindings}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { eng.drain(2 * time.Second) })
+
+	const id = "fixed-id"
+	_, res, err := eng.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head, ID: id})
+	require.NoError(t, err)
+	require.Equal(t, runningStatus, res.Status)
+
+	// Second call with the same explicit id collides at ScaffoldReviewDir.
+	_, _, err = eng.handleReview(context.Background(), nil, ReviewArgs{Base: base, Head: head, ID: id})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), id, "collision error must name the id so the client can recover")
+	assert.NotContains(t, err.Error(), "--resume", "MCP error must not name CLI-only flags")
+	assert.NotContains(t, err.Error(), "--force", "MCP error must not name CLI-only flags")
+}
+
 func TestReviewHandler_NoGitRepo(t *testing.T) {
 	cs := connectTest(t, t.TempDir(), fakeCompleter{})
 	msg := callErr(t, cs, ToolReview, map[string]any{})
