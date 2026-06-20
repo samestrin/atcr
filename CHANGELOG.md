@@ -1,3 +1,14 @@
+## [5.0.0] - 2026-06-20
+
+Reviewer-hallucinated file paths are now caught. The reconcile pipeline validates each finding's file path against the reviewed repository and flags the ones that do not exist, so a good finding that cites a wrong path (a typo, or the right file in the wrong directory) is surfaced for correction instead of silently shipping an unopenable location. The finding is always preserved — validation only annotates, it never discards.
+
+### Added
+
+- File-path existence validation in the reconcile pipeline — a finding whose path does not resolve under the repo root is flagged with `path_warning: "file not found"` in `findings.json` and a `⚠️ File not found: <path>` line in `report.md`, `atcr report`, and the checklist view
+- `path_valid` / `path_warning` fields on the `findings.json` record (`path_warning` is the authoritative signal; paths that escape the repo root are treated as invalid rather than probed)
+
+*Shipped via /execute-epic (epic 5.0)*
+
 ## [4.11.0] - 2026-06-20
 
 Per-call client telemetry now backs accurate API-call counting and per-call latency: the LLM client surfaces one record per HTTP attempt — retries included, with a precise wire-reached signal — up through the fan-out engine, fixing a counter undercount during provider degradation and populating a latency histogram.
