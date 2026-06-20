@@ -328,6 +328,15 @@ func backupExisting(ctx context.Context, path string) (string, error) {
 
 	// Stage the prior generation aside instead of destroying it: a failed swap
 	// below restores it from .bak.old.
+	//
+	// Accepted TOCTOU window: between the os.Lstat(backup) probe and the
+	// os.Rename(backup, backupOld) below, another process or a symlink swap could
+	// change what `backup` refers to between check and use. The window is tiny and
+	// atcr is a single-user developer tool whose trust model assumes the user owns
+	// the reviews tree, so this race is an accepted risk rather than a guarded one:
+	// POSIX offers no portable rename-if-unchanged primitive (renameat2's
+	// RENAME_NOREPLACE is Linux-only), and the same accepted window exists at the
+	// atomicfs swap site.
 	priorStaged := false
 	if _, err := os.Lstat(backup); err == nil {
 		if err := os.Rename(backup, backupOld); err != nil {
