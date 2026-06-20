@@ -336,13 +336,18 @@ func forceBackupOutputDir(dir string) (string, error) {
 // non-existent or empty backup, or one carrying the scaffolded review-tree
 // markers (a genuine prior atcr backup), is allowed through to be replaced.
 func guardForeignBackup(backup string) error {
-	entries, err := os.ReadDir(backup)
+	fi, err := os.Lstat(backup)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		// Exists but is not a readable directory (e.g. a regular file): treat as
-		// foreign and refuse rather than RemoveAll it.
+		return fmt.Errorf("checking backup path %q: %w", backup, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("refusing --force: %q is a regular file, not a directory; move or remove it first", backup)
+	}
+	entries, err := os.ReadDir(backup)
+	if err != nil {
 		return fmt.Errorf("refusing --force: %q exists and was not created by atcr; move or remove it first", backup)
 	}
 	if len(entries) == 0 || looksLikeReviewTree(backup) {

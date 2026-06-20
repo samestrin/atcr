@@ -14,6 +14,13 @@ import (
 // over path, so a reader never observes a partial write. The rename is atomic
 // within a single POSIX filesystem. SIGKILL-orphaned .tmp-* files in the same
 // directory are accepted by readers (readers use exact filenames, not globs).
+//
+// The atomicity guarantee is against concurrent readers, not power loss: neither
+// the temp file nor the parent directory is fsynced, so a crash immediately after
+// the rename can leave the rename durable while the data is not, yielding a
+// zero-length or truncated file. This is intentional — the artifacts written
+// through here (review/reconcile/verify output) are regenerable, so crash
+// durability is deliberately out of scope and not worth the fsync cost.
 func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
