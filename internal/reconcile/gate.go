@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -176,6 +177,19 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	}
 
 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
+
+	// Idempotency (Epic 4.7 AC4): a re-run re-emits every reconciled/ artifact.
+	// Snapshot the prior generation to reconciled.bak/ first so a failed or
+	// unwanted re-reconcile can be recovered. Copy (not move) so the live dir
+	// stays intact for the adjudication reads and Emit below. Only a directory
+	// that already holds reconcile output (findings.json) is backed up — the
+	// empty scaffolded dir on a first run is skipped.
+	if _, statErr := os.Stat(filepath.Join(reconDir, FindingsJSON)); statErr == nil {
+		if _, err := atomicfs.BackupToDotBak(reconDir); err != nil {
+			return Result{}, fmt.Errorf("backing up prior reconciled output: %w", err)
+		}
+	}
+
 	adjudicating := false
 	if _, statErr := os.Stat(filepath.Join(reconDir, AdjudicationJSON)); statErr == nil {
 		adj, err := LoadAdjudication(filepath.Join(reconDir, AdjudicationJSON))

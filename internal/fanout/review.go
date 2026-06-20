@@ -78,6 +78,14 @@ type ReviewRequest struct {
 	// to prevent invisible half-state reviews. Untrusted callers must validate the
 	// path before populating this field.
 	OutputDir string
+	// Force, when true, overwrites an existing review target instead of failing
+	// the collision (Epic 4.7 AC2): the prior tree is backed up to <dir>.bak and
+	// a fresh directory is scaffolded. It applies to the IDOverride path (a
+	// pre-existing .atcr/reviews/<id>/) and the non-empty OutputDir path; derived
+	// ids never collide (claimReviewDir auto-suffixes) so Force is a no-op there.
+	// Defaulting false preserves the safe fail-on-collision behavior for callers
+	// that do not opt in (e.g. the MCP handler).
+	Force bool
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -209,12 +217,26 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
 			return nil, err
 		}
+		// --force backs up a non-empty target to <dir>.bak before scaffolding;
+		// without it, ScaffoldOutputDir rejects a non-empty dir (Epic 4.7 AC2).
+		if req.Force {
+			if err = forceBackupOutputDir(req.OutputDir); err != nil {
+				return nil, err
+			}
+		}
 		dir, err = ScaffoldOutputDir(req.OutputDir)
 	case req.IDOverride != "":
 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
 		// a pre-existing directory (e.g. a client retrying atcr_review with the
 		// same id while the first run is in flight) is rejected rather than
-		// scaffolded into, so two fan-outs never share one review dir.
+		// scaffolded into, so two fan-outs never share one review dir. --force
+		// instead backs up the existing tree to <dir>.bak and scaffolds fresh
+		// (Epic 4.7 AC2).
+		if req.Force {
+			if err = forceBackupReviewDir(req.Root, id); err != nil {
+				return nil, err
+			}
+		}
 		dir, err = ScaffoldReviewDir(req.Root, id)
 	default:
 		// Derived ids claim their directory atomically: creation is the

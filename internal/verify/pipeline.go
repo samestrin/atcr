@@ -346,6 +346,13 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if !mfNoOp {
 		artifacts = append(artifacts, stagingEntry{path: mfPath, data: mfData})
 	}
+	// Idempotency (Epic 4.7 AC5): a re-verify (e.g. --fresh) overwrites
+	// verification.json as part of this atomic group. Snapshot the prior verdicts
+	// to verification.json.bak before the flush so the previous run is recoverable;
+	// a first-ever verify has no prior file and this is a no-op.
+	if err := BackupExistingVerification(reviewDir); err != nil {
+		return Result{}, err
+	}
 	if err := writeGroupAtomic(artifacts); err != nil {
 		return Result{}, err
 	}

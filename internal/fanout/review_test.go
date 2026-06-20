@@ -164,6 +164,54 @@ func TestRunReview_EndToEnd(t *testing.T) {
 	assert.Equal(t, res.ID, latest)
 }
 
+// TestRunReview_ForceBacksUpExistingDir is the Epic 4.7 AC8 integration test:
+// running review twice against the same explicit --id fails the collision
+// without --force, and with --force backs the prior directory up to <dir>.bak
+// and scaffolds a fresh one.
+func TestRunReview_ForceBacksUpExistingDir(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	repo, base, head := initRepo(t)
+	srv := mockProvider(t)
+	cfg := twoAgentConfig(srv.URL)
+
+	req := reviewReq(repo, repo, base, head)
+	req.IDOverride = "2026-06-10_fixed"
+
+	// First review creates the directory.
+	res1, err := RunReview(context.Background(), llmclient.New(), cfg, req)
+	require.NoError(t, err)
+	reviewDir := res1.Dir
+
+	// Plant a marker so the backup provably carries the prior generation.
+	marker := filepath.Join(reviewDir, "MARKER")
+	require.NoError(t, os.WriteFile(marker, []byte("gen1"), 0o644))
+
+	// Re-running the same --id WITHOUT --force fails the collision and names both
+	// recovery paths (AC1).
+	_, err = RunReview(context.Background(), llmclient.New(), cfg, req)
+	require.Error(t, err, "re-running the same --id without --force must fail the collision")
+	assert.Contains(t, err.Error(), "--resume")
+	assert.Contains(t, err.Error(), "--force")
+	// The collision must not have moved the existing directory.
+	assert.FileExists(t, marker, "a failed collision must leave the existing review untouched")
+	assert.NoDirExists(t, reviewDir+".bak", "no backup until --force is used")
+
+	// WITH --force: back up the prior dir to <dir>.bak and scaffold fresh.
+	req.Force = true
+	res2, err := RunReview(context.Background(), llmclient.New(), cfg, req)
+	require.NoError(t, err)
+	assert.Equal(t, reviewDir, res2.Dir, "the fresh review reuses the same id/path")
+
+	bakMarker := filepath.Join(reviewDir+".bak", "MARKER")
+	data, err := os.ReadFile(bakMarker)
+	require.NoError(t, err, "AC8: prior review dir must be backed up to <dir>.bak")
+	assert.Equal(t, "gen1", string(data))
+
+	// The fresh dir was scaffolded anew, so it does not carry the prior marker.
+	_, statErr := os.Stat(marker)
+	assert.True(t, os.IsNotExist(statErr), "the fresh review dir must not carry the prior generation's marker")
+}
+
 // TestRunReview_OutputDirSkipsLatest verifies --output-dir writes the full
 // review tree to the given path and does NOT repoint .atcr/latest (the pointer
 // tracks interactive runs only; external orchestrators own their output dir).
