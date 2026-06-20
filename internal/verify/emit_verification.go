@@ -141,6 +141,14 @@ func ReadVerificationResults(reviewDir string) ([]VerificationResult, error) {
 // 03-02). VerdictCounts is derived from results via CountVerdicts so the tally
 // can never drift from the records it counts. Each result's nil TrippedBudgets
 // is normalized to [] so the field never serializes as null.
+//
+// NOTE: WriteVerification is a TEST-ONLY SEAM — it has no non-test callers.
+// Production verify never routes through it: the pipeline's runVerify emits
+// verification.json as part of a multi-file atomic group (writeGroupAtomic),
+// composing the same pieces (computeVerificationBytes + backupExistingVerification)
+// directly rather than through this wrapper. Tests that assert write or backup
+// behavior through WriteVerification therefore exercise this wrapper, NOT the
+// shipped path — do not infer production backup coverage from them.
 func WriteVerification(reviewDir string, results []VerificationResult) error {
 	path, data, err := computeVerificationBytes(reviewDir, results, CountVerdicts(results))
 	if err != nil {
