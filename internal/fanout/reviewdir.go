@@ -1,6 +1,7 @@
 package fanout
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -308,7 +309,7 @@ func ScaffoldOutputDir(dir string) (string, error) {
 // postcondition. Stale atcr-owned staging artifacts (.bak.old/.bak.new) from a
 // prior crashed run are reconciled away at entry, so retries start clean and the
 // one-generation contract holds across a crash-then-retry sequence.
-func backupExisting(path string) (string, error) {
+func backupExisting(ctx context.Context, path string) (string, error) {
 	backup := path + ".bak"
 	backupOld := path + ".bak.old"
 	backupNew := path + ".bak.new"
@@ -349,12 +350,12 @@ func backupExisting(path string) (string, error) {
 				// another non-empty directory fails (ENOTEMPTY), so this Lstat
 				// guard is belt-and-suspenders that also makes the intent explicit.
 				if _, statErr := os.Lstat(backup); statErr != nil {
-					restorePriorBackup(priorStaged, backupOld, backup)
+					restorePriorBackup(ctx, priorStaged, backupOld, backup)
 				}
 				return "", cerr
 			}
 		} else {
-			restorePriorBackup(priorStaged, backupOld, backup)
+			restorePriorBackup(ctx, priorStaged, backupOld, backup)
 			return "", fmt.Errorf("backing up %q: %w", path, err)
 		}
 	}
@@ -388,7 +389,7 @@ var removePathFn = os.RemoveAll
 // Best-effort: a restore failure cannot un-fail the swap, but the prior data
 // still survives under .bak.old for manual recovery, so the error is not
 // propagated over the swap failure that is the caller's real concern.
-func restorePriorBackup(staged bool, backupOld, backup string) {
+func restorePriorBackup(ctx context.Context, staged bool, backupOld, backup string) {
 	if !staged {
 		return
 	}
@@ -430,21 +431,21 @@ func backupCrossDevice(path, backup, backupNew string) error {
 // is a no-op, so --force is harmless when there is nothing to overwrite. Returns
 // the backup path when a backup was created, or "" when there was nothing to
 // back up.
-func forceBackupReviewDir(root, id string) (string, error) {
+func forceBackupReviewDir(ctx context.Context, root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	} else if err != nil {
 		return "", fmt.Errorf("checking review directory before --force backup: %w", err)
 	}
-	return backupExisting(dir)
+	return backupExisting(ctx, dir)
 }
 
 // forceBackupOutputDir backs up a non-empty --output-dir before --force scaffolds
 // into it (Epic 4.7 AC2). An absent or empty target is a no-op: ScaffoldOutputDir
 // already accepts those, so there is nothing to preserve. Returns the backup path
 // when a backup was created, or "" when there was nothing to back up.
-func forceBackupOutputDir(dir string) (string, error) {
+func forceBackupOutputDir(ctx context.Context, dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
@@ -464,7 +465,7 @@ func forceBackupOutputDir(dir string) (string, error) {
 	if err := guardForeignBackup(dir + ".bak"); err != nil {
 		return "", err
 	}
-	return backupExisting(dir)
+	return backupExisting(ctx, dir)
 }
 
 // guardForeignBackup returns an error if backup exists but was not created by
