@@ -180,6 +180,23 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	if s.InitialBackoffMs <= 0 || s.InitialBackoffMs > MaxInitialBackoffMs {
 		return Settings{}, fmt.Errorf("initial_backoff_ms must be within 1..%d, got %d", MaxInitialBackoffMs, s.InitialBackoffMs)
 	}
+	// Per-agent retry overrides are read directly by EffectiveMaxRetries /
+	// EffectiveInitialBackoffMs, bypassing the global resolution above, so a
+	// directly-constructed reg (skipping LoadRegistry's validateAgent) could
+	// otherwise smuggle out-of-range per-agent values straight to the engine.
+	// Re-check them here for the same defense-in-depth reason as the global tier,
+	// walking in sorted order so the error is deterministic.
+	if reg != nil {
+		for _, name := range sortedKeys(reg.Agents) {
+			a := reg.Agents[name]
+			if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
+				return Settings{}, fmt.Errorf("agent %q: max_retries must be within 0..%d, got %d", name, MaxRetriesCap, *a.MaxRetries)
+			}
+			if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
+				return Settings{}, fmt.Errorf("agent %q: initial_backoff_ms must be within 1..%d, got %d", name, MaxInitialBackoffMs, *a.InitialBackoffMs)
+			}
+		}
+	}
 	return s, nil
 }
 

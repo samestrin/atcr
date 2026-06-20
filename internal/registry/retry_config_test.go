@@ -87,10 +87,44 @@ max_retries: 999999
 	assert.Contains(t, err.Error(), "max_retries must be within 0..")
 }
 
+func TestValidate_RegistryInitialBackoffZeroRejected(t *testing.T) {
+	// Symmetry with the agent-tier zero-rejection check: an explicit registry-level
+	// initial_backoff_ms:0 must fail (the base delay must be positive).
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  p:
+    api_key_env: KEY
+agents:
+  bruce: {provider: p, model: m}
+initial_backoff_ms: 0
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "initial_backoff_ms must be within 1..")
+}
+
 func TestResolveSettings_DirectRegistryRetryOutOfRangeRejected(t *testing.T) {
 	// A directly-constructed Registry (bypassing the file loader) can carry an
 	// out-of-range value; ResolveSettings must catch it so the engine never sees it.
 	_, err := ResolveSettings(CLIOverrides{}, nil, &Registry{MaxRetries: intPtr(MaxRetriesCap + 1)})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "max_retries"), "post-resolution validation rejects out-of-range max_retries")
+	assert.True(t, strings.Contains(err.Error(), "max_retries"), "post-resolution validation rejects out-of-range global max_retries")
+}
+
+func TestResolveSettings_DirectRegistryPerAgentRetryOutOfRangeRejected(t *testing.T) {
+	// Per-agent overrides are read directly by EffectiveMaxRetries, bypassing the
+	// global resolution; a directly-constructed reg must still be caught post-resolution.
+	reg := &Registry{Agents: map[string]AgentConfig{
+		"bruce": {Provider: "p", Model: "m", MaxRetries: intPtr(MaxRetriesCap + 5)},
+	}}
+	_, err := ResolveSettings(CLIOverrides{}, nil, reg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "max_retries must be within 0..")
+
+	regBackoff := &Registry{Agents: map[string]AgentConfig{
+		"bruce": {Provider: "p", Model: "m", InitialBackoffMs: intPtr(0)},
+	}}
+	_, err = ResolveSettings(CLIOverrides{}, nil, regBackoff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "initial_backoff_ms must be within 1..")
 }

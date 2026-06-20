@@ -417,6 +417,11 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 		maxRetries = o.maxRetries
 		delay = o.initialBackoff
 	}
+	// Clamp the starting delay so even the FIRST retry sleep respects maxBackoff:
+	// every subsequent delay is clamped after the ×factor step, but without this
+	// an out-of-range base (a misconfigured initial_backoff or a direct
+	// WithRetryOverride) would sleep its full unclamped duration on attempt 1.
+	delay = clampBackoff(delay)
 	// honorExact is set when the next sleep is a server-advertised Retry-After
 	// cooldown, which must be slept verbatim (neither jittered down nor clamped).
 	honorExact := false
