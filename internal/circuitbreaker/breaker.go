@@ -17,6 +17,7 @@
 package circuitbreaker
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -79,20 +80,31 @@ type Breaker struct {
 	// now is the clock, injectable so tests drive cooldown transitions without
 	// real sleeps. Production uses time.Now.
 	now func() time.Time
+	// gauge is cached at construction time so setMetric never needs to re-acquire
+	// the metrics registry lock while already holding b.mu (the key is fixed per
+	// provider for the life of the Breaker).
+	gauge interface{ Set(float64) }
 }
 
 // New builds a closed breaker for provider with the given failure threshold and
 // cooldown. It seeds the per-provider gauge to closed (0) so the series exists
 // before the first transition.
 func New(provider string, threshold int, cooldown time.Duration) *Breaker {
+	if threshold <= 0 {
+		threshold = DefaultThreshold
+	}
+	if cooldown <= 0 {
+		cooldown = DefaultCooldown
+	}
 	b := &Breaker{
 		provider:  provider,
 		state:     StateClosed,
 		threshold: threshold,
 		cooldown:  cooldown,
 		now:       time.Now,
+		gauge:     metrics.Gauge(metrics.Key(metrics.NameCircuitBreakerState, metrics.LabelProvider, provider)),
 	}
-	b.setMetric(StateClosed)
+	b.gauge.Set(float64(StateClosed))
 	return b
 }
 
@@ -108,7 +120,10 @@ func New(provider string, threshold int, cooldown time.Duration) *Breaker {
 // whole call (which may include a retry/backoff schedule spanning several
 // seconds), so during a probe every other agent for the provider fails fast even
 // if the provider has already recovered; this single-probe gate is intentional
-// (it bounds the recovery burst to one request).
+// (it bounds the recovery burst to one request). The maximum slot-hold equals the
+// caller's I/O timeout (typically the HTTP client deadline); a context
+// cancellation that short-circuits the probe before any response must call
+// ReleaseProbe, not RecordFailure, so the slot is freed for the next caller.
 func (b *Breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -171,10 +186,22 @@ func (b *Breaker) RecordFailure() {
 // cancellation that cut the probe short before any response. The circuit stays
 // half-open so the next caller can retry the probe; no failure is counted (the
 // provider did not actually fail) and the circuit is not closed (no success was
-// observed). Outside half-open it is a no-op (there is no probe to release).
+// observed). The method unconditionally clears probeInFlight regardless of
+// state; outside half-open probeInFlight is always false, so the clear is a
+// harmless no-op in practice.
 func (b *Breaker) ReleaseProbe() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.probeInFlight = false
+}
+
+// ForceHalfOpen puts the breaker directly into half-open state with no probe in
+// flight. It exists for test isolation so tests can reach half-open without
+// waiting for the real cooldown. Not for production use.
+func (b *Breaker) ForceHalfOpen() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.state = StateHalfOpen
 	b.probeInFlight = false
 }
 
@@ -209,12 +236,20 @@ func (b *Breaker) open() {
 // takes the registry's own lock briefly; metrics never calls back into this
 // package, so there is no lock-ordering cycle.
 func (b *Breaker) transition(s State) {
+	prev := b.state
 	b.state = s
+	slog.Info("circuit breaker state change",
+		"provider", b.provider,
+		"from", prev.String(),
+		"to", s.String(),
+		"failures", b.failureCount,
+	)
 	b.setMetric(s)
 }
 
 // setMetric writes the state's numeric value (0/1/2) to the provider-labelled
-// gauge. Caller must hold b.mu.
+// gauge. Caller must hold b.mu. The gauge pointer was cached at construction
+// time so this call is lock-free (gauge.Set is an atomic store).
 func (b *Breaker) setMetric(s State) {
-	metrics.Gauge(metrics.Key(metrics.NameCircuitBreakerState, metrics.LabelProvider, b.provider)).Set(float64(s))
+	b.gauge.Set(float64(s))
 }

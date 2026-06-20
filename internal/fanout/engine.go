@@ -450,6 +450,10 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	// the per-provider circuit breaker without a Provider field on Invocation
 	// (Epic 4.5). One chokepoint: this covers single-shot, the tool loop, and the
 	// verify path (all run through here). Empty provider no-ops the breaker.
+	if a.Provider == "" && a.Tools {
+		// Doctor/direct-construction paths use Tools=false and are intentionally exempt.
+		agentLogger.Warn("tools-enabled agent has no provider set; circuit breaker bypassed", "agent", a.Name)
+	}
 	ctx = circuitbreaker.NewContext(ctx, a.Provider)
 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
 
@@ -561,7 +565,8 @@ func (r *Result) addTripped(name string) {
 
 // classifyStatus maps an error to a status code. A context deadline or
 // cancellation (anywhere in the wrap chain) is a timeout; everything else is a
-// genuine failure.
+// genuine failure — including CircuitOpenError, which deliberately lands here so
+// invokeSlot advances the fallback chain (AC6).
 func classifyStatus(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return StatusTimeout

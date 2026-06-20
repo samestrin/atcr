@@ -23,7 +23,16 @@ func NewRegistry() *Registry {
 // so collaborating call sites share one circuit. The common already-exists case
 // takes only a read lock; creation upgrades to a write lock and re-checks so a
 // concurrent creator cannot produce two breakers for one provider.
+//
+// An empty provider string returns a fresh throwaway breaker on every call
+// rather than a cached one; this makes Get("") safe to call even when callers
+// forget the upstream empty-provider guard — failures never accumulate across
+// calls and no shared "" circuit can trip to fail-fast unkeyed requests.
 func (r *Registry) Get(provider string) *Breaker {
+	if provider == "" {
+		return New("", DefaultThreshold, DefaultCooldown)
+	}
+
 	r.mu.RLock()
 	b, ok := r.breakers[provider]
 	r.mu.RUnlock()
@@ -50,6 +59,16 @@ func (r *Registry) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.breakers = make(map[string]*Breaker)
+}
+
+// Set installs b as the breaker for provider, replacing any existing entry. It
+// exists for test isolation so tests can inject a pre-configured breaker without
+// triggering real HTTP failures. Production breakers are always created on first
+// use by Get. Not for production use.
+func (r *Registry) Set(provider string, b *Breaker) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.breakers[provider] = b
 }
 
 // DefaultRegistry is the process-wide registry the llmclient integration reads
