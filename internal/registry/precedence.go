@@ -32,6 +32,30 @@ const MaxToolBudgetBytes = DefaultPayloadByteBudget * MaxAgentTurns
 // misconfigured roster. 0 is the documented unbounded escape hatch.
 const DefaultMaxParallel = 10
 
+// Retry/backoff tunables (Epic 4.6). The llmclient already implements the
+// retry engine (exponential backoff + jitter + Retry-After); these expose its
+// budget through the shared-settings precedence chain. DefaultMaxRetries is 5
+// (the epic AC default) at the embedded tier — NOT the llmclient
+// defaultMaxRetries=2 constant, which stays the bare-New() fallback for the
+// doctor self-test and other direct clients. InitialBackoffMs is the fallback
+// base delay between retries when no server Retry-After is present.
+const (
+	// DefaultMaxRetries is the embedded-tier retry budget (5 → 6 attempts total).
+	DefaultMaxRetries = 5
+	// MaxRetriesCap bounds max_retries at every tier; a larger budget would let
+	// a single rate-limited agent stall the fan-out far past any useful window.
+	// 0 is valid (a single attempt, no retry).
+	MaxRetriesCap = 10
+	// DefaultInitialBackoffMs is the embedded-tier base delay (ms) between
+	// retries; it matches the llmclient default (500ms) so unconfigured behavior
+	// is unchanged apart from the larger retry budget.
+	DefaultInitialBackoffMs = 500
+	// MaxInitialBackoffMs caps the configurable base delay (ms) at the
+	// llmclient's per-retry backoff ceiling (30s); a larger base would be
+	// clamped anyway.
+	MaxInitialBackoffMs = 30000
+)
+
 // Settings are the effective shared review settings after precedence
 // resolution: CLI flag > project config > registry > embedded default.
 // Each field resolves independently; a tier participates only where it
@@ -51,6 +75,12 @@ type Settings struct {
 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
 	// engine; 0 is the documented unbounded escape hatch.
 	MaxParallel int
+	// MaxRetries is the resolved retry budget passed to the llmclient per call
+	// (Epic 4.6); 0 means a single attempt with no retry.
+	MaxRetries int
+	// InitialBackoffMs is the resolved base delay (ms) between retries when no
+	// server Retry-After header is present (Epic 4.6).
+	InitialBackoffMs int
 }
 
 // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
@@ -71,10 +101,21 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		TimeoutSecs:       DefaultTimeoutSecs,
 		PayloadByteBudget: DefaultPayloadByteBudget,
 		MaxParallel:       DefaultMaxParallel,
+		MaxRetries:        DefaultMaxRetries,
+		InitialBackoffMs:  DefaultInitialBackoffMs,
 	}
 
 	if reg != nil {
 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
+		// Retry tunables live only at the registry (global) tier and the agent
+		// tier (Epic 4.6) — the project tier intentionally does not carry them,
+		// so they are overlaid here rather than through applyTier.
+		if reg.MaxRetries != nil {
+			s.MaxRetries = *reg.MaxRetries
+		}
+		if reg.InitialBackoffMs != nil {
+			s.InitialBackoffMs = *reg.InitialBackoffMs
+		}
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
@@ -128,6 +169,33 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
 	if s.PayloadByteBudget < 0 {
 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+	}
+	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
+	// loader) can carry out-of-range values; catch them so the engine never
+	// receives them. 0 retries is valid (single attempt); the base delay must be
+	// positive so the exponential schedule has a non-zero starting point.
+	if s.MaxRetries < 0 || s.MaxRetries > MaxRetriesCap {
+		return Settings{}, fmt.Errorf("max_retries must be within 0..%d, got %d", MaxRetriesCap, s.MaxRetries)
+	}
+	if s.InitialBackoffMs <= 0 || s.InitialBackoffMs > MaxInitialBackoffMs {
+		return Settings{}, fmt.Errorf("initial_backoff_ms must be within 1..%d, got %d", MaxInitialBackoffMs, s.InitialBackoffMs)
+	}
+	// Per-agent retry overrides are read directly by EffectiveMaxRetries /
+	// EffectiveInitialBackoffMs, bypassing the global resolution above, so a
+	// directly-constructed reg (skipping LoadRegistry's validateAgent) could
+	// otherwise smuggle out-of-range per-agent values straight to the engine.
+	// Re-check them here for the same defense-in-depth reason as the global tier,
+	// walking in sorted order so the error is deterministic.
+	if reg != nil {
+		for _, name := range sortedKeys(reg.Agents) {
+			a := reg.Agents[name]
+			if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
+				return Settings{}, fmt.Errorf("agent %q: max_retries must be within 0..%d, got %d", name, MaxRetriesCap, *a.MaxRetries)
+			}
+			if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
+				return Settings{}, fmt.Errorf("agent %q: initial_backoff_ms must be within 1..%d, got %d", name, MaxInitialBackoffMs, *a.InitialBackoffMs)
+			}
+		}
 	}
 	return s, nil
 }

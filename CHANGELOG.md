@@ -1,3 +1,21 @@
+## [4.6.0] - 2026-06-19
+
+Robust rate-limit & backoff handling: exposed the existing LLM retry engine (exponential backoff with jitter + `Retry-After` honoring) through configuration and raised the default retry budget so transient 429/5xx rate-limits are absorbed before a review chunk fails.
+
+### Added
+
+- Configurable `max_retries` (0–10) and `initial_backoff_ms` (1–30000) retry tunables at the registry (global) tier and per-agent tier, resolving over the shared-settings precedence chain like `timeout_secs`. Per-agent overrides take effect per call without rebuilding the shared client.
+
+### Changed
+
+- Raised the default LLM retry budget for the review/resume fan-out from 3 attempts to 6 (`max_retries` 5) so sustained rate-limiting is retried with backoff before a chunk is marked failed. A 429 is still owned by the backoff path and never trips the Epic 4.5 circuit breaker.
+
+### Fixed
+
+- Clamped the first retry backoff sleep to the 30s ceiling (previously only subsequent sleeps were capped).
+
+*Shipped via /execute-epic (epic 4.6)*
+
 ## [Technical Debt] - 2026-06-19
 
 ### Fixed
