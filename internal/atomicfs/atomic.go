@@ -187,6 +187,14 @@ func swapStagedBackup(staged, bak, bakOld string) error {
 // renameFn is the swap primitive swapStagedBackup uses, indirected through a
 // package var so fault-injection tests can drive the failed-swap branch
 // deterministically. In production it is os.Rename.
+//
+// A second, independent renameFn seam lives in the fanout package
+// (reviewdir.go), guarding backupExisting's move-based swap. Despite the shared
+// name and doc shape the two vars are unrelated: patching fault-injection in
+// one does not affect the other. Neither covers fanout's backupCrossDevice
+// inner swap, which renames the staged copy into place via a direct os.Rename
+// that bypasses both seams — so cross-device inner-swap atomicity is not
+// fault-injectable through either var.
 var renameFn = os.Rename
 
 // CopyPath copies the regular file or directory tree at src to dst, preserving
