@@ -65,12 +65,18 @@ func WriteJSON(path string, v interface{}) error {
 // non-regular entries are skipped. Garbage-collecting older .bak state is the
 // caller's/user's job.
 func BackupToDotBak(src string) (string, error) {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		// A symlinked src is skipped (returns "", nil) rather than followed, so
+		// the link's target bytes are not silently backed up under the link's
+		// name. Lstat (not Stat) is what surfaces the symlink here.
+		return "", nil
 	}
 	bak := src + ".bak"
 	if err := os.RemoveAll(bak); err != nil {
