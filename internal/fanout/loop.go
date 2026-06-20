@@ -126,6 +126,7 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		}
 		l.res.Turns++
 		l.res.addUsage(resp.Usage)
+		l.res.addCallRecords(resp.CallRecords)
 		l.messages = append(l.messages, resp.Message)
 
 		// Final message (no tool_calls): the model finished within budget.
@@ -279,9 +280,10 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 		}
 		return l.finalize(status, err)
 	}
-	// The final-answer call is unbudgeted as a turn, but its tokens are real and
-	// must count toward the agent's usage total.
+	// The final-answer call is unbudgeted as a turn, but its tokens and HTTP
+	// attempts are real and must count toward the agent's usage and call telemetry.
 	l.res.addUsage(resp.Usage)
+	l.res.addCallRecords(resp.CallRecords)
 	l.res.Content = derefContent(resp.Message.Content)
 	l.tr.RecordFinal(l.res.Turns, l.res.Content)
 	return l.finalize(StatusOK, nil)
