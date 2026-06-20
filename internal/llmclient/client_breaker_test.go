@@ -359,7 +359,7 @@ func TestBreaker_PanicInDispatch_ProbeNotLeaked(t *testing.T) {
 	ctx := breakerCtx("panic-provider")
 
 	func() {
-		defer func() { recover() }()
+		defer func() { _ = recover() }()
 		_, _ = c.Complete(ctx, inv)
 	}()
 
