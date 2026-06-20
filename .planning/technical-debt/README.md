@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 16 | 0 |
-| LOW | 0 | 16 | 0 |
+| LOW | 2 | 16 | 0 |
 
 
-**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 33 | **Resolved Items:** 0 | **Total Items:** 33
+**Last Modified:** 2026-06-19 | **Open Items:** 2 | **Deferred Items:** 33 | **Resolved Items:** 0 | **Total Items:** 35
 
 ## Directory Structure
 
@@ -32,6 +32,13 @@ technical-debt/
 2. **Larger items**: Create a new document in `sprints/pending/`
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
+
+### [2026-06-19] From Sprint: epic-4.6
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/fanout/engine.go:458 | The per-agent effective retry budget (max_retries/initial_backoff_ms) is applied silently; the "invoking agent" debug log omits it, so diagnosing rate-limit retry behavior in production requires inference. | Add max_retries and initial_backoff_ms to the agentLogger.Debug("invoking agent", ...) fields. | CROSS_CUTTING | 15 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/verify/invoke.go:118 | A skeptic that leaves max_retries unset gets the bare shared-client default budget (2), not the resolved global default (5) the review path delivers, because buildSkepticAgent has no access to resolved Settings — an inconsistency between the verify and review paths (consistent with how skeptic TimeoutSecs already ignores global Settings, and documented in the code comment). | Thread resolved Settings into the verify invoke path so buildSkepticAgent can resolve retry via EffectiveMaxRetries like buildAgent, or accept the documented bare-client fallback as intended. | INTEGRATION | 30 | execute-epic-independent |
 
 ### [2026-06-19] From Sprint: 4.5_circuit_breaker
 
