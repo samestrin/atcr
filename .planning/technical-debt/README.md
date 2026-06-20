@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 19 | 0 |
-| LOW | 2 | 17 | 0 |
+| LOW | 5 | 17 | 0 |
 
 
-**Last Modified:** 2026-06-20 | **Open Items:** 2 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 39
+**Last Modified:** 2026-06-20 | **Open Items:** 5 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 42
 
 ## Directory Structure
 
@@ -32,6 +32,14 @@ technical-debt/
 2. **Larger items**: Create a new document in `sprints/pending/`
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
+
+### [2026-06-20] From Sprint: epic-4.9
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 4 | [ ] | LOW | internal/fanout/secrets.go:28 | SecretValues resolves os.Getenv only at redactor-construction time, so a key set or rotated after correlateAndRedact/reviewContext runs will not be added to the exact-value scrub list and could leak verbatim. | Document the construction-time snapshot contract explicitly as a known limitation; acceptable given keys are resolved before any provider call. | EDGE_CASES | 5 | execute-epic-independent |
+| 4 | [ ] | LOW | internal/fanout/secrets.go:18 | The minSecretLen=8 guard admits any 8-39 char misconfigured/self-hosted key value into the verbatim ReplaceAll scrub list, so a short generic key could over-redact unrelated log substrings that contain it. | Accept the documented tradeoff (real provider keys are 32+); if self-hosted short keys become a concern, raise the floor or scope the verbatim match to header-adjacent contexts. | EDGE_CASES | 15 | execute-epic-independent |
+| 4 | [ ] | LOW | internal/fanout/secrets.go:24 | SecretValues silently skips both unset and sub-8-char env values with no diagnostic, so an operator who fat-fingers a key env name or sets a too-short test key gets no signal that exact-value redaction is inactive for that slot. | Optionally emit a debug-level (never the value) note when a configured APIKeyEnv resolves empty or below the floor, so a misconfigured redaction path is observable. | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
 
