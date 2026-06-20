@@ -473,7 +473,7 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 		agentLogger.Warn("tools-enabled agent has no provider set; circuit breaker bypassed", "agent", a.Name)
 	}
 	ctx = circuitbreaker.NewContext(ctx, a.Provider)
-	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
+	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model, "max_retries", a.MaxRetries, "initial_backoff_ms", a.InitialBackoffMs)
 
 	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch
 	// (including any tool loop). The per-agent API-call count and outcome tally
