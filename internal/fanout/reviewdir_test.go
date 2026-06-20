@@ -283,7 +283,7 @@ func TestForceBackupOutputDir_RefusesForeignBak(t *testing.T) {
 	require.NoError(t, os.MkdirAll(foreign, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(foreign, "important.txt"), []byte("do not delete"), 0o644))
 
-	err := forceBackupOutputDir(dir)
+	_, err := forceBackupOutputDir(dir)
 	require.Error(t, err, "must refuse to clobber a foreign <dir>.bak")
 	assert.Contains(t, err.Error(), "atcr")
 	// The foreign backup and its contents survive untouched.
@@ -308,7 +308,8 @@ func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("old"), 0o644))
 
-	require.NoError(t, forceBackupOutputDir(dir))
+	_, err := forceBackupOutputDir(dir)
+	require.NoError(t, err)
 	// dir was moved aside to .bak; the prior generation is gone.
 	data, err := os.ReadFile(filepath.Join(prior, "report.json"))
 	require.NoError(t, err)

@@ -293,41 +293,42 @@ func backupExisting(path string) (string, error) {
 
 // forceBackupReviewDir backs up an existing managed review directory for id
 // before --force scaffolds a fresh one (Epic 4.7 AC2). A non-existent directory
-// is a no-op, so --force is harmless when there is nothing to overwrite.
-func forceBackupReviewDir(root, id string) error {
+// is a no-op, so --force is harmless when there is nothing to overwrite. Returns
+// the backup path when a backup was created, or "" when there was nothing to
+// back up.
+func forceBackupReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return "", nil
 	} else if err != nil {
-		return fmt.Errorf("checking review directory before --force backup: %w", err)
+		return "", fmt.Errorf("checking review directory before --force backup: %w", err)
 	}
-	_, err := backupExisting(dir)
-	return err
+	return backupExisting(dir)
 }
 
 // forceBackupOutputDir backs up a non-empty --output-dir before --force scaffolds
 // into it (Epic 4.7 AC2). An absent or empty target is a no-op: ScaffoldOutputDir
-// already accepts those, so there is nothing to preserve.
-func forceBackupOutputDir(dir string) error {
+// already accepts those, so there is nothing to preserve. Returns the backup path
+// when a backup was created, or "" when there was nothing to back up.
+func forceBackupOutputDir(dir string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return fmt.Errorf("checking output directory before --force backup: %w", err)
+		return "", fmt.Errorf("checking output directory before --force backup: %w", err)
 	}
 	if len(entries) == 0 {
-		return nil
+		return "", nil
 	}
 	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
 	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
 	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
 	// backup atcr did not create (Epic 4.7: never silently delete user data).
 	if err := guardForeignBackup(dir + ".bak"); err != nil {
-		return err
+		return "", err
 	}
-	_, err = backupExisting(dir)
-	return err
+	return backupExisting(dir)
 }
 
 // guardForeignBackup returns an error if backup exists but was not created by
