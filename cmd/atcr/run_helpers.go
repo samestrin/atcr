@@ -12,16 +12,19 @@ import (
 
 // correlateAndRedact tags ctx's logger with the review id and installs a
 // sink-level redactor rooted at repo. From the returned context on, every
-// downstream log line is review_id-correlated (AC9), has secret-shaped tokens
-// scrubbed (AC5), and has absolute paths under repo relativized (AC6). The repo
-// root is resolved to an absolute path first because the CLI default repo is "."
-// and path relativization no-ops on ".".
+// downstream log line is review_id-correlated (AC9), has the configured secret
+// values and secret-shaped tokens scrubbed (AC5; epic 4.9 makes the exact-value
+// scrub live for non-sk-/non-Bearer keys), and has absolute paths under repo
+// relativized (AC6). The repo root is resolved to an absolute path first because
+// the CLI default repo is "." and path relativization no-ops on ".".
 //
-// Both the fresh-review (runReview) and resume (runResume) paths call this so the
-// correlation + redaction contract cannot drift between them.
-func correlateAndRedact(ctx context.Context, id, repo string) context.Context {
+// secrets are the resolved registry API key values (see PreparedReview.SecretValues);
+// they are passed by value into NewRedactor and never logged. Both the fresh-review
+// (runReview) and resume (runResume) paths call this so the correlation + redaction
+// contract cannot drift between them.
+func correlateAndRedact(ctx context.Context, id, repo string, secrets ...string) context.Context {
 	ctx = correlateReviewID(ctx, id)
-	return log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(resolveRedactRoot(ctx, repo))))
+	return log.NewContext(ctx, log.WithRedactor(log.FromContext(ctx), log.NewRedactor(resolveRedactRoot(ctx, repo), secrets...)))
 }
 
 // reportInterrupt records a SIGINT/SIGTERM that landed mid-fan-out: it emits the

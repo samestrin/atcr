@@ -121,9 +121,10 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// Correlate every downstream log line by review id and enforce sink-level
 	// redaction (scrub secret-shaped tokens, relativize absolute paths under the
 	// repo root) for the resumed fan-out and reconcile — parity with the fresh
-	// review path so the resume flow never leaks secrets or absolute paths. Shared
-	// with runReview via correlateAndRedact so the contract can't drift.
-	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo)
+	// review path so the resume flow never leaks secrets or absolute paths,
+	// including the resolved registry key values (epic 4.9). Shared with runReview
+	// via correlateAndRedact so the contract can't drift.
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, prep.SecretValues()...)
 
 	// AC2: nothing pending — re-run reconciliation against the complete review and
 	// exit clean, never touching a provider. Clear any stale interrupt marker first

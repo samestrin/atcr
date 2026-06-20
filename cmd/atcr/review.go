@@ -198,9 +198,11 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// PrepareReview). correlateAndRedact attaches it to the context logger so every
 	// downstream stage — execute, reconcile, verify — emits log lines greppable by
 	// review_id (AC9), and installs sink-level redaction (AC5/AC6) for the whole
-	// review. Shared with runResume so the contract can't drift between paths.
-	// From here on use this correlated ctx, never cmd.Context() again.
-	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo)
+	// review — including the resolved registry key values (epic 4.9) so non-sk-/
+	// non-Bearer keys are scrubbed by exact value, not only by token shape. Shared
+	// with runResume so the contract can't drift between paths. From here on use
+	// this correlated ctx, never cmd.Context() again.
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, prep.SecretValues()...)
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
 		return err // no slot can authenticate → exit 2 before any provider call
