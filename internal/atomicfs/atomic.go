@@ -92,6 +92,13 @@ func BackupToDotBak(src string) (string, error) {
 	bakOld := src + ".bak.old"
 	dir := filepath.Dir(src)
 
+	// Clean up any .bak.tmp-* staging temps a prior SIGKILL'd run may have left.
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*"+filepath.Base(bak)+".tmp-*")); len(matches) > 0 {
+		for _, m := range matches {
+			_ = os.RemoveAll(m)
+		}
+	}
+
 	// Reconcile a stale .bak.old a prior crashed swap may have left, so a retry
 	// starts clean and the one-generation contract holds across crash-then-retry.
 	if err := os.RemoveAll(bakOld); err != nil && !errors.Is(err, fs.ErrNotExist) {
