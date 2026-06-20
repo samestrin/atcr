@@ -186,6 +186,32 @@ func TestWriteFileAtomic_OrphanedTempDoesNotCorruptTarget(t *testing.T) {
 	}
 }
 
+// TestBackupToDotBak_StaleStagingTempCleanedAtEntry verifies that a .bak.tmp-*
+// artifact left by a prior SIGKILL'd run is removed at the start of the next
+// BackupToDotBak call (before a new staging temp is created).
+func TestBackupToDotBak_StaleStagingTempCleanedAtEntry(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "verification.json")
+	if err := os.WriteFile(src, []byte("current\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Simulate a stale staging temp left by a prior crashed run.
+	staleName := "verification.json.bak.tmp-orphan"
+	stale := filepath.Join(dir, staleName)
+	if err := os.WriteFile(stale, []byte("stale-staging\n"), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+
+	if _, err := BackupToDotBak(src); err != nil {
+		t.Fatalf("BackupToDotBak: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale staging temp must be cleaned up at entry, stat err = %v", err)
+	}
+}
+
 func TestBackupToDotBak_File(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "verification.json")
