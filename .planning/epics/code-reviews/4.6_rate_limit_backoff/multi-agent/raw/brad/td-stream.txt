@@ -1,0 +1,2 @@
+MEDIUM|internal/fanout/engine.go:456|Coupled retry fields prevent disabling retries alone|Decouple sentinel or use pointer fields|correctness|10|InitialBackoffMs > 0 gates override; max_retries:0 alone is ignored|bruce
+LOW|internal/llmclient/retry_override.go:28|Missing validation for initialBackoff duration|Add duration clamp or validation|error-handling|5|negative durations bypass WithRetryOverride clamp|bruce

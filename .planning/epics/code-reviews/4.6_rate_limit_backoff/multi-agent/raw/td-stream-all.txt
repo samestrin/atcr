@@ -1,0 +1,8 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|internal/fanout/engine.go:450|Incorrect sentinel for retry override|Change `a.InitialBackoffMs > 0` to check if the budget was explicitly resolved|correctness|15|If `MaxRetries` is 0 but `InitialBackoffMs` is 0 (bare agent), the override is skipped, but if `InitialBackoffMs` is > 0, it applies. This logic fails if a user explicitly wants `MaxRetries: 0` and `InitialBackoffMs: 500`.|otto
+LOW|internal/llmclient/retry_override.go:35|context.WithValue uses unexported key struct; safe but non-idiomatic|Consider using a typed context key variable for clarity|maintainability|5|retryOverrideKey{} as key in WithValue|bruce
+MEDIUM|internal/llmclient/retry_override.go:26|Exported WithRetryOverride lacks upper-bound validation for maxRetries and initialBackoff|Clamp maxRetries to MaxRetriesCap and validate initialBackoff to prevent resource exhaustion|security|10|func WithRetryOverride accepts unbounded maxRetries and initialBackoff without clamping|greta
+MEDIUM|internal/fanout/engine.go:456|Coupled retry fields prevent disabling retries alone|Decouple sentinel or use pointer fields|correctness|10|InitialBackoffMs > 0 gates override; max_retries:0 alone is ignored|bruce
+LOW|internal/llmclient/retry_override.go:28|Missing validation for initialBackoff duration|Add duration clamp or validation|error-handling|5|negative durations bypass WithRetryOverride clamp|bruce

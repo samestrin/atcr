@@ -117,3 +117,129 @@ func TestHandleVerify_RegistryPathTraversalRejected(t *testing.T) {
 		assert.Contains(t, msg, "invalid registryPath", "registryPath %q must be rejected", bad)
 	}
 }
+
+// TestHandleVerify_InvalidMinSeverity: an out-of-vocabulary minSeverity is
+// rejected before any work, surfacing the structured severity error (handleVerify
+// validates minSeverity via parseOptionalSeverity first — AC 04-03/04-04).
+func TestHandleVerify_InvalidMinSeverity(t *testing.T) {
+	root := t.TempDir()
+	writeReviewConfig(t, root)
+	id := verifyReviewFixture(t, root, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Reviewers: []string{"greta"}},
+	})
+	cs := connectTest(t, root, fakeCompleter{})
+
+	msg := callErr(t, cs, ToolVerify, map[string]any{"id_or_path": id, "minSeverity": "SEVERE"})
+	assert.Contains(t, msg, "invalid severity")
+}
+
+// TestHandleVerify_InvalidFailOn: an out-of-vocabulary failOn is rejected with
+// the structured severity error before any verification work runs.
+func TestHandleVerify_InvalidFailOn(t *testing.T) {
+	root := t.TempDir()
+	writeReviewConfig(t, root)
+	id := verifyReviewFixture(t, root, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Reviewers: []string{"greta"}},
+	})
+	cs := connectTest(t, root, fakeCompleter{})
+
+	msg := callErr(t, cs, ToolVerify, map[string]any{"id_or_path": id, "failOn": "NOPE"})
+	assert.Contains(t, msg, "invalid severity")
+}
+
+// TestHandleVerify_RequireVerifiedWithoutFailOn: require_verified without a
+// failOn gate is a fail-fast error — a strict gate that never runs gives false
+// confidence (mirrors handleReconcile's require_verified rule).
+func TestHandleVerify_RequireVerifiedWithoutFailOn(t *testing.T) {
+	root := t.TempDir()
+	writeReviewConfig(t, root)
+	id := verifyReviewFixture(t, root, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Reviewers: []string{"greta"}},
+	})
+	cs := connectTest(t, root, fakeCompleter{})
+
+	msg := callErr(t, cs, ToolVerify, map[string]any{"id_or_path": id, "requireVerified": true})
+	assert.Contains(t, msg, "requireVerified requires failOn")
+}
+
+// TestHandleVerify_InvalidReviewID: a path-traversal id_or_path is rejected by
+// resolveReviewDir before any verification work (path-containment invariant).
+func TestHandleVerify_InvalidReviewID(t *testing.T) {
+	root := t.TempDir()
+	writeReviewConfig(t, root)
+	cs := connectTest(t, root, fakeCompleter{})
+
+	msg := callErr(t, cs, ToolVerify, map[string]any{"id_or_path": "../../etc/passwd"})
+	assert.Contains(t, msg, "invalid review id")
+}
+
+// TestHandleVerify_GateStatus: with a failOn threshold the result carries a
+// GateStatus computed from the reconciled findings. A HIGH finding fails a LOW
+// gate, so Pass is false and the failing count is reported (AC 04-03 Scenario 7).
+func TestHandleVerify_GateStatus(t *testing.T) {
+	root := t.TempDir()
+	writeReviewConfig(t, root)
+	id := verifyReviewFixture(t, root, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "MEDIUM", Reviewers: []string{"greta"}},
+	})
+	cs := connectTest(t, root, fakeCompleter{})
+
+	out := callOK[VerifyResult](t, cs, ToolVerify, map[string]any{"id_or_path": id, "failOn": "LOW"})
+	require.NotNil(t, out.GateStatus, "a failOn threshold must populate GateStatus")
+	assert.Equal(t, "LOW", out.GateStatus.FailOn)
+	assert.False(t, out.GateStatus.Pass, "a HIGH finding fails a LOW gate")
+	assert.GreaterOrEqual(t, out.GateStatus.FailingCount, 1)
+}
+
+// TestParseOptionalSeverity exercises the optional-severity canonicalizer
+// directly: blank (and whitespace) is the unset sentinel, a valid token
+// round-trips, and an unknown token is a structured error.
+func TestParseOptionalSeverity(t *testing.T) {
+	got, err := parseOptionalSeverity("  ")
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "blank/whitespace means unset")
+
+	got, err = parseOptionalSeverity("HIGH")
+	require.NoError(t, err)
+	assert.Equal(t, "HIGH", got)
+
+	_, err = parseOptionalSeverity("SEVERE")
+	require.Error(t, err, "an unknown severity must be a structured error")
+	assert.Contains(t, err.Error(), "invalid severity")
+}
+
+// TestLoadVerifyRegistry_ValidRelativePath: a relative registryPath contained
+// within the project root is loaded (the success branch of the containment
+// check), not rejected as a traversal.
+func TestLoadVerifyRegistry_ValidRelativePath(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "cfg")
+	require.NoError(t, os.MkdirAll(sub, 0o755))
+	regYAML := `providers:
+  p:
+    api_key_env: ATCR_TEST_KEY
+    base_url: https://example.invalid/v1
+agents:
+  greta:
+    provider: p
+    model: m-greta
+`
+	require.NoError(t, os.WriteFile(filepath.Join(sub, "registry.yaml"), []byte(regYAML), 0o644))
+	e := &engine{root: root}
+
+	reg, err := e.loadVerifyRegistry("cfg/registry.yaml")
+	require.NoError(t, err, "a contained relative registryPath must load")
+	require.NotNil(t, reg)
+}
+
+// TestLoadVerifyRegistry_DefaultConfigError: with no explicit registryPath and
+// no resolvable review config (isolated HOME, no registry anywhere), the default
+// LoadReviewConfig failure surfaces as the handler error rather than a nil registry.
+func TestLoadVerifyRegistry_DefaultConfigError(t *testing.T) {
+	isolateUserConfig(t)
+	root := t.TempDir()
+	e := &engine{root: root}
+
+	_, err := e.loadVerifyRegistry("")
+	require.Error(t, err, "no resolvable registry must surface the config-load error")
+}
