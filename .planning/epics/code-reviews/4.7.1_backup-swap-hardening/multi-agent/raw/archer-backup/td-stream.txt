@@ -1,0 +1,10 @@
+LOW|internal/atomicfs/atomic.go:120|Unused variable in error message|Remove unused 'got' variable|maintainability|5|Error variable 'got' from ReadFile is unused|REVIEWER
+LOW|internal/fanout/reviewdir.go:320|Inefficient directory cleanup|Use os.RemoveAll for empty dirs|performance|10|Empty dir removal uses custom logic, should use os.RemoveAll|REVIEWER
+HIGH|internal/atomicfs/atomic.go:75|Missing error check on Lstat result|Check errors.Is for fs.ErrNotExist|correctness|5|Lstat error handling only checks for fs.ErrNotExist, ignores other errors|REVIEWER
+HIGH|internal/fanout/reviewdir.go:295|Unsafe path concatenation|Use filepath.Join for backup paths|security|5|String concatenation for file paths may cause issues on different OS|REVIEWER
+LOW|internal/atomicfs/atomic.go:135|Redundant error check|Remove duplicate error check|maintainability|3|Duplicate check for os.Lstat(bak) after already checking in if block|REVIEWER
+MEDIUM|internal/fanout/reviewdir.go:310|Missing error context|Add context to RemoveAll error|error-handling|5|Error from os.RemoveAll lacks path context for debugging|REVIEWER
+LOW|internal/fanout/reviewdir.go:300|Inefficient string operations|Use fmt.Sprintf for error messages|maintainability|4|Repeated string concatenation in error messages reduces readability|REVIEWER
+HIGH|internal/atomicfs/atomic.go:85|Unsafe error handling|Check errors.Is for syscall.EXDEV|correctness|5|EXDEV error check uses direct comparison instead of errors.Is|REVIEWER
+MEDIUM|internal/fanout/reviewdir.go:280|Missing error validation|Validate path before Rename|error-handling|5|Path validation missing before os.Rename call|REVIEWER
+LOW|internal/atomicfs/atomic.go:110|Unused error variable|Remove unused error variable|maintainability|3|Error variable 'err' from os.Lstat is unused in if block|REVIEWER

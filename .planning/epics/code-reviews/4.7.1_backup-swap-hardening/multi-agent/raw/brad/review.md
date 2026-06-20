@@ -1,0 +1,2 @@
+MEDIUM|internal/atomicfs/atomic.go:94|Missing entry-time cleanup of .bak.tmp-* stragglers|Add glob/read-dir to remove .bak.tmp-* siblings at start|correctness|10|Sprint plan requires reconciling .bak.tmp-* at entry; only .bak.old is cleared|bruce
+MEDIUM|internal/atomicfs/atomic.go:155|Staged temp file/dir leaks on swap failure|Add os.RemoveAll(staged) before returning error|error-handling|5|swapStagedBackup returns error without cleaning staged|bruce

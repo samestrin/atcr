@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-19-b68e88
-question: "Should guardForeignBackup be extended to cover tool-internal transient temp names (.bak.old, .bak.new) alongside the user-visible .bak name?"
-created: 2026-06-19
+id: mem-2026-06-20-fbeb0e
+question: "Is backupCrossDevice's inner os.Rename(backupNew, backup) safe / same-filesystem, and should it be guarded?"
+created: 2026-06-20
 last_retrieved: ""
 sprints: []
 files: [internal/fanout/reviewdir.go]
-tags: [clarifications, epic-4.7.1_backup-swap-hardening, architecture, guardForeignBackup, backup, crash-safety]
+tags: [clarifications, epic-4.7.1_backup-swap-hardening, architecture, backup, atomic-swap, exdev, wont-fix]
 retrievals: 0
 status: active
-type: epic clarifications 2026-06-19
+type: clarifications
 ---
 
-# Should guardForeignBackup be extended to cover tool-internal
+# Is backupCrossDevice's inner os.Rename(backupNew, backup) sa
 
 ## Decision
 
-Keep guardForeignBackup scoped to .bak only. The guard's heuristic checks for atcr review-tree markers (manifest.json + reviewSubdirs) to distinguish user-owned from atcr-owned directories. That test is meaningful for .bak (users could independently create directories with that suffix) but not for .bak.old or .bak.new — no user toolchain produces those names. Applying the guard to tool-internal temp names would be dead-weight complexity with zero safety benefit. The correct pattern is: unconditional RemoveAll of stale .bak.old/.bak.new stragglers at the start of the backup call, before the rename chain begins. This scoping principle generalizes: guardForeignBackup applies only to names a user might plausibly create independently; pure tool-internal temp names get unconditional cleanup instead.
+Same-fs by construction — no guard needed (won't-fix). In internal/fanout/reviewdir.go, backup := path + ".bak" and backupNew := path + ".bak.new" are same-directory siblings of path, so backupCrossDevice's inner os.Rename(backupNew, backup) is same-filesystem and atomic in every present-day call path. There is no construction site where the two staging paths could diverge across mounts; the EXDEV boundary that triggers this fallback is between path and its .bak sibling (path being a mountpoint), not between the two .bak* staging siblings. A runtime guard asserting same-fs would be unreachable dead code today (only a hypothetical future refactor relocating staging could break the invariant), so per the project's minimum-code/nothing-speculative rule it is closed won't-fix. The invariant is already documented at the function level (reviewdir.go:415-419: "same-fs staging sibling … next to backup on the parent filesystem", "atomic same-fs swap").
 
 ## Rationale
 

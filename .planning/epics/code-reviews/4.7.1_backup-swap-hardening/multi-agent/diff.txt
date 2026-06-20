@@ -1,0 +1,599 @@
+diff --git a/internal/atomicfs/atomic.go b/internal/atomicfs/atomic.go
+index 314a47e..138b9a9 100644
+--- a/internal/atomicfs/atomic.go
++++ b/internal/atomicfs/atomic.go
+@@ -65,10 +65,15 @@ func WriteJSON(path string, v interface{}) error {
+ // non-regular entries are skipped. Garbage-collecting older .bak state is the
+ // caller's/user's job.
+ //
+-// The copy is staged into a temp sibling (<src>.bak.tmp-*) and then renamed
+-// over <src>.bak, with the destructive RemoveAll(<src>.bak) deferred until just
+-// before the rename. A crash or interruption during the copy therefore leaves
+-// the prior .bak generation intact.
++// The copy is staged into a temp sibling (<src>.bak.tmp-*) and then swapped over
++// <src>.bak crash-safely (Epic 4.7.1): the prior generation is renamed aside to
++// <src>.bak.old (not destroyed) before the staged copy is renamed into place, and
++// is removed only after a successful swap / restored on a failed one. Staging the
++// prior generation aside happens only after the copy completes, so a failed copy
++// leaves the prior .bak intact, and restoring on a failed rename keeps it intact
++// across a failed swap too — an interrupted backup never leaves the user with
++// neither generation. A stale <src>.bak.old from a prior crashed swap is
++// reconciled away at entry.
+ func BackupToDotBak(src string) (string, error) {
+ 	info, err := os.Lstat(src)
+ 	if errors.Is(err, fs.ErrNotExist) {
+@@ -84,10 +89,18 @@ func BackupToDotBak(src string) (string, error) {
+ 		return "", nil
+ 	}
+ 	bak := src + ".bak"
++	bakOld := src + ".bak.old"
+ 	dir := filepath.Dir(src)
+ 
+-	// Stage the backup into a temp sibling, then atomically swap it over bak.
+-	// If the copy is interrupted, the prior .bak remains untouched.
++	// Reconcile a stale .bak.old a prior crashed swap may have left, so a retry
++	// starts clean and the one-generation contract holds across crash-then-retry.
++	if err := os.RemoveAll(bakOld); err != nil {
++		return "", fmt.Errorf("clearing stale staging backup %s: %w", bakOld, err)
++	}
++
++	// Stage the backup into a temp sibling. If the copy is interrupted, the prior
++	// .bak is not touched (it is staged aside only after the copy completes).
++	var staged string
+ 	if info.IsDir() {
+ 		tmpDir, err := os.MkdirTemp(dir, filepath.Base(bak)+".tmp-*")
+ 		if err != nil {
+@@ -98,12 +111,7 @@ func BackupToDotBak(src string) (string, error) {
+ 		if err := copyTree(src, tmpDir); err != nil {
+ 			return "", fmt.Errorf("backing up %s: %w", src, err)
+ 		}
+-		if err := os.RemoveAll(bak); err != nil {
+-			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
+-		}
+-		if err := os.Rename(tmpDir, bak); err != nil {
+-			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
+-		}
++		staged = tmpDir
+ 	} else {
+ 		tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(bak)+".tmp-*")
+ 		if err != nil {
+@@ -119,14 +127,77 @@ func BackupToDotBak(src string) (string, error) {
+ 		if err := copyFile(src, tmpName, info.Mode().Perm()); err != nil {
+ 			return "", fmt.Errorf("backing up %s: %w", src, err)
+ 		}
+-		if err := os.RemoveAll(bak); err != nil {
+-			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
++		staged = tmpName
++	}
++
++	if err := swapStagedBackup(staged, bak, bakOld); err != nil {
++		return "", err
++	}
++	return bak, nil
++}
++
++// swapStagedBackup atomically replaces bak with the already-staged copy at
++// staged while preserving the prior generation across a failed swap (Epic
++// 4.7.1). The prior bak (if any) is renamed aside to bakOld rather than
++// destroyed; on a successful rename the superseded bakOld is removed, and on a
++// failed rename it is restored to bak so the caller is never left with neither
++// generation. This mirrors backupExisting's move-based crash-safe swap for the
++// copy-based path. renameFn is indirected through a package var so fault-injection
++// tests can drive the failed-swap branch deterministically; in production it is
++// os.Rename.
++func swapStagedBackup(staged, bak, bakOld string) error {
++	priorStaged := false
++	if _, err := os.Lstat(bak); err == nil {
++		if err := os.Rename(bak, bakOld); err != nil {
++			return fmt.Errorf("staging prior backup %s aside: %w", bak, err)
+ 		}
+-		if err := os.Rename(tmpName, bak); err != nil {
+-			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
++		priorStaged = true
++	} else if !errors.Is(err, fs.ErrNotExist) {
++		return fmt.Errorf("checking prior backup %s: %w", bak, err)
++	}
++
++	if err := renameFn(staged, bak); err != nil {
++		if priorStaged {
++			// Best-effort restore. A restore failure cannot un-fail the swap, but
++			// the prior data still survives under bakOld for the next entry-time
++			// reconcile / manual recovery, so the swap error is what propagates.
++			_ = os.Rename(bakOld, bak)
+ 		}
++		return fmt.Errorf("renaming staged backup to %s: %w", bak, err)
+ 	}
+-	return bak, nil
++
++	if priorStaged {
++		if err := os.RemoveAll(bakOld); err != nil {
++			return fmt.Errorf("removing superseded backup %s: %w", bakOld, err)
++		}
++	}
++	return nil
++}
++
++// renameFn is the swap primitive swapStagedBackup uses, indirected through a
++// package var so fault-injection tests can drive the failed-swap branch
++// deterministically. In production it is os.Rename.
++var renameFn = os.Rename
++
++// CopyPath copies the regular file or directory tree at src to dst, preserving
++// per-entry permissions; non-regular entries (symlinks, devices) are skipped, as
++// in BackupToDotBak. For a directory, dst is created by the copy (it must not
++// already exist). This is the copy primitive a caller uses to replicate a move
++// across a filesystem boundary when os.Rename returns EXDEV — the destination is
++// expected to be a fresh same-filesystem staging path that is then renamed into
++// place. A missing or non-regular/non-directory src is an error.
++func CopyPath(src, dst string) error {
++	info, err := os.Lstat(src)
++	if err != nil {
++		return err
++	}
++	if info.IsDir() {
++		return copyTree(src, dst)
++	}
++	if !info.Mode().IsRegular() {
++		return fmt.Errorf("copy %s: not a regular file or directory", src)
++	}
++	return copyFile(src, dst, info.Mode().Perm())
+ }
+ 
+ // copyFile copies a single regular file's bytes from src to dst with perm.
+diff --git a/internal/atomicfs/atomic_test.go b/internal/atomicfs/atomic_test.go
+index 46bfd0b..6f13199 100644
+--- a/internal/atomicfs/atomic_test.go
++++ b/internal/atomicfs/atomic_test.go
+@@ -444,3 +444,163 @@ func TestBackupToDotBak_NoStagingLeakAfterSuccess(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// TestBackupToDotBak_RenameFailurePreservesPriorBak is the Epic 4.7.1 AC4
++// rename-step fault test for the copy-based site: the copy succeeds but the swap
++// (staged->bak rename) fails, and the prior .bak must survive intact with no
++// staging artifacts left behind. The failure is injected through the renameFn
++// seam so the otherwise-microsecond same-dir rename window is deterministic.
++func TestBackupToDotBak_RenameFailurePreservesPriorBak(t *testing.T) {
++	for _, tc := range []struct {
++		name  string
++		isDir bool
++	}{
++		{"directory", true},
++		{"file", false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			dir := t.TempDir()
++			src := filepath.Join(dir, "review")
++			bak := src + ".bak"
++
++			if tc.isDir {
++				if err := os.MkdirAll(src, 0o755); err != nil {
++					t.Fatalf("seed src dir: %v", err)
++				}
++				if err := os.WriteFile(filepath.Join(src, "new.txt"), []byte("new\n"), 0o644); err != nil {
++					t.Fatalf("seed src content: %v", err)
++				}
++				if err := os.MkdirAll(bak, 0o755); err != nil {
++					t.Fatalf("seed prior .bak dir: %v", err)
++				}
++				if err := os.WriteFile(filepath.Join(bak, "prior.txt"), []byte("prior\n"), 0o644); err != nil {
++					t.Fatalf("seed prior .bak content: %v", err)
++				}
++			} else {
++				if err := os.WriteFile(src, []byte("new\n"), 0o644); err != nil {
++					t.Fatalf("seed src file: %v", err)
++				}
++				if err := os.WriteFile(bak, []byte("prior\n"), 0o644); err != nil {
++					t.Fatalf("seed prior .bak file: %v", err)
++				}
++			}
++
++			orig := renameFn
++			renameFn = func(_, _ string) error { return os.ErrPermission }
++			defer func() { renameFn = orig }()
++
++			if _, err := BackupToDotBak(src); err == nil {
++				t.Fatal("expected error on injected swap-rename failure, got nil")
++			}
++
++			// AC4: the prior .bak must survive the failed swap.
++			priorPath := bak
++			if tc.isDir {
++				priorPath = filepath.Join(bak, "prior.txt")
++			}
++			got, err := os.ReadFile(priorPath)
++			if err != nil {
++				t.Fatalf("prior .bak did not survive failed swap: %v", err)
++			}
++			if string(got) != "prior\n" {
++				t.Errorf("prior .bak corrupted after failed swap: %q", got)
++			}
++
++			// No atcr-owned staging artifact may leak.
++			entries, err := os.ReadDir(dir)
++			if err != nil {
++				t.Fatalf("ReadDir: %v", err)
++			}
++			for _, e := range entries {
++				if strings.Contains(e.Name(), ".bak.tmp-") {
++					t.Errorf("staging temp leaked after failed swap: %s", e.Name())
++				}
++				if strings.HasSuffix(e.Name(), ".bak.old") {
++					t.Errorf(".bak.old straggler leaked after failed swap: %s", e.Name())
++				}
++			}
++		})
++	}
++}
++
++// TestCopyPath_File verifies CopyPath copies a regular file's bytes and perms to
++// a fresh destination.
++func TestCopyPath_File(t *testing.T) {
++	dir := t.TempDir()
++	src := filepath.Join(dir, "src.txt")
++	if err := os.WriteFile(src, []byte("payload"), 0o640); err != nil {
++		t.Fatalf("write src: %v", err)
++	}
++	dst := filepath.Join(dir, "dst.txt")
++	if err := CopyPath(src, dst); err != nil {
++		t.Fatalf("CopyPath: %v", err)
++	}
++	data, err := os.ReadFile(dst)
++	if err != nil {
++		t.Fatalf("read dst: %v", err)
++	}
++	if string(data) != "payload" {
++		t.Errorf("content = %q, want payload", data)
++	}
++	fi, err := os.Stat(dst)
++	if err != nil {
++		t.Fatalf("stat dst: %v", err)
++	}
++	if fi.Mode().Perm() != 0o640 {
++		t.Errorf("perm = %v, want 0640", fi.Mode().Perm())
++	}
++}
++
++// TestCopyPath_Directory verifies CopyPath recreates a directory tree at a fresh
++// destination, preserving nested content.
++func TestCopyPath_Directory(t *testing.T) {
++	dir := t.TempDir()
++	src := filepath.Join(dir, "src")
++	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
++		t.Fatalf("mkdir: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(src, "sub", "f.txt"), []byte("nested"), 0o644); err != nil {
++		t.Fatalf("write: %v", err)
++	}
++	dst := filepath.Join(dir, "dst")
++	if err := CopyPath(src, dst); err != nil {
++		t.Fatalf("CopyPath: %v", err)
++	}
++	data, err := os.ReadFile(filepath.Join(dst, "sub", "f.txt"))
++	if err != nil {
++		t.Fatalf("read nested: %v", err)
++	}
++	if string(data) != "nested" {
++		t.Errorf("nested content = %q, want nested", data)
++	}
++}
++
++// TestCopyPath_MissingSourceErrors verifies CopyPath surfaces the Lstat error for
++// an absent source rather than silently succeeding.
++func TestCopyPath_MissingSourceErrors(t *testing.T) {
++	dir := t.TempDir()
++	if err := CopyPath(filepath.Join(dir, "nope"), filepath.Join(dir, "dst")); err == nil {
++		t.Fatal("expected error for missing source, got nil")
++	}
++}
++
++// TestCopyPath_NonRegularSourceErrors verifies CopyPath refuses a non-regular,
++// non-directory source (e.g. a symlink) instead of dereferencing it.
++func TestCopyPath_NonRegularSourceErrors(t *testing.T) {
++	dir := t.TempDir()
++	target := filepath.Join(dir, "target.txt")
++	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
++		t.Fatalf("write target: %v", err)
++	}
++	link := filepath.Join(dir, "link")
++	if err := os.Symlink(target, link); err != nil {
++		t.Skipf("symlink unsupported: %v", err)
++	}
++	err := CopyPath(link, filepath.Join(dir, "dst"))
++	if err == nil {
++		t.Fatal("expected error for symlink source, got nil")
++	}
++	if !strings.Contains(err.Error(), "not a regular file or directory") {
++		t.Errorf("error = %v, want 'not a regular file or directory'", err)
++	}
++}
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index c04a199..4e7d58f 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -36,7 +36,7 @@ var allowedInternalImports = map[string][]string{
+ 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+ 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+ 	"doctor":         {"llmclient", "registry"},
+-	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf)
++	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1)
+ 	"reconcile":      {"stream", "atomicfs"},
+ 	"scorecard":      {"llmclient", "reconcile", "fanout"},
+ 	"report":         {"stream", "reconcile"},
+diff --git a/internal/fanout/reviewdir.go b/internal/fanout/reviewdir.go
+index 34fad34..ff1d2bf 100644
+--- a/internal/fanout/reviewdir.go
++++ b/internal/fanout/reviewdir.go
+@@ -10,7 +10,9 @@ import (
+ 	"path/filepath"
+ 	"regexp"
+ 	"strings"
++	"syscall"
+ 
++	"github.com/samestrin/atcr/internal/atomicfs"
+ 	"github.com/samestrin/atcr/internal/payload"
+ )
+ 
+@@ -291,21 +293,114 @@ func ScaffoldOutputDir(dir string) (string, error) {
+ 
+ // backupExisting moves path aside to path+".bak" so a --force re-run preserves
+ // the prior review tree instead of destroying it, leaving the path vacant for a
+-// fresh scaffold. A pre-existing path+".bak" is removed first (os.Rename refuses
+-// to replace a non-empty directory), so --force keeps exactly one generation of
+-// backup — garbage-collecting older state is the user's responsibility (Epic
+-// 4.7: no automatic .bak GC). Returns the backup path.
++// fresh scaffold. --force keeps exactly one generation of backup —
++// garbage-collecting older state is the user's responsibility (Epic 4.7: no
++// automatic .bak GC). Returns the backup path.
++//
++// Crash-safe swap (Epic 4.7.1): the prior path+".bak" is renamed aside to
++// path+".bak.old" (not destroyed) before path is renamed onto path+".bak"; the
++// old generation is removed only after the swap succeeds, and is restored on any
++// failure — so an interrupted swap never leaves the user with neither the new
++// backup nor the prior one. When the path→.bak rename crosses a filesystem
++// boundary (EXDEV — possible when path is itself a mountpoint, so its parent-dir
++// sibling .bak is on a different mount), it falls back to copy-into-staging +
++// same-fs rename-swap + RemoveAll(path), replicating the move's vacate-path
++// postcondition. Stale atcr-owned staging artifacts (.bak.old/.bak.new) from a
++// prior crashed run are reconciled away at entry, so retries start clean and the
++// one-generation contract holds across a crash-then-retry sequence.
+ func backupExisting(path string) (string, error) {
+ 	backup := path + ".bak"
+-	if err := os.RemoveAll(backup); err != nil {
+-		return "", fmt.Errorf("removing stale backup %q: %w", backup, err)
++	backupOld := path + ".bak.old"
++	backupNew := path + ".bak.new"
++
++	// Reconcile stragglers a prior crashed swap may have left, so a retry starts
++	// from a clean slate and no atcr-owned staging artifact accumulates.
++	if err := os.RemoveAll(backupOld); err != nil {
++		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupOld, err)
++	}
++	if err := os.RemoveAll(backupNew); err != nil {
++		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupNew, err)
++	}
++
++	// Stage the prior generation aside instead of destroying it: a failed swap
++	// below restores it from .bak.old.
++	priorStaged := false
++	if _, err := os.Lstat(backup); err == nil {
++		if err := os.Rename(backup, backupOld); err != nil {
++			return "", fmt.Errorf("staging prior backup %q aside: %w", backup, err)
++		}
++		priorStaged = true
++	} else if !errors.Is(err, fs.ErrNotExist) {
++		return "", fmt.Errorf("checking prior backup %q: %w", backup, err)
+ 	}
+-	if err := os.Rename(path, backup); err != nil {
+-		return "", fmt.Errorf("backing up %q: %w", path, err)
++
++	// Swap the live tree into place as the new backup.
++	if err := renameFn(path, backup); err != nil {
++		if errors.Is(err, syscall.EXDEV) {
++			// path is on a different filesystem from its .bak sibling (path is a
++			// mountpoint): replicate the move with a same-fs copy + vacate.
++			if cerr := backupCrossDevice(path, backup, backupNew); cerr != nil {
++				restorePriorBackup(priorStaged, backupOld, backup)
++				return "", cerr
++			}
++		} else {
++			restorePriorBackup(priorStaged, backupOld, backup)
++			return "", fmt.Errorf("backing up %q: %w", path, err)
++		}
++	}
++
++	// Swap succeeded — the prior generation staged in .bak.old is now superseded.
++	if priorStaged {
++		if err := os.RemoveAll(backupOld); err != nil {
++			return "", fmt.Errorf("removing superseded backup %q: %w", backupOld, err)
++		}
+ 	}
+ 	return backup, nil
+ }
+ 
++// renameFn is the swap primitive backupExisting uses, indirected through a
++// package var so fault-injection tests can drive the failed-swap and
++// cross-filesystem (EXDEV) branches deterministically — the EXDEV branch cannot
++// be reached by real-fs tricks without a cross-mount in CI. In production it is
++// os.Rename.
++var renameFn = os.Rename
++
++// restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
++// after a failed swap, so a failure leaves the user with the prior backup intact.
++// Best-effort: a restore failure cannot un-fail the swap, but the prior data
++// still survives under .bak.old for manual recovery, so the error is not
++// propagated over the swap failure that is the caller's real concern.
++func restorePriorBackup(staged bool, backupOld, backup string) {
++	if !staged {
++		return
++	}
++	_ = os.Rename(backupOld, backup)
++}
++
++// backupCrossDevice replicates backupExisting's move across a filesystem boundary
++// (hit when path is a mountpoint, so os.Rename(path, backup) returns EXDEV): it
++// copies path's tree into a fresh same-fs staging sibling (backupNew, next to
++// backup on the parent filesystem), renames that over backup as an atomic same-fs
++// swap, then removes path to leave it vacant — matching os.Rename(path, backup)'s
++// postcondition. The prior .bak (if any) has already been staged to .bak.old by
++// the caller, so backup is absent here; a failure leaves backupNew for the
++// entry-time reconcile to clean on the next run.
++func backupCrossDevice(path, backup, backupNew string) error {
++	if err := os.RemoveAll(backupNew); err != nil {
++		return fmt.Errorf("clearing staging backup %q: %w", backupNew, err)
++	}
++	if err := atomicfs.CopyPath(path, backupNew); err != nil {
++		return fmt.Errorf("backing up %q across filesystems: %w", path, err)
++	}
++	if err := os.Rename(backupNew, backup); err != nil {
++		return fmt.Errorf("swapping staged backup %q into place: %w", backupNew, err)
++	}
++	if err := os.RemoveAll(path); err != nil {
++		return fmt.Errorf("vacating %q after cross-device backup: %w", path, err)
++	}
++	return nil
++}
++
+ // forceBackupReviewDir backs up an existing managed review directory for id
+ // before --force scaffolds a fresh one (Epic 4.7 AC2). A non-existent directory
+ // is a no-op, so --force is harmless when there is nothing to overwrite. Returns
+@@ -336,8 +431,10 @@ func forceBackupOutputDir(dir string) (string, error) {
+ 	if len(entries) == 0 {
+ 		return "", nil
+ 	}
+-	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
+-	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
++	// backupExisting ultimately replaces (and, on success, removes) the prior
++	// <dir>.bak generation — and its crash-safe staging also RemoveAll()s any
++	// <dir>.bak.old/<dir>.bak.new sibling at entry (Epic 4.7.1). Inside the managed
++	// reviews tree those siblings are atcr-owned, but an arbitrary --output-dir may
+ 	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
+ 	// backup atcr did not create (Epic 4.7: never silently delete user data).
+ 	if err := guardForeignBackup(dir + ".bak"); err != nil {
+diff --git a/internal/fanout/reviewdir_test.go b/internal/fanout/reviewdir_test.go
+index 2b3ff38..105c208 100644
+--- a/internal/fanout/reviewdir_test.go
++++ b/internal/fanout/reviewdir_test.go
+@@ -2,9 +2,11 @@ package fanout
+ 
+ import (
+ 	"encoding/json"
++	"errors"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
++	"syscall"
+ 	"testing"
+ 	"time"
+ 
+@@ -415,6 +417,109 @@ func TestForceBackupOutputDir_RefusesStructuralLookalike(t *testing.T) {
+ 	assert.Equal(t, "do not delete", string(data))
+ }
+ 
++// withRenameStub swaps the package rename seam for the duration of a test so the
++// crash-safe backup swap can be driven into its failed-swap and cross-filesystem
++// (EXDEV) branches deterministically, without a real cross-mount in CI.
++func withRenameStub(t *testing.T, stub func(oldpath, newpath string) error) {
++	t.Helper()
++	orig := renameFn
++	renameFn = stub
++	t.Cleanup(func() { renameFn = orig })
++}
++
++// TestBackupExisting_FailedSwapPreservesPriorBak verifies AC1: when the swap of
++// the live tree onto <dir>.bak fails (non-EXDEV), the prior <dir>.bak generation
++// is restored intact rather than left destroyed, and the live tree is untouched —
++// the user is left with both, never neither.
++func TestBackupExisting_FailedSwapPreservesPriorBak(t *testing.T) {
++	root := t.TempDir()
++	src := filepath.Join(root, "review")
++	require.NoError(t, os.MkdirAll(src, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
++
++	prior := src + ".bak"
++	require.NoError(t, os.MkdirAll(prior, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("prior-backup"), 0o644))
++
++	withRenameStub(t, func(_, _ string) error { return errors.New("simulated swap failure") })
++
++	_, err := backupExisting(src)
++	require.Error(t, err, "a failed swap must surface an error")
++
++	// AC1: the prior backup survives the failed swap.
++	data, readErr := os.ReadFile(filepath.Join(prior, "old.txt"))
++	require.NoError(t, readErr, "prior .bak must be restored after a failed swap")
++	assert.Equal(t, "prior-backup", string(data))
++	// The live tree is untouched (the swap never moved it).
++	live, liveErr := os.ReadFile(filepath.Join(src, "marker.txt"))
++	require.NoError(t, liveErr, "live tree must survive a failed swap")
++	assert.Equal(t, "current", string(live))
++	// No staging straggler left behind.
++	assert.NoDirExists(t, src+".bak.old", "staging artifact must not leak after a failed swap")
++}
++
++// TestBackupExisting_CrossDeviceFallback verifies AC3: an EXDEV (cross-filesystem)
++// rename of the live tree onto <dir>.bak is detected and falls back to
++// copy-into-staging + swap + vacate, leaving exactly one generation and the path
++// vacant for a fresh scaffold — without losing the prior backup.
++func TestBackupExisting_CrossDeviceFallback(t *testing.T) {
++	root := t.TempDir()
++	src := filepath.Join(root, "review")
++	require.NoError(t, os.MkdirAll(src, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
++
++	stale := src + ".bak"
++	require.NoError(t, os.MkdirAll(stale, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(stale, "old.txt"), []byte("stale"), 0o644))
++
++	// Force the live-tree swap to report EXDEV so the copy fallback runs.
++	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
++
++	bak, err := backupExisting(src)
++	require.NoError(t, err, "EXDEV must fall back to copy+remove, not error out")
++	assert.Equal(t, stale, bak)
++
++	// New generation is the live content, copied across the boundary.
++	data, readErr := os.ReadFile(filepath.Join(bak, "marker.txt"))
++	require.NoError(t, readErr)
++	assert.Equal(t, "current", string(data))
++	assert.NoFileExists(t, filepath.Join(bak, "old.txt"), "stale generation must be replaced, not merged")
++	// Move semantics preserved: path vacated for a fresh scaffold.
++	_, statErr := os.Stat(src)
++	assert.True(t, os.IsNotExist(statErr), "path must be vacant after the cross-device move")
++	// Staging artifacts cleaned up.
++	assert.NoDirExists(t, src+".bak.new", "staging copy must not leak after a cross-device backup")
++	assert.NoDirExists(t, src+".bak.old", "prior-generation staging must not leak after success")
++}
++
++// TestBackupExisting_CleansStaleStagingStragglers verifies the reconcile-on-retry
++// behavior: atcr-owned staging artifacts (.bak.old/.bak.new) left by a prior
++// crashed swap are removed at entry, so a retry starts clean and no straggler
++// accumulates across runs (Epic 4.7.1; preserves the one-generation contract).
++func TestBackupExisting_CleansStaleStagingStragglers(t *testing.T) {
++	root := t.TempDir()
++	src := filepath.Join(root, "review")
++	require.NoError(t, os.MkdirAll(src, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
++
++	// Leftovers a prior crashed run left behind.
++	require.NoError(t, os.MkdirAll(src+".bak.old", 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(src+".bak.old", "junk.txt"), []byte("x"), 0o644))
++	require.NoError(t, os.MkdirAll(src+".bak.new", 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(src+".bak.new", "junk.txt"), []byte("y"), 0o644))
++
++	bak, err := backupExisting(src)
++	require.NoError(t, err)
++	assert.Equal(t, src+".bak", bak)
++	// Stragglers gone.
++	assert.NoDirExists(t, src+".bak.old", "stale .bak.old must be cleaned at entry")
++	assert.NoDirExists(t, src+".bak.new", "stale .bak.new must be cleaned at entry")
++	// One clean generation.
++	data, readErr := os.ReadFile(filepath.Join(bak, "marker.txt"))
++	require.NoError(t, readErr)
++	assert.Equal(t, "current", string(data))
++}
++
+ func TestReviewExists_AndCollisionProbe(t *testing.T) {
+ 	root := t.TempDir()
+ 	assert.False(t, ReviewExists(root, "2026-06-10_x"))

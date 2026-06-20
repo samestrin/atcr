@@ -1,0 +1,2 @@
+MEDIUM|internal/atomicfs/atomic.go:138|Potential data loss on restore failure|Log or return error if restore fails|correctness|15|`_ = os.Rename(bakOld, bak)` ignores failure during critical recovery|otto
+MEDIUM|internal/fanout/reviewdir.go:365|Potential data loss on restore failure|Log or return error if restore fails|correctness|15|`_ = os.Rename(backupOld, backup)` ignores failure during critical recovery|otto

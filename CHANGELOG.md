@@ -1,3 +1,16 @@
+## [Technical Debt] - 2026-06-20
+
+### Fixed
+
+- `backupCrossDevice` now restores the prior `.bak` when the EXDEV fallback copy fails, covering the previously untested failure leg
+- `backupCrossDevice` cleans up the staged `backupNew` on copy failure so a stranded `.bak.new` no longer survives a failed fallback
+- `BackupToDotBak` sweeps stale `.bak.tmp-*` siblings at entry, reconciling artifacts from an earlier interrupted run
+- `swapStagedBackup` and `restorePriorBackup` now log and surface rename failures instead of swallowing them silently
+- `BackupToDotBak`'s staging branch now sets `staged` explicitly for non-regular, non-directory entries, eliminating the use-uninitialized path
+- `backupCrossDevice` documents the accepted TOCTOU window between `Lstat` and the subsequent `Rename` given the single-user trust model
+- `backupCrossDevice`'s postcondition comment no longer claims the cross-device fallback is atomic; documents the duplicated-tree window
+- Vacate failure in `backupCrossDevice` now reports that the durable backup completed and names the preserved backup path
+
 ## [4.7.1] - 2026-06-20
 
 ### Fixed
