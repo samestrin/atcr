@@ -31,7 +31,7 @@ type Completer interface {
 // completer that does not implement it degrades to the plain Complete path with
 // zero usage. *llmclient.Client satisfies it via CompleteWithUsage.
 type UsageCompleter interface {
-	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, error)
+	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error)
 }
 
 // ChatCompleter is the multi-turn extension of Completer: it carries a message
@@ -167,6 +167,16 @@ type Result struct {
 	Model     string
 	TokensIn  int
 	TokensOut int
+
+	// Per-call client telemetry (Epic 4.11). CallRecords holds one entry per HTTP
+	// attempt the client made for this agent — retries included, accumulated across
+	// every Chat() turn on the tool-loop path and taken from the single
+	// CompleteWithUsage() call on the single-shot path. recordAgentOutcome derives
+	// the API-call count (records that ReachedWire) and the per-call latency
+	// histogram from it. Nil when the completer surfaces no per-call data (a
+	// Complete-only test double, or a circuit-open fail-fast), in which case
+	// recordAgentOutcome falls back to the Turns-based count.
+	CallRecords []llmclient.CallRecord
 }
 
 // Engine fans a review out to a roster across a parallel lane (default) and a
@@ -525,10 +535,11 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 	var (
 		content string
 		usage   llmclient.UsageData
+		records []llmclient.CallRecord
 		err     error
 	)
 	if uc, ok := e.completer.(UsageCompleter); ok {
-		content, usage, err = uc.CompleteWithUsage(ctx, a.Invocation)
+		content, usage, records, err = uc.CompleteWithUsage(ctx, a.Invocation)
 	} else {
 		content, err = e.completer.Complete(ctx, a.Invocation)
 	}
@@ -545,6 +556,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		Model:          a.Invocation.Model,
 		TokensIn:       usage.PromptTokens,
 		TokensOut:      usage.CompletionTokens,
+		CallRecords:    records,
 	}
 	if err != nil {
 		r.Err = err
@@ -575,6 +587,14 @@ func (e *Engine) invokeDegraded(ctx context.Context, a Agent) Result {
 func (r *Result) addUsage(u llmclient.UsageData) {
 	r.TokensIn += u.PromptTokens
 	r.TokensOut += u.CompletionTokens
+}
+
+// addCallRecords appends one turn's per-attempt client telemetry onto the result.
+// The tool-loop path calls it after every Chat() (each turn plus the final-answer
+// call) so a multi-turn agent's CallRecords span every HTTP attempt across the
+// loop, mirroring addUsage. A nil/empty slice is a no-op.
+func (r *Result) addCallRecords(recs []llmclient.CallRecord) {
+	r.CallRecords = append(r.CallRecords, recs...)
 }
 
 // addTripped records a tripped budget name on the result, de-duplicating so a
