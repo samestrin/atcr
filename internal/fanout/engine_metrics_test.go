@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -113,5 +114,72 @@ func TestRecordAgentOutcomeContextCancelledBeforeRequest(t *testing.T) {
 
 	if got := metrics.Counter("atcr_api_calls_total").Value(); got != 0 {
 		t.Errorf("atcr_api_calls_total = %d, want 0 (context errors before any HTTP call must not count or decrement)", got)
+	}
+}
+
+// TestRecordAgentOutcome_PerAttemptCountsAndTimes verifies the per-record path:
+// atcr_api_calls_total counts CallRecords that reached the wire (retries
+// included), and the duration histogram observes exactly one sample per wire
+// record — so the histogram's count always equals the call count (AC1, AC3).
+func TestRecordAgentOutcome_PerAttemptCountsAndTimes(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	// AC1: a single-shot whose context expired after one real round-trip has one
+	// wire record and must count 1 (the Turns-based heuristic counts it 0 today).
+	recordAgentOutcome(Result{
+		Status: StatusTimeout,
+		Err:    context.DeadlineExceeded,
+		CallRecords: []llmclient.CallRecord{
+			{ReachedWire: true, Duration: 100 * time.Millisecond},
+		},
+	})
+	// Per-attempt counting: three wire attempts (two retries + a success) count 3.
+	recordAgentOutcome(Result{
+		Status: StatusOK,
+		CallRecords: []llmclient.CallRecord{
+			{ReachedWire: true, Duration: 10 * time.Millisecond},
+			{ReachedWire: true, Duration: 20 * time.Millisecond},
+			{ReachedWire: true, Duration: 30 * time.Millisecond},
+		},
+	})
+
+	if got := metrics.Counter(metrics.NameAPICallsTotal).Value(); got != 4 {
+		t.Errorf("atcr_api_calls_total = %d, want 4 (1 + 3 wire attempts)", got)
+	}
+	h := metrics.Histogram(metrics.NameAPICallDurationSeconds)
+	if got := h.Count(); got != 4 {
+		t.Errorf("%s count = %d, want 4 (one sample per wire record == call count)", metrics.NameAPICallDurationSeconds, got)
+	}
+	// 100 + 10 + 20 + 30 = 160ms total observed.
+	if got := h.Sum(); got < 0.159 || got > 0.161 {
+		t.Errorf("%s sum = %f, want ~0.160 seconds", metrics.NameAPICallDurationSeconds, got)
+	}
+}
+
+// TestRecordAgentOutcome_NonWireRecordsCountZero verifies cancel-before-send (a
+// record that never reached the wire) and circuit-open fail-fast (nil records +
+// CircuitOpenError) both count zero API calls and emit no latency sample (AC2).
+func TestRecordAgentOutcome_NonWireRecordsCountZero(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	// cancel-before-send: an attempt was entered but no bytes were written.
+	recordAgentOutcome(Result{
+		Status:      StatusTimeout,
+		Err:         context.Canceled,
+		CallRecords: []llmclient.CallRecord{{ReachedWire: false, Duration: time.Millisecond}},
+	})
+	// circuit-open fail-fast: no HTTP attempt made at all, nil records.
+	recordAgentOutcome(Result{
+		Status: StatusFailed,
+		Err:    &llmclient.CircuitOpenError{Provider: "groq"},
+	})
+
+	if got := metrics.Counter(metrics.NameAPICallsTotal).Value(); got != 0 {
+		t.Errorf("atcr_api_calls_total = %d, want 0 (no attempt reached the wire)", got)
+	}
+	if got := metrics.Histogram(metrics.NameAPICallDurationSeconds).Count(); got != 0 {
+		t.Errorf("%s count = %d, want 0 (no completed HTTP attempt)", metrics.NameAPICallDurationSeconds, got)
 	}
 }
