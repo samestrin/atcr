@@ -242,6 +242,9 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// Derived ids claim their directory atomically: creation is the
 		// collision check, so two reviews of the same branch in the same second
 		// get distinct dirs instead of interleaving writes in one.
+		if req.Force {
+			fmt.Fprintf(os.Stderr, "--force has no effect without --id or --output-dir; a new review directory was created\n")
+		}
 		id, dir, err = claimReviewDir(req.Root, id, req.TimeSuffix)
 	}
 	if err != nil {
