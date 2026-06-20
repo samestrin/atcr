@@ -16,7 +16,6 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/samestrin/atcr/internal/tools"
-	"github.com/samestrin/atcr/internal/validation"
 )
 
 // ErrPayloadFullyDropped is returned by buildPayloads when a non-empty input
@@ -216,15 +215,6 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		// still derived above (for provenance/output) but never used for the
 		// path, and .atcr/latest is left untouched below.
 		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
-			return nil, err
-		}
-		// Defense-in-depth: reject system-directory output paths (/etc, /proc, /sys)
-		// in the engine, not only the CLI flag parser. PrepareReview is public API
-		// reachable by the MCP handler and direct callers; enforcing here means a
-		// caller that sets OutputDir to a system path with Force=true is rejected
-		// before forceBackupOutputDir performs any destructive backup. The CLI keeps
-		// its own check too (exit 2), so this is additive, not a relocation.
-		if err = validation.FilePath(req.OutputDir); err != nil {
 			return nil, err
 		}
 		// --force backs up a non-empty target to <dir>.bak before scaffolding;
