@@ -391,6 +391,11 @@ func backupCrossDevice(path, backup, backupNew string) error {
 	if err := os.RemoveAll(backupNew); err != nil {
 		return fmt.Errorf("clearing staging backup %q: %w", backupNew, err)
 	}
+	// CopyPath skips symlinks and non-regular entries — this fallback is lossy
+	// if the live tree contains symlinks. Review trees hold only regular files
+	// (WritePool never creates symlinks), so the divergence is immaterial for
+	// managed reviews; --output-dir callers with symlinks in their tree will
+	// silently lose them on this path.
 	if err := atomicfs.CopyPath(path, backupNew); err != nil {
 		return fmt.Errorf("backing up %q across filesystems: %w", path, err)
 	}
