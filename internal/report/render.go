@@ -142,6 +142,7 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.
 		}
 		fmt.Fprintf(&b, "- %s — confidence %s, reviewers: %s\n",
 			codeSpan(f.File, f.Line), esc(f.Confidence), esc(joinReviewers(f.Reviewers)))
+		writePathWarning(&b, f)
 		if f.Disagreement != "" {
 			fmt.Fprintf(&b, "  - Severity disagreement: %s\n", esc(f.Disagreement))
 		}
@@ -185,6 +186,7 @@ func renderChecklist(w io.Writer, findings []reconcile.JSONFinding) error {
 	for _, f := range findings {
 		fmt.Fprintf(&b, "- [ ] **%s** %s — %s (confidence: %s)\n",
 			esc(f.Severity), codeSpan(f.File, f.Line), escTrunc(f.Problem), esc(f.Confidence))
+		writePathWarning(&b, f)
 	}
 	_, err := w.Write(b.Bytes())
 	return err
@@ -309,6 +311,16 @@ func isRefuted(f reconcile.JSONFinding) bool {
 		canonicalize(f.Verification.Verdict) == canonicalize(reconcile.VerdictRefuted)
 }
 
+// writePathWarning emits the hallucinated-path warning line for a finding whose
+// file failed existence validation (Epic 5.0). A no-op when the path is valid or
+// was never validated (PathWarning empty). The path is HTML-escaped so a
+// reviewer-controlled path cannot inject markup.
+func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
+	if f.PathWarning != "" {
+		fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(f.File))
+	}
+}
+
 // writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an
 // annotation when the verdict is unverifiable, and the reasoning (omitted when
 // empty, AC 06-01 Edge Case 3). All free text is HTML-escaped and newline-
@@ -341,6 +353,7 @@ func writeRefutedSection(b *bytes.Buffer, refuted []reconcile.JSONFinding) {
 	for _, f := range refuted {
 		fmt.Fprintf(b, "- %s — confidence %s, skeptic: %s\n",
 			codeSpan(f.File, f.Line), esc(f.Confidence), esc(skepticName(f.Verification)))
+		writePathWarning(b, f)
 		fmt.Fprintf(b, "  - Problem: %s\n", escTrunc(f.Problem))
 		if f.Verification != nil && strings.TrimSpace(f.Verification.Notes) != "" {
 			fmt.Fprintf(b, "  - Reasoning: %s\n", escTrunc(f.Verification.Notes))

@@ -219,6 +219,11 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 
 	res := Reconcile(sources, opts)
 
+	// Flag findings whose file paths do not exist under the reviewed repo root
+	// (Epic 5.0). Stamped after merge, before Emit, so the warning rides into
+	// findings.json and the reports. No-op when opts.Root is empty.
+	validateFindingPaths(res.Findings, opts.Root)
+
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}

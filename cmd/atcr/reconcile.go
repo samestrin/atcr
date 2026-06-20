@@ -78,6 +78,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reconcile.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
+		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 	})
 	if err != nil {
 		// An I/O failure is an infrastructure/usage error (exit 2), never the

@@ -193,6 +193,7 @@ func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) error 
 	rec, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
+		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 	})
 	if err != nil {
 		return usageError(fmt.Errorf("resume failed: %w", err))

@@ -317,6 +317,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
+		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err
