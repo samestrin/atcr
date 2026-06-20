@@ -209,6 +209,25 @@ func TestAdjudication_StaleBaselineHashRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "different ambiguous.json generation")
 }
 
+// TestAdjudication_FailedValidationCreatesNoBackup locks the Epic 4.7 TD fix:
+// the reconciled.bak/ snapshot is taken only when an overwrite is actually
+// imminent (just before Emit, after adjudication validation succeeds). A
+// re-invocation that fails validation (stale baseline hash here) must error out
+// WITHOUT having paid a full-tree copy of reconciled/ — a backup of state that
+// never changed is a misleading recovery point for an operation that did nothing.
+func TestAdjudication_FailedValidationCreatesNoBackup(t *testing.T) {
+	dir := writeGrayReview(t)
+	id := runRecon(t, dir).Ambiguous[0].ID
+	// Stale baseline hash fails validation in RunReconcile's adjudication block.
+	raw := `{"baseline_hash":"sha256:` + strings.Repeat("0", 64) + `","decisions":[{"cluster_id":"` + id + `","decision":"merge"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "reconciled", AdjudicationJSON), []byte(raw), 0o644))
+
+	_, err := RunReconcile(context.Background(), dir, nil, Options{ReconciledAt: time.Unix(1000, 0)})
+	require.Error(t, err, "stale baseline must fail validation")
+	assert.NoDirExists(t, filepath.Join(dir, "reconciled.bak"),
+		"a validation failure must not leave a reconciled.bak/ — nothing was overwritten")
+}
+
 func TestAdjudication_NoClustersToAdjudicate(t *testing.T) {
 	// adjudication.json present but the baseline has zero gray clusters: a
 	// misfire that must hard-error explicitly, not pass silently or surface as

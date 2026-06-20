@@ -7,6 +7,19 @@
 - Added per-agent `max_retries`/`initial_backoff_ms` to the invoke debug log for rate-limit diagnostics
 - Documented the three-state retry-override sentinel contract in the Agent struct comment
 - Added test coverage for MCP handler error paths (handleVerify, parseOptionalSeverity, rangeError, loadVerifyRegistry, handleReport, handleStatus, registerTool); raised `internal/mcp` coverage to 91.6%
+- `BackupToDotBak` now skips symlink sources via `os.Lstat` instead of following them
+- `copyFile` uses streaming `io.Copy` instead of unbounded in-memory reads
+- Added `tmp.Sync()` and parent-directory fsync in `WriteFileAtomic` for crash durability
+- `PrepareReview` now enforces the system-path reject (`/etc`, `/proc`, `/sys`) for all callers, not only the CLI
+- `--force` with a derived id emits a stderr notice instead of silently no-oping
+- `ScaffoldReviewDir`/`ScaffoldOutputDir` collision errors now name the id only, not the resolved filesystem path
+- `forceBackupReviewDir`/`forceBackupOutputDir` return and emit the backup path on `--force`
+- `guardForeignBackup` returns a specific error when the backup path is a regular file
+- `guardForeignBackup`/`looksLikeReviewTree` now require a `manifest.json` provenance marker before treating a directory as an atcr backup
+- `WriteVerification` documented as test-only seam; `BackupExistingVerification` unexported
+- Scoped verify backup to `verification.json`-only; removed false `reconciled.bak/` coverage claim
+- Moved `reconciled.bak` snapshot to just before `Emit`, after adjudication validation, so a failed validation no longer leaves a misleading backup
+- Accepted 79.5% coverage for `internal/atomicfs` defensive-error branches as a documented exception
 
 ## [4.7.0] - 2026-06-19
 
