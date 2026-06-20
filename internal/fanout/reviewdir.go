@@ -315,6 +315,8 @@ func backupExisting(path string) (string, error) {
 
 	// Reconcile stragglers a prior crashed swap may have left, so a retry starts
 	// from a clean slate and no atcr-owned staging artifact accumulates.
+	// .bak.tmp-* sibling names are produced only by atomicfs.BackupToDotBak, not
+	// by backupExisting — only .bak.old and .bak.new need clearing here.
 	if err := os.RemoveAll(backupOld); err != nil {
 		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupOld, err)
 	}
