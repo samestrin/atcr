@@ -2,9 +2,11 @@ package fanout
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -413,6 +415,109 @@ func TestForceBackupOutputDir_RefusesStructuralLookalike(t *testing.T) {
 	data, readErr := os.ReadFile(filepath.Join(lookalike, "important.txt"))
 	require.NoError(t, readErr)
 	assert.Equal(t, "do not delete", string(data))
+}
+
+// withRenameStub swaps the package rename seam for the duration of a test so the
+// crash-safe backup swap can be driven into its failed-swap and cross-filesystem
+// (EXDEV) branches deterministically, without a real cross-mount in CI.
+func withRenameStub(t *testing.T, stub func(oldpath, newpath string) error) {
+	t.Helper()
+	orig := renameFn
+	renameFn = stub
+	t.Cleanup(func() { renameFn = orig })
+}
+
+// TestBackupExisting_FailedSwapPreservesPriorBak verifies AC1: when the swap of
+// the live tree onto <dir>.bak fails (non-EXDEV), the prior <dir>.bak generation
+// is restored intact rather than left destroyed, and the live tree is untouched —
+// the user is left with both, never neither.
+func TestBackupExisting_FailedSwapPreservesPriorBak(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	prior := src + ".bak"
+	require.NoError(t, os.MkdirAll(prior, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("prior-backup"), 0o644))
+
+	withRenameStub(t, func(_, _ string) error { return errors.New("simulated swap failure") })
+
+	_, err := backupExisting(src)
+	require.Error(t, err, "a failed swap must surface an error")
+
+	// AC1: the prior backup survives the failed swap.
+	data, readErr := os.ReadFile(filepath.Join(prior, "old.txt"))
+	require.NoError(t, readErr, "prior .bak must be restored after a failed swap")
+	assert.Equal(t, "prior-backup", string(data))
+	// The live tree is untouched (the swap never moved it).
+	live, liveErr := os.ReadFile(filepath.Join(src, "marker.txt"))
+	require.NoError(t, liveErr, "live tree must survive a failed swap")
+	assert.Equal(t, "current", string(live))
+	// No staging straggler left behind.
+	assert.NoDirExists(t, src+".bak.old", "staging artifact must not leak after a failed swap")
+}
+
+// TestBackupExisting_CrossDeviceFallback verifies AC3: an EXDEV (cross-filesystem)
+// rename of the live tree onto <dir>.bak is detected and falls back to
+// copy-into-staging + swap + vacate, leaving exactly one generation and the path
+// vacant for a fresh scaffold — without losing the prior backup.
+func TestBackupExisting_CrossDeviceFallback(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	stale := src + ".bak"
+	require.NoError(t, os.MkdirAll(stale, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stale, "old.txt"), []byte("stale"), 0o644))
+
+	// Force the live-tree swap to report EXDEV so the copy fallback runs.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+
+	bak, err := backupExisting(src)
+	require.NoError(t, err, "EXDEV must fall back to copy+remove, not error out")
+	assert.Equal(t, stale, bak)
+
+	// New generation is the live content, copied across the boundary.
+	data, readErr := os.ReadFile(filepath.Join(bak, "marker.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "current", string(data))
+	assert.NoFileExists(t, filepath.Join(bak, "old.txt"), "stale generation must be replaced, not merged")
+	// Move semantics preserved: path vacated for a fresh scaffold.
+	_, statErr := os.Stat(src)
+	assert.True(t, os.IsNotExist(statErr), "path must be vacant after the cross-device move")
+	// Staging artifacts cleaned up.
+	assert.NoDirExists(t, src+".bak.new", "staging copy must not leak after a cross-device backup")
+	assert.NoDirExists(t, src+".bak.old", "prior-generation staging must not leak after success")
+}
+
+// TestBackupExisting_CleansStaleStagingStragglers verifies the reconcile-on-retry
+// behavior: atcr-owned staging artifacts (.bak.old/.bak.new) left by a prior
+// crashed swap are removed at entry, so a retry starts clean and no straggler
+// accumulates across runs (Epic 4.7.1; preserves the one-generation contract).
+func TestBackupExisting_CleansStaleStagingStragglers(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// Leftovers a prior crashed run left behind.
+	require.NoError(t, os.MkdirAll(src+".bak.old", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src+".bak.old", "junk.txt"), []byte("x"), 0o644))
+	require.NoError(t, os.MkdirAll(src+".bak.new", 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src+".bak.new", "junk.txt"), []byte("y"), 0o644))
+
+	bak, err := backupExisting(src)
+	require.NoError(t, err)
+	assert.Equal(t, src+".bak", bak)
+	// Stragglers gone.
+	assert.NoDirExists(t, src+".bak.old", "stale .bak.old must be cleaned at entry")
+	assert.NoDirExists(t, src+".bak.new", "stale .bak.new must be cleaned at entry")
+	// One clean generation.
+	data, readErr := os.ReadFile(filepath.Join(bak, "marker.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "current", string(data))
 }
 
 func TestReviewExists_AndCollisionProbe(t *testing.T) {

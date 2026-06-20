@@ -300,11 +300,18 @@ func backupExisting(path string) (string, error) {
 	if err := os.RemoveAll(backup); err != nil {
 		return "", fmt.Errorf("removing stale backup %q: %w", backup, err)
 	}
-	if err := os.Rename(path, backup); err != nil {
+	if err := renameFn(path, backup); err != nil {
 		return "", fmt.Errorf("backing up %q: %w", path, err)
 	}
 	return backup, nil
 }
+
+// renameFn is the swap primitive backupExisting uses, indirected through a
+// package var so fault-injection tests can drive the failed-swap and
+// cross-filesystem (EXDEV) branches deterministically — the EXDEV branch cannot
+// be reached by real-fs tricks without a cross-mount in CI. In production it is
+// os.Rename.
+var renameFn = os.Rename
 
 // forceBackupReviewDir backs up an existing managed review directory for id
 // before --force scaffolds a fresh one (Epic 4.7 AC2). A non-existent directory
