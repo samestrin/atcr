@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 17 | 7 |
-| LOW | 0 | 16 | 17 |
+| MEDIUM | 2 | 17 | 7 |
+| LOW | 3 | 16 | 17 |
 
 
-**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 34 | **Resolved Items:** 24 | **Total Items:** 58
+**Last Modified:** 2026-06-20 | **Open Items:** 5 | **Deferred Items:** 34 | **Resolved Items:** 24 | **Total Items:** 63
 
 ## Directory Structure
 
@@ -32,6 +32,16 @@ technical-debt/
 2. **Larger items**: Create a new document in `sprints/pending/`
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
+
+### [2026-06-20] From Sprint: epic-4.7.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | internal/fanout/reviewdir.go:342 | backupCrossDevice post-swap handling: when the path-to-.bak rename succeeds but RemoveAll(path) fails (a mountpoint root cannot be removed and its contents are partially deleted), the function returns a hard error and backupExisting then runs restorePriorBackup, which races the now-present new .bak (no-op via ENOTEMPTY for dirs but leaks .bak.old) — so a durably-completed backup is reported as a failure. Recorded clarification Q2 explicitly chose RemoveAll(path), so this is a deferred design refinement rather than an in-epic fix. | Signal pre- vs post-swap progress from backupCrossDevice so restore only fires before the swap completes, and use a content-only vacate that tolerates an unremovable mountpoint dir. | ERROR_PATHS | 60 | execute-epic-independent |
+| 1 | [ ] | MEDIUM | internal/fanout/reviewdir.go:373 | restorePriorBackup silently discards its os.Rename error and the package emits no log on any backup-swap failure, so a crash-recovery failure is invisible in production even though sibling fanout files already import internal/log. | Emit a diagnostic log when restorePriorBackup's rename fails, naming the .bak.old path the user must recover manually. | OBSERVABILITY | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/reviewdir.go:316 | backupExisting entry-time reconcile clears .bak.old and .bak.new but not .bak.tmp-* named by clarification Q3; backupExisting never produces .bak.tmp-* (only BackupToDotBak does), so the omission is harmless but inconsistent with the stated contract. | Either sweep .bak.tmp-* siblings at entry for consistency, or document that backupExisting never produces them. | INTEGRATION | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/fanout/reviewdir.go:392 | backupCrossDevice's EXDEV fallback uses atomicfs.CopyPath, which skips symlinks and non-regular entries, so it silently drops any symlinks a same-fs os.Rename would have preserved — non-equivalent to the move it replaces. | Document that the EXDEV fallback is lossy for non-regular entries, or note that review trees contain only regular files so the divergence is immaterial. | EDGE_CASES | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/atomicfs/atomic.go:139 | CopyPath documents that a directory dst must not already exist, but copyTree uses MkdirAll and copyFile uses O_TRUNC, so a pre-existing dst is silently merged/overwritten; the not-exist invariant is enforced by callers (a prior RemoveAll), not by CopyPath itself. | Enforce the precondition inside CopyPath (stat dst and error if present) or soften the doc comment to state CopyPath merges into an existing dst. | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-19] From Sprint: 4.7_idempotency
 
