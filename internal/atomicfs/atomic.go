@@ -94,7 +94,7 @@ func BackupToDotBak(src string) (string, error) {
 
 	// Reconcile a stale .bak.old a prior crashed swap may have left, so a retry
 	// starts clean and the one-generation contract holds across crash-then-retry.
-	if err := os.RemoveAll(bakOld); err != nil {
+	if err := os.RemoveAll(bakOld); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("clearing stale staging backup %s: %w", bakOld, err)
 	}
 
