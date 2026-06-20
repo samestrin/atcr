@@ -146,19 +146,19 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
 	if err != nil {
 		return err
 	}
-	if err := BackupExistingVerification(reviewDir); err != nil {
+	if err := backupExistingVerification(reviewDir); err != nil {
 		return err
 	}
 	return atomicfs.WriteFileAtomic(path, data)
 }
 
-// BackupExistingVerification snapshots an existing reconciled/verification.json to
+// backupExistingVerification snapshots an existing reconciled/verification.json to
 // verification.json.bak before a re-verify (e.g. --fresh) overwrites it (Epic 4.7
 // AC5). A first-ever verify has no prior file, so it is a no-op. Only
 // verification.json — the verify stage's exclusive output — is backed up here;
 // the reconcile-owned findings.json/summary.json the stage annotates in place are
 // already covered by reconciled.bak/ (AC4), so they are not re-backed-up.
-func BackupExistingVerification(reviewDir string) error {
+func backupExistingVerification(reviewDir string) error {
 	path := filepath.Join(reviewDir, reconciledSubdir, "verification.json")
 	if _, err := atomicfs.BackupToDotBak(path); err != nil {
 		return fmt.Errorf("backing up prior verification.json: %w", err)

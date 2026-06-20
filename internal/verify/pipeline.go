@@ -350,7 +350,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// verification.json as part of this atomic group. Snapshot the prior verdicts
 	// to verification.json.bak before the flush so the previous run is recoverable;
 	// a first-ever verify has no prior file and this is a no-op.
-	if err := BackupExistingVerification(reviewDir); err != nil {
+	if err := backupExistingVerification(reviewDir); err != nil {
 		return Result{}, err
 	}
 	if err := writeGroupAtomic(artifacts); err != nil {
