@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
+	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/payload"
 )
 
@@ -291,19 +293,112 @@ func ScaffoldOutputDir(dir string) (string, error) {
 
 // backupExisting moves path aside to path+".bak" so a --force re-run preserves
 // the prior review tree instead of destroying it, leaving the path vacant for a
-// fresh scaffold. A pre-existing path+".bak" is removed first (os.Rename refuses
-// to replace a non-empty directory), so --force keeps exactly one generation of
-// backup — garbage-collecting older state is the user's responsibility (Epic
-// 4.7: no automatic .bak GC). Returns the backup path.
+// fresh scaffold. --force keeps exactly one generation of backup —
+// garbage-collecting older state is the user's responsibility (Epic 4.7: no
+// automatic .bak GC). Returns the backup path.
+//
+// Crash-safe swap (Epic 4.7.1): the prior path+".bak" is renamed aside to
+// path+".bak.old" (not destroyed) before path is renamed onto path+".bak"; the
+// old generation is removed only after the swap succeeds, and is restored on any
+// failure — so an interrupted swap never leaves the user with neither the new
+// backup nor the prior one. When the path→.bak rename crosses a filesystem
+// boundary (EXDEV — possible when path is itself a mountpoint, so its parent-dir
+// sibling .bak is on a different mount), it falls back to copy-into-staging +
+// same-fs rename-swap + RemoveAll(path), replicating the move's vacate-path
+// postcondition. Stale atcr-owned staging artifacts (.bak.old/.bak.new) from a
+// prior crashed run are reconciled away at entry, so retries start clean and the
+// one-generation contract holds across a crash-then-retry sequence.
 func backupExisting(path string) (string, error) {
 	backup := path + ".bak"
-	if err := os.RemoveAll(backup); err != nil {
-		return "", fmt.Errorf("removing stale backup %q: %w", backup, err)
+	backupOld := path + ".bak.old"
+	backupNew := path + ".bak.new"
+
+	// Reconcile stragglers a prior crashed swap may have left, so a retry starts
+	// from a clean slate and no atcr-owned staging artifact accumulates.
+	if err := os.RemoveAll(backupOld); err != nil {
+		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupOld, err)
 	}
-	if err := os.Rename(path, backup); err != nil {
-		return "", fmt.Errorf("backing up %q: %w", path, err)
+	if err := os.RemoveAll(backupNew); err != nil {
+		return "", fmt.Errorf("clearing stale staging backup %q: %w", backupNew, err)
+	}
+
+	// Stage the prior generation aside instead of destroying it: a failed swap
+	// below restores it from .bak.old.
+	priorStaged := false
+	if _, err := os.Lstat(backup); err == nil {
+		if err := os.Rename(backup, backupOld); err != nil {
+			return "", fmt.Errorf("staging prior backup %q aside: %w", backup, err)
+		}
+		priorStaged = true
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("checking prior backup %q: %w", backup, err)
+	}
+
+	// Swap the live tree into place as the new backup.
+	if err := renameFn(path, backup); err != nil {
+		if errors.Is(err, syscall.EXDEV) {
+			// path is on a different filesystem from its .bak sibling (path is a
+			// mountpoint): replicate the move with a same-fs copy + vacate.
+			if cerr := backupCrossDevice(path, backup, backupNew); cerr != nil {
+				restorePriorBackup(priorStaged, backupOld, backup)
+				return "", cerr
+			}
+		} else {
+			restorePriorBackup(priorStaged, backupOld, backup)
+			return "", fmt.Errorf("backing up %q: %w", path, err)
+		}
+	}
+
+	// Swap succeeded — the prior generation staged in .bak.old is now superseded.
+	if priorStaged {
+		if err := os.RemoveAll(backupOld); err != nil {
+			return "", fmt.Errorf("removing superseded backup %q: %w", backupOld, err)
+		}
 	}
 	return backup, nil
+}
+
+// renameFn is the swap primitive backupExisting uses, indirected through a
+// package var so fault-injection tests can drive the failed-swap and
+// cross-filesystem (EXDEV) branches deterministically — the EXDEV branch cannot
+// be reached by real-fs tricks without a cross-mount in CI. In production it is
+// os.Rename.
+var renameFn = os.Rename
+
+// restorePriorBackup moves the staged prior generation (.bak.old) back to .bak
+// after a failed swap, so a failure leaves the user with the prior backup intact.
+// Best-effort: a restore failure cannot un-fail the swap, but the prior data
+// still survives under .bak.old for manual recovery, so the error is not
+// propagated over the swap failure that is the caller's real concern.
+func restorePriorBackup(staged bool, backupOld, backup string) {
+	if !staged {
+		return
+	}
+	_ = os.Rename(backupOld, backup)
+}
+
+// backupCrossDevice replicates backupExisting's move across a filesystem boundary
+// (hit when path is a mountpoint, so os.Rename(path, backup) returns EXDEV): it
+// copies path's tree into a fresh same-fs staging sibling (backupNew, next to
+// backup on the parent filesystem), renames that over backup as an atomic same-fs
+// swap, then removes path to leave it vacant — matching os.Rename(path, backup)'s
+// postcondition. The prior .bak (if any) has already been staged to .bak.old by
+// the caller, so backup is absent here; a failure leaves backupNew for the
+// entry-time reconcile to clean on the next run.
+func backupCrossDevice(path, backup, backupNew string) error {
+	if err := os.RemoveAll(backupNew); err != nil {
+		return fmt.Errorf("clearing staging backup %q: %w", backupNew, err)
+	}
+	if err := atomicfs.CopyPath(path, backupNew); err != nil {
+		return fmt.Errorf("backing up %q across filesystems: %w", path, err)
+	}
+	if err := os.Rename(backupNew, backup); err != nil {
+		return fmt.Errorf("swapping staged backup %q into place: %w", backupNew, err)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("vacating %q after cross-device backup: %w", path, err)
+	}
+	return nil
 }
 
 // forceBackupReviewDir backs up an existing managed review directory for id
@@ -336,8 +431,10 @@ func forceBackupOutputDir(dir string) (string, error) {
 	if len(entries) == 0 {
 		return "", nil
 	}
-	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
-	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
+	// backupExisting ultimately replaces (and, on success, removes) the prior
+	// <dir>.bak generation — and its crash-safe staging also RemoveAll()s any
+	// <dir>.bak.old/<dir>.bak.new sibling at entry (Epic 4.7.1). Inside the managed
+	// reviews tree those siblings are atcr-owned, but an arbitrary --output-dir may
 	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
 	// backup atcr did not create (Epic 4.7: never silently delete user data).
 	if err := guardForeignBackup(dir + ".bak"); err != nil {
