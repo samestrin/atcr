@@ -445,6 +445,84 @@ func TestBackupToDotBak_NoStagingLeakAfterSuccess(t *testing.T) {
 	}
 }
 
+// TestBackupToDotBak_RenameFailurePreservesPriorBak is the Epic 4.7.1 AC4
+// rename-step fault test for the copy-based site: the copy succeeds but the swap
+// (staged->bak rename) fails, and the prior .bak must survive intact with no
+// staging artifacts left behind. The failure is injected through the renameFn
+// seam so the otherwise-microsecond same-dir rename window is deterministic.
+func TestBackupToDotBak_RenameFailurePreservesPriorBak(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		isDir bool
+	}{
+		{"directory", true},
+		{"file", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "review")
+			bak := src + ".bak"
+
+			if tc.isDir {
+				if err := os.MkdirAll(src, 0o755); err != nil {
+					t.Fatalf("seed src dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(src, "new.txt"), []byte("new\n"), 0o644); err != nil {
+					t.Fatalf("seed src content: %v", err)
+				}
+				if err := os.MkdirAll(bak, 0o755); err != nil {
+					t.Fatalf("seed prior .bak dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(bak, "prior.txt"), []byte("prior\n"), 0o644); err != nil {
+					t.Fatalf("seed prior .bak content: %v", err)
+				}
+			} else {
+				if err := os.WriteFile(src, []byte("new\n"), 0o644); err != nil {
+					t.Fatalf("seed src file: %v", err)
+				}
+				if err := os.WriteFile(bak, []byte("prior\n"), 0o644); err != nil {
+					t.Fatalf("seed prior .bak file: %v", err)
+				}
+			}
+
+			orig := renameFn
+			renameFn = func(_, _ string) error { return os.ErrPermission }
+			defer func() { renameFn = orig }()
+
+			if _, err := BackupToDotBak(src); err == nil {
+				t.Fatal("expected error on injected swap-rename failure, got nil")
+			}
+
+			// AC4: the prior .bak must survive the failed swap.
+			priorPath := bak
+			if tc.isDir {
+				priorPath = filepath.Join(bak, "prior.txt")
+			}
+			got, err := os.ReadFile(priorPath)
+			if err != nil {
+				t.Fatalf("prior .bak did not survive failed swap: %v", err)
+			}
+			if string(got) != "prior\n" {
+				t.Errorf("prior .bak corrupted after failed swap: %q", got)
+			}
+
+			// No atcr-owned staging artifact may leak.
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("ReadDir: %v", err)
+			}
+			for _, e := range entries {
+				if strings.Contains(e.Name(), ".bak.tmp-") {
+					t.Errorf("staging temp leaked after failed swap: %s", e.Name())
+				}
+				if strings.HasSuffix(e.Name(), ".bak.old") {
+					t.Errorf(".bak.old straggler leaked after failed swap: %s", e.Name())
+				}
+			}
+		})
+	}
+}
+
 // TestCopyPath_File verifies CopyPath copies a regular file's bytes and perms to
 // a fresh destination.
 func TestCopyPath_File(t *testing.T) {
