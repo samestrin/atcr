@@ -119,7 +119,7 @@ func BackupToDotBak(src string) (string, error) {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
 		staged = tmpDir
-	} else {
+	} else if info.Mode().IsRegular() {
 		tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(bak)+".tmp-*")
 		if err != nil {
 			return "", fmt.Errorf("creating backup staging file: %w", err)
@@ -135,6 +135,8 @@ func BackupToDotBak(src string) (string, error) {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
 		staged = tmpName
+	} else {
+		return "", fmt.Errorf("backup %s: not a regular file or directory", src)
 	}
 
 	if err := swapStagedBackup(staged, bak, bakOld); err != nil {
