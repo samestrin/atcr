@@ -452,9 +452,16 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 	}
 	// Apply this agent's effective retry budget (Epic 4.6) for the whole dispatch
 	// — single-shot, tool loop, and degraded paths all run under this ctx, so the
-	// shared client's dispatch picks it up via WithRetryOverride. InitialBackoffMs
-	// > 0 marks a buildAgent-resolved budget; a bare Agent (doctor/direct
-	// construction) leaves it 0 and keeps the client's own default.
+	// shared client's dispatch picks it up via WithRetryOverride. The InitialBackoffMs>0
+	// sentinel makes this a deliberate three-state contract:
+	//   - both fields set (buildAgent-resolved): the override applies.
+	//   - both fields 0 (bare Agent — doctor/direct construction): the override is
+	//     skipped and the client's own default budget governs.
+	//   - MaxRetries set but InitialBackoffMs still 0: the override is ALSO skipped,
+	//     so that MaxRetries is intentionally ignored — there is no resolved base
+	//     delay to pair it with. This mirrors how an unset TimeoutSecs means "parent
+	//     deadline only" rather than a resolved value; a caller wanting a custom
+	//     retry budget on a bare Agent must set initial_backoff_ms as well.
 	if a.InitialBackoffMs > 0 {
 		ctx = llmclient.WithRetryOverride(ctx, a.MaxRetries, time.Duration(a.InitialBackoffMs)*time.Millisecond)
 	}
