@@ -254,6 +254,21 @@ func TestScaffoldOutputDir_CollisionMessageNamesForce(t *testing.T) {
 	assert.Contains(t, err.Error(), "--force", "must name --force as the overwrite opt-in")
 }
 
+// TestScaffoldOutputDir_CollisionErrorSanitizesPath verifies the non-empty
+// collision error names only the sanitized leaf, not the full resolved path, so
+// the error does not leak the server's filesystem layout to an MCP client.
+func TestScaffoldOutputDir_CollisionErrorSanitizesPath(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "myoutput")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prior.txt"), []byte("x"), 0o644))
+
+	_, err := ScaffoldOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "myoutput", "must still name the sanitized output dir")
+	assert.NotContains(t, err.Error(), parent, "must not leak the full resolved parent path")
+}
+
 // TestBackupExisting_MovesAsideReplacingStaleBak verifies backupExisting renames
 // a directory to <dir>.bak and replaces any pre-existing backup, so --force keeps
 // exactly one prior generation and the source path is left vacant for a fresh
