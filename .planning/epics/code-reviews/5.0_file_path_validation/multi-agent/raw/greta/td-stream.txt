@@ -1,0 +1,1 @@
+LOW|internal/stream/validate.go:58|Symlink traversal bypasses lexical containment check|Resolve symlinks and verify target remains under root|security|10|os.Stat follows symlinks, potentially leaking existence outside root|greta
