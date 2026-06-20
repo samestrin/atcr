@@ -65,10 +65,15 @@ func WriteJSON(path string, v interface{}) error {
 // non-regular entries are skipped. Garbage-collecting older .bak state is the
 // caller's/user's job.
 //
-// The copy is staged into a temp sibling (<src>.bak.tmp-*) and then renamed
-// over <src>.bak, with the destructive RemoveAll(<src>.bak) deferred until just
-// before the rename. A crash or interruption during the copy therefore leaves
-// the prior .bak generation intact.
+// The copy is staged into a temp sibling (<src>.bak.tmp-*) and then swapped over
+// <src>.bak crash-safely (Epic 4.7.1): the prior generation is renamed aside to
+// <src>.bak.old (not destroyed) before the staged copy is renamed into place, and
+// is removed only after a successful swap / restored on a failed one. Staging the
+// prior generation aside happens only after the copy completes, so a failed copy
+// leaves the prior .bak intact, and restoring on a failed rename keeps it intact
+// across a failed swap too — an interrupted backup never leaves the user with
+// neither generation. A stale <src>.bak.old from a prior crashed swap is
+// reconciled away at entry.
 func BackupToDotBak(src string) (string, error) {
 	info, err := os.Lstat(src)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -84,10 +89,18 @@ func BackupToDotBak(src string) (string, error) {
 		return "", nil
 	}
 	bak := src + ".bak"
+	bakOld := src + ".bak.old"
 	dir := filepath.Dir(src)
 
-	// Stage the backup into a temp sibling, then atomically swap it over bak.
-	// If the copy is interrupted, the prior .bak remains untouched.
+	// Reconcile a stale .bak.old a prior crashed swap may have left, so a retry
+	// starts clean and the one-generation contract holds across crash-then-retry.
+	if err := os.RemoveAll(bakOld); err != nil {
+		return "", fmt.Errorf("clearing stale staging backup %s: %w", bakOld, err)
+	}
+
+	// Stage the backup into a temp sibling. If the copy is interrupted, the prior
+	// .bak is not touched (it is staged aside only after the copy completes).
+	var staged string
 	if info.IsDir() {
 		tmpDir, err := os.MkdirTemp(dir, filepath.Base(bak)+".tmp-*")
 		if err != nil {
@@ -98,12 +111,7 @@ func BackupToDotBak(src string) (string, error) {
 		if err := copyTree(src, tmpDir); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
-		if err := os.RemoveAll(bak); err != nil {
-			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
-		}
-		if err := os.Rename(tmpDir, bak); err != nil {
-			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
-		}
+		staged = tmpDir
 	} else {
 		tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(bak)+".tmp-*")
 		if err != nil {
@@ -119,14 +127,77 @@ func BackupToDotBak(src string) (string, error) {
 		if err := copyFile(src, tmpName, info.Mode().Perm()); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
-		if err := os.RemoveAll(bak); err != nil {
-			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
-		}
-		if err := os.Rename(tmpName, bak); err != nil {
-			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
-		}
+		staged = tmpName
+	}
+
+	if err := swapStagedBackup(staged, bak, bakOld); err != nil {
+		return "", err
 	}
 	return bak, nil
+}
+
+// swapStagedBackup atomically replaces bak with the already-staged copy at
+// staged while preserving the prior generation across a failed swap (Epic
+// 4.7.1). The prior bak (if any) is renamed aside to bakOld rather than
+// destroyed; on a successful rename the superseded bakOld is removed, and on a
+// failed rename it is restored to bak so the caller is never left with neither
+// generation. This mirrors backupExisting's move-based crash-safe swap for the
+// copy-based path. renameFn is indirected through a package var so fault-injection
+// tests can drive the failed-swap branch deterministically; in production it is
+// os.Rename.
+func swapStagedBackup(staged, bak, bakOld string) error {
+	priorStaged := false
+	if _, err := os.Lstat(bak); err == nil {
+		if err := os.Rename(bak, bakOld); err != nil {
+			return fmt.Errorf("staging prior backup %s aside: %w", bak, err)
+		}
+		priorStaged = true
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("checking prior backup %s: %w", bak, err)
+	}
+
+	if err := renameFn(staged, bak); err != nil {
+		if priorStaged {
+			// Best-effort restore. A restore failure cannot un-fail the swap, but
+			// the prior data still survives under bakOld for the next entry-time
+			// reconcile / manual recovery, so the swap error is what propagates.
+			_ = os.Rename(bakOld, bak)
+		}
+		return fmt.Errorf("renaming staged backup to %s: %w", bak, err)
+	}
+
+	if priorStaged {
+		if err := os.RemoveAll(bakOld); err != nil {
+			return fmt.Errorf("removing superseded backup %s: %w", bakOld, err)
+		}
+	}
+	return nil
+}
+
+// renameFn is the swap primitive swapStagedBackup uses, indirected through a
+// package var so fault-injection tests can drive the failed-swap branch
+// deterministically. In production it is os.Rename.
+var renameFn = os.Rename
+
+// CopyPath copies the regular file or directory tree at src to dst, preserving
+// per-entry permissions; non-regular entries (symlinks, devices) are skipped, as
+// in BackupToDotBak. For a directory, dst is created by the copy (it must not
+// already exist). This is the copy primitive a caller uses to replicate a move
+// across a filesystem boundary when os.Rename returns EXDEV — the destination is
+// expected to be a fresh same-filesystem staging path that is then renamed into
+// place. A missing or non-regular/non-directory src is an error.
+func CopyPath(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return copyTree(src, dst)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("copy %s: not a regular file or directory", src)
+	}
+	return copyFile(src, dst, info.Mode().Perm())
 }
 
 // copyFile copies a single regular file's bytes from src to dst with perm.
