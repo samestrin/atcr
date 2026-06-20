@@ -213,6 +213,12 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		IDOverride: in.ID,
 	})
 	if err != nil {
+		// The explicit-id collision message names CLI-only flags (--resume/--force);
+		// re-message it for MCP clients, which have neither.
+		var existsErr *fanout.ReviewDirExistsError
+		if errors.As(err, &existsErr) {
+			return nil, ReviewResult{}, fmt.Errorf("review %s already exists; choose a different id or remove the existing review to re-run", existsErr.ID)
+		}
 		return nil, ReviewResult{}, err
 	}
 

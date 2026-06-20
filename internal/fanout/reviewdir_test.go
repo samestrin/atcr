@@ -128,6 +128,25 @@ func TestScaffoldOutputDir_TwoCallsSamePathSecondFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "not empty")
 }
 
+// TestScaffoldReviewDir_CollisionReturnsTypedError pins the seam non-CLI callers
+// rely on: an explicit-id collision is a *ReviewDirExistsError (so the MCP handler
+// can substitute a flag-neutral message via errors.As), while its default Error()
+// still names both CLI recovery flags for the CLI path (Epic 4.7 AC1).
+func TestScaffoldReviewDir_CollisionReturnsTypedError(t *testing.T) {
+	root := t.TempDir()
+	_, err := ScaffoldReviewDir(root, "dup")
+	require.NoError(t, err)
+
+	_, err = ScaffoldReviewDir(root, "dup")
+	require.Error(t, err)
+	var exists *ReviewDirExistsError
+	require.ErrorAs(t, err, &exists,
+		"collision must be a typed ReviewDirExistsError so non-CLI callers can re-message it")
+	assert.Equal(t, "dup", exists.ID)
+	assert.Contains(t, err.Error(), "--resume", "default (CLI) message names --resume (AC1)")
+	assert.Contains(t, err.Error(), "--force", "default (CLI) message names --force (AC1)")
+}
+
 func TestSlugifyBranch(t *testing.T) {
 	cases := map[string]string{
 		"feature/JIRA-123-add-auth": "JIRA-123-add-auth",

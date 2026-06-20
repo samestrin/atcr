@@ -192,6 +192,17 @@ func claimReviewDir(root, id, suffix string) (string, string, error) {
 	return "", "", fmt.Errorf("failed to create review directory: too many collisions for id %q", id)
 }
 
+// ReviewDirExistsError is returned by ScaffoldReviewDir when an explicit id's
+// review directory already exists. Its Error() names the CLI recovery flags
+// (--resume/--force) for the common CLI path; non-CLI callers (the MCP handler)
+// detect it with errors.As and substitute a flag-neutral message, since MCP
+// clients have no such flags.
+type ReviewDirExistsError struct{ ID string }
+
+func (e *ReviewDirExistsError) Error() string {
+	return fmt.Sprintf("review %s already exists; use --resume %s to continue it or --force to overwrite", e.ID, e.ID)
+}
+
 // ScaffoldReviewDir creates .atcr/reviews/<id>/ and its top-level subdirs (0755),
 // returning the review-dir path. Parent directories are created as needed
 // (AC 01-03 Edge Case 3). A creation failure carries the AC 01-03 message.
@@ -207,7 +218,7 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return "", fmt.Errorf("review %s already exists; use --resume %s to continue it or --force to overwrite", id, id)
+			return "", &ReviewDirExistsError{ID: id}
 		}
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}
