@@ -71,6 +71,13 @@ type JSONFinding struct {
 	Confidence   string        `json:"confidence"`
 	Disagreement string        `json:"disagreement,omitempty"`
 	Verification *Verification `json:"verification,omitempty"` // reserved (Epic 3.0); absent in 1.x
+	// PathValid / PathWarning carry file-existence validation (Epic 5.0). Both
+	// are omitempty so a finding that was never validated (or whose path exists)
+	// serializes byte-identically to pre-5.0 findings.json — only a flagged
+	// hallucinated path adds path_warning. The report layer keys display off
+	// PathWarning, not PathValid, so an absent (false) PathValid never flags.
+	PathValid   bool   `json:"path_valid,omitempty"`
+	PathWarning string `json:"path_warning,omitempty"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.
@@ -90,6 +97,8 @@ func (r Result) JSONFindings() []JSONFinding {
 			Confidence:   m.Confidence,
 			Disagreement: m.Disagreement,
 			Verification: m.Verification,
+			PathValid:    m.PathValid,
+			PathWarning:  m.PathWarning,
 		})
 	}
 	return out
