@@ -1,0 +1,796 @@
+diff --git a/docs/registry.md b/docs/registry.md
+index 43d512d..6b0eda6 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -42,6 +42,9 @@ timeout_secs: 600
+ payload_byte_budget: 524288
+ max_parallel: 10
+ fail_on: HIGH
++# Retry/backoff (Epic 4.6) — registry (global) tier only; not carried by project config or CLI.
++max_retries: 5
++initial_backoff_ms: 500
+ ```
+ 
+ ### Provider fields
+@@ -63,6 +66,8 @@ fail_on: HIGH
+ | `rate_limited` | false | `true` places the agent in the serial lane. |
+ | `fallback` | — | Another agent name, tried when this one fails. Chains are validated at load (dangling refs and cycles fail fast). |
+ | `payload` | inherited | Per-agent payload mode override (`diff`, `blocks`, `files`). When unset, inherits the resolved shared payload mode. See [payload-modes.md](payload-modes.md). |
++| `max_retries` | inherited | Per-agent retry budget for rate-limit/transient failures (429, 5xx, transport). When unset, inherits the resolved shared budget (default `5`); set it to override per agent. Must be within `0..10` (`0` = a single attempt, no retry). The `Retry-After` header is always honored regardless of this value. |
++| `initial_backoff_ms` | inherited | Per-agent base delay (ms) between retries when no server `Retry-After` is present; the schedule grows exponentially from here (×1.5, capped at 30s). When unset, inherits the resolved shared delay (default `500`). Must be within `1..30000`. |
+ 
+ ## `.atcr/config.yaml` (project level)
+ 
+@@ -133,6 +138,8 @@ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
+ 
+ A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+ 
++The retry tunables (`max_retries`, `initial_backoff_ms`, Epic 4.6) resolve over a **shorter chain**: agent-level field > `registry.yaml` (global) > embedded default (`max_retries=5`, `initial_backoff_ms=500`). They are deliberately **not** carried by `.atcr/config.yaml` or a CLI flag — rate-limit resilience is a property of the user's provider/account, set once at the registry tier or refined per agent. An agent's effective budget is threaded onto each call so per-agent overrides take effect without rebuilding the shared client.
++
+ The same **project-over-user** rule now applies uniformly across all three kinds of configuration — settings, personas, and definitions:
+ 
+ ```
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index ee3a641..fb3fdfd 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -75,6 +75,16 @@ type Agent struct {
+ 	// means "use the global context deadline only".
+ 	TimeoutSecs int
+ 
++	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
++	// delay (ms), resolved by buildAgent from the per-agent override layered over
++	// the global Settings. invokeAgent threads them onto the call context so the
++	// shared client's dispatch honors them. InitialBackoffMs > 0 is the
++	// "configured" sentinel: a bare Agent (doctor/direct construction) leaves it
++	// 0 and keeps the client's own default budget. MaxRetries 0 is a valid
++	// budget (single attempt) and is applied whenever InitialBackoffMs is set.
++	MaxRetries       int
++	InitialBackoffMs int
++
+ 	// Tool-loop configuration (Epic 2.0). Tools enables the multi-turn agent
+ 	// loop; when false the agent runs single-shot exactly as in 1.x. MaxTurns
+ 	// caps Chat-with-tools turns (default 10 applied at registry load when
+@@ -440,6 +450,14 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
+ 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
+ 		defer cancel()
+ 	}
++	// Apply this agent's effective retry budget (Epic 4.6) for the whole dispatch
++	// — single-shot, tool loop, and degraded paths all run under this ctx, so the
++	// shared client's dispatch picks it up via WithRetryOverride. InitialBackoffMs
++	// > 0 marks a buildAgent-resolved budget; a bare Agent (doctor/direct
++	// construction) leaves it 0 and keeps the client's own default.
++	if a.InitialBackoffMs > 0 {
++		ctx = llmclient.WithRetryOverride(ctx, a.MaxRetries, time.Duration(a.InitialBackoffMs)*time.Millisecond)
++	}
+ 	// Scope a per-agent logger so every line emitted while this agent runs carries
+ 	// agent_name (AC10). The engine logger already carries review_id (seeded by
+ 	// ExecuteReview), so agent lines carry both. Thread it through ctx so downstream
+diff --git a/internal/fanout/retry_wiring_test.go b/internal/fanout/retry_wiring_test.go
+new file mode 100644
+index 0000000..5bcd382
+--- /dev/null
++++ b/internal/fanout/retry_wiring_test.go
+@@ -0,0 +1,105 @@
++package fanout
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
++)
++
++// Epic 4.6: buildAgent resolves each agent's effective retry budget from the
++// per-agent override layered over the resolved global Settings, and invokeAgent
++// threads it onto the call context so the shared client's dispatch honors it.
++
++func retryCfg() *ReviewConfig {
++	return &ReviewConfig{
++		Registry: &registry.Registry{
++			Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: "http://x"}},
++			Agents: map[string]registry.AgentConfig{
++				// inherits the resolved global budget
++				"greta": {Provider: "p", Model: "m", Persona: "greta", Temperature: ptrF(0.7)},
++				// overrides max_retries; inherits initial_backoff_ms
++				"kai": {Provider: "p", Model: "m2", Persona: "kai", Temperature: ptrF(0.7), MaxRetries: ptrInt(9)},
++			},
++		},
++		Project:  &registry.ProjectConfig{Agents: []string{"greta"}},
++		Settings: registry.Settings{PayloadMode: "blocks", TimeoutSecs: 600, MaxRetries: 5, InitialBackoffMs: 500},
++	}
++}
++
++func TestBuildAgent_PropagatesRetryFields(t *testing.T) {
++	cfg := retryCfg()
++	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
++
++	greta, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"})
++	require.NoError(t, err)
++	assert.Equal(t, 5, greta.MaxRetries, "unset agent inherits resolved global max_retries")
++	assert.Equal(t, 500, greta.InitialBackoffMs, "unset agent inherits resolved global initial_backoff_ms")
++
++	kai, _, err := buildAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"})
++	require.NoError(t, err)
++	assert.Equal(t, 9, kai.MaxRetries, "per-agent max_retries override wins")
++	assert.Equal(t, 500, kai.InitialBackoffMs, "inherits global initial_backoff_ms when not overridden")
++}
++
++// retrying503Server returns 503 for the first failUntil calls, then a valid
++// completion. It counts calls so a test can assert the retry budget consumed.
++func retrying503Server(t *testing.T, failUntil int, calls *atomic.Int32) *httptest.Server {
++	t.Helper()
++	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		if calls.Add(1) <= int32(failUntil) {
++			w.WriteHeader(http.StatusServiceUnavailable)
++			return
++		}
++		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
++	}))
++}
++
++func TestInvokeAgent_AppliesRetryOverride(t *testing.T) {
++	var calls atomic.Int32
++	srv := retrying503Server(t, 2, &calls)
++	defer srv.Close()
++	t.Setenv("ATCR_TEST_KEY", "sk-test")
++
++	// Shared client built with ZERO retry budget: only the per-agent override on
++	// the context can carry the call past the two 503s.
++	client := llmclient.New(llmclient.WithHTTPClient(srv.Client()), llmclient.WithRetry(0, time.Millisecond, 1.5))
++	e := NewEngine(client)
++
++	a := Agent{
++		Name:             "kai",
++		Invocation:       llmclient.Invocation{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY", Model: "m"},
++		MaxRetries:       3,
++		InitialBackoffMs: 1,
++	}
++	r := e.invokeAgent(context.Background(), a)
++
++	require.Equal(t, StatusOK, r.Status, "per-agent override budget should drive retries past the 503s")
++	assert.Equal(t, int32(3), calls.Load(), "1 + 2 retries from the override budget")
++}
++
++func TestInvokeAgent_NoOverrideUsesClientDefault(t *testing.T) {
++	var calls atomic.Int32
++	srv := retrying503Server(t, 2, &calls)
++	defer srv.Close()
++	t.Setenv("ATCR_TEST_KEY", "sk-test")
++
++	// Bare Agent (no retry fields) → no context override → the client's own zero
++	// budget governs, so the first 503 fails fast.
++	client := llmclient.New(llmclient.WithHTTPClient(srv.Client()), llmclient.WithRetry(0, time.Millisecond, 1.5))
++	e := NewEngine(client)
++
++	a := Agent{Name: "bare", Invocation: llmclient.Invocation{BaseURL: srv.URL, APIKeyEnv: "ATCR_TEST_KEY", Model: "m"}}
++	r := e.invokeAgent(context.Background(), a)
++
++	require.Equal(t, StatusFailed, r.Status, "without an override the zero-budget client fails on the first 503")
++	assert.Equal(t, int32(1), calls.Load(), "exactly one attempt")
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index c637a91..89bd1a8 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -585,18 +585,20 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
+ 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
+ 	}
+ 	return Agent{
+-		Name:            name,
+-		Provider:        ac.Provider,
+-		Prompt:          prompt,
+-		PayloadMode:     mode,
+-		Truncation:      mp.Truncation,
+-		TimeoutSecs:     ac.EffectiveTimeoutSecs(cfg.Settings),
+-		Tools:           ac.Tools,
+-		SupportsFC:      ac.SupportsFC,
+-		MaxTurns:        derefMaxTurns(ac.MaxTurns),
+-		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
+-		MinSeverity:     ac.MinSeverity,
+-		MaxFindings:     ac.MaxFindings,
++		Name:             name,
++		Provider:         ac.Provider,
++		Prompt:           prompt,
++		PayloadMode:      mode,
++		Truncation:       mp.Truncation,
++		TimeoutSecs:      ac.EffectiveTimeoutSecs(cfg.Settings),
++		MaxRetries:       ac.EffectiveMaxRetries(cfg.Settings),
++		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
++		Tools:            ac.Tools,
++		SupportsFC:       ac.SupportsFC,
++		MaxTurns:         derefMaxTurns(ac.MaxTurns),
++		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
++		MinSeverity:      ac.MinSeverity,
++		MaxFindings:      ac.MaxFindings,
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     prov.BaseURL,
+ 			APIKeyEnv:   prov.APIKeyEnv,
+@@ -657,6 +659,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
+ 		PayloadMode: primary.PayloadMode,
+ 		Truncation:  primary.Truncation,
+ 		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
++		// Retry/backoff follow the fallback's OWN config (Epic 4.6), like
++		// TimeoutSecs: the fallback makes its own call to its own provider, so its
++		// own resilience budget governs.
++		MaxRetries:       ac.EffectiveMaxRetries(cfg.Settings),
++		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
+ 		// Fallbacks inherit the lane's effective tool settings from the primary,
+ 		// not the fallback's own config (AC 01-05 S4, AC 04-03: "fallbacks inherit
+ 		// the lane's effective tools setting"). Degrade stays per-agent — a
+diff --git a/internal/llmclient/client.go b/internal/llmclient/client.go
+index 2e1c2ca..9816d5d 100644
+--- a/internal/llmclient/client.go
++++ b/internal/llmclient/client.go
+@@ -407,11 +407,25 @@ func isBreakerFailure(err error) bool {
+ // size-cap semantics stay identical across the two call shapes.
+ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
+ 	var lastErr error
++	// The retry budget and base delay come from the client by default, but a
++	// per-call override on the context (Epic 4.6: the fan-out's resolved
++	// per-agent max_retries / initial_backoff_ms) takes precedence. The 1.5x
++	// factor and the maxBackoff cap stay fixed implementation constants.
++	maxRetries := c.maxRetries
+ 	delay := c.initialBackoff
++	if o, ok := retryOverrideFromContext(ctx); ok {
++		maxRetries = o.maxRetries
++		delay = o.initialBackoff
++	}
++	// Clamp the starting delay so even the FIRST retry sleep respects maxBackoff:
++	// every subsequent delay is clamped after the ×factor step, but without this
++	// an out-of-range base (a misconfigured initial_backoff or a direct
++	// WithRetryOverride) would sleep its full unclamped duration on attempt 1.
++	delay = clampBackoff(delay)
+ 	// honorExact is set when the next sleep is a server-advertised Retry-After
+ 	// cooldown, which must be slept verbatim (neither jittered down nor clamped).
+ 	honorExact := false
+-	for attempt := 0; attempt <= c.maxRetries; attempt++ {
++	for attempt := 0; attempt <= maxRetries; attempt++ {
+ 		if attempt > 0 {
+ 			sleepFor := delay
+ 			if !honorExact {
+@@ -435,7 +449,7 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
+ 				return nil, err
+ 			}
+ 			lastErr = err
+-			if attempt < c.maxRetries {
++			if attempt < maxRetries {
+ 				continue
+ 			}
+ 			// Transport-level exhaustion (connection reset, EOF, DNS) is transient:
+@@ -449,7 +463,7 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
+ 			return payload, nil
+ 		case retryableStatus[status]:
+ 			lastErr = httpStatusError(status, string(payload))
+-			if attempt < c.maxRetries {
++			if attempt < maxRetries {
+ 				// Honor a server-advertised cooldown (Retry-After) over the fixed
+ 				// backoff when present; otherwise keep the exponential schedule.
+ 				if retryAfter > 0 {
+diff --git a/internal/llmclient/retry_override.go b/internal/llmclient/retry_override.go
+new file mode 100644
+index 0000000..1fcbdc0
+--- /dev/null
++++ b/internal/llmclient/retry_override.go
+@@ -0,0 +1,41 @@
++package llmclient
++
++import (
++	"context"
++	"time"
++)
++
++// retryOverride is a per-call retry budget carried on the context so the
++// fan-out can apply each agent's effective max_retries / initial_backoff
++// (Epic 4.6) without rebuilding the shared *Client. It mirrors how the
++// circuitbreaker threads its per-provider state through the context: the value
++// is set far from the call site and read inside dispatch.
++type retryOverride struct {
++	maxRetries     int
++	initialBackoff time.Duration
++}
++
++// retryOverrideKey is the unexported context key for retryOverride; the
++// unexported type guarantees no collision with other packages' context values.
++type retryOverrideKey struct{}
++
++// WithRetryOverride returns a context carrying a per-call retry budget that
++// dispatch prefers over the client's own fields. A negative maxRetries is
++// clamped to 0 (a single attempt) — the same guard WithRetry applies — so the
++// retry loop never falls through to a nil-cause "exhausted retries" error.
++func WithRetryOverride(ctx context.Context, maxRetries int, initialBackoff time.Duration) context.Context {
++	if maxRetries < 0 {
++		maxRetries = 0
++	}
++	return context.WithValue(ctx, retryOverrideKey{}, retryOverride{
++		maxRetries:     maxRetries,
++		initialBackoff: initialBackoff,
++	})
++}
++
++// retryOverrideFromContext returns the per-call retry override and whether one
++// was set.
++func retryOverrideFromContext(ctx context.Context) (retryOverride, bool) {
++	o, ok := ctx.Value(retryOverrideKey{}).(retryOverride)
++	return o, ok
++}
+diff --git a/internal/llmclient/retry_override_test.go b/internal/llmclient/retry_override_test.go
+new file mode 100644
+index 0000000..a868f6e
+--- /dev/null
++++ b/internal/llmclient/retry_override_test.go
+@@ -0,0 +1,99 @@
++package llmclient
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 4.6: a per-call retry override carried on the context lets the fan-out
++// apply each agent's effective retry budget without rebuilding the shared
++// client. dispatch prefers the override over the client's own fields; absent an
++// override the client default applies.
++
++func TestRetryOverride_RaisesBudgetAboveClientDefault(t *testing.T) {
++	var calls atomic.Int32
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		if calls.Add(1) <= 2 {
++			w.WriteHeader(http.StatusServiceUnavailable)
++			return
++		}
++		okResponse(w, "ok after override retries")
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	// Client built with NO retry budget (1 attempt); the override raises it to 3.
++	c := New(WithHTTPClient(srv.Client()), WithRetry(0, time.Millisecond, 1.5))
++	ctx := WithRetryOverride(context.Background(), 3, time.Millisecond)
++
++	out, err := c.Complete(ctx, Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
++	require.NoError(t, err)
++	assert.Equal(t, "ok after override retries", out)
++	assert.Equal(t, int32(3), calls.Load(), "override budget (3) drove 1 + 2 retries")
++}
++
++func TestRetryOverride_LowersBudgetBelowClientDefault(t *testing.T) {
++	var calls atomic.Int32
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		calls.Add(1)
++		w.WriteHeader(http.StatusServiceUnavailable)
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	// Client default would retry 5×; the override forces a single attempt.
++	c := New(WithHTTPClient(srv.Client()), WithRetry(5, time.Millisecond, 1.5))
++	ctx := WithRetryOverride(context.Background(), 0, time.Millisecond)
++
++	_, err := c.Complete(ctx, Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
++	require.Error(t, err)
++	assert.Equal(t, int32(1), calls.Load(), "override budget (0) made exactly one attempt")
++}
++
++func TestRetryOverride_AbsentUsesClientDefault(t *testing.T) {
++	var calls atomic.Int32
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		if calls.Add(1) <= 2 {
++			w.WriteHeader(http.StatusServiceUnavailable)
++			return
++		}
++		okResponse(w, "ok")
++	}))
++	defer srv.Close()
++	t.Setenv("TEST_KEY", testKey)
++
++	// No override on the context → the client's own budget (2) governs.
++	c := New(WithHTTPClient(srv.Client()), WithRetry(2, time.Millisecond, 1.5))
++	out, err := c.Complete(context.Background(), Invocation{BaseURL: srv.URL, APIKeyEnv: "TEST_KEY", Model: "m"})
++	require.NoError(t, err)
++	assert.Equal(t, "ok", out)
++	assert.Equal(t, int32(3), calls.Load())
++}
++
++func TestRetryOverride_ContextRoundTrip(t *testing.T) {
++	base := context.Background()
++	_, ok := retryOverrideFromContext(base)
++	assert.False(t, ok, "no override on a bare context")
++
++	ctx := WithRetryOverride(base, 4, 250*time.Millisecond)
++	o, ok := retryOverrideFromContext(ctx)
++	require.True(t, ok)
++	assert.Equal(t, 4, o.maxRetries)
++	assert.Equal(t, 250*time.Millisecond, o.initialBackoff)
++}
++
++func TestRetryOverride_NegativeBudgetClamped(t *testing.T) {
++	// A negative budget would make the attempt loop fall through to a nil-cause
++	// "exhausted retries"; clamp to 0 (a single attempt) like WithRetry does.
++	ctx := WithRetryOverride(context.Background(), -3, time.Millisecond)
++	o, ok := retryOverrideFromContext(ctx)
++	require.True(t, ok)
++	assert.Equal(t, 0, o.maxRetries, "negative override budget is clamped to 0")
++}
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index 0237647..c00ed8b 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -121,6 +121,13 @@ type AgentConfig struct {
+ 	Scope       []string `yaml:"scope,omitempty"`        // soft focus categories injected into the prompt
+ 	MinSeverity string   `yaml:"min_severity,omitempty"` // drop findings below this floor (CRITICAL|HIGH|MEDIUM|LOW)
+ 	MaxFindings *int     `yaml:"max_findings,omitempty"` // cap on findings (severity-sorted truncate); nil = unlimited
++
++	// Retry/backoff tunables (Epic 4.6) — the per-agent tier, overriding the
++	// resolved global settings via EffectiveMaxRetries/EffectiveInitialBackoffMs.
++	// Pointers so an explicit 0 max_retries survives and an unset field inherits
++	// the resolved setting (same shape as TimeoutSecs).
++	MaxRetries       *int `yaml:"max_retries,omitempty"`        // per-agent retry budget (0 = single attempt); nil = inherit
++	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"` // per-agent base retry delay (ms); nil = inherit
+ }
+ 
+ // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
+@@ -159,6 +166,13 @@ type Registry struct {
+ 	// application in ResolveSettings.
+ 	MaxParallel *int `yaml:"max_parallel,omitempty"`
+ 
++	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
++	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
++	// max_retries (single attempt, no retry) survives default application in
++	// ResolveSettings. An unset value falls through to the embedded default.
++	MaxRetries       *int `yaml:"max_retries,omitempty"`
++	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"`
++
+ 	// Verify is the optional adversarial-verification block (Epic 3.0). Defaults
+ 	// (min_severity=MEDIUM, votes=1) are applied at load, so a registry without a
+ 	// verify block still yields the resolved defaults.
+@@ -224,6 +238,14 @@ func (r *Registry) validate() error {
+ 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
+ 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
+ 	}
++	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
++	// delay must be positive so the exponential schedule has a starting point.
++	if r.MaxRetries != nil && (*r.MaxRetries < 0 || *r.MaxRetries > MaxRetriesCap) {
++		errs = append(errs, fmt.Errorf("max_retries must be within 0..%d", MaxRetriesCap))
++	}
++	if r.InitialBackoffMs != nil && (*r.InitialBackoffMs <= 0 || *r.InitialBackoffMs > MaxInitialBackoffMs) {
++		errs = append(errs, fmt.Errorf("initial_backoff_ms must be within 1..%d", MaxInitialBackoffMs))
++	}
+ 	if !payloadModeValid(r.PayloadMode) {
+ 		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
+ 	}
+@@ -320,6 +342,14 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
+ 	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
+ 		errs = append(errs, agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap))
+ 	}
++	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
++	// delay must be positive. Same range as the registry tier.
++	if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
++		errs = append(errs, agentErrf(name, "agent '%s': max_retries must be within 0..%d", name, MaxRetriesCap))
++	}
++	if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
++		errs = append(errs, agentErrf(name, "agent '%s': initial_backoff_ms must be within 1..%d", name, MaxInitialBackoffMs))
++	}
+ 	for _, s := range a.Scope {
+ 		if strings.TrimSpace(s) == "" {
+ 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not be empty", name))
+@@ -425,6 +455,25 @@ func (a AgentConfig) EffectiveTimeoutSecs(s Settings) int {
+ 	return s.TimeoutSecs
+ }
+ 
++// EffectiveMaxRetries returns the agent's own retry budget when set, otherwise
++// the resolved shared budget (Epic 4.6). An explicit 0 (single attempt, no
++// retry) is honored — the pointer distinguishes it from "unset".
++func (a AgentConfig) EffectiveMaxRetries(s Settings) int {
++	if a.MaxRetries != nil {
++		return *a.MaxRetries
++	}
++	return s.MaxRetries
++}
++
++// EffectiveInitialBackoffMs returns the agent's own base retry delay (ms) when
++// set, otherwise the resolved shared delay (Epic 4.6).
++func (a AgentConfig) EffectiveInitialBackoffMs(s Settings) int {
++	if a.InitialBackoffMs != nil {
++		return *a.InitialBackoffMs
++	}
++	return s.InitialBackoffMs
++}
++
+ // EffectivePayloadMode returns the agent's own payload override when set,
+ // otherwise the resolved shared payload mode. (Enum validation of payload
+ // values is the payload-configuration stage's concern.)
+diff --git a/internal/registry/precedence.go b/internal/registry/precedence.go
+index 1fb08e7..36b8ceb 100644
+--- a/internal/registry/precedence.go
++++ b/internal/registry/precedence.go
+@@ -32,6 +32,30 @@ const MaxToolBudgetBytes = DefaultPayloadByteBudget * MaxAgentTurns
+ // misconfigured roster. 0 is the documented unbounded escape hatch.
+ const DefaultMaxParallel = 10
+ 
++// Retry/backoff tunables (Epic 4.6). The llmclient already implements the
++// retry engine (exponential backoff + jitter + Retry-After); these expose its
++// budget through the shared-settings precedence chain. DefaultMaxRetries is 5
++// (the epic AC default) at the embedded tier — NOT the llmclient
++// defaultMaxRetries=2 constant, which stays the bare-New() fallback for the
++// doctor self-test and other direct clients. InitialBackoffMs is the fallback
++// base delay between retries when no server Retry-After is present.
++const (
++	// DefaultMaxRetries is the embedded-tier retry budget (5 → 6 attempts total).
++	DefaultMaxRetries = 5
++	// MaxRetriesCap bounds max_retries at every tier; a larger budget would let
++	// a single rate-limited agent stall the fan-out far past any useful window.
++	// 0 is valid (a single attempt, no retry).
++	MaxRetriesCap = 10
++	// DefaultInitialBackoffMs is the embedded-tier base delay (ms) between
++	// retries; it matches the llmclient default (500ms) so unconfigured behavior
++	// is unchanged apart from the larger retry budget.
++	DefaultInitialBackoffMs = 500
++	// MaxInitialBackoffMs caps the configurable base delay (ms) at the
++	// llmclient's per-retry backoff ceiling (30s); a larger base would be
++	// clamped anyway.
++	MaxInitialBackoffMs = 30000
++)
++
+ // Settings are the effective shared review settings after precedence
+ // resolution: CLI flag > project config > registry > embedded default.
+ // Each field resolves independently; a tier participates only where it
+@@ -51,6 +75,12 @@ type Settings struct {
+ 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
+ 	// engine; 0 is the documented unbounded escape hatch.
+ 	MaxParallel int
++	// MaxRetries is the resolved retry budget passed to the llmclient per call
++	// (Epic 4.6); 0 means a single attempt with no retry.
++	MaxRetries int
++	// InitialBackoffMs is the resolved base delay (ms) between retries when no
++	// server Retry-After header is present (Epic 4.6).
++	InitialBackoffMs int
+ }
+ 
+ // CLIOverrides carries explicitly-set CLI flag values (nil = flag not set).
+@@ -71,10 +101,21 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 		TimeoutSecs:       DefaultTimeoutSecs,
+ 		PayloadByteBudget: DefaultPayloadByteBudget,
+ 		MaxParallel:       DefaultMaxParallel,
++		MaxRetries:        DefaultMaxRetries,
++		InitialBackoffMs:  DefaultInitialBackoffMs,
+ 	}
+ 
+ 	if reg != nil {
+ 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
++		// Retry tunables live only at the registry (global) tier and the agent
++		// tier (Epic 4.6) — the project tier intentionally does not carry them,
++		// so they are overlaid here rather than through applyTier.
++		if reg.MaxRetries != nil {
++			s.MaxRetries = *reg.MaxRetries
++		}
++		if reg.InitialBackoffMs != nil {
++			s.InitialBackoffMs = *reg.InitialBackoffMs
++		}
+ 	}
+ 	if proj != nil {
+ 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
+@@ -129,6 +170,33 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 	if s.PayloadByteBudget < 0 {
+ 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+ 	}
++	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
++	// loader) can carry out-of-range values; catch them so the engine never
++	// receives them. 0 retries is valid (single attempt); the base delay must be
++	// positive so the exponential schedule has a non-zero starting point.
++	if s.MaxRetries < 0 || s.MaxRetries > MaxRetriesCap {
++		return Settings{}, fmt.Errorf("max_retries must be within 0..%d, got %d", MaxRetriesCap, s.MaxRetries)
++	}
++	if s.InitialBackoffMs <= 0 || s.InitialBackoffMs > MaxInitialBackoffMs {
++		return Settings{}, fmt.Errorf("initial_backoff_ms must be within 1..%d, got %d", MaxInitialBackoffMs, s.InitialBackoffMs)
++	}
++	// Per-agent retry overrides are read directly by EffectiveMaxRetries /
++	// EffectiveInitialBackoffMs, bypassing the global resolution above, so a
++	// directly-constructed reg (skipping LoadRegistry's validateAgent) could
++	// otherwise smuggle out-of-range per-agent values straight to the engine.
++	// Re-check them here for the same defense-in-depth reason as the global tier,
++	// walking in sorted order so the error is deterministic.
++	if reg != nil {
++		for _, name := range sortedKeys(reg.Agents) {
++			a := reg.Agents[name]
++			if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
++				return Settings{}, fmt.Errorf("agent %q: max_retries must be within 0..%d, got %d", name, MaxRetriesCap, *a.MaxRetries)
++			}
++			if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
++				return Settings{}, fmt.Errorf("agent %q: initial_backoff_ms must be within 1..%d, got %d", name, MaxInitialBackoffMs, *a.InitialBackoffMs)
++			}
++		}
++	}
+ 	return s, nil
+ }
+ 
+diff --git a/internal/registry/retry_config_test.go b/internal/registry/retry_config_test.go
+new file mode 100644
+index 0000000..6fc6f7f
+--- /dev/null
++++ b/internal/registry/retry_config_test.go
+@@ -0,0 +1,130 @@
++package registry
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Epic 4.6: max_retries / initial_backoff_ms are configurable at the registry
++// (global) and agent tiers, resolving through the shared-settings precedence
++// chain exactly like timeout_secs.
++
++func TestResolveSettings_RetryDefaults(t *testing.T) {
++	s := resolve(t, CLIOverrides{}, nil, nil)
++	assert.Equal(t, DefaultMaxRetries, s.MaxRetries, "embedded default max_retries")
++	assert.Equal(t, 5, s.MaxRetries, "epic 4.6 AC: default max_retries is 5")
++	assert.Equal(t, DefaultInitialBackoffMs, s.InitialBackoffMs, "embedded default initial_backoff_ms")
++}
++
++func TestResolveSettings_RegistryRetryOverride(t *testing.T) {
++	reg := loadRegistryWith(t, "max_retries: 7\ninitial_backoff_ms: 250\n")
++	s := resolve(t, CLIOverrides{}, nil, reg)
++	assert.Equal(t, 7, s.MaxRetries, "registry tier overrides the embedded default")
++	assert.Equal(t, 250, s.InitialBackoffMs, "registry tier overrides the embedded default")
++}
++
++func TestResolveSettings_RegistryRetryZeroRetriesSurvives(t *testing.T) {
++	// 0 retries is valid (single attempt, no retry) and must survive default
++	// application — the pointer field distinguishes "explicit 0" from "unset".
++	reg := loadRegistryWith(t, "max_retries: 0\n")
++	s := resolve(t, CLIOverrides{}, nil, reg)
++	assert.Equal(t, 0, s.MaxRetries, "explicit 0 retries is honored, not replaced by the default")
++}
++
++func TestEffectiveMaxRetries(t *testing.T) {
++	s := Settings{MaxRetries: 5, InitialBackoffMs: 500}
++	withOwn := AgentConfig{MaxRetries: intPtr(9)}
++	without := AgentConfig{}
++	zero := AgentConfig{MaxRetries: intPtr(0)}
++	assert.Equal(t, 9, withOwn.EffectiveMaxRetries(s), "agent's own max_retries wins")
++	assert.Equal(t, 5, without.EffectiveMaxRetries(s), "unset agent max_retries inherits resolved settings")
++	assert.Equal(t, 0, zero.EffectiveMaxRetries(s), "explicit 0 override wins over the inherited default")
++}
++
++func TestEffectiveInitialBackoffMs(t *testing.T) {
++	s := Settings{MaxRetries: 5, InitialBackoffMs: 500}
++	withOwn := AgentConfig{InitialBackoffMs: intPtr(125)}
++	without := AgentConfig{}
++	assert.Equal(t, 125, withOwn.EffectiveInitialBackoffMs(s), "agent's own initial_backoff_ms wins")
++	assert.Equal(t, 500, without.EffectiveInitialBackoffMs(s), "unset agent initial_backoff_ms inherits resolved settings")
++}
++
++func TestValidate_AgentRetryOutOfRange(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m, max_retries: -1}
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_retries must be within 0..")
++
++	_, err = LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m, initial_backoff_ms: 0}
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "initial_backoff_ms must be within 1..")
++}
++
++func TestValidate_RegistryRetryOutOfRange(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m}
++max_retries: 999999
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "max_retries must be within 0..")
++}
++
++func TestValidate_RegistryInitialBackoffZeroRejected(t *testing.T) {
++	// Symmetry with the agent-tier zero-rejection check: an explicit registry-level
++	// initial_backoff_ms:0 must fail (the base delay must be positive).
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m}
++initial_backoff_ms: 0
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "initial_backoff_ms must be within 1..")
++}
++
++func TestResolveSettings_DirectRegistryRetryOutOfRangeRejected(t *testing.T) {
++	// A directly-constructed Registry (bypassing the file loader) can carry an
++	// out-of-range value; ResolveSettings must catch it so the engine never sees it.
++	_, err := ResolveSettings(CLIOverrides{}, nil, &Registry{MaxRetries: intPtr(MaxRetriesCap + 1)})
++	require.Error(t, err)
++	assert.True(t, strings.Contains(err.Error(), "max_retries"), "post-resolution validation rejects out-of-range global max_retries")
++}
++
++func TestResolveSettings_DirectRegistryPerAgentRetryOutOfRangeRejected(t *testing.T) {
++	// Per-agent overrides are read directly by EffectiveMaxRetries, bypassing the
++	// global resolution; a directly-constructed reg must still be caught post-resolution.
++	reg := &Registry{Agents: map[string]AgentConfig{
++		"bruce": {Provider: "p", Model: "m", MaxRetries: intPtr(MaxRetriesCap + 5)},
++	}}
++	_, err := ResolveSettings(CLIOverrides{}, nil, reg)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "bruce")
++	assert.Contains(t, err.Error(), "max_retries must be within 0..")
++
++	regBackoff := &Registry{Agents: map[string]AgentConfig{
++		"bruce": {Provider: "p", Model: "m", InitialBackoffMs: intPtr(0)},
++	}}
++	_, err = ResolveSettings(CLIOverrides{}, nil, regBackoff)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "initial_backoff_ms must be within 1..")
++}
+diff --git a/internal/verify/invoke.go b/internal/verify/invoke.go
+index de325ca..9f28296 100644
+--- a/internal/verify/invoke.go
++++ b/internal/verify/invoke.go
+@@ -110,6 +110,13 @@ func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
+ 		SupportsFC:      c.SupportsFC,
+ 		MaxTurns:        derefInt(c.MaxTurns),
+ 		ToolBudgetBytes: derefInt64(c.ToolBudgetBytes),
++		// Retry/backoff (Epic 4.6): forward the skeptic's per-agent budget the same
++		// way as the other per-finding budgets. A nil pointer becomes 0; the engine
++		// applies the override only when InitialBackoffMs > 0, so an unset budget
++		// keeps the shared client's own default (consistent with TimeoutSecs → 0
++		// meaning "parent deadline only").
++		MaxRetries:       derefInt(c.MaxRetries),
++		InitialBackoffMs: derefInt(c.InitialBackoffMs),
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     skeptic.Provider.BaseURL,
+ 			APIKeyEnv:   skeptic.Provider.APIKeyEnv,
+diff --git a/internal/verify/invoke_test.go b/internal/verify/invoke_test.go
+index afcfc95..10f93a2 100644
+--- a/internal/verify/invoke_test.go
++++ b/internal/verify/invoke_test.go
+@@ -53,12 +53,16 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
+ 	sk.Config.MaxTurns = intPtr(7)
+ 	sk.Config.ToolBudgetBytes = int64Ptr(4096)
+ 	sk.Config.TimeoutSecs = intPtr(30)
++	sk.Config.MaxRetries = intPtr(4)
++	sk.Config.InitialBackoffMs = intPtr(200)
+ 	a := buildSkepticAgent(sk, "the prompt")
+ 	assert.True(t, a.Tools)
+ 	assert.True(t, a.SupportsFC)
+ 	assert.Equal(t, 7, a.MaxTurns)
+ 	assert.Equal(t, int64(4096), a.ToolBudgetBytes)
+ 	assert.Equal(t, 30, a.TimeoutSecs)
++	assert.Equal(t, 4, a.MaxRetries, "skeptic max_retries forwarded (Epic 4.6)")
++	assert.Equal(t, 200, a.InitialBackoffMs, "skeptic initial_backoff_ms forwarded (Epic 4.6)")
+ 	assert.Equal(t, "http://localhost/v1", a.Invocation.BaseURL)
+ 	assert.Equal(t, "TEST_KEY", a.Invocation.APIKeyEnv)
+ 	assert.Equal(t, "skeptic-model", a.Invocation.Model)

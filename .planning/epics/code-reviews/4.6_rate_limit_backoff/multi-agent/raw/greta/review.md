@@ -1,0 +1,1 @@
+MEDIUM|internal/llmclient/retry_override.go:26|Exported WithRetryOverride lacks upper-bound validation for maxRetries and initialBackoff|Clamp maxRetries to MaxRetriesCap and validate initialBackoff to prevent resource exhaustion|security|10|func WithRetryOverride accepts unbounded maxRetries and initialBackoff without clamping|greta

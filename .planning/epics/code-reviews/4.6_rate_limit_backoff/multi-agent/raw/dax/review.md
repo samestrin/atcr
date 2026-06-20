@@ -1,0 +1,1 @@
+LOW|internal/llmclient/retry_override.go:35|context.WithValue uses unexported key struct; safe but non-idiomatic|Consider using a typed context key variable for clarity|maintainability|5|retryOverrideKey{} as key in WithValue|bruce
