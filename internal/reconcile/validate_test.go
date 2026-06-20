@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,4 +60,38 @@ func TestJSONFindings_CarriesPathValidation(t *testing.T) {
 	assert.Equal(t, stream.PathNotFoundWarning, js[0].PathWarning)
 	assert.True(t, js[1].PathValid)
 	assert.Empty(t, js[1].PathWarning)
+}
+
+// TestRenderMarkdown_ShowsPathWarning: report.md surfaces a per-finding warning
+// for a hallucinated path (AC3), preserving the finding (AC4).
+func TestRenderMarkdown_ShowsPathWarning(t *testing.T) {
+	r := Result{Findings: []Merged{
+		{Finding: stream.Finding{
+			Severity: "HIGH", File: "internal/auth/validator.go", Line: 12,
+			Problem: "token never expires", Confidence: "MEDIUM",
+			PathValid: false, PathWarning: stream.PathNotFoundWarning,
+		}},
+	}}
+
+	var b bytes.Buffer
+	require.NoError(t, RenderMarkdown(&b, r))
+	out := b.String()
+	assert.Contains(t, out, "⚠️ File not found: internal/auth/validator.go")
+	// The finding itself is preserved, not discarded.
+	assert.Contains(t, out, "token never expires")
+}
+
+// TestRenderMarkdown_NoWarningWhenValid: a valid path adds no warning line, so
+// report.md for clean findings is unchanged.
+func TestRenderMarkdown_NoWarningWhenValid(t *testing.T) {
+	r := Result{Findings: []Merged{
+		{Finding: stream.Finding{
+			Severity: "HIGH", File: "a.go", Line: 1,
+			Problem: "x", Confidence: "MEDIUM", PathValid: true,
+		}},
+	}}
+
+	var b bytes.Buffer
+	require.NoError(t, RenderMarkdown(&b, r))
+	assert.NotContains(t, b.String(), "File not found")
 }

@@ -310,6 +310,12 @@ func writeFindingsList(b *bytes.Buffer, findings []Merged) {
 		}
 		fmt.Fprintf(b, "- %s — confidence %s, reviewers: %s\n",
 			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
+		if m.PathWarning != "" {
+			// Hallucinated path (Epic 5.0): the finding is kept, not dropped — the
+			// path is flagged so a user can correct it. esc() neutralizes any
+			// markup in a reviewer-controlled path.
+			fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
+		}
 		if m.Disagreement != "" {
 			fmt.Fprintf(b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
 		}
