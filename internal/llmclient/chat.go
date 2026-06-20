@@ -100,6 +100,14 @@ type ChatResponse struct {
 	// diff successive turns instead of summing; until then the assumption is a
 	// documented hard contract, pinned by TestChat_UsageIsPerTurnNotCumulative.
 	Usage UsageData
+
+	// CallRecords is the per-attempt telemetry for THIS turn's dispatch (one
+	// record per HTTP attempt, retries included). Like Usage, it is per-turn and
+	// the fanout loop accumulates it across turns. Surfaced only on the success
+	// path: a turn that errors returns a nil *ChatResponse, so its records are
+	// dropped — the same accepted limitation that already applies to Usage on an
+	// errored turn (see the no-choices note below).
+	CallRecords []CallRecord
 }
 
 // chatToolRequest is the multi-turn request body. Tools (and tool_choice) are
@@ -149,7 +157,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 	if err != nil {
 		return nil, fmt.Errorf("encoding request: %w", err)
 	}
-	raw, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
+	raw, records, err := c.send(ctx, resolveEndpoint(inv.BaseURL), key, body)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +185,7 @@ func (c *Client) Chat(ctx context.Context, inv Invocation, messages []Message, t
 			return nil, fmt.Errorf("provider truncated response (finish_reason=%s): empty content with no tool_calls", ch.FinishReason)
 		}
 	}
-	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage}
+	resp := &ChatResponse{Message: ch.Message, FinishReason: ch.FinishReason, Usage: parsed.Usage, CallRecords: records}
 	if ch.FinishReason == "length" {
 		resp.Truncated = true
 	}

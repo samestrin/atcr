@@ -31,7 +31,7 @@ type Completer interface {
 // completer that does not implement it degrades to the plain Complete path with
 // zero usage. *llmclient.Client satisfies it via CompleteWithUsage.
 type UsageCompleter interface {
-	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, error)
+	CompleteWithUsage(ctx context.Context, inv llmclient.Invocation) (string, llmclient.UsageData, []llmclient.CallRecord, error)
 }
 
 // ChatCompleter is the multi-turn extension of Completer: it carries a message
@@ -528,7 +528,7 @@ func (e *Engine) invokeSingleShot(ctx context.Context, a Agent) Result {
 		err     error
 	)
 	if uc, ok := e.completer.(UsageCompleter); ok {
-		content, usage, err = uc.CompleteWithUsage(ctx, a.Invocation)
+		content, usage, _, err = uc.CompleteWithUsage(ctx, a.Invocation)
 	} else {
 		content, err = e.completer.Complete(ctx, a.Invocation)
 	}
