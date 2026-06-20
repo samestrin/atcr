@@ -2,9 +2,11 @@ package reconcile
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
@@ -94,4 +96,60 @@ func TestRenderMarkdown_NoWarningWhenValid(t *testing.T) {
 	var b bytes.Buffer
 	require.NoError(t, RenderMarkdown(&b, r))
 	assert.NotContains(t, b.String(), "File not found")
+}
+
+// TestRunReconcile_FlagsHallucinatedPathEndToEnd is the AC6 acceptance test: a
+// real review with a hallucinated path (validator.go, a typo for validate.go)
+// flows through the full pipeline and the warning surfaces in findings.json and
+// report.md, while the real-path finding stays clean and both findings are
+// preserved.
+func TestRunReconcile_FlagsHallucinatedPathEndToEnd(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "internal/auth"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "internal/auth/validate.go"), []byte("package auth\n"), 0o644))
+
+	reviewDir := t.TempDir()
+	sources := filepath.Join(reviewDir, "sources")
+	writeFindings(t, sources, "greta/findings.txt",
+		"HIGH|internal/auth/validate.go:10|real finding|fix|security|10|ev|greta\n"+
+			"HIGH|internal/auth/validator.go:12|hallucinated path finding|fix|security|10|ev|greta\n")
+
+	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
+		ReconciledAt: time.Unix(1700000000, 0).UTC(),
+		Root:         root,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Findings, 2)
+
+	byFile := map[string]Merged{}
+	for _, m := range res.Findings {
+		byFile[m.File] = m
+	}
+	valid := byFile["internal/auth/validate.go"]
+	hall := byFile["internal/auth/validator.go"]
+	assert.True(t, valid.PathValid)
+	assert.Empty(t, valid.PathWarning)
+	assert.False(t, hall.PathValid)
+	assert.Equal(t, stream.PathNotFoundWarning, hall.PathWarning)
+
+	// findings.json (the report command's input) carries the warning.
+	js, err := ReadReconciledFindings(reviewDir)
+	require.NoError(t, err)
+	var sawHallucinated bool
+	for _, f := range js {
+		switch f.File {
+		case "internal/auth/validator.go":
+			sawHallucinated = true
+			assert.Equal(t, stream.PathNotFoundWarning, f.PathWarning)
+		case "internal/auth/validate.go":
+			assert.Empty(t, f.PathWarning)
+		}
+	}
+	assert.True(t, sawHallucinated, "hallucinated finding present in findings.json")
+
+	// report.md shows the warning and preserves the finding (AC3, AC4).
+	reportMD, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", ReportMD))
+	require.NoError(t, err)
+	assert.Contains(t, string(reportMD), "⚠️ File not found: internal/auth/validator.go")
+	assert.Contains(t, string(reportMD), "hallucinated path finding")
 }
