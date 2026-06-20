@@ -55,6 +55,15 @@ type Finding struct {
 	Reviewer   string   // per-source 8th column
 	Reviewers  []string // reconciled 8th column
 	Confidence string   // reconciled 9th column
+
+	// PathValid and PathWarning record the result of file-existence validation
+	// (Epic 5.0). They are NOT part of the wire format — no findings.txt column
+	// carries them — and stay at their zero values until ValidatePath stamps a
+	// finding. PathWarning is the authoritative display signal: an empty
+	// PathWarning means "no warning" regardless of PathValid, so an unvalidated
+	// finding (PathValid defaults to false) is never falsely flagged.
+	PathValid   bool   // true once validated and the file exists
+	PathWarning string // e.g. "file not found"; empty when valid or unvalidated
 }
 
 // SkippedRow records a line skipped as malformed (wrong column count), with its

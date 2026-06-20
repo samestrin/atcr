@@ -71,6 +71,19 @@ type JSONFinding struct {
 	Confidence   string        `json:"confidence"`
 	Disagreement string        `json:"disagreement,omitempty"`
 	Verification *Verification `json:"verification,omitempty"` // reserved (Epic 3.0); absent in 1.x
+	// PathValid / PathWarning carry file-existence validation (Epic 5.0). Both
+	// are omitempty so a finding that was never validated (or whose path exists)
+	// serializes byte-identically to pre-5.0 findings.json — only a flagged
+	// hallucinated path adds path_warning.
+	//
+	// CONTRACT: path_warning is the authoritative signal — a non-empty value
+	// means the path did not resolve under the reviewed repo root. path_valid is
+	// auxiliary and MUST NOT be read in isolation: under omitempty, "validated
+	// but missing" and "never validated" both serialize as an absent path_valid
+	// (false), so the two states are indistinguishable from path_valid alone.
+	// Consumers and the report layer key display off path_warning.
+	PathValid   bool   `json:"path_valid,omitempty"`
+	PathWarning string `json:"path_warning,omitempty"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.
@@ -90,6 +103,8 @@ func (r Result) JSONFindings() []JSONFinding {
 			Confidence:   m.Confidence,
 			Disagreement: m.Disagreement,
 			Verification: m.Verification,
+			PathValid:    m.PathValid,
+			PathWarning:  m.PathWarning,
 		})
 	}
 	return out
@@ -301,6 +316,12 @@ func writeFindingsList(b *bytes.Buffer, findings []Merged) {
 		}
 		fmt.Fprintf(b, "- %s — confidence %s, reviewers: %s\n",
 			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
+		if m.PathWarning != "" {
+			// Hallucinated path (Epic 5.0): the finding is kept, not dropped — the
+			// path is flagged so a user can correct it. esc() neutralizes any
+			// markup in a reviewer-controlled path.
+			fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
+		}
 		if m.Disagreement != "" {
 			fmt.Fprintf(b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
 		}
