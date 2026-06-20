@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"regexp"
@@ -607,25 +608,38 @@ func readErrorSnippet(r io.Reader) string {
 // status (0 when absent/malformed). A 200 whose body exceeds the size cap
 // returns the size error with status 200.
 func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte) ([]byte, int, time.Duration, CallRecord, error) {
+	// Stamp the attempt's wall-clock start and detect whether the request bytes
+	// were actually written to the wire (httptrace WroteRequest). The flag is the
+	// load-bearing discriminator for ReachedWire on the transport-error path: a
+	// mid-flight cancel/timeout fires WroteRequest (counts as a real round-trip),
+	// while a cancel before the bytes are sent does not (must not count, AC2).
+	start := time.Now()
+	wroteRequest := false
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) { wroteRequest = true },
+	})
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, 0, 0, CallRecord{}, fmt.Errorf("creating request: %w", err)
+		return nil, 0, 0, CallRecord{ReachedWire: false, Duration: time.Since(start)}, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, 0, CallRecord{}, fmt.Errorf("request failed: %w", err)
+		return nil, 0, 0, CallRecord{ReachedWire: wroteRequest, Duration: time.Since(start)}, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A provider response was received, so the request reached the wire — every
+	// status (200, 4xx, 5xx) is a completed HTTP attempt for telemetry.
 	if resp.StatusCode != http.StatusOK {
 		// Capture a bounded snippet for error reporting; the provider's JSON
 		// error body carries the actionable root cause. Scrub the key in case
 		// the provider echoes the Authorization header back.
 		snippet := redactErrorSnippet(readErrorSnippet(resp.Body), key)
-		return []byte(snippet), resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), CallRecord{}, nil
+		return []byte(snippet), resp.StatusCode, parseRetryAfter(resp.Header.Get("Retry-After")), CallRecord{ReachedWire: true, Duration: time.Since(start)}, nil
 	}
 
 	// N is cap+1 so crossing the cap is distinguishable from a body that is
@@ -634,12 +648,12 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 	limited := &io.LimitedReader{R: resp.Body, N: maxResponseBodyBytes + 1}
 	raw, rerr := io.ReadAll(limited)
 	if rerr != nil {
-		return nil, resp.StatusCode, 0, CallRecord{}, fmt.Errorf("reading response: %w", rerr)
+		return nil, resp.StatusCode, 0, CallRecord{ReachedWire: true, Duration: time.Since(start)}, fmt.Errorf("reading response: %w", rerr)
 	}
 	if limited.N <= 0 {
-		return nil, resp.StatusCode, 0, CallRecord{}, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
+		return nil, resp.StatusCode, 0, CallRecord{ReachedWire: true, Duration: time.Since(start)}, fmt.Errorf("response exceeds %d byte size limit", maxResponseBodyBytes)
 	}
-	return raw, resp.StatusCode, 0, CallRecord{}, nil
+	return raw, resp.StatusCode, 0, CallRecord{ReachedWire: true, Duration: time.Since(start)}, nil
 }
 
 // parseRetryAfter interprets a Retry-After header value per RFC 7231: either
