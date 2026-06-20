@@ -313,3 +313,93 @@ func TestBreaker_RetriesThenTripsPerInvocation(t *testing.T) {
 	require.True(t, errors.As(err, &coe))
 	assert.Equal(t, int64(9), hits.Load(), "open circuit makes no further HTTP attempts")
 }
+
+// AC10 (caller-deadline vs provider-stall): a caller-side deadline expiry — the
+// per-agent TimeoutSecs or the global fan-out deadline running out — says nothing
+// about provider health and must NOT record a breaker failure. Five expired-ctx
+// calls against a healthy provider leave the circuit closed; without the
+// distinction, isBreakerFailure(DeadlineExceeded)=true would trip it after three.
+func TestBreaker_CallerDeadlineDoesNotTrip(t *testing.T) {
+	resetBreakers(t)
+	t.Setenv("TEST_KEY", testKey)
+
+	var hits atomic.Int64
+	srv := statusServer(t, http.StatusOK, &hits) // provider is healthy
+	c := noRetryClient(srv.Client())
+	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
+
+	for i := 0; i < 5; i++ {
+		// Deadline already in the past → the caller's own budget is exhausted.
+		ctx, cancel := context.WithDeadline(breakerCtx("openai"), time.Now().Add(-time.Second))
+		_, err := c.Complete(ctx, inv)
+		cancel()
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+	assert.Equal(t, int64(0), hits.Load(), "expired-deadline calls never reach the server")
+	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State(),
+		"a caller-side deadline expiry must not trip the breaker")
+}
+
+// Probe-leak on panic: a panic inside dispatch must not leave probeInFlight=true.
+// Without a defer guard in send(), the panic bypasses the breaker outcome switch
+// and the half-open probe slot is never freed, wedging the circuit forever.
+func TestBreaker_PanicInDispatch_ProbeNotLeaked(t *testing.T) {
+	resetBreakers(t)
+	t.Setenv("TEST_KEY", testKey)
+
+	// Inject a half-open breaker so the next Allow() wins the probe slot.
+	b := circuitbreaker.New("panic-provider", 1, time.Millisecond)
+	b.ForceHalfOpen()
+	circuitbreaker.DefaultRegistry.Set("panic-provider", b)
+	require.Equal(t, circuitbreaker.StateHalfOpen, b.State())
+
+	c := New(WithHTTPClient(&http.Client{Transport: panicRoundTripper{}}), WithRetry(0, time.Millisecond, 1.5))
+	inv := Invocation{BaseURL: "http://panic-host/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
+	ctx := breakerCtx("panic-provider")
+
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = c.Complete(ctx, inv)
+	}()
+
+	// Without the defer fix in send(), probeInFlight stays true and Allow returns
+	// false (probe leaked). With the fix, ReleaseProbe clears it and the next
+	// caller can probe again.
+	assert.True(t, b.Allow(),
+		"a panic in dispatch must not leak the half-open probe slot")
+}
+
+// panicRoundTripper is an http.RoundTripper that panics unconditionally, used to
+// simulate a dispatch panic without a real server.
+type panicRoundTripper struct{}
+
+func (panicRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	panic("simulated panic in dispatch")
+}
+
+// AC10 discriminator guard: a genuine provider stall — the HTTP client's own
+// timeout fires while the caller's context is NOT done — is a real outage and
+// must still trip the breaker. This is the load-bearing other side of the
+// caller-deadline distinction: the ctx.Err() check in send() must not swallow it.
+func TestBreaker_ProviderTimeoutStillTrips(t *testing.T) {
+	resetBreakers(t)
+	t.Setenv("TEST_KEY", testKey)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(200 * time.Millisecond) // stall past the client timeout
+	}))
+	t.Cleanup(srv.Close)
+	hc := srv.Client()
+	hc.Timeout = 20 * time.Millisecond // provider stall trips the client's own deadline
+	c := noRetryClient(hc)
+	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
+	ctx := breakerCtx("openai") // NO caller deadline
+
+	for i := 0; i < 3; i++ {
+		_, err := c.Complete(ctx, inv)
+		require.Error(t, err)
+	}
+	assert.Equal(t, circuitbreaker.StateOpen, circuitbreaker.DefaultRegistry.Get("openai").State(),
+		"a provider stall (client-timeout, caller ctx not done) is a real outage and must trip")
+}

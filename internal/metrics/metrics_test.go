@@ -307,6 +307,27 @@ func TestPackageLevelGaugeUsesDefaultRegistry(t *testing.T) {
 	}
 }
 
+func TestGaugeSetNonFiniteIgnored(t *testing.T) {
+	r := NewRegistry()
+	g := r.Gauge("nan_inf_gauge")
+	g.Set(1.5)
+	g.Set(math.NaN())
+	if got := g.Value(); math.IsNaN(got) {
+		t.Fatalf("Set(NaN) must be ignored; Value() = NaN, want 1.5")
+	}
+	g.Set(math.Inf(1))
+	if got := g.Value(); math.IsInf(got, 1) {
+		t.Fatalf("Set(+Inf) must be ignored; Value() = +Inf, want 1.5")
+	}
+	g.Set(math.Inf(-1))
+	if got := g.Value(); math.IsInf(got, -1) {
+		t.Fatalf("Set(-Inf) must be ignored; Value() = -Inf, want 1.5")
+	}
+	if got := g.Value(); got != 1.5 {
+		t.Fatalf("after NaN/Inf attempts Value() = %v, want 1.5", got)
+	}
+}
+
 func TestConcurrentGauge(t *testing.T) {
 	r := NewRegistry()
 	var wg sync.WaitGroup

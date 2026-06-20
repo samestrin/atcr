@@ -1059,3 +1059,15 @@ func TestRedactErrorSnippet_SKKeyCaseInsensitive(t *testing.T) {
 	assert.NotContains(t, got, "Sk-Def456")
 	assert.Contains(t, got, "[redacted]")
 }
+
+func TestRedactErrorSnippet_ForeignFleetKeyPrefixes(t *testing.T) {
+	// Other OpenAI-compatible fleet providers use distinct key prefixes (Google
+	// AIza..., Groq gsk_..., xAI xai-...). A provider echoing one of these into its
+	// JSON error body must have it scrubbed, just like sk-/Bearer tokens, so it
+	// never reaches HTTPStatusError.Snippet.
+	got := redactErrorSnippet("rejected AIzaSyD-FAKEkey_123 gsk_FAKEgroqKEY456 xai-FAKExaiKEY789", "")
+	assert.NotContains(t, got, "AIzaSyD-FAKEkey_123")
+	assert.NotContains(t, got, "gsk_FAKEgroqKEY456")
+	assert.NotContains(t, got, "xai-FAKExaiKEY789")
+	assert.Contains(t, got, "[redacted]")
+}

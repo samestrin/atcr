@@ -1,8 +1,10 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,6 +73,27 @@ func TestInvokeSlot_CircuitOpenChainFailsAsFailed(t *testing.T) {
 	require.Equal(t, StatusFailed, r.Status)
 	var coe *llmclient.CircuitOpenError
 	require.True(t, errors.As(r.Err, &coe), "chain failure should surface the CircuitOpenError")
+}
+
+// A tools-enabled agent with no Provider set must emit a warn-level log so a
+// silent breaker bypass is observable in production. Doctor/direct-construction
+// paths have Tools=false and are therefore exempt.
+func TestInvokeAgent_WarnOnEmptyProviderWithTools(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	e := NewEngine(newFake(), WithLogger(logger))
+
+	a := Agent{
+		Name:       "misconfig",
+		Tools:      true,
+		Invocation: llmclient.Invocation{Model: "misconfig"},
+		// Provider intentionally empty — simulates a misconfigured production agent
+	}
+	e.invokeAgent(context.Background(), a)
+
+	assert.Contains(t, buf.String(), "provider",
+		"invokeAgent must warn when a tools-enabled agent has no provider set")
 }
 
 // AC2 metric correctness: a circuit-open fail-fast made no provider round-trip,

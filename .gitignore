@@ -63,3 +63,4 @@ Thumbs.db
 .planning/**/code-review/claude/
 .planning/**/code-review/multi-agent/
 .planning/**/code-review/reconciled/
+.kimi-code/

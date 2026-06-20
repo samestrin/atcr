@@ -86,3 +86,24 @@ func TestProviderContextEmptyString(t *testing.T) {
 		t.Fatalf("ProviderFromContext for empty provider = %q, want empty", got)
 	}
 }
+
+// Get("") must return a throwaway breaker on every call so that callers that
+// forget the upstream empty-provider guard cannot accumulate failures and
+// trip a cached "" circuit that fail-fasts all future unkeyed calls.
+func TestRegistryEmptyProviderReturnsThrownaway(t *testing.T) {
+	r := NewRegistry()
+	b := r.Get("")
+	// Trip the breaker returned for the empty provider.
+	for i := 0; i < DefaultThreshold; i++ {
+		b.RecordFailure()
+	}
+	if b.Allow() {
+		t.Fatal("returned breaker should be tripped after DefaultThreshold failures")
+	}
+	// A subsequent Get("") must return a fresh, always-closed breaker — NOT
+	// the tripped cached one.
+	fresh := r.Get("")
+	if !fresh.Allow() {
+		t.Fatal("Get(\"\") returned a cached tripped breaker; want a fresh throwaway")
+	}
+}

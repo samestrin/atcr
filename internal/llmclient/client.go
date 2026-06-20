@@ -309,7 +309,17 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 	if !breaker.Allow() {
 		return nil, &CircuitOpenError{Provider: provider}
 	}
+	// resolved is set to true once the switch below records a verdict. The defer
+	// fires on both normal return and panic; if resolved is still false when it
+	// runs (panic path), it releases the probe so the slot is never leaked.
+	resolved := false
+	defer func() {
+		if !resolved {
+			breaker.ReleaseProbe()
+		}
+	}()
 	raw, err := c.dispatch(ctx, endpoint, key, body)
+	resolved = true
 	// Every branch reports the outcome to the breaker exactly once: a half-open
 	// probe MUST be resolved (RecordSuccess/RecordFailure/ReleaseProbe) or the
 	// probe slot leaks and the circuit wedges half-open forever.
@@ -317,18 +327,30 @@ func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([
 	case err == nil:
 		// A successful round-trip: closes a half-open probe, resets the run.
 		breaker.RecordSuccess()
-	case isBreakerFailure(err):
-		// 5xx, timeout, or transport failure: trips/advances the failure run.
-		breaker.RecordFailure()
 	case errors.Is(err, context.Canceled):
 		// The caller cancelled mid-call — nothing was learned about the provider.
-		// Release any half-open probe without a verdict (do not count it).
+		// Release any half-open probe without a verdict (do not count it). Checked
+		// before isBreakerFailure so the classification is explicit rather than
+		// resting on isBreakerFailure happening to return false for cancellation.
 		breaker.ReleaseProbe()
+	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded:
+		// The caller's OWN deadline expired (the per-agent TimeoutSecs or the
+		// global fan-out deadline), not a provider stall: ctx is Done, so this
+		// says nothing about provider health — release any half-open probe without
+		// a verdict. A genuine provider stall trips the HTTP client's timeout while
+		// the caller ctx is NOT done; that falls through to isBreakerFailure below
+		// and counts as an outage (AC10). The ctx.Err() guard is the load-bearing
+		// discriminator between the two.
+		breaker.ReleaseProbe()
+	case isBreakerFailure(err):
+		// 5xx, provider-stall timeout, or transport failure: trips/advances the run.
+		breaker.RecordFailure()
 	default:
-		// A non-tripping HTTP response (4xx incl. 429/401): the provider replied,
-		// so it is reachable. The breaker tracks outages, not auth/rate-limit
-		// correctness, so a reply counts as a healthy round-trip — which also
-		// closes a half-open probe instead of wedging it.
+		// A non-tripping HTTP response (3xx redirect surfaced by noRedirect, or
+		// 4xx incl. 429/401): the provider replied, so it is reachable. The
+		// breaker tracks outages, not redirect or auth/rate-limit correctness,
+		// so a provider reply counts as a healthy round-trip — which also closes
+		// a half-open probe instead of wedging it.
 		breaker.RecordSuccess()
 	}
 	return raw, err
@@ -354,6 +376,13 @@ func (e *CircuitOpenError) Error() string {
 // the server replied, so the provider is reachable. A caller-initiated
 // cancellation does not count either — the call was aborted, which says nothing
 // about provider health.
+//
+// A context.DeadlineExceeded counts as a failure here because it is the
+// provider-stall signal (the HTTP client's own timeout firing). The send switch
+// filters out the OTHER source of DeadlineExceeded first — the caller's own ctx
+// deadline (ctx.Err()==DeadlineExceeded) — and releases the probe for it, so by
+// the time this function is consulted a DeadlineExceeded means the provider
+// stalled, not that the caller's budget ran out.
 func isBreakerFailure(err error) bool {
 	if err == nil {
 		return false
@@ -480,13 +509,20 @@ func httpStatusError(status int, snippet string) error {
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
 	skKeyPattern       = regexp.MustCompile(`(?i)sk-\S+`)
+	// fleetKeyPattern matches the distinctive key prefixes of the other
+	// OpenAI-compatible fleet providers (Google AIza…, Groq gsk_…, xAI xai-…) so a
+	// foreign key echoed in an error body is scrubbed like an sk-/Bearer token.
+	// This stays best-effort defense-in-depth: a generic JWT/hex/base64 secret
+	// with no known prefix is not covered (only the configured key is scrubbed by
+	// exact match for those).
+	fleetKeyPattern = regexp.MustCompile(`(?i)(?:AIza|gsk_|xai-)\S+`)
 )
 
 // redactErrorSnippet scrubs secrets from a provider error snippet. It removes
 // the configured key in both literal and URL-encoded form (an exact-match scrub
 // alone misses a key the provider echoes re-encoded), then redacts any
-// Bearer-prefixed or sk- shaped token generically so a foreign or transformed
-// secret cannot leak into HTTPStatusError.Snippet.
+// Bearer-, sk-, or known-fleet-prefixed (AIza/gsk_/xai-) token generically so a
+// foreign or transformed secret cannot leak into HTTPStatusError.Snippet.
 func redactErrorSnippet(snippet, key string) string {
 	if key != "" {
 		snippet = strings.ReplaceAll(snippet, key, "[redacted]")
@@ -496,16 +532,29 @@ func redactErrorSnippet(snippet, key string) string {
 	}
 	snippet = bearerTokenPattern.ReplaceAllString(snippet, "Bearer [redacted]")
 	snippet = skKeyPattern.ReplaceAllString(snippet, "[redacted]")
+	snippet = fleetKeyPattern.ReplaceAllString(snippet, "[redacted]")
 	return snippet
 }
 
 // readErrorSnippet reads a bounded prefix of a non-200 response body and
-// collapses it to a single whitespace-normalized line. The remainder of the
-// body is drained so the connection can be reused.
+// collapses it to a single whitespace-normalized line. A bounded remainder is
+// then drained so a normally-sized error body's connection can be reused.
+//
+// The drain is deliberately capped (total read ≤ 2×maxErrorBodyBytes, ~8KB), NOT
+// drained in full: a hostile or malfunctioning endpoint streaming a huge error
+// body on the error path must not be read to completion (a full io.Copy drain
+// would spend time bounded only by the HTTP/context timeout on attacker-supplied
+// bytes). The accepted trade-off is that an error body larger than ~8KB is left
+// undrained, so its connection is closed rather than returned to the keep-alive
+// pool — costing one extra TCP+TLS handshake on the next retry. Real provider
+// error bodies are far smaller than 8KB, so bounding the read against abuse is
+// worth more than saving that handshake on the rare oversized body. The bound is
+// guarded by TestReadErrorSnippet_DrainIsBounded.
 func readErrorSnippet(r io.Reader) string {
 	b, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
-	// Drain a bounded remainder so the connection can be reused, without reading
-	// an unbounded body from a hostile/malfunctioning endpoint on the error path.
+	// Drain only a bounded remainder (see the function doc): enough to reuse the
+	// connection for a normal error body, without reading an unbounded body from a
+	// hostile/malfunctioning endpoint on the error path.
 	_, _ = io.CopyN(io.Discard, r, maxErrorBodyBytes)
 	return strings.Join(strings.Fields(string(b)), " ")
 }
