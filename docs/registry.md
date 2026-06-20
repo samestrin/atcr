@@ -42,6 +42,9 @@ timeout_secs: 600
 payload_byte_budget: 524288
 max_parallel: 10
 fail_on: HIGH
+# Retry/backoff (Epic 4.6) — registry (global) tier only; not carried by project config or CLI.
+max_retries: 5
+initial_backoff_ms: 500
 ```
 
 ### Provider fields
@@ -63,6 +66,8 @@ fail_on: HIGH
 | `rate_limited` | false | `true` places the agent in the serial lane. |
 | `fallback` | — | Another agent name, tried when this one fails. Chains are validated at load (dangling refs and cycles fail fast). |
 | `payload` | inherited | Per-agent payload mode override (`diff`, `blocks`, `files`). When unset, inherits the resolved shared payload mode. See [payload-modes.md](payload-modes.md). |
+| `max_retries` | inherited | Per-agent retry budget for rate-limit/transient failures (429, 5xx, transport). When unset, inherits the resolved shared budget (default `5`); set it to override per agent. Must be within `0..10` (`0` = a single attempt, no retry). The `Retry-After` header is always honored regardless of this value. |
+| `initial_backoff_ms` | inherited | Per-agent base delay (ms) between retries when no server `Retry-After` is present; the schedule grows exponentially from here (×1.5, capped at 30s). When unset, inherits the resolved shared delay (default `500`). Must be within `1..30000`. |
 
 ## `.atcr/config.yaml` (project level)
 
@@ -132,6 +137,8 @@ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
 ```
 
 A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+
+The retry tunables (`max_retries`, `initial_backoff_ms`, Epic 4.6) resolve over a **shorter chain**: agent-level field > `registry.yaml` (global) > embedded default (`max_retries=5`, `initial_backoff_ms=500`). They are deliberately **not** carried by `.atcr/config.yaml` or a CLI flag — rate-limit resilience is a property of the user's provider/account, set once at the registry tier or refined per agent. An agent's effective budget is threaded onto each call so per-agent overrides take effect without rebuilding the shared client.
 
 The same **project-over-user** rule now applies uniformly across all three kinds of configuration — settings, personas, and definitions:
 
