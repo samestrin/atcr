@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-19-4db340
-question: "Should the output-path denylist in validation.FilePath be tightened (allowlist) or is the permissive denylist the intended final policy?"
+id: mem-2026-06-19-708a5b
+question: "When a package sits just under the 80% per-package coverage guideline because only defensive stdlib error-return branches are uncovered, accept the gap or add a fault-injection seam to production code?"
 created: 2026-06-19
 last_retrieved: ""
 sprints: []
-files: [internal/validation/validation.go, .planning/epics/completed/4.3_input_validation.md]
-tags: [td-clarification, td-only, security, architecture, validation, FilePath]
+files: [internal/atomicfs/atomic.go]
+tags: [td-clarification, td-only, testing, coverage, atomicfs, go]
 retrievals: 0
 status: active
-type: clarifications skill — td-only 2026-06-19
+type: clarifications td-only 2026-06-19 Q1 (epic-4.7)
 ---
 
-# Should the output-path denylist in validation.FilePath be ti
+# When a package sits just under the 80% per-package coverage 
 
 ## Decision
 
-The permissive denylist (/etc, /proc, /sys, /private/etc, /private/var) deliberately omitting /boot, /dev, /root, /var is the intended final policy for epic 4.3. The epic's Open Questions explicitly chose "Option B: permissive — only reject clearly invalid inputs." The TD row documents this as a "deliberate Option-B permissive choice." Tightening to an allowlist anchored at the repo/.atcr root is conditional only ("if stronger isolation is later required"). No immediate fix is warranted without a new security requirement.
+Accept the defensive branches as untested. The 80% per-package figure is a guideline, not a CI gate; module-wide coverage (89.6%) is what matters. For internal/atomicfs/atomic.go the uncovered clusters are WriteFileAtomic mid-stream Write/Chmod/Close failures (atomic.go:32-42) and BackupToDotBak staging RemoveAll/Rename error paths (atomic.go:101-127) — pure error-propagation (return err) on stdlib file ops with no logic to verify. Adding an injectable file-op seam to reach >=80% is production indirection purely for test reach, which contradicts the minimum-code/nothing-speculative principle and risks tripping the over-complexity SAFE_SCOPE gate. Resolution: close the coverage TD with a one-line coverage-exception note; do not add a seam. The TD row's own Fix text sanctioned this option.
 
 ## Rationale
 
@@ -27,5 +27,4 @@ The permissive denylist (/etc, /proc, /sys, /private/etc, /private/var) delibera
 
 ## Code Reference
 
-- internal/validation/validation.go
-- .planning/epics/completed/4.3_input_validation.md
+- internal/atomicfs/atomic.go

@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 16 | 0 |
-| LOW | 6 | 16 | 0 |
+| MEDIUM | 0 | 17 | 7 |
+| LOW | 0 | 16 | 17 |
 
 
-**Last Modified:** 2026-06-19 | **Open Items:** 6 | **Deferred Items:** 33 | **Resolved Items:** 0 | **Total Items:** 39
+**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 34 | **Resolved Items:** 24 | **Total Items:** 58
 
 ## Directory Structure
 
@@ -33,16 +33,11 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
-### [2026-06-19] From Sprint: epic-4.7
+### [2026-06-19] From Sprint: 4.7_idempotency
 
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/atomicfs/atomic.go:12 | atomicfs package coverage is 75.5% (below the 80% per-package guideline; module-wide is 89.6%) because WriteFileAtomic Write/Chmod/Close and BackupToDotBak/copyTree error-return branches lack fault-injection seams | Add a small fault-injection seam (e.g. injectable file ops) to exercise the error returns, or accept the defensive branches as untested | TESTING | 30 | execute-epic-cumulative |
-| 1 | [ ] | LOW | internal/atomicfs/atomic.go:195 | BackupToDotBak RemoveAll(bak) then copies non-atomically; a crash between RemoveAll and copy completion loses the prior .bak generation (live source stays intact, so only the backup is at risk) | Acceptable for a recovery aid; optionally copy to a temp sibling then rename for crash-safe backup replacement | EDGE_CASES | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/atomicfs/atomic.go:240 | copyTree silently skips symlinks and other non-regular entries so a reconciled/ tree containing a symlinked artifact would back up incomplete; plan assumes plain files only | Document the plain-files assumption or error/log when a non-regular entry is skipped during a backup | EDGE_CASES | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/reviewdir.go:210 | Explicit-id collision error names CLI flags --resume/--force but is also surfaced to MCP clients via PrepareReview (internal/mcp/handlers.go) which have no such flags | Provide an MCP-specific or flag-neutral collision error when PrepareReview is invoked from the MCP handler | CORRECTNESS | 30 | execute-epic-stage3 |
-| U | [ ] | LOW | internal/verify/emit_verification.go:149 | AC5 backup is implemented twice (WriteVerification adds BackupExistingVerification AND runVerify adds it) but production verify only goes through runVerify/writeGroupAtomic so WriteVerification is test-only; two copies can drift | Note that WriteVerification has no non-test callers or collapse to a single backup site to avoid future divergence | REGRESSION_RISK | 30 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/reviewdir.go:285 | forceBackupReviewDir/forceBackupOutputDir back up without emitting any user-facing message (unlike the epic-plan sketch which printed Backed up existing review to <dir>) | Print a stderr notice naming the .bak path on --force so the destructive backup is visible to the user | OBSERVABILITY | 15 | execute-epic-independent |
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:284 | backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1) | Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap. | correctness | 120 | code-review | code-reviewer, claude | HIGH |
 
 ### [2026-06-19] From Sprint: 4.5_circuit_breaker
 

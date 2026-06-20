@@ -1,0 +1,995 @@
+diff --git a/README.md b/README.md
+index d43cc6e..20636bb 100644
+--- a/README.md
++++ b/README.md
+@@ -76,7 +76,7 @@ atcr report --format md
+ 
+ Key flags:
+ 
+-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below)
++- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+ - `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+@@ -109,6 +109,7 @@ atcr review --resume ./path        # an explicit review directory
+ - The panel is locked: resume re-resolves the current git range and compares it (plus the configured roster) against the interrupted run's `manifest.json`. A changed range or roster aborts with exit code **2** — resuming against changed code or a different panel would mix inconsistent results, so start a fresh `atcr review` instead.
+ - An agent counts as complete only when its per-agent `status.json` records `ok` (a clean reviewer that found nothing is complete; a failed/timed-out one is re-run). Pass the same range flags (`--base`/`--head`/`--merge-commit`) the original review used so the range matches.
+ - If every agent already completed, resume just re-runs reconciliation. `--resume` cannot be combined with `--id` or `--output-dir`.
++- Re-running an explicit `--id` (or a non-empty `--output-dir`) whose directory already exists is rejected; the error names the two ways forward — `--resume <id>` to continue it non-destructively, or `--force` to back the prior tree up to `<dir>.bak` and start fresh. `--resume` and `--force` are mutually exclusive (opposite collision resolutions).
+ 
+ ## Payload modes
+ 
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 3195d2c..78d6afa 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -43,6 +43,7 @@ func newReviewCmd() *cobra.Command {
+ 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
+ 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+ 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
++	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
+ 	addRangeFlags(cmd)
+ 	return cmd
+ }
+@@ -86,6 +87,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
+ 	// before any new-review flag handling.
+ 	if cmd.Flags().Changed("resume") {
++		// --resume (continue an existing review non-destructively) and --force
++		// (back up and overwrite it) are opposite collision resolutions; passing
++		// both is a usage error (Epic 4.7 AC1b). Checked here, before the resume
++		// short-circuit, so the conflict fires regardless of flag order.
++		if cmd.Flags().Changed("force") {
++			return usageError(errors.New("--resume and --force are mutually exclusive"))
++		}
+ 		anchor, _ := cmd.Flags().GetString("resume")
+ 		return runResume(cmd, anchor)
+ 	}
+@@ -168,6 +176,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 		StartedAt:  now,
+ 		IDOverride: idOverride,
+ 		OutputDir:  outputDir,
++		Force:      boolFlag(cmd, "force"),
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 4add323..86f0941 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -278,6 +278,26 @@ func TestReviewCmd_MissingAPIKeyIsUsageError(t *testing.T) {
+ 	require.Equal(t, 2, execCmd(t, "review", "--base", "HEAD^"))
+ }
+ 
++// TestReviewCmd_ForceFlagRegistered verifies the --force flag exists on the
++// review command and defaults to false (Epic 4.7 AC2).
++func TestReviewCmd_ForceFlagRegistered(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NotNil(t, cmd.Flags().Lookup("force"), "review must define --force")
++	v, err := cmd.Flags().GetBool("force")
++	require.NoError(t, err)
++	require.False(t, v, "--force defaults to false")
++}
++
++// TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
++// --resume and --force is a usage error (exit 2) regardless of a git repo,
++// because the guard fires at the resume branch before any range resolution.
++func TestReviewCmd_ResumeAndForceMutuallyExclusive(t *testing.T) {
++	isolate(t)
++	code, out := execCmdCapture(t, "review", "--resume", "latest", "--force")
++	require.Equal(t, 2, code, "AC1b: --resume + --force is a usage error (exit 2)")
++	require.Contains(t, out, "--resume and --force are mutually exclusive")
++}
++
+ func TestOutputDirFromFlags_Unset(t *testing.T) {
+ 	cmd := newReviewCmd()
+ 	require.NoError(t, cmd.ParseFlags(nil))
+diff --git a/internal/atomicfs/atomic.go b/internal/atomicfs/atomic.go
+index 99bf3f3..5174541 100644
+--- a/internal/atomicfs/atomic.go
++++ b/internal/atomicfs/atomic.go
+@@ -1,6 +1,10 @@
+ package atomicfs
+ 
+ import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io/fs"
+ 	"os"
+ 	"path/filepath"
+ )
+@@ -30,3 +34,83 @@ func WriteFileAtomic(path string, data []byte) error {
+ 	}
+ 	return os.Rename(tmpName, path)
+ }
++
++// WriteJSON marshals v as two-space-indented JSON (with a trailing newline, so
++// the artifact matches the reconcile/verify writers and is human-diffable) and
++// writes it through WriteFileAtomic. A marshal failure returns before any file
++// is touched, so a bad value can never truncate or partially overwrite path.
++func WriteJSON(path string, v interface{}) error {
++	data, err := json.MarshalIndent(v, "", "  ")
++	if err != nil {
++		return err
++	}
++	return WriteFileAtomic(path, append(data, '\n'))
++}
++
++// BackupToDotBak copies src to src+".bak", replacing any existing backup, so a
++// stage that is about to overwrite its prior output can preserve one prior
++// generation for recovery (Epic 4.7). src may be a regular file or a directory
++// tree; a missing src is a no-op (returns "", nil) so callers need not pre-check
++// existence. The copy is made in place — src is left untouched — so callers can
++// still read the live tree after backing it up. Returns the backup path on
++// success. Garbage-collecting older .bak state is the caller's/user's job.
++func BackupToDotBak(src string) (string, error) {
++	info, err := os.Stat(src)
++	if errors.Is(err, fs.ErrNotExist) {
++		return "", nil
++	}
++	if err != nil {
++		return "", err
++	}
++	bak := src + ".bak"
++	if err := os.RemoveAll(bak); err != nil {
++		return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
++	}
++	if info.IsDir() {
++		if err := copyTree(src, bak); err != nil {
++			return "", fmt.Errorf("backing up %s: %w", src, err)
++		}
++	} else {
++		if err := copyFile(src, bak, info.Mode().Perm()); err != nil {
++			return "", fmt.Errorf("backing up %s: %w", src, err)
++		}
++	}
++	return bak, nil
++}
++
++// copyFile copies a single regular file's bytes from src to dst with perm.
++func copyFile(src, dst string, perm os.FileMode) error {
++	data, err := os.ReadFile(src)
++	if err != nil {
++		return err
++	}
++	return os.WriteFile(dst, data, perm)
++}
++
++// copyTree recursively copies the directory tree rooted at src to dst, preserving
++// per-entry permissions. Non-regular entries (symlinks, devices) are skipped:
++// review artifacts are plain files and directories, so there is nothing to lose,
++// and following links during a backup would be a surprising side effect.
++func copyTree(src, dst string) error {
++	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		rel, err := filepath.Rel(src, path)
++		if err != nil {
++			return err
++		}
++		target := filepath.Join(dst, rel)
++		info, err := d.Info()
++		if err != nil {
++			return err
++		}
++		if d.IsDir() {
++			return os.MkdirAll(target, info.Mode().Perm())
++		}
++		if !info.Mode().IsRegular() {
++			return nil
++		}
++		return copyFile(path, target, info.Mode().Perm())
++	})
++}
+diff --git a/internal/atomicfs/atomic_test.go b/internal/atomicfs/atomic_test.go
+new file mode 100644
+index 0000000..043e2b6
+--- /dev/null
++++ b/internal/atomicfs/atomic_test.go
+@@ -0,0 +1,302 @@
++package atomicfs
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestWriteJSON_RoundTripsIndented(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "out.json")
++
++	type rec struct {
++		Name  string `json:"name"`
++		Count int    `json:"count"`
++	}
++	want := rec{Name: "alpha", Count: 3}
++
++	if err := WriteJSON(path, want); err != nil {
++		t.Fatalf("WriteJSON: %v", err)
++	}
++
++	data, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	// Indented output (two-space) so artifacts stay human-diffable, matching the
++	// reconcile/verify renderers, and a trailing newline like the other writers.
++	if !strings.Contains(string(data), "\n  \"name\": \"alpha\"") {
++		t.Errorf("expected two-space indented JSON, got:\n%s", data)
++	}
++	if !strings.HasSuffix(string(data), "\n") {
++		t.Errorf("expected trailing newline, got:\n%q", data)
++	}
++
++	var got rec
++	if err := json.Unmarshal(data, &got); err != nil {
++		t.Fatalf("Unmarshal: %v", err)
++	}
++	if got != want {
++		t.Errorf("round-trip mismatch: got %+v want %+v", got, want)
++	}
++}
++
++func TestWriteJSON_OverwritesAtomicallyNoTempLeftover(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "out.json")
++
++	if err := os.WriteFile(path, []byte("{\"stale\":true}\n"), 0o644); err != nil {
++		t.Fatalf("seed: %v", err)
++	}
++	if err := WriteJSON(path, map[string]int{"fresh": 1}); err != nil {
++		t.Fatalf("WriteJSON: %v", err)
++	}
++
++	data, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	if strings.Contains(string(data), "stale") {
++		t.Errorf("overwrite did not replace prior content: %s", data)
++	}
++
++	// The atomic temp file (.<base>.tmp-*) must not survive a successful write.
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		t.Fatalf("ReadDir: %v", err)
++	}
++	for _, e := range entries {
++		if strings.HasPrefix(e.Name(), ".out.json.tmp-") {
++			t.Errorf("temp file leaked after successful write: %s", e.Name())
++		}
++	}
++}
++
++func TestWriteFileAtomic_HappyPathWritesExactBytes(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "data.bin")
++	want := []byte("exact-bytes\x00\n")
++
++	if err := WriteFileAtomic(path, want); err != nil {
++		t.Fatalf("WriteFileAtomic: %v", err)
++	}
++	got, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	if string(got) != string(want) {
++		t.Errorf("content mismatch: got %q want %q", got, want)
++	}
++}
++
++func TestWriteFileAtomic_MissingParentDirErrors(t *testing.T) {
++	dir := t.TempDir()
++	// Parent directory does not exist, so CreateTemp fails and the error is
++	// surfaced rather than swallowed; the target must not be created.
++	path := filepath.Join(dir, "no-such-subdir", "data.json")
++	if err := WriteFileAtomic(path, []byte("x")); err == nil {
++		t.Fatal("expected error writing into a missing parent dir, got nil")
++	}
++	if _, err := os.Stat(path); !os.IsNotExist(err) {
++		t.Errorf("expected no file at %s, stat err = %v", path, err)
++	}
++}
++
++func TestWriteJSON_UnmarshalableValueErrorsAndWritesNothing(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "out.json")
++
++	// A channel cannot be marshaled; WriteJSON must fail before touching path.
++	if err := WriteJSON(path, make(chan int)); err == nil {
++		t.Fatal("expected marshal error, got nil")
++	}
++	if _, err := os.Stat(path); !os.IsNotExist(err) {
++		t.Errorf("expected no file written on marshal error, stat err = %v", err)
++	}
++}
++
++// TestWriteJSON_FailedWritePreservesExistingFile is half of Epic 4.7 AC6: a
++// write that fails (here, a marshal error) aborts before any temp is renamed over
++// the target, so the existing file is never truncated or corrupted.
++func TestWriteJSON_FailedWritePreservesExistingFile(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "verification.json")
++	original := []byte("{\n  \"state\": \"original-intact\"\n}\n")
++	if err := os.WriteFile(path, original, 0o644); err != nil {
++		t.Fatalf("seed: %v", err)
++	}
++
++	if err := WriteJSON(path, make(chan int)); err == nil {
++		t.Fatal("expected marshal error, got nil")
++	}
++
++	got, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	if string(got) != string(original) {
++		t.Errorf("a failed write must leave the existing file byte-identical: got %q want %q", got, original)
++	}
++}
++
++// TestWriteFileAtomic_OrphanedTempDoesNotCorruptTarget is the other half of AC6:
++// a process killed mid-write (after CreateTemp + partial Write, before Rename)
++// leaves an orphaned .<base>.tmp-* sibling. Readers address the exact target
++// filename, so the target stays complete; a later atomic write replaces it
++// wholesale and never merges the orphan's partial bytes.
++func TestWriteFileAtomic_OrphanedTempDoesNotCorruptTarget(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "data.json")
++	original := []byte("complete-original\n")
++	if err := os.WriteFile(path, original, 0o644); err != nil {
++		t.Fatalf("seed: %v", err)
++	}
++
++	// Simulate the SIGKILL-orphaned partial temp an interrupted write would leave.
++	orphan := filepath.Join(dir, ".data.json.tmp-deadbeef")
++	if err := os.WriteFile(orphan, []byte("half-written-garbag"), 0o644); err != nil {
++		t.Fatalf("seed orphan: %v", err)
++	}
++
++	// The target is untouched by the orphaned temp.
++	got, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	if string(got) != string(original) {
++		t.Errorf("orphaned temp must not affect the target: got %q", got)
++	}
++
++	// A subsequent atomic write replaces the target wholesale with complete data.
++	if err := WriteFileAtomic(path, []byte("complete-new\n")); err != nil {
++		t.Fatalf("WriteFileAtomic: %v", err)
++	}
++	got2, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile after write: %v", err)
++	}
++	if string(got2) != "complete-new\n" {
++		t.Errorf("atomic rename must replace the target wholesale: got %q", got2)
++	}
++	if strings.Contains(string(got2), "garbag") {
++		t.Errorf("the orphan's partial bytes must never merge into the target: got %q", got2)
++	}
++}
++
++func TestBackupToDotBak_File(t *testing.T) {
++	dir := t.TempDir()
++	src := filepath.Join(dir, "verification.json")
++	if err := os.WriteFile(src, []byte("current\n"), 0o644); err != nil {
++		t.Fatalf("seed: %v", err)
++	}
++	// A stale .bak must be replaced, not error out.
++	if err := os.WriteFile(src+".bak", []byte("stale\n"), 0o644); err != nil {
++		t.Fatalf("seed stale: %v", err)
++	}
++
++	bak, err := BackupToDotBak(src)
++	if err != nil {
++		t.Fatalf("BackupToDotBak: %v", err)
++	}
++	if bak != src+".bak" {
++		t.Errorf("backup path = %q, want %q", bak, src+".bak")
++	}
++	data, err := os.ReadFile(bak)
++	if err != nil {
++		t.Fatalf("ReadFile backup: %v", err)
++	}
++	if string(data) != "current\n" {
++		t.Errorf("backup content = %q, want the current generation", data)
++	}
++	// Source is preserved in place (copy, not move).
++	if _, err := os.Stat(src); err != nil {
++		t.Errorf("source must remain in place after backup: %v", err)
++	}
++}
++
++func TestBackupToDotBak_Directory(t *testing.T) {
++	dir := t.TempDir()
++	src := filepath.Join(dir, "reconciled")
++	if err := os.MkdirAll(filepath.Join(src, "nested"), 0o755); err != nil {
++		t.Fatalf("mkdir: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(src, "findings.json"), []byte("[]\n"), 0o644); err != nil {
++		t.Fatalf("seed: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(src, "nested", "deep.txt"), []byte("deep\n"), 0o600); err != nil {
++		t.Fatalf("seed nested: %v", err)
++	}
++	// Stale backup with a file that must NOT survive the replace.
++	if err := os.MkdirAll(src+".bak", 0o755); err != nil {
++		t.Fatalf("mkdir stale: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(src+".bak", "old.txt"), []byte("old"), 0o644); err != nil {
++		t.Fatalf("seed stale: %v", err)
++	}
++
++	bak, err := BackupToDotBak(src)
++	if err != nil {
++		t.Fatalf("BackupToDotBak: %v", err)
++	}
++
++	got, err := os.ReadFile(filepath.Join(bak, "findings.json"))
++	if err != nil || string(got) != "[]\n" {
++		t.Errorf("top-level file not copied: data=%q err=%v", got, err)
++	}
++	gotNested, err := os.ReadFile(filepath.Join(bak, "nested", "deep.txt"))
++	if err != nil || string(gotNested) != "deep\n" {
++		t.Errorf("nested file not copied: data=%q err=%v", gotNested, err)
++	}
++	if _, err := os.Stat(filepath.Join(bak, "old.txt")); !os.IsNotExist(err) {
++		t.Errorf("stale backup content must be replaced, stat err = %v", err)
++	}
++	// Source tree preserved (copy semantics).
++	if _, err := os.Stat(filepath.Join(src, "findings.json")); err != nil {
++		t.Errorf("source must remain after backup: %v", err)
++	}
++}
++
++func TestBackupToDotBak_DirectorySkipsNonRegularFiles(t *testing.T) {
++	dir := t.TempDir()
++	src := filepath.Join(dir, "reconciled")
++	if err := os.MkdirAll(src, 0o755); err != nil {
++		t.Fatalf("mkdir: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(src, "findings.json"), []byte("[]\n"), 0o644); err != nil {
++		t.Fatalf("seed: %v", err)
++	}
++	// A symlink inside the tree must be skipped (not followed) by the backup.
++	if err := os.Symlink(filepath.Join(src, "findings.json"), filepath.Join(src, "link.json")); err != nil {
++		t.Skipf("symlink unsupported on this platform: %v", err)
++	}
++
++	bak, err := BackupToDotBak(src)
++	if err != nil {
++		t.Fatalf("BackupToDotBak: %v", err)
++	}
++	if _, err := os.Stat(filepath.Join(bak, "findings.json")); err != nil {
++		t.Errorf("regular file must be copied: %v", err)
++	}
++	if _, err := os.Lstat(filepath.Join(bak, "link.json")); !os.IsNotExist(err) {
++		t.Errorf("symlink must be skipped, not copied; lstat err = %v", err)
++	}
++}
++
++func TestBackupToDotBak_MissingSourceIsNoop(t *testing.T) {
++	dir := t.TempDir()
++	src := filepath.Join(dir, "absent")
++
++	bak, err := BackupToDotBak(src)
++	if err != nil {
++		t.Fatalf("expected no error for missing source, got %v", err)
++	}
++	if bak != "" {
++		t.Errorf("expected empty backup path for missing source, got %q", bak)
++	}
++	if _, err := os.Stat(src + ".bak"); !os.IsNotExist(err) {
++		t.Errorf("no backup may be created for a missing source, stat err = %v", err)
++	}
++}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 89bd1a8..c48b496 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -78,6 +78,14 @@ type ReviewRequest struct {
+ 	// to prevent invisible half-state reviews. Untrusted callers must validate the
+ 	// path before populating this field.
+ 	OutputDir string
++	// Force, when true, overwrites an existing review target instead of failing
++	// the collision (Epic 4.7 AC2): the prior tree is backed up to <dir>.bak and
++	// a fresh directory is scaffolded. It applies to the IDOverride path (a
++	// pre-existing .atcr/reviews/<id>/) and the non-empty OutputDir path; derived
++	// ids never collide (claimReviewDir auto-suffixes) so Force is a no-op there.
++	// Defaulting false preserves the safe fail-on-collision behavior for callers
++	// that do not opt in (e.g. the MCP handler).
++	Force bool
+ }
+ 
+ // ReviewResult is the outcome of a completed review run.
+@@ -209,12 +217,26 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 		if err = validateOutputDirRoot(req.OutputDir, req.Root); err != nil {
+ 			return nil, err
+ 		}
++		// --force backs up a non-empty target to <dir>.bak before scaffolding;
++		// without it, ScaffoldOutputDir rejects a non-empty dir (Epic 4.7 AC2).
++		if req.Force {
++			if err = forceBackupOutputDir(req.OutputDir); err != nil {
++				return nil, err
++			}
++		}
+ 		dir, err = ScaffoldOutputDir(req.OutputDir)
+ 	case req.IDOverride != "":
+ 		// Explicit overrides keep their exact id, but the scaffold is exclusive:
+ 		// a pre-existing directory (e.g. a client retrying atcr_review with the
+ 		// same id while the first run is in flight) is rejected rather than
+-		// scaffolded into, so two fan-outs never share one review dir.
++		// scaffolded into, so two fan-outs never share one review dir. --force
++		// instead backs up the existing tree to <dir>.bak and scaffolds fresh
++		// (Epic 4.7 AC2).
++		if req.Force {
++			if err = forceBackupReviewDir(req.Root, id); err != nil {
++				return nil, err
++			}
++		}
+ 		dir, err = ScaffoldReviewDir(req.Root, id)
+ 	default:
+ 		// Derived ids claim their directory atomically: creation is the
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index 6c35452..74c5e3a 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -164,6 +164,54 @@ func TestRunReview_EndToEnd(t *testing.T) {
+ 	assert.Equal(t, res.ID, latest)
+ }
+ 
++// TestRunReview_ForceBacksUpExistingDir is the Epic 4.7 AC8 integration test:
++// running review twice against the same explicit --id fails the collision
++// without --force, and with --force backs the prior directory up to <dir>.bak
++// and scaffolds a fresh one.
++func TestRunReview_ForceBacksUpExistingDir(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	repo, base, head := initRepo(t)
++	srv := mockProvider(t)
++	cfg := twoAgentConfig(srv.URL)
++
++	req := reviewReq(repo, repo, base, head)
++	req.IDOverride = "2026-06-10_fixed"
++
++	// First review creates the directory.
++	res1, err := RunReview(context.Background(), llmclient.New(), cfg, req)
++	require.NoError(t, err)
++	reviewDir := res1.Dir
++
++	// Plant a marker so the backup provably carries the prior generation.
++	marker := filepath.Join(reviewDir, "MARKER")
++	require.NoError(t, os.WriteFile(marker, []byte("gen1"), 0o644))
++
++	// Re-running the same --id WITHOUT --force fails the collision and names both
++	// recovery paths (AC1).
++	_, err = RunReview(context.Background(), llmclient.New(), cfg, req)
++	require.Error(t, err, "re-running the same --id without --force must fail the collision")
++	assert.Contains(t, err.Error(), "--resume")
++	assert.Contains(t, err.Error(), "--force")
++	// The collision must not have moved the existing directory.
++	assert.FileExists(t, marker, "a failed collision must leave the existing review untouched")
++	assert.NoDirExists(t, reviewDir+".bak", "no backup until --force is used")
++
++	// WITH --force: back up the prior dir to <dir>.bak and scaffold fresh.
++	req.Force = true
++	res2, err := RunReview(context.Background(), llmclient.New(), cfg, req)
++	require.NoError(t, err)
++	assert.Equal(t, reviewDir, res2.Dir, "the fresh review reuses the same id/path")
++
++	bakMarker := filepath.Join(reviewDir+".bak", "MARKER")
++	data, err := os.ReadFile(bakMarker)
++	require.NoError(t, err, "AC8: prior review dir must be backed up to <dir>.bak")
++	assert.Equal(t, "gen1", string(data))
++
++	// The fresh dir was scaffolded anew, so it does not carry the prior marker.
++	_, statErr := os.Stat(marker)
++	assert.True(t, os.IsNotExist(statErr), "the fresh review dir must not carry the prior generation's marker")
++}
++
+ // TestRunReview_OutputDirSkipsLatest verifies --output-dir writes the full
+ // review tree to the given path and does NOT repoint .atcr/latest (the pointer
+ // tracks interactive runs only; external orchestrators own their output dir).
+diff --git a/internal/fanout/reviewdir.go b/internal/fanout/reviewdir.go
+index 96851d3..596f613 100644
+--- a/internal/fanout/reviewdir.go
++++ b/internal/fanout/reviewdir.go
+@@ -207,7 +207,7 @@ func ScaffoldReviewDir(root, id string) (string, error) {
+ 	dir := filepath.Join(ReviewsRoot(root), id)
+ 	if err := os.Mkdir(dir, 0o755); err != nil {
+ 		if errors.Is(err, fs.ErrExist) {
+-			return "", fmt.Errorf("review %q already exists: refusing to scaffold into an existing review directory (omit --id to derive a fresh one)", id)
++			return "", fmt.Errorf("review directory %s already exists; use --resume %s to continue it or --force to overwrite", dir, id)
+ 		}
+ 		return "", fmt.Errorf("failed to create review directory: %w", err)
+ 	}
+@@ -263,7 +263,7 @@ func ScaffoldOutputDir(dir string) (string, error) {
+ 			return "", fmt.Errorf("failed to create review directory: %w", readErr)
+ 		}
+ 		if len(entries) > 0 {
+-			return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
++			return "", fmt.Errorf("output directory %q already exists and is not empty; use --force to overwrite (or point --output-dir at a new or empty path)", dir)
+ 		}
+ 	}
+ 	for _, sub := range reviewSubdirs {
+@@ -274,6 +274,95 @@ func ScaffoldOutputDir(dir string) (string, error) {
+ 	return dir, nil
+ }
+ 
++// backupExisting moves path aside to path+".bak" so a --force re-run preserves
++// the prior review tree instead of destroying it, leaving the path vacant for a
++// fresh scaffold. A pre-existing path+".bak" is removed first (os.Rename refuses
++// to replace a non-empty directory), so --force keeps exactly one generation of
++// backup — garbage-collecting older state is the user's responsibility (Epic
++// 4.7: no automatic .bak GC). Returns the backup path.
++func backupExisting(path string) (string, error) {
++	backup := path + ".bak"
++	if err := os.RemoveAll(backup); err != nil {
++		return "", fmt.Errorf("removing stale backup %q: %w", backup, err)
++	}
++	if err := os.Rename(path, backup); err != nil {
++		return "", fmt.Errorf("backing up %q: %w", path, err)
++	}
++	return backup, nil
++}
++
++// forceBackupReviewDir backs up an existing managed review directory for id
++// before --force scaffolds a fresh one (Epic 4.7 AC2). A non-existent directory
++// is a no-op, so --force is harmless when there is nothing to overwrite.
++func forceBackupReviewDir(root, id string) error {
++	dir := filepath.Join(ReviewsRoot(root), id)
++	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
++		return nil
++	} else if err != nil {
++		return fmt.Errorf("checking review directory before --force backup: %w", err)
++	}
++	_, err := backupExisting(dir)
++	return err
++}
++
++// forceBackupOutputDir backs up a non-empty --output-dir before --force scaffolds
++// into it (Epic 4.7 AC2). An absent or empty target is a no-op: ScaffoldOutputDir
++// already accepts those, so there is nothing to preserve.
++func forceBackupOutputDir(dir string) error {
++	entries, err := os.ReadDir(dir)
++	if errors.Is(err, fs.ErrNotExist) {
++		return nil
++	}
++	if err != nil {
++		return fmt.Errorf("checking output directory before --force backup: %w", err)
++	}
++	if len(entries) == 0 {
++		return nil
++	}
++	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
++	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
++	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
++	// backup atcr did not create (Epic 4.7: never silently delete user data).
++	if err := guardForeignBackup(dir + ".bak"); err != nil {
++		return err
++	}
++	_, err = backupExisting(dir)
++	return err
++}
++
++// guardForeignBackup returns an error if backup exists but was not created by
++// atcr, so --force on an unmanaged --output-dir cannot silently destroy it. A
++// non-existent or empty backup, or one carrying the scaffolded review-tree
++// markers (a genuine prior atcr backup), is allowed through to be replaced.
++func guardForeignBackup(backup string) error {
++	entries, err := os.ReadDir(backup)
++	if errors.Is(err, fs.ErrNotExist) {
++		return nil
++	}
++	if err != nil {
++		// Exists but is not a readable directory (e.g. a regular file): treat as
++		// foreign and refuse rather than RemoveAll it.
++		return fmt.Errorf("refusing --force: %q exists and was not created by atcr; move or remove it first", backup)
++	}
++	if len(entries) == 0 || looksLikeReviewTree(backup) {
++		return nil
++	}
++	return fmt.Errorf("refusing --force: %q already exists and does not look like an atcr backup; move or remove it first", backup)
++}
++
++// looksLikeReviewTree reports whether dir contains every scaffolded review
++// subdirectory, the marker that distinguishes an atcr-created tree (or a prior
++// atcr backup) from arbitrary user data.
++func looksLikeReviewTree(dir string) bool {
++	for _, sub := range reviewSubdirs {
++		fi, err := os.Stat(filepath.Join(dir, sub))
++		if err != nil || !fi.IsDir() {
++			return false
++		}
++	}
++	return true
++}
++
+ // validateOutputDirRoot returns an error if dir is inside ReviewsRoot(root).
+ // An --output-dir that resolves into the managed reviews location creates a
+ // half-state: the review tree is written but WriteLatest is skipped, making
+diff --git a/internal/fanout/reviewdir_test.go b/internal/fanout/reviewdir_test.go
+index 3381e6f..2b3101b 100644
+--- a/internal/fanout/reviewdir_test.go
++++ b/internal/fanout/reviewdir_test.go
+@@ -212,6 +212,110 @@ func TestScaffoldReviewDir_CreatesLayout(t *testing.T) {
+ 	assert.NoDirExists(t, filepath.Join(dir, "sources", "pool"))
+ }
+ 
++// TestScaffoldReviewDir_CollisionMessageNamesResumeAndForce locks AC1: an
++// explicit --id whose directory already exists is rejected with a message that
++// names BOTH the non-destructive resume path and the destructive --force path,
++// so the user is told every way forward.
++func TestScaffoldReviewDir_CollisionMessageNamesResumeAndForce(t *testing.T) {
++	root := t.TempDir()
++	_, err := ScaffoldReviewDir(root, "2026-06-10_dup")
++	require.NoError(t, err)
++
++	_, err = ScaffoldReviewDir(root, "2026-06-10_dup")
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "already exists")
++	assert.Contains(t, err.Error(), "--resume", "AC1: must name the non-destructive resume path")
++	assert.Contains(t, err.Error(), "--force", "AC1: must name the destructive overwrite path")
++}
++
++// TestScaffoldOutputDir_CollisionMessageNamesForce locks the AC1 parity for the
++// --output-dir path: a non-empty target is rejected with a message that names
++// --force as the overwrite opt-in.
++func TestScaffoldOutputDir_CollisionMessageNamesForce(t *testing.T) {
++	dir := t.TempDir()
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "prior.txt"), []byte("x"), 0o644))
++	_, err := ScaffoldOutputDir(dir)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "--force", "must name --force as the overwrite opt-in")
++}
++
++// TestBackupExisting_MovesAsideReplacingStaleBak verifies backupExisting renames
++// a directory to <dir>.bak and replaces any pre-existing backup, so --force keeps
++// exactly one prior generation and the source path is left vacant for a fresh
++// scaffold.
++func TestBackupExisting_MovesAsideReplacingStaleBak(t *testing.T) {
++	root := t.TempDir()
++	src := filepath.Join(root, "review")
++	require.NoError(t, os.MkdirAll(src, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
++
++	// A stale backup from a previous --force must be replaced, not error out.
++	stale := src + ".bak"
++	require.NoError(t, os.MkdirAll(stale, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(stale, "old.txt"), []byte("old"), 0o644))
++
++	bak, err := backupExisting(src)
++	require.NoError(t, err)
++	assert.Equal(t, stale, bak)
++	// Source is now vacant.
++	_, statErr := os.Stat(src)
++	assert.True(t, os.IsNotExist(statErr), "source must be moved aside, leaving the path vacant")
++	// Backup holds the current generation, not the stale one.
++	data, err := os.ReadFile(filepath.Join(bak, "marker.txt"))
++	require.NoError(t, err)
++	assert.Equal(t, "current", string(data))
++	assert.NoFileExists(t, filepath.Join(bak, "old.txt"), "stale backup must be replaced, not merged")
++}
++
++// TestForceBackupOutputDir_RefusesForeignBak verifies that --force on an
++// arbitrary --output-dir does NOT silently destroy a pre-existing sibling
++// <dir>.bak that atcr did not create. backupExisting removes the prior .bak
++// generation unconditionally; for an unmanaged output path that sibling may be
++// unrelated user data, so forceBackupOutputDir must refuse instead.
++func TestForceBackupOutputDir_RefusesForeignBak(t *testing.T) {
++	root := t.TempDir()
++	dir := filepath.Join(root, "myreview")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
++
++	// A foreign sibling backup the user owns — no atcr review-tree markers.
++	foreign := dir + ".bak"
++	require.NoError(t, os.MkdirAll(foreign, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(foreign, "important.txt"), []byte("do not delete"), 0o644))
++
++	err := forceBackupOutputDir(dir)
++	require.Error(t, err, "must refuse to clobber a foreign <dir>.bak")
++	assert.Contains(t, err.Error(), "atcr")
++	// The foreign backup and its contents survive untouched.
++	data, readErr := os.ReadFile(filepath.Join(foreign, "important.txt"))
++	require.NoError(t, readErr)
++	assert.Equal(t, "do not delete", string(data), "foreign backup must not be destroyed")
++}
++
++// TestForceBackupOutputDir_ReplacesPriorAtcrBak verifies that a genuine prior
++// atcr backup (one carrying the scaffolded review-tree markers) is still
++// replaced, preserving the one-generation --force contract for managed trees.
++func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
++	root := t.TempDir()
++	dir := filepath.Join(root, "myreview")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
++
++	// A prior atcr backup carries the review subdirs — safe to replace.
++	prior := dir + ".bak"
++	for _, sub := range reviewSubdirs {
++		require.NoError(t, os.MkdirAll(filepath.Join(prior, sub), 0o755))
++	}
++	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("old"), 0o644))
++
++	require.NoError(t, forceBackupOutputDir(dir))
++	// dir was moved aside to .bak; the prior generation is gone.
++	data, err := os.ReadFile(filepath.Join(prior, "report.json"))
++	require.NoError(t, err)
++	assert.Equal(t, "current", string(data))
++	assert.NoFileExists(t, filepath.Join(prior, "old.txt"), "prior atcr backup must be replaced")
++}
++
+ func TestReviewExists_AndCollisionProbe(t *testing.T) {
+ 	root := t.TempDir()
+ 	assert.False(t, ReviewExists(root, "2026-06-10_x"))
+diff --git a/internal/reconcile/gate.go b/internal/reconcile/gate.go
+index e282c32..0d033d9 100644
+--- a/internal/reconcile/gate.go
++++ b/internal/reconcile/gate.go
+@@ -9,6 +9,7 @@ import (
+ 	"path/filepath"
+ 	"strings"
+ 
++	"github.com/samestrin/atcr/internal/atomicfs"
+ 	"github.com/samestrin/atcr/internal/stream"
+ )
+ 
+@@ -176,6 +177,19 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
+ 	}
+ 
+ 	reconDir := filepath.Join(reviewDir, reconciledSubdir)
++
++	// Idempotency (Epic 4.7 AC4): a re-run re-emits every reconciled/ artifact.
++	// Snapshot the prior generation to reconciled.bak/ first so a failed or
++	// unwanted re-reconcile can be recovered. Copy (not move) so the live dir
++	// stays intact for the adjudication reads and Emit below. Only a directory
++	// that already holds reconcile output (findings.json) is backed up — the
++	// empty scaffolded dir on a first run is skipped.
++	if _, statErr := os.Stat(filepath.Join(reconDir, FindingsJSON)); statErr == nil {
++		if _, err := atomicfs.BackupToDotBak(reconDir); err != nil {
++			return Result{}, fmt.Errorf("backing up prior reconciled output: %w", err)
++		}
++	}
++
+ 	adjudicating := false
+ 	if _, statErr := os.Stat(filepath.Join(reconDir, AdjudicationJSON)); statErr == nil {
+ 		adj, err := LoadAdjudication(filepath.Join(reconDir, AdjudicationJSON))
+diff --git a/internal/reconcile/gate_test.go b/internal/reconcile/gate_test.go
+index ba02183..16fd08e 100644
+--- a/internal/reconcile/gate_test.go
++++ b/internal/reconcile/gate_test.go
+@@ -71,6 +71,38 @@ func TestRunReconcile_EndToEnd(t *testing.T) {
+ 	assert.Equal(t, 0, CountAtOrAbove(res.Findings, SevCritical, false))
+ }
+ 
++// TestRunReconcile_BacksUpPriorReconciledOnReRun locks Epic 4.7 AC4: a second
++// reconcile of the same review backs up the prior reconciled/ artifacts to
++// reconciled.bak/ before overwriting them, and the first run (no prior output)
++// creates no backup.
++func TestRunReconcile_BacksUpPriorReconciledOnReRun(t *testing.T) {
++	reviewDir := t.TempDir()
++	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
++		"HIGH|a.go:1|first issue|fix|security|10|ev|host\n")
++
++	_, err := RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(1, 0).UTC()})
++	require.NoError(t, err)
++	// First run: no prior output existed, so no backup is created.
++	assert.NoDirExists(t, filepath.Join(reviewDir, "reconciled.bak"),
++		"first reconcile must not create a backup (nothing to overwrite)")
++
++	// Capture the first generation's findings.json bytes, then re-run with a
++	// different finding so the live artifact provably changes.
++	firstFindings, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", FindingsJSON))
++	require.NoError(t, err)
++
++	writeFindings(t, filepath.Join(reviewDir, "sources"), "host/findings.txt",
++		"CRITICAL|b.go:2|second issue|fix|security|10|ev|host\n")
++	_, err = RunReconcile(context.Background(), reviewDir, nil, Options{ReconciledAt: time.Unix(2, 0).UTC()})
++	require.NoError(t, err)
++
++	// The prior generation is preserved under reconciled.bak/.
++	bakFindings, err := os.ReadFile(filepath.Join(reviewDir, "reconciled.bak", FindingsJSON))
++	require.NoError(t, err, "AC4: prior reconciled output must be backed up before overwrite")
++	assert.Equal(t, string(firstFindings), string(bakFindings),
++		"backup must hold the pre-overwrite generation")
++}
++
+ // --- ValidateRequireVerified (TD-004) ---
+ 
+ func TestValidateRequireVerified_NoVerifyRan(t *testing.T) {
+diff --git a/internal/verify/emit_test.go b/internal/verify/emit_test.go
+index 54a4e18..cd6c71e 100644
+--- a/internal/verify/emit_test.go
++++ b/internal/verify/emit_test.go
+@@ -49,6 +49,38 @@ func TestWriteVerification_RoundTrip(t *testing.T) {
+ 	assert.NotEmpty(t, got.VerifiedAt)
+ }
+ 
++// TestWriteVerification_BacksUpPriorOnReWrite locks Epic 4.7 AC5: a re-verify
++// backs up the prior reconciled/verification.json to verification.json.bak before
++// overwriting it, and the first verify (no prior file) creates no backup.
++func TestWriteVerification_BacksUpPriorOnReWrite(t *testing.T) {
++	dir := t.TempDir()
++	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
++
++	gen1 := []VerificationResult{
++		{File: "a.go", Line: 1, Problem: "first issue", Verdict: "confirmed", Skeptic: "s", Model: "m"},
++	}
++	require.NoError(t, WriteVerification(dir, gen1))
++	assert.NoFileExists(t, filepath.Join(dir, "reconciled", "verification.json.bak"),
++		"first verify must not create a backup (nothing to overwrite)")
++
++	first, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json"))
++	require.NoError(t, err)
++
++	gen2 := []VerificationResult{
++		{File: "b.go", Line: 2, Problem: "second issue", Verdict: "refuted", Skeptic: "s", Model: "m"},
++	}
++	require.NoError(t, WriteVerification(dir, gen2))
++
++	bak, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json.bak"))
++	require.NoError(t, err, "AC5: prior verification.json must be backed up before overwrite")
++	assert.Equal(t, string(first), string(bak), "backup must hold the pre-overwrite generation")
++
++	live, err := os.ReadFile(filepath.Join(dir, "reconciled", "verification.json"))
++	require.NoError(t, err)
++	assert.Contains(t, string(live), "second issue", "live file holds the new generation")
++	assert.NotContains(t, string(live), "first issue", "live file no longer holds the prior generation")
++}
++
+ func TestWriteVerification_VerifiedAtHasNanosecondPrecision(t *testing.T) {
+ 	dir := t.TempDir()
+ 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "reconciled"), 0o755))
+diff --git a/internal/verify/emit_verification.go b/internal/verify/emit_verification.go
+index 6e95210..e0d498d 100644
+--- a/internal/verify/emit_verification.go
++++ b/internal/verify/emit_verification.go
+@@ -146,5 +146,22 @@ func WriteVerification(reviewDir string, results []VerificationResult) error {
+ 	if err != nil {
+ 		return err
+ 	}
++	if err := BackupExistingVerification(reviewDir); err != nil {
++		return err
++	}
+ 	return atomicfs.WriteFileAtomic(path, data)
+ }
++
++// BackupExistingVerification snapshots an existing reconciled/verification.json to
++// verification.json.bak before a re-verify (e.g. --fresh) overwrites it (Epic 4.7
++// AC5). A first-ever verify has no prior file, so it is a no-op. Only
++// verification.json — the verify stage's exclusive output — is backed up here;
++// the reconcile-owned findings.json/summary.json the stage annotates in place are
++// already covered by reconciled.bak/ (AC4), so they are not re-backed-up.
++func BackupExistingVerification(reviewDir string) error {
++	path := filepath.Join(reviewDir, reconciledSubdir, "verification.json")
++	if _, err := atomicfs.BackupToDotBak(path); err != nil {
++		return fmt.Errorf("backing up prior verification.json: %w", err)
++	}
++	return nil
++}
+diff --git a/internal/verify/pipeline.go b/internal/verify/pipeline.go
+index 02be48d..1724276 100644
+--- a/internal/verify/pipeline.go
++++ b/internal/verify/pipeline.go
+@@ -346,6 +346,13 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 	if !mfNoOp {
+ 		artifacts = append(artifacts, stagingEntry{path: mfPath, data: mfData})
+ 	}
++	// Idempotency (Epic 4.7 AC5): a re-verify (e.g. --fresh) overwrites
++	// verification.json as part of this atomic group. Snapshot the prior verdicts
++	// to verification.json.bak before the flush so the previous run is recoverable;
++	// a first-ever verify has no prior file and this is a no-op.
++	if err := BackupExistingVerification(reviewDir); err != nil {
++		return Result{}, err
++	}
+ 	if err := writeGroupAtomic(artifacts); err != nil {
+ 		return Result{}, err
+ 	}

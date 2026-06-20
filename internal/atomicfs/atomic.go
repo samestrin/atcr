@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,13 @@ import (
 // over path, so a reader never observes a partial write. The rename is atomic
 // within a single POSIX filesystem. SIGKILL-orphaned .tmp-* files in the same
 // directory are accepted by readers (readers use exact filenames, not globs).
+//
+// The atomicity guarantee is against concurrent readers, not power loss: neither
+// the temp file nor the parent directory is fsynced, so a crash immediately after
+// the rename can leave the rename durable while the data is not, yielding a
+// zero-length or truncated file. This is intentional — the artifacts written
+// through here (review/reconcile/verify output) are regenerable, so crash
+// durability is deliberately out of scope and not worth the fsync cost.
 func WriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -53,26 +61,69 @@ func WriteJSON(path string, v interface{}) error {
 // tree; a missing src is a no-op (returns "", nil) so callers need not pre-check
 // existence. The copy is made in place — src is left untouched — so callers can
 // still read the live tree after backing it up. Returns the backup path on
-// success. Garbage-collecting older .bak state is the caller's/user's job.
+// success. Only regular files and directories are copied; symlinks and other
+// non-regular entries are skipped. Garbage-collecting older .bak state is the
+// caller's/user's job.
+//
+// The copy is staged into a temp sibling (<src>.bak.tmp-*) and then renamed
+// over <src>.bak, with the destructive RemoveAll(<src>.bak) deferred until just
+// before the rename. A crash or interruption during the copy therefore leaves
+// the prior .bak generation intact.
 func BackupToDotBak(src string) (string, error) {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	bak := src + ".bak"
-	if err := os.RemoveAll(bak); err != nil {
-		return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
+	if info.Mode()&os.ModeSymlink != 0 {
+		// A symlinked src is skipped (returns "", nil) rather than followed, so
+		// the link's target bytes are not silently backed up under the link's
+		// name. Lstat (not Stat) is what surfaces the symlink here.
+		return "", nil
 	}
+	bak := src + ".bak"
+	dir := filepath.Dir(src)
+
+	// Stage the backup into a temp sibling, then atomically swap it over bak.
+	// If the copy is interrupted, the prior .bak remains untouched.
 	if info.IsDir() {
-		if err := copyTree(src, bak); err != nil {
+		tmpDir, err := os.MkdirTemp(dir, filepath.Base(bak)+".tmp-*")
+		if err != nil {
+			return "", fmt.Errorf("creating backup staging dir: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		if err := copyTree(src, tmpDir); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
+		if err := os.RemoveAll(bak); err != nil {
+			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
+		}
+		if err := os.Rename(tmpDir, bak); err != nil {
+			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
+		}
 	} else {
-		if err := copyFile(src, bak, info.Mode().Perm()); err != nil {
+		tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(bak)+".tmp-*")
+		if err != nil {
+			return "", fmt.Errorf("creating backup staging file: %w", err)
+		}
+		tmpName := tmpFile.Name()
+		if err := tmpFile.Close(); err != nil {
+			_ = os.Remove(tmpName)
+			return "", fmt.Errorf("closing backup staging file: %w", err)
+		}
+		defer func() { _ = os.Remove(tmpName) }()
+
+		if err := copyFile(src, tmpName, info.Mode().Perm()); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
+		}
+		if err := os.RemoveAll(bak); err != nil {
+			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
+		}
+		if err := os.Rename(tmpName, bak); err != nil {
+			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
 		}
 	}
 	return bak, nil
@@ -80,11 +131,22 @@ func BackupToDotBak(src string) (string, error) {
 
 // copyFile copies a single regular file's bytes from src to dst with perm.
 func copyFile(src, dst string, perm os.FileMode) error {
-	data, err := os.ReadFile(src)
+	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, perm)
+	defer func() { _ = srcFile.Close() }()
+
+	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = dstFile.Close()
+		return err
+	}
+	return dstFile.Close()
 }
 
 // copyTree recursively copies the directory tree rooted at src to dst, preserving

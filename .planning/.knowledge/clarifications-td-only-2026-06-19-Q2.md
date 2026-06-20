@@ -1,21 +1,22 @@
 ---
-id: mem-2026-06-19-a5ee98
-question: "Should validation.Severity and validation.Enum be deleted, wired into ParseSeverity/ValidFormat, or kept as public API for AC5/AC7?"
+id: mem-2026-06-19-b130af
+question: "When fanout needs a validator from internal/validation, import it or duplicate the check inline?"
 created: 2026-06-19
 last_retrieved: ""
 sprints: []
-files: [internal/validation/validation.go, .planning/epics/completed/4.3_input_validation.md]
-tags: [td-clarification, td-only, over_engineering, architecture, validation, Severity, Enum]
+files: [internal/boundaries_test.go, internal/validation/validation.go, internal/fanout/review.go]
+tags: []
 retrievals: 0
 status: active
-type: clarifications skill — td-only 2026-06-19
+type: clarifications (resolve-td, 2026-06-19)
 ---
 
-# Should validation.Severity and validation.Enum be deleted, w
+# When fanout needs a validator from internal/validation, impo
 
 ## Decision
 
-Keep as public API. The exported Severity and Enum validators in internal/validation are deliberately NOT wired to ParseSeverity/ValidFormat. They exist to satisfy AC5 (validation.Severity must return an error for invalid input) and AC7 (100% test coverage). Epic 4.3 Clarifications (recorded 2026-06-18) explicitly state "validation.Severity/Enum ship in the package for AC5/AC7 + future use but do NOT replace those paths." Deleting them breaks AC5/AC7; wiring them in was explicitly out of scope.
+Add the package to the importer's allowlist and reuse the canonical validator — do not duplicate inline. internal/validation is a stdlib-only leaf (allowlist entry "validation": {} in internal/boundaries_test.go:34, zero internal deps). Any engine-layer package (e.g. fanout) importing it is a downward engine→leaf dependency that satisfies the "lower layers never import higher ones" rule and keeps TestInternalPackages_AllowlistIsAcyclic green; the allowlist just needs the entry added. Example: to enforce validation.FilePath() (the /etc,/proc,/sys system-path reject at internal/validation/validation.go:57) inside the exported fanout.PrepareReview, add "validation" to fanout's allowlist and call validation.FilePath(abs) rather than forking the denylist inline (which would drift from the canonical copy).</answer>
+<parameter name="tags">td-clarification, td-only, architecture, dependency-boundaries, internal/validation, internal/fanout
 
 ## Rationale
 
@@ -27,5 +28,6 @@ Keep as public API. The exported Severity and Enum validators in internal/valida
 
 ## Code Reference
 
+- internal/boundaries_test.go
 - internal/validation/validation.go
-- .planning/epics/completed/4.3_input_validation.md
+- internal/fanout/review.go
