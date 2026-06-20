@@ -536,6 +536,24 @@ func TestPrepareReview_ForceBackupEmitsStderrNotice(t *testing.T) {
 	assert.Contains(t, string(out), "2026-06-10_backed.bak")
 }
 
+// TestPrepareReview_RejectsSystemOutputDir verifies the engine itself rejects an
+// --output-dir under a system directory (/etc, /proc, /sys), not only the CLI
+// flag parser. PrepareReview is public API reachable by the MCP handler and
+// direct callers, so the system-path reject must fire for every caller, before
+// any --force backup or scaffold touches the filesystem.
+func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+
+	req := reviewReq(repo, repo, base, head)
+	req.OutputDir = "/etc/atcr-td-output"
+	req.Force = true
+
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "system directories")
+}
+
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.
