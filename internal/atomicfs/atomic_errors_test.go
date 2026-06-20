@@ -11,10 +11,15 @@ import (
 // is a directory, a missing parent dir, a parent that is a regular file, an
 // unreadable source subtree) rather than injecting a fake filesystem. They lift
 // per-package coverage of the error paths without adding any production seam.
-// Mid-stream temp-file failures (Write/Chmod/Close on an already-open *os.File)
-// are deliberately left untested: they only occur on disk-full/quota/hardware
-// faults that cannot be provoked deterministically without a fake fs, and the
-// branches are simple `return err` passthroughs.
+//
+// Accepted coverage exception (TD internal/atomicfs/atomic.go:12): the two
+// remaining uncovered clusters — WriteFileAtomic's mid-stream Write/Chmod/Close
+// failures (atomic.go:32-42) and BackupToDotBak's staging RemoveAll/Rename error
+// paths (atomic.go:101-127) — are pure stdlib `return err` passthroughs that only
+// fire on disk-full/quota/hardware faults, unreachable deterministically without a
+// fake fs. The package sits at 79.5% against the 80% per-package guideline (a
+// guideline, not a CI gate; module-wide coverage is 89.6%); a production
+// fault-injection seam purely for test reach is rejected as speculative indirection.
 
 // TestWriteFileAtomic_RenameOverExistingDirErrors covers the final os.Rename
 // failure: the temp file is created, written, chmod'd, and closed cleanly, but
