@@ -360,15 +360,24 @@ func guardForeignBackup(backup string) error {
 	return fmt.Errorf("refusing --force: %q already exists and does not look like an atcr backup; move or remove it first", backup)
 }
 
-// looksLikeReviewTree reports whether dir contains every scaffolded review
-// subdirectory, the marker that distinguishes an atcr-created tree (or a prior
-// atcr backup) from arbitrary user data.
+// looksLikeReviewTree reports whether dir carries the atcr provenance markers
+// that distinguish an atcr-created tree (or a prior atcr backup) from arbitrary
+// user data: every scaffolded review subdirectory AND a manifest.json at the
+// root. The subdir names alone are too weak a signal — any directory containing
+// payload/, sources/, and reconciled/ would qualify and be eligible for
+// destruction by --force. manifest.json is written by every scaffolded review
+// (WriteManifest), so a genuine backup always has it while a coincidental
+// structural lookalike of user data does not.
 func looksLikeReviewTree(dir string) bool {
 	for _, sub := range reviewSubdirs {
 		fi, err := os.Stat(filepath.Join(dir, sub))
 		if err != nil || !fi.IsDir() {
 			return false
 		}
+	}
+	fi, err := os.Stat(filepath.Join(dir, manifestFile))
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
 	}
 	return true
 }

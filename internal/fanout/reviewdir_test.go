@@ -349,11 +349,13 @@ func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
 
-	// A prior atcr backup carries the review subdirs — safe to replace.
+	// A prior atcr backup carries the review subdirs AND a manifest.json
+	// provenance marker — safe to replace.
 	prior := dir + ".bak"
 	for _, sub := range reviewSubdirs {
 		require.NoError(t, os.MkdirAll(filepath.Join(prior, sub), 0o755))
 	}
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "manifest.json"), []byte("{}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("old"), 0o644))
 
 	_, err := forceBackupOutputDir(dir)
