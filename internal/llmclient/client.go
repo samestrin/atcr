@@ -427,11 +427,6 @@ func isBreakerFailure(err error) bool {
 // size-cap semantics stay identical across the two call shapes.
 func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, []CallRecord, error) {
 	var lastErr error
-	// One CallRecord per attempt (retries included), so a caller can count real
-	// HTTP round-trips and observe per-attempt latency. Capacity is the worst-case
-	// attempt count (maxRetries below is read after the override resolves, so size
-	// for the client default and let append grow it for a larger override).
-	var records []CallRecord
 	// The retry budget and base delay come from the client by default, but a
 	// per-call override on the context (Epic 4.6: the fan-out's resolved
 	// per-agent max_retries / initial_backoff_ms) takes precedence. The 1.5x
@@ -442,6 +437,10 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 		maxRetries = o.maxRetries
 		delay = o.initialBackoff
 	}
+	// One CallRecord per attempt (retries included), so a caller can count real
+	// HTTP round-trips and observe per-attempt latency. Sized to the worst-case
+	// attempt count (initial try + maxRetries) so the common path never re-grows.
+	records := make([]CallRecord, 0, maxRetries+1)
 	// Clamp the starting delay so even the FIRST retry sleep respects maxBackoff:
 	// every subsequent delay is clamped after the ×factor step, but without this
 	// an out-of-range base would sleep its full unclamped duration on attempt 1.
