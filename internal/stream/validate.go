@@ -28,6 +28,11 @@ const PathNotFoundWarning = "file not found"
 // root defaults to "." (the process working directory, which is the repo root
 // for every atcr entry point — see internal/verify, which threads the same "."
 // root) when empty. A nil finding is a no-op.
+//
+// Limitation: existence is checked with os.Stat, which is case-insensitive on
+// the default macOS/Windows filesystems — a path differing from the real file
+// only in case (Parser.go vs parser.go) resolves as present there and is not
+// flagged. A case-exact check is a deferred enhancement (tracked in TD).
 func ValidatePath(f *Finding, root string) {
 	if f == nil {
 		return
@@ -62,12 +67,5 @@ func ValidatePath(f *Finding, root string) {
 	default:
 		// Indeterminate (permission, I/O): leave the finding unflagged rather
 		// than assert a "not found" we cannot prove.
-	}
-}
-
-// ValidatePaths stamps every finding in the slice in place (see ValidatePath).
-func ValidatePaths(findings []Finding, root string) {
-	for i := range findings {
-		ValidatePath(&findings[i], root)
 	}
 }

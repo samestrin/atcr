@@ -116,20 +116,3 @@ func TestValidatePath_AbsolutePathNeutralized(t *testing.T) {
 func TestValidatePath_NilSafe(t *testing.T) {
 	assert.NotPanics(t, func() { ValidatePath(nil, t.TempDir()) })
 }
-
-// TestValidatePaths_StampsAll: the slice helper stamps every finding in place.
-func TestValidatePaths_StampsAll(t *testing.T) {
-	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "exists.go"), []byte("package x\n"), 0o644))
-
-	findings := []Finding{
-		{File: "exists.go"},
-		{File: "missing.go"},
-	}
-	ValidatePaths(findings, root)
-
-	assert.True(t, findings[0].PathValid)
-	assert.Empty(t, findings[0].PathWarning)
-	assert.False(t, findings[1].PathValid)
-	assert.Equal(t, PathNotFoundWarning, findings[1].PathWarning)
-}

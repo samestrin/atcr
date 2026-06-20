@@ -74,8 +74,14 @@ type JSONFinding struct {
 	// PathValid / PathWarning carry file-existence validation (Epic 5.0). Both
 	// are omitempty so a finding that was never validated (or whose path exists)
 	// serializes byte-identically to pre-5.0 findings.json — only a flagged
-	// hallucinated path adds path_warning. The report layer keys display off
-	// PathWarning, not PathValid, so an absent (false) PathValid never flags.
+	// hallucinated path adds path_warning.
+	//
+	// CONTRACT: path_warning is the authoritative signal — a non-empty value
+	// means the path did not resolve under the reviewed repo root. path_valid is
+	// auxiliary and MUST NOT be read in isolation: under omitempty, "validated
+	// but missing" and "never validated" both serialize as an absent path_valid
+	// (false), so the two states are indistinguishable from path_valid alone.
+	// Consumers and the report layer key display off path_warning.
 	PathValid   bool   `json:"path_valid,omitempty"`
 	PathWarning string `json:"path_warning,omitempty"`
 }
