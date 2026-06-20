@@ -117,7 +117,13 @@ func (l *toolLoop) run(ctx context.Context) Result {
 		if err != nil {
 			// A Chat error ends the loop. A deadline/cancel records the timeout
 			// budget; any other provider error is a plain failure. Partial
-			// counters already accumulated in res are preserved either way.
+			// counters already accumulated in res are preserved either way. An
+			// errored turn still carries the per-attempt telemetry for any HTTP
+			// attempt that reached the wire (Epic 4.11), so count it before exiting —
+			// a mid-flight timeout that did one round-trip must not undercount.
+			if resp != nil {
+				l.res.addCallRecords(resp.CallRecords)
+			}
 			status := classifyStatus(err)
 			if status == StatusTimeout {
 				l.res.addTripped(budgetTimeout)
@@ -274,6 +280,11 @@ func (l *toolLoop) requestFinalAnswer(ctx context.Context) Result {
 	l.appendUser(finalAnswerMessage)
 	resp, err := l.cc.Chat(ctx, l.agent.Invocation, l.messages, nil)
 	if err != nil {
+		// Count the final-answer call's wire attempt(s) even on error (Epic 4.11),
+		// mirroring the per-turn path above.
+		if resp != nil {
+			l.res.addCallRecords(resp.CallRecords)
+		}
 		status := classifyStatus(err)
 		if status == StatusTimeout {
 			l.res.addTripped(budgetTimeout)

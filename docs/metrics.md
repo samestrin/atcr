@@ -40,7 +40,7 @@ every review that exits normally.
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `atcr_api_calls_total` | counter | Provider HTTP attempts that reached the wire, counted per attempt — every retry counts, and a request cancelled before any bytes were sent (or a circuit-open fail-fast) counts zero. Equals the `atcr_api_call_duration_seconds` observation count. (Before Epic 4.11 this was one-per-round-trip with retries collapsed; dashboards comparing across that change will see a one-time step up.) |
+| `atcr_api_calls_total` | counter | Provider HTTP attempts that reached the wire, counted per attempt — every retry counts, and a request cancelled before any bytes were sent (or a circuit-open fail-fast) counts zero. Equals the `atcr_api_call_duration_seconds` observation count (except on the rare fallback where a completer surfaces no per-call telemetry, which counts without timing). (Before Epic 4.11 this was one-per-round-trip with retries collapsed; dashboards comparing across that change will see a one-time step up.) |
 | `atcr_api_call_duration_seconds` | histogram | Wall-clock latency of each completed HTTP attempt that reached the wire (one observation per `atcr_api_calls_total` increment). |
 | `atcr_api_errors_total{status}` | counter | API errors, labeled by HTTP status code. |
 | `atcr_tool_calls_total` | counter | Tool calls made by tool-using agents. |

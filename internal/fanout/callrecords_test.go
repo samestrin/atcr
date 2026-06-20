@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,4 +47,31 @@ func TestToolLoop_AccumulatesCallRecordsAcrossTurns(t *testing.T) {
 	require.Len(t, r.CallRecords, 2, "both turns' CallRecords must accumulate onto the Result")
 	assert.Equal(t, time.Millisecond, r.CallRecords[0].Duration)
 	assert.Equal(t, 2*time.Millisecond, r.CallRecords[1].Duration)
+}
+
+// TestToolLoop_MidFlightTimeoutCountsWireAttempt verifies the tool-loop path does
+// not reproduce the AC1 undercount: a Chat() that reached the wire and then timed
+// out surfaces its CallRecords even though it returns an error, so the wire
+// attempt is counted and timed (independent-review MEDIUM finding).
+func TestToolLoop_MidFlightTimeoutCountsWireAttempt(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Cleanup(metrics.DefaultRegistry.Reset)
+
+	cc := &scriptedChat{turns: []chatTurn{
+		{
+			err:         context.DeadlineExceeded,
+			callRecords: []llmclient.CallRecord{{ReachedWire: true, Duration: 7 * time.Millisecond}},
+		},
+	}}
+	r := toolEngine(cc, newFakeDispatcher()).invokeAgent(context.Background(), toolAgent("a", 10, 0))
+
+	require.Equal(t, StatusTimeout, r.Status)
+	require.Len(t, r.CallRecords, 1, "the errored turn's wire attempt must be recorded")
+	assert.True(t, r.CallRecords[0].ReachedWire)
+	if got := metrics.Counter(metrics.NameAPICallsTotal).Value(); got != 1 {
+		t.Errorf("atcr_api_calls_total = %d, want 1 (mid-flight tool-loop timeout counts its wire attempt, not 0)", got)
+	}
+	if got := metrics.Histogram(metrics.NameAPICallDurationSeconds).Count(); got != 1 {
+		t.Errorf("histogram count = %d, want 1 (the wire attempt is timed)", got)
+	}
 }

@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/samestrin/atcr/internal/circuitbreaker"
@@ -612,10 +613,14 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 	// load-bearing discriminator for ReachedWire on the transport-error path: a
 	// mid-flight cancel/timeout fires WroteRequest (counts as a real round-trip),
 	// while a cancel before the bytes are sent does not (must not count, AC2).
+	// The flag is an atomic.Bool: net/http writes the request from a separate
+	// transport goroutine, so on the Do-returns-error path there is no guaranteed
+	// happens-before between the callback's store and this read — the atomic makes
+	// the read well-defined rather than a data race.
 	start := time.Now()
-	wroteRequest := false
+	var wroteRequest atomic.Bool
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		WroteRequest: func(httptrace.WroteRequestInfo) { wroteRequest = true },
+		WroteRequest: func(httptrace.WroteRequestInfo) { wroteRequest.Store(true) },
 	})
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -627,7 +632,7 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, 0, 0, CallRecord{ReachedWire: wroteRequest, Duration: time.Since(start)}, fmt.Errorf("request failed: %w", err)
+		return nil, 0, 0, CallRecord{ReachedWire: wroteRequest.Load(), Duration: time.Since(start)}, fmt.Errorf("request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

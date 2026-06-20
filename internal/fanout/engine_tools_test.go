@@ -90,7 +90,9 @@ func (s *scriptedChat) Chat(ctx context.Context, _ llmclient.Invocation, message
 		return nil, err
 	}
 	if turn.err != nil {
-		return nil, turn.err
+		// Mirror the real *Client.Chat contract: an errored turn still surfaces the
+		// per-attempt telemetry for any wire attempt it made (Epic 4.11).
+		return &llmclient.ChatResponse{CallRecords: turn.callRecords}, turn.err
 	}
 	msg := llmclient.Message{Role: "assistant", ToolCalls: turn.toolCalls}
 	fr := "stop"

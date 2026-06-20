@@ -17,8 +17,10 @@ import (
 //
 // API calls are counted PER ATTEMPT (Epic 4.11): apiCallCount sums the agent's
 // CallRecords that reached the wire — retries included — and each such record's
-// duration is observed into atcr_api_call_duration_seconds, so the histogram's
-// sample count always equals atcr_api_calls_total. This is a deliberate change
+// duration is observed into atcr_api_call_duration_seconds, so on the per-record
+// path the histogram's sample count equals atcr_api_calls_total (the nil Turns
+// fallback below increments the counter without emitting a latency sample, so the
+// two can diverge only for completers that surface no per-call data). This is a deliberate change
 // from the prior Turns-based one-per-round-trip behavior: a single-shot that
 // retried (defaultMaxRetries = 2) now counts each HTTP attempt rather than 1, so
 // dashboards comparing pre/post values will see a one-time inflation step.
