@@ -12,6 +12,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,33 @@ func TestReviewContext_RedactsSecretsAndPaths(t *testing.T) {
 	assert.NotContains(t, out, "sk-leakedvalue123", "secret must be redacted at the sink (AC5)")
 	assert.NotContains(t, out, cwd+string(filepath.Separator), "absolute root must be relativized (AC6)")
 	assert.Contains(t, out, filepath.Join("internal", "secret.go"), "path must render relative to root")
+}
+
+// TestReviewContext_ScrubsConfiguredNonSkKey is the serve-mode half of epic 4.9
+// AC2: a non-sk-/non-Bearer-shaped provider key (Google AIzaSy…) resolved from
+// the prepared review's slots and threaded into reviewContext is scrubbed at the
+// sink. Before 4.9 reviewContext passed no secrets to NewRedactor, so this key —
+// lacking the sk-/Bearer token shapes — would leak verbatim in serve-mode logs.
+func TestReviewContext_ScrubsConfiguredNonSkKey(t *testing.T) {
+	const key = "AIzaSyServeModeNonSkKeyValue1234567890"
+	t.Setenv("ATCR_MCP_REDACT_KEY", key)
+
+	var buf bytes.Buffer
+	logger, err := log.New("info", "json", &buf)
+	require.NoError(t, err)
+	e := &engine{log: logger, root: "."}
+
+	prep := &fanout.PreparedReview{
+		ID:    "2026-06-20_serve",
+		Slots: []fanout.Slot{{Primary: fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: "ATCR_MCP_REDACT_KEY"}}}},
+	}
+	ctx := e.reviewContext(context.Background(), prep.ID, prep.SecretValues()...)
+	log.FromContext(ctx).Info("provider rejected request", "header", "x-goog-api-key: "+key)
+
+	out := buf.String()
+	assert.Contains(t, out, "2026-06-20_serve", "review_id must stay greppable (AC9)")
+	assert.NotContains(t, out, key, "AC2: a configured non-sk provider key must be scrubbed in serve-mode logs")
+	assert.Contains(t, out, "[redacted]", "AC2: the scrubbed key must be replaced with the redaction marker")
 }
 
 // gitRepo creates a temp git repo with a base and head commit, returning the

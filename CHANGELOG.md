@@ -1,3 +1,17 @@
+## [4.9.0] - 2026-06-20
+
+Exact-value secret redaction is now live in production: resolved registry API key values are threaded into the log redactor at both per-review construction sites, so provider keys are scrubbed by their actual value rather than relying solely on the `sk-`/`Bearer` token-shape patterns.
+
+### Security
+
+- Provider API keys that lack an `sk-`/`Bearer` prefix (Google `AIzaSy…`, Azure, JWTs) are now scrubbed by exact value from both `atcr review`/`--resume` and serve-mode logs, closing a gap where such keys could otherwise leak verbatim
+
+### Added
+
+- `PreparedReview.SecretValues` enumerates the resolved registry API key values (deduped, with a minimum-length guard against over-redaction) for the log redactor at the review, resume, and serve-mode construction sites
+
+*Shipped via /execute-epic (epic 4.9)*
+
 ## [Technical Debt] - 2026-06-20
 
 ### Fixed
