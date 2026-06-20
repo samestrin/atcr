@@ -405,6 +405,7 @@ func backupCrossDevice(path, backup, backupNew string) error {
 	// managed reviews; --output-dir callers with symlinks in their tree will
 	// silently lose them on this path.
 	if err := copyPathFn(path, backupNew); err != nil {
+		_ = os.RemoveAll(backupNew) // clean up any partial copy
 		return fmt.Errorf("backing up %q across filesystems: %w", path, err)
 	}
 	if err := os.Rename(backupNew, backup); err != nil {
