@@ -407,11 +407,20 @@ func isBreakerFailure(err error) bool {
 // size-cap semantics stay identical across the two call shapes.
 func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
 	var lastErr error
+	// The retry budget and base delay come from the client by default, but a
+	// per-call override on the context (Epic 4.6: the fan-out's resolved
+	// per-agent max_retries / initial_backoff_ms) takes precedence. The 1.5x
+	// factor and the maxBackoff cap stay fixed implementation constants.
+	maxRetries := c.maxRetries
 	delay := c.initialBackoff
+	if o, ok := retryOverrideFromContext(ctx); ok {
+		maxRetries = o.maxRetries
+		delay = o.initialBackoff
+	}
 	// honorExact is set when the next sleep is a server-advertised Retry-After
 	// cooldown, which must be slept verbatim (neither jittered down nor clamped).
 	honorExact := false
-	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			sleepFor := delay
 			if !honorExact {
@@ -435,7 +444,7 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 				return nil, err
 			}
 			lastErr = err
-			if attempt < c.maxRetries {
+			if attempt < maxRetries {
 				continue
 			}
 			// Transport-level exhaustion (connection reset, EOF, DNS) is transient:
@@ -449,7 +458,7 @@ func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte
 			return payload, nil
 		case retryableStatus[status]:
 			lastErr = httpStatusError(status, string(payload))
-			if attempt < c.maxRetries {
+			if attempt < maxRetries {
 				// Honor a server-advertised cooldown (Retry-After) over the fixed
 				// backoff when present; otherwise keep the exponential schedule.
 				if retryAfter > 0 {
