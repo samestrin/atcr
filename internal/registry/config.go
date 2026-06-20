@@ -121,6 +121,13 @@ type AgentConfig struct {
 	Scope       []string `yaml:"scope,omitempty"`        // soft focus categories injected into the prompt
 	MinSeverity string   `yaml:"min_severity,omitempty"` // drop findings below this floor (CRITICAL|HIGH|MEDIUM|LOW)
 	MaxFindings *int     `yaml:"max_findings,omitempty"` // cap on findings (severity-sorted truncate); nil = unlimited
+
+	// Retry/backoff tunables (Epic 4.6) — the per-agent tier, overriding the
+	// resolved global settings via EffectiveMaxRetries/EffectiveInitialBackoffMs.
+	// Pointers so an explicit 0 max_retries survives and an unset field inherits
+	// the resolved setting (same shape as TimeoutSecs).
+	MaxRetries       *int `yaml:"max_retries,omitempty"`        // per-agent retry budget (0 = single attempt); nil = inherit
+	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"` // per-agent base retry delay (ms); nil = inherit
 }
 
 // reviewSeverities is the canonical finding-severity rubric (personas/_base.md),
@@ -158,6 +165,13 @@ type Registry struct {
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
+
+	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
+	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
+	// max_retries (single attempt, no retry) survives default application in
+	// ResolveSettings. An unset value falls through to the embedded default.
+	MaxRetries       *int `yaml:"max_retries,omitempty"`
+	InitialBackoffMs *int `yaml:"initial_backoff_ms,omitempty"`
 
 	// Verify is the optional adversarial-verification block (Epic 3.0). Defaults
 	// (min_severity=MEDIUM, votes=1) are applied at load, so a registry without a
@@ -223,6 +237,14 @@ func (r *Registry) validate() error {
 	}
 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
+	}
+	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
+	// delay must be positive so the exponential schedule has a starting point.
+	if r.MaxRetries != nil && (*r.MaxRetries < 0 || *r.MaxRetries > MaxRetriesCap) {
+		errs = append(errs, fmt.Errorf("max_retries must be within 0..%d", MaxRetriesCap))
+	}
+	if r.InitialBackoffMs != nil && (*r.InitialBackoffMs <= 0 || *r.InitialBackoffMs > MaxInitialBackoffMs) {
+		errs = append(errs, fmt.Errorf("initial_backoff_ms must be within 1..%d", MaxInitialBackoffMs))
 	}
 	if !payloadModeValid(r.PayloadMode) {
 		errs = append(errs, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", r.PayloadMode))
@@ -319,6 +341,14 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
 		errs = append(errs, agentErrf(name, "agent '%s': max_findings must be within 1..%d", name, MaxFindingsCap))
+	}
+	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
+	// delay must be positive. Same range as the registry tier.
+	if a.MaxRetries != nil && (*a.MaxRetries < 0 || *a.MaxRetries > MaxRetriesCap) {
+		errs = append(errs, agentErrf(name, "agent '%s': max_retries must be within 0..%d", name, MaxRetriesCap))
+	}
+	if a.InitialBackoffMs != nil && (*a.InitialBackoffMs <= 0 || *a.InitialBackoffMs > MaxInitialBackoffMs) {
+		errs = append(errs, agentErrf(name, "agent '%s': initial_backoff_ms must be within 1..%d", name, MaxInitialBackoffMs))
 	}
 	for _, s := range a.Scope {
 		if strings.TrimSpace(s) == "" {
@@ -423,6 +453,25 @@ func (a AgentConfig) EffectiveTimeoutSecs(s Settings) int {
 		return *a.TimeoutSecs
 	}
 	return s.TimeoutSecs
+}
+
+// EffectiveMaxRetries returns the agent's own retry budget when set, otherwise
+// the resolved shared budget (Epic 4.6). An explicit 0 (single attempt, no
+// retry) is honored — the pointer distinguishes it from "unset".
+func (a AgentConfig) EffectiveMaxRetries(s Settings) int {
+	if a.MaxRetries != nil {
+		return *a.MaxRetries
+	}
+	return s.MaxRetries
+}
+
+// EffectiveInitialBackoffMs returns the agent's own base retry delay (ms) when
+// set, otherwise the resolved shared delay (Epic 4.6).
+func (a AgentConfig) EffectiveInitialBackoffMs(s Settings) int {
+	if a.InitialBackoffMs != nil {
+		return *a.InitialBackoffMs
+	}
+	return s.InitialBackoffMs
 }
 
 // EffectivePayloadMode returns the agent's own payload override when set,

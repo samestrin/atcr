@@ -75,6 +75,16 @@ type Agent struct {
 	// means "use the global context deadline only".
 	TimeoutSecs int
 
+	// Retry/backoff (Epic 4.6): the agent's effective retry budget and base
+	// delay (ms), resolved by buildAgent from the per-agent override layered over
+	// the global Settings. invokeAgent threads them onto the call context so the
+	// shared client's dispatch honors them. InitialBackoffMs > 0 is the
+	// "configured" sentinel: a bare Agent (doctor/direct construction) leaves it
+	// 0 and keeps the client's own default budget. MaxRetries 0 is a valid
+	// budget (single attempt) and is applied whenever InitialBackoffMs is set.
+	MaxRetries       int
+	InitialBackoffMs int
+
 	// Tool-loop configuration (Epic 2.0). Tools enables the multi-turn agent
 	// loop; when false the agent runs single-shot exactly as in 1.x. MaxTurns
 	// caps Chat-with-tools turns (default 10 applied at registry load when
@@ -439,6 +449,14 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.TimeoutSecs)*time.Second)
 		defer cancel()
+	}
+	// Apply this agent's effective retry budget (Epic 4.6) for the whole dispatch
+	// — single-shot, tool loop, and degraded paths all run under this ctx, so the
+	// shared client's dispatch picks it up via WithRetryOverride. InitialBackoffMs
+	// > 0 marks a buildAgent-resolved budget; a bare Agent (doctor/direct
+	// construction) leaves it 0 and keeps the client's own default.
+	if a.InitialBackoffMs > 0 {
+		ctx = llmclient.WithRetryOverride(ctx, a.MaxRetries, time.Duration(a.InitialBackoffMs)*time.Millisecond)
 	}
 	// Scope a per-agent logger so every line emitted while this agent runs carries
 	// agent_name (AC10). The engine logger already carries review_id (seeded by

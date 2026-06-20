@@ -585,18 +585,20 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		return Agent{}, "", fmt.Errorf("agent %q references unknown provider %q", name, ac.Provider)
 	}
 	return Agent{
-		Name:            name,
-		Provider:        ac.Provider,
-		Prompt:          prompt,
-		PayloadMode:     mode,
-		Truncation:      mp.Truncation,
-		TimeoutSecs:     ac.EffectiveTimeoutSecs(cfg.Settings),
-		Tools:           ac.Tools,
-		SupportsFC:      ac.SupportsFC,
-		MaxTurns:        derefMaxTurns(ac.MaxTurns),
-		ToolBudgetBytes: derefInt64(ac.ToolBudgetBytes),
-		MinSeverity:     ac.MinSeverity,
-		MaxFindings:     ac.MaxFindings,
+		Name:             name,
+		Provider:         ac.Provider,
+		Prompt:           prompt,
+		PayloadMode:      mode,
+		Truncation:       mp.Truncation,
+		TimeoutSecs:      ac.EffectiveTimeoutSecs(cfg.Settings),
+		MaxRetries:       ac.EffectiveMaxRetries(cfg.Settings),
+		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
+		Tools:            ac.Tools,
+		SupportsFC:       ac.SupportsFC,
+		MaxTurns:         derefMaxTurns(ac.MaxTurns),
+		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
+		MinSeverity:      ac.MinSeverity,
+		MaxFindings:      ac.MaxFindings,
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -657,6 +659,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		PayloadMode: primary.PayloadMode,
 		Truncation:  primary.Truncation,
 		TimeoutSecs: ac.EffectiveTimeoutSecs(cfg.Settings),
+		// Retry/backoff follow the fallback's OWN config (Epic 4.6), like
+		// TimeoutSecs: the fallback makes its own call to its own provider, so its
+		// own resilience budget governs.
+		MaxRetries:       ac.EffectiveMaxRetries(cfg.Settings),
+		InitialBackoffMs: ac.EffectiveInitialBackoffMs(cfg.Settings),
 		// Fallbacks inherit the lane's effective tool settings from the primary,
 		// not the fallback's own config (AC 01-05 S4, AC 04-03: "fallbacks inherit
 		// the lane's effective tools setting"). Degrade stays per-agent — a

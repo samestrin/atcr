@@ -110,6 +110,13 @@ func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
 		SupportsFC:      c.SupportsFC,
 		MaxTurns:        derefInt(c.MaxTurns),
 		ToolBudgetBytes: derefInt64(c.ToolBudgetBytes),
+		// Retry/backoff (Epic 4.6): forward the skeptic's per-agent budget the same
+		// way as the other per-finding budgets. A nil pointer becomes 0; the engine
+		// applies the override only when InitialBackoffMs > 0, so an unset budget
+		// keeps the shared client's own default (consistent with TimeoutSecs → 0
+		// meaning "parent deadline only").
+		MaxRetries:       derefInt(c.MaxRetries),
+		InitialBackoffMs: derefInt(c.InitialBackoffMs),
 		Invocation: llmclient.Invocation{
 			BaseURL:     skeptic.Provider.BaseURL,
 			APIKeyEnv:   skeptic.Provider.APIKeyEnv,
