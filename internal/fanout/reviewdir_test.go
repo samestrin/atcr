@@ -633,6 +633,46 @@ func TestBackupCrossDevice_CopyFailureCleansBackupNew(t *testing.T) {
 	assert.NoDirExists(t, src+".bak.new", "backupCrossDevice must clean up .bak.new on copy failure")
 }
 
+// TestBackupCrossDevice_CopyFailureRestoresPriorBak proves the "EXDEV falls back
+// without data loss" AC on its failure leg: when the cross-device copy fails with a
+// prior .bak staged aside, the prior generation is restored intact, the live tree
+// survives, and the .bak.new staging artifact is cleaned up. The success path was
+// already covered (TestBackupExisting_CrossDeviceFallback); this locks the
+// restore-on-copy-failure path the prior tests left unproven (TD reviewdir.go:388).
+func TestBackupCrossDevice_CopyFailureRestoresPriorBak(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// A prior backup generation that must survive a failed cross-device backup.
+	prior := src + ".bak"
+	require.NoError(t, os.MkdirAll(prior, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "marker.txt"), []byte("prior"), 0o644))
+
+	// Trigger the EXDEV branch, then fail the copy step (after a partial dst).
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	withCopyPathStub(t, func(_, dst string) error {
+		require.NoError(t, os.MkdirAll(dst, 0o755))
+		return errors.New("simulated copy failure")
+	})
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err, "a failed cross-device copy must surface an error")
+
+	// Prior generation restored intact: .bak holds the prior content, not the live.
+	data, readErr := os.ReadFile(filepath.Join(prior, "marker.txt"))
+	require.NoError(t, readErr, "prior .bak must be restored after a failed cross-device copy")
+	assert.Equal(t, "prior", string(data), "restored backup must hold the prior generation")
+	// Live tree untouched: the copy never moves or removes path.
+	live, readErr := os.ReadFile(filepath.Join(src, "marker.txt"))
+	require.NoError(t, readErr, "live tree must survive a failed cross-device copy")
+	assert.Equal(t, "current", string(live))
+	// Staging artifacts cleaned up.
+	assert.NoDirExists(t, src+".bak.new", "staging copy must not leak after a failed cross-device copy")
+	assert.NoDirExists(t, src+".bak.old", "prior-generation staging must not leak after restore")
+}
+
 // TestBackupExisting_CrossDeviceVacateFailurePreservesNewBackup verifies that when
 // the copy+rename to .bak succeeds but the vacate of the live path fails, the new
 // backup is not overwritten by restoring the prior .bak.old generation — the live
