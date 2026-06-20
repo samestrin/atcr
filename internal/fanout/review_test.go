@@ -503,6 +503,39 @@ func TestPrepareReview_ForceWithDerivedIdWarnsStderr(t *testing.T) {
 	assert.Contains(t, string(out), "--force has no effect without --id or --output-dir")
 }
 
+// TestPrepareReview_ForceBackupEmitsStderrNotice verifies that a --force
+// overwrite of an existing explicit-id review emits a stderr breadcrumb naming
+// the .bak directory, so an operator who forced by mistake knows where the
+// prior tree was preserved.
+func TestPrepareReview_ForceBackupEmitsStderrNotice(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+
+	req := reviewReq(repo, repo, base, head)
+	req.IDOverride = "2026-06-10_backed"
+
+	_, err := PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	req.Force = true
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_, err = PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Close())
+	os.Stderr = oldStderr
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "backed up prior review to")
+	assert.Contains(t, string(out), "2026-06-10_backed.bak")
+}
+
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.
