@@ -64,6 +64,11 @@ func WriteJSON(path string, v interface{}) error {
 // success. Only regular files and directories are copied; symlinks and other
 // non-regular entries are skipped. Garbage-collecting older .bak state is the
 // caller's/user's job.
+//
+// The copy is staged into a temp sibling (<src>.bak.tmp-*) and then renamed
+// over <src>.bak, with the destructive RemoveAll(<src>.bak) deferred until just
+// before the rename. A crash or interruption during the copy therefore leaves
+// the prior .bak generation intact.
 func BackupToDotBak(src string) (string, error) {
 	info, err := os.Lstat(src)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -79,16 +84,46 @@ func BackupToDotBak(src string) (string, error) {
 		return "", nil
 	}
 	bak := src + ".bak"
-	if err := os.RemoveAll(bak); err != nil {
-		return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
-	}
+	dir := filepath.Dir(src)
+
+	// Stage the backup into a temp sibling, then atomically swap it over bak.
+	// If the copy is interrupted, the prior .bak remains untouched.
 	if info.IsDir() {
-		if err := copyTree(src, bak); err != nil {
+		tmpDir, err := os.MkdirTemp(dir, filepath.Base(bak)+".tmp-*")
+		if err != nil {
+			return "", fmt.Errorf("creating backup staging dir: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(tmpDir) }()
+
+		if err := copyTree(src, tmpDir); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
 		}
+		if err := os.RemoveAll(bak); err != nil {
+			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
+		}
+		if err := os.Rename(tmpDir, bak); err != nil {
+			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
+		}
 	} else {
-		if err := copyFile(src, bak, info.Mode().Perm()); err != nil {
+		tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(bak)+".tmp-*")
+		if err != nil {
+			return "", fmt.Errorf("creating backup staging file: %w", err)
+		}
+		tmpName := tmpFile.Name()
+		if err := tmpFile.Close(); err != nil {
+			_ = os.Remove(tmpName)
+			return "", fmt.Errorf("closing backup staging file: %w", err)
+		}
+		defer func() { _ = os.Remove(tmpName) }()
+
+		if err := copyFile(src, tmpName, info.Mode().Perm()); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", src, err)
+		}
+		if err := os.RemoveAll(bak); err != nil {
+			return "", fmt.Errorf("removing stale backup %s: %w", bak, err)
+		}
+		if err := os.Rename(tmpName, bak); err != nil {
+			return "", fmt.Errorf("renaming staged backup to %s: %w", bak, err)
 		}
 	}
 	return bak, nil
@@ -100,15 +135,15 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dstFile, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = dstFile.Close()
 		return err
 	}
 	return dstFile.Close()

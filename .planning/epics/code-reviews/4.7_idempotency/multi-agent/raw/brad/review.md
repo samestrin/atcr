@@ -1,0 +1,2 @@
+MEDIUM|internal/verify/pipeline.go:352|Backup called in both pipeline and emit risks overwriting .bak with new data|Consolidate backup to single write path|correctness|15|BackupExistingVerification invoked before writeGroupAtomic and in WriteVerification|code-reviewer
+LOW|internal/fanout/reviewdir.go:284|os.RemoveAll before os.Rename loses backup on rename failure|Rename to temp, remove old, then rename temp|correctness|10|os.RemoveAll(backup) executes before os.Rename(path, backup)|code-reviewer

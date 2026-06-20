@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/pipeline.go:353|Redundant backup call|Remove call to BackupExistingVerification in pipeline.go|performance|5|BackupExistingVerification is called both in runVerify (pipeline.go:353) and again inside WriteVerification (emit_verification.go:149)|otto

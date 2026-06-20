@@ -326,3 +326,121 @@ func TestBackupToDotBak_SymlinkSourceIsSkipped(t *testing.T) {
 		t.Errorf("no backup may be created for a symlink source, lstat err = %v", err)
 	}
 }
+
+// TestBackupToDotBak_FailedFileCopyPreservesOldBackup is a fault-injection test
+// for crash-safe replacement: if the copy into the staging temp fails, the prior
+// .bak generation must remain intact and no staging temp must be left behind.
+func TestBackupToDotBak_FailedFileCopyPreservesOldBackup(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read unreadable files")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "verification.json")
+	if err := os.WriteFile(src, []byte("current\n"), 0o000); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Pre-existing backup that must survive a failed copy.
+	if err := os.WriteFile(src+".bak", []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed old backup: %v", err)
+	}
+
+	_, err := BackupToDotBak(src)
+	if err == nil {
+		t.Fatal("expected error copying unreadable source, got nil")
+	}
+
+	got, err := os.ReadFile(src + ".bak")
+	if err != nil {
+		t.Fatalf("old backup should still exist: %v", err)
+	}
+	if string(got) != "old\n" {
+		t.Errorf("old backup was corrupted: %q", got)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".bak.tmp-") {
+			t.Errorf("staging temp leaked after failed backup: %s", e.Name())
+		}
+	}
+}
+
+// TestBackupToDotBak_FailedDirCopyPreservesOldBackup is the directory-tree
+// counterpart of the file fault-injection test above.
+func TestBackupToDotBak_FailedDirCopyPreservesOldBackup(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read unreadable files")
+	}
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reconciled")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "findings.json"), []byte("current\n"), 0o000); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Pre-existing backup tree that must survive a failed copy.
+	oldBak := src + ".bak"
+	if err := os.MkdirAll(oldBak, 0o755); err != nil {
+		t.Fatalf("mkdir old bak: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(oldBak, "legacy.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed old backup: %v", err)
+	}
+
+	_, err := BackupToDotBak(src)
+	if err == nil {
+		t.Fatal("expected error copying unreadable nested file, got nil")
+	}
+
+	got, err := os.ReadFile(filepath.Join(oldBak, "legacy.txt"))
+	if err != nil {
+		t.Fatalf("old backup should still exist: %v", err)
+	}
+	if string(got) != "old\n" {
+		t.Errorf("old backup was corrupted: %q", got)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".bak.tmp-") {
+			t.Errorf("staging temp leaked after failed backup: %s", e.Name())
+		}
+	}
+}
+
+// TestBackupToDotBak_NoStagingLeakAfterSuccess verifies that the staging temp
+// sibling is renamed into place and never left behind after a successful backup.
+func TestBackupToDotBak_NoStagingLeakAfterSuccess(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "verification.json")
+	if err := os.WriteFile(src, []byte("current\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.WriteFile(src+".bak", []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+
+	if _, err := BackupToDotBak(src); err != nil {
+		t.Fatalf("BackupToDotBak: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".bak.tmp-") {
+			t.Errorf("staging temp leaked after successful backup: %s", e.Name())
+		}
+	}
+}

@@ -1,0 +1,2 @@
+MEDIUM|internal/atomicfs/atomic.go:75|Unbounded file read in copyFile risks OOM/DoS|Use io.Copy with fixed buffer for streaming copy|security|10|data, err := os.ReadFile(src) loads entire file into memory|greta
+LOW|internal/atomicfs/atomic.go:52|BackupToDotBak follows symlinks via os.Stat|Use os.Lstat to detect symlinks and abort or skip|security|15|info, err := os.Stat(src) dereferences symlinks before backup|greta
