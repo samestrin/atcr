@@ -1,6 +1,7 @@
 package atomicfs
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 )
@@ -29,4 +30,16 @@ func WriteFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// WriteJSON marshals v as two-space-indented JSON (with a trailing newline, so
+// the artifact matches the reconcile/verify writers and is human-diffable) and
+// writes it through WriteFileAtomic. A marshal failure returns before any file
+// is touched, so a bad value can never truncate or partially overwrite path.
+func WriteJSON(path string, v interface{}) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return WriteFileAtomic(path, append(data, '\n'))
 }
