@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 16 | 4 |
-| LOW | 6 | 16 | 7 |
+| LOW | 0 | 16 | 13 |
 
 
-**Last Modified:** 2026-06-19 | **Open Items:** 6 | **Deferred Items:** 33 | **Resolved Items:** 11 | **Total Items:** 50
+**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 33 | **Resolved Items:** 17 | **Total Items:** 50
 
 ## Directory Structure
 
@@ -168,9 +168,9 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|------------|
-| Solo | [ ] | LOW | internal/mcp/handlers.go:521 | handleVerify is at 63% — its error branches (verify-registry load failure, invalid severity, range-resolution failure) have no test asserting the structured client-facing error. | Add table-driven tests for the three failure paths asserting the structured error (type/category + stable substring); reach ≥85%. | testing | 30 | epic-review | claude | MEDIUM |
-| Solo | [ ] | LOW | internal/mcp/handlers.go:605 | parseOptionalSeverity is at 75% — blank and invalid inputs are untested. | Add valid / blank / invalid cases → 100%. | testing | 10 | epic-review | claude | MEDIUM |
-| Solo | [ ] | LOW | internal/mcp/handlers.go:489 | rangeError (66.7%) and loadVerifyRegistry (83.3%) failure paths are untested. | Add tests exercising each failure path → ≥90%. | testing | 15 | epic-review | claude | MEDIUM |
-| Solo | [ ] | LOW | internal/mcp/handlers.go:347 | handleReport is at 76% — the markdown radar branch (Epic 3.2) and error paths (missing reconciled data, corrupt/absent ambiguous.json degrading gracefully) are uncovered. | Add tests for the radar branch and the degradation paths → ≥85%. | testing | 20 | epic-review | claude | MEDIUM |
-| Solo | [ ] | LOW | internal/mcp/handlers.go:402 | handleStatus is at 81.8% — the corrupt-manifest path is untested. | Add a corrupt-manifest test → ≥90%. | testing | 10 | epic-review | claude | MEDIUM |
-| Solo | [ ] | LOW | internal/mcp/server.go:52 | Serve (0%, stdio transport lifecycle) is untested; registerTool (80%) and reportInputSchema (tools.go:187, 83.3%) have partial registration/schema branches. | Add a minimal in-memory-transport Serve test OR record a one-line documented exclusion; cover the registration/schema branches → ≥90%. | testing | 45 | epic-review | claude | MEDIUM |
+| Solo | [x] | LOW | internal/mcp/handlers.go:521 | handleVerify is at 63% — its error branches (verify-registry load failure, invalid severity, range-resolution failure) have no test asserting the structured client-facing error. | Add table-driven tests for the three failure paths asserting the structured error (type/category + stable substring); reach ≥85%. | testing | 30 | epic-review | claude | MEDIUM |
+| Solo | [x] | LOW | internal/mcp/handlers.go:605 | parseOptionalSeverity is at 75% — blank and invalid inputs are untested. | Add valid / blank / invalid cases → 100%. | testing | 10 | epic-review | claude | MEDIUM |
+| Solo | [x] | LOW | internal/mcp/handlers.go:489 | rangeError (66.7%) and loadVerifyRegistry (83.3%) failure paths are untested. | Add tests exercising each failure path → ≥90%. | testing | 15 | epic-review | claude | MEDIUM |
+| Solo | [x] | LOW | internal/mcp/handlers.go:347 | handleReport is at 76% — the markdown radar branch (Epic 3.2) and error paths (missing reconciled data, corrupt/absent ambiguous.json degrading gracefully) are uncovered. | Add tests for the radar branch and the degradation paths → ≥85%. | testing | 20 | epic-review | claude | MEDIUM |
+| Solo | [x] | LOW | internal/mcp/handlers.go:402 | handleStatus is at 81.8% — the corrupt-manifest path is untested. | Add a corrupt-manifest test → ≥90%. | testing | 10 | epic-review | claude | MEDIUM |
+| Solo | [x] | LOW | internal/mcp/server.go:52 | Serve (0%, stdio transport lifecycle) is untested; registerTool (80%) and reportInputSchema (tools.go:187, 83.3%) have partial registration/schema branches. | Add a minimal in-memory-transport Serve test OR record a one-line documented exclusion; cover the registration/schema branches → ≥90%. | testing | 45 | epic-review | claude | MEDIUM |
