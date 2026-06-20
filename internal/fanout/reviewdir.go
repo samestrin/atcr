@@ -428,7 +428,15 @@ func backupCrossDevice(path, backup, backupNew string) error {
 		return fmt.Errorf("swapping staged backup %q into place: %w", backupNew, err)
 	}
 	if err := removePathFn(path); err != nil {
-		return fmt.Errorf("vacating %q after cross-device backup: %w", path, err)
+		// The same-fs swap above already placed the new generation durably at
+		// backup; only vacating the live path failed (e.g. path is a mountpoint
+		// root that cannot be unlinked). The live tree's contents are preserved in
+		// the backup, so no data is lost — say so explicitly, and name the backup,
+		// so a caller hitting this knows the backup is safe and only the live path
+		// needs manual cleanup. A content-only vacate that tolerates an unremovable
+		// mountpoint root (so this stops being a hard failure) is a deferred
+		// refinement: clarification Q2 chose RemoveAll(path).
+		return fmt.Errorf("backup completed at %q but vacating live path %q failed (its contents are preserved in the backup; remove the live path manually): %w", backup, path, err)
 	}
 	return nil
 }

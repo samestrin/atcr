@@ -552,6 +552,37 @@ func TestBackupExisting_CrossDeviceFallback(t *testing.T) {
 	assert.NoDirExists(t, src+".bak.old", "prior-generation staging must not leak after success")
 }
 
+// TestBackupCrossDevice_VacateFailureReportsDurableBackup verifies that when the
+// cross-device swap succeeds but vacating the live path fails (e.g. path is a
+// mountpoint root that cannot be unlinked), the returned error states the backup
+// completed durably and names the backup holding the preserved data — so a caller
+// hitting this knows no data was lost and only the live path needs manual cleanup.
+// This honors clarification Q2's RemoveAll(path) choice; a content-only vacate
+// that tolerates an unremovable mountpoint root is a deferred refinement (TD
+// reviewdir.go:342).
+func TestBackupCrossDevice_VacateFailureReportsDurableBackup(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// Force the live-tree swap onto EXDEV so the copy+swap+vacate fallback runs,
+	// then make the final vacate fail to simulate an unremovable mountpoint root.
+	withRenameStub(t, func(_, _ string) error { return syscall.EXDEV })
+	withRemovePathStub(t, func(_ string) error { return errors.New("device or resource busy") })
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err, "a failed vacate must still surface an error (Q2: RemoveAll(path))")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "backup completed", "must state the backup is durable")
+	assert.Contains(t, msg, src+".bak", "must name the backup path holding the preserved data")
+	// The backup really is durable on disk.
+	data, readErr := os.ReadFile(filepath.Join(src+".bak", "marker.txt"))
+	require.NoError(t, readErr, "the new backup must be in place despite the vacate failure")
+	assert.Equal(t, "current", string(data))
+}
+
 // TestBackupExisting_CleansStaleStagingStragglers verifies the reconcile-on-retry
 // behavior: atcr-owned staging artifacts (.bak.old/.bak.new) left by a prior
 // crashed swap are removed at entry, so a retry starts clean and no straggler
