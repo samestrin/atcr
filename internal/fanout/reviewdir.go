@@ -319,8 +319,48 @@ func forceBackupOutputDir(dir string) error {
 	if len(entries) == 0 {
 		return nil
 	}
+	// backupExisting unconditionally RemoveAll()s <dir>.bak. Inside the managed
+	// reviews tree that sibling is atcr-owned, but an arbitrary --output-dir may
+	// have an unrelated sibling .bak the user owns. Refuse rather than destroy a
+	// backup atcr did not create (Epic 4.7: never silently delete user data).
+	if err := guardForeignBackup(dir + ".bak"); err != nil {
+		return err
+	}
 	_, err = backupExisting(dir)
 	return err
+}
+
+// guardForeignBackup returns an error if backup exists but was not created by
+// atcr, so --force on an unmanaged --output-dir cannot silently destroy it. A
+// non-existent or empty backup, or one carrying the scaffolded review-tree
+// markers (a genuine prior atcr backup), is allowed through to be replaced.
+func guardForeignBackup(backup string) error {
+	entries, err := os.ReadDir(backup)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		// Exists but is not a readable directory (e.g. a regular file): treat as
+		// foreign and refuse rather than RemoveAll it.
+		return fmt.Errorf("refusing --force: %q exists and was not created by atcr; move or remove it first", backup)
+	}
+	if len(entries) == 0 || looksLikeReviewTree(backup) {
+		return nil
+	}
+	return fmt.Errorf("refusing --force: %q already exists and does not look like an atcr backup; move or remove it first", backup)
+}
+
+// looksLikeReviewTree reports whether dir contains every scaffolded review
+// subdirectory, the marker that distinguishes an atcr-created tree (or a prior
+// atcr backup) from arbitrary user data.
+func looksLikeReviewTree(dir string) bool {
+	for _, sub := range reviewSubdirs {
+		fi, err := os.Stat(filepath.Join(dir, sub))
+		if err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 // validateOutputDirRoot returns an error if dir is inside ReviewsRoot(root).

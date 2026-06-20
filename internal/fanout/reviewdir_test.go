@@ -267,6 +267,55 @@ func TestBackupExisting_MovesAsideReplacingStaleBak(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(bak, "old.txt"), "stale backup must be replaced, not merged")
 }
 
+// TestForceBackupOutputDir_RefusesForeignBak verifies that --force on an
+// arbitrary --output-dir does NOT silently destroy a pre-existing sibling
+// <dir>.bak that atcr did not create. backupExisting removes the prior .bak
+// generation unconditionally; for an unmanaged output path that sibling may be
+// unrelated user data, so forceBackupOutputDir must refuse instead.
+func TestForceBackupOutputDir_RefusesForeignBak(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "myreview")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
+
+	// A foreign sibling backup the user owns — no atcr review-tree markers.
+	foreign := dir + ".bak"
+	require.NoError(t, os.MkdirAll(foreign, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(foreign, "important.txt"), []byte("do not delete"), 0o644))
+
+	err := forceBackupOutputDir(dir)
+	require.Error(t, err, "must refuse to clobber a foreign <dir>.bak")
+	assert.Contains(t, err.Error(), "atcr")
+	// The foreign backup and its contents survive untouched.
+	data, readErr := os.ReadFile(filepath.Join(foreign, "important.txt"))
+	require.NoError(t, readErr)
+	assert.Equal(t, "do not delete", string(data), "foreign backup must not be destroyed")
+}
+
+// TestForceBackupOutputDir_ReplacesPriorAtcrBak verifies that a genuine prior
+// atcr backup (one carrying the scaffolded review-tree markers) is still
+// replaced, preserving the one-generation --force contract for managed trees.
+func TestForceBackupOutputDir_ReplacesPriorAtcrBak(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "myreview")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "report.json"), []byte("current"), 0o644))
+
+	// A prior atcr backup carries the review subdirs — safe to replace.
+	prior := dir + ".bak"
+	for _, sub := range reviewSubdirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(prior, sub), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(prior, "old.txt"), []byte("old"), 0o644))
+
+	require.NoError(t, forceBackupOutputDir(dir))
+	// dir was moved aside to .bak; the prior generation is gone.
+	data, err := os.ReadFile(filepath.Join(prior, "report.json"))
+	require.NoError(t, err)
+	assert.Equal(t, "current", string(data))
+	assert.NoFileExists(t, filepath.Join(prior, "old.txt"), "prior atcr backup must be replaced")
+}
+
 func TestReviewExists_AndCollisionProbe(t *testing.T) {
 	root := t.TempDir()
 	assert.False(t, ReviewExists(root, "2026-06-10_x"))
