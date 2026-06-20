@@ -478,6 +478,31 @@ func TestPrepareReview_RejectsExistingOverrideID(t *testing.T) {
 	assert.Contains(t, err.Error(), "custom-review-id")
 }
 
+// TestPrepareReview_ForceWithDerivedIdWarnsStderr verifies that --force without
+// --id or --output-dir emits a stderr notice because the derived id path never
+// collides and Force is a silent no-op there.
+func TestPrepareReview_ForceWithDerivedIdWarnsStderr(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	req := reviewReq(repo, repo, base, head)
+	req.Force = true
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_, err = PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Close())
+	os.Stderr = oldStderr
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "--force has no effect without --id or --output-dir")
+}
+
 // A payloads map missing the agent's effective mode must be an explicit build
 // error (like the adjacent unknown-agent/unknown-provider lookups), never a
 // silently empty payload that produces a plausible-looking vacuous review.
