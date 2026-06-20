@@ -1,0 +1,1 @@
+MEDIUM|internal/llmclient/client.go:321|Redundant error classification branch|Remove `case errors.Is(err, context.Canceled)` or reorder|correctness|2|`isBreakerFailure` already returns false for `context.Canceled`, making the explicit case unreachable if `isBreakerFailure` is evaluated first|bruce

@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 2 | 15 | 0 |
-| LOW | 1 | 16 | 0 |
+| MEDIUM | 0 | 16 | 0 |
+| LOW | 0 | 16 | 0 |
 
 
-**Last Modified:** 2026-06-19 | **Open Items:** 3 | **Deferred Items:** 32 | **Resolved Items:** 0 | **Total Items:** 35
+**Last Modified:** 2026-06-19 | **Open Items:** 0 | **Deferred Items:** 33 | **Resolved Items:** 0 | **Total Items:** 33
 
 ## Directory Structure
 
@@ -33,13 +33,11 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
-### [2026-06-19] From Sprint: epic-4.5
+### [2026-06-19] From Sprint: 4.5_circuit_breaker
 
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/metrics/metrics.go:gauge.Set | gauge.Set accepts NaN/Inf silently whereas histogram.Observe rejects non-finite; a future reuse could render NaN into /metrics | Reject non-finite in gauge.Set (skip the store) or document callers must pass finite values | EDGE_CASES | 5 | execute-epic-stage3 |
-| U | [ ] | MEDIUM | internal/circuitbreaker/breaker.go:transition | Circuit-breaker state transitions are pushed to the metrics gauge but never logged; Epic 4.5's "Relationship to Other Epics" notes Epic 4.0 expects state changes to be logged. Deferred: the breaker is a pure metrics-only leaf and logging needs either a logger threaded into New (signature + all callers) or an llmclient->log boundary change, a separate design decision out of this epic's AC set. | Thread a slog.Logger into the breaker (or log at the llmclient fail-fast site via log.FromContext after extending the llmclient->log boundary) and emit an INFO line on open/half-open/close transitions with provider + new state. | OBSERVABILITY | 30 | execute-epic-cumulative |
-| U | [ ] | MEDIUM | internal/llmclient/client.go:isBreakerFailure | isBreakerFailure trips on context.DeadlineExceeded (per locked epic Q3); in serve mode the breaker registry is process-global, so a review-level global-time-budget expiry that cancels in-flight calls as DeadlineExceeded against a HEALTHY provider records false failures that can trip the breaker for the NEXT review. Deferred: resolving it means NOT tripping on parent-context DeadlineExceeded, which contradicts the locked Q3 decision and needs the epic owner to revisit. | Distinguish the provider's own slowness (http-client timeout, parent ctx not done) from an ancestor budget/cancel by checking ctx.Err() != nil after dispatch and routing the latter to ReleaseProbe instead of RecordFailure; reconcile with epic Q3 first. | EDGE_CASES | 30 | execute-epic-independent |
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| 2 | [/] | MEDIUM | internal/fanout/metrics.go:37 | recordAgentOutcome zeroes apiCalls for any result whose error unwraps to context.DeadlineExceeded/Canceled, assuming no request was made. But a per-agent timeout routinely fires AFTER real HTTP round-trips (and mid tool-loop after several Chat turns already hit the wire), so atcr_api_calls_total undercounts real provider traffic exactly when a provider is degraded. The no-request assumption is only provably safe for CircuitOpenError and pre-first-send cancellation. (Deferred: Epic Plan 4.11) | Use max(1, r.Turns) for the deadline case instead of a flat 0, or thread a real calls-attempted counter out of the client rather than inferring from the terminal error class. Keep the apiCalls=0 path only for CircuitOpenError. | performance | 60 | code-review | claude | MEDIUM |
 
 ### [2026-06-18] From Sprint: epic-4.3
 

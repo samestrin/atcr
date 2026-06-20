@@ -1,6 +1,9 @@
 package circuitbreaker
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -248,6 +251,55 @@ func TestHalfOpenReleaseProbeReadmits(t *testing.T) {
 	b.RecordSuccess()
 	if got := b.State(); got != StateClosed {
 		t.Fatalf("State() = %v after recovery, want closed", got)
+	}
+}
+
+// transition must emit one structured slog.Info line per state change, carrying
+// provider, from-state, to-state, and failure count.
+func TestTransitionEmitsStructuredLog(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	b, clk := newTestBreaker(t, 1, 60*time.Second)
+	b.RecordFailure() // closed → open (one log line expected)
+	clk.advance(60 * time.Second)
+	_ = b.State()     // open → half-open (one log line expected)
+	b.RecordSuccess() // half-open → closed (one log line expected)
+
+	out := buf.String()
+	for _, want := range []string{"circuit breaker state change", "provider=openai"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	lines := strings.Count(out, "circuit breaker state change")
+	if lines != 3 {
+		t.Errorf("expected 3 state-change log lines (closed→open, open→half-open, half-open→closed), got %d\nfull output:\n%s", lines, out)
+	}
+}
+
+// New must clamp non-positive threshold/cooldown to defaults so a caller
+// passing 0 or a negative value does not produce a breaker that trips on one
+// failure or recovers immediately (no cooldown).
+func TestNewClampsBadThresholdAndCooldown(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	defer metrics.DefaultRegistry.Reset()
+	cases := []struct {
+		threshold int
+		cooldown  time.Duration
+	}{
+		{0, 0},
+		{-1, -1 * time.Second},
+	}
+	for _, tc := range cases {
+		b := New("clamp-test", tc.threshold, tc.cooldown)
+		b.RecordFailure() // must NOT trip when threshold is clamped to DefaultThreshold (3)
+		if got := b.State(); got != StateClosed {
+			t.Errorf("New(%d, %v).RecordFailure()→State() = %v, want closed (threshold must be clamped)",
+				tc.threshold, tc.cooldown, got)
+		}
 	}
 }
 

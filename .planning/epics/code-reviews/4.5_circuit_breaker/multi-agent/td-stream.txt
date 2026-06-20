@@ -1,0 +1,6 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+LOW|internal/circuitbreaker/breaker.go:128|Potential probe leak on panic|The probeInFlight flag is set to true in Allow() but only released in RecordSuccess, RecordFailure, or ReleaseProbe. If the logic between Allow() and these calls panics, the circuit remains half-open indefinitely.|Wrap the call site in internal/llmclient/client.go with a defer that calls ReleaseProbe if no verdict is recorded|correctness|15|probeInFlight is set in Allow() but released in separate methods; a panic in the caller wedges the circuit|otto
+MEDIUM|internal/llmclient/client.go:321|Redundant error classification branch|Remove `case errors.Is(err, context.Canceled)` or reorder|correctness|2|`isBreakerFailure` already returns false for `context.Canceled`, making the explicit case unreachable if `isBreakerFailure` is evaluated first|bruce
+MEDIUM|internal/circuitbreaker/breaker.go:219|Provider name injected into metric label unescaped, may break Prometheus format|Escape provider label using metric label encoding helper|maintainability|10|metrics.Key(NameCircuitBreakerState, LabelProvider, b.provider) produces key with raw provider string, no escaping|code-reviewer
