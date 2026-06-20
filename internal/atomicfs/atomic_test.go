@@ -118,6 +118,74 @@ func TestWriteJSON_UnmarshalableValueErrorsAndWritesNothing(t *testing.T) {
 	}
 }
 
+// TestWriteJSON_FailedWritePreservesExistingFile is half of Epic 4.7 AC6: a
+// write that fails (here, a marshal error) aborts before any temp is renamed over
+// the target, so the existing file is never truncated or corrupted.
+func TestWriteJSON_FailedWritePreservesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "verification.json")
+	original := []byte("{\n  \"state\": \"original-intact\"\n}\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := WriteJSON(path, make(chan int)); err == nil {
+		t.Fatal("expected marshal error, got nil")
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Errorf("a failed write must leave the existing file byte-identical: got %q want %q", got, original)
+	}
+}
+
+// TestWriteFileAtomic_OrphanedTempDoesNotCorruptTarget is the other half of AC6:
+// a process killed mid-write (after CreateTemp + partial Write, before Rename)
+// leaves an orphaned .<base>.tmp-* sibling. Readers address the exact target
+// filename, so the target stays complete; a later atomic write replaces it
+// wholesale and never merges the orphan's partial bytes.
+func TestWriteFileAtomic_OrphanedTempDoesNotCorruptTarget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "data.json")
+	original := []byte("complete-original\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Simulate the SIGKILL-orphaned partial temp an interrupted write would leave.
+	orphan := filepath.Join(dir, ".data.json.tmp-deadbeef")
+	if err := os.WriteFile(orphan, []byte("half-written-garbag"), 0o644); err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+
+	// The target is untouched by the orphaned temp.
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Errorf("orphaned temp must not affect the target: got %q", got)
+	}
+
+	// A subsequent atomic write replaces the target wholesale with complete data.
+	if err := WriteFileAtomic(path, []byte("complete-new\n")); err != nil {
+		t.Fatalf("WriteFileAtomic: %v", err)
+	}
+	got2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile after write: %v", err)
+	}
+	if string(got2) != "complete-new\n" {
+		t.Errorf("atomic rename must replace the target wholesale: got %q", got2)
+	}
+	if strings.Contains(string(got2), "garbag") {
+		t.Errorf("the orphan's partial bytes must never merge into the target: got %q", got2)
+	}
+}
+
 func TestBackupToDotBak_File(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "verification.json")
