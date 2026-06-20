@@ -207,7 +207,7 @@ func ScaffoldReviewDir(root, id string) (string, error) {
 	dir := filepath.Join(ReviewsRoot(root), id)
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			return "", fmt.Errorf("review %q already exists: refusing to scaffold into an existing review directory (omit --id to derive a fresh one)", id)
+			return "", fmt.Errorf("review directory %s already exists; use --resume %s to continue it or --force to overwrite", dir, id)
 		}
 		return "", fmt.Errorf("failed to create review directory: %w", err)
 	}
@@ -263,7 +263,7 @@ func ScaffoldOutputDir(dir string) (string, error) {
 			return "", fmt.Errorf("failed to create review directory: %w", readErr)
 		}
 		if len(entries) > 0 {
-			return "", fmt.Errorf("output directory %q is not empty: refusing to overwrite (point --output-dir at a new or empty path)", dir)
+			return "", fmt.Errorf("output directory %q already exists and is not empty; use --force to overwrite (or point --output-dir at a new or empty path)", dir)
 		}
 	}
 	for _, sub := range reviewSubdirs {
@@ -272,6 +272,55 @@ func ScaffoldOutputDir(dir string) (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+// backupExisting moves path aside to path+".bak" so a --force re-run preserves
+// the prior review tree instead of destroying it, leaving the path vacant for a
+// fresh scaffold. A pre-existing path+".bak" is removed first (os.Rename refuses
+// to replace a non-empty directory), so --force keeps exactly one generation of
+// backup — garbage-collecting older state is the user's responsibility (Epic
+// 4.7: no automatic .bak GC). Returns the backup path.
+func backupExisting(path string) (string, error) {
+	backup := path + ".bak"
+	if err := os.RemoveAll(backup); err != nil {
+		return "", fmt.Errorf("removing stale backup %q: %w", backup, err)
+	}
+	if err := os.Rename(path, backup); err != nil {
+		return "", fmt.Errorf("backing up %q: %w", path, err)
+	}
+	return backup, nil
+}
+
+// forceBackupReviewDir backs up an existing managed review directory for id
+// before --force scaffolds a fresh one (Epic 4.7 AC2). A non-existent directory
+// is a no-op, so --force is harmless when there is nothing to overwrite.
+func forceBackupReviewDir(root, id string) error {
+	dir := filepath.Join(ReviewsRoot(root), id)
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("checking review directory before --force backup: %w", err)
+	}
+	_, err := backupExisting(dir)
+	return err
+}
+
+// forceBackupOutputDir backs up a non-empty --output-dir before --force scaffolds
+// into it (Epic 4.7 AC2). An absent or empty target is a no-op: ScaffoldOutputDir
+// already accepts those, so there is nothing to preserve.
+func forceBackupOutputDir(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking output directory before --force backup: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	_, err = backupExisting(dir)
+	return err
 }
 
 // validateOutputDirRoot returns an error if dir is inside ReviewsRoot(root).

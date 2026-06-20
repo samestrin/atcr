@@ -43,6 +43,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
+	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	addRangeFlags(cmd)
 	return cmd
 }
@@ -86,6 +87,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// agents (epic 4.1.1); it is a distinct flow from a fresh review, so branch
 	// before any new-review flag handling.
 	if cmd.Flags().Changed("resume") {
+		// --resume (continue an existing review non-destructively) and --force
+		// (back up and overwrite it) are opposite collision resolutions; passing
+		// both is a usage error (Epic 4.7 AC1b). Checked here, before the resume
+		// short-circuit, so the conflict fires regardless of flag order.
+		if cmd.Flags().Changed("force") {
+			return usageError(errors.New("--resume and --force are mutually exclusive"))
+		}
 		anchor, _ := cmd.Flags().GetString("resume")
 		return runResume(cmd, anchor)
 	}
@@ -168,6 +176,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		StartedAt:  now,
 		IDOverride: idOverride,
 		OutputDir:  outputDir,
+		Force:      boolFlag(cmd, "force"),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona

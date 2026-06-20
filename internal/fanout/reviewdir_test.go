@@ -212,6 +212,61 @@ func TestScaffoldReviewDir_CreatesLayout(t *testing.T) {
 	assert.NoDirExists(t, filepath.Join(dir, "sources", "pool"))
 }
 
+// TestScaffoldReviewDir_CollisionMessageNamesResumeAndForce locks AC1: an
+// explicit --id whose directory already exists is rejected with a message that
+// names BOTH the non-destructive resume path and the destructive --force path,
+// so the user is told every way forward.
+func TestScaffoldReviewDir_CollisionMessageNamesResumeAndForce(t *testing.T) {
+	root := t.TempDir()
+	_, err := ScaffoldReviewDir(root, "2026-06-10_dup")
+	require.NoError(t, err)
+
+	_, err = ScaffoldReviewDir(root, "2026-06-10_dup")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+	assert.Contains(t, err.Error(), "--resume", "AC1: must name the non-destructive resume path")
+	assert.Contains(t, err.Error(), "--force", "AC1: must name the destructive overwrite path")
+}
+
+// TestScaffoldOutputDir_CollisionMessageNamesForce locks the AC1 parity for the
+// --output-dir path: a non-empty target is rejected with a message that names
+// --force as the overwrite opt-in.
+func TestScaffoldOutputDir_CollisionMessageNamesForce(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "prior.txt"), []byte("x"), 0o644))
+	_, err := ScaffoldOutputDir(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--force", "must name --force as the overwrite opt-in")
+}
+
+// TestBackupExisting_MovesAsideReplacingStaleBak verifies backupExisting renames
+// a directory to <dir>.bak and replaces any pre-existing backup, so --force keeps
+// exactly one prior generation and the source path is left vacant for a fresh
+// scaffold.
+func TestBackupExisting_MovesAsideReplacingStaleBak(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "marker.txt"), []byte("current"), 0o644))
+
+	// A stale backup from a previous --force must be replaced, not error out.
+	stale := src + ".bak"
+	require.NoError(t, os.MkdirAll(stale, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(stale, "old.txt"), []byte("old"), 0o644))
+
+	bak, err := backupExisting(src)
+	require.NoError(t, err)
+	assert.Equal(t, stale, bak)
+	// Source is now vacant.
+	_, statErr := os.Stat(src)
+	assert.True(t, os.IsNotExist(statErr), "source must be moved aside, leaving the path vacant")
+	// Backup holds the current generation, not the stale one.
+	data, err := os.ReadFile(filepath.Join(bak, "marker.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "current", string(data))
+	assert.NoFileExists(t, filepath.Join(bak, "old.txt"), "stale backup must be replaced, not merged")
+}
+
 func TestReviewExists_AndCollisionProbe(t *testing.T) {
 	root := t.TempDir()
 	assert.False(t, ReviewExists(root, "2026-06-10_x"))
