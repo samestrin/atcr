@@ -343,7 +343,7 @@ func guardForeignBackup(backup string) error {
 	if err != nil {
 		return fmt.Errorf("checking backup path %q: %w", backup, err)
 	}
-	if !fi.IsDir() {
+	if fi.Mode().IsRegular() {
 		return fmt.Errorf("refusing --force: %q is a regular file, not a directory; move or remove it first", backup)
 	}
 	entries, err := os.ReadDir(backup)
