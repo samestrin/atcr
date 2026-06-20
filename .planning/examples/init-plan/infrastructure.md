@@ -1,6 +1,8 @@
 # Infrastructure: Add Preview Environments for Pull Requests
 
 - **Estimated time**: 1 week
+- **Tasks**: 8
+- **Components**: 4
 
 ## Context
 

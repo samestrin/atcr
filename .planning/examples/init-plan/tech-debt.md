@@ -1,6 +1,8 @@
 # Tech Debt: Migrate from Moment.js to date-fns
 
 - **Estimated time**: 1 week
+- **Tasks**: 7
+- **Components**: 3
 
 ## Current State
 

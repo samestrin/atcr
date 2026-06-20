@@ -1,6 +1,8 @@
 # Bug Report: Payment Processing Timeout on Large Orders
 
 - **Estimated time**: 2 days
+- **Tasks**: 4
+- **Components**: 3
 
 ## Summary
 
