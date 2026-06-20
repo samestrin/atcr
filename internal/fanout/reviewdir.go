@@ -342,7 +342,15 @@ func backupExisting(path string) (string, error) {
 			// path is on a different filesystem from its .bak sibling (path is a
 			// mountpoint): replicate the move with a same-fs copy + vacate.
 			if cerr := backupCrossDevice(path, backup, backupNew); cerr != nil {
-				restorePriorBackup(priorStaged, backupOld, backup)
+				// Only restore the prior backup if the new backup was never placed.
+				// When copy+rename succeeded but the final vacate failed, backup
+				// already holds the new generation — restoring .bak.old over it
+				// would destroy it. POSIX rename of a non-empty directory over
+				// another non-empty directory fails (ENOTEMPTY), so this Lstat
+				// guard is belt-and-suspenders that also makes the intent explicit.
+				if _, statErr := os.Lstat(backup); statErr != nil {
+					restorePriorBackup(priorStaged, backupOld, backup)
+				}
 				return "", cerr
 			}
 		} else {
