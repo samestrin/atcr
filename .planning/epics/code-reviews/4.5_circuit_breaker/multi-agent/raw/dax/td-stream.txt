@@ -1,0 +1,1 @@
+MEDIUM|internal/circuitbreaker/breaker.go:219|Provider name injected into metric label unescaped, may break Prometheus format|Escape provider label using metric label encoding helper|maintainability|10|metrics.Key(NameCircuitBreakerState, LabelProvider, b.provider) produces key with raw provider string, no escaping|code-reviewer

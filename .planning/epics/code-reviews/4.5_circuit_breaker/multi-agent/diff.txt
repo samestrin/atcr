@@ -1,0 +1,1679 @@
+diff --git a/docs/metrics.md b/docs/metrics.md
+index 2e5c204..7a0a97f 100644
+--- a/docs/metrics.md
++++ b/docs/metrics.md
+@@ -51,6 +51,12 @@ every review that exits normally.
+ | `atcr_findings_total` | counter | Findings kept after guardrails (min-severity floor + max-findings cap). |
+ | `atcr_findings_by_severity{severity}` | counter | Kept findings, labeled `CRITICAL`/`HIGH`/`MEDIUM`/`LOW` (anything outside that set is bucketed as `UNKNOWN`). |
+ 
++### Circuit breaker
++
++| Metric | Type | Description |
++|--------|------|-------------|
++| `atcr_circuit_breaker_state{provider}` | gauge | Per-provider circuit state: `0` closed (normal), `1` open (failing fast), `2` half-open (probing recovery). A provider trips open after 3 consecutive breaker-failures (5xx, timeout, or connection-level transport error; 4xx including 429/401 never count) and returns to half-open after a 60s cooldown. |
++
+ ## End-of-review CLI summary
+ 
+ After a review, `atcr review` prints a four-line summary reflecting that review
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 64c8e04..a8a842a 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -23,24 +23,25 @@ const modulePath = "github.com/samestrin/atcr"
+ // internal packages it may import (subpackages inherit their top-level
+ // entry). Absence of a directory here fails the completeness check.
+ var allowedInternalImports = map[string][]string{
+-	"atomicfs":   {},
+-	"stream":     {},
+-	"gitrange":   {},
+-	"log":        {},         // single diagnostic sink; stdlib-only (epic 4.0)
+-	"errors":     {},         // error-classification taxonomy; stdlib-only (epic 4.0)
+-	"registry":   {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
+-	"tools":      {},
+-	"metrics":    {},                              // in-process metrics collector; stdlib-only leaf (epic 4.4)
+-	"validation": {},                              // user-input validators; stdlib-only leaf (epic 4.3)
+-	"payload":    {"gitrange", "atomicfs", "log"}, // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+-	"llmclient":  {"registry", "errors"},          // errors: HTTP failures wrapped in ClassifiedError (epic 4.0 phase 4.3)
+-	"doctor":     {"llmclient", "registry"},
+-	"fanout":     {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4)
+-	"reconcile":  {"stream", "atomicfs"},
+-	"scorecard":  {"llmclient", "reconcile", "fanout"},
+-	"report":     {"stream", "reconcile"},
+-	"verify":     {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
+-	"mcp":        {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log", "metrics"},
++	"atomicfs":       {},
++	"stream":         {},
++	"gitrange":       {},
++	"log":            {},         // single diagnostic sink; stdlib-only (epic 4.0)
++	"errors":         {},         // error-classification taxonomy; stdlib-only (epic 4.0)
++	"registry":       {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
++	"tools":          {},
++	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
++	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
++	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
++	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
++	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
++	"doctor":         {"llmclient", "registry"},
++	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5)
++	"reconcile":      {"stream", "atomicfs"},
++	"scorecard":      {"llmclient", "reconcile", "fanout"},
++	"report":         {"stream", "reconcile"},
++	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
++	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log", "metrics"},
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+diff --git a/internal/circuitbreaker/breaker.go b/internal/circuitbreaker/breaker.go
+new file mode 100644
+index 0000000..02668fe
+--- /dev/null
++++ b/internal/circuitbreaker/breaker.go
+@@ -0,0 +1,220 @@
++// Package circuitbreaker implements a per-provider circuit breaker so a failing
++// LLM provider is detected once and skipped by every subsequent agent, instead
++// of each agent independently timing out against the same outage (Epic 4.5).
++//
++// The breaker is a three-state machine — closed (normal), open (fail fast), and
++// half-open (testing recovery). A provider that returns the configured number of
++// consecutive breaker-failures (5xx, timeouts, connection-level transport
++// errors; 4xx including 429/401 never count) trips the circuit open. After a
++// cooldown the circuit admits a single probe (half-open); one success closes it,
++// one failure reopens it and restarts the cooldown. Every state transition is
++// pushed to the atcr_circuit_breaker_state gauge, labelled by provider.
++//
++// All state is in-memory and resets on process exit (persistence is out of
++// scope). Every method is safe for concurrent use: one mutex guards the whole
++// state machine, and the in-memory transitions are far cheaper than the provider
++// call they gate, so the lock is never the hot path.
++package circuitbreaker
++
++import (
++	"sync"
++	"time"
++
++	"github.com/samestrin/atcr/internal/metrics"
++)
++
++// State is the circuit breaker's current mode.
++type State int
++
++const (
++	// StateClosed is normal operation: requests are allowed.
++	StateClosed State = iota
++	// StateOpen means the circuit tripped: requests fail fast without a call.
++	StateOpen
++	// StateHalfOpen means the cooldown elapsed and a single probe is admitted to
++	// test whether the provider recovered.
++	StateHalfOpen
++)
++
++// String renders the state as the gauge/diagnostic label. The numeric value
++// (0/1/2) is what the gauge stores; this is for logs and the String() metric
++// note. An out-of-range value renders "unknown" rather than panicking.
++func (s State) String() string {
++	switch s {
++	case StateClosed:
++		return "closed"
++	case StateOpen:
++		return "open"
++	case StateHalfOpen:
++		return "half-open"
++	default:
++		return "unknown"
++	}
++}
++
++// Default tuning (hardcoded per Epic 4.5; configurable thresholds are explicitly
++// out of scope). Three consecutive failures is conservative enough to ride out a
++// transient blip; a 60s cooldown is short enough that a recovered provider is
++// retried quickly via the half-open probe.
++const (
++	DefaultThreshold = 3
++	DefaultCooldown  = 60 * time.Second
++)
++
++// Breaker is one provider's circuit. Construct it with New (or obtain a shared
++// one from a Registry). The zero value is not usable — it has no clock.
++type Breaker struct {
++	mu           sync.Mutex
++	provider     string
++	state        State
++	failureCount int
++	openedAt     time.Time
++	// probeInFlight gates half-open to a single trial request: once a probe is
++	// admitted, concurrent callers fail fast until the probe resolves (success
++	// closes the circuit, failure reopens it). This bounds the recovery burst to
++	// one request instead of letting every waiting agent hit a still-down provider.
++	probeInFlight bool
++	threshold     int
++	cooldown      time.Duration
++	// now is the clock, injectable so tests drive cooldown transitions without
++	// real sleeps. Production uses time.Now.
++	now func() time.Time
++}
++
++// New builds a closed breaker for provider with the given failure threshold and
++// cooldown. It seeds the per-provider gauge to closed (0) so the series exists
++// before the first transition.
++func New(provider string, threshold int, cooldown time.Duration) *Breaker {
++	b := &Breaker{
++		provider:  provider,
++		state:     StateClosed,
++		threshold: threshold,
++		cooldown:  cooldown,
++		now:       time.Now,
++	}
++	b.setMetric(StateClosed)
++	return b
++}
++
++// Allow reports whether a request may proceed. It returns true when the circuit
++// is closed, or when it is half-open and no probe is currently in flight (the
++// caller becomes the probe). It returns false when the circuit is open, or
++// half-open with a probe already running. A time-elapsed open circuit is first
++// rolled forward to half-open so the cooldown is honoured lazily without a timer.
++//
++// A caller that wins the half-open probe MUST report the outcome exactly once via
++// RecordSuccess, RecordFailure, or ReleaseProbe — otherwise the probe slot leaks
++// and the circuit wedges half-open forever. The slot is held for the caller's
++// whole call (which may include a retry/backoff schedule spanning several
++// seconds), so during a probe every other agent for the provider fails fast even
++// if the provider has already recovered; this single-probe gate is intentional
++// (it bounds the recovery burst to one request).
++func (b *Breaker) Allow() bool {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	b.refresh()
++	switch b.state {
++	case StateClosed:
++		return true
++	case StateHalfOpen:
++		if b.probeInFlight {
++			return false
++		}
++		b.probeInFlight = true
++		return true
++	default: // StateOpen
++		return false
++	}
++}
++
++// RecordSuccess records a successful provider call. In half-open it closes the
++// circuit (the provider recovered); in closed it resets the consecutive-failure
++// run. A success observed while open (an in-flight call that started before the
++// trip) only clears the failure run; the cooldown-driven half-open probe still
++// governs reopening.
++func (b *Breaker) RecordSuccess() {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	switch b.state {
++	case StateHalfOpen:
++		b.transition(StateClosed)
++		b.failureCount = 0
++		b.probeInFlight = false
++	default: // StateClosed, StateOpen
++		b.failureCount = 0
++	}
++}
++
++// RecordFailure records a breaker-failure (the caller has already filtered out
++// 4xx/cancellations). In closed it advances the consecutive-failure run and trips
++// the circuit at the threshold; in half-open it reopens immediately and restarts
++// the cooldown. A failure observed while already open is ignored so a pre-trip
++// in-flight call cannot extend the cooldown indefinitely.
++func (b *Breaker) RecordFailure() {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	switch b.state {
++	case StateClosed:
++		b.failureCount++
++		if b.failureCount >= b.threshold {
++			b.open()
++		}
++	case StateHalfOpen:
++		b.open()
++		b.probeInFlight = false
++	default: // StateOpen
++	}
++}
++
++// ReleaseProbe frees a half-open probe slot without recording a health verdict.
++// It is for outcomes that prove nothing about the provider — a caller-initiated
++// cancellation that cut the probe short before any response. The circuit stays
++// half-open so the next caller can retry the probe; no failure is counted (the
++// provider did not actually fail) and the circuit is not closed (no success was
++// observed). Outside half-open it is a no-op (there is no probe to release).
++func (b *Breaker) ReleaseProbe() {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	b.probeInFlight = false
++}
++
++// State returns the current state, rolling a cooldown-elapsed open circuit
++// forward to half-open first so the reported state never lags the clock.
++func (b *Breaker) State() State {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	b.refresh()
++	return b.state
++}
++
++// refresh applies the time-based transition: an open circuit whose cooldown has
++// elapsed becomes half-open, ready to admit a probe. probeInFlight stays false so
++// the next Allow admits the trial. Caller must hold b.mu.
++func (b *Breaker) refresh() {
++	if b.state == StateOpen && b.now().Sub(b.openedAt) >= b.cooldown {
++		b.transition(StateHalfOpen)
++	}
++}
++
++// open trips the circuit and anchors the cooldown at the current time, clearing
++// the failure run so a later half-open→closed starts clean. Caller must hold b.mu.
++func (b *Breaker) open() {
++	b.transition(StateOpen)
++	b.openedAt = b.now()
++	b.failureCount = 0
++}
++
++// transition sets the state and pushes the new value to the per-provider gauge so
++// operators see the change in /metrics. Caller must hold b.mu. The metrics call
++// takes the registry's own lock briefly; metrics never calls back into this
++// package, so there is no lock-ordering cycle.
++func (b *Breaker) transition(s State) {
++	b.state = s
++	b.setMetric(s)
++}
++
++// setMetric writes the state's numeric value (0/1/2) to the provider-labelled
++// gauge. Caller must hold b.mu.
++func (b *Breaker) setMetric(s State) {
++	metrics.Gauge(metrics.Key(metrics.NameCircuitBreakerState, metrics.LabelProvider, b.provider)).Set(float64(s))
++}
+diff --git a/internal/circuitbreaker/breaker_test.go b/internal/circuitbreaker/breaker_test.go
+new file mode 100644
+index 0000000..90f75f8
+--- /dev/null
++++ b/internal/circuitbreaker/breaker_test.go
+@@ -0,0 +1,264 @@
++package circuitbreaker
++
++import (
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/metrics"
++)
++
++// clock is a controllable time source so cooldown transitions are tested without
++// real sleeps.
++type clock struct{ t time.Time }
++
++func (c *clock) now() time.Time          { return c.t }
++func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
++
++// newTestBreaker builds a breaker wired to a controllable clock. metrics
++// DefaultRegistry is reset so gauge assertions see only this test's writes.
++func newTestBreaker(t *testing.T, threshold int, cooldown time.Duration) (*Breaker, *clock) {
++	t.Helper()
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++	clk := &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
++	b := New("openai", threshold, cooldown)
++	b.now = clk.now
++	return b, clk
++}
++
++// gaugeValue reads the current circuit-state gauge for the breaker's provider.
++func gaugeValue(provider string) float64 {
++	return metrics.DefaultRegistry.Gauge(
++		metrics.Key(metrics.NameCircuitBreakerState, metrics.LabelProvider, provider),
++	).Value()
++}
++
++func TestStateString(t *testing.T) {
++	cases := map[State]string{
++		StateClosed:   "closed",
++		StateOpen:     "open",
++		StateHalfOpen: "half-open",
++		State(99):     "unknown",
++	}
++	for s, want := range cases {
++		if got := s.String(); got != want {
++			t.Errorf("State(%d).String() = %q, want %q", s, got, want)
++		}
++	}
++}
++
++func TestNewStartsClosed(t *testing.T) {
++	b, _ := newTestBreaker(t, DefaultThreshold, DefaultCooldown)
++	if got := b.State(); got != StateClosed {
++		t.Fatalf("fresh breaker State() = %v, want closed", got)
++	}
++	if !b.Allow() {
++		t.Fatal("fresh breaker Allow() = false, want true")
++	}
++	if got := gaugeValue("openai"); got != 0 {
++		t.Fatalf("fresh breaker gauge = %v, want 0 (closed)", got)
++	}
++}
++
++// AC1: after 3 consecutive failures the circuit opens.
++func TestOpensAfterThresholdFailures(t *testing.T) {
++	b, _ := newTestBreaker(t, 3, DefaultCooldown)
++	b.RecordFailure()
++	b.RecordFailure()
++	if got := b.State(); got != StateClosed {
++		t.Fatalf("after 2 failures State() = %v, want still closed", got)
++	}
++	b.RecordFailure() // third → open
++	if got := b.State(); got != StateOpen {
++		t.Fatalf("after 3 failures State() = %v, want open", got)
++	}
++	if got := gaugeValue("openai"); got != 1 {
++		t.Fatalf("open gauge = %v, want 1", got)
++	}
++}
++
++// AC2: when open, Allow() returns false (no call made) before the cooldown.
++func TestOpenFailsFastBeforeCooldown(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // threshold 1 → open immediately
++	if b.State() != StateOpen {
++		t.Fatalf("State() = %v, want open", b.State())
++	}
++	clk.advance(59 * time.Second) // still within cooldown
++	if b.Allow() {
++		t.Fatal("Allow() = true within cooldown, want false (fail fast)")
++	}
++	if got := b.State(); got != StateOpen {
++		t.Fatalf("State() = %v within cooldown, want open", got)
++	}
++}
++
++// AC3: after the cooldown the circuit transitions to half-open.
++func TestTransitionsToHalfOpenAfterCooldown(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open
++	clk.advance(60 * time.Second)
++	if got := b.State(); got != StateHalfOpen {
++		t.Fatalf("after cooldown State() = %v, want half-open", got)
++	}
++	if got := gaugeValue("openai"); got != 2 {
++		t.Fatalf("half-open gauge = %v, want 2", got)
++	}
++}
++
++// AC3 via Allow: a cooldown-elapsed open circuit admits exactly one probe.
++func TestHalfOpenAdmitsSingleProbe(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open
++	clk.advance(60 * time.Second)
++	if !b.Allow() {
++		t.Fatal("first Allow() after cooldown = false, want true (the probe)")
++	}
++	if b.Allow() {
++		t.Fatal("second Allow() while probe in flight = true, want false")
++	}
++}
++
++// AC4: in half-open, one success closes the circuit.
++func TestHalfOpenSuccessCloses(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open
++	clk.advance(60 * time.Second)
++	b.Allow() // become the probe → half-open
++	if b.State() != StateHalfOpen {
++		t.Fatalf("State() = %v, want half-open", b.State())
++	}
++	b.RecordSuccess()
++	if got := b.State(); got != StateClosed {
++		t.Fatalf("after half-open success State() = %v, want closed", got)
++	}
++	if !b.Allow() {
++		t.Fatal("Allow() after recovery = false, want true (closed)")
++	}
++	if got := gaugeValue("openai"); got != 0 {
++		t.Fatalf("recovered gauge = %v, want 0", got)
++	}
++}
++
++// AC5: in half-open, one failure reopens the circuit and restarts the cooldown.
++func TestHalfOpenFailureReopens(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open at t0
++	clk.advance(60 * time.Second)
++	b.Allow() // half-open at t0+60
++	b.RecordFailure()
++	if got := b.State(); got != StateOpen {
++		t.Fatalf("after half-open failure State() = %v, want open", got)
++	}
++	// Cooldown restarted: still open just before a fresh 60s elapses.
++	clk.advance(59 * time.Second)
++	if got := b.State(); got != StateOpen {
++		t.Fatalf("State() = %v, want still open (cooldown restarted)", got)
++	}
++	clk.advance(1 * time.Second)
++	if got := b.State(); got != StateHalfOpen {
++		t.Fatalf("State() = %v, want half-open after restarted cooldown", got)
++	}
++}
++
++// A success in the closed state resets the consecutive-failure run so
++// non-consecutive failures never accumulate to the threshold.
++func TestClosedSuccessResetsFailureRun(t *testing.T) {
++	b, _ := newTestBreaker(t, 3, DefaultCooldown)
++	b.RecordFailure()
++	b.RecordFailure()
++	b.RecordSuccess() // resets the run
++	b.RecordFailure()
++	b.RecordFailure() // only 2 in the new run → still closed
++	if got := b.State(); got != StateClosed {
++		t.Fatalf("State() = %v, want closed (success reset the run)", got)
++	}
++}
++
++// A success observed while open (a pre-trip in-flight call returning) clears the
++// failure run but does not close the circuit early.
++func TestOpenSuccessDoesNotClose(t *testing.T) {
++	b, _ := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open
++	b.RecordSuccess() // observed while open
++	if got := b.State(); got != StateOpen {
++		t.Fatalf("State() = %v, want still open (cooldown governs recovery)", got)
++	}
++}
++
++// A failure observed while already open is ignored and does not extend the
++// cooldown anchored at the original trip.
++func TestOpenFailureDoesNotExtendCooldown(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open at t0
++	clk.advance(30 * time.Second)
++	b.RecordFailure() // observed while open — must not re-anchor the cooldown
++	clk.advance(30 * time.Second)
++	if got := b.State(); got != StateHalfOpen {
++		t.Fatalf("State() = %v, want half-open (original cooldown unextended)", got)
++	}
++}
++
++func TestConcurrentAccessIsRaceFree(t *testing.T) {
++	b, _ := newTestBreaker(t, 3, time.Millisecond)
++	var wg sync.WaitGroup
++	wg.Add(16)
++	for i := 0; i < 16; i++ {
++		go func(i int) {
++			defer wg.Done()
++			for j := 0; j < 500; j++ {
++				if b.Allow() {
++					if (i+j)%2 == 0 {
++						b.RecordSuccess()
++					} else {
++						b.RecordFailure()
++					}
++				}
++				_ = b.State()
++			}
++		}(i)
++	}
++	wg.Wait()
++	// No assertion on the final state — the point is the -race detector sees no
++	// data race and no method panics under concurrent access.
++}
++
++// Regression (independent review): a half-open probe released without a verdict
++// (caller cancellation) must free the slot so a later caller can retry — the
++// circuit must NOT wedge half-open forever.
++func TestHalfOpenReleaseProbeReadmits(t *testing.T) {
++	b, clk := newTestBreaker(t, 1, 60*time.Second)
++	b.RecordFailure() // open
++	clk.advance(60 * time.Second)
++	if !b.Allow() {
++		t.Fatal("first Allow() after cooldown = false, want true (probe)")
++	}
++	if b.Allow() {
++		t.Fatal("second Allow() = true while probe in flight, want false")
++	}
++	b.ReleaseProbe() // caller cancelled — release without a verdict
++	if got := b.State(); got != StateHalfOpen {
++		t.Fatalf("State() = %v after ReleaseProbe, want still half-open", got)
++	}
++	if !b.Allow() {
++		t.Fatal("Allow() after ReleaseProbe = false, want true (slot re-armed, not wedged)")
++	}
++	// Recovery still works: a subsequent success closes the circuit.
++	b.RecordSuccess()
++	if got := b.State(); got != StateClosed {
++		t.Fatalf("State() = %v after recovery, want closed", got)
++	}
++}
++
++// ReleaseProbe outside half-open is a harmless no-op.
++func TestReleaseProbeNoOpWhenClosed(t *testing.T) {
++	b, _ := newTestBreaker(t, 3, DefaultCooldown)
++	b.ReleaseProbe()
++	if got := b.State(); got != StateClosed {
++		t.Fatalf("State() = %v, want closed (ReleaseProbe no-op)", got)
++	}
++	if !b.Allow() {
++		t.Fatal("Allow() = false after no-op ReleaseProbe, want true")
++	}
++}
+diff --git a/internal/circuitbreaker/context.go b/internal/circuitbreaker/context.go
+new file mode 100644
+index 0000000..44b6e2f
+--- /dev/null
++++ b/internal/circuitbreaker/context.go
+@@ -0,0 +1,24 @@
++package circuitbreaker
++
++import "context"
++
++// providerKey is the unexported context key for the per-call provider name, so
++// no other package can collide with or overwrite it.
++type providerKey struct{}
++
++// NewContext returns a context carrying the logical provider name for the call.
++// The fan-out engine sets it once per agent invocation; llmclient.send reads it
++// to key the per-provider breaker. An empty provider (or a context with no value)
++// disables the breaker for that call — which is the correct behaviour for a
++// diagnostic like `atcr doctor` that must probe every endpoint regardless of
++// circuit state.
++func NewContext(ctx context.Context, provider string) context.Context {
++	return context.WithValue(ctx, providerKey{}, provider)
++}
++
++// ProviderFromContext returns the provider name set by NewContext, or "" when no
++// provider was attached (the breaker then no-ops for that call).
++func ProviderFromContext(ctx context.Context) string {
++	p, _ := ctx.Value(providerKey{}).(string)
++	return p
++}
+diff --git a/internal/circuitbreaker/registry.go b/internal/circuitbreaker/registry.go
+new file mode 100644
+index 0000000..9a2f217
+--- /dev/null
++++ b/internal/circuitbreaker/registry.go
+@@ -0,0 +1,57 @@
++package circuitbreaker
++
++import "sync"
++
++// Registry holds one Breaker per provider, created on first use with the default
++// threshold and cooldown. A provider's breaker is shared across every agent and
++// goroutine that uses that provider, so provider health is tracked once (per
++// provider) rather than independently per agent — the whole point of the epic.
++// Safe for concurrent use.
++type Registry struct {
++	mu       sync.RWMutex
++	breakers map[string]*Breaker
++}
++
++// NewRegistry creates an empty registry. Tests use a fresh registry for
++// isolation; production uses the package-global DefaultRegistry.
++func NewRegistry() *Registry {
++	return &Registry{breakers: make(map[string]*Breaker)}
++}
++
++// Get returns the breaker for provider, creating a closed one with the default
++// tuning on first use. The same provider name always returns the same instance,
++// so collaborating call sites share one circuit. The common already-exists case
++// takes only a read lock; creation upgrades to a write lock and re-checks so a
++// concurrent creator cannot produce two breakers for one provider.
++func (r *Registry) Get(provider string) *Breaker {
++	r.mu.RLock()
++	b, ok := r.breakers[provider]
++	r.mu.RUnlock()
++	if ok {
++		return b
++	}
++
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	// Re-check under the write lock: another goroutine may have created it
++	// between the RUnlock above and the Lock here.
++	if b, ok := r.breakers[provider]; ok {
++		return b
++	}
++	b = New(provider, DefaultThreshold, DefaultCooldown)
++	r.breakers[provider] = b
++	return b
++}
++
++// Reset drops every breaker. It exists for test isolation; production never
++// resets — the process-wide registry accumulates per-provider circuits for the
++// life of the run.
++func (r *Registry) Reset() {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	r.breakers = make(map[string]*Breaker)
++}
++
++// DefaultRegistry is the process-wide registry the llmclient integration reads
++// to find each provider's circuit.
++var DefaultRegistry = NewRegistry()
+diff --git a/internal/circuitbreaker/registry_test.go b/internal/circuitbreaker/registry_test.go
+new file mode 100644
+index 0000000..33e102d
+--- /dev/null
++++ b/internal/circuitbreaker/registry_test.go
+@@ -0,0 +1,88 @@
++package circuitbreaker
++
++import (
++	"context"
++	"sync"
++	"testing"
++)
++
++func TestRegistryGetCreatesAndShares(t *testing.T) {
++	r := NewRegistry()
++	a := r.Get("openai")
++	if a == nil {
++		t.Fatal("Get returned nil")
++	}
++	if got := a.State(); got != StateClosed {
++		t.Fatalf("new breaker State() = %v, want closed", got)
++	}
++	b := r.Get("openai")
++	if a != b {
++		t.Fatal("Get(\"openai\") returned different instances; breaker is not shared")
++	}
++}
++
++func TestRegistryGetDistinctProviders(t *testing.T) {
++	r := NewRegistry()
++	if r.Get("openai") == r.Get("anthropic") {
++		t.Fatal("distinct providers share one breaker; must be per-provider")
++	}
++}
++
++func TestRegistryReset(t *testing.T) {
++	r := NewRegistry()
++	first := r.Get("openai")
++	r.Reset()
++	if second := r.Get("openai"); second == first {
++		t.Fatal("after Reset() Get returned the pre-reset breaker; Reset did not clear")
++	}
++}
++
++func TestDefaultRegistryUsable(t *testing.T) {
++	t.Cleanup(DefaultRegistry.Reset)
++	if DefaultRegistry.Get("openai") == nil {
++		t.Fatal("DefaultRegistry.Get returned nil")
++	}
++}
++
++func TestRegistryGetConcurrentSingleInstance(t *testing.T) {
++	r := NewRegistry()
++	const goroutines = 32
++	var wg sync.WaitGroup
++	got := make([]*Breaker, goroutines)
++	wg.Add(goroutines)
++	for i := 0; i < goroutines; i++ {
++		go func(i int) {
++			defer wg.Done()
++			got[i] = r.Get("openai")
++		}(i)
++	}
++	wg.Wait()
++	// Every goroutine must observe the same shared instance despite the race to
++	// create it.
++	for i := 1; i < goroutines; i++ {
++		if got[i] != got[0] {
++			t.Fatalf("concurrent Get produced distinct breakers (index %d)", i)
++		}
++	}
++}
++
++func TestProviderContextRoundTrip(t *testing.T) {
++	ctx := NewContext(context.Background(), "openai")
++	if got := ProviderFromContext(ctx); got != "openai" {
++		t.Fatalf("ProviderFromContext = %q, want openai", got)
++	}
++}
++
++func TestProviderFromContextAbsentIsEmpty(t *testing.T) {
++	if got := ProviderFromContext(context.Background()); got != "" {
++		t.Fatalf("ProviderFromContext on bare context = %q, want empty", got)
++	}
++}
++
++func TestProviderContextEmptyString(t *testing.T) {
++	// An explicitly-empty provider round-trips as empty (the breaker no-ops).
++	ctx := NewContext(context.Background(), "")
++	if got := ProviderFromContext(ctx); got != "" {
++		t.Fatalf("ProviderFromContext for empty provider = %q, want empty", got)
++	}
++}
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index b3c951a..07f77cb 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -9,6 +9,7 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/circuitbreaker"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/metrics"
+@@ -58,7 +59,14 @@ type toolDispatcher interface {
+ // the rendered persona prompt, the payload mode it saw, and any byte-budget
+ // truncation recorded for its status.json.
+ type Agent struct {
+-	Name        string
++	Name string
++	// Provider is the logical provider name (the registry Providers map key). The
++	// engine threads it onto the request context in invokeAgent so llmclient.send
++	// can key the per-provider circuit breaker (Epic 4.5). It is intentionally NOT
++	// a field on Invocation: BaseURL is a lossy proxy for provider identity (two
++	// providers can share a base_url; trailing-slash variants splinter one). Empty
++	// (direct construction / a fallback that did not set it) no-ops the breaker.
++	Provider    string
+ 	Invocation  llmclient.Invocation
+ 	Prompt      string
+ 	PayloadMode string
+@@ -438,6 +446,11 @@ func (e *Engine) invokeAgent(ctx context.Context, a Agent) Result {
+ 	// calls (tool loop, llmclient) inherit the agent scope via log.FromContext.
+ 	agentLogger := log.WithAgent(e.logger(), a.Name)
+ 	ctx = log.NewContext(ctx, agentLogger)
++	// Thread the logical provider name onto the context so llmclient.send can key
++	// the per-provider circuit breaker without a Provider field on Invocation
++	// (Epic 4.5). One chokepoint: this covers single-shot, the tool loop, and the
++	// verify path (all run through here). Empty provider no-ops the breaker.
++	ctx = circuitbreaker.NewContext(ctx, a.Provider)
+ 	agentLogger.Debug("invoking agent", "tools", a.Tools, "model", a.Invocation.Model)
+ 
+ 	// Metrics (Epic 4.4): count the agent invocation and time the whole dispatch
+diff --git a/internal/fanout/engine_breaker_test.go b/internal/fanout/engine_breaker_test.go
+new file mode 100644
+index 0000000..cbfc8cd
+--- /dev/null
++++ b/internal/fanout/engine_breaker_test.go
+@@ -0,0 +1,91 @@
++package fanout
++
++import (
++	"context"
++	"errors"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"github.com/samestrin/atcr/internal/circuitbreaker"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/metrics"
++)
++
++// provCapture records the provider name it observes on the call context, so a
++// test can assert the engine bridged Agent.Provider onto it.
++type provCapture struct{ provider string }
++
++func (p *provCapture) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
++	p.provider = circuitbreaker.ProviderFromContext(ctx)
++	return "ok", nil
++}
++
++// The engine bridges Agent.Provider onto the request context so llmclient.send
++// can key the per-provider breaker without a Provider field on Invocation.
++func TestEngine_ThreadsProviderToContext(t *testing.T) {
++	pc := &provCapture{}
++	e := NewEngine(pc)
++	e.Run(context.Background(), []Slot{{
++		Primary: Agent{Name: "a", Provider: "openai", Invocation: llmclient.Invocation{Model: "a"}},
++	}})
++	assert.Equal(t, "openai", pc.provider,
++		"engine must thread Agent.Provider onto the call context")
++}
++
++// AC6: a CircuitOpenError from the primary is a permanent (non-timeout) failure;
++// the slot moves straight to the fallback chain, which answers in its place.
++func TestInvokeSlot_CircuitOpenTriggersFallback(t *testing.T) {
++	f := newFake()
++	f.failFor["primary"] = &llmclient.CircuitOpenError{Provider: "openai"}
++	e := NewEngine(f)
++
++	slot := Slot{
++		Primary:   Agent{Name: "primary", Provider: "openai", Invocation: llmclient.Invocation{Model: "primary"}},
++		Fallbacks: []Agent{{Name: "fb", Provider: "anthropic", Invocation: llmclient.Invocation{Model: "fb"}}},
++	}
++	r := e.invokeSlot(context.Background(), slot)
++
++	require.Equal(t, StatusOK, r.Status, "fallback should answer when the primary's circuit is open")
++	assert.True(t, r.FallbackUsed)
++	assert.Equal(t, "primary", r.Agent, "attribution follows the slot, not the substitute")
++	assert.Equal(t, "primary", r.FallbackFrom)
++}
++
++// A CircuitOpenError classifies as StatusFailed (not StatusTimeout), so a slot
++// whose entire chain is circuit-open fails fast and is reported as failed rather
++// than mislabelled a timeout.
++func TestInvokeSlot_CircuitOpenChainFailsAsFailed(t *testing.T) {
++	f := newFake()
++	f.failFor["primary"] = &llmclient.CircuitOpenError{Provider: "openai"}
++	f.failFor["fb"] = &llmclient.CircuitOpenError{Provider: "openai"}
++	e := NewEngine(f)
++
++	slot := Slot{
++		Primary:   Agent{Name: "primary", Provider: "openai", Invocation: llmclient.Invocation{Model: "primary"}},
++		Fallbacks: []Agent{{Name: "fb", Provider: "openai", Invocation: llmclient.Invocation{Model: "fb"}}},
++	}
++	r := e.invokeSlot(context.Background(), slot)
++
++	require.Equal(t, StatusFailed, r.Status)
++	var coe *llmclient.CircuitOpenError
++	require.True(t, errors.As(r.Err, &coe), "chain failure should surface the CircuitOpenError")
++}
++
++// AC2 metric correctness: a circuit-open fail-fast made no provider round-trip,
++// so it must not be counted in atcr_api_calls_total.
++func TestRecordAgentOutcome_CircuitOpenNotCountedAsAPICall(t *testing.T) {
++	metrics.DefaultRegistry.Reset()
++	t.Cleanup(metrics.DefaultRegistry.Reset)
++
++	recordAgentOutcome(Result{Status: StatusFailed, Err: &llmclient.CircuitOpenError{Provider: "openai"}})
++
++	if got := metrics.DefaultRegistry.Counter(metrics.NameAPICallsTotal).Value(); got != 0 {
++		t.Fatalf("atcr_api_calls_total = %d, want 0 (circuit-open made no request)", got)
++	}
++	// It is still counted as a failed agent.
++	if got := metrics.DefaultRegistry.Counter(metrics.NameAgentsFailed).Value(); got != 1 {
++		t.Fatalf("atcr_agents_failed = %d, want 1", got)
++	}
++}
+diff --git a/internal/fanout/metrics.go b/internal/fanout/metrics.go
+index d0d072d..b9ed071 100644
+--- a/internal/fanout/metrics.go
++++ b/internal/fanout/metrics.go
+@@ -37,12 +37,17 @@ func recordAgentOutcome(r Result) {
+ 	apiCalls := r.Turns
+ 	if apiCalls < 1 {
+ 		// Turns < 1 covers both the single-shot path (Turns==0, one provider
+-		// round-trip) and a corrupt negative value. Context cancellation/deadline
+-		// before the first HTTP call means no actual request was made; in that case
+-		// keep apiCalls at 0. Otherwise treat as a single-shot: 1 call.
+-		if errors.Is(r.Err, context.DeadlineExceeded) || errors.Is(r.Err, context.Canceled) {
++		// round-trip) and a corrupt negative value. Some terminal errors mean no
++		// actual request was made — context cancellation/deadline before the first
++		// HTTP call, or a circuit-open fail-fast (Epic 4.5, AC2: no request made) —
++		// so keep apiCalls at 0. Otherwise treat as a single-shot: 1 call.
++		var coe *llmclient.CircuitOpenError
++		switch {
++		case errors.Is(r.Err, context.DeadlineExceeded) || errors.Is(r.Err, context.Canceled):
+ 			apiCalls = 0
+-		} else {
++		case errors.As(r.Err, &coe):
++			apiCalls = 0
++		default:
+ 			apiCalls = 1
+ 		}
+ 	}
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index 87dfdb7..c637a91 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -586,6 +586,7 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
+ 	}
+ 	return Agent{
+ 		Name:            name,
++		Provider:        ac.Provider,
+ 		Prompt:          prompt,
+ 		PayloadMode:     mode,
+ 		Truncation:      mp.Truncation,
+@@ -647,7 +648,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
+ 		fmt.Fprintf(os.Stderr, "warn: fallback agent %q sets its own min_severity/max_findings/scope; these are ignored — the primary lane's constraints govern\n", name)
+ 	}
+ 	return Agent{
+-		Name:        name,
++		Name: name,
++		// A fallback keys on its OWN provider: if it uses a different provider than
++		// the primary, it gets that provider's breaker (so a fallback can succeed
++		// while the primary's circuit is open).
++		Provider:    ac.Provider,
+ 		Prompt:      primary.Prompt,
+ 		PayloadMode: primary.PayloadMode,
+ 		Truncation:  primary.Truncation,
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index b123be5..6c35452 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -15,6 +15,7 @@ import (
+ 	"testing"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/circuitbreaker"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/payload"
+@@ -57,6 +58,14 @@ func initRepo(t *testing.T) (dir, base, head string) {
+ // shape. It returns 500 for any model in failModels, else a findings payload.
+ func mockProvider(t *testing.T, failModels ...string) *httptest.Server {
+ 	t.Helper()
++	// The circuit breaker keys on the registry provider name ("p"), which every
++	// review test shares, and lives in a process-global registry (correct for
++	// serve mode, where a provider outage in one review should fail-fast the next).
++	// In the test binary that global is shared across tests, so a failing-provider
++	// test would trip "p" for an unrelated later test. Isolate per test: start
++	// clean and reset on cleanup.
++	circuitbreaker.DefaultRegistry.Reset()
++	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
+ 	fail := map[string]bool{}
+ 	for _, m := range failModels {
+ 		fail[m] = true
+diff --git a/internal/llmclient/client.go b/internal/llmclient/client.go
+index ca2f936..a216e6d 100644
+--- a/internal/llmclient/client.go
++++ b/internal/llmclient/client.go
+@@ -4,6 +4,7 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"math"
+@@ -16,6 +17,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/circuitbreaker"
+ 	atcrerrors "github.com/samestrin/atcr/internal/errors"
+ )
+ 
+@@ -289,12 +291,92 @@ func resolveEndpoint(baseURL string) string {
+ 	return endpoint
+ }
+ 
+-// send performs the request with the retry/backoff schedule and returns the raw
+-// 200 response body for the caller to parse. It is shared by Complete (single
++// send wraps the retry loop (dispatch) with the per-provider circuit breaker
++// (Epic 4.5). The provider name travels on the context (set by the fan-out
++// engine), not on the Invocation, so the breaker keys on the logical provider
++// rather than a lossy BaseURL. When no provider is attached — e.g. the doctor
++// self-test, which must probe every endpoint regardless of circuit state — the
++// breaker is skipped entirely. An open circuit fails fast with no HTTP request
++// (AC2). After the call, only a breaker-failure (5xx / timeout / transport)
++// records a failure; a 4xx (incl. 429/401) or a caller cancellation records
++// nothing (AC10).
++func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
++	provider := circuitbreaker.ProviderFromContext(ctx)
++	if provider == "" {
++		return c.dispatch(ctx, endpoint, key, body)
++	}
++	breaker := circuitbreaker.DefaultRegistry.Get(provider)
++	if !breaker.Allow() {
++		return nil, &CircuitOpenError{Provider: provider}
++	}
++	raw, err := c.dispatch(ctx, endpoint, key, body)
++	// Every branch reports the outcome to the breaker exactly once: a half-open
++	// probe MUST be resolved (RecordSuccess/RecordFailure/ReleaseProbe) or the
++	// probe slot leaks and the circuit wedges half-open forever.
++	switch {
++	case err == nil:
++		// A successful round-trip: closes a half-open probe, resets the run.
++		breaker.RecordSuccess()
++	case isBreakerFailure(err):
++		// 5xx, timeout, or transport failure: trips/advances the failure run.
++		breaker.RecordFailure()
++	case errors.Is(err, context.Canceled):
++		// The caller cancelled mid-call — nothing was learned about the provider.
++		// Release any half-open probe without a verdict (do not count it).
++		breaker.ReleaseProbe()
++	default:
++		// A non-tripping HTTP response (4xx incl. 429/401): the provider replied,
++		// so it is reachable. The breaker tracks outages, not auth/rate-limit
++		// correctness, so a reply counts as a healthy round-trip — which also
++		// closes a half-open probe instead of wedging it.
++		breaker.RecordSuccess()
++	}
++	return raw, err
++}
++
++// CircuitOpenError is returned when a provider's circuit breaker is open: the
++// request fails fast with no HTTP call (AC2). It is a permanent failure — the
++// fan-out engine classifies it as a non-timeout failure and moves straight to
++// the fallback chain (AC6). Provider names the tripped provider for diagnostics.
++type CircuitOpenError struct {
++	Provider string
++}
++
++func (e *CircuitOpenError) Error() string {
++	return fmt.Sprintf("circuit breaker open for provider %q: failing fast without an API call", e.Provider)
++}
++
++// isBreakerFailure reports whether err should count as a circuit-breaker failure
++// (Epic 4.5, AC10 as clarified by the rubber-duck gate): a 5xx response, a
++// timeout, or a connection-level transport error (connection refused/reset, EOF,
++// DNS) — all signal the provider is unavailable. A 4xx response (including 429
++// rate-limits, owned by Epic 4.6's backoff, and 401 auth errors) does NOT count:
++// the server replied, so the provider is reachable. A caller-initiated
++// cancellation does not count either — the call was aborted, which says nothing
++// about provider health.
++func isBreakerFailure(err error) bool {
++	if err == nil {
++		return false
++	}
++	if errors.Is(err, context.Canceled) {
++		return false
++	}
++	var he *HTTPStatusError
++	if errors.As(err, &he) {
++		return he.Status >= 500
++	}
++	// No HTTP response reached us: a transport-level failure or a timeout. Both
++	// mean the provider is effectively unavailable → count as a breaker failure.
++	return true
++}
++
++// dispatch performs the request with the retry/backoff schedule and returns the
++// raw 200 response body for the caller to parse. It is the inner retry loop
++// wrapped by send (which adds the circuit breaker), shared by Complete (single
+ // message) and Chat (multi-turn with tools): both feed it a pre-marshalled body
+ // and decode the bytes themselves, so the retry, redirect, key-redaction, and
+ // size-cap semantics stay identical across the two call shapes.
+-func (c *Client) send(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
++func (c *Client) dispatch(ctx context.Context, endpoint, key string, body []byte) ([]byte, error) {
+ 	var lastErr error
+ 	delay := c.initialBackoff
+ 	// honorExact is set when the next sleep is a server-advertised Retry-After
+diff --git a/internal/llmclient/client_breaker_test.go b/internal/llmclient/client_breaker_test.go
+new file mode 100644
+index 0000000..73646ce
+--- /dev/null
++++ b/internal/llmclient/client_breaker_test.go
+@@ -0,0 +1,315 @@
++package llmclient
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"github.com/samestrin/atcr/internal/circuitbreaker"
++)
++
++// breakerCtx attaches a provider so the circuit breaker engages for the call.
++func breakerCtx(provider string) context.Context {
++	return circuitbreaker.NewContext(context.Background(), provider)
++}
++
++// noRetryClient builds a client with no retries so each Complete is exactly one
++// HTTP attempt — one breaker outcome and one server hit per call.
++func noRetryClient(h *http.Client) *Client {
++	return New(WithHTTPClient(h), WithRetry(0, time.Millisecond, 1.5))
++}
++
++// statusServer serves a fixed HTTP status and counts hits.
++func statusServer(t *testing.T, code int, hits *atomic.Int64) *httptest.Server {
++	t.Helper()
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		hits.Add(1)
++		w.WriteHeader(code)
++		_, _ = w.Write([]byte(`{"error":"boom"}`))
++	}))
++	t.Cleanup(srv.Close)
++	return srv
++}
++
++func resetBreakers(t *testing.T) {
++	t.Helper()
++	circuitbreaker.DefaultRegistry.Reset()
++	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
++}
++
++// AC9 + AC2: a provider returning 500 trips the breaker after 3 failures; the
++// 4th call fails fast with CircuitOpenError and makes NO HTTP request.
++func TestBreaker_OpensAfterThree500s(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var hits atomic.Int64
++	srv := statusServer(t, http.StatusInternalServerError, &hits)
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	for i := 0; i < 3; i++ {
++		_, err := c.Complete(ctx, inv)
++		require.Error(t, err)
++		var coe *CircuitOpenError
++		require.False(t, errors.As(err, &coe), "call %d should be a real 500, not circuit-open", i)
++	}
++	require.Equal(t, int64(3), hits.Load(), "first 3 calls should each hit the server")
++	require.Equal(t, circuitbreaker.StateOpen, circuitbreaker.DefaultRegistry.Get("openai").State())
++
++	// 4th call: fail fast, no HTTP request (AC2).
++	_, err := c.Complete(ctx, inv)
++	var coe *CircuitOpenError
++	require.True(t, errors.As(err, &coe), "4th call should be CircuitOpenError, got %v", err)
++	assert.Equal(t, "openai", coe.Provider)
++	assert.Equal(t, int64(3), hits.Load(), "open circuit must make no HTTP request (AC2)")
++}
++
++// AC10: a 429 rate-limit never trips the breaker (owned by Epic 4.6's backoff).
++func TestBreaker_429StaysClosed(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var hits atomic.Int64
++	srv := statusServer(t, http.StatusTooManyRequests, &hits)
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	for i := 0; i < 5; i++ {
++		_, err := c.Complete(ctx, inv)
++		require.Error(t, err)
++	}
++	assert.Equal(t, int64(5), hits.Load(), "every 429 call must reach the server (breaker stays closed)")
++	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State())
++}
++
++// AC10: a 401 auth error never trips the breaker (auth is permanent, not an outage).
++func TestBreaker_401StaysClosed(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var hits atomic.Int64
++	srv := statusServer(t, http.StatusUnauthorized, &hits)
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	for i := 0; i < 5; i++ {
++		_, err := c.Complete(ctx, inv)
++		require.Error(t, err)
++	}
++	assert.Equal(t, int64(5), hits.Load(), "every 401 call must reach the server (breaker stays closed)")
++	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State())
++}
++
++// Extended AC10/AC9 (rubber-duck clarification): a connection-level transport
++// failure trips the breaker — a hard-down provider returns fast transport errors,
++// not a slow 5xx, so excluding them would defeat outage detection.
++func TestBreaker_TransportFailureTrips(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	// Start then immediately close a server so its URL refuses connections.
++	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
++	client := srv.Client()
++	baseURL := srv.URL
++	srv.Close()
++
++	c := noRetryClient(client)
++	inv := Invocation{BaseURL: baseURL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	for i := 0; i < 3; i++ {
++		_, err := c.Complete(ctx, inv)
++		require.Error(t, err)
++	}
++	require.Equal(t, circuitbreaker.StateOpen, circuitbreaker.DefaultRegistry.Get("openai").State(),
++		"3 transport failures should trip the breaker")
++
++	_, err := c.Complete(ctx, inv)
++	var coe *CircuitOpenError
++	require.True(t, errors.As(err, &coe), "after transport failures the circuit should be open, got %v", err)
++}
++
++// A successful 200 records success and resets the consecutive-failure run, so
++// non-consecutive failures never accumulate to the threshold.
++func TestBreaker_SuccessResetsFailureRun(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var fail atomic.Bool
++	fail.Store(true)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		if fail.Load() {
++			w.WriteHeader(http.StatusInternalServerError)
++			return
++		}
++		okResponse(w, "ok")
++	}))
++	t.Cleanup(srv.Close)
++
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	_, _ = c.Complete(ctx, inv) // fail 1
++	_, _ = c.Complete(ctx, inv) // fail 2
++	fail.Store(false)
++	out, err := c.Complete(ctx, inv) // success → resets the run
++	require.NoError(t, err)
++	require.Equal(t, "ok", out)
++	fail.Store(true)
++	_, _ = c.Complete(ctx, inv) // fail 1 (new run)
++	_, _ = c.Complete(ctx, inv) // fail 2 (new run)
++
++	// 4 total failures but only 2 consecutive after the success → still closed.
++	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State())
++}
++
++// No provider on the context (e.g. the doctor self-test) disables the breaker:
++// every call reaches the server regardless of repeated failures.
++func TestBreaker_NoProviderNoOp(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var hits atomic.Int64
++	srv := statusServer(t, http.StatusInternalServerError, &hits)
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++
++	for i := 0; i < 5; i++ {
++		_, err := c.Complete(context.Background(), inv) // no provider attached
++		require.Error(t, err)
++		var coe *CircuitOpenError
++		require.False(t, errors.As(err, &coe), "no-provider call must never fail fast")
++	}
++	assert.Equal(t, int64(5), hits.Load(), "no-provider calls must always reach the server")
++}
++
++// A caller-initiated cancellation is not a provider-health signal: it records
++// nothing and leaves the circuit closed.
++func TestBreaker_CancellationDoesNotTrip(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var hits atomic.Int64
++	srv := statusServer(t, http.StatusInternalServerError, &hits)
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++
++	for i := 0; i < 5; i++ {
++		ctx, cancel := context.WithCancel(breakerCtx("openai"))
++		cancel() // cancel before the call
++		_, err := c.Complete(ctx, inv)
++		require.Error(t, err)
++		require.ErrorIs(t, err, context.Canceled)
++	}
++	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State(),
++		"cancellations must not trip the breaker")
++}
++
++// isBreakerFailure classification is unit-tested directly so every branch —
++// including the defensive nil guard the call site never reaches — is covered.
++func TestIsBreakerFailureClassification(t *testing.T) {
++	cases := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{"nil", nil, false},
++		{"canceled", context.Canceled, false},
++		{"wrapped canceled", fmt.Errorf("x: %w", context.Canceled), false},
++		{"500", &HTTPStatusError{Status: 500}, true},
++		{"503", &HTTPStatusError{Status: 503}, true},
++		{"wrapped 500", fmt.Errorf("exhausted: %w", &HTTPStatusError{Status: 500}), true},
++		{"429", &HTTPStatusError{Status: 429}, false},
++		{"401", &HTTPStatusError{Status: 401}, false},
++		{"404", &HTTPStatusError{Status: 404}, false},
++		{"transport", errors.New("connection refused"), true},
++		{"deadline", context.DeadlineExceeded, true},
++	}
++	for _, tc := range cases {
++		if got := isBreakerFailure(tc.err); got != tc.want {
++			t.Errorf("isBreakerFailure(%s) = %v, want %v", tc.name, got, tc.want)
++		}
++	}
++}
++
++func TestCircuitOpenErrorMessage(t *testing.T) {
++	err := &CircuitOpenError{Provider: "openai"}
++	msg := err.Error()
++	if !strings.Contains(msg, "openai") || !strings.Contains(msg, "circuit breaker open") {
++		t.Fatalf("CircuitOpenError.Error() = %q, want it to mention the provider and 'circuit breaker open'", msg)
++	}
++}
++
++// A 4xx (here 429) means the provider replied — it is reachable — so the breaker
++// treats it as a healthy round-trip that resets the consecutive-failure run.
++// (Independent-review fix: this also closes a half-open probe instead of wedging
++// it.) Four 500s interrupted by a 429 never reach 3 consecutive failures.
++func TestBreaker_4xxResetsFailureRun(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var code atomic.Int64
++	code.Store(http.StatusInternalServerError)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
++		w.WriteHeader(int(code.Load()))
++		_, _ = w.Write([]byte(`{"error":"x"}`))
++	}))
++	t.Cleanup(srv.Close)
++
++	c := noRetryClient(srv.Client())
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	_, _ = c.Complete(ctx, inv) // 500 → fail 1
++	_, _ = c.Complete(ctx, inv) // 500 → fail 2
++	code.Store(http.StatusTooManyRequests)
++	_, _ = c.Complete(ctx, inv) // 429 → reachable → resets the run
++	code.Store(http.StatusInternalServerError)
++	_, _ = c.Complete(ctx, inv) // 500 → fail 1 (new run)
++	_, _ = c.Complete(ctx, inv) // 500 → fail 2 (new run)
++
++	assert.Equal(t, circuitbreaker.StateClosed, circuitbreaker.DefaultRegistry.Get("openai").State(),
++		"a 429 between failures resets the run, so 4 total 500s never reach 3 consecutive")
++}
++
++// AC1 granularity (independent review): the breaker records one outcome per agent
++// invocation (after that invocation's own retry budget), not per HTTP attempt.
++// With retries enabled, three invocations against a 500 — nine HTTP attempts —
++// trip the breaker after the third invocation.
++func TestBreaker_RetriesThenTripsPerInvocation(t *testing.T) {
++	resetBreakers(t)
++	t.Setenv("TEST_KEY", testKey)
++
++	var hits atomic.Int64
++	srv := statusServer(t, http.StatusInternalServerError, &hits)
++	c := New(WithHTTPClient(srv.Client()), WithRetry(2, time.Millisecond, 1.5)) // 3 attempts/invocation
++	inv := Invocation{BaseURL: srv.URL + "/v1", APIKeyEnv: "TEST_KEY", Model: "m1", Prompt: "x"}
++	ctx := breakerCtx("openai")
++
++	for i := 0; i < 3; i++ {
++		_, err := c.Complete(ctx, inv)
++		require.Error(t, err)
++	}
++	assert.Equal(t, int64(9), hits.Load(), "each invocation exhausts its 3-attempt retry budget (3×3)")
++	require.Equal(t, circuitbreaker.StateOpen, circuitbreaker.DefaultRegistry.Get("openai").State(),
++		"breaker trips after 3 invocations, not 3 HTTP attempts")
++
++	_, err := c.Complete(ctx, inv)
++	var coe *CircuitOpenError
++	require.True(t, errors.As(err, &coe))
++	assert.Equal(t, int64(9), hits.Load(), "open circuit makes no further HTTP attempts")
++}
+diff --git a/internal/metrics/metrics.go b/internal/metrics/metrics.go
+index af27155..b22478b 100644
+--- a/internal/metrics/metrics.go
++++ b/internal/metrics/metrics.go
+@@ -142,7 +142,27 @@ func (h *histogram) Count() int64 {
+ // Name returns the metric name (including any encoded label suffix).
+ func (h *histogram) Name() string { return h.name }
+ 
+-// Registry holds all counters and histograms, each keyed by its full name
++// gauge is a settable float64 metric whose value can rise and fall (e.g. a
++// circuit breaker's current state: 0 closed / 1 open / 2 half-open). Unlike a
++// counter it is not monotonic. The value is stored as the bit pattern of a
++// float64 in an atomic uint64 so Set and Value are lock-free, matching the
++// counter's atomic style. Obtain one from a Registry or the package-level Gauge;
++// the zero value reads as 0. Safe for concurrent use.
++type gauge struct {
++	name string
++	bits atomic.Uint64
++}
++
++// Set replaces the gauge's current value.
++func (g *gauge) Set(v float64) { g.bits.Store(math.Float64bits(v)) }
++
++// Value returns the current value.
++func (g *gauge) Value() float64 { return math.Float64frombits(g.bits.Load()) }
++
++// Name returns the metric name (including any encoded label suffix).
++func (g *gauge) Name() string { return g.name }
++
++// Registry holds all counters, gauges, and histograms, each keyed by its full name
+ // (label suffix included). Accessors are get-or-create: the same name always
+ // returns the same instance, so collaborating call sites share one metric. Safe
+ // for concurrent use.
+@@ -155,6 +175,7 @@ func (h *histogram) Name() string { return h.name }
+ type Registry struct {
+ 	mu         sync.Mutex
+ 	counters   map[string]*counter
++	gauges     map[string]*gauge
+ 	histograms map[string]*histogram
+ }
+ 
+@@ -163,6 +184,7 @@ type Registry struct {
+ func NewRegistry() *Registry {
+ 	return &Registry{
+ 		counters:   make(map[string]*counter),
++		gauges:     make(map[string]*gauge),
+ 		histograms: make(map[string]*histogram),
+ 	}
+ }
+@@ -191,6 +213,18 @@ func (r *Registry) Histogram(name string) *histogram {
+ 	return h
+ }
+ 
++// Gauge returns the gauge registered under name, creating it on first use.
++func (r *Registry) Gauge(name string) *gauge {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	g, ok := r.gauges[name]
++	if !ok {
++		g = &gauge{name: name}
++		r.gauges[name] = g
++	}
++	return g
++}
++
+ // Reset drops every counter and histogram. It exists for test isolation (and a
+ // hypothetical operator reset); production never calls it — serve-mode metrics
+ // are cumulative since process start.
+@@ -198,6 +232,7 @@ func (r *Registry) Reset() {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+ 	r.counters = make(map[string]*counter)
++	r.gauges = make(map[string]*gauge)
+ 	r.histograms = make(map[string]*histogram)
+ }
+ 
+@@ -213,3 +248,7 @@ func Counter(name string) *counter { return DefaultRegistry.Counter(name) }
+ // Histogram returns the named histogram from DefaultRegistry (get-or-create):
+ // metrics.Histogram("atcr_review_duration_seconds").Observe(secs).
+ func Histogram(name string) *histogram { return DefaultRegistry.Histogram(name) }
++
++// Gauge returns the named gauge from DefaultRegistry (get-or-create). This is the
++// call-site API: metrics.Gauge(metrics.Key(name, "provider", p)).Set(state).
++func Gauge(name string) *gauge { return DefaultRegistry.Gauge(name) }
+diff --git a/internal/metrics/metrics_test.go b/internal/metrics/metrics_test.go
+index f038326..44c67ed 100644
+--- a/internal/metrics/metrics_test.go
++++ b/internal/metrics/metrics_test.go
+@@ -251,3 +251,76 @@ func TestConcurrentCounterAndHistogram(t *testing.T) {
+ 		t.Fatalf("concurrent histogram Count() = %d, want %d", got, goroutines*iters)
+ 	}
+ }
++
++func TestGaugeSetValue(t *testing.T) {
++	r := NewRegistry()
++	g := r.Gauge("atcr_circuit_breaker_state")
++	if got := g.Value(); got != 0 {
++		t.Fatalf("fresh gauge Value() = %v, want 0", got)
++	}
++	g.Set(1)
++	if got := g.Value(); got != 1 {
++		t.Fatalf("after Set(1) Value() = %v, want 1", got)
++	}
++	g.Set(2)
++	if got := g.Value(); got != 2 {
++		t.Fatalf("after Set(2) Value() = %v, want 2", got)
++	}
++	// A gauge can decrease (unlike a monotonic counter).
++	g.Set(0)
++	if got := g.Value(); got != 0 {
++		t.Fatalf("after Set(0) Value() = %v, want 0", got)
++	}
++	if got := g.Name(); got != "atcr_circuit_breaker_state" {
++		t.Fatalf("Name() = %q, want %q", got, "atcr_circuit_breaker_state")
++	}
++}
++
++func TestRegistryGaugeGetOrCreate(t *testing.T) {
++	r := NewRegistry()
++	a := r.Gauge("g")
++	a.Set(3)
++	b := r.Gauge("g")
++	if a != b {
++		t.Fatalf("Gauge(%q) returned different instances", "g")
++	}
++	if got := b.Value(); got != 3 {
++		t.Fatalf("shared gauge Value() = %v, want 3", got)
++	}
++}
++
++func TestRegistryResetGauge(t *testing.T) {
++	r := NewRegistry()
++	r.Gauge("g").Set(5)
++	r.Reset()
++	if got := r.Gauge("g").Value(); got != 0 {
++		t.Fatalf("after Reset() gauge Value() = %v, want 0", got)
++	}
++}
++
++func TestPackageLevelGaugeUsesDefaultRegistry(t *testing.T) {
++	DefaultRegistry.Reset()
++	t.Cleanup(DefaultRegistry.Reset)
++	Gauge("pkg_gauge").Set(2)
++	if got := DefaultRegistry.Gauge("pkg_gauge").Value(); got != 2 {
++		t.Fatalf("package Gauge did not write DefaultRegistry: got %v", got)
++	}
++}
++
++func TestConcurrentGauge(t *testing.T) {
++	r := NewRegistry()
++	var wg sync.WaitGroup
++	wg.Add(8)
++	for g := 0; g < 8; g++ {
++		go func() {
++			defer wg.Done()
++			for j := 0; j < 1000; j++ {
++				r.Gauge("g").Set(float64(j))
++			}
++		}()
++	}
++	wg.Wait()
++	if got := r.Gauge("g").Value(); got < 0 || got > 999 {
++		t.Fatalf("concurrent gauge Value() = %v, out of range [0,999]", got)
++	}
++}
+diff --git a/internal/metrics/names.go b/internal/metrics/names.go
+index 2289aa9..7de8dd7 100644
+--- a/internal/metrics/names.go
++++ b/internal/metrics/names.go
+@@ -29,7 +29,13 @@ const (
+ 	NameFindingsTotal      = "atcr_findings_total"
+ 	NameFindingsBySeverity = "atcr_findings_by_severity"
+ 
++	// Circuit breaker (Epic 4.5). A per-provider gauge whose value is the current
++	// circuit state: 0 closed / 1 open / 2 half-open. Recorded by
++	// internal/circuitbreaker on every state transition.
++	NameCircuitBreakerState = "atcr_circuit_breaker_state"
++
+ 	// Label names used with Key.
+ 	LabelStatus   = "status"
+ 	LabelSeverity = "severity"
++	LabelProvider = "provider"
+ )
+diff --git a/internal/metrics/prometheus.go b/internal/metrics/prometheus.go
+index ecd6643..2229194 100644
+--- a/internal/metrics/prometheus.go
++++ b/internal/metrics/prometheus.go
+@@ -71,6 +71,10 @@ func (r *Registry) WritePrometheus() string {
+ 	for k, c := range r.counters {
+ 		counters[k] = c
+ 	}
++	gauges := make(map[string]*gauge, len(r.gauges))
++	for k, g := range r.gauges {
++		gauges[k] = g
++	}
+ 	histograms := make(map[string]*histogram, len(r.histograms))
+ 	for k, h := range r.histograms {
+ 		histograms[k] = h
+@@ -96,6 +100,23 @@ func (r *Registry) WritePrometheus() string {
+ 		}
+ 	}
+ 
++	// Gauges, grouped by family so each family emits exactly one TYPE header.
++	// A gauge renders its current float value (shortest exact decimal), unlike a
++	// counter's integer total or a histogram's summary lines.
++	gaugeFamilies := make(map[string][]string, len(gauges))
++	for k := range gauges {
++		f := metricFamily(k)
++		gaugeFamilies[f] = append(gaugeFamilies[f], k)
++	}
++	for _, fam := range sortedKeys(gaugeFamilies) {
++		fmt.Fprintf(&b, "# TYPE %s gauge\n", fam)
++		keys := gaugeFamilies[fam]
++		sort.Strings(keys)
++		for _, k := range keys {
++			fmt.Fprintf(&b, "%s %s\n", k, formatFloat(gauges[k].Value()))
++		}
++	}
++
+ 	// Histograms as Prometheus summaries, grouped by family so each family emits
+ 	// exactly one TYPE header even when it has several labeled keyed variants
+ 	// (duplicate TYPE lines are invalid exposition format).
+diff --git a/internal/metrics/prometheus_test.go b/internal/metrics/prometheus_test.go
+index e27a4a1..cf8edda 100644
+--- a/internal/metrics/prometheus_test.go
++++ b/internal/metrics/prometheus_test.go
+@@ -189,3 +189,39 @@ func TestFormatFloat(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestWritePrometheusGauge(t *testing.T) {
++	r := NewRegistry()
++	// Labeled family: two provider variants must share one # TYPE header.
++	r.Gauge(Key("atcr_circuit_breaker_state", "provider", "openai")).Set(1)
++	r.Gauge(Key("atcr_circuit_breaker_state", "provider", "anthropic")).Set(0)
++
++	out := r.WritePrometheus()
++	for _, w := range []string{
++		"# TYPE atcr_circuit_breaker_state gauge",
++		`atcr_circuit_breaker_state{provider="openai"} 1`,
++		`atcr_circuit_breaker_state{provider="anthropic"} 0`,
++	} {
++		if !strings.Contains(out, w) {
++			t.Errorf("gauge output missing %q\n---\n%s", w, out)
++		}
++	}
++	// Exactly one TYPE header per family (duplicate TYPE lines are invalid).
++	if n := strings.Count(out, "# TYPE atcr_circuit_breaker_state gauge"); n != 1 {
++		t.Errorf("gauge TYPE header appeared %d times, want 1\n%s", n, out)
++	}
++}
++
++func TestWritePrometheusGaugeUnlabeled(t *testing.T) {
++	r := NewRegistry()
++	r.Gauge("atcr_circuit_breaker_state").Set(2)
++	out := r.WritePrometheus()
++	for _, w := range []string{
++		"# TYPE atcr_circuit_breaker_state gauge",
++		"atcr_circuit_breaker_state 2",
++	} {
++		if !strings.Contains(out, w) {
++			t.Errorf("unlabeled gauge output missing %q\n---\n%s", w, out)
++		}
++	}
++}
+diff --git a/internal/verify/invoke.go b/internal/verify/invoke.go
+index c794a28..de325ca 100644
+--- a/internal/verify/invoke.go
++++ b/internal/verify/invoke.go
+@@ -103,6 +103,7 @@ func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
+ 	c := skeptic.Config
+ 	return fanout.Agent{
+ 		Name:            skeptic.Name,
++		Provider:        c.Provider,
+ 		Prompt:          prompt,
+ 		TimeoutSecs:     derefInt(c.TimeoutSecs),
+ 		Tools:           true,

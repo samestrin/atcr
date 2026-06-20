@@ -1,3 +1,22 @@
+## [Technical Debt] - 2026-06-19
+
+### Fixed
+
+- Guarded `gauge.Set` against NaN/Inf inputs to match `histogram.Observe`; updated `Registry.Reset` doc comment to include gauges
+- Added debug warning when a tools-enabled production agent has an empty provider, making silent circuit breaker bypasses observable
+- Documented in `classifyStatus` that `CircuitOpenError` deliberately classifies as `StatusFailed` so the fan-out chain advances to the fallback (AC6)
+- Extracted `writeFamily` helper in `prometheus.go` to eliminate three near-identical family-grouping blocks
+- Documented 3xx responses as health-neutral in the circuit breaker `send` switch
+- Clamped non-positive `threshold` and `cooldown` values in `New()` to defaults so a zero-config breaker cannot trip on the first failure
+- Documented the max probe slot-hold bound (= caller HTTP timeout) in `Allow`; corrected `ReleaseProbe` comment to accurately state it always clears `probeInFlight`
+- Emitted structured log (`slog.Info`) on every circuit breaker state transition with provider name and new state
+- Cached gauge pointer in `Breaker` at construction time to remove cross-package lock acquisition under `b.mu` on each state transition
+- `Registry.Get("")` now returns a fresh throwaway always-closed breaker instead of caching a real stateful one under the empty key
+- `isBreakerFailure` now distinguishes caller-initiated deadline expiry from a provider stall, preventing false breaker failures when the caller's own budget expires against a healthy provider
+- Extended error snippet redaction to cover foreign fleet key prefixes (`AIza`, `gsk_`, `xai-`) in `HTTPStatusError.Snippet`
+- Documented the deliberate ~8KB error-body drain bound as an accepted trade-off in `readErrorSnippet`
+- Added deferred probe slot release in `send()` so a panic in `dispatch()` cannot wedge the circuit breaker half-open permanently
+
 ## [4.5.0] - 2026-06-19
 
 ### Added

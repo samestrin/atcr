@@ -1,0 +1,12 @@
+{
+  "target": "4.5_circuit_breaker",
+  "target_type": "epic",
+  "sources": ["claude", "multi-agent"],
+  "raw_count": 21,
+  "merged_count": 21,
+  "clusters_collapsed": "21 raw findings reduced into 21 merged (0 collapsed)",
+  "severity_disagreements": 0,
+  "intent_annotations": 2,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-19T16:02:35Z"
+}
