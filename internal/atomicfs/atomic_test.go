@@ -117,3 +117,118 @@ func TestWriteJSON_UnmarshalableValueErrorsAndWritesNothing(t *testing.T) {
 		t.Errorf("expected no file written on marshal error, stat err = %v", err)
 	}
 }
+
+func TestBackupToDotBak_File(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "verification.json")
+	if err := os.WriteFile(src, []byte("current\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// A stale .bak must be replaced, not error out.
+	if err := os.WriteFile(src+".bak", []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+
+	bak, err := BackupToDotBak(src)
+	if err != nil {
+		t.Fatalf("BackupToDotBak: %v", err)
+	}
+	if bak != src+".bak" {
+		t.Errorf("backup path = %q, want %q", bak, src+".bak")
+	}
+	data, err := os.ReadFile(bak)
+	if err != nil {
+		t.Fatalf("ReadFile backup: %v", err)
+	}
+	if string(data) != "current\n" {
+		t.Errorf("backup content = %q, want the current generation", data)
+	}
+	// Source is preserved in place (copy, not move).
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("source must remain in place after backup: %v", err)
+	}
+}
+
+func TestBackupToDotBak_Directory(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reconciled")
+	if err := os.MkdirAll(filepath.Join(src, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "findings.json"), []byte("[]\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "nested", "deep.txt"), []byte("deep\n"), 0o600); err != nil {
+		t.Fatalf("seed nested: %v", err)
+	}
+	// Stale backup with a file that must NOT survive the replace.
+	if err := os.MkdirAll(src+".bak", 0o755); err != nil {
+		t.Fatalf("mkdir stale: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src+".bak", "old.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+
+	bak, err := BackupToDotBak(src)
+	if err != nil {
+		t.Fatalf("BackupToDotBak: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(bak, "findings.json"))
+	if err != nil || string(got) != "[]\n" {
+		t.Errorf("top-level file not copied: data=%q err=%v", got, err)
+	}
+	gotNested, err := os.ReadFile(filepath.Join(bak, "nested", "deep.txt"))
+	if err != nil || string(gotNested) != "deep\n" {
+		t.Errorf("nested file not copied: data=%q err=%v", gotNested, err)
+	}
+	if _, err := os.Stat(filepath.Join(bak, "old.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale backup content must be replaced, stat err = %v", err)
+	}
+	// Source tree preserved (copy semantics).
+	if _, err := os.Stat(filepath.Join(src, "findings.json")); err != nil {
+		t.Errorf("source must remain after backup: %v", err)
+	}
+}
+
+func TestBackupToDotBak_DirectorySkipsNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "reconciled")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "findings.json"), []byte("[]\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// A symlink inside the tree must be skipped (not followed) by the backup.
+	if err := os.Symlink(filepath.Join(src, "findings.json"), filepath.Join(src, "link.json")); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	bak, err := BackupToDotBak(src)
+	if err != nil {
+		t.Fatalf("BackupToDotBak: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(bak, "findings.json")); err != nil {
+		t.Errorf("regular file must be copied: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(bak, "link.json")); !os.IsNotExist(err) {
+		t.Errorf("symlink must be skipped, not copied; lstat err = %v", err)
+	}
+}
+
+func TestBackupToDotBak_MissingSourceIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "absent")
+
+	bak, err := BackupToDotBak(src)
+	if err != nil {
+		t.Fatalf("expected no error for missing source, got %v", err)
+	}
+	if bak != "" {
+		t.Errorf("expected empty backup path for missing source, got %q", bak)
+	}
+	if _, err := os.Stat(src + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("no backup may be created for a missing source, stat err = %v", err)
+	}
+}
