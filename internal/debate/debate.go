@@ -315,11 +315,13 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		ir.Reason = "unparseable_ruling"
 	}
 	if ruling.Outcome == OutcomeSplit {
-		sev := ruling.SettledSeverity
-		if sev == "" {
-			sev = item.Severity // judge gave no severity: keep the original
-		}
-		ir.SettledSeverity = sev
+		// A split with no settled_severity settles nothing: record no settled
+		// severity rather than backfilling item.Severity. Backfilling would echo
+		// the original severity as if the judge had adjusted to it (masking a
+		// no-op ruling) and — should the radar ever score item.Severity above the
+		// finding's own — silently bump the finding up. Empty SettledSeverity →
+		// splitSeverity returns "" → applyRulings leaves findings[i].Severity as-is.
+		ir.SettledSeverity = ruling.SettledSeverity
 	}
 	return ir
 }
