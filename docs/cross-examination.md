@@ -83,7 +83,7 @@ Rulings ride the same `verification` block and confidence axis the verify stage 
 | `overturn` | `refuted` | — | `LOW` | unchanged |
 | `unresolved` | (none) | — | unchanged | unchanged |
 
-Because the judge's ruling is authoritative, it supersedes any prior skeptic verdict on a debated finding. Gray-zone cluster `merge`/`separate` decisions are recorded in `debate.json` (an unattended decision, no Skill needed); the physical cluster re-merge continues to flow through the existing `adjudication.json` path.
+Because the judge's ruling is authoritative, it supersedes any prior skeptic verdict on a debated finding. Gray-zone cluster `merge`/`separate` decisions are recorded in `debate.json` and, as of Epic 6.1, **applied inline**: a `merge` ruling physically unions the cluster's member findings in `findings.json` during the debate stage (no Skill, no `adjudication.json` round-trip), flagging the survivor `cluster_merged` so a re-run never re-merges it; a `separate` ruling leaves the members unmerged. The Skill-authored `adjudication.json` path is unchanged and remains available as a manual override.
 
 ## Gate Semantics
 
