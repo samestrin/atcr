@@ -54,7 +54,6 @@ technical-debt/
 | 8 | [x] | HIGH | internal/stream/suggest.go:156 | prefixDerivation incorrectly flags validator/validate as derivation | Check for specific derivation suffixes instead of HasPrefix | correctness | 10 | code-review | bruce | MEDIUM |
 | 8 | [x] | LOW | internal/stream/validate.go:68 | The lexical and containment escape checks compare against ".."+filepath.Separator. Correct on the macOS/Linux runtime (filepath.Join/Rel emit OS separators), but brittle: if a future caller passes slash-form paths into filepath.Rel on Windows, the prefix check would mismatch and a ../foo escape could pass the guard. Latent cross-platform fragility, not a live break. | Normalize both sides with filepath.ToSlash and compare against "../", or assert the platform. Add a table test using both separator forms. | security | 15 | code-review | claude | MEDIUM |
 | 8 | [x] | LOW | internal/stream/validate.go:86 | EvalSymlinks errors on root are silently swallowed | Warn or fall back to lexical containment only when root cannot be resolved | error-handling | 10 | code-review | bruce | MEDIUM |
-| U | [ ] | SEVERITY | FILE:LINE | PROBLEM | FIX | CATEGORY | 0 | SOURCE | REVIEWERS | CONFIDENCE |
 
 ### [2026-06-21] From Sprint: epic-5.4
 
