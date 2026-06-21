@@ -1,0 +1,7 @@
+{
+  "agent_name": "dax",
+  "model": "deepseek-4",
+  "status": "timeout",
+  "duration_ms": 575116,
+  "error": "stream read failed: context deadline exceeded (fallback dax-local also failed: request failed: Post \"http://192.168.68.109:4000/v1/chat/completions\": context deadline exceeded)"
+}

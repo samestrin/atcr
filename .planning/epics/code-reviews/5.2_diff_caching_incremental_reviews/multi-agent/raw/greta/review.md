@@ -1,0 +1,2 @@
+MEDIUM|internal/cache/store.go:89|Silent failure to remove corrupt cache entry|Log removal error and return error to caller or retry|error-handling|5|_ = os.Remove(path) ignores removal errors|greta
+LOW|internal/cache/store.go:138|LRU eviction silently ignores file deletion errors|Log deletion failures and consider alerting on persistent reclaim failure|error-handling|10|if err := os.Remove(f.path); err == nil { total -= f.size }|greta

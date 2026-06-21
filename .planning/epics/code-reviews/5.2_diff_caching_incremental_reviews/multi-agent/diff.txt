@@ -1,0 +1,1414 @@
+diff --git a/README.md b/README.md
+index 20636bb..74ace11 100644
+--- a/README.md
++++ b/README.md
+@@ -76,7 +76,7 @@ atcr report --format md
+ 
+ Key flags:
+ 
+-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`)
++- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+ - `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index bfb2a57..89c6fb7 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -44,6 +44,7 @@ func newReviewCmd() *cobra.Command {
+ 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+ 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
+ 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
++	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
+ 	addRangeFlags(cmd)
+ 	return cmd
+ }
+@@ -177,6 +178,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 		IDOverride: idOverride,
+ 		OutputDir:  outputDir,
+ 		Force:      boolFlag(cmd, "force"),
++		NoCache:    boolFlag(cmd, "no-cache"),
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index 86f0941..faa766e 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -288,6 +288,16 @@ func TestReviewCmd_ForceFlagRegistered(t *testing.T) {
+ 	require.False(t, v, "--force defaults to false")
+ }
+ 
++// TestReviewCmd_NoCacheFlagRegistered verifies the --no-cache flag exists on the
++// review command and defaults to false (Epic 5.2: caching on unless opted out).
++func TestReviewCmd_NoCacheFlagRegistered(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NotNil(t, cmd.Flags().Lookup("no-cache"), "review must define --no-cache")
++	v, err := cmd.Flags().GetBool("no-cache")
++	require.NoError(t, err)
++	require.False(t, v, "--no-cache defaults to false (caching active)")
++}
++
+ // TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
+ // --resume and --force is a usage error (exit 2) regardless of a git repo,
+ // because the guard fires at the resume branch before any range resolution.
+diff --git a/docs/registry.md b/docs/registry.md
+index 6b0eda6..7074daf 100644
+--- a/docs/registry.md
++++ b/docs/registry.md
+@@ -41,6 +41,7 @@ payload_mode: blocks
+ timeout_secs: 600
+ payload_byte_budget: 524288
+ max_parallel: 10
++cache_max_bytes: 52428800
+ fail_on: HIGH
+ # Retry/backoff (Epic 4.6) — registry (global) tier only; not carried by project config or CLI.
+ max_retries: 5
+@@ -82,6 +83,7 @@ payload_mode: blocks
+ timeout_secs: 600
+ payload_byte_budget: 524288
+ max_parallel: 10
++cache_max_bytes: 52428800
+ fail_on: HIGH
+ ```
+ 
+@@ -93,6 +95,7 @@ fail_on: HIGH
+ | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
+ | `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. **Context sizing:** models with context limits below 128k will time out or fail on the default; set to `163840` (160 KiB ≈ 40k tokens) for rosters that include smaller-context models (e.g. 49k-limit). |
+ | `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once. When `serial_agents` is non-empty, the serial lane runs concurrently with the parallel lane in its own goroutine — peak provider concurrency is therefore `max_parallel + 1`, not `max_parallel`. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
++| `cache_max_bytes` | `52428800` | Total-size cap (bytes, 50 MiB default) for the diff cache under `.atcr/cache`. A re-run over an unchanged diff replays each reviewer's prior output and skips the LLM call; cache keys combine the payload digest, model id, and persona digest. Least-recently-used entries are evicted once the cap is exceeded. `0` = unbounded; negative is rejected. Bypass a single run's cache reads with `atcr review --no-cache` (fresh results are still written back). Only the review fan-out is cached — tool-enabled agents (live code reads) and the verification stage are not. |
+ | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
+ 
+ An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
+@@ -130,13 +133,13 @@ atcr trust --all           # authorize every project provider
+ 
+ ## Precedence
+ 
+-The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `fail_on`) resolve **per field, independently**, in this order:
++The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
+ 
+ ```
+ CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
+ ```
+ 
+-A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
++A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`, `cache_max_bytes=52428800`. `cache_max_bytes` resolves across the registry and project tiers only (no CLI flag); `--no-cache` is a per-run read bypass, not a settings override. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+ 
+ The retry tunables (`max_retries`, `initial_backoff_ms`, Epic 4.6) resolve over a **shorter chain**: agent-level field > `registry.yaml` (global) > embedded default (`max_retries=5`, `initial_backoff_ms=500`). They are deliberately **not** carried by `.atcr/config.yaml` or a CLI flag — rate-limit resilience is a property of the user's provider/account, set once at the registry tier or refined per agent. An agent's effective budget is threaded onto each call so per-agent overrides take effect without rebuilding the shared client.
+ 
+@@ -148,7 +151,7 @@ CLI flag  >  .atcr/*  (project)  >  ~/.config/atcr/*  (user)  >  embedded defaul
+ 
+ Settings resolve per field (above); personas resolve per file (`.atcr/personas/` shadows `~/.config/atcr/personas/`, chain below); and provider/agent **definitions** merge whole-entry (`.atcr/registry.yaml` shadows `~/.config/atcr/registry.yaml`, [overlay](#project-registry-overlay) above). There is no embedded tier for definitions — providers and agents must be defined in at least one registry file.
+ 
+-**Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
++**Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
+ 
+ ## Persona resolution chain
+ 
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 4e7d58f..d01683b 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -24,6 +24,7 @@ const modulePath = "github.com/samestrin/atcr"
+ // entry). Absence of a directory here fails the completeness check.
+ var allowedInternalImports = map[string][]string{
+ 	"atomicfs":       {},
++	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
+ 	"stream":         {},
+ 	"gitrange":       {},
+ 	"log":            {},         // single diagnostic sink; stdlib-only (epic 4.0)
+@@ -36,7 +37,7 @@ var allowedInternalImports = map[string][]string{
+ 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+ 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+ 	"doctor":         {"llmclient", "registry"},
+-	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1)
++	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs", "cache"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1); cache: diff-cache replay on the single-shot review path (epic 5.2)
+ 	"reconcile":      {"stream", "atomicfs"},
+ 	"scorecard":      {"llmclient", "reconcile", "fanout"},
+ 	"report":         {"stream", "reconcile"},
+diff --git a/internal/cache/key.go b/internal/cache/key.go
+new file mode 100644
+index 0000000..4e72e0a
+--- /dev/null
++++ b/internal/cache/key.go
+@@ -0,0 +1,50 @@
++// Package cache implements payload-level diff caching for the review fan-out
++// (Epic 5.2). A reviewer's raw output is content-addressed by the payload it
++// saw, its model, and its persona, so a re-run over an unchanged diff replays
++// the prior result and skips the LLM API call entirely.
++//
++// Granularity note: atcr concatenates every changed file into one payload per
++// mode before any agent is called, so the cache unit is per-agent-per-payload,
++// not per-file. Changing even one file in the diff alters the payload digest and
++// is a full miss for that agent — true per-file incremental caching would
++// require re-architecting the fan-out engine and is out of scope here.
++package cache
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++)
++
++// HashText returns the canonical "sha256:<hex>" digest of s — the same format
++// used elsewhere in atcr (reconcile/ambiguous.go) so cache keys read uniformly
++// against other content hashes in artifacts and logs.
++func HashText(s string) string {
++	sum := sha256.Sum256([]byte(s))
++	return "sha256:" + hex.EncodeToString(sum[:])
++}
++
++// Key derives the content-addressed cache key for one reviewer call from the
++// digest of the full rendered prompt the model received, the model id, and a
++// tuning token (the temperature). promptHash is pre-computed via HashText so the
++// large prompt text is hashed once at agent-build time rather than on every
++// lookup.
++//
++// The three inputs are joined with a NUL separator (which cannot appear in a hex
++// digest, a model id, or a numeric tuning token) before the outer hash, so no
++// boundary ambiguity can map two distinct triples onto the same key.
++//
++// Keying on the rendered prompt (not the raw payload/persona) is deliberate: the
++// prompt subsumes payload + persona + the per-agent scope focus + the base/head
++// refs, so any input that changes what the model sees invalidates the entry.
++// Deliberately excluded (Epic 5.2): min_severity and max_findings are
++// deterministic post-LLM filters applied after the call, so the same cached
++// response is valid regardless of those thresholds.
++func Key(promptHash, model, tuning string) string {
++	h := sha256.New()
++	h.Write([]byte(promptHash))
++	h.Write([]byte{0})
++	h.Write([]byte(model))
++	h.Write([]byte{0})
++	h.Write([]byte(tuning))
++	return "sha256:" + hex.EncodeToString(h.Sum(nil))
++}
+diff --git a/internal/cache/key_test.go b/internal/cache/key_test.go
+new file mode 100644
+index 0000000..91f851c
+--- /dev/null
++++ b/internal/cache/key_test.go
+@@ -0,0 +1,59 @@
++package cache
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestHashText_FormatAndDeterminism(t *testing.T) {
++	h := HashText("hello world")
++	require.True(t, strings.HasPrefix(h, "sha256:"), "digest must carry the canonical sha256: prefix")
++	hex := strings.TrimPrefix(h, "sha256:")
++	assert.Len(t, hex, 64, "sha256 hex digest is 64 chars")
++
++	// Deterministic: same input -> same digest.
++	assert.Equal(t, h, HashText("hello world"))
++	// Distinct inputs -> distinct digests.
++	assert.NotEqual(t, h, HashText("hello worlD"))
++	// Empty input still produces a well-formed digest.
++	assert.True(t, strings.HasPrefix(HashText(""), "sha256:"))
++}
++
++func TestKey_DeterministicAndFormat(t *testing.T) {
++	ph := HashText("payload bytes")
++	sh := HashText("persona text")
++
++	k1 := Key(ph, "gpt-4o", sh)
++	k2 := Key(ph, "gpt-4o", sh)
++	assert.Equal(t, k1, k2, "same triple must yield the same key")
++	assert.True(t, strings.HasPrefix(k1, "sha256:"), "key must be a sha256: digest")
++	assert.Len(t, strings.TrimPrefix(k1, "sha256:"), 64)
++}
++
++func TestKey_VariesWithEveryComponent(t *testing.T) {
++	ph := HashText("payload bytes")
++	sh := HashText("persona text")
++	base := Key(ph, "gpt-4o", sh)
++
++	// Payload hash changes -> key changes.
++	assert.NotEqual(t, base, Key(HashText("other payload"), "gpt-4o", sh))
++	// Model changes -> key changes.
++	assert.NotEqual(t, base, Key(ph, "claude-opus", sh))
++	// Persona hash changes -> key changes.
++	assert.NotEqual(t, base, Key(ph, "gpt-4o", HashText("other persona")))
++}
++
++// TestKey_DomainSeparation guards against boundary ambiguity: two distinct
++// triples whose naive concatenation would coincide must still produce distinct
++// keys (NUL-separated fields).
++func TestKey_DomainSeparation(t *testing.T) {
++	a := Key("aa", "bb", "cc")
++	b := Key("a", "abb", "cc")
++	c := Key("aa", "b", "bcc")
++	assert.NotEqual(t, a, b)
++	assert.NotEqual(t, a, c)
++	assert.NotEqual(t, b, c)
++}
+diff --git a/internal/cache/store.go b/internal/cache/store.go
+new file mode 100644
+index 0000000..c73d9a8
+--- /dev/null
++++ b/internal/cache/store.go
+@@ -0,0 +1,191 @@
++package cache
++
++import (
++	"encoding/json"
++	"errors"
++	"io/fs"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/samestrin/atcr/internal/atomicfs"
++)
++
++// entry is the on-disk cache record: the full key (for a defensive match on
++// read, guarding against filename truncation/collision bugs) and the cached
++// reviewer output. Deliberately minimal — LRU recency is tracked by file mtime,
++// not a stored timestamp.
++type entry struct {
++	Key     string `json:"key"`
++	Content string `json:"content"`
++}
++
++// Store is a content-addressed, size-bounded cache of reviewer outputs on disk.
++// Each entry is one JSON file named by the key digest under dir. Total on-disk
++// size is capped at maxBytes via least-recently-used eviction (oldest mtime
++// first); maxBytes <= 0 disables eviction (unbounded), matching the codebase's
++// "0 = unlimited" escape-hatch idiom for byte budgets.
++//
++// All operations are guarded by a single mutex. Contention is negligible in
++// practice — a review fans out to a handful of agents and each touches the cache
++// at most twice (one Get, one Put) around a slow LLM call — so the simpler
++// fully-serialized design is preferred over finer-grained locking.
++type Store struct {
++	dir      string
++	maxBytes int64
++	mu       sync.Mutex
++}
++
++// NewStore returns a Store rooted at dir with the given size cap. The directory
++// is created lazily on the first Put, so constructing a Store is cheap and never
++// fails.
++func NewStore(dir string, maxBytes int64) *Store {
++	return &Store{dir: dir, maxBytes: maxBytes}
++}
++
++// Get returns the cached content for key. hit is false (with a nil error) on a
++// cold miss, a corrupt entry (which is removed to self-heal), or a defensive
++// key mismatch. A read hit refreshes the entry's mtime so it is treated as
++// recently used by a later eviction. A genuine IO error (other than not-exist)
++// is surfaced so the caller can log it and fall back to a live call.
++func (s *Store) Get(key string) (string, bool, error) {
++	name, ok := fileName(key)
++	if !ok {
++		return "", false, nil // malformed key — treat as a miss
++	}
++	path := filepath.Join(s.dir, name)
++
++	s.mu.Lock()
++	defer s.mu.Unlock()
++
++	data, err := os.ReadFile(path)
++	if errors.Is(err, fs.ErrNotExist) {
++		return "", false, nil
++	}
++	if err != nil {
++		return "", false, err
++	}
++	var e entry
++	if jerr := json.Unmarshal(data, &e); jerr != nil || e.Key != key {
++		// Corrupt or mismatched entry: drop it so the next run repopulates a
++		// clean record, and report a miss rather than an error.
++		_ = os.Remove(path)
++		return "", false, nil
++	}
++	// Refresh recency for LRU eviction (best-effort: a touch failure only makes
++	// the entry a slightly earlier eviction candidate, never a correctness bug).
++	now := time.Now()
++	_ = os.Chtimes(path, now, now)
++	return e.Content, true, nil
++}
++
++// Put stores content under key (atomic write) and then enforces the size cap by
++// evicting least-recently-used entries. A write error is returned; eviction is
++// best-effort and never fails a Put (a transient eviction error only defers
++// reclaiming disk to the next Put).
++func (s *Store) Put(key, content string) error {
++	name, ok := fileName(key)
++	if !ok {
++		return errors.New("cache: refusing to store under a malformed key")
++	}
++
++	s.mu.Lock()
++	defer s.mu.Unlock()
++
++	if err := os.MkdirAll(s.dir, 0o755); err != nil {
++		return err
++	}
++	path := filepath.Join(s.dir, name)
++	if err := atomicfs.WriteJSON(path, entry{Key: key, Content: content}); err != nil {
++		return err
++	}
++	s.evict()
++	return nil
++}
++
++// evict deletes least-recently-used entries until the total on-disk size is at
++// or under maxBytes. maxBytes <= 0 disables eviction. Caller must hold s.mu.
++func (s *Store) evict() {
++	if s.maxBytes <= 0 {
++		return
++	}
++	entries, err := os.ReadDir(s.dir)
++	if err != nil {
++		return // best-effort; reclaim on a later Put
++	}
++	type fileInfo struct {
++		path  string
++		size  int64
++		mtime time.Time
++	}
++	var files []fileInfo
++	var total int64
++	for _, de := range entries {
++		if de.IsDir() || !strings.HasSuffix(de.Name(), ".json") {
++			continue
++		}
++		info, err := de.Info()
++		if err != nil {
++			continue
++		}
++		files = append(files, fileInfo{filepath.Join(s.dir, de.Name()), info.Size(), info.ModTime()})
++		total += info.Size()
++	}
++	if total <= s.maxBytes {
++		return
++	}
++	// Oldest first — least-recently-used (Get refreshes mtime).
++	sort.Slice(files, func(i, j int) bool { return files[i].mtime.Before(files[j].mtime) })
++	for _, f := range files {
++		if total <= s.maxBytes {
++			break
++		}
++		if err := os.Remove(f.path); err == nil {
++			total -= f.size
++		}
++	}
++}
++
++// fileName maps a cache key to its on-disk filename. The key MUST be a canonical
++// "sha256:<64-hex>" digest (as produced by Key); the filename is "<hex>.json".
++//
++// Security: the hex digest is validated to be exactly 64 lowercase hex chars
++// before it is used as a path segment. Get/Put are exported, so a crafted or
++// buggy key like "sha256:../../etc/passwd" must never reach filepath.Join — the
++// strict hex check makes path traversal impossible regardless of caller input.
++func fileName(key string) (string, bool) {
++	digest := strings.TrimPrefix(key, "sha256:")
++	if digest == key || !isHex64(digest) {
++		return "", false
++	}
++	return digest + ".json", true
++}
++
++// isHex64 reports whether s is exactly 64 lowercase hexadecimal characters — the
++// shape of a sha256 hex digest. Rejecting anything else keeps cache filenames to
++// a fixed, traversal-proof character set.
++func isHex64(s string) bool {
++	if len(s) != 64 {
++		return false
++	}
++	for i := 0; i < len(s); i++ {
++		c := s[i]
++		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
++			return false
++		}
++	}
++	return true
++}
++
++// fileNameFor is the test-facing form of fileName that returns just the name,
++// panicking on a malformed key (tests always pass well-formed keys).
++func fileNameFor(key string) string {
++	name, ok := fileName(key)
++	if !ok {
++		panic("cache: malformed key in test: " + key)
++	}
++	return name
++}
+diff --git a/internal/cache/store_test.go b/internal/cache/store_test.go
+new file mode 100644
+index 0000000..3906aed
+--- /dev/null
++++ b/internal/cache/store_test.go
+@@ -0,0 +1,195 @@
++package cache
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestStore_PutThenGet_RoundTrips(t *testing.T) {
++	s := NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	k := Key(HashText("p"), "m", HashText("persona"))
++
++	content, hit, err := s.Get(k)
++	require.NoError(t, err)
++	assert.False(t, hit, "cold cache must miss")
++	assert.Empty(t, content)
++
++	require.NoError(t, s.Put(k, "the review body"))
++
++	content, hit, err = s.Get(k)
++	require.NoError(t, err)
++	assert.True(t, hit, "after Put the same key must hit")
++	assert.Equal(t, "the review body", content)
++}
++
++func TestStore_DistinctKeysDoNotCollide(t *testing.T) {
++	s := NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	k1 := Key(HashText("p1"), "m", HashText("x"))
++	k2 := Key(HashText("p2"), "m", HashText("x"))
++	require.NoError(t, s.Put(k1, "one"))
++	require.NoError(t, s.Put(k2, "two"))
++
++	c1, hit1, _ := s.Get(k1)
++	c2, hit2, _ := s.Get(k2)
++	assert.True(t, hit1)
++	assert.True(t, hit2)
++	assert.Equal(t, "one", c1)
++	assert.Equal(t, "two", c2)
++}
++
++func TestStore_MissOnUnknownKey(t *testing.T) {
++	s := NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	_, hit, err := s.Get(Key(HashText("nope"), "m", HashText("x")))
++	require.NoError(t, err)
++	assert.False(t, hit)
++}
++
++// TestStore_CorruptEntrySelfHeals: a garbage file at the key's path is treated
++// as a miss (not an error) and removed so the next run can repopulate it.
++func TestStore_CorruptEntrySelfHeals(t *testing.T) {
++	dir := filepath.Join(t.TempDir(), "cache")
++	require.NoError(t, os.MkdirAll(dir, 0o755))
++	s := NewStore(dir, 0)
++	k := Key(HashText("p"), "m", HashText("x"))
++	// Write a corrupt entry directly at the key's file path.
++	path := filepath.Join(dir, fileNameFor(k))
++	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
++
++	_, hit, err := s.Get(k)
++	require.NoError(t, err, "corrupt entry must not surface as an error")
++	assert.False(t, hit)
++	_, statErr := os.Stat(path)
++	assert.True(t, os.IsNotExist(statErr), "corrupt entry should be removed to self-heal")
++}
++
++// TestStore_EvictsOldestWhenOverCap writes several entries past the byte cap and
++// asserts the least-recently-used (oldest mtime) entries are evicted while the
++// newest survive.
++func TestStore_EvictsOldestWhenOverCap(t *testing.T) {
++	dir := filepath.Join(t.TempDir(), "cache")
++	// Each entry's JSON is ~500 bytes (71-char key digest + 400-char body +
++	// envelope); a 1200-byte cap therefore holds at most two entries.
++	s := NewStore(dir, 1200)
++
++	body := func(n string) string { return n + ":" + strings.Repeat("x", 400) }
++
++	keys := []string{
++		Key(HashText("a"), "m", HashText("x")),
++		Key(HashText("b"), "m", HashText("x")),
++		Key(HashText("c"), "m", HashText("x")),
++		Key(HashText("d"), "m", HashText("x")),
++	}
++	for _, k := range keys {
++		require.NoError(t, s.Put(k, body(k)))
++		// Stagger mtimes so eviction order is deterministic (oldest first).
++		time.Sleep(10 * time.Millisecond)
++	}
++
++	// Total on disk must be within the cap.
++	total := dirSize(t, dir)
++	assert.LessOrEqual(t, total, int64(1200), "store must evict down to the cap")
++
++	// The most recently written key must still be present.
++	_, hit, err := s.Get(keys[len(keys)-1])
++	require.NoError(t, err)
++	assert.True(t, hit, "newest entry must survive eviction")
++
++	// The oldest key must have been evicted.
++	_, hit0, err := s.Get(keys[0])
++	require.NoError(t, err)
++	assert.False(t, hit0, "oldest entry must be evicted first")
++}
++
++// TestStore_GetRefreshesRecency: reading an entry bumps its mtime so it is not
++// the first victim of a later eviction.
++func TestStore_GetRefreshesRecency(t *testing.T) {
++	dir := filepath.Join(t.TempDir(), "cache")
++	// ~500 bytes/entry; a 1200-byte cap holds two entries, so a third forces a
++	// single eviction — exercising recency ordering precisely.
++	s := NewStore(dir, 1200)
++	body := strings.Repeat("x", 400)
++
++	kA := Key(HashText("a"), "m", HashText("x"))
++	kB := Key(HashText("b"), "m", HashText("x"))
++	require.NoError(t, s.Put(kA, body))
++	time.Sleep(10 * time.Millisecond)
++	require.NoError(t, s.Put(kB, body))
++	time.Sleep(10 * time.Millisecond)
++
++	// Touch A so it becomes most-recently-used.
++	_, hit, _ := s.Get(kA)
++	require.True(t, hit)
++	time.Sleep(10 * time.Millisecond)
++
++	// A third entry forces eviction; B (now oldest) should go, A should stay.
++	kC := Key(HashText("c"), "m", HashText("x"))
++	require.NoError(t, s.Put(kC, body))
++
++	_, hitA, _ := s.Get(kA)
++	_, hitB, _ := s.Get(kB)
++	assert.True(t, hitA, "recently-read entry must survive")
++	assert.False(t, hitB, "untouched older entry must be evicted")
++}
++
++// TestStore_RejectsMalformedKeys hardens against path traversal: a key whose
++// digest is not 64-char hex must be refused by Put and miss on Get, never joined
++// into a filesystem path that could escape the cache dir.
++func TestStore_RejectsMalformedKeys(t *testing.T) {
++	dir := filepath.Join(t.TempDir(), "cache")
++	s := NewStore(dir, 0)
++
++	bad := []string{
++		"sha256:../../etc/passwd",
++		"sha256:" + strings.Repeat("z", 64), // right length, non-hex
++		"sha256:abc",                        // too short
++		"notadigest",                        // missing prefix
++		"sha256:",                           // empty digest
++	}
++	for _, k := range bad {
++		err := s.Put(k, "x")
++		assert.Error(t, err, "Put must refuse malformed key %q", k)
++		_, hit, gerr := s.Get(k)
++		assert.NoError(t, gerr)
++		assert.False(t, hit, "Get must miss on malformed key %q", k)
++	}
++	// Nothing escaped the cache dir (it should not even exist — no valid Put ran).
++	_, statErr := os.Stat(filepath.Join(t.TempDir(), "etc"))
++	assert.True(t, os.IsNotExist(statErr))
++}
++
++func TestStore_ConcurrentPutGet(t *testing.T) {
++	s := NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	var wg sync.WaitGroup
++	for i := 0; i < 16; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			k := Key(HashText(string(rune('a'+i))), "m", HashText("x"))
++			require.NoError(t, s.Put(k, "body"))
++			_, hit, err := s.Get(k)
++			require.NoError(t, err)
++			assert.True(t, hit)
++		}(i)
++	}
++	wg.Wait()
++}
++
++func dirSize(t *testing.T, dir string) int64 {
++	t.Helper()
++	entries, err := os.ReadDir(dir)
++	require.NoError(t, err)
++	var total int64
++	for _, e := range entries {
++		info, err := e.Info()
++		require.NoError(t, err)
++		total += info.Size()
++	}
++	return total
++}
+diff --git a/internal/fanout/artifacts.go b/internal/fanout/artifacts.go
+index 1e2bf77..9f3cdf5 100644
+--- a/internal/fanout/artifacts.go
++++ b/internal/fanout/artifacts.go
+@@ -218,6 +218,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
+ 		FallbackFrom:           r.FallbackFrom,
+ 		DroppedByMinSeverity:   fr.Dropped,
+ 		TruncatedByMaxFindings: fr.Truncated,
++		CacheHit:               r.CacheHit,
+ 	}
+ 	if r.Err != nil {
+ 		st.Error = r.Err.Error()
+diff --git a/internal/fanout/cache_test.go b/internal/fanout/cache_test.go
+new file mode 100644
+index 0000000..0057d5b
+--- /dev/null
++++ b/internal/fanout/cache_test.go
+@@ -0,0 +1,243 @@
++package fanout
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"sync/atomic"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/cache"
++	"github.com/samestrin/atcr/internal/circuitbreaker"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// cacheableSlot builds a non-serial, non-tool slot whose primary carries the
++// diff-cache key derived from the rendered prompt (which subsumes payload +
++// persona + scope) and the model.
++func cacheableSlot(name, model, prompt string) Slot {
++	return Slot{Primary: Agent{
++		Name:        name,
++		PayloadMode: "blocks",
++		CacheKey:    diffCacheKey(prompt, model, nil),
++		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
++	}}
++}
++
++func TestEngine_CacheHitReplaysWithoutAPICall(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	slot := cacheableSlot("reviewer", "m", "the rendered prompt")
++
++	// First run: cold cache -> one live call, result is written to cache.
++	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	require.Len(t, r1, 1)
++	assert.Equal(t, StatusOK, r1[0].Status)
++	assert.Equal(t, "review by m", r1[0].Content)
++	assert.False(t, r1[0].CacheHit, "cold cache cannot be a hit")
++	assert.Equal(t, 1, f.callCount("m"))
++
++	// Second run: same key -> served from cache, NO new API call.
++	r2 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	require.Len(t, r2, 1)
++	assert.Equal(t, StatusOK, r2[0].Status)
++	assert.Equal(t, "review by m", r2[0].Content)
++	assert.True(t, r2[0].CacheHit, "warm cache must replay")
++	assert.Equal(t, 1, f.callCount("m"), "cache hit must not make another API call")
++}
++
++func TestEngine_NoCacheBypassesReadButStillWrites(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	slot := cacheableSlot("reviewer", "m", "the rendered prompt")
++
++	// Seed the cache.
++	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	require.Equal(t, 1, f.callCount("m"))
++
++	// --no-cache (cacheNoRead=true): must bypass the read and make a live call...
++	r := NewEngine(f, WithCache(store, true)).Run(context.Background(), []Slot{slot})
++	assert.False(t, r[0].CacheHit, "no-cache must not replay")
++	assert.Equal(t, 2, f.callCount("m"), "no-cache bypasses the cached entry and calls live")
++
++	// ...and still refresh the entry, so a subsequent normal run hits.
++	r2 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	assert.True(t, r2[0].CacheHit, "no-cache run must still write fresh results")
++	assert.Equal(t, 2, f.callCount("m"), "the refreshed entry is now served")
++}
++
++func TestEngine_DifferentModelMissesCache(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	NewEngine(f, WithCache(store, false)).Run(context.Background(),
++		[]Slot{cacheableSlot("a", "m1", "same rendered prompt")})
++
++	// Same payload+persona but a different model -> distinct key -> live call.
++	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
++		[]Slot{cacheableSlot("b", "m2", "same rendered prompt")})
++	assert.False(t, r[0].CacheHit)
++	assert.Equal(t, 1, f.callCount("m2"))
++}
++
++// TestEngine_DifferentPromptMissesCache is the regression guard for the
++// independent-review HIGH finding: the key derives from the FULL rendered prompt
++// (which embeds the per-agent scope focus, persona, and refs), so two runs of the
++// same model whose prompts differ — e.g. a changed --scope — must NOT collide.
++func TestEngine_DifferentPromptMissesCache(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	NewEngine(f, WithCache(store, false)).Run(context.Background(),
++		[]Slot{cacheableSlot("a", "m", "prompt with scope:security")})
++
++	// Same model, different rendered prompt (scope changed) -> distinct key -> live.
++	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
++		[]Slot{cacheableSlot("a", "m", "prompt with scope:performance")})
++	assert.False(t, r[0].CacheHit, "a changed prompt (e.g. scope) must not replay a stale review")
++	assert.Equal(t, 2, f.callCount("m"))
++}
++
++// TestEngine_DifferentTemperatureMissesCache guards the temperature MEDIUM
++// finding: temperature changes the LLM output, so it is folded into the key.
++func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	hot, cold := 0.9, 0.1
++	mk := func(temp *float64) Slot {
++		return Slot{Primary: Agent{
++			Name:        "a",
++			PayloadMode: "blocks",
++			CacheKey:    diffCacheKey("same prompt", "m", temp),
++			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
++		}}
++	}
++	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(&hot)})
++	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(&cold)})
++	assert.False(t, r[0].CacheHit, "a temperature change must invalidate the cache entry")
++	assert.Equal(t, 2, f.callCount("m"))
++}
++
++func TestEngine_FailedReviewIsNotCached(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	f.failFor["m"] = assertFailErr
++	slot := cacheableSlot("reviewer", "m", "prompt p")
++
++	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	require.Equal(t, StatusFailed, r1[0].Status)
++
++	// A failure must not populate the cache; the next run calls live again.
++	delete(f.failFor, "m")
++	r2 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	assert.False(t, r2[0].CacheHit, "a failed review must never be cached")
++	assert.Equal(t, 2, f.callCount("m"))
++}
++
++// TestEngine_NoCacheKeyIsNeverCached: an agent with no payload digest (e.g. a
++// directly-constructed Agent) bypasses the cache entirely even when a store is
++// wired, so it always calls live.
++func TestEngine_NoCacheKeyIsNeverCached(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	slot := Slot{Primary: Agent{Name: "x", Invocation: llmclient.Invocation{Model: "m"}}}
++
++	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	assert.False(t, r[0].CacheHit)
++	assert.Equal(t, 2, f.callCount("m"), "an agent without a cache key always calls live")
++}
++
++// countingProvider is a mock OpenAI server that counts the chat-completion
++// requests it serves, so a test can assert a second review made zero live calls.
++func countingProvider(t *testing.T, hits *int64) *httptest.Server {
++	t.Helper()
++	circuitbreaker.DefaultRegistry.Reset()
++	t.Cleanup(circuitbreaker.DefaultRegistry.Reset)
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		atomic.AddInt64(hits, 1)
++		body, _ := io.ReadAll(r.Body)
++		var req struct {
++			Model string `json:"model"`
++		}
++		_ = json.Unmarshal(body, &req)
++		content := "CRITICAL|auth.go:3|Unchecked call|Guard it|security|15|b() unchecked"
++		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
++		_ = json.NewEncoder(w).Encode(resp)
++	}))
++	t.Cleanup(srv.Close)
++	return srv
++}
++
++// TestRunReview_SecondRunServedFromCache is the end-to-end proof of Epic 5.2:
++// re-running a review over an unchanged diff makes zero LLM calls because every
++// agent's output is replayed from .atcr/cache.
++func TestRunReview_SecondRunServedFromCache(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	repo, base, head := initRepo(t)
++	var hits int64
++	srv := countingProvider(t, &hits)
++	cfg := twoAgentConfig(srv.URL)
++
++	// First run: cold cache -> one live call per agent (two agents).
++	_, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
++	require.NoError(t, err)
++	assert.Equal(t, int64(2), atomic.LoadInt64(&hits), "cold run calls each agent live")
++
++	// Second run, same repo/range/root -> everything served from .atcr/cache.
++	res2, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
++	require.NoError(t, err)
++	require.Equal(t, 2, res2.Summary.Succeeded, "cached agents still count as succeeded")
++	assert.Equal(t, int64(2), atomic.LoadInt64(&hits), "warm run makes no new live calls")
++
++	assert.DirExists(t, filepath.Join(repo, ".atcr", "cache"))
++}
++
++// TestRunReview_NoCacheRequestStillCallsLive verifies the request-level
++// --no-cache wiring: NoCache=true bypasses the warm cache and calls live.
++func TestRunReview_NoCacheRequestStillCallsLive(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	repo, base, head := initRepo(t)
++	var hits int64
++	srv := countingProvider(t, &hits)
++	cfg := twoAgentConfig(srv.URL)
++
++	_, err := RunReview(context.Background(), llmclient.New(), cfg, reviewReq(repo, repo, base, head))
++	require.NoError(t, err)
++	require.Equal(t, int64(2), atomic.LoadInt64(&hits))
++
++	noCacheReq := reviewReq(repo, repo, base, head)
++	noCacheReq.NoCache = true
++	_, err = RunReview(context.Background(), llmclient.New(), cfg, noCacheReq)
++	require.NoError(t, err)
++	assert.Equal(t, int64(4), atomic.LoadInt64(&hits), "--no-cache bypasses the warm cache and calls live")
++}
++
++// TestEngine_ToolAgentNeverCached locks the Epic 5.2 scope boundary: a
++// tool-enabled agent (here degraded to single-shot because the fake completer is
++// not a ChatCompleter) must always call live and never replay from cache, since
++// its output depends on live code reads, not just the payload.
++func TestEngine_ToolAgentNeverCached(t *testing.T) {
++	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
++	f := newFake()
++	slot := cacheableSlot("reviewer", "m", "the prompt")
++	slot.Primary.Tools = true // routes through invokeDegraded, bypassing the cache
++
++	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	require.Equal(t, StatusOK, r1[0].Status)
++	assert.False(t, r1[0].CacheHit)
++	assert.True(t, r1[0].ToolsDegraded, "tool agent degraded without a ChatCompleter")
++
++	r2 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
++	assert.False(t, r2[0].CacheHit, "a tool agent must never replay from cache")
++	assert.Equal(t, 2, f.callCount("m"), "tool agent calls live every run")
++}
++
++var assertFailErr = errAssertFail{}
++
++type errAssertFail struct{}
++
++func (errAssertFail) Error() string { return "synthetic failure" }
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index 920402c..904e542 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -46,6 +46,16 @@ type ChatCompleter interface {
+ 	Chat(ctx context.Context, inv llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error)
+ }
+ 
++// reviewCache is the diff cache (Epic 5.2) the engine consults for non-tool
++// (single-shot) agents: Get replays a prior reviewer output for an unchanged
++// payload+model+persona, Put stores a fresh one. *cache.Store satisfies it; the
++// interface keeps the engine decoupled from the storage implementation (mirrors
++// toolDispatcher). nil (the default) disables caching entirely.
++type reviewCache interface {
++	Get(key string) (string, bool, error)
++	Put(key, content string) error
++}
++
+ // toolDispatcher executes a single tool call against the snapshot sandbox,
+ // returning bounded content (never panicking — a tool failure is a *tools.ToolError
+ // the loop relays to the model as a role:"tool" result). *tools.Dispatcher
+@@ -105,6 +115,16 @@ type Agent struct {
+ 	// constraint follows the slot, like the persona prompt).
+ 	MinSeverity string
+ 	MaxFindings *int
++
++	// CacheKey is the diff-cache key (Epic 5.2) for this agent's review call,
++	// derived by buildAgent/buildFallbackAgent from the FULL rendered prompt
++	// (which subsumes payload, persona, the per-agent scope focus, and the
++	// base/head refs — every text input to the model), the model id, and the
++	// temperature. The engine uses it to look up / store this agent's raw review
++	// output, so a re-run over an unchanged diff replays the prior result without
++	// an API call. Empty means "not cacheable" (a directly-constructed Agent, the
++	// doctor self-test) and the engine always calls live for it.
++	CacheKey string
+ }
+ 
+ // Slot is one reviewer position in the roster: a primary agent plus its
+@@ -156,6 +176,12 @@ type Result struct {
+ 	ToolsRequested bool
+ 	TrippedBudgets []string
+ 
++	// CacheHit marks a result served from the diff cache (Epic 5.2) instead of a
++	// live API call. The replayed result carries the cached Content with zero
++	// token usage and no CallRecords, so the run's API-call and cost metrics
++	// reflect that no provider round-trip happened.
++	CacheHit bool
++
+ 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
+ 	// model id; TokensIn/TokensOut are the provider-reported token counts,
+ 	// accumulated across every Chat() turn on the tool-loop path and taken from
+@@ -200,6 +226,15 @@ type Engine struct {
+ 	// correlated context logger via WithLogger, so invokeAgent's per-agent
+ 	// WithAgent scoping produces lines carrying both review_id and agent_name.
+ 	log *slog.Logger
++	// cache is the optional diff cache (Epic 5.2). nil (the default) disables
++	// caching, preserving the pre-5.2 always-live behavior. Only non-tool
++	// (single-shot) agents with a cache key are cached; tool-loop agents read
++	// live code and are never cached.
++	cache reviewCache
++	// cacheNoRead, when true, bypasses cache READS (the --no-cache flag) while
++	// still WRITING fresh results, so a flagged run refreshes stale entries and
++	// every subsequent run benefits. No effect when cache is nil.
++	cacheNoRead bool
+ }
+ 
+ // EngineOption configures an Engine at construction.
+@@ -234,6 +269,18 @@ func WithTranscript(f func(agentName string) *tools.Transcript) EngineOption {
+ 	return func(e *Engine) { e.transcript = f }
+ }
+ 
++// WithCache wires the diff cache (Epic 5.2). When set, a non-tool agent whose
++// payload+model+persona key already has a stored result replays it instead of
++// calling the provider; a fresh successful result is stored. noRead bypasses
++// the read (the --no-cache flag) but still writes. Without this option the
++// engine never touches a cache and always calls live.
++func WithCache(c reviewCache, noRead bool) EngineOption {
++	return func(e *Engine) {
++		e.cache = c
++		e.cacheNoRead = noRead
++	}
++}
++
+ // WithLogger injects the engine's diagnostic logger. Pass the review_id-
+ // correlated logger from the request context (log.FromContext) so every agent
+ // log line is greppable by review. Without it, the engine logs to a no-op
+@@ -519,9 +566,60 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
+ 				return e.invokeToolLoop(ctx, a, cc, e.dispatcher)
+ 			}
+ 		}
++		// A degraded tool agent runs single-shot but is intentionally NOT cached:
++		// it was configured to read live code via the tool loop, so its output is
++		// not a pure function of the payload and a payload-keyed cache could serve
++		// a stale degraded answer. Tool agents always call live.
+ 		return e.invokeDegraded(ctx, a)
+ 	}
+-	return e.invokeSingleShot(ctx, a)
++	return e.invokeCachedSingleShot(ctx, a)
++}
++
++// invokeCachedSingleShot wraps the single-shot path with the diff cache (Epic
++// 5.2). It is the only cache integration point: tool agents (live or degraded)
++// never reach it. With no cache wired, or an agent with no cache key, it is a
++// transparent pass-through to invokeSingleShot, preserving the pre-5.2 behavior.
++//
++// On a cache hit it returns a synthesized OK result carrying the cached Content
++// with zero token usage and no CallRecords — the agent is still counted by the
++// invokeAgent metrics wrapper (it produced a result), but no provider round-trip
++// is recorded, which is the whole point. On a miss it calls live and stores a
++// successful result; a failed/timed-out review is never cached.
++func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
++	if e.cache == nil || a.CacheKey == "" {
++		return e.invokeSingleShot(ctx, a)
++	}
++	key := a.CacheKey
++	if !e.cacheNoRead {
++		content, hit, err := e.cache.Get(key)
++		if err != nil {
++			// A cache read fault is never fatal: log and fall through to a live
++			// call so a corrupt/unreadable cache degrades to the uncached path.
++			log.FromContext(ctx).Warn("diff cache read failed; calling live", "agent", a.Name, "err", err)
++		} else if hit {
++			log.FromContext(ctx).Debug("diff cache hit; replaying without API call", "agent", a.Name, "model", a.Invocation.Model)
++			return Result{
++				Agent:       a.Name,
++				Content:     content,
++				Status:      StatusOK,
++				PayloadMode: a.PayloadMode,
++				Truncation:  a.Truncation,
++				MinSeverity: a.MinSeverity,
++				MaxFindings: a.MaxFindings,
++				Model:       a.Invocation.Model,
++				CacheHit:    true,
++			}
++		}
++	}
++	r := e.invokeSingleShot(ctx, a)
++	if r.Status == StatusOK {
++		if err := e.cache.Put(key, r.Content); err != nil {
++			// A write fault only forfeits the future speed-up; the live result is
++			// already correct, so the review proceeds.
++			log.FromContext(ctx).Warn("diff cache write failed", "agent", a.Name, "err", err)
++		}
++	}
++	return r
+ }
+ 
+ // invokeSingleShot performs one chat completion and classifies the outcome on
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+index d526078..b58ce30 100644
+--- a/internal/fanout/resume.go
++++ b/internal/fanout/resume.go
+@@ -13,6 +13,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/cache"
+ 	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/samestrin/atcr/internal/stream"
+ )
+@@ -311,6 +312,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
+ 		Repo:        req.Repo,
+ 		Head:        req.Range.Head,
+ 		manifest:    m,
++		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
++		// fresh output is written back so a later full run benefits — matching the
++		// "fresh results are always written" contract — rather than being re-called.
++		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
++		cacheNoRead: req.NoCache,
+ 	}
+ 	return p, info, nil
+ }
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index f17927c..89c1b5f 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -7,9 +7,11 @@ import (
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/cache"
+ 	"github.com/samestrin/atcr/internal/llmclient"
+ 	"github.com/samestrin/atcr/internal/log"
+ 	"github.com/samestrin/atcr/internal/metrics"
+@@ -87,6 +89,11 @@ type ReviewRequest struct {
+ 	// Defaulting false preserves the safe fail-on-collision behavior for callers
+ 	// that do not opt in (e.g. the MCP handler).
+ 	Force bool
++	// NoCache bypasses diff-cache READS for this run (the --no-cache flag, Epic
++	// 5.2) while still WRITING fresh results, so the run refreshes any stale
++	// entries and every subsequent run benefits. Defaulting false keeps caching
++	// fully active for callers that do not opt out (e.g. the MCP handler).
++	NoCache bool
+ }
+ 
+ // ReviewResult is the outcome of a completed review run.
+@@ -159,6 +166,13 @@ type PreparedReview struct {
+ 	Repo     string
+ 	Head     string
+ 	manifest *payload.Manifest
++	// cache is the diff cache for this review (Epic 5.2), rooted at
++	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
++	// caching could not be set up; ExecuteReview wires it into the engine when
++	// non-nil. cacheNoRead carries the --no-cache request (bypass reads, still
++	// write).
++	cache       reviewCache
++	cacheNoRead bool
+ }
+ 
+ // AgentCount is the number of reviewer slots the prepared review will run.
+@@ -299,7 +313,12 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 			return nil, err
+ 		}
+ 	}
+-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
++	// Wire the diff cache (Epic 5.2): reviewer outputs are content-addressed
++	// under <root>/.atcr/cache (sibling of reviews/, already excluded from git)
++	// and capped at the resolved cache_max_bytes. The store is shared across the
++	// run's agents; ExecuteReview hands it to the engine.
++	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
++	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+ }
+ 
+ // runEngine wires the optional read-only tool harness for p's tool-enabled slots
+@@ -325,6 +344,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
+ 	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
+ 	// discard logger if none is set.
+ 	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
++	// Hand the diff cache to the engine (Epic 5.2). Non-tool agents whose
++	// payload+model+persona key already has a stored result replay it instead of
++	// calling the provider; nil cache (direct construction) leaves caching off.
++	if p.cache != nil {
++		opts = append(opts, WithCache(p.cache, p.cacheNoRead))
++	}
+ 	if anyToolAgent(p.Slots) && p.Head != "" {
+ 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
+ 			log.FromContext(ctx).Warn("tool harness disabled (snapshot); tool agents degrade to single-shot", "head", p.Head, "err", err)
+@@ -585,6 +610,24 @@ const defaultMaxTokens = 8192
+ // (MaxTokens is a pointer so an explicit value always serializes).
+ func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
+ 
++// diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
++// the FULL rendered prompt — which already embeds the payload, the resolved
++// persona, the per-agent scope focus (Epic 2.2), and the base/head refs, i.e.
++// every text input the model receives — plus the model id and the temperature
++// (the tuning param that changes the output). Keying on the rendered prompt
++// rather than the raw payload+persona is what guarantees a scope or persona
++// change invalidates the entry instead of silently replaying a stale review.
++// MaxTokens is constant across review agents (defaultMaxTokens), so it is
++// intentionally omitted. min_severity/max_findings are deterministic post-LLM
++// filters and are correctly NOT in the key.
++func diffCacheKey(prompt, model string, temperature *float64) string {
++	temp := "default"
++	if temperature != nil {
++		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
++	}
++	return cache.Key(cache.HashText(prompt), model, temp)
++}
++
+ // buildAgent resolves an agent's persona, renders its prompt against the payload
+ // it sees, and assembles the invocation. It returns the agent and its mode.
+ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange) (Agent, string, error) {
+@@ -642,6 +685,11 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
+ 		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
+ 		MinSeverity:      ac.MinSeverity,
+ 		MaxFindings:      ac.MaxFindings,
++		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
++		// + temperature (see diffCacheKey). Tool agents carry a key too but the
++		// engine never caches them (they read live code), so setting it
++		// unconditionally is safe.
++		CacheKey: diffCacheKey(prompt, ac.Model, ac.Temperature),
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     prov.BaseURL,
+ 			APIKeyEnv:   prov.APIKeyEnv,
+@@ -724,6 +772,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
+ 		// and max_findings still govern the output.
+ 		MinSeverity: primary.MinSeverity,
+ 		MaxFindings: primary.MaxFindings,
++		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
++		// the primary but on its OWN model and temperature, so it keys on the
++		// primary's prompt with the fallback's model/temperature — a substitute
++		// model must not collide with the primary's cache entry.
++		CacheKey: diffCacheKey(primary.Prompt, ac.Model, ac.Temperature),
+ 		Invocation: llmclient.Invocation{
+ 			BaseURL:     prov.BaseURL,
+ 			APIKeyEnv:   prov.APIKeyEnv,
+diff --git a/internal/fanout/status.go b/internal/fanout/status.go
+index 9329490..5fa6248 100644
+--- a/internal/fanout/status.go
++++ b/internal/fanout/status.go
+@@ -322,6 +322,12 @@ type AgentStatus struct {
+ 	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
+ 	ToolsRequested bool     `json:"tools_requested,omitempty"`
+ 	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
++
++	// CacheHit marks a result replayed from the diff cache (Epic 5.2) instead of
++	// a live API call. omitempty so a live review's status.json is byte-identical
++	// to the pre-5.2 shape; only a cached replay records cache_hit:true, making a
++	// stale-serve auditable in the artifacts rather than invisible.
++	CacheHit bool `json:"cache_hit,omitempty"`
+ }
+ 
+ // WriteStatus serializes s to path as indented JSON, writing atomically (temp
+diff --git a/internal/registry/cache_settings_test.go b/internal/registry/cache_settings_test.go
+new file mode 100644
+index 0000000..772b030
+--- /dev/null
++++ b/internal/registry/cache_settings_test.go
+@@ -0,0 +1,63 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestPrecedence_CacheMaxBytesDefault(t *testing.T) {
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, nil)
++	assert.Equal(t, int64(DefaultCacheMaxBytes), s.CacheMaxBytes, "embedded 50 MB default used when nothing overrides")
++}
++
++func TestPrecedence_CacheMaxBytesChain(t *testing.T) {
++	reg := loadRegistryWith(t, "cache_max_bytes: 1048576\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncache_max_bytes: 2097152\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, int64(2097152), s.CacheMaxBytes, "project config wins over registry")
++}
++
++func TestPrecedence_CacheMaxBytesRegistryOverridesEmbedded(t *testing.T) {
++	reg := loadRegistryWith(t, "cache_max_bytes: 1048576\n")
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, reg)
++	assert.Equal(t, int64(1048576), s.CacheMaxBytes, "registry wins over embedded default")
++}
++
++func TestPrecedence_CacheMaxBytesExplicitZeroIsUnbounded(t *testing.T) {
++	// 0 is the documented unbounded escape hatch (parity with payload_byte_budget
++	// and max_parallel) and must survive default application.
++	proj, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncache_max_bytes: 0\n"))
++	require.NoError(t, err)
++
++	s := resolve(t, CLIOverrides{}, proj, nil)
++	assert.Equal(t, int64(0), s.CacheMaxBytes, "explicit 0 overrides the embedded default (unbounded)")
++}
++
++func TestProjectConfig_CacheMaxBytesNegativeRejected(t *testing.T) {
++	_, err := LoadProjectConfig(writeProject(t, "agents: [bruce]\ncache_max_bytes: -1\n"))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "cache_max_bytes")
++}
++
++func TestRegistry_CacheMaxBytesNegativeRejected(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, `
++providers:
++  p:
++    api_key_env: KEY
++agents:
++  bruce: {provider: p, model: m}
++cache_max_bytes: -5
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "cache_max_bytes")
++}
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index 6b4d8fc..adb4e6e 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -165,6 +165,11 @@ type Registry struct {
+ 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
+ 	// application in ResolveSettings.
+ 	MaxParallel *int `yaml:"max_parallel,omitempty"`
++	// CacheMaxBytes is the user-level (global) tier of the diff-cache size cap
++	// (Epic 5.2); a pointer so an explicit 0 (unbounded) survives default
++	// application. The project tier overrides it; unset falls through to the
++	// embedded DefaultCacheMaxBytes.
++	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+ 
+ 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
+ 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
+@@ -238,6 +243,9 @@ func (r *Registry) validate() error {
+ 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
+ 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
+ 	}
++	if r.CacheMaxBytes != nil && *r.CacheMaxBytes < 0 {
++		errs = append(errs, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
++	}
+ 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
+ 	// delay must be positive so the exponential schedule has a starting point.
+ 	for _, m := range validateRetryBounds(r.MaxRetries, r.InitialBackoffMs) {
+diff --git a/internal/registry/precedence.go b/internal/registry/precedence.go
+index 60cda55..6d7f632 100644
+--- a/internal/registry/precedence.go
++++ b/internal/registry/precedence.go
+@@ -94,6 +94,9 @@ type Settings struct {
+ 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
+ 	// engine; 0 is the documented unbounded escape hatch.
+ 	MaxParallel int
++	// CacheMaxBytes is the resolved total-size cap for the diff cache (Epic 5.2)
++	// passed to cache.NewStore; 0 is the documented unbounded escape hatch.
++	CacheMaxBytes int64
+ 	// MaxRetries is the resolved retry budget passed to the llmclient per call
+ 	// (Epic 4.6); 0 means a single attempt with no retry.
+ 	MaxRetries int
+@@ -120,12 +123,19 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 		TimeoutSecs:       DefaultTimeoutSecs,
+ 		PayloadByteBudget: DefaultPayloadByteBudget,
+ 		MaxParallel:       DefaultMaxParallel,
++		CacheMaxBytes:     DefaultCacheMaxBytes,
+ 		MaxRetries:        DefaultMaxRetries,
+ 		InitialBackoffMs:  DefaultInitialBackoffMs,
+ 	}
+ 
+ 	if reg != nil {
+ 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
++		// CacheMaxBytes lives at the registry (global) and project tiers only,
++		// like the retry tunables — overlaid here, not through applyTier's fixed
++		// four-field signature. A pointer means an explicit 0 (unbounded) survives.
++		if reg.CacheMaxBytes != nil {
++			s.CacheMaxBytes = *reg.CacheMaxBytes
++		}
+ 		// Retry tunables live only at the registry (global) tier and the agent
+ 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
+ 		// so they are overlaid here rather than through applyTier.
+@@ -138,6 +148,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 	}
+ 	if proj != nil {
+ 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
++		if proj.CacheMaxBytes != nil {
++			s.CacheMaxBytes = *proj.CacheMaxBytes
++		}
+ 	}
+ 
+ 	if cli.PayloadByteBudget != nil {
+@@ -189,6 +202,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
+ 	if s.PayloadByteBudget < 0 {
+ 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+ 	}
++	// CacheMaxBytes: 0 = unbounded (valid); negative is always invalid. A
++	// directly-constructed proj/reg (bypassing the file loader) could carry one.
++	if s.CacheMaxBytes < 0 {
++		return Settings{}, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
++	}
+ 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
+ 	// loader) can carry out-of-range values; catch them so the engine never
+ 	// receives them. 0 retries is valid (single attempt); the base delay must be
+diff --git a/internal/registry/project.go b/internal/registry/project.go
+index ffc7dfd..58030eb 100644
+--- a/internal/registry/project.go
++++ b/internal/registry/project.go
+@@ -23,6 +23,11 @@ const (
+ 	// default — reduce payload_byte_budget to ~163840 (160 KiB ≈ 40k tokens)
+ 	// in .atcr/config.yaml for rosters that include smaller-context models.
+ 	DefaultPayloadByteBudget int64 = 524288
++	// DefaultCacheMaxBytes is the embedded total-size cap for the diff cache
++	// (Epic 5.2): 50 MiB of reviewer outputs under .atcr/cache before
++	// least-recently-used eviction kicks in. 0 is the documented unbounded
++	// escape hatch (parity with payload_byte_budget / max_parallel).
++	DefaultCacheMaxBytes int64 = 50 * 1024 * 1024
+ )
+ 
+ // ProjectConfig is the project-level configuration from .atcr/config.yaml:
+@@ -41,6 +46,10 @@ type ProjectConfig struct {
+ 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
+ 	// application in ResolveSettings.
+ 	MaxParallel *int `yaml:"max_parallel,omitempty"`
++	// CacheMaxBytes overrides the diff-cache total-size cap (Epic 5.2). A pointer
++	// so an explicit 0 (unbounded) survives default application; unset inherits
++	// the registry tier or the embedded DefaultCacheMaxBytes.
++	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+ }
+ 
+ // DefaultProjectConfigPath returns .atcr/config.yaml under root.
+@@ -70,6 +79,10 @@ func DefaultProjectConfigYAML(roster []string) string {
+ 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
+ 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")
+ 	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
++	b.WriteString("# cache_max_bytes: total-size cap (bytes) for the diff cache under .atcr/cache.\n")
++	b.WriteString("#   Unchanged diffs are served from cache, skipping the LLM call. Default 50 MiB;\n")
++	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
++	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
+ 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
+ 	return b.String()
+ }
+@@ -115,6 +128,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
+ 	if cfg.MaxParallel != nil && *cfg.MaxParallel < 0 {
+ 		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)
+ 	}
++	if cfg.CacheMaxBytes != nil && *cfg.CacheMaxBytes < 0 {
++		return nil, fmt.Errorf("%s: cache_max_bytes must be >= 0 (0 = unbounded)", base)
++	}
+ 	if !payloadModeValid(cfg.PayloadMode) {
+ 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
+ 	}

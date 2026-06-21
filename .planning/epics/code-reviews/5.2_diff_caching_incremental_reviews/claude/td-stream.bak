@@ -1,0 +1,13 @@
+# TD_STREAM - Technical Debt Items
+# TARGET_ID: /Users/samestrin/Documents/GitHub/atcr/.planning/epics/completed/5.2_diff_caching_incremental_reviews.md
+# TARGET_TYPE: epic
+# CREATED: 2026-06-20 19:41:43
+# Format: SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+# EST_MINUTES: estimated fix time
+# EVIDENCE: Code snippet reference with file:line_start-line_end range
+# REVIEWER: 'claude' (this prompt), agent name (multi_review pool)
+# NOTE: Reviewed against origin/main @ 4f2e6b9 (the merged epic 5.2 code). Local main (a7c9cd8) does NOT contain this code — it is 7 ahead / 1 behind origin/main, missing the merge.
+# --- DATA BELOW THIS LINE ---
+
+LOW|.gitignore:0|The diff cache writes reviewer outputs (up to the 50 MiB cap) to .atcr/cache/. The epic clarification assumed this dir is "gitignored like .atcr/reviews", but the only ignore rule for .atcr/ lives in .git/info/exclude (line 18), which is a LOCAL, per-clone, untracked file — it is NOT committed and does not travel with the repo. On a fresh clone, in CI, or for any collaborator, .atcr/cache/ is untracked-but-not-ignored, so reviewer-output JSON (which can contain code snippets and review prose) can be accidentally staged by 'git add .' and the cache can bloat the repo. 5.2 amplifies a pre-existing pattern by adding a new high-churn directory under the same unshared protection.|Add '.atcr/' (or explicitly '.atcr/cache/' and '.atcr/reviews/') to the committed .gitignore so the ignore rule is shared across clones and CI, not dependent on each developer's local .git/info/exclude.|ops|15|.gitignore (whole file); .git/info/exclude:18|claude
+LOW|internal/fanout/review.go:613|diffCacheKey(prompt, model, temperature) keys a cache entry on the model-id STRING but not the provider/BaseURL. atcr supports arbitrary OpenAI-compatible providers, so two roster agents can share an identical model id (e.g. "gpt-4o-mini" or a local model name) served by different endpoints/API-key envs. With identical rendered prompt + identical model id + identical temperature, the two agents derive the SAME cache key, so the second replays the first backend's output — a cross-provider cache collision that serves one endpoint's review for the other. Narrow (most rosters use distinct model ids), but real for multi-provider-same-model rosters.|In diffCacheKey, fold a provider discriminator (the resolved BaseURL host, or the registry provider name) into the tuning token passed to cache.Key alongside the temperature, so distinct backends never share an entry. Update internal/fanout/cache_test.go with a same-model/different-provider miss case.|correctness|45|internal/fanout/review.go:613-628|claude
