@@ -40,6 +40,7 @@ const PathNotFoundWarning = "file not found"
 // candidate index (CaseCorrection), not here: os.Stat/EvalSymlinks remain
 // case-insensitive on the default macOS/Windows filesystems, so a case-only typo
 // still resolves as present at this layer and is caught by the index instead.
+//
 // idx is the candidate file index for this reconcile run (Epic 5.4), built once
 // from `git ls-files` and shared across every finding. It powers PathSuggestion
 // and the case-only check; a nil idx (non-git repo, or git unavailable) cleanly
