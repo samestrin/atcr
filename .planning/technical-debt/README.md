@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 20 | 1 |
-| LOW | 0 | 20 | 7 |
+| MEDIUM | 0 | 20 | 0 |
+| LOW | 0 | 20 | 0 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 41 | **Resolved Items:** 8 | **Total Items:** 49
+**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 41 | **Resolved Items:** 0 | **Total Items:** 41
 
 ## Directory Structure
 
@@ -35,12 +35,6 @@ technical-debt/
 
 
 
-### [2026-06-20] From Sprint: 5.2_diff_caching_incremental_reviews
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| U | [x] | MEDIUM | internal/fanout/engine.go:596 | Missing FallbackFrom in synthesized cache-hit Result (Closed 2026-06-21: false positive — Agent has no FallbackFrom field so the suggested fix cannot compile; invokeSlot stamps FallbackFrom uniformly on cached and live Results) | Add FallbackFrom: a.FallbackFrom to the Result struct | correctness | 5 | code-review | bruce | MEDIUM |
-
 ### [2026-06-20] From Sprint: epic-5.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
@@ -53,17 +47,6 @@ technical-debt/
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
 | U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
-| U | [x] | LOW | internal/reconcile/emit.go:146 | The reconciled 9-column findings.txt (RenderText) does not carry PathValid/PathWarning, so a consumer reading findings.txt rather than findings.json/report.md loses the hallucination warning | Document the intentional omission in RenderText, or fold the warning into the EVIDENCE column the way the Disagreement annotation already is | INTEGRATION | 15 | execute-epic-independent |
-| U | [x] | LOW | internal/stream/validate.go:46 | os.Stat is case-insensitive on macOS/Windows default filesystems, so a case-only path typo (Parser.go vs parser.go) resolves as present and is not flagged | Add a case-exact existence check comparing against the real dirent name per path segment | EDGE_CASES | 30 | execute-epic-independent |
-| U | [x] | LOW | internal/report/render.go:318 | The warning label "File not found" is hardcoded and keyed off PathWarning != "" rather than rendering the PathWarning value, so a future non-default warning would render text inconsistent with findings.json path_warning | Render esc(f.PathWarning) so the human report always matches the machine field | REGRESSION_RISK | 15 | execute-epic-independent |
-
-### [2026-06-20] From Sprint: epic-4.9
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 4 | [x] | LOW | internal/fanout/secrets.go:28 | SecretValues resolves os.Getenv only at redactor-construction time, so a key set or rotated after correlateAndRedact/reviewContext runs will not be added to the exact-value scrub list and could leak verbatim. | Document the construction-time snapshot contract explicitly as a known limitation; acceptable given keys are resolved before any provider call. | EDGE_CASES | 5 | execute-epic-independent |
-| 4 | [x] | LOW | internal/fanout/secrets.go:18 | The minSecretLen=8 guard admits any 8-39 char misconfigured/self-hosted key value into the verbatim ReplaceAll scrub list, so a short generic key could over-redact unrelated log substrings that contain it. | Accept the documented tradeoff (real provider keys are 32+); if self-hosted short keys become a concern, raise the floor or scope the verbatim match to header-adjacent contexts. | EDGE_CASES | 15 | execute-epic-independent |
-| 4 | [x] | LOW | internal/fanout/secrets.go:24 | SecretValues silently skips both unset and sub-8-char env values with no diagnostic, so an operator who fat-fingers a key env name or sets a too-short test key gets no signal that exact-value redaction is inactive for that slot. | Optionally emit a debug-level (never the value) note when a configured APIKeyEnv resolves empty or below the floor, so a misconfigured redaction path is observable. | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
 
@@ -73,12 +56,6 @@ technical-debt/
 | 3 | [/] | MEDIUM | internal/fanout/reviewdir.go:373 | The advertised "an interrupted swap never leaves the user with neither generation" invariant is conditional on a best-effort SILENT restore succeeding. If restorePriorBackup's os.Rename(backupOld,backup) fails (e.g. backup partially recreated, or perms change), the only surviving copy is stranded under .bak.old — which the very next run's entry-time RemoveAll(backupOld) (line 318) then deletes. Same pattern at the copy site swapStagedBackup (atomic.go:159-167) feeding atomic.go:97 RemoveAll(bakOld). (Won't-fix 2026-06-20: observability half done (restore failure now logged); the lone-.bak.old-as-generation redesign is rejected per Epic 4.7.1 Q3 — .bak.old is atcr-owned temp deleted at entry, one-generation contract + TestBackupExisting_CleansStaleStagingStragglers stand; confirmed via /sprint-clarification 95%) | Surface restore failures loudly (log/return) instead of dropping them, and/or do not auto-RemoveAll .bak.old at entry when .bak is absent — treat a lone .bak.old as the surviving generation to recover. Add a test where restore fails and a subsequent run is asserted not to delete the only surviving copy. | correctness | 120 | code-review | claude | MEDIUM |
 | 3 | [/] | LOW | internal/fanout/reviewdir.go:388 | backupCrossDevice's inner os.Rename(backupNew,backup) relies on backupNew and backup sharing a filesystem, an invariant that holds only by naming coincidence (both are siblings of path). If anyone later relocates backupNew under path, the inner rename silently becomes cross-device and returns a raw EXDEV to the user. (Won't-fix 2026-06-20: same-fs invariant holds by construction — backup and backupNew are both siblings of path; a runtime guard would be unreachable dead code today and is already documented at reviewdir.go:415-419; confirmed via /sprint-clarification 90%) | Add a test that forces renameFn to return syscall.EXDEV and makes the copy fail (a copy seam, or unreadable src), staging a prior .bak first; assert the prior .bak content is restored intact, the live tree survives, and .bak.new is cleaned up. Cover the copy-failure leg at minimum. | testing | 120 | code-review | claude | MEDIUM |
 | 3 | [/] | LOW | internal/fanout/reviewdir_test.go:458 | Test-coverage gaps in the failed-swap/cleanup paths: TestBackupExisting_FailedSwapPreservesPriorBak asserts no .bak.old straggler but not .bak.new; the non-ErrNotExist Lstat(backup) error branch (reviewdir.go:333-335) is untested; the entry-time RemoveAll straggler-cleanup failure legs (reviewdir.go:318-323) are untested. Each is a real error branch a regression could silently break. | Add assert.NoDirExists for src+".bak.new" at reviewdir_test.go:458; add a perms-based test forcing Lstat(backup) to fail with a non-ErrNotExist error; add a test where .bak.old cannot be removed and assert the typed "clearing stale staging backup" error. Skip on root/CI where perms are not enforced. (Partial 2026-06-21: gaps 1 (.bak.new assertion) and 3 (RemoveAll(.bak.old) failure) covered; gap 2 (non-ErrNotExist Lstat(backup)) deferred — needs an lstatFn production seam since the staging siblings share a parent dir so perms cannot isolate it) | testing | 30 | code-review | claude | MEDIUM |
-
-### [2026-06-20] From Sprint: epic-4.7.1
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [x] | LOW | internal/atomicfs/atomic.go:139 | CopyPath documents that a directory dst must not already exist, but copyTree uses MkdirAll and copyFile uses O_TRUNC, so a pre-existing dst is silently merged/overwritten; the not-exist invariant is enforced by callers (a prior RemoveAll), not by CopyPath itself. | Enforce the precondition inside CopyPath (stat dst and error if present) or soften the doc comment to state CopyPath merges into an existing dst. | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-19] From Sprint: 4.7_idempotency
 
