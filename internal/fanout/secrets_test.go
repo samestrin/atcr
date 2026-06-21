@@ -24,7 +24,7 @@ func TestSecretValues_ResolvesPrimaryAndFallbacks(t *testing.T) {
 	t.Setenv("ATCR_SV_FALLBACK", "sk-fallbackkeyvalue7890")
 
 	prep := &PreparedReview{Slots: []Slot{slotForKeys("ATCR_SV_PRIMARY", "ATCR_SV_FALLBACK")}}
-	got := prep.SecretValues()
+	got, _ := prep.SecretValues()
 
 	require.ElementsMatch(t, []string{"AIzaSyPrimaryKeyValue123456", "sk-fallbackkeyvalue7890"}, got,
 		"both the primary and fallback resolved key values must be enumerated")
@@ -41,7 +41,7 @@ func TestSecretValues_DedupesIdenticalResolvedValues(t *testing.T) {
 		slotForKeys("ATCR_SV_A"),
 		slotForKeys("ATCR_SV_B"),
 	}}
-	got := prep.SecretValues()
+	got, _ := prep.SecretValues()
 
 	require.Equal(t, []string{"AIzaSySharedKeyValue1234567"}, got,
 		"identical resolved values must be deduped")
@@ -54,7 +54,7 @@ func TestSecretValues_SkipsUnsetEnv(t *testing.T) {
 	// ATCR_SV_UNSET is intentionally never set.
 
 	prep := &PreparedReview{Slots: []Slot{slotForKeys("ATCR_SV_SET", "ATCR_SV_UNSET")}}
-	got := prep.SecretValues()
+	got, _ := prep.SecretValues()
 
 	require.Equal(t, []string{"AIzaSyOnlyOneIsSet123456789"}, got,
 		"an unset env var must not contribute an empty secret")
@@ -69,7 +69,7 @@ func TestSecretValues_SkipsShortValues(t *testing.T) {
 	t.Setenv("ATCR_SV_LONG", "AIzaSyLongEnoughKeyValue123")
 
 	prep := &PreparedReview{Slots: []Slot{slotForKeys("ATCR_SV_SHORT", "ATCR_SV_EXACT8", "ATCR_SV_LONG")}}
-	got := prep.SecretValues()
+	got, _ := prep.SecretValues()
 
 	require.ElementsMatch(t, []string{"abcd1234", "AIzaSyLongEnoughKeyValue123"}, got,
 		"values shorter than 8 chars must be skipped; 8-char and longer values kept")
@@ -79,5 +79,41 @@ func TestSecretValues_SkipsShortValues(t *testing.T) {
 // never a panic.
 func TestSecretValues_EmptySlots(t *testing.T) {
 	prep := &PreparedReview{}
-	require.Empty(t, prep.SecretValues(), "no slots must yield no secrets")
+	secrets, warnings := prep.SecretValues()
+	require.Empty(t, secrets, "no slots must yield no secrets")
+	require.Empty(t, warnings, "no slots must yield no warnings")
+}
+
+// TestSecretValues_WarnsOnConfiguredButUnusableSlot verifies a named APIKeyEnv
+// that resolves empty or below the floor yields a warning (never the value),
+// while a slot with no APIKeyEnv configured stays silent.
+func TestSecretValues_WarnsOnConfiguredButUnusableSlot(t *testing.T) {
+	t.Setenv("ATCR_SV_SHORTKEY", "abc") // configured but below the floor
+	// ATCR_SV_MISSINGKEY intentionally unset.
+
+	prep := &PreparedReview{Slots: []Slot{
+		slotForKeys("ATCR_SV_SHORTKEY", "ATCR_SV_MISSINGKEY"),
+		{Primary: Agent{Invocation: llmclient.Invocation{APIKeyEnv: ""}}}, // no key env → silent
+	}}
+	secrets, warnings := prep.SecretValues()
+
+	require.Empty(t, secrets, "no usable key values")
+	require.Len(t, warnings, 2, "one warning per configured-but-unusable env; the unconfigured slot is silent")
+	for _, w := range warnings {
+		require.NotContains(t, w, "abc", "a warning must never contain the resolved value")
+	}
+	require.Contains(t, warnings[0], "ATCR_SV_SHORTKEY")
+	require.Contains(t, warnings[1], "ATCR_SV_MISSINGKEY")
+}
+
+// TestSecretValues_WarnsOncePerEnv verifies the same misconfigured env across
+// two slots warns only once.
+func TestSecretValues_WarnsOncePerEnv(t *testing.T) {
+	// ATCR_SV_DUP intentionally unset, referenced by two slots.
+	prep := &PreparedReview{Slots: []Slot{
+		slotForKeys("ATCR_SV_DUP"),
+		slotForKeys("ATCR_SV_DUP"),
+	}}
+	_, warnings := prep.SecretValues()
+	require.Len(t, warnings, 1, "a repeated misconfigured env warns once")
 }

@@ -52,6 +52,22 @@ func TestRender_Markdown_RefutedShowsPathWarning(t *testing.T) {
 	assert.Contains(t, out, "⚠️ File not found: internal/auth/validator.go")
 }
 
+// TestRender_Markdown_NonDefaultPathWarning: a finding whose PathWarning is not
+// the canonical PathNotFoundWarning renders the actual warning value rather than
+// the frozen "File not found" label, so the human report tracks the machine
+// field path_warning (TD render.go:318).
+func TestRender_Markdown_NonDefaultPathWarning(t *testing.T) {
+	f := flagged()
+	f[0].PathWarning = "path escapes repo"
+
+	var b bytes.Buffer
+	require.NoError(t, Render(&b, f, FormatMarkdown))
+
+	out := b.String()
+	assert.Contains(t, out, "⚠️ path escapes repo: internal/auth/validator.go")
+	assert.NotContains(t, out, "File not found")
+}
+
 // flaggedWithSuggestion returns one flagged finding that also carries a
 // candidate-index correction (Epic 5.4).
 func flaggedWithSuggestion() []reconcile.JSONFinding {

@@ -322,11 +322,19 @@ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
 	if f.PathWarning == "" {
 		return
 	}
+	// Default to the canonical "File not found" label for the standard
+	// PathNotFoundWarning value (keeping the human report byte-stable), but render
+	// the actual PathWarning for any non-default warning so the human report
+	// tracks the machine field (path_warning) instead of a frozen string.
+	label := "File not found"
+	if f.PathWarning != stream.PathNotFoundWarning {
+		label = esc(f.PathWarning)
+	}
 	if f.PathSuggestion != "" {
-		fmt.Fprintf(b, "  - ⚠️ File not found: %s (did you mean %s?)\n", esc(f.File), esc(f.PathSuggestion))
+		fmt.Fprintf(b, "  - ⚠️ %s: %s (did you mean %s?)\n", label, esc(f.File), esc(f.PathSuggestion))
 		return
 	}
-	fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(f.File))
+	fmt.Fprintf(b, "  - ⚠️ %s: %s\n", label, esc(f.File))
 }
 
 // writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an

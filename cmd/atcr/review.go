@@ -204,7 +204,11 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// non-Bearer keys are scrubbed by exact value, not only by token shape. Shared
 	// with runResume so the contract can't drift between paths. From here on use
 	// this correlated ctx, never cmd.Context() again.
-	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, prep.SecretValues()...)
+	secrets, secretWarnings := prep.SecretValues()
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+	for _, w := range secretWarnings {
+		log.FromContext(ctx).Debug(w)
+	}
 
 	if err := preflightAPIKeys(prep.Slots); err != nil {
 		return err // no slot can authenticate → exit 2 before any provider call

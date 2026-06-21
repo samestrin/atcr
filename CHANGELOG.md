@@ -2,6 +2,20 @@
 
 ### Fixed
 
+- Documented `CopyPath`'s actual merge-into-existing-destination behavior.
+- Documented the `SecretValues` construction-time snapshot contract for environment keys.
+- Documented the `minSecretLen` over-redaction tradeoff.
+- Documented the intentional `PathWarning` omission in `RenderText`.
+- Rendered the actual `PathWarning` value for non-default warnings in human reports.
+- Surfaced `SecretValues` misconfiguration (unset or below-minimum values) via returned warnings.
+- Covered backup straggler-cleanup failure legs in tests.
+
+*Shipped via /resolve-td + /finalize-td*
+
+## [Technical Debt] - 2026-06-21
+
+### Fixed
+
 - Normalized backslash path separators in file-index lookups so cited paths match regardless of the build OS.
 - Clarified that path case folding uses ASCII-lowercase, not full Unicode case folding.
 - Prevented path-suggestion from offering a sibling correction when the cited path itself is tracked.
