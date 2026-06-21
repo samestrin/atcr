@@ -24,6 +24,15 @@ type FileIndex struct {
 }
 
 // BuildFileIndex runs `git ls-files` under root and builds the candidate index.
+//
+// root must be the repository root (not a subdirectory). The returned tracked
+// paths are relative to root, and callers expect Finding.File paths to share
+// that base. Passing a subdirectory would make git emit paths relative to that
+// subdirectory while the caller still supplied repo-root-relative paths,
+// silently producing zero useful matches. Today all callers pass "." / the
+// repo root; if subdir roots ever become supported, reconcile the path bases
+// between the index and the caller before matching.
+//
 // It returns nil — signalling "degrade to existence-only, no suggestion" — when
 // root is empty, root is not a git repository, or git is unavailable. A repo
 // with no tracked files yields a non-nil but empty index.
