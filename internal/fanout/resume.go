@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -311,6 +312,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		Repo:        req.Repo,
 		Head:        req.Range.Head,
 		manifest:    m,
+		// Wire the diff cache for resumed agents too (Epic 5.2): a resumed agent's
+		// fresh output is written back so a later full run benefits — matching the
+		// "fresh results are always written" contract — rather than being re-called.
+		cache:       cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes),
+		cacheNoRead: req.NoCache,
 	}
 	return p, info, nil
 }

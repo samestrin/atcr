@@ -288,6 +288,16 @@ func TestReviewCmd_ForceFlagRegistered(t *testing.T) {
 	require.False(t, v, "--force defaults to false")
 }
 
+// TestReviewCmd_NoCacheFlagRegistered verifies the --no-cache flag exists on the
+// review command and defaults to false (Epic 5.2: caching on unless opted out).
+func TestReviewCmd_NoCacheFlagRegistered(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NotNil(t, cmd.Flags().Lookup("no-cache"), "review must define --no-cache")
+	v, err := cmd.Flags().GetBool("no-cache")
+	require.NoError(t, err)
+	require.False(t, v, "--no-cache defaults to false (caching active)")
+}
+
 // TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
 // --resume and --force is a usage error (exit 2) regardless of a git repo,
 // because the guard fires at the resume branch before any range resolution.

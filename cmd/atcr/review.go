@@ -44,6 +44,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
+	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
 	addRangeFlags(cmd)
 	return cmd
 }
@@ -177,6 +178,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		IDOverride: idOverride,
 		OutputDir:  outputDir,
 		Force:      boolFlag(cmd, "force"),
+		NoCache:    boolFlag(cmd, "no-cache"),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
