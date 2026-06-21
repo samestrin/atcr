@@ -24,7 +24,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, nil),
+		CacheKey:    diffCacheKey(prompt, model, "", nil),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -111,13 +111,39 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", temp),
+			CacheKey:    diffCacheKey("same prompt", "m", "", temp),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}
 	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(&hot)})
 	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(&cold)})
 	assert.False(t, r[0].CacheHit, "a temperature change must invalidate the cache entry")
+	assert.Equal(t, 2, f.callCount("m"))
+}
+
+// TestEngine_DifferentProviderMissesCache guards the cross-provider collision:
+// two agents sharing a model id + rendered prompt + temperature but served by
+// different backends (BaseURLs) must NOT collide on one cache entry, or the
+// second backend would replay the first's review. The resolved backend is folded
+// into the key alongside temperature.
+func TestEngine_DifferentProviderMissesCache(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newFake()
+	mk := func(baseURL string) Slot {
+		return Slot{Primary: Agent{
+			Name:        "a",
+			PayloadMode: "blocks",
+			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil),
+			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
+		}}
+	}
+	NewEngine(f, WithCache(store, false)).Run(context.Background(),
+		[]Slot{mk("https://api.provider-a.test/v1")})
+
+	// Same model+prompt+temperature, different backend -> distinct key -> live.
+	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
+		[]Slot{mk("https://api.provider-b.test/v1")})
+	assert.False(t, r[0].CacheHit, "same model+prompt+temp on a different backend must not replay")
 	assert.Equal(t, 2, f.callCount("m"))
 }
 

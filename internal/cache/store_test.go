@@ -69,6 +69,31 @@ func TestStore_CorruptEntrySelfHeals(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "corrupt entry should be removed to self-heal")
 }
 
+// TestStore_CorruptEntryRemovalFailureSurfacesError: when a corrupt entry is
+// found but cannot be removed (e.g. the cache dir is not writable), the removal
+// error is surfaced to the caller rather than silently discarded — a real IO
+// failure must not be masked as a clean miss.
+func TestStore_CorruptEntryRemovalFailureSurfacesError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root bypasses directory permission checks")
+	}
+	dir := filepath.Join(t.TempDir(), "cache")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	s := NewStore(dir, 0)
+	k := Key(HashText("p"), "m", HashText("x"))
+	// Write a corrupt entry directly at the key's file path.
+	path := filepath.Join(dir, fileNameFor(k))
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
+
+	// Make the cache dir non-writable so os.Remove of the corrupt entry fails.
+	require.NoError(t, os.Chmod(dir, 0o555))
+	defer func() { _ = os.Chmod(dir, 0o755) }() // restore so t.TempDir cleanup succeeds
+
+	_, hit, err := s.Get(k)
+	assert.Error(t, err, "failure to remove a corrupt entry must surface as an error")
+	assert.False(t, hit)
+}
+
 // TestStore_EvictsOldestWhenOverCap writes several entries past the byte cap and
 // asserts the least-recently-used (oldest mtime) entries are evicted while the
 // newest survive.
@@ -136,6 +161,24 @@ func TestStore_GetRefreshesRecency(t *testing.T) {
 	_, hitB, _ := s.Get(kB)
 	assert.True(t, hitA, "recently-read entry must survive")
 	assert.False(t, hitB, "untouched older entry must be evicted")
+}
+
+// TestStore_OversizedNewestEntrySurvivesEviction: an entry larger than the cap
+// must not be evicted by the very Put that wrote it. evict protects the
+// most-recently-written (newest mtime) entry, accepting a transient over-cap
+// rather than churning the new entry — otherwise an oversized reviewer output is
+// permanently uncacheable and re-called every run after a wasted write.
+func TestStore_OversizedNewestEntrySurvivesEviction(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache")
+	// One entry's JSON is ~500 bytes; a 200-byte cap is smaller than a single
+	// entry, so the just-written entry stands alone and over cap.
+	s := NewStore(dir, 200)
+	k := Key(HashText("big"), "m", HashText("x"))
+	require.NoError(t, s.Put(k, strings.Repeat("x", 400)))
+
+	_, hit, err := s.Get(k)
+	require.NoError(t, err)
+	assert.True(t, hit, "an oversized newest entry must survive its own eviction pass")
 }
 
 // TestStore_RejectsMalformedKeys hardens against path traversal: a key whose

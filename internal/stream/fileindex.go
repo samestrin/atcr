@@ -5,6 +5,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // FileIndex is the candidate file index built once per reconcile run from
@@ -24,6 +26,15 @@ type FileIndex struct {
 }
 
 // BuildFileIndex runs `git ls-files` under root and builds the candidate index.
+//
+// root must be the repository root (not a subdirectory). The returned tracked
+// paths are relative to root, and callers expect Finding.File paths to share
+// that base. Passing a subdirectory would make git emit paths relative to that
+// subdirectory while the caller still supplied repo-root-relative paths,
+// silently producing zero useful matches. Today all callers pass "." / the
+// repo root; if subdir roots ever become supported, reconcile the path bases
+// between the index and the caller before matching.
+//
 // It returns nil — signalling "degrade to existence-only, no suggestion" — when
 // root is empty, root is not a git repository, or git is unavailable. A repo
 // with no tracked files yields a non-nil but empty index.
@@ -36,9 +47,24 @@ func BuildFileIndex(root string) *FileIndex {
 	out, err := cmd.Output()
 	if err != nil {
 		// Not a git repo, git missing, or other failure: graceful degradation.
+		// Count it before discarding so a silently disabled path matcher in CI
+		// (git missing, corrupt repo, timeout) is observable rather than mistaken
+		// for a healthy run — the failure was previously swallowed entirely. This
+		// leaf takes no logger (stream is a metrics-only observability consumer,
+		// like the validate.go indeterminate branch); an empty root is the
+		// legitimate "validation disabled" case above and is NOT counted.
+		metrics.Counter("atcr_path_index_unavailable_total").Inc()
 		return nil
 	}
 	return indexFromPaths(strings.Split(string(out), "\x00"))
+}
+
+// toSlashKeys normalizes a relpath to forward-slash form regardless of the
+// build OS. filepath.ToSlash only converts OS-native separators, so on Unix it
+// leaves backslashes untouched; reviewer-cited paths may contain backslashes,
+// which must normalize to match git's slash-only output.
+func toSlashKeys(p string) string {
+	return filepath.ToSlash(strings.ReplaceAll(p, "\\", "/"))
 }
 
 // indexFromPaths builds the index maps from raw (possibly NUL-split, possibly
@@ -53,11 +79,11 @@ func indexFromPaths(raw []string) *FileIndex {
 		folded:   make(map[string][]string),
 	}
 	for _, r := range raw {
-		rel := strings.TrimSpace(r)
+		rel := r
 		if rel == "" {
 			continue
 		}
-		rel = filepath.ToSlash(rel)
+		rel = toSlashKeys(rel)
 		if _, seen := idx.tracked[rel]; seen {
 			continue
 		}
@@ -80,7 +106,7 @@ func (x *FileIndex) Has(relpath string) bool {
 	if x == nil {
 		return false
 	}
-	_, ok := x.tracked[filepath.ToSlash(relpath)]
+	_, ok := x.tracked[toSlashKeys(relpath)]
 	return ok
 }
 
@@ -99,7 +125,7 @@ func (x *FileIndex) DirBasenames(dir string) []string {
 	if x == nil {
 		return nil
 	}
-	return x.dirFiles[filepath.ToSlash(dir)]
+	return x.dirFiles[toSlashKeys(dir)]
 }
 
 // HasDir reports whether any tracked file lives directly under dir.
@@ -107,15 +133,15 @@ func (x *FileIndex) HasDir(dir string) bool {
 	if x == nil {
 		return false
 	}
-	return len(x.dirFiles[filepath.ToSlash(dir)]) > 0
+	return len(x.dirFiles[toSlashKeys(dir)]) > 0
 }
 
-// ByFold returns the tracked relpaths equal to relpath under Unicode-simple
-// case folding (lowercase). A correctly-cased citation returns itself; a
-// case-typo returns the real path(s).
+// ByFold returns the tracked relpaths equal to relpath under ASCII-lowercase
+// matching (not full Unicode case folding). A correctly-cased citation returns
+// itself; a case-typo returns the real path(s).
 func (x *FileIndex) ByFold(relpath string) []string {
 	if x == nil {
 		return nil
 	}
-	return x.folded[strings.ToLower(filepath.ToSlash(relpath))]
+	return x.folded[strings.ToLower(toSlashKeys(relpath))]
 }

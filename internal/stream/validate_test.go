@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,6 +135,32 @@ func TestValidatePath_SymlinkEscapeFlagged(t *testing.T) {
 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
 }
 
+// TestEscapesRoot_SeparatorIndependent: the traversal guard must treat a
+// filepath.Rel result as an escape regardless of which path separator it carries.
+// filepath.Rel emits OS-native separators (backslash on Windows); comparing
+// against a hardcoded filepath.Separator means a "..\\foo" form reaching the
+// check on a platform with a different separator slips through and a ../foo escape
+// passes the guard. The check must normalize before comparing.
+func TestEscapesRoot_SeparatorIndependent(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"..", true},
+		{"../foo", true},
+		{"..\\foo", true}, // backslash form — the cross-platform fragility case
+		{"../foo/bar", true},
+		{"foo", false},
+		{"foo/bar", false},
+		{"..foo", false},      // a filename beginning with .., not a traversal
+		{"foo/../bar", false}, // a cleaned Rel result never escapes via an interior ..
+		{"", false},
+	}
+	for _, c := range cases {
+		assert.Equalf(t, c.want, escapesRoot(c.rel), "escapesRoot(%q)", c.rel)
+	}
+}
+
 // TestValidatePath_SuggestsWrongDirectory: with a candidate index, a wrong-
 // directory hallucination yields the real file as PathSuggestion (AC2/AC6).
 func TestValidatePath_SuggestsWrongDirectory(t *testing.T) {
@@ -205,6 +232,58 @@ func TestValidatePath_SymlinkEscapeNoSuggestion(t *testing.T) {
 	assert.False(t, f.PathValid)
 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
 	assert.Empty(t, f.PathSuggestion)
+}
+
+// TestValidatePath_IndeterminateEmitsMetric: when existence cannot be proven —
+// EvalSymlinks returns a permission/IO error rather than a clean "not found" —
+// the finding is left unflagged (never a false "file not found"), but the
+// indeterminate branch must no longer be silent. It increments an observability
+// counter so a systematic permission problem suppressing all path validation is
+// visible in production rather than swallowing every finding without a trace.
+//
+// The indeterminate result is forced by routing the lookup through a regular
+// file standing where a directory segment is expected: EvalSymlinks then fails
+// with ENOTDIR, an error os.IsNotExist rejects, so existsContained returns
+// existsIndeterminate.
+func TestValidatePath_IndeterminateEmitsMetric(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "notadir"), []byte("x\n"), 0o644))
+
+	f := Finding{File: "notadir/child.go", Line: 7}
+	ValidatePath(&f, root, nil)
+
+	// An indeterminate result must never masquerade as "file not found".
+	assert.False(t, f.PathValid)
+	assert.Empty(t, f.PathWarning)
+
+	// ...but it must be counted, so the silent branch becomes observable.
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_indeterminate_total").Value(),
+		"an indeterminate path check must increment the observability counter")
+}
+
+// TestValidatePath_RootUnresolvedEmitsMetric: when the validation root itself
+// cannot be symlink-resolved (a broken symlink, a permission error), the code
+// previously fell back to the unresolved path silently — a degraded containment
+// check with no signal. The failure must now be observable via a counter, the
+// same mechanism the indeterminate branch uses, so a misconfigured root does not
+// silently weaken every path check.
+//
+// The failure is forced with a root that is a symlink to a nonexistent target:
+// filepath.EvalSymlinks on it returns an error that is not a clean "not found"
+// of the file under it, exercising the root-resolution failure branch.
+func TestValidatePath_RootUnresolvedEmitsMetric(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := filepath.Join(t.TempDir(), "broken-root")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nonexistent-target"), root))
+
+	f := Finding{File: "child.go", Line: 3}
+	ValidatePath(&f, root, nil)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value(),
+		"an unresolvable validation root must increment the observability counter")
 }
 
 // TestValidatePath_NilIndexNoSuggestion: with no index (non-git repo), a missing

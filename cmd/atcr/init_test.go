@@ -50,6 +50,22 @@ func TestInit_FreshDirectory(t *testing.T) {
 	}
 }
 
+// TestInit_WritesGitignore: `atcr init` drops a .atcr/.gitignore so the runtime
+// outputs atcr writes under .atcr/ (the diff cache, up to cache_max_bytes, and
+// reviewer outputs) are ignored by git out of the box — even for end users who
+// never manually ignore .atcr/. The editable config.yaml and personas/ alongside
+// it stay tracked.
+func TestInit_WritesGitignore(t *testing.T) {
+	dir := t.TempDir()
+	initDir(t, dir)
+
+	data, err := os.ReadFile(filepath.Join(dir, ".atcr", ".gitignore"))
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "cache/", "the diff cache dir must be ignored")
+	assert.Contains(t, content, "reviews/", "the reviews dir must be ignored")
+}
+
 func TestInit_FilePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permissions")

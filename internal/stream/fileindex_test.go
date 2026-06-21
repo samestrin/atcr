@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,6 +62,22 @@ func TestBuildFileIndex_EmptyRoot(t *testing.T) {
 	assert.Nil(t, BuildFileIndex(""))
 }
 
+// TestBuildFileIndex_CountsGitFailure: when the git invocation fails the index
+// still degrades to nil, but the failure is surfaced via an observability counter
+// so a silently disabled path-matcher in CI is distinguishable from a healthy
+// run. Previously every git failure was collapsed into a bare `return nil` with
+// the error discarded entirely. Verified by removing git from PATH (bogus PATH).
+func TestBuildFileIndex_CountsGitFailure(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Setenv("PATH", "") // git unavailable: ls-files fails
+
+	idx := BuildFileIndex(t.TempDir())
+
+	assert.Nil(t, idx, "git failure must still degrade to a nil index")
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_index_unavailable_total").Value(),
+		"a git failure that disables the index must increment the observability counter")
+}
+
 // TestFileIndex_DirBasenames: the directory index lists the basenames tracked
 // under a given directory, used by Tier 2.
 func TestFileIndex_DirBasenames(t *testing.T) {
@@ -82,4 +99,27 @@ func TestFileIndex_FoldedLookup(t *testing.T) {
 	assert.ElementsMatch(t, []string{"internal/auth/parser.go"}, idx.ByFold("internal/auth/Parser.go"))
 	assert.ElementsMatch(t, []string{"internal/auth/parser.go"}, idx.ByFold("INTERNAL/AUTH/PARSER.GO"))
 	assert.Empty(t, idx.ByFold("internal/auth/other.go"))
+}
+
+// TestIndexFromPaths_PreservesWhitespace: git ls-files -z emits paths verbatim,
+// including any leading or trailing spaces in filenames, so the index must not
+// trim whitespace.
+func TestIndexFromPaths_PreservesWhitespace(t *testing.T) {
+	idx := indexFromPaths([]string{" path with spaces.go ", "normal.go"})
+	require.NotNil(t, idx)
+
+	assert.True(t, idx.Has(" path with spaces.go "), "tracked path with spaces should be preserved")
+	assert.True(t, idx.Has("normal.go"))
+	assert.False(t, idx.Has("path with spaces.go"), "trimmed variant should not be tracked")
+}
+
+// TestFileIndex_BackslashCitedPath: on non-Windows builds filepath.ToSlash is a
+// no-op, so a reviewer-cited path with backslashes must be explicitly normalized
+// before lookup.
+func TestFileIndex_BackslashCitedPath(t *testing.T) {
+	idx := indexFromPaths([]string{"a/validate.go"})
+	require.NotNil(t, idx)
+
+	assert.True(t, idx.Has("a\\validate.go"), "Has should normalize backslashes")
+	assert.Equal(t, "a/validate.go", idx.MissingSuggestion("b\\validate.go"), "MissingSuggestion should normalize backslashes")
 }

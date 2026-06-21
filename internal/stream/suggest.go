@@ -2,8 +2,8 @@ package stream
 
 import (
 	"path"
-	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // tier2SimilarityThreshold is the minimum stem similarity for a Tier 2 typo
@@ -32,7 +32,7 @@ func (x *FileIndex) CaseCorrection(citedRel string) (suggestion string, mismatch
 	if x == nil {
 		return "", false
 	}
-	rel := filepath.ToSlash(citedRel)
+	rel := toSlashKeys(citedRel)
 	if x.Has(rel) {
 		return "", false // correctly cited, byte-exact
 	}
@@ -61,11 +61,19 @@ func (x *FileIndex) CaseCorrection(citedRel string) (suggestion string, mismatch
 //
 // Tier 1 is tried first because an exact-basename match is near-certain and
 // needs no threshold; Tier 2 only runs when Tier 1 finds nothing.
+//
+// Trade-off: a lone Tier 1 match with zero path-segment overlap (e.g., a very
+// common basename such as handler.go appearing in an unrelated directory) will
+// be suggested confidently even though it may be the wrong file. This is
+// mandated by AC2, which requires a lone exact-basename match to be suggested
+// without an overlap threshold. Callers that need stricter filtering may
+// post-filter suggestions by directory similarity or require a minimum segment
+// overlap before presenting the result.
 func (x *FileIndex) MissingSuggestion(citedRel string) string {
 	if x == nil {
 		return ""
 	}
-	rel := filepath.ToSlash(citedRel)
+	rel := toSlashKeys(citedRel)
 	base := path.Base(rel)
 	dir := path.Dir(rel)
 
@@ -77,6 +85,9 @@ func (x *FileIndex) MissingSuggestion(citedRel string) string {
 
 // tier1 ranks exact-basename matches in other directories by path-segment
 // overlap with the cited path, returning a unique winner or "".
+//
+// For a lone match (len(candidates) == 1) the result is returned regardless of
+// overlap, per AC2. See MissingSuggestion for the documented trade-off.
 func (x *FileIndex) tier1(rel, base, dir string) string {
 	candidates := x.ByBasename(base)
 	if len(candidates) == 0 {
@@ -91,8 +102,10 @@ func (x *FileIndex) tier1(rel, base, dir string) string {
 		return ""
 	}
 	bestScore, best, tie := -1, "", false
+	selfTracked := false
 	for _, c := range candidates {
 		if c == rel {
+			selfTracked = true
 			continue
 		}
 		score := segOverlap(dir, path.Dir(c))
@@ -106,6 +119,11 @@ func (x *FileIndex) tier1(rel, base, dir string) string {
 	if tie || best == "" {
 		return "" // ambiguous: a wrong guess is worse than none
 	}
+	if selfTracked {
+		// The cited path is itself tracked; a tracked path is never a hallucination
+		// to correct, regardless of on-disk state.
+		return ""
+	}
 	return best
 }
 
@@ -116,6 +134,7 @@ func (x *FileIndex) tier2(rel, base, dir string) string {
 		return ""
 	}
 	citedStem, citedExt := splitStem(base)
+	citedStemLen := utf8.RuneCountInString(citedStem)
 	bestScore, best, tie := tier2SimilarityThreshold, "", false
 	for _, cand := range x.DirBasenames(dir) {
 		if cand == base {
@@ -133,6 +152,23 @@ func (x *FileIndex) tier2(rel, base, dir string) string {
 			// canonical validator/validate (0.78) — so guard structurally and
 			// emit no suggestion rather than a confident wrong one.
 			continue
+		}
+		// Cheap early-out: length difference is a lower bound on edit distance.
+		// If the stems already differ by more than the threshold allows, skip the
+		// O(n*m) Levenshtein computation.
+		candStemLen := utf8.RuneCountInString(candStem)
+		maxLen := citedStemLen
+		if candStemLen > maxLen {
+			maxLen = candStemLen
+		}
+		if maxLen > 0 {
+			diff := citedStemLen - candStemLen
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > int((1.0-tier2SimilarityThreshold)*float64(maxLen)) {
+				continue
+			}
 		}
 		score := similarity(citedStem, candStem)
 		switch {
