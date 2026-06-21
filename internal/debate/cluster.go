@@ -40,6 +40,33 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 	return out
 }
 
+// filterMergedClusters drops gray-zone radar items whose cluster a prior debate
+// already merged inline (Epic 6.1 AC4), so a re-run never re-debates or re-merges
+// an already-applied cluster. A cluster is "already applied" when a findings.json
+// record flagged ClusterMerged sits at the gray-zone item's location (the merged
+// survivor is placed at the cluster's canonical File+Line). Non-gray-zone items
+// pass through untouched. Returns items unchanged when no record is flagged, so a
+// first-ever debate run does no extra work.
+func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding) []reconcile.DisagreementItem {
+	mergedLocs := map[string]bool{}
+	for _, f := range findings {
+		if f.ClusterMerged {
+			mergedLocs[locationKey(f.File, f.Line)] = true
+		}
+	}
+	if len(mergedLocs) == 0 {
+		return items
+	}
+	out := make([]reconcile.DisagreementItem, 0, len(items))
+	for _, it := range items {
+		if it.Kind == reconcile.KindGrayZone && mergedLocs[locationKey(it.File, it.Line)] {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
 // applyClusterMerges unions the member findings of each gray-zone cluster the
 // judge ruled "merge" (Epic 6.1, Option A) directly in the findings slice and
 // returns the rewritten slice. For each cluster it gathers the records at the

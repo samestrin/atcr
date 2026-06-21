@@ -178,3 +178,37 @@ func TestRunDebate_GrayZoneMergeRequiresExactAnchor(t *testing.T) {
 		assert.False(t, x.ClusterMerged)
 	}
 }
+
+// TestRunDebate_GrayZoneMergeIsIdempotent: a second debate run over an
+// already-applied cluster does not re-debate, re-merge, or corrupt it (AC4). The
+// merged survivor carries cluster_merged, so the radar filters the gray-zone item
+// out of selection on the re-run.
+func TestRunDebate_GrayZoneMergeIsIdempotent(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	// Run 1 applies the merge.
+	cc1 := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc1))
+	require.NoError(t, err)
+	after1 := readFindings(t, dir)
+	require.Len(t, after1, 1)
+	require.True(t, after1[0].ClusterMerged)
+
+	// Run 2: the cluster is already applied — it must be filtered out of selection.
+	cc2 := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	res2, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc2))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res2.Selected, "an already-merged cluster must not be re-selected")
+
+	after2 := readFindings(t, dir)
+	require.Len(t, after2, 1, "re-run must not duplicate or re-split the merged record")
+	assert.True(t, after2[0].ClusterMerged)
+	assert.Equal(t, []string{"alice", "bob"}, after2[0].Reviewers)
+}

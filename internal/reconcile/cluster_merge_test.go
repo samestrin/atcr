@@ -1,9 +1,12 @@
 package reconcile
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestMergeJSONFindings_UnionsMembers: collapsing two gray-zone member records
@@ -33,4 +36,17 @@ func TestMergeJSONFindings_UnionsMembers(t *testing.T) {
 func TestMergeJSONFindings_SingleIsIdentity(t *testing.T) {
 	f := JSONFinding{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", Reviewers: []string{"a"}, Confidence: "MEDIUM"}
 	assert.Equal(t, f, MergeJSONFindings([]JSONFinding{f}))
+}
+
+// TestJSONFinding_ClusterMergedOmitempty: the Epic 6.1 idempotency marker is
+// omitempty, so a non-merged record serializes byte-identically to a pre-6.1
+// findings.json (the field is absent), and only a merged record carries it.
+func TestJSONFinding_ClusterMergedOmitempty(t *testing.T) {
+	plain, err := json.Marshal(JSONFinding{Severity: "LOW", File: "x.go", Line: 1, Problem: "p"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(plain), "cluster_merged", "non-merged record must omit the field")
+
+	merged, err := json.Marshal(JSONFinding{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", ClusterMerged: true})
+	require.NoError(t, err)
+	assert.True(t, strings.Contains(string(merged), `"cluster_merged":true`), "a merged record must carry the flag")
 }
