@@ -199,9 +199,13 @@ var renameFn = os.Rename
 
 // CopyPath copies the regular file or directory tree at src to dst, preserving
 // per-entry permissions; non-regular entries (symlinks, devices) are skipped, as
-// in BackupToDotBak. For a directory, dst is created by the copy (it must not
-// already exist). This is the copy primitive a caller uses to replicate a move
-// across a filesystem boundary when os.Rename returns EXDEV — the destination is
+// in BackupToDotBak. For a directory, dst is created if absent and otherwise
+// merged into: copyTree uses MkdirAll per directory and copyFile opens with
+// O_TRUNC, so a pre-existing dst is overwritten entry-by-entry (same-named files
+// replaced, unrelated files left in place) rather than rejected. CopyPath does
+// not enforce a fresh dst — callers needing clean-replace semantics RemoveAll
+// dst first. This is the copy primitive a caller uses to replicate a move across
+// a filesystem boundary when os.Rename returns EXDEV — the destination is
 // expected to be a fresh same-filesystem staging path that is then renamed into
 // place. A missing or non-regular/non-directory src is an error.
 func CopyPath(src, dst string) error {

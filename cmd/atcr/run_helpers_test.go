@@ -33,7 +33,8 @@ func TestCorrelateAndRedact_ScrubsNonSkProviderKey(t *testing.T) {
 		Repo:  t.TempDir(),
 		Slots: []fanout.Slot{slotWithKeys("ATCR_REDACT_NONSK_KEY")},
 	}
-	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, prep.SecretValues()...)
+	secrets, _ := prep.SecretValues()
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
 
 	log.FromContext(ctx).Info("provider call failed", "detail", "x-goog-api-key: "+key)
 
@@ -59,7 +60,8 @@ func TestCorrelateAndRedact_PreservesReviewIDAndRedactsKey(t *testing.T) {
 		Repo:  t.TempDir(),
 		Slots: []fanout.Slot{slotWithKeys("ATCR_REDACT_NONSK_KEY2")},
 	}
-	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, prep.SecretValues()...)
+	secrets, _ := prep.SecretValues()
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
 	log.FromContext(ctx).Info("emitting key " + key)
 
 	out := buf.String()
