@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 20 | 0 |
-| LOW | 0 | 20 | 0 |
+| MEDIUM | 1 | 20 | 0 |
+| LOW | 6 | 20 | 0 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 41 | **Resolved Items:** 0 | **Total Items:** 41
+**Last Modified:** 2026-06-21 | **Open Items:** 7 | **Deferred Items:** 41 | **Resolved Items:** 0 | **Total Items:** 48
 
 ## Directory Structure
 
@@ -34,6 +34,18 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-21] From Sprint: epic-6.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/debate/debate.go:140 | Debate writes findings.json then debate.json then manifest.json in sequence, not as one atomic group like verify's writeGroupAtomic | Batch the three writes via a writeGroupAtomic-style staged temp+rename so a mid-sequence failure cannot leave partial stage state | CROSS_CUTTING | 30 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/debate/emit.go:118 | Verification.Skeptic holds the judge agent name for debated findings; semantically correct (verdict producer) but ambiguous against skeptic-produced verdicts | Add a debate-source marker or render the judge distinctly in the report so a debated verdict is not mistaken for a skeptic verdict | CORRECTNESS | 20 | execute-epic-stage3 |
+| 1 | [ ] | MEDIUM | internal/debate/debate.go:165 | Gray-zone cluster merge/separate rulings are recorded in debate.json but not physically applied to findings.json; clusters still resolve via the existing adjudication path | Wire the judge cluster decision into the reconcile adjudication application so unattended runs auto-merge gray-zone clusters inline | INTEGRATION | 60 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/debate/debate.go:120 | After debate overwrites verdicts in findings.json, verify-owned summary.json verdictCounts and verification.json are not updated, so those stage-audit files can drift from the authoritative findings.json | Recompute and re-emit summary.json verdictCounts (and optionally verification.json) after debate, or document them as verify-stage snapshots superseded by debate.json | CROSS_CUTTING | 45 | execute-epic-cumulative |
+| 1 | [ ] | LOW | internal/debate/debate.go:108 | Debate processes selected items sequentially (no bounded worker pool), unlike verify which uses reg.Verify.MaxParallel; a max_items run is N*3 provider calls back-to-back | Add a bounded worker pool over selected items mirroring verify's sem/maxPar pattern, keeping per-item turns sequential | PERFORMANCE | 45 | execute-epic-cumulative |
+| 1 | [ ] | LOW | internal/debate/emit.go:103 | applyRulings applies a ruling to every finding matching FindingKey{File,Line,Problem}; two distinct findings sharing that triple would both receive the verdict (mirrors verify's pre-existing assumption that the reconciler dedups the triple) | Assert triple uniqueness or match by a stable per-finding identity so a ruling applies to exactly the debated finding | EDGE_CASES | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/review.go:48 | The --single-model flag on 'atcr review' is silently a no-op unless --debate is also passed; a user setting it alone gets no feedback | Add a usage-error or warning guard when --single-model is set without --debate, mirroring the --require-verified requires --verify guard | UNDER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: epic-5.2
 
