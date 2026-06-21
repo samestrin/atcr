@@ -14,10 +14,9 @@ import (
 	"github.com/samestrin/atcr/internal/tools"
 )
 
-// maxTurns is the hard, non-configurable cap on the exchange: exactly three turns
-// (proposer defends, challenger attacks, judge rules). The epic's bounded-protocol
-// contract — a debate is never an open-ended conversation.
-const maxTurns = 3
+// The exchange is bounded to exactly three turns — proposer defends, challenger
+// attacks, judge rules — hard-coded in RunDebate. The epic's bounded-protocol
+// contract: a debate is never an open-ended conversation.
 
 // Dispatcher executes a single tool call against the read-only snapshot sandbox.
 // It mirrors verify.Dispatcher / fanout's toolDispatcher so debate can inject a

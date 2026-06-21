@@ -134,13 +134,13 @@ func reviewSeverity(s string) bool {
 	}
 }
 
-// truncate caps a diagnostic string at 2000 bytes on a rune boundary.
+// truncate caps a diagnostic string at maxNotesLen bytes on a rune boundary.
 func truncate(s string) string {
-	const cap = 2000
-	if len(s) <= cap {
+	const maxNotesLen = 2000
+	if len(s) <= maxNotesLen {
 		return s
 	}
-	cut := cap
+	cut := maxNotesLen
 	for cut > 0 && (s[cut]&0xC0) == 0x80 { // back up off a UTF-8 continuation byte
 		cut--
 	}
