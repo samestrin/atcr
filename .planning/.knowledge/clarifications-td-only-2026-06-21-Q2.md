@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-21-ebc2e7
-question: "Should evict() in internal/cache/store.go surface/log file deletion errors, or is silent best-effort eviction intentional?"
+id: mem-2026-06-21-f7e99f
+question: "Should the cache Store eviction be optimized with a running total-size counter to avoid per-Put ReadDir scans?"
 created: 2026-06-21
 last_retrieved: ""
 sprints: []
 files: [internal/cache/store.go]
-tags: [clarifications, td-clarification, td-only, error-handling, cache, best-effort]
+tags: [td-clarification, td-only, performance, cache, eviction, mutex, store]
 retrievals: 0
 status: active
-type: clarifications-td-only
+type: clarifications skill, td-only mode, 2026-06-21
 ---
 
-# Should evict() in internal/cache/store.go surface/log file d
+# Should the cache Store eviction be optimized with a running 
 
 ## Decision
 
-Intentional best-effort; accepted design. The swallowed os.Remove error at store.go:150 is the documented contract (store.go:89-92: eviction is best-effort and never fails a Put; a failed delete only defers reclaiming disk to the next Put, no correctness impact), consistent with other best-effort degradations like _ = os.Chtimes (store.go:85). Do NOT add a logger to Store and do NOT fail Put. This is principled asymmetry with the Get-path corrupt-entry removal at store.go:77-79 (resolved in commit 971f389), which IS surfaced because a failed remove there returns stale corrupt data forever. Convention: the cache package degrades silently except where swallowing an error would cause a correctness bug (stale data).
+Leave as-is. The evict ReadDir+Stat scan is called only from Put while the store mutex is held (internal/cache/store.go:36-40, 116-120), so it is strictly sequential — it never runs concurrently with any other operation. LLM API round-trips dominate latency by orders of magnitude, so the O(n) scan is negligible in absolute terms. A running counter would touch Store struct, constructor, Put, evict, and Get's corrupt-entry removal — complexity that exceeds the LOW severity rating and any measured need. Leave as-is until a concrete performance measurement justifies the change.
 
 ## Rationale
 
