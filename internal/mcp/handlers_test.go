@@ -78,7 +78,8 @@ func TestReviewContext_ScrubsConfiguredNonSkKey(t *testing.T) {
 		ID:    "2026-06-20_serve",
 		Slots: []fanout.Slot{{Primary: fanout.Agent{Invocation: llmclient.Invocation{APIKeyEnv: "ATCR_MCP_REDACT_KEY"}}}},
 	}
-	ctx := e.reviewContext(context.Background(), prep.ID, prep.SecretValues()...)
+	secrets, _ := prep.SecretValues()
+	ctx := e.reviewContext(context.Background(), prep.ID, secrets...)
 	log.FromContext(ctx).Info("provider rejected request", "header", "x-goog-api-key: "+key)
 
 	out := buf.String()

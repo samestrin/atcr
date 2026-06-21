@@ -36,14 +36,32 @@ const minSecretLen = 8
 // because every entry point resolves keys here before any provider call runs
 // (cmd/atcr review.go/resume.go via correlateAndRedact, the MCP handler via
 // reviewContext), so the live scrub set always covers the keys the run uses.
-func (p *PreparedReview) SecretValues() []string {
-	var secrets []string
+//
+// It also returns a list of human-readable warnings (never containing a value)
+// for configured-but-unusable slots: a named APIKeyEnv that resolves empty or
+// below minSecretLen means exact-value redaction is silently inactive for that
+// slot. The caller logs these with its own logger so a fat-fingered env name or
+// too-short key is observable; a slot with no APIKeyEnv configured is not a
+// misconfiguration and is not warned. SecretValues stays dependency-light
+// (imports only "os") — it returns the warnings rather than logging them.
+func (p *PreparedReview) SecretValues() (secrets []string, warnings []string) {
 	seen := make(map[string]struct{})
+	warned := make(map[string]struct{})
 	for _, s := range p.Slots {
 		for _, a := range append([]Agent{s.Primary}, s.Fallbacks...) {
-			v := os.Getenv(a.Invocation.APIKeyEnv)
+			env := a.Invocation.APIKeyEnv
+			v := os.Getenv(env)
 			if len(v) < minSecretLen {
-				continue // empty (unset) or too short to redact safely
+				// Configured (non-empty env name) but empty/too short: exact-value
+				// redaction is inactive for this slot. Warn once per env name; a slot
+				// with no APIKeyEnv is not a misconfiguration and is not warned.
+				if env != "" {
+					if _, dup := warned[env]; !dup {
+						warned[env] = struct{}{}
+						warnings = append(warnings, "API key env "+env+" is unset or below the redaction floor; exact-value log redaction is inactive for that slot")
+					}
+				}
+				continue
 			}
 			if _, dup := seen[v]; dup {
 				continue
@@ -52,5 +70,5 @@ func (p *PreparedReview) SecretValues() []string {
 			secrets = append(secrets, v)
 		}
 	}
-	return secrets
+	return secrets, warnings
 }
