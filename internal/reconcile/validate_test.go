@@ -18,7 +18,7 @@ import (
 // falsely flagged.
 func TestValidateFindingPaths_SkipsWhenRootEmpty(t *testing.T) {
 	findings := []Merged{{Finding: stream.Finding{File: "does/not/exist.go"}}}
-	validateFindingPaths(context.Background(), findings, "")
+	validateFindingPaths(findings, "")
 
 	assert.False(t, findings[0].PathValid)
 	assert.Empty(t, findings[0].PathWarning)
@@ -34,7 +34,7 @@ func TestValidateFindingPaths_StampsWhenRootSet(t *testing.T) {
 		{Finding: stream.Finding{File: "exists.go"}},
 		{Finding: stream.Finding{File: "missing.go"}},
 	}
-	validateFindingPaths(context.Background(), findings, root)
+	validateFindingPaths(findings, root)
 
 	assert.True(t, findings[0].PathValid)
 	assert.Empty(t, findings[0].PathWarning)

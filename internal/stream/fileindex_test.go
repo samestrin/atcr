@@ -1,13 +1,12 @@
 package stream
 
 import (
-	"bytes"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,21 +62,20 @@ func TestBuildFileIndex_EmptyRoot(t *testing.T) {
 	assert.Nil(t, BuildFileIndex(""))
 }
 
-// TestBuildFileIndexWithLogger_LogsGitFailure: when the git invocation fails the
-// index still degrades to nil, but the underlying error is surfaced at WARN so a
-// silently disabled path-matcher in CI is distinguishable from a healthy run.
-// Previously every git failure was collapsed into a bare `return nil` with the
-// error discarded entirely. Verified by removing git from PATH (bogus PATH).
-func TestBuildFileIndexWithLogger_LogsGitFailure(t *testing.T) {
-	t.Setenv("PATH", "")
+// TestBuildFileIndex_CountsGitFailure: when the git invocation fails the index
+// still degrades to nil, but the failure is surfaced via an observability counter
+// so a silently disabled path-matcher in CI is distinguishable from a healthy
+// run. Previously every git failure was collapsed into a bare `return nil` with
+// the error discarded entirely. Verified by removing git from PATH (bogus PATH).
+func TestBuildFileIndex_CountsGitFailure(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+	t.Setenv("PATH", "") // git unavailable: ls-files fails
 
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	idx := BuildFileIndexWithLogger(t.TempDir(), logger)
+	idx := BuildFileIndex(t.TempDir())
 
 	assert.Nil(t, idx, "git failure must still degrade to a nil index")
-	assert.Contains(t, buf.String(), "git ls-files", "the discarded git error must be logged before returning nil")
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_index_unavailable_total").Value(),
+		"a git failure that disables the index must increment the observability counter")
 }
 
 // TestFileIndex_DirBasenames: the directory index lists the basenames tracked

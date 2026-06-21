@@ -1,13 +1,12 @@
 package stream
 
 import (
-	"log/slog"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
-	"github.com/samestrin/atcr/internal/log"
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // FileIndex is the candidate file index built once per reconcile run from
@@ -40,20 +39,6 @@ type FileIndex struct {
 // root is empty, root is not a git repository, or git is unavailable. A repo
 // with no tracked files yields a non-nil but empty index.
 func BuildFileIndex(root string) *FileIndex {
-	return BuildFileIndexWithLogger(root, nil)
-}
-
-// BuildFileIndexWithLogger is BuildFileIndex with an explicit diagnostic sink.
-// The nil-return contract is unchanged — an empty, non-repo, or git-unavailable
-// root still degrades to "existence-only, no suggestion" — but the underlying
-// git failure is logged at WARN before returning nil, so a silently disabled
-// path matcher in CI (git missing, corrupt repo, timeout) is distinguishable
-// from a healthy run. An empty root is the legitimate "validation disabled" case
-// and is NOT logged. A nil logger is treated as a discard sink.
-func BuildFileIndexWithLogger(root string, logger *slog.Logger) *FileIndex {
-	if logger == nil {
-		logger = log.Discard()
-	}
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
@@ -62,10 +47,13 @@ func BuildFileIndexWithLogger(root string, logger *slog.Logger) *FileIndex {
 	out, err := cmd.Output()
 	if err != nil {
 		// Not a git repo, git missing, or other failure: graceful degradation.
-		// Log before discarding so a silently disabled path matcher in CI is not
-		// mistaken for a healthy run (the failure was previously swallowed).
-		logger.Warn("path index disabled: git ls-files failed; degrading to existence-only validation",
-			"root", root, "err", err)
+		// Count it before discarding so a silently disabled path matcher in CI
+		// (git missing, corrupt repo, timeout) is observable rather than mistaken
+		// for a healthy run — the failure was previously swallowed entirely. This
+		// leaf takes no logger (stream is a metrics-only observability consumer,
+		// like the validate.go indeterminate branch); an empty root is the
+		// legitimate "validation disabled" case above and is NOT counted.
+		metrics.Counter("atcr_path_index_unavailable_total").Inc()
 		return nil
 	}
 	return indexFromPaths(strings.Split(string(out), "\x00"))

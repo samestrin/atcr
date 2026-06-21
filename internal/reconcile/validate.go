@@ -1,11 +1,6 @@
 package reconcile
 
-import (
-	"context"
-
-	"github.com/samestrin/atcr/internal/log"
-	"github.com/samestrin/atcr/internal/stream"
-)
+import "github.com/samestrin/atcr/internal/stream"
 
 // validateFindingPaths stamps each merged finding's PathValid/PathWarning and,
 // when a hallucinated path has a confident correction, PathSuggestion (Epic 5.0
@@ -19,16 +14,14 @@ import (
 // and shared across every finding, never rebuilt per-finding. A nil index
 // (root is not a git repo, or git is unavailable) degrades to existence-only
 // validation with no suggestion.
-func validateFindingPaths(ctx context.Context, findings []Merged, root string) {
+func validateFindingPaths(findings []Merged, root string) {
 	if root == "" {
 		return
 	}
 	if len(findings) == 0 {
 		return
 	}
-	// Thread the context logger so a degraded index (git unavailable/corrupt) is
-	// surfaced at WARN instead of silently disabling path validation in CI.
-	idx := stream.BuildFileIndexWithLogger(root, log.FromContext(ctx))
+	idx := stream.BuildFileIndex(root)
 	for i := range findings {
 		stream.ValidatePath(&findings[i].Finding, root, idx)
 	}
