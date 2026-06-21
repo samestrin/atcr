@@ -248,3 +248,146 @@ func confidenceFor(reviewerCount int) string {
 	}
 	return ConfMedium
 }
+
+// MergeJSONFindings collapses a group of findings.json records — a gray-zone
+// cluster's members the judge ruled "merge" (Epic 6.1) — into one reconciled
+// record. It applies the same field rules as Merge (severity max with a
+// "<lo> vs <hi>" disagreement annotation, longest problem/fix, modal category,
+// max est-minutes) but over the already-reconciled JSONFinding shape, where
+// REVIEWERS is a list (the merge unions the per-record lists, not a single
+// per-source name). The location is the first member's file/line; EVIDENCE is the
+// distinct members' evidence joined by " / "; CONFIDENCE follows the unioned
+// reviewer count. Verification is combined by mergeVerification (verdict
+// precedence confirmed > unverifiable > refuted, skeptic provenance unioned) and
+// the Epic 5.0 path-validation fields carry the first member's — the members are
+// co-located, so their path status is identical. The caller sets ClusterMerged on
+// the result. A
+// zero- or one-member group is returned as-is (the apply path never unions fewer
+// than two records, but the helper stays total).
+func MergeJSONFindings(group []JSONFinding) JSONFinding {
+	if len(group) == 0 {
+		return JSONFinding{}
+	}
+	if len(group) == 1 {
+		return group[0]
+	}
+	sf := make([]stream.Finding, len(group))
+	for i, f := range group {
+		sf[i] = stream.Finding{
+			Severity: f.Severity, File: f.File, Line: f.Line,
+			Problem: f.Problem, Fix: f.Fix, Category: f.Category,
+			EstMinutes: f.EstMinutes, Evidence: f.Evidence,
+		}
+	}
+	maxSev, disagreement := mergeSeverity(sf)
+	reviewers := unionReviewers(group)
+	return JSONFinding{
+		Severity:       maxSev,
+		File:           group[0].File,
+		Line:           group[0].Line,
+		Problem:        longestField(sf, func(f stream.Finding) string { return f.Problem }),
+		Fix:            longestField(sf, func(f stream.Finding) string { return f.Fix }),
+		Category:       modalCategory(sf),
+		EstMinutes:     maxEstMinutes(sf),
+		Evidence:       joinEvidence(group),
+		Reviewers:      reviewers,
+		Confidence:     confidenceFor(len(reviewers)),
+		Disagreement:   disagreement,
+		Verification:   mergeVerification(group),
+		PathValid:      group[0].PathValid,
+		PathWarning:    group[0].PathWarning,
+		PathSuggestion: group[0].PathSuggestion,
+	}
+}
+
+// unionReviewers returns the sorted, deduplicated union of every member record's
+// REVIEWERS list (each JSONFinding already carries a reconciled list).
+func unionReviewers(group []JSONFinding) []string {
+	set := map[string]bool{}
+	for _, f := range group {
+		for _, r := range f.Reviewers {
+			if r != "" {
+				set[r] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for r := range set {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// joinEvidence concatenates each member's distinct, non-empty EVIDENCE in member
+// order, joined by " / ". Duplicates (the same evidence string from co-located
+// members) collapse to one so the merged evidence does not double-count.
+func joinEvidence(group []JSONFinding) string {
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(group))
+	for _, f := range group {
+		if f.Evidence == "" || seen[f.Evidence] {
+			continue
+		}
+		seen[f.Evidence] = true
+		parts = append(parts, f.Evidence)
+	}
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += " / "
+		}
+		out += p
+	}
+	return out
+}
+
+// verdictRank orders verify verdicts for the cluster-merge precedence in
+// mergeVerification: confirmed (gate-blocking) outranks unverifiable, which
+// outranks refuted; an unknown/empty verdict ranks last.
+func verdictRank(verdict string) int {
+	switch strings.ToLower(strings.TrimSpace(verdict)) {
+	case VerdictConfirmed:
+		return 3
+	case VerdictUnverifiable:
+		return 2
+	case VerdictRefuted:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// mergeVerification combines the member Verification blocks of an inline cluster
+// merge into one (Epic 6.1). The judge ruled the members duplicates, so they must
+// carry a single verdict: precedence is confirmed > unverifiable > refuted, so a
+// confirmed verification of the same underlying issue is never masked by a refuted
+// sibling phrasing, and a refuted verdict wins only when no member was confirmed
+// or unverifiable. The winning block's Verdict/Notes/ChallengeSurvived are kept
+// (ties resolve to the first member, for determinism), and every member's Skeptic
+// provenance is unioned (deduped, comma-joined) so no voter is lost. Returns nil
+// when no member carried a block.
+func mergeVerification(group []JSONFinding) *Verification {
+	var chosen *Verification
+	var skeptics []string
+	seen := map[string]bool{}
+	for i := range group {
+		v := group[i].Verification
+		if v == nil {
+			continue
+		}
+		if v.Skeptic != "" && !seen[v.Skeptic] {
+			seen[v.Skeptic] = true
+			skeptics = append(skeptics, v.Skeptic)
+		}
+		if chosen == nil || verdictRank(v.Verdict) > verdictRank(chosen.Verdict) {
+			chosen = v
+		}
+	}
+	if chosen == nil {
+		return nil
+	}
+	out := *chosen // copy so the source finding's block is not mutated
+	out.Skeptic = strings.Join(skeptics, ",")
+	return &out
+}
