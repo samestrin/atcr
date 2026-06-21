@@ -139,12 +139,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	debateFlag, _ := cmd.Flags().GetBool("debate")
 
 	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
-	// It is meaningless without both a gate (--fail-on) and the verify stage that
-	// produces verdicts (--verify); a strict gate with no verdicts would silently
-	// pass everything. Fail fast as a usage error (parity with `atcr reconcile`).
+	// It needs a gate (--fail-on) and a stage that produces confirmed verdicts:
+	// --verify, or --debate (a debate uphold/split writes verdict "confirmed",
+	// promoted to VERIFIED — debate alone genuinely yields verified findings, the
+	// same semantics the MCP handleDebate gates on). Without any verdict-producing
+	// stage a strict gate would silently pass everything, so fail fast as a usage
+	// error (parity with `atcr reconcile` and the MCP debate handler).
 	requireVerified, _ := cmd.Flags().GetBool("require-verified")
-	if requireVerified && (threshold == "" || !verifyFlag) {
-		return usageError(errors.New("--require-verified requires --fail-on and --verify"))
+	if requireVerified && (threshold == "" || (!verifyFlag && !debateFlag)) {
+		return usageError(errors.New("--require-verified requires --fail-on and --verify or --debate"))
 	}
 
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
