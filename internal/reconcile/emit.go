@@ -337,10 +337,14 @@ func writeFindingsList(b *bytes.Buffer, findings []Merged) {
 			// suggestion (Epic 5.4), when present, points at the real file. esc()
 			// neutralizes any markup in the reviewer-controlled path; the
 			// suggestion comes from git ls-files but is esc'd for symmetry.
+			label := "File not found"
+			if m.PathWarning != stream.PathNotFoundWarning {
+				label = esc(m.PathWarning)
+			}
 			if m.PathSuggestion != "" {
-				fmt.Fprintf(b, "  - ⚠️ File not found: %s (did you mean %s?)\n", esc(m.File), esc(m.PathSuggestion))
+				fmt.Fprintf(b, "  - ⚠️ %s: %s (did you mean %s?)\n", label, esc(m.File), esc(m.PathSuggestion))
 			} else {
-				fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
+				fmt.Fprintf(b, "  - ⚠️ %s: %s\n", label, esc(m.File))
 			}
 		}
 		if m.Disagreement != "" {
