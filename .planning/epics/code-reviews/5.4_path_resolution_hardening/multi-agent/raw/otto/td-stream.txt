@@ -1,0 +1,1 @@
+LOW|internal/stream/fileindex.go:51|Potential for trailing NUL character in path|Trim the trailing NUL byte if `git ls-files -z` output ends with one|correctness|10|`strings.Split(string(out), "\x00")` on a NUL-terminated list creates an empty trailing string|otto

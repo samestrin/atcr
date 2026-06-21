@@ -1,0 +1,4 @@
+MEDIUM|internal/stream/fileindex.go:50|exec.Command error swallowed silently|Log or record the error so callers can distinguish "no git" from "git failed"|error-handling|15|`if err != nil { return nil }` discards the error|bruce
+LOW|internal/stream/fileindex.go:63|indexFromPaths does not deduplicate NUL-split empty strings|Strip trailing empty string from strings.Split when input ends with NUL|correctness|5|`strings.Split(string(out), "\x00")` may produce a trailing empty element|bruce
+LOW|internal/stream/suggest.go:148|segOverlap uses set intersection; O(n*m) for large repos|Use a map for one side and iterate the other; negligible for typical repos|performance|10|`for _, s := range strings.Split(b, "/")` nested loop|bruce
+LOW|internal/stream/validate.go:86|EvalSymlinks errors on root are silently swallowed|Warn or fall back to lexical containment only when root cannot be resolved|error-handling|10|`if err != nil { realRoot = absRoot }` with no log|bruce

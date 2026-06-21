@@ -1,0 +1,15 @@
+{
+  "sources": ["claude", "multi-agent"],
+  "raw_count": 17,
+  "merged_count": 16,
+  "clusters_collapsed": {
+    "raw_findings": 17,
+    "merged_clusters": 13,
+    "final_findings_after_adjudication": 16,
+    "description": "17 raw findings clustered into 13 merged rows; 2 ambiguous clusters split during adjudication, yielding 16 final findings"
+  },
+  "severity_disagreements": 1,
+  "intent_annotations": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-21T16:15:56Z"
+}

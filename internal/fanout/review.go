@@ -620,7 +620,7 @@ func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 // MaxTokens is constant across review agents (defaultMaxTokens), so it is
 // intentionally omitted. min_severity/max_findings are deterministic post-LLM
 // filters and are correctly NOT in the key.
-func diffCacheKey(prompt, model string, temperature *float64) string {
+func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
@@ -689,7 +689,7 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		// + temperature (see diffCacheKey). Tool agents carry a key too but the
 		// engine never caches them (they read live code), so setting it
 		// unconditionally is safe.
-		CacheKey: diffCacheKey(prompt, ac.Model, ac.Temperature),
+		CacheKey: diffCacheKey(prompt, ac.Model, prov.BaseURL, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -776,7 +776,7 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		// the primary but on its OWN model and temperature, so it keys on the
 		// primary's prompt with the fallback's model/temperature — a substitute
 		// model must not collide with the primary's cache entry.
-		CacheKey: diffCacheKey(primary.Prompt, ac.Model, ac.Temperature),
+		CacheKey: diffCacheKey(primary.Prompt, ac.Model, prov.BaseURL, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,

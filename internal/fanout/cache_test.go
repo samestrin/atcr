@@ -24,7 +24,7 @@ func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		CacheKey:    diffCacheKey(prompt, model, nil),
+		CacheKey:    diffCacheKey(prompt, model, "", nil),
 		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
@@ -111,7 +111,7 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 		return Slot{Primary: Agent{
 			Name:        "a",
 			PayloadMode: "blocks",
-			CacheKey:    diffCacheKey("same prompt", "m", temp),
+			CacheKey:    diffCacheKey("same prompt", "m", "", temp),
 			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
 		}}
 	}

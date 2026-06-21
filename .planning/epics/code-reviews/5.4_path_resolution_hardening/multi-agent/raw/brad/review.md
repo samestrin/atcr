@@ -1,0 +1,1 @@
+HIGH|internal/stream/suggest.go:156|prefixDerivation incorrectly flags validator/validate as derivation|Check for specific derivation suffixes instead of HasPrefix|correctness|10|HasPrefix("validator","validate") is true, skipping valid suggestion|bruce
