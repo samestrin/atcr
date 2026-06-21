@@ -427,6 +427,22 @@ func TestReviewCmd_RequireVerifiedAllowedWithDebate(t *testing.T) {
 	require.Contains(t, out2, "--require-verified requires")
 }
 
+// TestReviewCmd_SingleModelNeedsDebate verifies `review --single-model` without
+// --debate is a usage error (exit 2): the flag only affects the debate stage's
+// casting, so set alone it is silently a no-op with no feedback — mirroring the
+// --require-verified guard.
+func TestReviewCmd_SingleModelNeedsDebate(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--single-model")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--single-model requires --debate")
+
+	// With --debate it is accepted (fails later for unrelated reasons in this bare
+	// workspace, but not with the single-model usage message).
+	_, out2 := execCmdCapture(t, "review", "--single-model", "--debate")
+	require.NotContains(t, out2, "--single-model requires --debate")
+}
+
 // TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
 // with an undefined flag name — a programming error that must fail loudly
 // rather than silently returning false.
