@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
@@ -87,6 +89,11 @@ type ReviewRequest struct {
 	// Defaulting false preserves the safe fail-on-collision behavior for callers
 	// that do not opt in (e.g. the MCP handler).
 	Force bool
+	// NoCache bypasses diff-cache READS for this run (the --no-cache flag, Epic
+	// 5.2) while still WRITING fresh results, so the run refreshes any stale
+	// entries and every subsequent run benefits. Defaulting false keeps caching
+	// fully active for callers that do not opt out (e.g. the MCP handler).
+	NoCache bool
 }
 
 // ReviewResult is the outcome of a completed review run.
@@ -159,6 +166,13 @@ type PreparedReview struct {
 	Repo     string
 	Head     string
 	manifest *payload.Manifest
+	// cache is the diff cache for this review (Epic 5.2), rooted at
+	// <root>/.atcr/cache and sized by the resolved cache_max_bytes. nil only if
+	// caching could not be set up; ExecuteReview wires it into the engine when
+	// non-nil. cacheNoRead carries the --no-cache request (bypass reads, still
+	// write).
+	cache       reviewCache
+	cacheNoRead bool
 }
 
 // AgentCount is the number of reviewer slots the prepared review will run.
@@ -299,7 +313,12 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 			return nil, err
 		}
 	}
-	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m}, nil
+	// Wire the diff cache (Epic 5.2): reviewer outputs are content-addressed
+	// under <root>/.atcr/cache (sibling of reviews/, already excluded from git)
+	// and capped at the resolved cache_max_bytes. The store is shared across the
+	// run's agents; ExecuteReview hands it to the engine.
+	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
+	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
@@ -325,6 +344,12 @@ func runEngine(ctx context.Context, completer Completer, p *PreparedReview, pool
 	// log line is greppable by review (AC9 + AC10). FromContext returns a never-nil
 	// discard logger if none is set.
 	opts := []EngineOption{WithMaxParallel(p.MaxParallel), WithLogger(log.FromContext(ctx))}
+	// Hand the diff cache to the engine (Epic 5.2). Non-tool agents whose
+	// payload+model+persona key already has a stored result replay it instead of
+	// calling the provider; nil cache (direct construction) leaves caching off.
+	if p.cache != nil {
+		opts = append(opts, WithCache(p.cache, p.cacheNoRead))
+	}
 	if anyToolAgent(p.Slots) && p.Head != "" {
 		if root, cleanup, err := tools.NewSnapshotManager(p.Repo).SnapshotFor(p.Head); err != nil {
 			log.FromContext(ctx).Warn("tool harness disabled (snapshot); tool agents degrade to single-shot", "head", p.Head, "err", err)
@@ -585,6 +610,24 @@ const defaultMaxTokens = 8192
 // (MaxTokens is a pointer so an explicit value always serializes).
 func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 
+// diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
+// the FULL rendered prompt — which already embeds the payload, the resolved
+// persona, the per-agent scope focus (Epic 2.2), and the base/head refs, i.e.
+// every text input the model receives — plus the model id and the temperature
+// (the tuning param that changes the output). Keying on the rendered prompt
+// rather than the raw payload+persona is what guarantees a scope or persona
+// change invalidates the entry instead of silently replaying a stale review.
+// MaxTokens is constant across review agents (defaultMaxTokens), so it is
+// intentionally omitted. min_severity/max_findings are deterministic post-LLM
+// filters and are correctly NOT in the key.
+func diffCacheKey(prompt, model string, temperature *float64) string {
+	temp := "default"
+	if temperature != nil {
+		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
+	}
+	return cache.Key(cache.HashText(prompt), model, temp)
+}
+
 // buildAgent resolves an agent's persona, renders its prompt against the payload
 // it sees, and assembles the invocation. It returns the agent and its mode.
 func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange) (Agent, string, error) {
@@ -642,6 +685,11 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
 		MinSeverity:      ac.MinSeverity,
 		MaxFindings:      ac.MaxFindings,
+		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
+		// + temperature (see diffCacheKey). Tool agents carry a key too but the
+		// engine never caches them (they read live code), so setting it
+		// unconditionally is safe.
+		CacheKey: diffCacheKey(prompt, ac.Model, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -724,6 +772,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		// and max_findings still govern the output.
 		MinSeverity: primary.MinSeverity,
 		MaxFindings: primary.MaxFindings,
+		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
+		// the primary but on its OWN model and temperature, so it keys on the
+		// primary's prompt with the fallback's model/temperature — a substitute
+		// model must not collide with the primary's cache entry.
+		CacheKey: diffCacheKey(primary.Prompt, ac.Model, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,

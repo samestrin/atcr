@@ -23,6 +23,11 @@ const (
 	// default — reduce payload_byte_budget to ~163840 (160 KiB ≈ 40k tokens)
 	// in .atcr/config.yaml for rosters that include smaller-context models.
 	DefaultPayloadByteBudget int64 = 524288
+	// DefaultCacheMaxBytes is the embedded total-size cap for the diff cache
+	// (Epic 5.2): 50 MiB of reviewer outputs under .atcr/cache before
+	// least-recently-used eviction kicks in. 0 is the documented unbounded
+	// escape hatch (parity with payload_byte_budget / max_parallel).
+	DefaultCacheMaxBytes int64 = 50 * 1024 * 1024
 )
 
 // ProjectConfig is the project-level configuration from .atcr/config.yaml:
@@ -41,6 +46,10 @@ type ProjectConfig struct {
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
+	// CacheMaxBytes overrides the diff-cache total-size cap (Epic 5.2). A pointer
+	// so an explicit 0 (unbounded) survives default application; unset inherits
+	// the registry tier or the embedded DefaultCacheMaxBytes.
+	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -70,6 +79,10 @@ func DefaultProjectConfigYAML(roster []string) string {
 	b.WriteString("# max_parallel: cap on concurrent parallel-lane agent calls. Default: 10 (a cap).\n")
 	b.WriteString("#   Set to 0 for unbounded — unset is NOT unbounded, it uses the default of 10.\n")
 	fmt.Fprintf(&b, "max_parallel: %d\n", DefaultMaxParallel)
+	b.WriteString("# cache_max_bytes: total-size cap (bytes) for the diff cache under .atcr/cache.\n")
+	b.WriteString("#   Unchanged diffs are served from cache, skipping the LLM call. Default 50 MiB;\n")
+	b.WriteString("#   least-recently-used entries are evicted past the cap. Set to 0 for unbounded.\n")
+	fmt.Fprintf(&b, "cache_max_bytes: %d\n", DefaultCacheMaxBytes)
 	fmt.Fprintf(&b, "fail_on: %s\n", DefaultFailOn)
 	return b.String()
 }
@@ -114,6 +127,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if cfg.MaxParallel != nil && *cfg.MaxParallel < 0 {
 		return nil, fmt.Errorf("%s: max_parallel must be >= 0 (0 = unbounded)", base)
+	}
+	if cfg.CacheMaxBytes != nil && *cfg.CacheMaxBytes < 0 {
+		return nil, fmt.Errorf("%s: cache_max_bytes must be >= 0 (0 = unbounded)", base)
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
