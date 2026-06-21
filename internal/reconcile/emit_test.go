@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -339,4 +340,52 @@ func TestJSONFindings_PreservesVerification(t *testing.T) {
 	data, err := json.Marshal(res2.JSONFindings())
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "verification", "nil Verification must stay omitted")
+}
+
+// TestJSONFinding_PathSuggestionOmittedWhenEmpty: a finding with no suggestion
+// must serialize without a path_suggestion key — byte-identical to pre-5.4
+// output (Epic 5.4 AC6 / Success Criteria: no findings.json change when absent).
+func TestJSONFinding_PathSuggestionOmittedWhenEmpty(t *testing.T) {
+	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
+	data, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "path_suggestion", "empty suggestion must be omitted")
+}
+
+// TestJSONFindings_CarriesPathSuggestion: a Merged finding's PathSuggestion is
+// carried into the JSON schema and survives a RenderJSON round-trip (AC6).
+func TestJSONFindings_CarriesPathSuggestion(t *testing.T) {
+	m := Merged{Finding: mf("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}
+	m.PathWarning = "file not found"
+	m.PathSuggestion = "internal/auth/validate.go"
+	res := Result{Findings: []Merged{m}}
+
+	got := res.JSONFindings()
+	require.Len(t, got, 1)
+	assert.Equal(t, "internal/auth/validate.go", got[0].PathSuggestion)
+
+	dir := t.TempDir()
+	reconDir := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, Emit(reconDir, res))
+	readBack, err := ReadReconciledFindings(dir)
+	require.NoError(t, err)
+	require.Len(t, readBack, 1)
+	assert.Equal(t, "internal/auth/validate.go", readBack[0].PathSuggestion)
+	// The original hallucinated path is preserved (suggest-only, AC7).
+	assert.Equal(t, "internal/auth/validator.go", readBack[0].File)
+}
+
+// TestRenderMarkdown_ShowsPathSuggestion: report.md renders a "(did you mean …)"
+// clause next to the file-not-found warning when a suggestion exists (AC6).
+func TestRenderMarkdown_ShowsPathSuggestion(t *testing.T) {
+	m := Merged{Finding: mf("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}
+	m.PathWarning = "file not found"
+	m.PathSuggestion = "internal/auth/validate.go"
+
+	var b bytes.Buffer
+	require.NoError(t, RenderMarkdown(&b, Result{Findings: []Merged{m}}))
+	out := b.String()
+	assert.Contains(t, out, "File not found")
+	assert.Contains(t, out, "did you mean")
+	assert.Contains(t, out, "internal/auth/validate.go")
 }

@@ -64,6 +64,13 @@ type Finding struct {
 	// finding (PathValid defaults to false) is never falsely flagged.
 	PathValid   bool   // true once validated and the file exists
 	PathWarning string // e.g. "file not found"; empty when valid or unvalidated
+
+	// PathSuggestion is the candidate-index correction for a hallucinated path
+	// (Epic 5.4): the real tracked file a flagged finding most likely meant. It
+	// is suggest-only — File is never rewritten — and stays empty when the path
+	// is valid, when no confident single candidate exists, or when no index is
+	// available (non-git repo). Set only alongside a non-empty PathWarning.
+	PathSuggestion string // e.g. "internal/auth/validate.go"; empty when none
 }
 
 // SkippedRow records a line skipped as malformed (wrong column count), with its

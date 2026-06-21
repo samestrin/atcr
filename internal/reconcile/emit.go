@@ -84,6 +84,12 @@ type JSONFinding struct {
 	// Consumers and the report layer key display off path_warning.
 	PathValid   bool   `json:"path_valid,omitempty"`
 	PathWarning string `json:"path_warning,omitempty"`
+	// PathSuggestion is the candidate-index correction for a hallucinated path
+	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
+	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
+	// present. It is advisory only — File (the original cited path) is never
+	// rewritten — and is set only alongside a non-empty path_warning.
+	PathSuggestion string `json:"path_suggestion,omitempty"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.
@@ -91,20 +97,21 @@ func (r Result) JSONFindings() []JSONFinding {
 	out := make([]JSONFinding, 0, len(r.Findings))
 	for _, m := range r.Findings {
 		out = append(out, JSONFinding{
-			Severity:     m.Severity,
-			File:         m.File,
-			Line:         m.Line,
-			Problem:      m.Problem,
-			Fix:          m.Fix,
-			Category:     m.Category,
-			EstMinutes:   m.EstMinutes,
-			Evidence:     m.Evidence,
-			Reviewers:    m.Reviewers,
-			Confidence:   m.Confidence,
-			Disagreement: m.Disagreement,
-			Verification: m.Verification,
-			PathValid:    m.PathValid,
-			PathWarning:  m.PathWarning,
+			Severity:       m.Severity,
+			File:           m.File,
+			Line:           m.Line,
+			Problem:        m.Problem,
+			Fix:            m.Fix,
+			Category:       m.Category,
+			EstMinutes:     m.EstMinutes,
+			Evidence:       m.Evidence,
+			Reviewers:      m.Reviewers,
+			Confidence:     m.Confidence,
+			Disagreement:   m.Disagreement,
+			Verification:   m.Verification,
+			PathValid:      m.PathValid,
+			PathWarning:    m.PathWarning,
+			PathSuggestion: m.PathSuggestion,
 		})
 	}
 	return out
@@ -318,9 +325,15 @@ func writeFindingsList(b *bytes.Buffer, findings []Merged) {
 			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
 		if m.PathWarning != "" {
 			// Hallucinated path (Epic 5.0): the finding is kept, not dropped — the
-			// path is flagged so a user can correct it. esc() neutralizes any
-			// markup in a reviewer-controlled path.
-			fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
+			// path is flagged so a user can correct it. A candidate-index
+			// suggestion (Epic 5.4), when present, points at the real file. esc()
+			// neutralizes any markup in the reviewer-controlled path; the
+			// suggestion comes from git ls-files but is esc'd for symmetry.
+			if m.PathSuggestion != "" {
+				fmt.Fprintf(b, "  - ⚠️ File not found: %s (did you mean %s?)\n", esc(m.File), esc(m.PathSuggestion))
+			} else {
+				fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
+			}
 		}
 		if m.Disagreement != "" {
 			fmt.Fprintf(b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
