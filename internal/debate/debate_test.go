@@ -3,6 +3,7 @@ package debate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,6 +21,12 @@ import (
 func harness(cc fanout.ChatCompleter) harnessFunc {
 	return func() (fanout.ChatCompleter, Dispatcher, func(), error) {
 		return cc, &fakeDispatcher{}, nil, nil
+	}
+}
+
+func errorHarness(err error) harnessFunc {
+	return func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return nil, nil, nil, err
 	}
 }
 
@@ -352,6 +359,22 @@ func TestRunDebate_GroupWriteIsAtomic(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "debate.json must not be written when group write fails")
 	f, _ := reconcile.ReadReconciledFindings(dir)
 	assert.Empty(t, f[0].Verification, "findings.json must not be mutated when group write fails")
+}
+
+func TestRunDebate_HarnessFailure_RecordsUnavailable(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, errorHarness(errors.New("harness unavailable")))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Selected)
+	assert.Equal(t, 1, res.Unresolved)
+
+	var df DebateFile
+	raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, json.Unmarshal(raw, &df))
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, OutcomeUnresolved, df.Items[0].Outcome)
+	assert.Equal(t, "harness_unavailable", df.Items[0].Reason)
 }
 
 func TestReadDebateFile(t *testing.T) {
