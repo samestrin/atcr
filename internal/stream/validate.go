@@ -107,6 +107,12 @@ func ValidatePath(f *Finding, root string, idx *FileIndex) {
 	}
 }
 
+// escapesRoot reports whether a filepath.Rel result points outside its base —
+// it is exactly ".." or begins with a parent segment.
+func escapesRoot(rel string) bool {
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 type existence int
 
 const (

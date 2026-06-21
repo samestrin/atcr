@@ -135,6 +135,32 @@ func TestValidatePath_SymlinkEscapeFlagged(t *testing.T) {
 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
 }
 
+// TestEscapesRoot_SeparatorIndependent: the traversal guard must treat a
+// filepath.Rel result as an escape regardless of which path separator it carries.
+// filepath.Rel emits OS-native separators (backslash on Windows); comparing
+// against a hardcoded filepath.Separator means a "..\\foo" form reaching the
+// check on a platform with a different separator slips through and a ../foo escape
+// passes the guard. The check must normalize before comparing.
+func TestEscapesRoot_SeparatorIndependent(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"..", true},
+		{"../foo", true},
+		{"..\\foo", true}, // backslash form — the cross-platform fragility case
+		{"../foo/bar", true},
+		{"foo", false},
+		{"foo/bar", false},
+		{"..foo", false},      // a filename beginning with .., not a traversal
+		{"foo/../bar", false}, // a cleaned Rel result never escapes via an interior ..
+		{"", false},
+	}
+	for _, c := range cases {
+		assert.Equalf(t, c.want, escapesRoot(c.rel), "escapesRoot(%q)", c.rel)
+	}
+}
+
 // TestValidatePath_SuggestsWrongDirectory: with a candidate index, a wrong-
 // directory hallucination yields the real file as PathSuggestion (AC2/AC6).
 func TestValidatePath_SuggestsWrongDirectory(t *testing.T) {
