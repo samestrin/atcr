@@ -476,8 +476,37 @@ func TestBackupExisting_FailedSwapPreservesPriorBak(t *testing.T) {
 	live, liveErr := os.ReadFile(filepath.Join(src, "marker.txt"))
 	require.NoError(t, liveErr, "live tree must survive a failed swap")
 	assert.Equal(t, "current", string(live))
-	// No staging straggler left behind.
+	// No staging straggler left behind — neither generation.
 	assert.NoDirExists(t, src+".bak.old", "staging artifact must not leak after a failed swap")
+	assert.NoDirExists(t, src+".bak.new", "staging copy must not leak after a failed swap")
+}
+
+// TestBackupExisting_StaleBakOldRemovalFailureSurfaces verifies the entry-time
+// straggler cleanup does not silently swallow a RemoveAll failure: when a stale
+// <dir>.bak.old cannot be removed (its parent dir is read-only), backupExisting
+// returns the typed "clearing stale staging backup" error rather than proceeding
+// as if the slate were clean (reviewdir.go entry-time cleanup, the .bak.old leg).
+func TestBackupExisting_StaleBakOldRemovalFailureSurfaces(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses directory write permissions; cannot force a RemoveAll failure")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "review")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+
+	// A stale staging straggler a prior crashed swap left behind.
+	require.NoError(t, os.MkdirAll(src+".bak.old", 0o755))
+
+	// Make the parent read-only so the straggler cannot be unlinked: RemoveAll of
+	// <src>.bak.old needs write on its parent dir, which is now denied. Restore in
+	// cleanup so t.TempDir's own RemoveAll can still tear the tree down.
+	require.NoError(t, os.Chmod(root, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	_, err := backupExisting(context.Background(), src)
+	require.Error(t, err, "an unremovable stale .bak.old must surface, not be swallowed")
+	assert.Contains(t, err.Error(), "clearing stale staging backup")
+	assert.Contains(t, err.Error(), ".bak.old")
 }
 
 // TestRestorePriorBackup_LogsRestoreFailure verifies that when the prior-backup
