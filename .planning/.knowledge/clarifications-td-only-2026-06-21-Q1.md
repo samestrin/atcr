@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-21-34c064
-question: "applyRulings replaces reconcile.Verification wholesale — should the fix add a Judge field to reconcile.Verification (option a), preserve Skeptic/Notes in-place (option b), or defer (option c)?"
+id: mem-2026-06-21-1fb1e6
+question: "When debate failure leaves verify findings on disk (no rollback), what behavior should the CLI chaining at cmd/atcr/review.go implement: atomic temp-staging, rollback/delete, or accept partial state?"
 created: 2026-06-21
 last_retrieved: ""
 sprints: []
-files: [internal/reconcile/emit.go, internal/debate/emit.go, .planning/epics/completed/6.0_cross_examination.md]
-tags: [td-clarification, td-only, architecture, correctness, verification, debate, reconcile]
+files: [cmd/atcr/review.go:306, internal/debate/debate.go:146]
+tags: [td-clarification, td-only, architecture, debate, verify, partial-state, error-handling]
 retrievals: 0
 status: active
-type: clarifications skill — td-only 2026-06-21
+type: td-clarification
 ---
 
-# applyRulings replaces reconcile.Verification wholesale — s
+# When debate failure leaves verify findings on disk (no rollb
 
 ## Decision
 
-Option (a) — add `Judge string \`json:"judge,omitempty"\`` to `reconcile.Verification` following the established additive omitempty pattern (same as `ChallengeSurvived`). In `applyRulings` (internal/debate/emit.go:109-120), check if `findings[i].Verification != nil` and mutate in-place — preserving the original `Skeptic` (multi-voter list from verify) and `Notes` (verify reasoning) — setting only `Verdict`, `ChallengeSurvived`, `Judge`, and reasoning from the ruling. Construct a fresh struct only when `Verification` is nil (pre-verify finding). Option (b) in-place with `Skeptic = judge` is the known ambiguous path (flagged in TD row at internal/debate/emit.go:118 in the epic-6.0 section). The epic design explicitly chose additive omitempty fields on Verification (see ChallengeSurvived, reconcile/emit.go:51). Justification: reconcile/emit.go:40-52 (struct definition + pattern); debate/emit.go:109-120 (wholesale replacement to fix); epic-6.0 Clarifications Q1 (additive omitempty is the contract); TD row emit.go:118 (confirms Skeptic=judge is ambiguous). The fix spans reconcile/ and internal/debate/ — requires running /resolve-td without --group.
+Option (c) — accept the partial state and document it with a comment. Verify findings on disk are valid, structured artifacts (confirmed/refuted/unverifiable verdicts) the user can inspect; debateFailureError already surfaces the failure. Atomic staging (option a) requires significant refactoring of how verify and debate share result.Dir. Rollback (option b) destroys useful debugging state. The debate package's own internal durability concern (applyRulings → writeFindings → writeDebateFile ordering) is tracked separately at internal/debate/debate.go:146. Fix: add a brief comment at cmd/atcr/review.go just before the `if debateFlag` block (~line 306) documenting that a debate failure intentionally leaves verify findings on disk.
 
 ## Rationale
 
@@ -27,6 +27,5 @@ Option (a) — add `Judge string \`json:"judge,omitempty"\`` to `reconcile.Verif
 
 ## Code Reference
 
-- internal/reconcile/emit.go
-- internal/debate/emit.go
-- .planning/epics/completed/6.0_cross_examination.md
+- cmd/atcr/review.go:306
+- internal/debate/debate.go:146

@@ -1,3 +1,24 @@
+## [Technical Debt] - 2026-06-21
+
+### Fixed
+
+- Documented that debate `pickDistinct` enforces distinctness by exact model string only.
+- Left finding severity untouched when a split ruling carries no `settled_severity`.
+- Validated debate verdict enum before persisting `Verification` so empty/invalid verdicts cannot be written.
+- Generated the debate prompt-injection sentinel from `crypto/rand` with 128-bit entropy.
+- Added a bounded worker pool for debate item processing to parallelize provider calls.
+- Preserved original verify skeptic list and notes when `applyRulings` mutates `Verification`.
+- Flattened untrusted newlines inside debate item blocks to block in-block prompt injection.
+- Rendered a `challenge-survived` badge on upheld and split contested findings.
+- Truncated unresolved reason text in the contested report with `escTrunc`.
+- Annotated overturned findings as excluded so severity tags no longer appear live.
+- Disclosed single-model fallback usage at the contested section level and on unresolved items.
+- Allowed `--require-verified` alongside `--debate` without requiring `--verify` in the CLI.
+- Consolidated debate trigger defaulting to a single source of truth in `ResolveConfig`.
+- Rejected `--single-model` on `atcr review` when `--debate` is not set.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [6.0.0] - 2026-06-21
 
 Cross-examination (debate) stage: resolve reviewer disagreements through a bounded proposer/challenger/judge debate instead of a heuristic. Where reviewers dispute severity, the reconciler leaves a gray-zone cluster, or a skeptic vote ties, the judge's ruling — not severity-max — settles the finding, and survivors form the top confidence tier.
