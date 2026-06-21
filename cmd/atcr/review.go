@@ -150,6 +150,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return usageError(errors.New("--require-verified requires --fail-on and --verify or --debate"))
 	}
 
+	// --single-model only affects the debate stage's casting (it opts into the
+	// same-model persona fallback). Without --debate it is silently a no-op, so a
+	// user setting it alone gets no effect and no feedback; fail fast as a usage
+	// error, mirroring the --require-verified guard.
+	singleModel, _ := cmd.Flags().GetBool("single-model")
+	if singleModel && !debateFlag {
+		return usageError(errors.New("--single-model requires --debate"))
+	}
+
 	res, err := gitrange.Resolve(ctx, ".", gitrange.Options{Base: base, Head: head, MergeCommit: mergeCommit})
 	if err != nil {
 		// A SIGINT/SIGTERM during range resolution surfaces as context.Canceled
