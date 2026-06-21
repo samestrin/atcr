@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 2 | 19 | 0 |
-| LOW | 10 | 17 | 0 |
+| LOW | 5 | 17 | 5 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 12 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 49
+**Last Modified:** 2026-06-21 | **Open Items:** 7 | **Deferred Items:** 37 | **Resolved Items:** 5 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -53,16 +53,16 @@ technical-debt/
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | U | [ ] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today | CROSS_CUTTING | 15 | execute-epic-cumulative |
 | U | [ ] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention | EDGE_CASES | 60 | execute-epic-independent |
-| U | [ ] | LOW | internal/reconcile/emit.go:146 | The reconciled 9-column findings.txt (RenderText) does not carry PathValid/PathWarning, so a consumer reading findings.txt rather than findings.json/report.md loses the hallucination warning | Document the intentional omission in RenderText, or fold the warning into the EVIDENCE column the way the Disagreement annotation already is | INTEGRATION | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/stream/validate.go:46 | os.Stat is case-insensitive on macOS/Windows default filesystems, so a case-only path typo (Parser.go vs parser.go) resolves as present and is not flagged | Add a case-exact existence check comparing against the real dirent name per path segment | EDGE_CASES | 30 | execute-epic-independent |
+| U | [x] | LOW | internal/reconcile/emit.go:146 | The reconciled 9-column findings.txt (RenderText) does not carry PathValid/PathWarning, so a consumer reading findings.txt rather than findings.json/report.md loses the hallucination warning | Document the intentional omission in RenderText, or fold the warning into the EVIDENCE column the way the Disagreement annotation already is | INTEGRATION | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/stream/validate.go:46 | os.Stat is case-insensitive on macOS/Windows default filesystems, so a case-only path typo (Parser.go vs parser.go) resolves as present and is not flagged | Add a case-exact existence check comparing against the real dirent name per path segment | EDGE_CASES | 30 | execute-epic-independent |
 | U | [ ] | LOW | internal/report/render.go:318 | The warning label "File not found" is hardcoded and keyed off PathWarning != "" rather than rendering the PathWarning value, so a future non-default warning would render text inconsistent with findings.json path_warning | Render esc(f.PathWarning) so the human report always matches the machine field | REGRESSION_RISK | 15 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: epic-4.9
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 4 | [ ] | LOW | internal/fanout/secrets.go:28 | SecretValues resolves os.Getenv only at redactor-construction time, so a key set or rotated after correlateAndRedact/reviewContext runs will not be added to the exact-value scrub list and could leak verbatim. | Document the construction-time snapshot contract explicitly as a known limitation; acceptable given keys are resolved before any provider call. | EDGE_CASES | 5 | execute-epic-independent |
-| 4 | [ ] | LOW | internal/fanout/secrets.go:18 | The minSecretLen=8 guard admits any 8-39 char misconfigured/self-hosted key value into the verbatim ReplaceAll scrub list, so a short generic key could over-redact unrelated log substrings that contain it. | Accept the documented tradeoff (real provider keys are 32+); if self-hosted short keys become a concern, raise the floor or scope the verbatim match to header-adjacent contexts. | EDGE_CASES | 15 | execute-epic-independent |
+| 4 | [x] | LOW | internal/fanout/secrets.go:28 | SecretValues resolves os.Getenv only at redactor-construction time, so a key set or rotated after correlateAndRedact/reviewContext runs will not be added to the exact-value scrub list and could leak verbatim. | Document the construction-time snapshot contract explicitly as a known limitation; acceptable given keys are resolved before any provider call. | EDGE_CASES | 5 | execute-epic-independent |
+| 4 | [x] | LOW | internal/fanout/secrets.go:18 | The minSecretLen=8 guard admits any 8-39 char misconfigured/self-hosted key value into the verbatim ReplaceAll scrub list, so a short generic key could over-redact unrelated log substrings that contain it. | Accept the documented tradeoff (real provider keys are 32+); if self-hosted short keys become a concern, raise the floor or scope the verbatim match to header-adjacent contexts. | EDGE_CASES | 15 | execute-epic-independent |
 | 4 | [ ] | LOW | internal/fanout/secrets.go:24 | SecretValues silently skips both unset and sub-8-char env values with no diagnostic, so an operator who fat-fingers a key env name or sets a too-short test key gets no signal that exact-value redaction is inactive for that slot. | Optionally emit a debug-level (never the value) note when a configured APIKeyEnv resolves empty or below the floor, so a misconfigured redaction path is observable. | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: 4.7.1_backup-swap-hardening
@@ -78,7 +78,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/atomicfs/atomic.go:139 | CopyPath documents that a directory dst must not already exist, but copyTree uses MkdirAll and copyFile uses O_TRUNC, so a pre-existing dst is silently merged/overwritten; the not-exist invariant is enforced by callers (a prior RemoveAll), not by CopyPath itself. | Enforce the precondition inside CopyPath (stat dst and error if present) or soften the doc comment to state CopyPath merges into an existing dst. | EDGE_CASES | 15 | execute-epic-independent |
+| U | [x] | LOW | internal/atomicfs/atomic.go:139 | CopyPath documents that a directory dst must not already exist, but copyTree uses MkdirAll and copyFile uses O_TRUNC, so a pre-existing dst is silently merged/overwritten; the not-exist invariant is enforced by callers (a prior RemoveAll), not by CopyPath itself. | Enforce the precondition inside CopyPath (stat dst and error if present) or soften the doc comment to state CopyPath merges into an existing dst. | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-19] From Sprint: 4.7_idempotency
 
