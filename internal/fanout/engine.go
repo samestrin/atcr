@@ -606,8 +606,14 @@ func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
 				Truncation:  a.Truncation,
 				MinSeverity: a.MinSeverity,
 				MaxFindings: a.MaxFindings,
-				Model:       a.Invocation.Model,
-				CacheHit:    true,
+				// Mirror invokeSingleShot's OK shape: it always carries
+				// ToolsRequested (=a.Tools) so a degraded tool agent reports it.
+				// Only non-tool agents reach this cached path today (a.Tools is
+				// false), so this is shape-consistency insurance against drift if
+				// the cache scope ever widens — not an observable behavior change.
+				ToolsRequested: a.Tools,
+				Model:          a.Invocation.Model,
+				CacheHit:       true,
 			}
 		}
 	}
