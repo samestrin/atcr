@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -205,6 +206,35 @@ func TestValidatePath_SymlinkEscapeNoSuggestion(t *testing.T) {
 	assert.False(t, f.PathValid)
 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
 	assert.Empty(t, f.PathSuggestion)
+}
+
+// TestValidatePath_IndeterminateEmitsMetric: when existence cannot be proven —
+// EvalSymlinks returns a permission/IO error rather than a clean "not found" —
+// the finding is left unflagged (never a false "file not found"), but the
+// indeterminate branch must no longer be silent. It increments an observability
+// counter so a systematic permission problem suppressing all path validation is
+// visible in production rather than swallowing every finding without a trace.
+//
+// The indeterminate result is forced by routing the lookup through a regular
+// file standing where a directory segment is expected: EvalSymlinks then fails
+// with ENOTDIR, an error os.IsNotExist rejects, so existsContained returns
+// existsIndeterminate.
+func TestValidatePath_IndeterminateEmitsMetric(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "notadir"), []byte("x\n"), 0o644))
+
+	f := Finding{File: "notadir/child.go", Line: 7}
+	ValidatePath(&f, root, nil)
+
+	// An indeterminate result must never masquerade as "file not found".
+	assert.False(t, f.PathValid)
+	assert.Empty(t, f.PathWarning)
+
+	// ...but it must be counted, so the silent branch becomes observable.
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_indeterminate_total").Value(),
+		"an indeterminate path check must increment the observability counter")
 }
 
 // TestValidatePath_NilIndexNoSuggestion: with no index (non-git repo), a missing
