@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 21 | 0 |
-| LOW | 0 | 20 | 0 |
+| LOW | 4 | 20 | 0 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 42
+**Last Modified:** 2026-06-21 | **Open Items:** 4 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 46
 
 ## Directory Structure
 
@@ -34,6 +34,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-21] From Sprint: epic-6.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/debate/cluster.go:filterMergedClusters | Two distinct gray-zone clusters sharing the same canonical File+Line: merging one drops the other's radar item too (location-keyed filter), so the second is not debated until the next fresh reconcile (self-healing, non-corrupting) | Track the merged cluster identity (e.g. cluster id) on the survivor and filter by cluster identity rather than location alone | EDGE_CASES | 30 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/debate/debate.go:201 | An empty/unparseable judge cluster_decision on a real gray-zone item is indistinguishable from an intentional separate (both fall through with no application beyond debate.json) | Record the no-decision case distinctly in debate.json (e.g. a reason) so an unparseable cluster ruling is auditable rather than silently treated as separate | REGRESSION_RISK | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/debate/cluster.go:applyClusterMerges | No explicit guard/assertion locks the invariant that gray-zone member locations never collide with the single-finding rulings keyspace (the radar excludes gray members from solo/split tiers today); a future radar change could silently break it | Add a defensive assertion or test pinning that a gray-zone member location is never also a rulings-map key | INTEGRATION | 25 | execute-epic-independent |
+| U | [ ] | LOW | internal/reconcile/merge.go:296 | MergeJSONFindings copies PathValid/PathWarning/PathSuggestion from group[0] only, assuming co-located members share path status, but cross-line drift can union members at different lines whose Epic 5.0 path fields are not guaranteed identical | Take the path fields from the canonical-location member or re-derive them, rather than assuming group[0] when members may span lines | CORRECTNESS | 20 | execute-epic-independent |
 
 ### [2026-06-21] From Sprint: epic-6.0
 
