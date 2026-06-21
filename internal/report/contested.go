@@ -55,6 +55,12 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 		return
 	}
 	fmt.Fprintf(b, "\n## Contested findings\n\nDebated %d finding(s) through cross-examination (proposer/challenger/judge).\n", len(cr.Items))
+	// Model independence is the epic's selling point, so a degraded run must be
+	// disclosed at the surface a reader scans first: an aggregate count of rulings
+	// made under the same-model persona fallback, in addition to the per-item note.
+	if single := singleModelCount(cr.Items); single > 0 {
+		fmt.Fprintf(b, "\n_%d ruling(s) used the same-model persona fallback — model independence was weaker for these._\n", single)
+	}
 	for i, c := range cr.Items {
 		fmt.Fprintf(b, "\n### %d. %s — %s%s%s\n", i+1, esc(c.Outcome), codeSpan(c.File, c.Line), severityTransition(c), challengeBadge(c))
 		switch c.Outcome {
@@ -69,6 +75,12 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 				fmt.Fprintf(b, "- Unresolved: %s.\n", escTrunc(c.Reason))
 			} else {
 				b.WriteString("- Unresolved.\n")
+			}
+			// An item left unresolved because distinct models were unavailable has no
+			// Judge line to carry singleModelNote, so surface the weakened-independence
+			// condition here rather than leaving it invisible.
+			if c.Reason == "insufficient_distinct_models" {
+				b.WriteString("- Independence: distinct models were unavailable; no ruling under the independence guarantee.\n")
 			}
 		}
 		if c.Judge != "" {
@@ -115,6 +127,18 @@ func challengeBadge(c Contested) string {
 		return " _(challenge-survived)_"
 	}
 	return ""
+}
+
+// singleModelCount reports how many rulings were produced under the same-model
+// persona fallback — the input to the section-level independence disclosure.
+func singleModelCount(items []Contested) int {
+	n := 0
+	for _, c := range items {
+		if c.SingleModel {
+			n++
+		}
+	}
+	return n
 }
 
 // singleModelNote flags a ruling produced under the same-model persona fallback,
