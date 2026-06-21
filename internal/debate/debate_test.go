@@ -6,12 +6,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 )
@@ -67,6 +70,74 @@ func splitFinding() reconcile.JSONFinding {
 		Category: "correctness", Reviewers: []string{"alice"}, Confidence: "HIGH",
 		Disagreement: "MEDIUM vs HIGH",
 	}
+}
+
+// concCompleter records the maximum number of Chat calls in flight at once so a
+// test can assert the debate loop runs items through a bounded worker pool
+// (concurrent across items) rather than strictly one-at-a-time. Each call returns
+// a parseable uphold ruling, so every seat — proposer, challenger, judge — yields
+// a valid turn regardless of order.
+type concCompleter struct {
+	mu      sync.Mutex
+	cur     int
+	maxSeen int
+}
+
+func (c *concCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	return "", nil
+}
+
+func (c *concCompleter) Chat(_ context.Context, _ llmclient.Invocation, _ []llmclient.Message, _ []llmclient.ToolDef) (*llmclient.ChatResponse, error) {
+	c.mu.Lock()
+	c.cur++
+	if c.cur > c.maxSeen {
+		c.maxSeen = c.cur
+	}
+	c.mu.Unlock()
+	// Hold the call open briefly so concurrent items genuinely coincide; the
+	// upper bound is enforced structurally by the semaphore, this only widens the
+	// window for the lower bound (>=2 in flight).
+	time.Sleep(30 * time.Millisecond)
+	c.mu.Lock()
+	c.cur--
+	c.mu.Unlock()
+	content := `{"outcome":"uphold","settled_severity":"HIGH"}`
+	return &llmclient.ChatResponse{Message: llmclient.Message{Role: "assistant", Content: &content}, FinishReason: "stop"}, nil
+}
+
+// TestRunDebate_BoundedWorkerPool: three selected items with MaxParallel=2 run
+// through a bounded worker pool — at most two debates in flight at once, and at
+// least two genuinely overlapping (proving the loop is not sequential). All items
+// are still recorded with their verdicts.
+func TestRunDebate_BoundedWorkerPool(t *testing.T) {
+	f1 := splitFinding()
+	f2 := splitFinding()
+	f2.File, f2.Line, f2.Problem = "b.go", 20, "nil deref 2"
+	f3 := splitFinding()
+	f3.File, f3.Line, f3.Problem = "c.go", 30, "nil deref 3"
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f1, f2, f3})
+
+	cc := &concCompleter{}
+	reg := debateRoster()
+	reg.Debate.MaxParallel = 2
+
+	res, err := runDebate(context.Background(), dir, reg, Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 3, res.Selected, "all three split findings should be debated")
+	assert.Equal(t, 3, res.Upheld)
+
+	assert.Equal(t, 2, cc.maxSeen, "bounded worker pool must run at most MaxParallel=2 debates at once, and at least two concurrently")
+
+	var df DebateFile
+	raw, err := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &df))
+	require.Len(t, df.Items, 3)
+	files := map[string]bool{}
+	for _, it := range df.Items {
+		files[it.File] = true
+	}
+	assert.Equal(t, map[string]bool{"a.go": true, "b.go": true, "c.go": true}, files)
 }
 
 func TestRunDebate_UpholdWritesConfirmedVerdict(t *testing.T) {

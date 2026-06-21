@@ -85,6 +85,7 @@ type DebateConfig struct {
 	Triggers         []string `yaml:"triggers,omitempty"`           // default: all three kinds
 	MaxItems         *int     `yaml:"max_items,omitempty"`          // nil = default 5; 0 = unlimited; N>0 = cap
 	AllowSingleModel bool     `yaml:"allow_single_model,omitempty"` // default false (skip + record unresolved)
+	MaxParallel      int      `yaml:"max_parallel,omitempty"`       // bounded worker pool cap (0 = default 4)
 }
 
 // VerifyConfig is the optional registry-level adversarial-verification block
@@ -326,6 +327,9 @@ func (r *Registry) validate() error {
 	}
 	if r.Debate.MaxItems != nil && *r.Debate.MaxItems < 0 {
 		errs = append(errs, fmt.Errorf("debate.max_items must be >= 0 (0 = unlimited), got %d", *r.Debate.MaxItems))
+	}
+	if r.Debate.MaxParallel < 0 {
+		errs = append(errs, fmt.Errorf("debate.max_parallel must be >= 0 (0 = default 4), got %d", r.Debate.MaxParallel))
 	}
 
 	for _, name := range sortedKeys(r.Providers) {

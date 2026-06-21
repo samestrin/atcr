@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/atomicwrite"
@@ -142,33 +143,65 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	rulings := map[FindingKey]ruleApply{}
 	var res Result
 
-	for _, it := range sel.Selected {
-		if harnessFailed {
-			ir := ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "harness_unavailable"}
-			items = append(items, ir)
-			tally(&res, ir)
-			continue
-		}
-		if ctx.Err() != nil {
-			ir := ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
-			items = append(items, ir)
-			tally(&res, ir)
-			continue
-		}
-		ir := debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
-		items = append(items, ir)
-		tally(&res, ir)
-		// Apply verdicts only to single-finding items. A gray-zone ruling is a
-		// cluster-level merge/separate decision recorded for the existing
-		// adjudication path, not a per-finding verdict (see Clarifications).
-		if ir.Outcome != OutcomeUnresolved && it.Kind != reconcile.KindGrayZone {
-			rulings[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = ruleApply{
-				verdict:   ruleVerdict(ir),
-				survived:  ir.ChallengeSurvived,
-				severity:  splitSeverity(ir),
-				judge:     ir.Judge,
-				reasoning: ir.Reasoning,
+	// Debate items through a bounded worker pool (mirrors verify's sem/maxPar):
+	// items run concurrently up to cfg.MaxParallel, while each item's three-turn
+	// debate stays sequential inside debateOne. Per-item outcomes land in an
+	// index-aligned slice and are merged in selection order after the pool drains,
+	// so debate.json item order, the rulings map, and the Result tally stay
+	// deterministic and race-free without a lock (the merge is single-threaded).
+	maxPar := cfg.MaxParallel
+	if maxPar <= 0 {
+		maxPar = 4
+	}
+	type itemOutcome struct {
+		ir    ItemResult
+		apply bool
+		key   FindingKey
+		rule  ruleApply
+	}
+	outcomes := make([]itemOutcome, len(sel.Selected))
+	sem := make(chan struct{}, maxPar)
+	var wg sync.WaitGroup
+	for i, it := range sel.Selected {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, it reconcile.DisagreementItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var ir ItemResult
+			switch {
+			case harnessFailed:
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "harness_unavailable"}
+			case ctx.Err() != nil:
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
+			default:
+				ir = debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
 			}
+			oc := itemOutcome{ir: ir}
+			// Apply verdicts only to single-finding items. A gray-zone ruling is a
+			// cluster-level merge/separate decision recorded for the existing
+			// adjudication path, not a per-finding verdict (see Clarifications).
+			if ir.Outcome != OutcomeUnresolved && it.Kind != reconcile.KindGrayZone {
+				oc.apply = true
+				oc.key = FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
+				oc.rule = ruleApply{
+					verdict:   ruleVerdict(ir),
+					survived:  ir.ChallengeSurvived,
+					severity:  splitSeverity(ir),
+					judge:     ir.Judge,
+					reasoning: ir.Reasoning,
+				}
+			}
+			outcomes[idx] = oc
+		}(i, it)
+	}
+	wg.Wait()
+
+	for _, oc := range outcomes {
+		items = append(items, oc.ir)
+		tally(&res, oc.ir)
+		if oc.apply {
+			rulings[oc.key] = oc.rule
 		}
 	}
 
