@@ -386,3 +386,36 @@ func readFindings(t *testing.T, dir string) []reconcile.JSONFinding {
 	require.NoError(t, err)
 	return f
 }
+
+func TestDeduplicateFindings_KeepsFirstOccurrence(t *testing.T) {
+	f1 := reconcile.JSONFinding{File: "a.go", Line: 10, Problem: "nil deref", Severity: "HIGH"}
+	f2 := reconcile.JSONFinding{File: "a.go", Line: 10, Problem: "nil deref", Severity: "MEDIUM"}
+	f3 := reconcile.JSONFinding{File: "b.go", Line: 20, Problem: "leak", Severity: "LOW"}
+
+	got := deduplicateFindings([]reconcile.JSONFinding{f1, f2, f3})
+	require.Len(t, got, 2)
+	assert.Equal(t, "HIGH", got[0].Severity, "first occurrence of a duplicate triple must be kept")
+	assert.Equal(t, "b.go", got[1].File)
+}
+
+func TestRunDebate_DuplicateFindingKeyMutatesOnlyOne(t *testing.T) {
+	f1 := splitFinding()
+	f2 := splitFinding()
+	f2.Severity = "MEDIUM" // same {File,Line,Problem} as f1
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f1, f2})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`},
+	}}
+
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Selected, "duplicate triple should collapse to one debate item")
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 1, "findings.json should be deduplicated on the triple")
+	require.NotNil(t, f[0].Verification)
+	assert.Equal(t, reconcile.VerdictConfirmed, f[0].Verification.Verdict)
+	assert.True(t, f[0].Verification.ChallengeSurvived)
+}
