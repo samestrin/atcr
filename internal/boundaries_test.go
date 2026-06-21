@@ -25,7 +25,7 @@ const modulePath = "github.com/samestrin/atcr"
 var allowedInternalImports = map[string][]string{
 	"atomicfs":       {},
 	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
-	"stream":         {},
+	"stream":         {"metrics"},  // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle)
 	"gitrange":       {},
 	"log":            {},         // single diagnostic sink; stdlib-only (epic 4.0)
 	"errors":         {},         // error-classification taxonomy; stdlib-only (epic 4.0)

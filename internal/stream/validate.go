@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // PathNotFoundWarning is the warning stamped on a finding whose file does not
@@ -65,8 +67,7 @@ func ValidatePath(f *Finding, root string, idx *FileIndex) {
 	// lexical guard is cheap and runs before any filesystem call; the symlink-
 	// resolved containment check below catches the cases lexical analysis cannot
 	// (a path that escapes only after a symlinked segment is followed).
-	if rel, err := filepath.Rel(root, joined); err != nil ||
-		rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if rel, err := filepath.Rel(root, joined); err != nil || escapesRoot(rel) {
 		f.PathValid = false
 		f.PathWarning = PathNotFoundWarning
 		return
@@ -96,8 +97,26 @@ func ValidatePath(f *Finding, root string, idx *FileIndex) {
 		}
 	default: // existsIndeterminate
 		// Indeterminate (permission, I/O): leave the finding unflagged rather
-		// than assert a "not found" we cannot prove.
+		// than assert a "not found" we cannot prove. Silence here would hide a
+		// systematic fault — a permission problem suppressing every path check
+		// would flag nothing and look identical to a clean run — so count the
+		// indeterminate result. The process-wide registry surfaces it via the
+		// Prometheus endpoint without threading a logger through this signature.
+		metrics.Counter("atcr_path_validation_indeterminate_total").Inc()
 	}
+}
+
+// escapesRoot reports whether a filepath.Rel result points outside its base —
+// it is exactly ".." or begins with a parent ("../") segment. The input is
+// slash-normalized via toSlashKeys first so the check is separator-independent:
+// filepath.Rel emits OS-native separators (backslash on Windows), and comparing
+// against a hardcoded filepath.Separator would let a "..\\foo" escape slip
+// through on any platform whose separator differs from the path form in hand.
+// toSlashKeys (not filepath.ToSlash, a no-op on non-Windows) converts backslashes
+// explicitly so the guard holds regardless of build OS.
+func escapesRoot(rel string) bool {
+	rel = toSlashKeys(rel)
+	return rel == ".." || strings.HasPrefix(rel, "../")
 }
 
 type existence int
@@ -123,13 +142,19 @@ func existsContained(root, joined string) existence {
 	}
 	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
-		realRoot = absRoot // best effort; containment still re-checked below
+		// The root cannot be symlink-resolved (broken link, permission). Don't
+		// silently treat the unresolved path as authoritative — a degraded
+		// containment check that looks identical to a clean one. Count it (the same
+		// observability mechanism the indeterminate branch uses, avoiding a logger
+		// in this signature), then fall back to the lexical absRoot best-effort.
+		metrics.Counter("atcr_path_validation_root_unresolved_total").Inc()
+		realRoot = absRoot
 	}
 	resolved, err := filepath.EvalSymlinks(absJoined)
 	switch {
 	case err == nil:
 		rel, rerr := filepath.Rel(realRoot, resolved)
-		if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rerr != nil || escapesRoot(rel) {
 			return existsOutsideOrAbsent // escaped the repo via a symlink
 		}
 		return existsInside

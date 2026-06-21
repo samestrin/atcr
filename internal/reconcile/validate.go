@@ -18,6 +18,9 @@ func validateFindingPaths(findings []Merged, root string) {
 	if root == "" {
 		return
 	}
+	if len(findings) == 0 {
+		return
+	}
 	idx := stream.BuildFileIndex(root)
 	for i := range findings {
 		stream.ValidatePath(&findings[i].Finding, root, idx)

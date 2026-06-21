@@ -33,11 +33,23 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
+// atcrGitignore is dropped at .atcr/.gitignore by `atcr init` so the runtime
+// outputs atcr writes under .atcr/ (the diff cache, up to cache_max_bytes, and
+// reviewer outputs — both can hold source snippets and review prose) are never
+// accidentally committed, even by end users who never manually ignore .atcr/.
+// The editable config.yaml and personas/ alongside this file stay tracked.
+const atcrGitignore = `# Written by atcr init. Runtime outputs under .atcr/ — do not commit.
+# The editable config.yaml and personas/ alongside this file stay tracked.
+cache/
+reviews/
+`
+
 // initTargets returns every path `atcr init` writes under dir, config first.
 func initTargets(dir string) []string {
 	personasDir := filepath.Join(dir, ".atcr", "personas")
 	targets := []string{
 		filepath.Join(dir, ".atcr", "config.yaml"),
+		filepath.Join(dir, ".atcr", ".gitignore"),
 		filepath.Join(personasDir, "_base.md"),
 	}
 	for _, name := range personas.Names() {
@@ -107,6 +119,10 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 
 	roster := personas.Names()
 	if err := write(targets[0], registry.DefaultProjectConfigYAML(roster)); err != nil {
+		return err
+	}
+
+	if err := write(filepath.Join(dir, ".atcr", ".gitignore"), atcrGitignore); err != nil {
 		return err
 	}
 

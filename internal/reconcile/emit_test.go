@@ -185,7 +185,23 @@ func TestRenderMarkdown_BacktickFilePathRendersInert(t *testing.T) {
 	out := b.String()
 	assert.NotContains(t, out, "`a`", "backtick in path must not open/close a code span")
 	assert.NotContains(t, out, "<i>", "HTML in path must be escaped")
-	assert.Contains(t, out, "- a`&lt;i&gt;.go:1 — ", "falls back to escaped plain text, no span")
+	assert.Contains(t, out, "- a&#96;&lt;i&gt;.go:1 — ", "falls back to escaped plain text, no span")
+}
+
+func TestRenderMarkdown_PathWarningEscapesBacktickAndHTML(t *testing.T) {
+	// The "did you mean ..." warning line renders File and PathSuggestion through
+	// esc(), so backticks and HTML in those fields must be neutralized just like
+	// in report/render.go esc() (TD reconcile emit.go:332).
+	m := Merged{Finding: mf("HIGH", "a`<i>.go", 1, "p", "f", "security", 10, "e", "greta")}
+	m.PathWarning = "file not found"
+	m.PathSuggestion = "b`<i>.go"
+
+	var b bytes.Buffer
+	require.NoError(t, RenderMarkdown(&b, Result{Findings: []Merged{m}}))
+	out := b.String()
+	assert.Contains(t, out, "a&#96;&lt;i&gt;.go", "File with backtick must be escaped")
+	assert.Contains(t, out, "b&#96;&lt;i&gt;.go", "PathSuggestion with backtick must be escaped")
+	assert.NotContains(t, out, "<i>", "HTML must be escaped")
 }
 
 func TestRenderMarkdown_FlattensNewlineInjection(t *testing.T) {

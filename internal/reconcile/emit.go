@@ -406,9 +406,12 @@ func codeSpan(file string, line int) string {
 }
 
 // esc makes a free-text field safe in markdown: newlines are flattened (so a
-// field cannot inject markdown structure) and HTML metacharacters are escaped
-// (so raw HTML never renders). html.EscapeString alone leaves newlines intact.
-func esc(s string) string { return html.EscapeString(newlineFlattener.Replace(s)) }
+// field cannot inject markdown structure), HTML metacharacters are escaped
+// (so raw HTML never renders), and backticks are escaped so reviewer-controlled
+// fields cannot open an inline code span inside a normal bullet.
+func esc(s string) string {
+	return strings.ReplaceAll(html.EscapeString(newlineFlattener.Replace(s)), "`", "&#96;")
+}
 
 // joinOrNone joins names with ", " or returns "(none)" for an empty list.
 func joinOrNone(names []string) string {
