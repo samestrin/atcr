@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/report"
 	"github.com/samestrin/atcr/internal/validation"
@@ -98,7 +99,11 @@ func runReport(cmd *cobra.Command, args []string) error {
 		// failing the report (the dedicated --disagreements view above surfaces
 		// such errors explicitly instead).
 		df := reconcile.LoadDisagreements(reviewDir, findings)
-		if err := report.RenderMarkdownWithDisagreements(&buf, findings, df); err != nil {
+		// Contested-findings section (Epic 6.0): a present-but-malformed debate.json
+		// degrades to no section rather than failing the report, matching the
+		// tolerant-read contract the radar uses for ambiguous.json.
+		cr := loadContested(reviewDir)
+		if err := report.RenderMarkdownWithContested(&buf, findings, df, cr); err != nil {
 			return usageError(err)
 		}
 	default:
@@ -136,6 +141,36 @@ func resolveOutputPath(output string) (string, error) {
 		return abs, nil
 	}
 	return resolved, nil
+}
+
+// loadContested reads the debate stage's reconciled/debate.json (Epic 6.0) and
+// maps it onto the report's presentation-only Contested view. It is the seam that
+// keeps the report package decoupled from the debate package: the command (the
+// composition root) owns the artifact read and the mapping. A missing debate.json
+// (the stage never ran) or a malformed one degrades to an empty report — the
+// contested section is then omitted — matching the radar's tolerant-read contract.
+func loadContested(reviewDir string) report.ContestedReport {
+	df, found, err := debate.ReadDebateFile(reviewDir)
+	if err != nil || !found {
+		return report.ContestedReport{}
+	}
+	items := make([]report.Contested, 0, len(df.Items))
+	for _, it := range df.Items {
+		items = append(items, report.Contested{
+			File:              it.File,
+			Line:              it.Line,
+			Outcome:           it.Outcome,
+			OriginalSeverity:  it.OriginalSeverity,
+			SettledSeverity:   it.SettledSeverity,
+			Judge:             it.Judge,
+			Reasoning:         it.Reasoning,
+			Reason:            it.Reason,
+			ChallengeSurvived: it.ChallengeSurvived,
+			SingleModel:       it.SingleModel,
+			ClusterDecision:   it.ClusterDecision,
+		})
+	}
+	return report.ContestedReport{Items: items, Overflow: len(df.Overflow)}
 }
 
 // readReconciledFindings wraps the shared reconcile loader with the CLI's
