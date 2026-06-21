@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -117,16 +116,15 @@ type Agent struct {
 	MinSeverity string
 	MaxFindings *int
 
-	// Diff-cache digests (Epic 5.2). PayloadHash and PersonaHash are the
-	// HashText digests of the payload this agent saw and its persona text,
-	// computed once by buildAgent. The engine combines them with the model
-	// (cache.Key) to look up / store this agent's raw review output, so a re-run
-	// over an unchanged diff replays the prior result without an API call. Both
-	// empty means "not cacheable" (a directly-constructed Agent, the doctor
-	// self-test) and the engine always calls live for it. A fallback inherits the
-	// primary's digests (same payload + persona) but keys on its own model.
-	PayloadHash string
-	PersonaHash string
+	// CacheKey is the diff-cache key (Epic 5.2) for this agent's review call,
+	// derived by buildAgent/buildFallbackAgent from the FULL rendered prompt
+	// (which subsumes payload, persona, the per-agent scope focus, and the
+	// base/head refs — every text input to the model), the model id, and the
+	// temperature. The engine uses it to look up / store this agent's raw review
+	// output, so a re-run over an unchanged diff replays the prior result without
+	// an API call. Empty means "not cacheable" (a directly-constructed Agent, the
+	// doctor self-test) and the engine always calls live for it.
+	CacheKey string
 }
 
 // Slot is one reviewer position in the roster: a primary agent plus its
@@ -588,10 +586,10 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 // is recorded, which is the whole point. On a miss it calls live and stores a
 // successful result; a failed/timed-out review is never cached.
 func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
-	if e.cache == nil || a.PayloadHash == "" {
+	if e.cache == nil || a.CacheKey == "" {
 		return e.invokeSingleShot(ctx, a)
 	}
-	key := cache.Key(a.PayloadHash, a.Invocation.Model, a.PersonaHash)
+	key := a.CacheKey
 	if !e.cacheNoRead {
 		content, hit, err := e.cache.Get(key)
 		if err != nil {

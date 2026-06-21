@@ -24,25 +24,27 @@ func HashText(s string) string {
 }
 
 // Key derives the content-addressed cache key for one reviewer call from the
-// payload digest it saw, the model id, and the persona digest. payloadHash and
-// personaHash are pre-computed via HashText so the large payload/persona texts
-// are hashed once at agent-build time rather than on every cache lookup.
+// digest of the full rendered prompt the model received, the model id, and a
+// tuning token (the temperature). promptHash is pre-computed via HashText so the
+// large prompt text is hashed once at agent-build time rather than on every
+// lookup.
 //
-// The three inputs are joined with a NUL separator (which cannot appear in a
-// hex digest or a model id) before the outer hash, so no boundary ambiguity can
-// map two distinct triples onto the same key.
+// The three inputs are joined with a NUL separator (which cannot appear in a hex
+// digest, a model id, or a numeric tuning token) before the outer hash, so no
+// boundary ambiguity can map two distinct triples onto the same key.
 //
-// Deliberately excluded from the key (Epic 5.2 clarification): min_severity and
-// max_findings are deterministic post-LLM filters applied after the call, so the
-// same cached response is valid regardless of those thresholds; the per-payload
-// byte budget is captured implicitly (a different budget yields different payload
-// bytes and therefore a different payloadHash).
-func Key(payloadHash, model, personaHash string) string {
+// Keying on the rendered prompt (not the raw payload/persona) is deliberate: the
+// prompt subsumes payload + persona + the per-agent scope focus + the base/head
+// refs, so any input that changes what the model sees invalidates the entry.
+// Deliberately excluded (Epic 5.2): min_severity and max_findings are
+// deterministic post-LLM filters applied after the call, so the same cached
+// response is valid regardless of those thresholds.
+func Key(promptHash, model, tuning string) string {
 	h := sha256.New()
-	h.Write([]byte(payloadHash))
+	h.Write([]byte(promptHash))
 	h.Write([]byte{0})
 	h.Write([]byte(model))
 	h.Write([]byte{0})
-	h.Write([]byte(personaHash))
+	h.Write([]byte(tuning))
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }

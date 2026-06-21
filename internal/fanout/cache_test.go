@@ -18,21 +18,21 @@ import (
 )
 
 // cacheableSlot builds a non-serial, non-tool slot whose primary carries the
-// payload/persona digests the cache keys on.
-func cacheableSlot(name, model, payload, persona string) Slot {
+// diff-cache key derived from the rendered prompt (which subsumes payload +
+// persona + scope) and the model.
+func cacheableSlot(name, model, prompt string) Slot {
 	return Slot{Primary: Agent{
 		Name:        name,
 		PayloadMode: "blocks",
-		PayloadHash: cache.HashText(payload),
-		PersonaHash: cache.HashText(persona),
-		Invocation:  llmclient.Invocation{Model: model},
+		CacheKey:    diffCacheKey(prompt, model, nil),
+		Invocation:  llmclient.Invocation{Model: model, Prompt: prompt},
 	}}
 }
 
 func TestEngine_CacheHitReplaysWithoutAPICall(t *testing.T) {
 	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
 	f := newFake()
-	slot := cacheableSlot("reviewer", "m", "the diff payload", "the persona")
+	slot := cacheableSlot("reviewer", "m", "the rendered prompt")
 
 	// First run: cold cache -> one live call, result is written to cache.
 	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
@@ -54,7 +54,7 @@ func TestEngine_CacheHitReplaysWithoutAPICall(t *testing.T) {
 func TestEngine_NoCacheBypassesReadButStillWrites(t *testing.T) {
 	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
 	f := newFake()
-	slot := cacheableSlot("reviewer", "m", "the diff payload", "the persona")
+	slot := cacheableSlot("reviewer", "m", "the rendered prompt")
 
 	// Seed the cache.
 	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
@@ -75,20 +75,57 @@ func TestEngine_DifferentModelMissesCache(t *testing.T) {
 	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
 	f := newFake()
 	NewEngine(f, WithCache(store, false)).Run(context.Background(),
-		[]Slot{cacheableSlot("a", "m1", "same payload", "same persona")})
+		[]Slot{cacheableSlot("a", "m1", "same rendered prompt")})
 
 	// Same payload+persona but a different model -> distinct key -> live call.
 	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
-		[]Slot{cacheableSlot("b", "m2", "same payload", "same persona")})
+		[]Slot{cacheableSlot("b", "m2", "same rendered prompt")})
 	assert.False(t, r[0].CacheHit)
 	assert.Equal(t, 1, f.callCount("m2"))
+}
+
+// TestEngine_DifferentPromptMissesCache is the regression guard for the
+// independent-review HIGH finding: the key derives from the FULL rendered prompt
+// (which embeds the per-agent scope focus, persona, and refs), so two runs of the
+// same model whose prompts differ — e.g. a changed --scope — must NOT collide.
+func TestEngine_DifferentPromptMissesCache(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newFake()
+	NewEngine(f, WithCache(store, false)).Run(context.Background(),
+		[]Slot{cacheableSlot("a", "m", "prompt with scope:security")})
+
+	// Same model, different rendered prompt (scope changed) -> distinct key -> live.
+	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
+		[]Slot{cacheableSlot("a", "m", "prompt with scope:performance")})
+	assert.False(t, r[0].CacheHit, "a changed prompt (e.g. scope) must not replay a stale review")
+	assert.Equal(t, 2, f.callCount("m"))
+}
+
+// TestEngine_DifferentTemperatureMissesCache guards the temperature MEDIUM
+// finding: temperature changes the LLM output, so it is folded into the key.
+func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newFake()
+	hot, cold := 0.9, 0.1
+	mk := func(temp *float64) Slot {
+		return Slot{Primary: Agent{
+			Name:        "a",
+			PayloadMode: "blocks",
+			CacheKey:    diffCacheKey("same prompt", "m", temp),
+			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", Temperature: temp},
+		}}
+	}
+	NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(&hot)})
+	r := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{mk(&cold)})
+	assert.False(t, r[0].CacheHit, "a temperature change must invalidate the cache entry")
+	assert.Equal(t, 2, f.callCount("m"))
 }
 
 func TestEngine_FailedReviewIsNotCached(t *testing.T) {
 	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
 	f := newFake()
 	f.failFor["m"] = assertFailErr
-	slot := cacheableSlot("reviewer", "m", "p", "persona")
+	slot := cacheableSlot("reviewer", "m", "prompt p")
 
 	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})
 	require.Equal(t, StatusFailed, r1[0].Status)
@@ -186,7 +223,7 @@ func TestRunReview_NoCacheRequestStillCallsLive(t *testing.T) {
 func TestEngine_ToolAgentNeverCached(t *testing.T) {
 	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
 	f := newFake()
-	slot := cacheableSlot("reviewer", "m", "payload", "persona")
+	slot := cacheableSlot("reviewer", "m", "the prompt")
 	slot.Primary.Tools = true // routes through invokeDegraded, bypassing the cache
 
 	r1 := NewEngine(f, WithCache(store, false)).Run(context.Background(), []Slot{slot})

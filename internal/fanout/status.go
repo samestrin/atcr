@@ -322,6 +322,12 @@ type AgentStatus struct {
 	ToolsDegraded  bool     `json:"tools_degraded,omitempty"`
 	ToolsRequested bool     `json:"tools_requested,omitempty"`
 	TrippedBudgets []string `json:"tripped_budgets,omitempty"`
+
+	// CacheHit marks a result replayed from the diff cache (Epic 5.2) instead of
+	// a live API call. omitempty so a live review's status.json is byte-identical
+	// to the pre-5.2 shape; only a cached replay records cache_hit:true, making a
+	// stale-serve auditable in the artifacts rather than invisible.
+	CacheHit bool `json:"cache_hit,omitempty"`
 }
 
 // WriteStatus serializes s to path as indented JSON, writing atomically (temp

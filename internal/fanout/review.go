@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -609,6 +610,24 @@ const defaultMaxTokens = 8192
 // (MaxTokens is a pointer so an explicit value always serializes).
 func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 
+// diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
+// the FULL rendered prompt — which already embeds the payload, the resolved
+// persona, the per-agent scope focus (Epic 2.2), and the base/head refs, i.e.
+// every text input the model receives — plus the model id and the temperature
+// (the tuning param that changes the output). Keying on the rendered prompt
+// rather than the raw payload+persona is what guarantees a scope or persona
+// change invalidates the entry instead of silently replaying a stale review.
+// MaxTokens is constant across review agents (defaultMaxTokens), so it is
+// intentionally omitted. min_severity/max_findings are deterministic post-LLM
+// filters and are correctly NOT in the key.
+func diffCacheKey(prompt, model string, temperature *float64) string {
+	temp := "default"
+	if temperature != nil {
+		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
+	}
+	return cache.Key(cache.HashText(prompt), model, temp)
+}
+
 // buildAgent resolves an agent's persona, renders its prompt against the payload
 // it sees, and assembles the invocation. It returns the agent and its mode.
 func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange) (Agent, string, error) {
@@ -666,12 +685,11 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 		ToolBudgetBytes:  derefInt64(ac.ToolBudgetBytes),
 		MinSeverity:      ac.MinSeverity,
 		MaxFindings:      ac.MaxFindings,
-		// Diff-cache digests (Epic 5.2): hash the payload this agent saw and its
-		// persona text once here; the engine combines them with the model into the
-		// cache key. Tool agents carry the digests too but the engine never caches
-		// them (they read live code), so populating these unconditionally is safe.
-		PayloadHash: cache.HashText(mp.Text),
-		PersonaHash: cache.HashText(persona.Text),
+		// Diff-cache key (Epic 5.2): derived from the full rendered prompt + model
+		// + temperature (see diffCacheKey). Tool agents carry a key too but the
+		// engine never caches them (they read live code), so setting it
+		// unconditionally is safe.
+		CacheKey: diffCacheKey(prompt, ac.Model, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
@@ -754,12 +772,11 @@ func buildFallbackAgent(cfg *ReviewConfig, primary Agent, name string) (Agent, e
 		// and max_findings still govern the output.
 		MinSeverity: primary.MinSeverity,
 		MaxFindings: primary.MaxFindings,
-		// Diff-cache digests (Epic 5.2): a fallback reviews the SAME payload and
-		// persona as the primary, so it inherits both digests but keys on its OWN
-		// model (set in Invocation below) — a fallback that substitutes a different
+		// Diff-cache key (Epic 5.2): a fallback reviews the SAME rendered prompt as
+		// the primary but on its OWN model and temperature, so it keys on the
+		// primary's prompt with the fallback's model/temperature — a substitute
 		// model must not collide with the primary's cache entry.
-		PayloadHash: primary.PayloadHash,
-		PersonaHash: primary.PersonaHash,
+		CacheKey: diffCacheKey(primary.Prompt, ac.Model, ac.Temperature),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
 			APIKeyEnv:   prov.APIKeyEnv,
