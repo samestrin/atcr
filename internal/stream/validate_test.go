@@ -116,3 +116,20 @@ func TestValidatePath_AbsolutePathNeutralized(t *testing.T) {
 func TestValidatePath_NilSafe(t *testing.T) {
 	assert.NotPanics(t, func() { ValidatePath(nil, t.TempDir()) })
 }
+
+// TestValidatePath_SymlinkEscapeFlagged: a symlinked path segment that resolves
+// outside the repo root must NOT be reported as present (Epic 5.4 AC5 — no
+// existence oracle). The cleaned path "link/target" has no ".." so it clears the
+// lexical guard; only symlink resolution catches the escape.
+func TestValidatePath_SymlinkEscapeFlagged(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir() // a sibling temp dir, outside root
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "target"), []byte("x\n"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
+
+	f := Finding{File: "link/target"}
+	ValidatePath(&f, root)
+
+	assert.False(t, f.PathValid, "a file reached only via a symlink out of the repo must not be valid")
+	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
+}
