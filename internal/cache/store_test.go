@@ -163,6 +163,24 @@ func TestStore_GetRefreshesRecency(t *testing.T) {
 	assert.False(t, hitB, "untouched older entry must be evicted")
 }
 
+// TestStore_OversizedNewestEntrySurvivesEviction: an entry larger than the cap
+// must not be evicted by the very Put that wrote it. evict protects the
+// most-recently-written (newest mtime) entry, accepting a transient over-cap
+// rather than churning the new entry — otherwise an oversized reviewer output is
+// permanently uncacheable and re-called every run after a wasted write.
+func TestStore_OversizedNewestEntrySurvivesEviction(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "cache")
+	// One entry's JSON is ~500 bytes; a 200-byte cap is smaller than a single
+	// entry, so the just-written entry stands alone and over cap.
+	s := NewStore(dir, 200)
+	k := Key(HashText("big"), "m", HashText("x"))
+	require.NoError(t, s.Put(k, strings.Repeat("x", 400)))
+
+	_, hit, err := s.Get(k)
+	require.NoError(t, err)
+	assert.True(t, hit, "an oversized newest entry must survive its own eviction pass")
+}
+
 // TestStore_RejectsMalformedKeys hardens against path traversal: a key whose
 // digest is not 64-char hex must be refused by Put and miss on Get, never joined
 // into a filesystem path that could escape the cache dir.
