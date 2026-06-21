@@ -40,7 +40,11 @@ const PathNotFoundWarning = "file not found"
 // candidate index (CaseCorrection), not here: os.Stat/EvalSymlinks remain
 // case-insensitive on the default macOS/Windows filesystems, so a case-only typo
 // still resolves as present at this layer and is caught by the index instead.
-func ValidatePath(f *Finding, root string) {
+// idx is the candidate file index for this reconcile run (Epic 5.4), built once
+// from `git ls-files` and shared across every finding. It powers PathSuggestion
+// and the case-only check; a nil idx (non-git repo, or git unavailable) cleanly
+// degrades to 5.0 existence-only behavior with no suggestion.
+func ValidatePath(f *Finding, root string, idx *FileIndex) {
 	if f == nil {
 		return
 	}
@@ -55,15 +59,27 @@ func ValidatePath(f *Finding, root string) {
 	// traversal ("../../x") or absolute ("/etc/passwd") File could otherwise stat
 	// a file outside the reviewed repo — an existence oracle, and a path outside
 	// the repo is not a valid review location anyway. Such a path is flagged
-	// invalid rather than probed. This lexical guard is cheap and runs before any
-	// filesystem call; the symlink-resolved containment check below catches the
-	// cases lexical analysis cannot (a path that escapes only after a symlinked
-	// segment is followed).
+	// invalid rather than probed (and never suggested — it is not a typo). This
+	// lexical guard is cheap and runs before any filesystem call; the symlink-
+	// resolved containment check below catches the cases lexical analysis cannot
+	// (a path that escapes only after a symlinked segment is followed).
 	if rel, err := filepath.Rel(root, joined); err != nil ||
 		rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		f.PathValid = false
 		f.PathWarning = PathNotFoundWarning
 		return
+	}
+	// Tier 3 (case-only) is checked before existence: on a case-insensitive
+	// filesystem os.Stat/EvalSymlinks would report a case-typo as present, so the
+	// index — not the filesystem — is authoritative for case. A byte-exact
+	// citation reports no mismatch and falls through to the existence check.
+	if idx != nil {
+		if suggestion, mismatch := idx.CaseCorrection(f.File); mismatch {
+			f.PathValid = false
+			f.PathWarning = PathNotFoundWarning
+			f.PathSuggestion = suggestion // "" when ambiguous (multiple cases)
+			return
+		}
 	}
 	switch existsContained(root, joined) {
 	case existsInside:
@@ -72,6 +88,10 @@ func ValidatePath(f *Finding, root string) {
 	case existsOutsideOrAbsent:
 		f.PathValid = false
 		f.PathWarning = PathNotFoundWarning
+		if idx != nil {
+			// Tier 1 (exact basename elsewhere) then Tier 2 (same-dir typo).
+			f.PathSuggestion = idx.MissingSuggestion(f.File)
+		}
 	default: // existsIndeterminate
 		// Indeterminate (permission, I/O): leave the finding unflagged rather
 		// than assert a "not found" we cannot prove.
