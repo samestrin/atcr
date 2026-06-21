@@ -257,10 +257,11 @@ func confidenceFor(reviewerCount int) string {
 // REVIEWERS is a list (the merge unions the per-record lists, not a single
 // per-source name). The location is the first member's file/line; EVIDENCE is the
 // distinct members' evidence joined by " / "; CONFIDENCE follows the unioned
-// reviewer count. Verification carries the first non-nil member block (gray-zone
-// members are unmerged pairs, so at most one typically verified) and the Epic 5.0
-// path-validation fields carry the first member's — the members are co-located, so
-// their path status is identical. The caller sets ClusterMerged on the result. A
+// reviewer count. Verification is combined by mergeVerification (verdict
+// precedence confirmed > unverifiable > refuted, skeptic provenance unioned) and
+// the Epic 5.0 path-validation fields carry the first member's — the members are
+// co-located, so their path status is identical. The caller sets ClusterMerged on
+// the result. A
 // zero- or one-member group is returned as-is (the apply path never unions fewer
 // than two records, but the helper stays total).
 func MergeJSONFindings(group []JSONFinding) JSONFinding {
@@ -292,7 +293,7 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 		Reviewers:      reviewers,
 		Confidence:     confidenceFor(len(reviewers)),
 		Disagreement:   disagreement,
-		Verification:   firstVerification(group),
+		Verification:   mergeVerification(group),
 		PathValid:      group[0].PathValid,
 		PathWarning:    group[0].PathWarning,
 		PathSuggestion: group[0].PathSuggestion,
@@ -341,14 +342,52 @@ func joinEvidence(group []JSONFinding) string {
 	return out
 }
 
-// firstVerification returns the first non-nil member Verification block (the
-// audit trail to preserve through an inline cluster merge), or nil when no member
-// was verified.
-func firstVerification(group []JSONFinding) *Verification {
-	for _, f := range group {
-		if f.Verification != nil {
-			return f.Verification
+// verdictRank orders verify verdicts for the cluster-merge precedence in
+// mergeVerification: confirmed (gate-blocking) outranks unverifiable, which
+// outranks refuted; an unknown/empty verdict ranks last.
+func verdictRank(verdict string) int {
+	switch strings.ToLower(strings.TrimSpace(verdict)) {
+	case VerdictConfirmed:
+		return 3
+	case VerdictUnverifiable:
+		return 2
+	case VerdictRefuted:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// mergeVerification combines the member Verification blocks of an inline cluster
+// merge into one (Epic 6.1). The judge ruled the members duplicates, so they must
+// carry a single verdict: precedence is confirmed > unverifiable > refuted, so a
+// confirmed verification of the same underlying issue is never masked by a refuted
+// sibling phrasing, and a refuted verdict wins only when no member was confirmed
+// or unverifiable. The winning block's Verdict/Notes/ChallengeSurvived are kept
+// (ties resolve to the first member, for determinism), and every member's Skeptic
+// provenance is unioned (deduped, comma-joined) so no voter is lost. Returns nil
+// when no member carried a block.
+func mergeVerification(group []JSONFinding) *Verification {
+	var chosen *Verification
+	var skeptics []string
+	seen := map[string]bool{}
+	for i := range group {
+		v := group[i].Verification
+		if v == nil {
+			continue
+		}
+		if v.Skeptic != "" && !seen[v.Skeptic] {
+			seen[v.Skeptic] = true
+			skeptics = append(skeptics, v.Skeptic)
+		}
+		if chosen == nil || verdictRank(v.Verdict) > verdictRank(chosen.Verdict) {
+			chosen = v
 		}
 	}
-	return nil
+	if chosen == nil {
+		return nil
+	}
+	out := *chosen // copy so the source finding's block is not mutated
+	out.Skeptic = strings.Join(skeptics, ",")
+	return &out
 }

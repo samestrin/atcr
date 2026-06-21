@@ -68,25 +68,38 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 }
 
 // applyClusterMerges unions the member findings of each gray-zone cluster the
-// judge ruled "merge" (Epic 6.1, Option A) directly in the findings slice and
-// returns the rewritten slice. For each cluster it gathers the records at the
-// cluster's member locations — matching a member by its exact File+Line+Problem,
-// or, when that member's problem drifted (further-merged with a third finding),
-// by location alone IF that location holds exactly one record (so an unrelated
-// co-located finding is never absorbed). The matched records are collapsed via
-// reconcile.MergeJSONFindings into one record placed at the cluster's canonical
-// location and flagged ClusterMerged. A cluster with fewer than two matched
-// records, or any matched record already flagged ClusterMerged (a re-run that
-// slipped past the radar filter), is left untouched — the merge is a strict no-op
-// rather than a corruption.
-func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.AmbiguousCluster) []reconcile.JSONFinding {
+// judge ruled "merge" (Epic 6.1, Option A) directly in the findings slice. It
+// returns the rewritten slice and the count of clusters actually applied, so the
+// caller can surface a ruling that could not be physically applied. Each cluster
+// is handled independently by applyOneClusterMerge.
+func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, int) {
+	applied := 0
 	for _, c := range clusters {
-		findings = applyOneClusterMerge(findings, c)
+		var ok bool
+		findings, ok = applyOneClusterMerge(findings, c)
+		if ok {
+			applied++
+		}
 	}
-	return findings
+	return findings, applied
 }
 
-func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.AmbiguousCluster) []reconcile.JSONFinding {
+// applyOneClusterMerge unions one cluster's members in findings and reports
+// whether the merge was applied. Members are matched to findings.json records in
+// two passes: first by exact File+Line+Problem, then — for members whose problem
+// drifted (further-merged with a third finding) — by taking the sole still-
+// unmatched record at that member's location. Per-location drift recovery handles
+// the same-line case (two co-located members where one drifted): the drifted
+// member is the lone unmatched record left at that location after the exact pass.
+// More than one unmatched record at a member location is ambiguous, so none is
+// taken — an unrelated co-located finding is never absorbed. At least one exact
+// hit is required to anchor the cluster (so a cluster whose members were all
+// refuted/removed cannot union purely fallback-matched, possibly unrelated,
+// records). The matched records collapse via reconcile.MergeJSONFindings into one
+// record at the cluster's canonical location, flagged ClusterMerged. Fewer than
+// two matched records, or any matched record already flagged ClusterMerged (a
+// re-run past the radar filter), is a strict no-op rather than a corruption.
+func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, bool) {
 	memberExact := map[FindingKey]bool{}
 	memberLocs := map[string]bool{}
 	for _, mf := range c.Findings {
@@ -94,43 +107,43 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.Ambiguou
 		memberLocs[locationKey(mf.File, mf.Line)] = true
 	}
 
-	countAtLoc := map[string]int{}
-	for _, f := range findings {
-		countAtLoc[locationKey(f.File, f.Line)]++
-	}
-
 	matched := map[int]bool{}
 	exactHits := 0
+	// Pass 1: exact member matches.
 	for i, f := range findings {
-		lk := locationKey(f.File, f.Line)
-		if !memberLocs[lk] {
-			continue
-		}
-		switch {
-		case memberExact[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}]:
+		if memberExact[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] {
 			matched[i] = true
 			exactHits++
-		case countAtLoc[lk] == 1:
-			// Drift: the sole record at a member location is that member, now
-			// carrying a further-merged problem text — safe to union.
-			matched[i] = true
+		}
+	}
+	// Pass 2: drift recovery. Group the still-unmatched records by member location;
+	// a member location with exactly one unmatched record contributes it (the
+	// drifted member). Two or more is ambiguous and contributes nothing.
+	unmatchedAtLoc := map[string][]int{}
+	for i, f := range findings {
+		if matched[i] {
+			continue
+		}
+		lk := locationKey(f.File, f.Line)
+		if memberLocs[lk] {
+			unmatchedAtLoc[lk] = append(unmatchedAtLoc[lk], i)
+		}
+	}
+	for _, idxs := range unmatchedAtLoc {
+		if len(idxs) == 1 {
+			matched[idxs[0]] = true
 		}
 	}
 
-	// Require at least one member to match by exact File+Line+Problem before
-	// unioning. Without this, a cluster whose members were all refuted/removed
-	// post-reconcile could union a group composed purely of fallback-matched
-	// records that merely happen to be the sole findings at those lines — absorbing
-	// unrelated findings. One exact hit proves the cluster genuinely maps here.
 	if exactHits == 0 || len(matched) < 2 {
-		return findings // members not both present (or not anchored): nothing to union
+		return findings, false // not anchored, or members not both present
 	}
 	group := make([]reconcile.JSONFinding, 0, len(matched))
 	firstIdx := -1
 	for i := range findings {
 		if matched[i] {
 			if findings[i].ClusterMerged {
-				return findings // already applied: strict no-op
+				return findings, false // already applied: strict no-op
 			}
 			if firstIdx < 0 {
 				firstIdx = i
@@ -154,5 +167,5 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.Ambiguou
 			out = append(out, findings[i])
 		}
 	}
-	return out
+	return out, true
 }

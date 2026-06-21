@@ -153,6 +153,33 @@ func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 	assert.Equal(t, "totally unrelated finding", unrelated.Problem)
 }
 
+// TestRunDebate_GrayZoneMergeSameLineDrift: two members co-located at the SAME
+// line where one member's problem drifted (further-merged with a third finding).
+// Per-location drift recovery unions the drifted member (the lone unmatched record
+// at that line after the exact-match pass), anchored by the other member's exact
+// match.
+func TestRunDebate_GrayZoneMergeSameLineDrift(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "longest merged problem text from a third finding", "HIGH", "bob"),
+	}
+	// Member B's raw problem ("beta problem text") drifted; it is the lone unmatched
+	// record at a.go:10 after member A matches exactly.
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 1, "the anchored member plus the same-line drifted member union to one")
+	assert.True(t, f[0].ClusterMerged)
+	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
+}
+
 // TestRunDebate_GrayZoneMergeRequiresExactAnchor: when NO cluster member matches a
 // findings.json record by exact File+Line+Problem (e.g. both members were
 // refuted/removed and unrelated findings now sit at those lines), the merge is a

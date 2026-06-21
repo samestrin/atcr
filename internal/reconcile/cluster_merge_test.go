@@ -38,6 +38,33 @@ func TestMergeJSONFindings_SingleIsIdentity(t *testing.T) {
 	assert.Equal(t, f, MergeJSONFindings([]JSONFinding{f}))
 }
 
+// TestMergeJSONFindings_VerificationPrecedence: a confirmed member verdict wins
+// over a refuted one (confirmed > unverifiable > refuted) so a real issue is never
+// masked by a refuted sibling, and every member's skeptic provenance is unioned.
+func TestMergeJSONFindings_VerificationPrecedence(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue A", Reviewers: []string{"alice"},
+			Verification: &Verification{Verdict: VerdictRefuted, Skeptic: "sk1", Notes: "disproved A"}},
+		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue B longer", Reviewers: []string{"bob"},
+			Verification: &Verification{Verdict: VerdictConfirmed, Skeptic: "sk2", Notes: "confirmed B", ChallengeSurvived: true}},
+	}
+	m := MergeJSONFindings(group)
+	require.NotNil(t, m.Verification)
+	assert.Equal(t, VerdictConfirmed, m.Verification.Verdict, "confirmed must win over refuted")
+	assert.True(t, m.Verification.ChallengeSurvived)
+	assert.Equal(t, "sk1,sk2", m.Verification.Skeptic, "skeptic provenance from all members is unioned")
+}
+
+// TestMergeJSONFindings_NoVerificationStaysNil: with no member carrying a block,
+// the merged record has no verification (a non-debated finding stays byte-stable).
+func TestMergeJSONFindings_NoVerificationStaysNil(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 5, Problem: "a", Reviewers: []string{"x"}},
+		{Severity: "LOW", File: "a.go", Line: 5, Problem: "ab", Reviewers: []string{"y"}},
+	}
+	assert.Nil(t, MergeJSONFindings(group).Verification)
+}
+
 // TestJSONFinding_ClusterMergedOmitempty: the Epic 6.1 idempotency marker is
 // omitempty, so a non-merged record serializes byte-identically to a pre-6.1
 // findings.json (the field is absent), and only a merged record carries it.
