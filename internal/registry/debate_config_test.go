@@ -29,6 +29,22 @@ func TestDebateConfig_DefaultsWhenAbsent(t *testing.T) {
 	assert.False(t, reg.Debate.AllowSingleModel)
 }
 
+// TestDefaultDebateTriggers_LoadUsesSharedSource pins the single source of truth:
+// the load-time default (applyDefaults) must fill exactly DefaultDebateTriggers(),
+// the same set internal/debate.ResolveConfig resolves to, so the two paths cannot
+// drift to different enabled sets.
+func TestDefaultDebateTriggers_LoadUsesSharedSource(t *testing.T) {
+	want := DefaultDebateTriggers()
+	require.Len(t, want, 3)
+	reg, err := LoadRegistry(writeRegistry(t, debateBaseProviders))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, want, reg.Debate.Triggers)
+	// A fresh slice per call: mutating the registry's triggers must not affect the
+	// shared source.
+	want[0] = "mutated"
+	assert.NotContains(t, reg.Debate.Triggers, "mutated", "DefaultDebateTriggers must return a fresh slice")
+}
+
 func TestDebateConfig_ExplicitValues(t *testing.T) {
 	reg, err := LoadRegistry(writeRegistry(t, debateBaseProviders+`
 debate:

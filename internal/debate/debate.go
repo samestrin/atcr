@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -48,7 +50,11 @@ type Result struct {
 // three-turn debate per item through the Epic 2.0 tool loop, and integrates the
 // judge rulings: it re-emits findings.json with the settled verdicts/severities,
 // writes reconciled/debate.json, records "debate" in the manifest stages, and
-// writes per-item transcripts under debate/.
+// writes per-item transcripts under debate/. It deliberately does NOT re-emit the
+// verify-stage snapshots summary.json (verdictCounts) or verification.json: after
+// debate, findings.json together with debate.json is the authoritative record of
+// settled verdicts/severities, while those two snapshots remain as-of-verify audit
+// artifacts that may legitimately lag findings.json (see the artifacts group below).
 //
 // It is the single orchestrator shared by `atcr debate`, `atcr review
 // --verify --debate`, and the atcr_debate MCP tool. repoRoot is the git repo the
@@ -91,6 +97,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
+	// Deduplicate findings on the {File,Line,Problem} triple before the radar is
+	// built. The reconciler does not guarantee uniqueness of this triple, and a
+	// ruling keyed on it would otherwise mutate every matching finding (and
+	// idempotency filtering would drop items that were never debated).
+	findings = deduplicateFindings(findings)
+
 	// Rebuild the radar from the current findings so the selection includes
 	// post-verify verification_disagreement items (absent from the reconcile-time
 	// disagreements.json snapshot) alongside severity splits and gray-zone clusters.
@@ -108,10 +120,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// the seats degrade and the affected items are recorded unresolved.
 	var cc fanout.ChatCompleter
 	var disp Dispatcher
+	harnessFailed := false
 	if len(sel.Selected) > 0 {
 		c, d, cleanup, herr := newHarness()
 		if herr != nil {
-			log.FromContext(ctx).Warn("debate: tool harness unavailable; selected items will be unresolved")
+			log.FromContext(ctx).Warn("debate: tool harness unavailable; selected items will be unresolved", "err", herr.Error())
+			harnessFailed = true
 		} else {
 			cc, disp = c, d
 			if cleanup != nil {
@@ -122,41 +136,115 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 
 	debateDir := filepath.Join(reviewDir, debateSubdir)
 	items := make([]ItemResult, 0, len(sel.Selected))
+	// rulings keys on {File, Line, Problem}. This is safe because
+	// deduplicateFindings (called near the top of this function) already
+	// guarantees that the {File, Line, Problem} triple is unique across the
+	// findings slice before any debating happens.
 	rulings := map[FindingKey]ruleApply{}
 	var res Result
 
-	for _, it := range sel.Selected {
-		ir := debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
-		items = append(items, ir)
-		tally(&res, ir)
-		// Apply verdicts only to single-finding items. A gray-zone ruling is a
-		// cluster-level merge/separate decision recorded for the existing
-		// adjudication path, not a per-finding verdict (see Clarifications).
-		if ir.Outcome != OutcomeUnresolved && it.Kind != reconcile.KindGrayZone {
-			rulings[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] = ruleApply{
-				verdict:   ruleVerdict(ir),
-				survived:  ir.ChallengeSurvived,
-				severity:  splitSeverity(ir),
-				judge:     ir.Judge,
-				reasoning: ir.Reasoning,
+	// Debate items through a bounded worker pool (mirrors verify's sem/maxPar):
+	// items run concurrently up to cfg.MaxParallel, while each item's three-turn
+	// debate stays sequential inside debateOne. Per-item outcomes land in an
+	// index-aligned slice and are merged in selection order after the pool drains,
+	// so debate.json item order, the rulings map, and the Result tally stay
+	// deterministic and race-free without a lock (the merge is single-threaded).
+	maxPar := cfg.MaxParallel
+	if maxPar <= 0 {
+		maxPar = 4
+	}
+	type itemOutcome struct {
+		ir    ItemResult
+		apply bool
+		key   FindingKey
+		rule  ruleApply
+	}
+	outcomes := make([]itemOutcome, len(sel.Selected))
+	sem := make(chan struct{}, maxPar)
+	var wg sync.WaitGroup
+	for i, it := range sel.Selected {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, it reconcile.DisagreementItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var ir ItemResult
+			switch {
+			case harnessFailed:
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "harness_unavailable"}
+			case ctx.Err() != nil:
+				ir = ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
+			default:
+				ir = debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
 			}
+			oc := itemOutcome{ir: ir}
+			// Apply verdicts only to single-finding items. A gray-zone ruling is a
+			// cluster-level merge/separate decision recorded for the existing
+			// adjudication path, not a per-finding verdict (see Clarifications).
+			if ir.Outcome != OutcomeUnresolved && it.Kind != reconcile.KindGrayZone {
+				oc.apply = true
+				oc.key = FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
+				oc.rule = ruleApply{
+					verdict:   ruleVerdict(ir),
+					survived:  ir.ChallengeSurvived,
+					severity:  splitSeverity(ir),
+					judge:     ir.Judge,
+					reasoning: ir.Reasoning,
+				}
+			}
+			outcomes[idx] = oc
+		}(i, it)
+	}
+	wg.Wait()
+
+	for _, oc := range outcomes {
+		items = append(items, oc.ir)
+		tally(&res, oc.ir)
+		if oc.apply {
+			rulings[oc.key] = oc.rule
 		}
+	}
+
+	// Build all three stage artifacts in memory first, then flush them as one
+	// atomic group so a mid-sequence failure cannot leave partial state
+	// (e.g. findings.json updated but manifest.json or debate.json missing).
+	//
+	// Scope note: the atomic group is exactly debate.json + findings.json +
+	// manifest.json. The verify-stage snapshots summary.json (verdictCounts) and
+	// verification.json are intentionally NOT recomputed here — they are
+	// point-in-time verify audit artifacts. findings.json (with debate.json) is the
+	// authoritative post-debate record; any consumer needing settled verdict counts
+	// must derive them from findings.json, not from the now-stale summary.json.
+	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items:         items,
+		Overflow:      overflowItems(sel.Overflow),
+	})
+	if err != nil {
+		return Result{}, err
 	}
 
 	if len(rulings) > 0 {
 		applyRulings(findings, rulings)
-		if err := writeFindings(reviewDir, findings); err != nil {
-			return Result{}, err
-		}
 	}
-	if err := writeDebateFile(reviewDir, DebateFile{
-		SchemaVersion: DebateSchemaVersion,
-		Items:         items,
-		Overflow:      overflowItems(sel.Overflow),
-	}); err != nil {
+	findingsPath, findingsBytes, err := computeFindingsBytes(reviewDir, findings)
+	if err != nil {
 		return Result{}, err
 	}
-	if err := updateManifestStage(reviewDir); err != nil {
+
+	manifestPath, manifestBytes, err := computeManifestStageBytes(reviewDir)
+	if err != nil {
+		return Result{}, err
+	}
+
+	artifacts := []atomicwrite.Entry{
+		{Path: debatePath, Data: debateBytes},
+		{Path: findingsPath, Data: findingsBytes},
+	}
+	if manifestBytes != nil {
+		artifacts = append(artifacts, atomicwrite.Entry{Path: manifestPath, Data: manifestBytes})
+	}
+	if err := atomicwrite.WriteGroup(artifacts); err != nil {
 		return Result{}, err
 	}
 
@@ -188,6 +276,24 @@ func filterAlreadyDebated(items []reconcile.DisagreementItem, findings []reconci
 			continue
 		}
 		out = append(out, it)
+	}
+	return out
+}
+
+// deduplicateFindings returns a copy of findings with only the first occurrence of
+// each {File,Line,Problem} triple retained. This keeps rulings from silently
+// mutating multiple findings that happen to share the same location and problem
+// text.
+func deduplicateFindings(findings []reconcile.JSONFinding) []reconcile.JSONFinding {
+	seen := make(map[FindingKey]bool, len(findings))
+	out := make([]reconcile.JSONFinding, 0, len(findings))
+	for _, f := range findings {
+		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, f)
 	}
 	return out
 }
@@ -242,11 +348,13 @@ func debateOne(ctx context.Context, debateDir string, item reconcile.Disagreemen
 		ir.Reason = "unparseable_ruling"
 	}
 	if ruling.Outcome == OutcomeSplit {
-		sev := ruling.SettledSeverity
-		if sev == "" {
-			sev = item.Severity // judge gave no severity: keep the original
-		}
-		ir.SettledSeverity = sev
+		// A split with no settled_severity settles nothing: record no settled
+		// severity rather than backfilling item.Severity. Backfilling would echo
+		// the original severity as if the judge had adjusted to it (masking a
+		// no-op ruling) and — should the radar ever score item.Severity above the
+		// finding's own — silently bump the finding up. Empty SettledSeverity →
+		// splitSeverity returns "" → applyRulings leaves findings[i].Severity as-is.
+		ir.SettledSeverity = ruling.SettledSeverity
 	}
 	return ir
 }

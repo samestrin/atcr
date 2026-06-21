@@ -72,6 +72,20 @@ const (
 // highest-priority disputed items, with the remainder recorded as overflow.
 const DefaultDebateMaxItems = 5
 
+// DefaultDebateTriggers returns the debate trigger kinds enabled when a config
+// sets none — the single source of truth for the default-enabled set. Both the
+// load-time resolver (applyDefaults) and the stage-time resolver
+// (internal/debate.ResolveConfig) reference it, so the two paths can never drift to
+// different enabled sets when a trigger is added. A fresh slice is returned per call
+// so callers may store it without aliasing shared state.
+func DefaultDebateTriggers() []string {
+	return []string{
+		DebateTriggerSeveritySplit,
+		DebateTriggerGrayZone,
+		DebateTriggerVerificationDisagreement,
+	}
+}
+
 // DebateConfig is the optional registry-level cross-examination block (Epic 6.0).
 // It is backward-compatible: an absent block, or a present block with unset
 // fields, resolves to the defaults (all three triggers on, max_items=5,
@@ -85,6 +99,7 @@ type DebateConfig struct {
 	Triggers         []string `yaml:"triggers,omitempty"`           // default: all three kinds
 	MaxItems         *int     `yaml:"max_items,omitempty"`          // nil = default 5; 0 = unlimited; N>0 = cap
 	AllowSingleModel bool     `yaml:"allow_single_model,omitempty"` // default false (skip + record unresolved)
+	MaxParallel      int      `yaml:"max_parallel,omitempty"`       // bounded worker pool cap (0 = default 4)
 }
 
 // VerifyConfig is the optional registry-level adversarial-verification block
@@ -327,6 +342,9 @@ func (r *Registry) validate() error {
 	if r.Debate.MaxItems != nil && *r.Debate.MaxItems < 0 {
 		errs = append(errs, fmt.Errorf("debate.max_items must be >= 0 (0 = unlimited), got %d", *r.Debate.MaxItems))
 	}
+	if r.Debate.MaxParallel < 0 {
+		errs = append(errs, fmt.Errorf("debate.max_parallel must be >= 0 (0 = default 4), got %d", r.Debate.MaxParallel))
+	}
 
 	for _, name := range sortedKeys(r.Providers) {
 		errs = append(errs, validateProvider(name, r.Providers[name])...)
@@ -479,16 +497,15 @@ func (r *Registry) applyDefaults() {
 	if r.Verify.Votes == 0 {
 		r.Verify.Votes = DefaultVerifyVotes
 	}
-	// Debate triggers (Epic 6.0): an absent or empty list enables all three kinds
-	// at load so consumers see a resolved set. max_items and allow_single_model are
-	// resolved later (internal/debate.ResolveConfig) — max_items must stay nil here
-	// so an explicit 0 (unlimited) remains distinguishable from unset.
+	// Debate triggers (Epic 6.0): an absent or empty list enables the default kinds
+	// at load so consumers see a resolved set. The default set comes from the shared
+	// DefaultDebateTriggers source, the same one internal/debate.ResolveConfig uses,
+	// so load-time and stage-time defaulting cannot drift. max_items and
+	// allow_single_model are resolved later (internal/debate.ResolveConfig) —
+	// max_items must stay nil here so an explicit 0 (unlimited) remains
+	// distinguishable from unset.
 	if len(r.Debate.Triggers) == 0 {
-		r.Debate.Triggers = []string{
-			DebateTriggerSeveritySplit,
-			DebateTriggerGrayZone,
-			DebateTriggerVerificationDisagreement,
-		}
+		r.Debate.Triggers = DefaultDebateTriggers()
 	}
 }
 

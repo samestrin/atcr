@@ -19,7 +19,7 @@ const verifyStage = "verify"
 // computeManifestStageBytes reads reviewDir/manifest.json, appends "verify" to
 // the stages list (seeding "review" first if absent), and returns the path plus
 // the bytes to write. Returns noOp=true when "verify" is already present so the
-// caller can skip the artifact in a writeGroupAtomic batch.
+// caller can skip the artifact in an atomicwrite.WriteGroup batch.
 func computeManifestStageBytes(reviewDir string) (path string, data []byte, noOp bool, err error) {
 	path = filepath.Join(reviewDir, manifestFile)
 	raw, err := os.ReadFile(path)

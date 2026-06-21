@@ -144,7 +144,7 @@ func ReadVerificationResults(reviewDir string) ([]VerificationResult, error) {
 //
 // NOTE: WriteVerification is a TEST-ONLY SEAM — it has no non-test callers.
 // Production verify never routes through it: the pipeline's runVerify emits
-// verification.json as part of a multi-file atomic group (writeGroupAtomic),
+// verification.json as part of a multi-file atomic group (atomicwrite.WriteGroup),
 // composing the same pieces (computeVerificationBytes + backupExistingVerification)
 // directly rather than through this wrapper. Tests that assert write or backup
 // behavior through WriteVerification therefore exercise this wrapper, NOT the

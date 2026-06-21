@@ -25,6 +25,7 @@ type Config struct {
 	Triggers         map[string]bool
 	MaxItems         int // 0 = unlimited
 	AllowSingleModel bool
+	MaxParallel      int // bounded worker pool cap; 0 = default 4 (resolved at the loop)
 }
 
 // ResolveConfig turns the registry's optional DebateConfig into the resolved
@@ -36,11 +37,9 @@ func ResolveConfig(dc registry.DebateConfig) Config {
 	triggers := map[string]bool{}
 	src := dc.Triggers
 	if len(src) == 0 {
-		src = []string{
-			registry.DebateTriggerSeveritySplit,
-			registry.DebateTriggerGrayZone,
-			registry.DebateTriggerVerificationDisagreement,
-		}
+		// Shared default source — the same set applyDefaults fills at load — so the
+		// two resolution paths cannot drift to different enabled sets.
+		src = registry.DefaultDebateTriggers()
 	}
 	for _, t := range src {
 		triggers[t] = true
@@ -49,7 +48,7 @@ func ResolveConfig(dc registry.DebateConfig) Config {
 	if dc.MaxItems != nil {
 		maxItems = *dc.MaxItems
 	}
-	return Config{Triggers: triggers, MaxItems: maxItems, AllowSingleModel: dc.AllowSingleModel}
+	return Config{Triggers: triggers, MaxItems: maxItems, AllowSingleModel: dc.AllowSingleModel, MaxParallel: dc.MaxParallel}
 }
 
 // Selection is the outcome of trigger filtering and cost-cap application over a
