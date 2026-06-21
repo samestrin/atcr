@@ -2,9 +2,10 @@ package debate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -81,7 +82,13 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 // reviewer content so it cannot forge a closing tag. It is a security boundary, so
 // the value must be unpredictable.
 func newSentinel() string {
-	return fmt.Sprintf("%08x", rand.Uint32())
+	var b [16]byte // 128 bits, hex-encoded to 32 chars
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing means the system RNG is broken; there is no safe
+		// non-random fallback for a security boundary token, so fail loudly.
+		panic("debate: crypto/rand unavailable: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // runTurn drives one seat through the tool loop, records the turn to the
