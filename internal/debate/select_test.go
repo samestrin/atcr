@@ -39,6 +39,19 @@ func TestResolveConfig_Defaults(t *testing.T) {
 	assert.False(t, cfg.AllowSingleModel)
 }
 
+// TestResolveConfig_DefaultsUseSharedRegistrySource pins the single source of truth:
+// the stage-time default trigger set must be exactly registry.DefaultDebateTriggers(),
+// the same set applyDefaults fills at load, so the two resolution paths cannot drift.
+func TestResolveConfig_DefaultsUseSharedRegistrySource(t *testing.T) {
+	want := registry.DefaultDebateTriggers()
+	require.Len(t, want, 3)
+	cfg := ResolveConfig(registry.DebateConfig{})
+	require.Len(t, cfg.Triggers, len(want))
+	for _, k := range want {
+		assert.True(t, cfg.Triggers[k], "default trigger %q must be enabled", k)
+	}
+}
+
 func TestResolveConfig_ExplicitZeroMeansUnlimited(t *testing.T) {
 	zero := 0
 	cfg := ResolveConfig(registry.DebateConfig{MaxItems: &zero, Triggers: []string{registry.DebateTriggerGrayZone}})

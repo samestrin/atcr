@@ -37,11 +37,9 @@ func ResolveConfig(dc registry.DebateConfig) Config {
 	triggers := map[string]bool{}
 	src := dc.Triggers
 	if len(src) == 0 {
-		src = []string{
-			registry.DebateTriggerSeveritySplit,
-			registry.DebateTriggerGrayZone,
-			registry.DebateTriggerVerificationDisagreement,
-		}
+		// Shared default source — the same set applyDefaults fills at load — so the
+		// two resolution paths cannot drift to different enabled sets.
+		src = registry.DefaultDebateTriggers()
 	}
 	for _, t := range src {
 		triggers[t] = true
