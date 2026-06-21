@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/cache"
 	"github.com/samestrin/atcr/internal/circuitbreaker"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -44,6 +45,16 @@ type UsageCompleter interface {
 type ChatCompleter interface {
 	Completer
 	Chat(ctx context.Context, inv llmclient.Invocation, messages []llmclient.Message, toolDefs []llmclient.ToolDef) (*llmclient.ChatResponse, error)
+}
+
+// reviewCache is the diff cache (Epic 5.2) the engine consults for non-tool
+// (single-shot) agents: Get replays a prior reviewer output for an unchanged
+// payload+model+persona, Put stores a fresh one. *cache.Store satisfies it; the
+// interface keeps the engine decoupled from the storage implementation (mirrors
+// toolDispatcher). nil (the default) disables caching entirely.
+type reviewCache interface {
+	Get(key string) (string, bool, error)
+	Put(key, content string) error
 }
 
 // toolDispatcher executes a single tool call against the snapshot sandbox,
@@ -105,6 +116,17 @@ type Agent struct {
 	// constraint follows the slot, like the persona prompt).
 	MinSeverity string
 	MaxFindings *int
+
+	// Diff-cache digests (Epic 5.2). PayloadHash and PersonaHash are the
+	// HashText digests of the payload this agent saw and its persona text,
+	// computed once by buildAgent. The engine combines them with the model
+	// (cache.Key) to look up / store this agent's raw review output, so a re-run
+	// over an unchanged diff replays the prior result without an API call. Both
+	// empty means "not cacheable" (a directly-constructed Agent, the doctor
+	// self-test) and the engine always calls live for it. A fallback inherits the
+	// primary's digests (same payload + persona) but keys on its own model.
+	PayloadHash string
+	PersonaHash string
 }
 
 // Slot is one reviewer position in the roster: a primary agent plus its
@@ -156,6 +178,12 @@ type Result struct {
 	ToolsRequested bool
 	TrippedBudgets []string
 
+	// CacheHit marks a result served from the diff cache (Epic 5.2) instead of a
+	// live API call. The replayed result carries the cached Content with zero
+	// token usage and no CallRecords, so the run's API-call and cost metrics
+	// reflect that no provider round-trip happened.
+	CacheHit bool
+
 	// Per-agent usage accounting (Epic 3.3 scorecard). Model is the configured
 	// model id; TokensIn/TokensOut are the provider-reported token counts,
 	// accumulated across every Chat() turn on the tool-loop path and taken from
@@ -200,6 +228,15 @@ type Engine struct {
 	// correlated context logger via WithLogger, so invokeAgent's per-agent
 	// WithAgent scoping produces lines carrying both review_id and agent_name.
 	log *slog.Logger
+	// cache is the optional diff cache (Epic 5.2). nil (the default) disables
+	// caching, preserving the pre-5.2 always-live behavior. Only non-tool
+	// (single-shot) agents with a cache key are cached; tool-loop agents read
+	// live code and are never cached.
+	cache reviewCache
+	// cacheNoRead, when true, bypasses cache READS (the --no-cache flag) while
+	// still WRITING fresh results, so a flagged run refreshes stale entries and
+	// every subsequent run benefits. No effect when cache is nil.
+	cacheNoRead bool
 }
 
 // EngineOption configures an Engine at construction.
@@ -232,6 +269,18 @@ func WithDispatcher(d toolDispatcher) EngineOption {
 // review.
 func WithTranscript(f func(agentName string) *tools.Transcript) EngineOption {
 	return func(e *Engine) { e.transcript = f }
+}
+
+// WithCache wires the diff cache (Epic 5.2). When set, a non-tool agent whose
+// payload+model+persona key already has a stored result replays it instead of
+// calling the provider; a fresh successful result is stored. noRead bypasses
+// the read (the --no-cache flag) but still writes. Without this option the
+// engine never touches a cache and always calls live.
+func WithCache(c reviewCache, noRead bool) EngineOption {
+	return func(e *Engine) {
+		e.cache = c
+		e.cacheNoRead = noRead
+	}
 }
 
 // WithLogger injects the engine's diagnostic logger. Pass the review_id-
@@ -519,9 +568,60 @@ func (e *Engine) dispatchAgent(ctx context.Context, a Agent) Result {
 				return e.invokeToolLoop(ctx, a, cc, e.dispatcher)
 			}
 		}
+		// A degraded tool agent runs single-shot but is intentionally NOT cached:
+		// it was configured to read live code via the tool loop, so its output is
+		// not a pure function of the payload and a payload-keyed cache could serve
+		// a stale degraded answer. Tool agents always call live.
 		return e.invokeDegraded(ctx, a)
 	}
-	return e.invokeSingleShot(ctx, a)
+	return e.invokeCachedSingleShot(ctx, a)
+}
+
+// invokeCachedSingleShot wraps the single-shot path with the diff cache (Epic
+// 5.2). It is the only cache integration point: tool agents (live or degraded)
+// never reach it. With no cache wired, or an agent with no cache key, it is a
+// transparent pass-through to invokeSingleShot, preserving the pre-5.2 behavior.
+//
+// On a cache hit it returns a synthesized OK result carrying the cached Content
+// with zero token usage and no CallRecords — the agent is still counted by the
+// invokeAgent metrics wrapper (it produced a result), but no provider round-trip
+// is recorded, which is the whole point. On a miss it calls live and stores a
+// successful result; a failed/timed-out review is never cached.
+func (e *Engine) invokeCachedSingleShot(ctx context.Context, a Agent) Result {
+	if e.cache == nil || a.PayloadHash == "" {
+		return e.invokeSingleShot(ctx, a)
+	}
+	key := cache.Key(a.PayloadHash, a.Invocation.Model, a.PersonaHash)
+	if !e.cacheNoRead {
+		content, hit, err := e.cache.Get(key)
+		if err != nil {
+			// A cache read fault is never fatal: log and fall through to a live
+			// call so a corrupt/unreadable cache degrades to the uncached path.
+			log.FromContext(ctx).Warn("diff cache read failed; calling live", "agent", a.Name, "err", err)
+		} else if hit {
+			log.FromContext(ctx).Debug("diff cache hit; replaying without API call", "agent", a.Name, "model", a.Invocation.Model)
+			return Result{
+				Agent:       a.Name,
+				Content:     content,
+				Status:      StatusOK,
+				PayloadMode: a.PayloadMode,
+				Truncation:  a.Truncation,
+				MinSeverity: a.MinSeverity,
+				MaxFindings: a.MaxFindings,
+				Model:       a.Invocation.Model,
+				CacheHit:    true,
+			}
+		}
+	}
+	r := e.invokeSingleShot(ctx, a)
+	if r.Status == StatusOK {
+		if err := e.cache.Put(key, r.Content); err != nil {
+			// A write fault only forfeits the future speed-up; the live result is
+			// already correct, so the review proceeds.
+			log.FromContext(ctx).Warn("diff cache write failed", "agent", a.Name, "err", err)
+		}
+	}
+	return r
 }
 
 // invokeSingleShot performs one chat completion and classifies the outcome on
