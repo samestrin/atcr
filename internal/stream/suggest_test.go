@@ -124,6 +124,31 @@ func TestMissingSuggestion_Tier2ExtensionGuard(t *testing.T) {
 	assert.Empty(t, idx.MissingSuggestion("internal/auth/validator.go"))
 }
 
+// TestMissingSuggestion_Tier2RejectsPluralDerivation: a missing path whose stem
+// is a strict prefix/suffix derivation of a real sibling (pluralization,
+// agent-noun) must NOT be suggested — these are commonly distinct coexisting
+// files and score higher than a real typo. Independent-review MEDIUM.
+func TestMissingSuggestion_Tier2RejectsPluralDerivation(t *testing.T) {
+	cases := []struct{ tracked, cited string }{
+		{"internal/store/user.go", "internal/store/users.go"},
+		{"internal/http/handler.go", "internal/http/handlers.go"},
+		{"internal/parse/parse.go", "internal/parse/parser.go"},
+		{"internal/net/route.go", "internal/net/router.go"},
+	}
+	for _, c := range cases {
+		idx := indexFromPaths([]string{c.tracked})
+		assert.Emptyf(t, idx.MissingSuggestion(c.cited),
+			"derivation %q should not be suggested toward %q", c.cited, c.tracked)
+	}
+}
+
+// TestMissingSuggestion_Tier2KeepsTrueTypo: the canonical validator->validate
+// typo survives the derivation guard (neither stem is a prefix of the other).
+func TestMissingSuggestion_Tier2KeepsTrueTypo(t *testing.T) {
+	idx := indexFromPaths([]string{"internal/auth/validate.go"})
+	assert.Equal(t, "internal/auth/validate.go", idx.MissingSuggestion("internal/auth/validator.go"))
+}
+
 // TestMissingSuggestion_Tier1BeatsTier2: when the exact basename exists
 // elsewhere, Tier 1 wins over any same-dir typo candidate.
 func TestMissingSuggestion_Tier1BeatsTier2(t *testing.T) {

@@ -125,6 +125,15 @@ func (x *FileIndex) tier2(rel, base, dir string) string {
 		if candExt != citedExt {
 			continue // Tier 2 stays within a file type
 		}
+		if prefixDerivation(citedStem, candStem) {
+			// One stem is a strict prefix of the other: a pluralization or
+			// derivation (user/users, handler/handlers, parse/parser), which are
+			// commonly distinct coexisting files, not a typo. Similarity cannot
+			// separate these from a real typo — they often score HIGHER than the
+			// canonical validator/validate (0.78) — so guard structurally and
+			// emit no suggestion rather than a confident wrong one.
+			continue
+		}
 		score := similarity(citedStem, candStem)
 		switch {
 		case score > bestScore:
@@ -161,6 +170,21 @@ func segOverlap(a, b string) int {
 		}
 	}
 	return n
+}
+
+// prefixDerivation reports whether one stem is a strict prefix of the other —
+// the signature of a pluralization or derivation (user->users, parse->parser)
+// rather than a typo. It deliberately does NOT fire for validator/validate,
+// which share a prefix but where neither contains the other.
+func prefixDerivation(a, b string) bool {
+	if a == b {
+		return false
+	}
+	short, long := a, b
+	if len(b) < len(a) {
+		short, long = b, a
+	}
+	return strings.HasPrefix(long, short)
 }
 
 // splitStem splits a basename into its stem and extension (including the dot),

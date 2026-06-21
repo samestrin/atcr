@@ -26,8 +26,9 @@ const PathNotFoundWarning = "file not found"
 //     indeterminate result must not masquerade as "file not found".
 //
 // root defaults to "." (the process working directory, which is the repo root
-// for every atcr entry point — see internal/verify, which threads the same "."
-// root) when empty. A nil finding is a no-op.
+// for every atcr entry point — the cmd/atcr reconcile/review/resume commands all
+// thread Root="." into reconcile, the sole caller) when empty. A nil finding is
+// a no-op.
 //
 // Symlink safety (Epic 5.4 AC5): existence is resolved with filepath.EvalSymlinks
 // and the result is re-checked for containment under the (also symlink-resolved)
