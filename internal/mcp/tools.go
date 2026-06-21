@@ -16,6 +16,7 @@ const (
 	ToolReview    = "atcr_review"
 	ToolReconcile = "atcr_reconcile"
 	ToolVerify    = "atcr_verify"
+	ToolDebate    = "atcr_debate"
 	ToolReport    = "atcr_report"
 	ToolRange     = "atcr_range"
 	ToolStatus    = "atcr_status"
@@ -58,6 +59,35 @@ type VerifyArgs struct {
 	RegistryPath    string `json:"registryPath,omitempty" jsonschema:"override the registry file path (default: the user/project merged registry)"`
 	FailOn          string `json:"failOn,omitempty" jsonschema:"compute a gate status: not-passing if any finding at or above this severity survives verification"`
 	RequireVerified bool   `json:"requireVerified,omitempty" jsonschema:"with failOn: gate counts only skeptic-confirmed (VERIFIED) findings; requires failOn"`
+}
+
+// DebateArgs are the atcr_debate tool arguments. id_or_path is the review id
+// (paths are not accepted), defaulting to .atcr/latest. single_model opts in to
+// the same-model persona fallback when fewer than three distinct models are
+// available; fail_on / require_verified drive the returned gate status
+// (require_verified requires fail_on).
+type DebateArgs struct {
+	IDOrPath        string `json:"id_or_path,omitempty" jsonschema:"review id to debate (review id only; paths are not accepted); defaults to .atcr/latest"`
+	SingleModel     bool   `json:"singleModel,omitempty" jsonschema:"allow the same-model persona fallback when fewer than 3 distinct models are available across the proposer/challenger/judge roles"`
+	RegistryPath    string `json:"registryPath,omitempty" jsonschema:"override the registry file path (default: the user/project merged registry)"`
+	FailOn          string `json:"failOn,omitempty" jsonschema:"compute a gate status: not-passing if any finding at or above this severity survives the debate"`
+	RequireVerified bool   `json:"requireVerified,omitempty" jsonschema:"with failOn: gate counts only confirmed (VERIFIED) findings; requires failOn"`
+}
+
+// DebateResult is the atcr_debate summary: the per-outcome tally, the recorded
+// overflow count, the wall-clock duration, and — when failOn was given — the gate
+// status. Artifacts (debate.json, re-emitted findings.json, transcripts) are
+// always written regardless of the gate outcome.
+type DebateResult struct {
+	ReviewID   string      `json:"review_id"`
+	Selected   int         `json:"selected"`
+	Upheld     int         `json:"upheld"`
+	Overturned int         `json:"overturned"`
+	Split      int         `json:"split"`
+	Unresolved int         `json:"unresolved"`
+	Overflow   int         `json:"overflow"`
+	DurationMs int         `json:"durationMs"`
+	GateStatus *GateStatus `json:"gateStatus,omitempty"`
 }
 
 // ReportArgs are the atcr_report tool arguments (all optional). Format is
@@ -170,6 +200,9 @@ const (
 	descVerify = "Run adversarial skeptics over a review's reconciled findings and re-emit the artifacts with verdicts and confidence v2. " +
 		"Runs after atcr_reconcile. Returns {review_id, verdictCounts, findingsProcessed, durationMs, gateStatus?}. " +
 		"Optional args: id_or_path (review id only; defaults to the latest review), fresh, thorough, minSeverity (CRITICAL|HIGH|MEDIUM|LOW), failOn, requireVerified."
+	descDebate = "Cross-examine a review's disputed findings (severity splits, gray-zone clusters, verification disagreements) through a bounded proposer/challenger/judge debate and integrate the rulings. " +
+		"Runs after atcr_reconcile (and atcr_verify, for verification disagreements). Returns {review_id, selected, upheld, overturned, split, unresolved, overflow, durationMs, gateStatus?}. " +
+		"Optional args: id_or_path (review id only; defaults to the latest review), singleModel, failOn (CRITICAL|HIGH|MEDIUM|LOW), requireVerified."
 	descReport = "Render a view over a review's reconciled findings. " +
 		"Optional args: id_or_path (review id only; paths are not accepted; defaults to the latest review), format (md|json|checklist; default md)."
 	descRange = "Resolve a git review range without calling any provider. " +

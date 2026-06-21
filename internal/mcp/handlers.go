@@ -14,6 +14,7 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/log"
@@ -579,6 +580,61 @@ func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		findings, ferr := reconcile.ReadReconciledFindings(dir)
 		if ferr != nil {
 			return nil, VerifyResult{}, ferr
+		}
+		n := reconcile.CountFailingJSON(findings, threshold, in.RequireVerified)
+		out.GateStatus = &GateStatus{Pass: n == 0, FailingCount: n, FailOn: threshold}
+	}
+	return nil, out, nil
+}
+
+// handleDebate runs the cross-examination stage over a review's reconciled
+// findings and returns the per-outcome tally plus an optional gate status. It
+// shares the internal/debate.Debate orchestration with the `atcr debate` CLI and
+// the `atcr review --debate` chain, so all three emit identical artifacts for the
+// same input. failOn / requireVerified are validated before any work; missing
+// reconciled findings yields the same reconcile-first guidance as the CLI. A seat
+// failure becomes an unresolved item, never a handler error.
+func (e *engine) handleDebate(ctx context.Context, _ *mcpsdk.CallToolRequest, in DebateArgs) (*mcpsdk.CallToolResult, DebateResult, error) {
+	threshold, err := parseOptionalSeverity(in.FailOn)
+	if err != nil {
+		return nil, DebateResult{}, err
+	}
+	if in.RequireVerified && threshold == "" {
+		return nil, DebateResult{}, fmt.Errorf("requireVerified requires failOn")
+	}
+
+	dir, id, err := e.resolveReviewDir(in.IDOrPath)
+	if err != nil {
+		return nil, DebateResult{}, err
+	}
+
+	reg, err := e.loadVerifyRegistry(in.RegistryPath)
+	if err != nil {
+		return nil, DebateResult{}, err
+	}
+
+	res, err := debate.Debate(ctx, e.root, dir, reg, debate.Options{SingleModel: in.SingleModel})
+	if err != nil {
+		if errors.Is(err, debate.ErrNoReconciledFindings) {
+			return nil, DebateResult{}, fmt.Errorf("no reconciled findings found in %s — run 'atcr reconcile' first", dir)
+		}
+		return nil, DebateResult{}, err
+	}
+
+	out := DebateResult{
+		ReviewID:   id,
+		Selected:   res.Selected,
+		Upheld:     res.Upheld,
+		Overturned: res.Overturned,
+		Split:      res.Split,
+		Unresolved: res.Unresolved,
+		Overflow:   res.Overflow,
+		DurationMs: res.DurationMs,
+	}
+	if threshold != "" {
+		findings, ferr := reconcile.ReadReconciledFindings(dir)
+		if ferr != nil {
+			return nil, DebateResult{}, ferr
 		}
 		n := reconcile.CountFailingJSON(findings, threshold, in.RequireVerified)
 		out.GateStatus = &GateStatus{Pass: n == 0, FailingCount: n, FailOn: threshold}

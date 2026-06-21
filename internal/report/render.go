@@ -82,6 +82,13 @@ func renderJSON(w io.Writer, findings []reconcile.JSONFinding) error {
 // maxTextLen; file paths render verbatim inside backtick code spans (no escape,
 // no truncation — preserving unicode paths byte-for-byte, AC 01-06 Edge Case 3).
 func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile) error {
+	return renderMarkdownFull(w, findings, df, ContestedReport{})
+}
+
+// renderMarkdownFull is the markdown renderer with the optional contested-findings
+// section (Epic 6.0). An empty ContestedReport writes no contested section, so the
+// output is byte-identical to the pre-6.0 report for every existing caller.
+func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconcile.DisagreementsFile, cr ContestedReport) error {
 	var b bytes.Buffer
 	b.WriteString("# atcr Review Report\n\n")
 	verified := anyVerification(findings)
@@ -90,6 +97,10 @@ func renderMarkdown(w io.Writer, findings []reconcile.JSONFinding, df reconcile.
 	// Disagreement radar above the consensus findings (Epic 3.2). Empty df →
 	// nothing written → output identical to the plain report.
 	writeRadarSection(&b, df)
+
+	// Contested-findings section (Epic 6.0): judge rulings over debated disputes.
+	// Empty cr → nothing written → output identical to the pre-6.0 report.
+	writeContestedSection(&b, cr)
 
 	if len(findings) == 0 {
 		b.WriteString("\nNo findings.\n")

@@ -42,7 +42,8 @@ var allowedInternalImports = map[string][]string{
 	"scorecard":      {"llmclient", "reconcile", "fanout"},
 	"report":         {"stream", "reconcile"},
 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
-	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "scorecard", "log", "metrics"},
+	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // cross-examination stage; mirrors verify's harness (epic 6.0)
+	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
 	// integration holds only end-to-end _test.go files (no production code).
 	// The dependency-direction walk skips _test.go, so this entry exists to
 	// satisfy the allowlist-completeness check; it records the packages those

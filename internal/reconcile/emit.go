@@ -41,6 +41,14 @@ type Verification struct {
 	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
 	Skeptic string `json:"skeptic"` // agent that produced the verdict
 	Notes   string `json:"notes,omitempty"`
+	// ChallengeSurvived marks a finding upheld by the cross-examination stage
+	// (Epic 6.0): the judge ruled uphold or split, so the finding survived hostile
+	// challenge. omitempty keeps every pre-6.0 and non-debated findings.json block
+	// byte-identical — the marker appears only on a debated, surviving finding. It
+	// rides alongside Verdict (uphold→confirmed, split→confirmed at a settled
+	// severity, overturn→refuted), so the gate keys on Verdict as before and this
+	// is a display/audit marker, never a separate confidence tier.
+	ChallengeSurvived bool `json:"challenge_survived,omitempty"`
 }
 
 // Verdict enum values for Verification.Verdict (Epic 3.0). The verify stage

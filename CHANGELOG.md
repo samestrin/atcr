@@ -1,3 +1,20 @@
+## [6.0.0] - 2026-06-21
+
+Cross-examination (debate) stage: resolve reviewer disagreements through a bounded proposer/challenger/judge debate instead of a heuristic. Where reviewers dispute severity, the reconciler leaves a gray-zone cluster, or a skeptic vote ties, the judge's ruling — not severity-max — settles the finding, and survivors form the top confidence tier.
+
+### Added
+
+- `atcr debate [id-or-path]` command, `atcr review --verify --debate` chaining, and the `atcr_debate` MCP tool — all sharing one orchestrator. `--single-model` opts into a same-model persona fallback when fewer than three distinct models are available.
+- `debate.*` registry config (`triggers`, `max_items`, `allow_single_model`), validated in lockstep with the config schema.
+- A `challenge_survived` marker on upheld findings (folded into the existing `VERIFIED` tier, not a new tier), the `reconciled/debate.json` ruling record, and replayable per-item transcripts under `debate/`.
+- A "Contested findings" report section showing judge rulings with one-line rationales, severity transitions, single-model disclosure, and recorded overflow.
+
+### Changed
+
+- Disputed findings — severity splits (≥2 tiers), gray-zone clusters, and verification disagreements — route through a debate that settles them: `uphold`/`split` confirm (split replaces severity-max with the judge's settled severity), `overturn` refutes. Distinct-model enforcement spans all three seats; the protocol is bounded (hard 3-turn cap, `max_items` cost cap with recorded overflow) and idempotent across re-runs.
+
+*Shipped via /execute-epic (epic 6.0)*
+
 ## [Technical Debt] - 2026-06-21
 
 ### Fixed

@@ -66,6 +66,8 @@ atcr report --format md
 |---------|---------|
 | `atcr review` | Resolve the git range, build payloads, fan out to the reviewer pool, write per-agent + merged findings |
 | `atcr reconcile` | Discover sources, cluster, dedupe, score confidence, write reconciled artifacts |
+| `atcr verify` | Run adversarial skeptics over reconciled findings; write verdicts and confidence v2 |
+| `atcr debate` | Cross-examine disputed findings (proposer/challenger/judge); settle severity splits, gray-zone clusters, and verification disagreements |
 | `atcr report` | Render md / json / checklist views over the reconciled findings |
 | `atcr range` | Pre-flight base..head resolution only; prints resolution JSON |
 | `atcr status` | Print a review's fan-out progress as JSON (roster + per-agent state) |
