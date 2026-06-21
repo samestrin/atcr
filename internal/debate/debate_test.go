@@ -291,6 +291,22 @@ func writeAmbiguous(t *testing.T, dir, content string) {
 
 func errContext() error { return context.DeadlineExceeded }
 
+// TestRunDebate_IdempotentReRun: a finding already upheld by a prior debate (carries
+// ChallengeSurvived) is not re-debated on a second run, so re-runs do not re-bill
+// settled findings.
+func TestRunDebate_IdempotentReRun(t *testing.T) {
+	f := splitFinding()
+	f.Verification = &reconcile.Verification{Verdict: reconcile.VerdictConfirmed, Skeptic: "carol", ChallengeSurvived: true}
+	f.Confidence = reconcile.ConfidenceVerified
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Selected, "an already-upheld finding must not be re-debated")
+}
+
 func TestReadDebateFile(t *testing.T) {
 	// Absent file → found=false, no error.
 	dir := t.TempDir()

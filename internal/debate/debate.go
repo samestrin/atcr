@@ -95,6 +95,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// post-verify verification_disagreement items (absent from the reconcile-time
 	// disagreements.json snapshot) alongside severity splits and gray-zone clusters.
 	df := reconcile.LoadDisagreements(reviewDir, findings)
+	// Idempotency: drop findings a prior debate already settled (upheld/split mark
+	// ChallengeSurvived). An upheld severity-split keeps its Disagreement annotation,
+	// so without this guard it re-enters the radar and a re-run re-bills it at three
+	// provider calls. Overturned findings are already excluded (refuted) by the radar;
+	// unresolved items are intentionally retried (roles may have been configured since).
+	df.Items = filterAlreadyDebated(df.Items, findings)
 	sel := SelectItems(df, cfg)
 
 	// Build the harness only when there is work (mirrors verify): a run with
@@ -158,6 +164,32 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	res.Overflow = len(sel.Overflow)
 	res.DurationMs = int(time.Since(start).Milliseconds())
 	return res, nil
+}
+
+// filterAlreadyDebated removes radar items whose finding a prior debate already
+// upheld or split (Verification.ChallengeSurvived). It keys on the same
+// File+Line+Problem triple rulings are applied by, so only single-finding items
+// (severity splits, verification disagreements) are filtered; gray-zone cluster
+// items never carry the marker and are unaffected. Returns items unchanged when no
+// finding is marked, so a first-ever debate run does no extra work.
+func filterAlreadyDebated(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding) []reconcile.DisagreementItem {
+	debated := map[FindingKey]bool{}
+	for _, f := range findings {
+		if f.Verification != nil && f.Verification.ChallengeSurvived {
+			debated[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] = true
+		}
+	}
+	if len(debated) == 0 {
+		return items
+	}
+	out := make([]reconcile.DisagreementItem, 0, len(items))
+	for _, it := range items {
+		if debated[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}] {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
 }
 
 // debateOne casts and runs the debate for a single item, records its transcript,

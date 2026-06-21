@@ -321,7 +321,13 @@ func runReview(cmd *cobra.Command, _ []string) error {
 					return usageError(ferr)
 				}
 				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
-					return fmt.Errorf("%d finding(s) at or above %s survived the review", n, threshold)
+					// Keep the verify-only message stable (operators/CI may match on it);
+					// name cross-examination only when --debate actually ran.
+					stage := "verification"
+					if debateFlag {
+						stage = "cross-examination"
+					}
+					return fmt.Errorf("%d finding(s) at or above %s survived %s", n, threshold, stage)
 				}
 			}
 			return nil
