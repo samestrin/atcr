@@ -245,7 +245,11 @@ func (e *engine) handleReview(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// Detach for handler-return (reviewContext: WithoutCancel), then re-attach a
 		// cancellation tied to server shutdown only. cancel is deferred so a review
 		// that finishes before any shutdown releases its AfterFunc registration.
-		rctx, cancel := e.withShutdownCancel(e.reviewContext(ctx, prep.ID, prep.SecretValues()...))
+		secrets, secretWarnings := prep.SecretValues()
+		for _, w := range secretWarnings {
+			e.logger().Debug(w, "review_id", prep.ID)
+		}
+		rctx, cancel := e.withShutdownCancel(e.reviewContext(ctx, prep.ID, secrets...))
 		defer cancel()
 		if _, err := fanout.ExecuteReview(rctx, e.completer, prep); err != nil {
 			e.logger().Error("review fan-out finished with errors", "review_id", prep.ID, "error", err)

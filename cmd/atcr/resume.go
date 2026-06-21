@@ -10,6 +10,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
@@ -124,7 +125,11 @@ func runResume(cmd *cobra.Command, anchor string) error {
 	// review path so the resume flow never leaks secrets or absolute paths,
 	// including the resolved registry key values (epic 4.9). Shared with runReview
 	// via correlateAndRedact so the contract can't drift.
-	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, prep.SecretValues()...)
+	secrets, secretWarnings := prep.SecretValues()
+	ctx = correlateAndRedact(ctx, prep.ID, prep.Repo, secrets...)
+	for _, w := range secretWarnings {
+		log.FromContext(ctx).Debug(w)
+	}
 
 	// AC2: nothing pending — re-run reconciliation against the complete review and
 	// exit clean, never touching a provider. Clear any stale interrupt marker first

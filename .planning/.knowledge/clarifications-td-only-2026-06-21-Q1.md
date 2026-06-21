@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-21-657ff0
-question: "Is the evict() mtime read vs Get() os.Chtimes a race condition in internal/cache/store.go?"
+id: mem-2026-06-21-cbcbcb
+question: "Does FallbackFrom need to be set inside the synthesized cache-hit Result in engine.go invokeAgent?"
 created: 2026-06-21
 last_retrieved: ""
 sprints: []
-files: [internal/cache/store.go]
-tags: [clarifications, td-clarification, td-only, correctness, cache, concurrency]
+files: [internal/fanout/engine.go]
+tags: [td-clarification, td-only, correctness, engine, cache, FallbackFrom, invokeSlot]
 retrievals: 0
 status: active
-type: clarifications-td-only
+type: clarifications skill, td-only mode, 2026-06-21
 ---
 
-# Is the evict() mtime read vs Get() os.Chtimes a race conditi
+# Does FallbackFrom need to be set inside the synthesized cach
 
 ## Decision
 
-No race. Store uses a single mutex (s.mu) that fully serializes all operations: Get() holds s.mu for its whole body (store.go:61-62) and evict() runs only via Put() which also holds s.mu (store.go:99-100, 114). os.Chtimes (store.go:85) and os.ReadDir/de.Info (store.go:119,134) are therefore never concurrent — the exclusive lock eliminates the race, it does not merely mitigate it. The guarantee is documented at store.go:32-35 and store.go:114. Accepted design; no functional change warranted.
+No. FallbackFrom is stamped by invokeSlot (internal/fanout/engine.go:476) uniformly on the returned Result for both cached and live paths. The synthesized cache-hit Result returned from invokeCachedSingleShot intentionally mirrors invokeSingleShot, which also omits FallbackFrom from the struct literal. Any TD finding that suggests adding FallbackFrom inside the cache-hit Result is a false positive — the Agent struct has no FallbackFrom field and the field is set at the invokeSlot level, not inside individual result constructors.
 
 ## Rationale
 
@@ -27,4 +27,4 @@ No race. Store uses a single mutex (s.mu) that fully serializes all operations: 
 
 ## Code Reference
 
-- internal/cache/store.go
+- internal/fanout/engine.go
