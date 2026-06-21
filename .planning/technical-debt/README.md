@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 1 | 19 | 1 |
+| MEDIUM | 0 | 20 | 1 |
 | LOW | 0 | 20 | 7 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 1 | **Deferred Items:** 40 | **Resolved Items:** 8 | **Total Items:** 49
+**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 41 | **Resolved Items:** 8 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -52,7 +52,7 @@ technical-debt/
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | U | [/] | LOW | internal/report/render.go:317 | The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages | Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won't-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope) | CROSS_CUTTING | 15 | execute-epic-cumulative |
-| U | [ ] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention | EDGE_CASES | 60 | execute-epic-independent |
+| U | [/] | MEDIUM | internal/reconcile/reconcile.go:26 | Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found" | Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60) | EDGE_CASES | 60 | execute-epic-independent |
 | U | [x] | LOW | internal/reconcile/emit.go:146 | The reconciled 9-column findings.txt (RenderText) does not carry PathValid/PathWarning, so a consumer reading findings.txt rather than findings.json/report.md loses the hallucination warning | Document the intentional omission in RenderText, or fold the warning into the EVIDENCE column the way the Disagreement annotation already is | INTEGRATION | 15 | execute-epic-independent |
 | U | [x] | LOW | internal/stream/validate.go:46 | os.Stat is case-insensitive on macOS/Windows default filesystems, so a case-only path typo (Parser.go vs parser.go) resolves as present and is not flagged | Add a case-exact existence check comparing against the real dirent name per path segment | EDGE_CASES | 30 | execute-epic-independent |
 | U | [x] | LOW | internal/report/render.go:318 | The warning label "File not found" is hardcoded and keyed off PathWarning != "" rather than rendering the PathWarning value, so a future non-default warning would render text inconsistent with findings.json path_warning | Render esc(f.PathWarning) so the human report always matches the machine field | REGRESSION_RISK | 15 | execute-epic-independent |
