@@ -115,10 +115,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// the seats degrade and the affected items are recorded unresolved.
 	var cc fanout.ChatCompleter
 	var disp Dispatcher
+	harnessFailed := false
 	if len(sel.Selected) > 0 {
 		c, d, cleanup, herr := newHarness()
 		if herr != nil {
-			log.FromContext(ctx).Warn("debate: tool harness unavailable; selected items will be unresolved")
+			log.FromContext(ctx).Warn("debate: tool harness unavailable; selected items will be unresolved", "err", herr.Error())
+			harnessFailed = true
 		} else {
 			cc, disp = c, d
 			if cleanup != nil {
@@ -133,6 +135,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	var res Result
 
 	for _, it := range sel.Selected {
+		if harnessFailed {
+			ir := ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "harness_unavailable"}
+			items = append(items, ir)
+			tally(&res, ir)
+			continue
+		}
 		if ctx.Err() != nil {
 			ir := ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
 			items = append(items, ir)
