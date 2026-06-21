@@ -61,7 +61,7 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 	// cannot forge a closing tag and inject instructions — the early-close defense
 	// the verify stage uses on skeptic prompts. Shared across seats so the judge
 	// sees the same framing the proposer and challenger argued under.
-	sentinel := fmt.Sprintf("%08x", rand.Uint32())
+	sentinel := newSentinel()
 
 	// Turn 1 — proposer defends the finding.
 	rec.ProposerStatement = rec.runTurn(ctx, cast.Proposer, 1, buildProposerPrompt(item, sentinel), cc, disp, tr)
@@ -75,6 +75,13 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 		buildJudgePrompt(item, rec.ProposerStatement, rec.ChallengerStatement, sentinel), cc, disp, tr)
 
 	return rec
+}
+
+// newSentinel returns the per-item block sentinel used to tag untrusted finding and
+// reviewer content so it cannot forge a closing tag. It is a security boundary, so
+// the value must be unpredictable.
+func newSentinel() string {
+	return fmt.Sprintf("%08x", rand.Uint32())
 }
 
 // runTurn drives one seat through the tool loop, records the turn to the
