@@ -71,8 +71,12 @@ func (s *Store) Get(key string) (string, bool, error) {
 	var e entry
 	if jerr := json.Unmarshal(data, &e); jerr != nil || e.Key != key {
 		// Corrupt or mismatched entry: drop it so the next run repopulates a
-		// clean record, and report a miss rather than an error.
-		_ = os.Remove(path)
+		// clean record, and report a miss rather than an error. A failure to
+		// remove the entry is itself a genuine IO error, so surface it (per the
+		// contract above) instead of masking it as a clean miss.
+		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return "", false, rerr
+		}
 		return "", false, nil
 	}
 	// Refresh recency for LRU eviction (best-effort: a touch failure only makes
