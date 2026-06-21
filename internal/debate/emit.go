@@ -169,16 +169,6 @@ func computeFindingsBytes(reviewDir string, findings []reconcile.JSONFinding) (s
 	return path, append(data, '\n'), nil
 }
 
-// writeFindings serializes the findings slice to reconciled/findings.json
-// atomically (indented, trailing newline), mirroring the verify re-emit.
-func writeFindings(reviewDir string, findings []reconcile.JSONFinding) error {
-	path, data, err := computeFindingsBytes(reviewDir, findings)
-	if err != nil {
-		return err
-	}
-	return atomicfs.WriteFileAtomic(path, data)
-}
-
 // computeDebateBytes serializes the debate document to indented JSON with a
 // trailing newline and returns the target path plus bytes.
 func computeDebateBytes(reviewDir string, df DebateFile) (string, []byte, error) {
@@ -247,21 +237,6 @@ func computeManifestStageBytes(reviewDir string) (string, []byte, error) {
 		return "", nil, err
 	}
 	return path, append(out, '\n'), nil
-}
-
-// updateManifestStage appends "debate" to the manifest's stages list,
-// idempotently. A manifest with no stages is seeded with "review" first. A missing
-// manifest is returned as os.ErrNotExist; a malformed one as a parse error,
-// leaving the file untouched. Mirrors verify.UpdateManifestStage.
-func updateManifestStage(reviewDir string) error {
-	path, data, err := computeManifestStageBytes(reviewDir)
-	if err != nil {
-		return err
-	}
-	if data == nil {
-		return nil
-	}
-	return atomicfs.WriteFileAtomic(path, data)
 }
 
 // ReadDebateFile reads reviewDir/reconciled/debate.json. It returns found=false
