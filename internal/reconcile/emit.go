@@ -98,6 +98,13 @@ type JSONFinding struct {
 	// present. It is advisory only — File (the original cited path) is never
 	// rewritten — and is set only alongside a non-empty path_warning.
 	PathSuggestion string `json:"path_suggestion,omitempty"`
+	// ClusterMerged marks the record that resulted from inline application of a
+	// judge gray-zone "merge" ruling (Epic 6.1): the cross-examination stage
+	// unioned a gray-zone cluster's members into this single finding. omitempty
+	// keeps every non-merged findings.json record byte-identical. It is the
+	// idempotency marker the debate radar filters on so a re-run never re-merges an
+	// already-applied cluster (AC4); it is never set by any reconcile-time path.
+	ClusterMerged bool `json:"cluster_merged,omitempty"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.
