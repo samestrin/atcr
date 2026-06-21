@@ -149,9 +149,18 @@ func (s *Store) evict() {
 	}
 	// Oldest first — least-recently-used (Get refreshes mtime).
 	sort.Slice(files, func(i, j int) bool { return files[i].mtime.Before(files[j].mtime) })
-	for _, f := range files {
+	// Protect the most-recently-written entry (newest mtime, last after the sort)
+	// from its own eviction pass: a single entry larger than maxBytes would
+	// otherwise be deleted by the Put that just wrote it, making it permanently
+	// uncacheable and re-called every run. Accept a transient over-cap instead of
+	// churning the new entry.
+	newest := len(files) - 1
+	for i, f := range files {
 		if total <= s.maxBytes {
 			break
+		}
+		if i == newest {
+			continue
 		}
 		// Best-effort: a failed delete only defers reclaiming disk to the next
 		// Put (it never fails one), so the error is intentionally swallowed.
