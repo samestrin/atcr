@@ -130,6 +130,13 @@ func resolveProposer(reg *registry.Registry, item reconcile.DisagreementItem) (C
 // pickDistinct returns the first agent (sorted by name) whose effective role is
 // role and whose model is not in excludeModels, resolved to a provider-backed
 // seat with the given label. ok=false when none qualifies.
+//
+// Distinctness is by exact Model string only: there is no alias/canonicalization
+// map, so two agents pointing at the same underlying model via different strings
+// (e.g. "gpt-4o" vs "gpt-4o-2024-08-06", or a provider alias) are treated as
+// distinct seats. The "three distinct models" independence guarantee is therefore
+// a guarantee over model *labels*, not over verified-distinct model identities;
+// operators must give genuinely different models distinct strings to rely on it.
 func pickDistinct(reg *registry.Registry, role, label string, excludeModels []string) (Caster, bool) {
 	excluded := map[string]bool{}
 	for _, m := range excludeModels {
