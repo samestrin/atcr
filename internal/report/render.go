@@ -348,16 +348,23 @@ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
 	fmt.Fprintf(b, "  - ⚠️ %s: %s\n", label, esc(f.File))
 }
 
-// writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an
-// annotation when the verdict is unverifiable, and the reasoning (omitted when
-// empty, AC 06-01 Edge Case 3). All free text is HTML-escaped and newline-
-// flattened so skeptic output cannot inject markup or escape the section.
+// writeSkepticBlock renders the per-finding verdict-attribution section: the
+// agent name, verdict, an annotation when the verdict is unverifiable, and the
+// reasoning (omitted when empty, AC 06-01 Edge Case 3). For findings that
+// survived cross-examination (ChallengeSurvived) the agent is the judge and is
+// labelled "Judge" so it is not mistaken for a skeptic-produced verdict.
+// All free text is HTML-escaped and newline-flattened so reviewer-controlled
+// fields cannot inject markup or escape the section.
 func writeSkepticBlock(b *bytes.Buffer, v *reconcile.Verification) {
 	annotation := ""
 	if canonicalize(v.Verdict) == canonicalize(reconcile.VerdictUnverifiable) {
 		annotation = " (skeptic could not verify)"
 	}
-	fmt.Fprintf(b, "  - Skeptic: %s — %s%s\n", esc(v.Skeptic), esc(v.Verdict), annotation)
+	label := "Skeptic"
+	if v.ChallengeSurvived {
+		label = "Judge"
+	}
+	fmt.Fprintf(b, "  - %s: %s — %s%s\n", label, esc(v.Skeptic), esc(v.Verdict), annotation)
 	if strings.TrimSpace(v.Notes) != "" {
 		fmt.Fprintf(b, "    - Reasoning: %s\n", escTrunc(v.Notes))
 	}
