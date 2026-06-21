@@ -1,0 +1,180 @@
+package debate
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/samestrin/atcr/internal/stream"
+)
+
+// grayFinding builds a findings.json record for a gray-zone cluster member.
+func grayFinding(file string, line int, problem, sev, reviewer string) reconcile.JSONFinding {
+	return reconcile.JSONFinding{
+		Severity: sev, File: file, Line: line, Problem: problem, Fix: "fix",
+		Category: "correctness", EstMinutes: 15, Evidence: "ev-" + reviewer,
+		Reviewers: []string{reviewer}, Confidence: "MEDIUM",
+	}
+}
+
+// reviewDirWithGray seeds reconciled/findings.json + ambiguous.json + manifest so
+// the radar surfaces the given gray-zone cluster as a debate item.
+func reviewDirWithGray(t *testing.T, findings []reconcile.JSONFinding, clusters ...reconcile.AmbiguousCluster) string {
+	t.Helper()
+	dir := t.TempDir()
+	recon := filepath.Join(dir, reconciledSubdir)
+	require.NoError(t, os.MkdirAll(recon, 0o755))
+	fdata, err := json.MarshalIndent(findings, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, reconcile.FindingsJSON), append(fdata, '\n'), 0o644))
+	adata, err := json.MarshalIndent(clusters, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(recon, reconcile.AmbiguousJSON), append(adata, '\n'), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile),
+		[]byte(`{"base":"a","head":"deadbeef","stages":["review","verify"]}`), 0o644))
+	return dir
+}
+
+// grayCluster builds a two-member ambiguous cluster co-located at file/line.
+func grayCluster(id, file string, line int, probA, sevA, revA, probB, sevB, revB string) reconcile.AmbiguousCluster {
+	return reconcile.AmbiguousCluster{
+		ID: id, File: file, Line: line, Similarity: 0.5,
+		Findings: []stream.Finding{
+			{Severity: sevA, File: file, Line: line, Problem: probA, Reviewer: revA},
+			{Severity: sevB, File: file, Line: line, Problem: probB, Reviewer: revB},
+		},
+	}
+}
+
+// grayJudgeTurns scripts proposer/challenger/judge turns where the judge returns a
+// gray-zone ruling with the given cluster_decision.
+func grayJudgeTurns(decision string) []chatTurn {
+	return []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"uphold","cluster_decision":"` + decision + `","settled_severity":"HIGH","reasoning":"same root cause"}`},
+	}
+}
+
+// TestRunDebate_GrayZoneMergeUnionsFindings: a judge "merge" ruling physically
+// unions the cluster's two member findings into one record in findings.json
+// (AC1), unioning reviewers and flagging the survivor cluster_merged.
+func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Selected)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 1, "the two gray-zone members must be unioned into one record")
+	assert.True(t, f[0].ClusterMerged, "the surviving merged record must be flagged cluster_merged")
+	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
+	assert.Equal(t, "HIGH", f[0].Severity)
+	assert.Equal(t, 10, f[0].Line)
+}
+
+// TestRunDebate_GrayZoneSeparateLeavesUnmerged: a judge "separate" ruling leaves
+// the cluster's members unmerged in findings.json (AC2) and sets no flag.
+func TestRunDebate_GrayZoneSeparateLeavesUnmerged(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("separate")}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Selected)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 2, "a separate ruling must leave both members in findings.json")
+	for _, x := range f {
+		assert.False(t, x.ClusterMerged, "no record may be flagged cluster_merged on a separate ruling")
+	}
+}
+
+// TestRunDebate_GrayZoneMergeDriftAndNoOverCapture: when a member's problem text
+// drifted (it was further-merged with a third finding) but is the sole record at
+// its location, the merge still unions it (the third-finding wrinkle). An
+// unrelated finding co-located at a DIFFERENT line is never absorbed.
+func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
+		grayFinding("a.go", 12, "longest merged problem text from a third finding", "HIGH", "bob"),
+		grayFinding("a.go", 50, "totally unrelated finding", "LOW", "carol"),
+	}
+	// Cluster member B's raw problem ("beta problem text") no longer matches the
+	// drifted record at a.go:12, but that location holds exactly one record.
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	cluster.Findings[1].Line = 12
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Selected)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 2, "the two members union to one; the unrelated finding is untouched")
+	var merged, unrelated *reconcile.JSONFinding
+	for i := range f {
+		if f[i].Line == 50 {
+			unrelated = &f[i]
+		} else {
+			merged = &f[i]
+		}
+	}
+	require.NotNil(t, merged)
+	require.NotNil(t, unrelated)
+	assert.True(t, merged.ClusterMerged)
+	assert.Equal(t, []string{"alice", "bob"}, merged.Reviewers)
+	assert.False(t, unrelated.ClusterMerged, "the unrelated co-file finding must never be absorbed")
+	assert.Equal(t, "totally unrelated finding", unrelated.Problem)
+}
+
+// TestRunDebate_GrayZoneMergeRequiresExactAnchor: when NO cluster member matches a
+// findings.json record by exact File+Line+Problem (e.g. both members were
+// refuted/removed and unrelated findings now sit at those lines), the merge is a
+// strict no-op — a group of purely fallback-matched records is never unioned.
+func TestRunDebate_GrayZoneMergeRequiresExactAnchor(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "unrelated record now at line 10", "MEDIUM", "alice"),
+		grayFinding("a.go", 12, "unrelated record now at line 12", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"original member A text", "MEDIUM", "alice",
+		"original member B text", "HIGH", "bob")
+	cluster.Findings[1].Line = 12
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 2, "no exact member anchor: nothing may be unioned")
+	for _, x := range f {
+		assert.False(t, x.ClusterMerged)
+	}
+}

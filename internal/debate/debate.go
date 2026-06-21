@@ -107,6 +107,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// post-verify verification_disagreement items (absent from the reconcile-time
 	// disagreements.json snapshot) alongside severity splits and gray-zone clusters.
 	df := reconcile.LoadDisagreements(reviewDir, findings)
+	// Gray-zone cluster decisions (Epic 6.1) apply inline: load the clusters so a
+	// judge "merge" ruling can union the member findings in findings.json directly
+	// (Option A), and drop clusters a prior debate already merged so a re-run is a
+	// no-op (AC4). A missing/corrupt ambiguous.json degrades to no gray-zone work.
+	grayClusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)
+	clusterIdx := indexClusters(grayClusters)
 	// Idempotency: drop findings a prior debate already settled (upheld/split mark
 	// ChallengeSurvived). An upheld severity-split keeps its Disagreement annotation,
 	// so without this guard it re-enters the radar and a re-run re-bills it at three
@@ -154,10 +160,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		maxPar = 4
 	}
 	type itemOutcome struct {
-		ir    ItemResult
-		apply bool
-		key   FindingKey
-		rule  ruleApply
+		ir           ItemResult
+		apply        bool
+		key          FindingKey
+		rule         ruleApply
+		clusterMerge bool
+		cluster      reconcile.AmbiguousCluster
 	}
 	outcomes := make([]itemOutcome, len(sel.Selected))
 	sem := make(chan struct{}, maxPar)
@@ -178,10 +186,22 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 				ir = debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
 			}
 			oc := itemOutcome{ir: ir}
-			// Apply verdicts only to single-finding items. A gray-zone ruling is a
-			// cluster-level merge/separate decision recorded for the existing
-			// adjudication path, not a per-finding verdict (see Clarifications).
-			if ir.Outcome != OutcomeUnresolved && it.Kind != reconcile.KindGrayZone {
+			switch {
+			case ir.Outcome == OutcomeUnresolved:
+				// An unresolved item settles nothing — no application either way.
+			case it.Kind == reconcile.KindGrayZone:
+				// Epic 6.1: a gray-zone ruling is a cluster-level decision, not a
+				// per-finding verdict, so it never enters the single-finding rulings
+				// map. A "merge" unions the cluster's members in findings.json inline
+				// (Option A); "separate" leaves them unmerged. The cluster is captured
+				// here and applied after the pool drains.
+				if ir.ClusterDecision == ClusterMerge {
+					if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok {
+						oc.clusterMerge = true
+						oc.cluster = c
+					}
+				}
+			default:
 				oc.apply = true
 				oc.key = FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
 				oc.rule = ruleApply{
@@ -197,11 +217,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 	wg.Wait()
 
+	var mergeClusters []reconcile.AmbiguousCluster
 	for _, oc := range outcomes {
 		items = append(items, oc.ir)
 		tally(&res, oc.ir)
 		if oc.apply {
 			rulings[oc.key] = oc.rule
+		}
+		if oc.clusterMerge {
+			mergeClusters = append(mergeClusters, oc.cluster)
 		}
 	}
 
@@ -226,6 +250,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 
 	if len(rulings) > 0 {
 		applyRulings(findings, rulings)
+	}
+	if len(mergeClusters) > 0 {
+		// Epic 6.1: union gray-zone clusters the judge ruled "merge" directly in the
+		// post-verify findings.json (Option A) — never via RunReconcile, which would
+		// rebuild from sources/ and erase the verify/debate verdicts above.
+		findings = applyClusterMerges(findings, mergeClusters)
 	}
 	findingsPath, findingsBytes, err := computeFindingsBytes(reviewDir, findings)
 	if err != nil {

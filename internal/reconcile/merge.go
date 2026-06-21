@@ -248,3 +248,107 @@ func confidenceFor(reviewerCount int) string {
 	}
 	return ConfMedium
 }
+
+// MergeJSONFindings collapses a group of findings.json records — a gray-zone
+// cluster's members the judge ruled "merge" (Epic 6.1) — into one reconciled
+// record. It applies the same field rules as Merge (severity max with a
+// "<lo> vs <hi>" disagreement annotation, longest problem/fix, modal category,
+// max est-minutes) but over the already-reconciled JSONFinding shape, where
+// REVIEWERS is a list (the merge unions the per-record lists, not a single
+// per-source name). The location is the first member's file/line; EVIDENCE is the
+// distinct members' evidence joined by " / "; CONFIDENCE follows the unioned
+// reviewer count. Verification carries the first non-nil member block (gray-zone
+// members are unmerged pairs, so at most one typically verified) and the Epic 5.0
+// path-validation fields carry the first member's — the members are co-located, so
+// their path status is identical. The caller sets ClusterMerged on the result. A
+// zero- or one-member group is returned as-is (the apply path never unions fewer
+// than two records, but the helper stays total).
+func MergeJSONFindings(group []JSONFinding) JSONFinding {
+	if len(group) == 0 {
+		return JSONFinding{}
+	}
+	if len(group) == 1 {
+		return group[0]
+	}
+	sf := make([]stream.Finding, len(group))
+	for i, f := range group {
+		sf[i] = stream.Finding{
+			Severity: f.Severity, File: f.File, Line: f.Line,
+			Problem: f.Problem, Fix: f.Fix, Category: f.Category,
+			EstMinutes: f.EstMinutes, Evidence: f.Evidence,
+		}
+	}
+	maxSev, disagreement := mergeSeverity(sf)
+	reviewers := unionReviewers(group)
+	return JSONFinding{
+		Severity:       maxSev,
+		File:           group[0].File,
+		Line:           group[0].Line,
+		Problem:        longestField(sf, func(f stream.Finding) string { return f.Problem }),
+		Fix:            longestField(sf, func(f stream.Finding) string { return f.Fix }),
+		Category:       modalCategory(sf),
+		EstMinutes:     maxEstMinutes(sf),
+		Evidence:       joinEvidence(group),
+		Reviewers:      reviewers,
+		Confidence:     confidenceFor(len(reviewers)),
+		Disagreement:   disagreement,
+		Verification:   firstVerification(group),
+		PathValid:      group[0].PathValid,
+		PathWarning:    group[0].PathWarning,
+		PathSuggestion: group[0].PathSuggestion,
+	}
+}
+
+// unionReviewers returns the sorted, deduplicated union of every member record's
+// REVIEWERS list (each JSONFinding already carries a reconciled list).
+func unionReviewers(group []JSONFinding) []string {
+	set := map[string]bool{}
+	for _, f := range group {
+		for _, r := range f.Reviewers {
+			if r != "" {
+				set[r] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for r := range set {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// joinEvidence concatenates each member's distinct, non-empty EVIDENCE in member
+// order, joined by " / ". Duplicates (the same evidence string from co-located
+// members) collapse to one so the merged evidence does not double-count.
+func joinEvidence(group []JSONFinding) string {
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(group))
+	for _, f := range group {
+		if f.Evidence == "" || seen[f.Evidence] {
+			continue
+		}
+		seen[f.Evidence] = true
+		parts = append(parts, f.Evidence)
+	}
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += " / "
+		}
+		out += p
+	}
+	return out
+}
+
+// firstVerification returns the first non-nil member Verification block (the
+// audit trail to preserve through an inline cluster merge), or nil when no member
+// was verified.
+func firstVerification(group []JSONFinding) *Verification {
+	for _, f := range group {
+		if f.Verification != nil {
+			return f.Verification
+		}
+	}
+	return nil
+}
