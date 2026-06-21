@@ -451,6 +451,35 @@ func TestDeduplicateFindings_KeepsFirstOccurrence(t *testing.T) {
 	assert.Equal(t, "b.go", got[1].File)
 }
 
+// TestApplyRulings_SkipsInvalidVerdict: the reconcile.Verification contract requires
+// the writing stage to validate Verdict against the enum before persisting; an empty
+// or out-of-enum verdict is a contract violation downstream consumers choke on.
+// applyRulings must refuse to persist such a ruling rather than writing a bad block.
+func TestApplyRulings_SkipsInvalidVerdict(t *testing.T) {
+	findings := []reconcile.JSONFinding{{File: "a.go", Line: 1, Problem: "nil deref", Severity: "HIGH"}}
+	key := FindingKey{File: "a.go", Line: 1, Problem: "nil deref"}
+
+	// Empty verdict — never reachable today, but the writer must defend the contract.
+	applyRulings(findings, map[FindingKey]ruleApply{
+		key: {verdict: "", survived: true, judge: "carol", reasoning: "x"},
+	})
+	assert.Nil(t, findings[0].Verification, "empty verdict must not be persisted")
+	assert.Equal(t, "HIGH", findings[0].Severity, "severity must not be mutated by an invalid ruling")
+
+	// Out-of-enum verdict.
+	applyRulings(findings, map[FindingKey]ruleApply{
+		key: {verdict: "maybe", survived: true, judge: "carol"},
+	})
+	assert.Nil(t, findings[0].Verification, "out-of-enum verdict must not be persisted")
+
+	// A valid verdict still applies.
+	applyRulings(findings, map[FindingKey]ruleApply{
+		key: {verdict: reconcile.VerdictConfirmed, survived: true, judge: "carol", reasoning: "holds"},
+	})
+	require.NotNil(t, findings[0].Verification)
+	assert.Equal(t, reconcile.VerdictConfirmed, findings[0].Verification.Verdict)
+}
+
 func TestRunDebate_DuplicateFindingKeyMutatesOnlyOne(t *testing.T) {
 	f1 := splitFinding()
 	f2 := splitFinding()
