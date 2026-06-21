@@ -1,3 +1,16 @@
+## [6.1.0] - 2026-06-21
+
+### Added
+
+- Inline application of judge gray-zone cluster rulings: a `merge` ruling now physically unions the cluster's member findings in `findings.json` during the debate stage (no `adjudication.json` round-trip), and a `separate` ruling leaves them unmerged.
+- `cluster_merged` marker on merged findings so a re-run never re-merges an already-applied cluster.
+
+### Changed
+
+- Gray-zone cluster decisions are applied inline (Option A) instead of being recorded only for the Skill adjudication path; the authored `adjudication.json` path is unchanged and remains a manual override.
+
+*Shipped via /execute-epic (epic 6.1)*
+
 ## [Technical Debt] - 2026-06-21
 
 ### Fixed
