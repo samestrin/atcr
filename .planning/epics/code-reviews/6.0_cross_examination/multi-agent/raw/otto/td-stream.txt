@@ -1,0 +1,1 @@
+LOW|internal/debate/debate.go:133|Potential data race on Result tally|The `tally` function modifies the `res` Result struct within a loop. While currently sequential, if `debateOne` were ever parallelized, this would race.|Add a mutex or use atomic counters for Result tallies|correctness|10|`tally(&res, ir)` called in a sequential loop, but structurally risky if parallelized|otto
