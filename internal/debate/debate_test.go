@@ -551,6 +551,53 @@ func TestApplyRulings_SkipsInvalidVerdict(t *testing.T) {
 	assert.Equal(t, reconcile.VerdictConfirmed, findings[0].Verification.Verdict)
 }
 
+// TestApplyRulings_PreservesVerifyProvenance: a finding already verified (Epic 3.0)
+// carries Verification.Skeptic = the comma-joined multi-voter list and the original
+// verify Notes. Debating it must record the ruling's outcome without destroying that
+// provenance — the radar keys verification_disagreement on the multi-voter Skeptic
+// (reconcile.isVerificationTie), and the audit trail must survive a debate re-run.
+// The judge + reasoning are recorded separately in debate.json, so they are not lost.
+func TestApplyRulings_PreservesVerifyProvenance(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		File: "a.go", Line: 1, Problem: "nil deref", Severity: "HIGH",
+		Verification: &reconcile.Verification{
+			Verdict: reconcile.VerdictUnverifiable,
+			Skeptic: "alice, bob",
+			Notes:   "voters split on reproduction",
+		},
+	}}
+	key := FindingKey{File: "a.go", Line: 1, Problem: "nil deref"}
+
+	applyRulings(findings, map[FindingKey]ruleApply{
+		key: {verdict: reconcile.VerdictConfirmed, survived: true, judge: "carol", reasoning: "judge upheld"},
+	})
+
+	v := findings[0].Verification
+	require.NotNil(t, v)
+	assert.Equal(t, reconcile.VerdictConfirmed, v.Verdict, "debate verdict must be recorded")
+	assert.True(t, v.ChallengeSurvived, "challenge-survived marker must be set")
+	assert.Equal(t, "alice, bob", v.Skeptic, "original multi-voter skeptic list must survive the debate")
+	assert.Equal(t, "voters split on reproduction", v.Notes, "original verify notes must survive the debate")
+}
+
+// TestApplyRulings_NoPriorVerificationRecordsJudge: a finding debated without a prior
+// verify stage has no Verification; applyRulings must record the judge as the skeptic
+// and the judge reasoning as notes (the only audit trail available in that path).
+func TestApplyRulings_NoPriorVerificationRecordsJudge(t *testing.T) {
+	findings := []reconcile.JSONFinding{{File: "a.go", Line: 1, Problem: "nil deref", Severity: "HIGH"}}
+	key := FindingKey{File: "a.go", Line: 1, Problem: "nil deref"}
+
+	applyRulings(findings, map[FindingKey]ruleApply{
+		key: {verdict: reconcile.VerdictConfirmed, survived: true, judge: "carol", reasoning: "judge upheld"},
+	})
+
+	v := findings[0].Verification
+	require.NotNil(t, v)
+	assert.Equal(t, reconcile.VerdictConfirmed, v.Verdict)
+	assert.Equal(t, "carol", v.Skeptic, "judge recorded as skeptic when no prior verification exists")
+	assert.Equal(t, "judge upheld", v.Notes, "judge reasoning recorded as notes when no prior verification exists")
+}
+
 func TestRunDebate_DuplicateFindingKeyMutatesOnlyOne(t *testing.T) {
 	f1 := splitFinding()
 	f2 := splitFinding()
