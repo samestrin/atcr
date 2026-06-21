@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/metrics"
 )
 
 // PathNotFoundWarning is the warning stamped on a finding whose file does not
@@ -96,7 +98,12 @@ func ValidatePath(f *Finding, root string, idx *FileIndex) {
 		}
 	default: // existsIndeterminate
 		// Indeterminate (permission, I/O): leave the finding unflagged rather
-		// than assert a "not found" we cannot prove.
+		// than assert a "not found" we cannot prove. Silence here would hide a
+		// systematic fault — a permission problem suppressing every path check
+		// would flag nothing and look identical to a clean run — so count the
+		// indeterminate result. The process-wide registry surfaces it via the
+		// Prometheus endpoint without threading a logger through this signature.
+		metrics.Counter("atcr_path_validation_indeterminate_total").Inc()
 	}
 }
 
