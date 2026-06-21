@@ -70,8 +70,47 @@ type Selection struct {
 // radar's tension score descending, then a stable total order (file, line, kind)
 // so the same radar always yields the same selection.
 func SelectItems(df reconcile.DisagreementsFile, cfg Config) Selection {
-	// stub — implemented in GREEN
-	_ = sort.SliceStable
-	_ = stream.NormalizeSeverity
-	return Selection{}
+	matched := make([]reconcile.DisagreementItem, 0, len(df.Items))
+	for _, it := range df.Items {
+		if cfg.Triggers[it.Kind] {
+			matched = append(matched, it)
+		}
+	}
+	sortByPriority(matched)
+
+	// MaxItems == 0 means unlimited; a list at or under the cap is fully selected.
+	if cfg.MaxItems <= 0 || len(matched) <= cfg.MaxItems {
+		return Selection{Selected: matched, Overflow: []reconcile.DisagreementItem{}}
+	}
+	return Selection{
+		Selected: matched[:cfg.MaxItems],
+		Overflow: matched[cfg.MaxItems:],
+	}
+}
+
+// sortByPriority orders disputed items by debate priority in place: severity rank
+// descending first (spend the cost cap on the most severe disputes), then the
+// radar tension score descending, then a stable total order (file, line, kind)
+// so the same radar always yields the same selection. The order is independent
+// of the radar's own score-first sort: "priority by severity" is the cost-cap
+// contract, distinct from the radar's tension ranking.
+func sortByPriority(items []reconcile.DisagreementItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		ra := reconcile.SeverityRank[stream.NormalizeSeverity(a.Severity)]
+		rb := reconcile.SeverityRank[stream.NormalizeSeverity(b.Severity)]
+		if ra != rb {
+			return ra > rb
+		}
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.Kind < b.Kind
+	})
 }

@@ -181,6 +181,18 @@ func roleValid(r string) bool {
 	}
 }
 
+// debateTriggerValid reports whether t names a known debate trigger kind (Epic
+// 6.0). The empty string is rejected — a blank triggers entry is a YAML typo, not
+// "all" (the all-triggers default applies only to an absent/empty list).
+func debateTriggerValid(t string) bool {
+	switch t {
+	case DebateTriggerSeveritySplit, DebateTriggerGrayZone, DebateTriggerVerificationDisagreement:
+		return true
+	default:
+		return false
+	}
+}
+
 // Registry is the user-level configuration from ~/.config/atcr/registry.yaml:
 // providers, agents, and optional user-level defaults for the shared review
 // settings (the tier between project config and embedded defaults in the
@@ -302,6 +314,18 @@ func (r *Registry) validate() error {
 	}
 	if r.Verify.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("verify.max_parallel must be >= 0 (0 = default 4), got %d", r.Verify.MaxParallel))
+	}
+	// debate.* (Epic 6.0): every trigger must name a known disagreement kind, and
+	// max_items must be non-negative (0 = unlimited). Defaults (all three triggers)
+	// are applied at load in applyDefaults; an explicit max_items stays as written
+	// so 0/unlimited is distinguishable from unset.
+	for _, t := range r.Debate.Triggers {
+		if !debateTriggerValid(t) {
+			errs = append(errs, fmt.Errorf("invalid debate.triggers entry %q: must be one of severity_split, gray_zone, verification_disagreement", t))
+		}
+	}
+	if r.Debate.MaxItems != nil && *r.Debate.MaxItems < 0 {
+		errs = append(errs, fmt.Errorf("debate.max_items must be >= 0 (0 = unlimited), got %d", *r.Debate.MaxItems))
 	}
 
 	for _, name := range sortedKeys(r.Providers) {
@@ -454,6 +478,17 @@ func (r *Registry) applyDefaults() {
 	}
 	if r.Verify.Votes == 0 {
 		r.Verify.Votes = DefaultVerifyVotes
+	}
+	// Debate triggers (Epic 6.0): an absent or empty list enables all three kinds
+	// at load so consumers see a resolved set. max_items and allow_single_model are
+	// resolved later (internal/debate.ResolveConfig) — max_items must stay nil here
+	// so an explicit 0 (unlimited) remains distinguishable from unset.
+	if len(r.Debate.Triggers) == 0 {
+		r.Debate.Triggers = []string{
+			DebateTriggerSeveritySplit,
+			DebateTriggerGrayZone,
+			DebateTriggerVerificationDisagreement,
+		}
 	}
 }
 
