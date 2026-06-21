@@ -121,6 +121,32 @@ func TestEngine_DifferentTemperatureMissesCache(t *testing.T) {
 	assert.Equal(t, 2, f.callCount("m"))
 }
 
+// TestEngine_DifferentProviderMissesCache guards the cross-provider collision:
+// two agents sharing a model id + rendered prompt + temperature but served by
+// different backends (BaseURLs) must NOT collide on one cache entry, or the
+// second backend would replay the first's review. The resolved backend is folded
+// into the key alongside temperature.
+func TestEngine_DifferentProviderMissesCache(t *testing.T) {
+	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
+	f := newFake()
+	mk := func(baseURL string) Slot {
+		return Slot{Primary: Agent{
+			Name:        "a",
+			PayloadMode: "blocks",
+			CacheKey:    diffCacheKey("same prompt", "m", baseURL, nil),
+			Invocation:  llmclient.Invocation{Model: "m", Prompt: "same prompt", BaseURL: baseURL},
+		}}
+	}
+	NewEngine(f, WithCache(store, false)).Run(context.Background(),
+		[]Slot{mk("https://api.provider-a.test/v1")})
+
+	// Same model+prompt+temperature, different backend -> distinct key -> live.
+	r := NewEngine(f, WithCache(store, false)).Run(context.Background(),
+		[]Slot{mk("https://api.provider-b.test/v1")})
+	assert.False(t, r[0].CacheHit, "same model+prompt+temp on a different backend must not replay")
+	assert.Equal(t, 2, f.callCount("m"))
+}
+
 func TestEngine_FailedReviewIsNotCached(t *testing.T) {
 	store := cache.NewStore(filepath.Join(t.TempDir(), "cache"), 0)
 	f := newFake()
