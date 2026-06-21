@@ -62,6 +62,10 @@ func BuildFileIndexWithLogger(root string, logger *slog.Logger) *FileIndex {
 	out, err := cmd.Output()
 	if err != nil {
 		// Not a git repo, git missing, or other failure: graceful degradation.
+		// Log before discarding so a silently disabled path matcher in CI is not
+		// mistaken for a healthy run (the failure was previously swallowed).
+		logger.Warn("path index disabled: git ls-files failed; degrading to existence-only validation",
+			"root", root, "err", err)
 		return nil
 	}
 	return indexFromPaths(strings.Split(string(out), "\x00"))
