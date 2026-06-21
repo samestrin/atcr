@@ -83,3 +83,15 @@ func TestFileIndex_FoldedLookup(t *testing.T) {
 	assert.ElementsMatch(t, []string{"internal/auth/parser.go"}, idx.ByFold("INTERNAL/AUTH/PARSER.GO"))
 	assert.Empty(t, idx.ByFold("internal/auth/other.go"))
 }
+
+// TestIndexFromPaths_PreservesWhitespace: git ls-files -z emits paths verbatim,
+// including any leading or trailing spaces in filenames, so the index must not
+// trim whitespace.
+func TestIndexFromPaths_PreservesWhitespace(t *testing.T) {
+	idx := indexFromPaths([]string{" path with spaces.go ", "normal.go"})
+	require.NotNil(t, idx)
+
+	assert.True(t, idx.Has(" path with spaces.go "), "tracked path with spaces should be preserved")
+	assert.True(t, idx.Has("normal.go"))
+	assert.False(t, idx.Has("path with spaces.go"), "trimmed variant should not be tracked")
+}
