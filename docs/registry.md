@@ -197,8 +197,8 @@ The `role` field selects what an agent does in the pipeline. It was **reserved (
 | Value | Active in | Purpose |
 |-------|-----------|---------|
 | `reviewer` | 1.x | Produces findings in the review fan-out. The default when `role` is unset. |
-| `skeptic` | 3.0 | Attempts to **refute** reconciled findings in `atcr verify` (see [verification.md](verification.md)). |
-| `judge` | reserved | Inert until a later stage; accepted at load but not yet acted on. |
+| `skeptic` | 3.0 | Attempts to **refute** reconciled findings in `atcr verify` (see [verification.md](verification.md)). Also casts the **challenger** seat in `atcr debate`. |
+| `judge` | 6.0 | Rules on disputed findings in `atcr debate` — the **judge** seat that settles a cross-examination (see [cross-examination.md](cross-examination.md)). |
 
 An agent with no `role` defaults to `reviewer`, so every 1.x registry keeps working unchanged. The enum is validated at load (`reviewer`, `skeptic`, `judge`); any other value is a load error.
 
@@ -223,6 +223,43 @@ agents:
 **Different-model rule.** The verify engine never selects a skeptic whose `model` exactly matches the model of any reviewer credited on the finding — a model cannot verify its own work, even indirectly through a shared blind spot. This is enforced by the engine, not left to configuration discipline. If no eligible skeptic remains for a finding, that finding is recorded `unverifiable` (reason `no_eligible_skeptic`) and keeps its v1 confidence — it is never dropped. Roster enough skeptics on distinct models that every reviewer model is covered.
 
 The verification stage also reads an optional registry-level `verify:` block (`min_severity`, `votes`) — see [verification.md](verification.md#cost-controls) for those knobs and the full mechanics.
+
+## Judge agents (`role: judge`, active in 6.0)
+
+The cross-examination stage (`atcr debate`) casts three seats per disputed finding: a **proposer** (a crediting reviewer's agent), a **challenger** (a `role: skeptic` agent), and a **judge** (a `role: judge` agent). All three must be **distinct models** — enforced by the engine. Give the judge the strongest model available, with `tools: true` and `supports_function_calling: true` so it can read the cited code:
+
+```yaml
+agents:
+  judge-opus:                 # the judge — a third distinct model, the strongest available
+    persona: otto             # any persona; the judge prompt is engine-supplied
+    provider: anthropic
+    model: claude-opus-4-6
+    role: judge
+    tools: true
+    supports_function_calling: true
+```
+
+When fewer than three distinct models are available across the roles, the stage records the item **unresolved** by default rather than loosening independence; opt in to a same-model persona fallback with `debate.allow_single_model: true` (or `--single-model`).
+
+The stage reads an optional registry-level `debate:` block:
+
+```yaml
+debate:
+  triggers:                   # which disputes to debate (default: all three)
+    - severity_split
+    - gray_zone
+    - verification_disagreement
+  max_items: 5                # cost cap; 0 = unlimited; overflow is recorded, never silent
+  allow_single_model: false   # opt in to the same-model persona fallback
+```
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `triggers` | all three | Any subset of `severity_split`, `gray_zone`, `verification_disagreement`. An unknown trigger is a load error. |
+| `max_items` | `5` | Highest-priority (by severity) disputes are debated; the rest are recorded as overflow. `0` = unlimited. A negative value is a load error. |
+| `allow_single_model` | `false` | When `true`, fewer than three distinct models falls back to distinct personas on one model (disclosed as `single_model` in the artifacts and report). |
+
+See [cross-examination.md](cross-examination.md) for the full mechanics, the judge envelope, and gate semantics.
 
 ## Review-constraint fields (active in 2.2)
 

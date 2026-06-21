@@ -291,6 +291,31 @@ func writeAmbiguous(t *testing.T, dir, content string) {
 
 func errContext() error { return context.DeadlineExceeded }
 
+func TestReadDebateFile(t *testing.T) {
+	// Absent file → found=false, no error.
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, reconciledSubdir), 0o755))
+	_, found, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	assert.False(t, found)
+
+	// Present file → parsed.
+	require.NoError(t, writeDebateFile(dir, DebateFile{
+		SchemaVersion: DebateSchemaVersion,
+		Items:         []ItemResult{{File: "a.go", Line: 1, Kind: reconcile.KindSeveritySplit, Outcome: OutcomeUphold, Judge: "carol"}},
+	}))
+	df, found, err := ReadDebateFile(dir)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Len(t, df.Items, 1)
+	assert.Equal(t, OutcomeUphold, df.Items[0].Outcome)
+
+	// Malformed file → error.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, DebateJSON), []byte("{not json"), 0o644))
+	_, _, err = ReadDebateFile(dir)
+	assert.Error(t, err)
+}
+
 func readFindings(t *testing.T, dir string) []reconcile.JSONFinding {
 	t.Helper()
 	f, err := reconcile.ReadReconciledFindings(dir)

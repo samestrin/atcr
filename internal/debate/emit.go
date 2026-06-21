@@ -188,6 +188,24 @@ func updateManifestStage(reviewDir string) error {
 	return atomicfs.WriteFileAtomic(path, append(out, '\n'))
 }
 
+// ReadDebateFile reads reviewDir/reconciled/debate.json. It returns found=false
+// (no error) when the file is absent — a review that never ran the debate stage —
+// so callers (the report view) can render conditionally. A present-but-malformed
+// file is an error.
+func ReadDebateFile(reviewDir string) (df DebateFile, found bool, err error) {
+	data, rerr := os.ReadFile(filepath.Join(reviewDir, reconciledSubdir, DebateJSON))
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return DebateFile{}, false, nil
+		}
+		return DebateFile{}, false, rerr
+	}
+	if err := json.Unmarshal(data, &df); err != nil {
+		return DebateFile{}, false, fmt.Errorf("parsing %s: %w", DebateJSON, err)
+	}
+	return df, true, nil
+}
+
 // overflowItems projects the selector's overflow into the recorded shape.
 func overflowItems(items []reconcile.DisagreementItem) []OverflowItem {
 	out := make([]OverflowItem, 0, len(items))

@@ -107,8 +107,9 @@ The block fields are:
 | Field | Meaning |
 |-------|---------|
 | `verdict` | `confirmed`, `refuted`, or `unverifiable`. |
-| `skeptic` | The agent name that produced the verdict. |
-| `notes` | The skeptic's reasoning (omitted when empty). |
+| `skeptic` | The agent name that produced the verdict (the **judge** when the verdict came from the cross-examination stage). |
+| `notes` | The skeptic's (or judge's) reasoning (omitted when empty). |
+| `challenge_survived` | `true` when the finding survived a hostile cross-examination (`atcr debate`, Epic 6.0) — the judge ruled `uphold` or `split`. Omitted (absent) otherwise, so a non-debated finding's block is byte-identical to pre-6.0 output. See [cross-examination.md](cross-examination.md). |
 
 When `verification` is present, readers must treat an absent or unrecognized `verdict` value (including `""`) as unverified rather than trusting it — the allowed enum is `confirmed | refuted | unverifiable`; any other value indicates a future format or a write error.
 
