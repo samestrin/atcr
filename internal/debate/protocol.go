@@ -198,15 +198,28 @@ func itemBlock(item reconcile.DisagreementItem) string {
 	fmt.Fprintf(&b, "Severity: %s\n", item.Severity)
 	fmt.Fprintf(&b, "Dispute kind: %s\n", item.Kind)
 	if item.Disagreement != "" {
-		fmt.Fprintf(&b, "Severity disagreement: %s\n", item.Disagreement)
+		fmt.Fprintf(&b, "Severity disagreement: %s\n", flattenUntrusted(item.Disagreement))
 	}
 	if item.Problem != "" {
-		fmt.Fprintf(&b, "Problem: %s\n", item.Problem)
+		fmt.Fprintf(&b, "Problem: %s\n", flattenUntrusted(item.Problem))
 	}
 	for _, p := range item.Positions {
-		fmt.Fprintf(&b, "Position (%s, %s): %s\n", p.Reviewer, p.Severity, p.Problem)
+		fmt.Fprintf(&b, "Position (%s, %s): %s\n", p.Reviewer, p.Severity, flattenUntrusted(p.Problem))
 	}
 	return b.String()
+}
+
+// flattenUntrusted collapses newlines in an untrusted free-text field to spaces so
+// it stays on its single labelled line in itemBlock. The per-item sentinel guards
+// against closing-tag forgery; this guards the in-block injection it does not cover —
+// reviewer- or model-authored content embedding blank lines and fake structural cues
+// (a forged "Position (...)" line, a fake section boundary) that a seat might read as
+// prompt structure rather than data. Content is preserved, only flattened.
+func flattenUntrusted(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
 
 // block wraps untrusted content in a sentinel-tagged block (<name-SENTINEL>…),
