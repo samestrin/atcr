@@ -95,3 +95,14 @@ func TestIndexFromPaths_PreservesWhitespace(t *testing.T) {
 	assert.True(t, idx.Has("normal.go"))
 	assert.False(t, idx.Has("path with spaces.go"), "trimmed variant should not be tracked")
 }
+
+// TestFileIndex_BackslashCitedPath: on non-Windows builds filepath.ToSlash is a
+// no-op, so a reviewer-cited path with backslashes must be explicitly normalized
+// before lookup.
+func TestFileIndex_BackslashCitedPath(t *testing.T) {
+	idx := indexFromPaths([]string{"a/validate.go"})
+	require.NotNil(t, idx)
+
+	assert.True(t, idx.Has("a\\validate.go"), "Has should normalize backslashes")
+	assert.Equal(t, "a/validate.go", idx.MissingSuggestion("b\\validate.go"), "MissingSuggestion should normalize backslashes")
+}
