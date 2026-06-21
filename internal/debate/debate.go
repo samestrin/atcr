@@ -131,6 +131,10 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 
 	debateDir := filepath.Join(reviewDir, debateSubdir)
 	items := make([]ItemResult, 0, len(sel.Selected))
+	// rulings keys on {File, Line, Problem}. This is safe because
+	// deduplicateFindings (called near the top of this function) already
+	// guarantees that the {File, Line, Problem} triple is unique across the
+	// findings slice before any debating happens.
 	rulings := map[FindingKey]ruleApply{}
 	var res Result
 
