@@ -9,6 +9,14 @@ import "os"
 // provider key is shorter than this (OpenAI ~51, Google AIzaSy… 39, Azure
 // 32-hex, JWTs longer), so the floor never drops a genuine key. It is symmetric
 // with the Redactor's own empty-string guard (internal/log/redact.go).
+//
+// Tradeoff (accepted): the floor is deliberately low (8), so an 8–31 char
+// misconfigured or self-hosted key value is still admitted and matched
+// verbatim, and could over-redact an unrelated log substring that contains it.
+// This is accepted because genuine provider keys are 32+ and the asymmetry
+// favors never leaking a real key over never over-redacting a short one. If
+// self-hosted short keys become a concern, raise this floor or scope the
+// verbatim match to header-adjacent contexts.
 const minSecretLen = 8
 
 // SecretValues returns the distinct, resolved API key values across this
