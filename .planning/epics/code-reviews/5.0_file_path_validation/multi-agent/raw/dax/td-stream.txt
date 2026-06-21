@@ -1,0 +1,1 @@
+LOW|internal/reconcile/validate.go:9|validateFindingPaths skips validation on empty root, making ValidatePath’s "." default unreachable and inconsistent|Remove the default in ValidatePath or eliminate the skip and let ValidatePath handle empty root|maintainability|5|if root == "" { return } // ValidatePath will never exercise its default|reviewer

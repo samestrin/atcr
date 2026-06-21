@@ -41,6 +41,7 @@ payload_mode: blocks
 timeout_secs: 600
 payload_byte_budget: 524288
 max_parallel: 10
+cache_max_bytes: 52428800
 fail_on: HIGH
 # Retry/backoff (Epic 4.6) — registry (global) tier only; not carried by project config or CLI.
 max_retries: 5
@@ -82,6 +83,7 @@ payload_mode: blocks
 timeout_secs: 600
 payload_byte_budget: 524288
 max_parallel: 10
+cache_max_bytes: 52428800
 fail_on: HIGH
 ```
 
@@ -93,6 +95,7 @@ fail_on: HIGH
 | `timeout_secs` | `600` | Global fan-out timeout. Must be positive and `≤ 86400`; an explicit `0` is rejected (not silently defaulted). |
 | `payload_byte_budget` | `524288` | Per-payload byte budget (512 KiB ≈ 128k tokens). Files are dropped largest-first when a payload exceeds it, recorded per agent in `status.json`. `0` = unlimited; negative is rejected. CLI override: `atcr review --byte-budget N`. **Context sizing:** models with context limits below 128k will time out or fail on the default; set to `163840` (160 KiB ≈ 40k tokens) for rosters that include smaller-context models (e.g. 49k-limit). |
 | `max_parallel` | `10` | Cap on concurrent parallel-lane agent calls. Bounds the fan-out so a large roster cannot burst every provider call at once. When `serial_agents` is non-empty, the serial lane runs concurrently with the parallel lane in its own goroutine — peak provider concurrency is therefore `max_parallel + 1`, not `max_parallel`. `0` = unbounded; negative is rejected. CLI override: `atcr review --max-parallel N`. |
+| `cache_max_bytes` | `52428800` | Total-size cap (bytes, 50 MiB default) for the diff cache under `.atcr/cache`. A re-run over an unchanged diff replays each reviewer's prior output and skips the LLM call; cache keys combine the payload digest, model id, and persona digest. Least-recently-used entries are evicted once the cap is exceeded. `0` = unbounded; negative is rejected. Bypass a single run's cache reads with `atcr review --no-cache` (fresh results are still written back). Only the review fan-out is cached — tool-enabled agents (live code reads) and the verification stage are not. |
 | `fail_on` | `HIGH` (template only) | CI gate threshold (see [ci-integration.md](ci-integration.md)). The `HIGH` value is seeded into the config `atcr init` generates; the gate itself is opt-in — an unconfigured project does not gate. |
 
 An agent may not appear twice, and may not appear in both `agents` and `serial_agents`.
@@ -130,13 +133,13 @@ atcr trust --all           # authorize every project provider
 
 ## Precedence
 
-The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `fail_on`) resolve **per field, independently**, in this order:
+The shared review settings (`payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, `fail_on`) resolve **per field, independently**, in this order:
 
 ```
 CLI flag  >  .atcr/config.yaml  >  registry.yaml  >  embedded default
 ```
 
-A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
+A tier participates only where it explicitly sets a value; whitespace-only values count as unset, and a set-but-empty CLI flag is treated as unset rather than clobbering lower tiers. CLI values are validated at resolution time (they bypass the file-load checks), so an invalid `--payload`, out-of-range `--timeout`, or negative `--max-parallel` fails before any review work begins. Embedded defaults: `payload_mode=blocks`, `timeout_secs=600`, `payload_byte_budget=524288`, `max_parallel=10`, `cache_max_bytes=52428800`. `cache_max_bytes` resolves across the registry and project tiers only (no CLI flag); `--no-cache` is a per-run read bypass, not a settings override. There is **no embedded default for `fail_on`**: the gate is opt-in, and `fail_on` resolution stops at the registry tier (`--fail-on` flag > project config > registry). The `fail_on: HIGH` line in a freshly generated config comes from the `atcr init` template, not from gate resolution.
 
 The retry tunables (`max_retries`, `initial_backoff_ms`, Epic 4.6) resolve over a **shorter chain**: agent-level field > `registry.yaml` (global) > embedded default (`max_retries=5`, `initial_backoff_ms=500`). They are deliberately **not** carried by `.atcr/config.yaml` or a CLI flag — rate-limit resilience is a property of the user's provider/account, set once at the registry tier or refined per agent. An agent's effective budget is threaded onto each call so per-agent overrides take effect without rebuilding the shared client.
 
@@ -148,7 +151,7 @@ CLI flag  >  .atcr/*  (project)  >  ~/.config/atcr/*  (user)  >  embedded defaul
 
 Settings resolve per field (above); personas resolve per file (`.atcr/personas/` shadows `~/.config/atcr/personas/`, chain below); and provider/agent **definitions** merge whole-entry (`.atcr/registry.yaml` shadows `~/.config/atcr/registry.yaml`, [overlay](#project-registry-overlay) above). There is no embedded tier for definitions — providers and agents must be defined in at least one registry file.
 
-**Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
+**Generated configs shadow registry defaults.** `atcr init` bakes explicit `payload_mode`, `timeout_secs`, `payload_byte_budget`, `max_parallel`, `cache_max_bytes`, and `fail_on` values into `.atcr/config.yaml` so every knob is visible and editable. Because the project tier outranks the registry tier, those baked lines shadow any user-global defaults set in `registry.yaml` — an initialized project never inherits registry-tier values for them. To inherit a registry-tier value, delete the corresponding line from the project config (for `payload_mode` and `fail_on`, a whitespace-only value also counts as unset).
 
 ## Persona resolution chain
 

@@ -1,6 +1,8 @@
 # Test Remediation: Improve API Endpoint Coverage
 
 - **Estimated time**: 1 week
+- **Tasks**: 6
+- **Components**: 6
 
 ## Current State
 

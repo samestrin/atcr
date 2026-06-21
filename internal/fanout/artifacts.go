@@ -218,6 +218,7 @@ func statusFor(r Result, fr findingsResult) AgentStatus {
 		FallbackFrom:           r.FallbackFrom,
 		DroppedByMinSeverity:   fr.Dropped,
 		TruncatedByMaxFindings: fr.Truncated,
+		CacheHit:               r.CacheHit,
 	}
 	if r.Err != nil {
 		st.Error = r.Err.Error()

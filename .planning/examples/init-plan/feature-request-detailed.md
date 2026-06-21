@@ -1,6 +1,8 @@
 # Feature Request: Multi-Tenant Dashboard Analytics
 
 - **Estimated time**: 3 weeks
+- **Tasks**: 12
+- **Components**: 5
 
 ## Context
 

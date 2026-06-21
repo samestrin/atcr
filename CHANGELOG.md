@@ -1,3 +1,16 @@
+## [5.2.0] - 2026-06-20
+
+Repeated reviews of an unchanged diff no longer re-spend tokens. Each reviewer's output is now content-addressed under `.atcr/cache` and replayed on a re-run when the rendered prompt, model, and temperature are identical — so iterating with `atcr review` on a branch that has not changed (or changed elsewhere) skips the LLM call for every cached agent. Caching is scoped to the single-shot review fan-out only; tool-enabled agents (which read live code) and the verification stage are never cached. A failed or timed-out review is never cached.
+
+### Added
+
+- Diff cache for the review fan-out: an unchanged payload+model+temperature replays the prior reviewer output instead of calling the provider, cutting cost and latency on repeated runs. Cache keys derive from the full rendered prompt (which subsumes payload, persona, per-agent scope focus, and refs), the model id, and the temperature, so any change that alters the LLM input invalidates the entry
+- `cache_max_bytes` config key (registry and project tiers; default 50 MiB, `0` = unbounded) bounding the cache with least-recently-used eviction
+- `atcr review --no-cache` flag to bypass cache reads and force a fresh review (fresh results are still written back so subsequent runs benefit)
+- `cache_hit` field in a per-agent `status.json` (present only on a replayed result) so a cache hit is auditable rather than indistinguishable from a live call
+
+*Shipped via /execute-epic (epic 5.2)*
+
 ## [5.0.0] - 2026-06-20
 
 Reviewer-hallucinated file paths are now caught. The reconcile pipeline validates each finding's file path against the reviewed repository and flags the ones that do not exist, so a good finding that cites a wrong path (a typo, or the right file in the wrong directory) is surfaced for correction instead of silently shipping an unopenable location. The finding is always preserved — validation only annotates, it never discards.

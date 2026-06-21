@@ -1,0 +1,1 @@
+LOW|internal/stream/validate.go:52|Potential performance issue with repeated os.Stat|The current implementation calls os.Stat for every finding. In large repos with many findings, this could be slow. Consider caching the results of file existence checks.|performance|30|os.Stat is called in a loop inside validateFindingPaths|otto

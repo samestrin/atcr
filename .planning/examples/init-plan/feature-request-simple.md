@@ -1,6 +1,8 @@
 # Feature Request: User Export
 
 - **Estimated time**: 3 days
+- **Tasks**: 5
+- **Components**: 2
 
 ## Problem
 
