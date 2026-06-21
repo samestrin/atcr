@@ -3,6 +3,7 @@ package stream
 import (
 	"path"
 	"strings"
+	"unicode/utf8"
 )
 
 // tier2SimilarityThreshold is the minimum stem similarity for a Tier 2 typo
@@ -133,6 +134,7 @@ func (x *FileIndex) tier2(rel, base, dir string) string {
 		return ""
 	}
 	citedStem, citedExt := splitStem(base)
+	citedStemLen := utf8.RuneCountInString(citedStem)
 	bestScore, best, tie := tier2SimilarityThreshold, "", false
 	for _, cand := range x.DirBasenames(dir) {
 		if cand == base {
@@ -150,6 +152,23 @@ func (x *FileIndex) tier2(rel, base, dir string) string {
 			// canonical validator/validate (0.78) — so guard structurally and
 			// emit no suggestion rather than a confident wrong one.
 			continue
+		}
+		// Cheap early-out: length difference is a lower bound on edit distance.
+		// If the stems already differ by more than the threshold allows, skip the
+		// O(n*m) Levenshtein computation.
+		candStemLen := utf8.RuneCountInString(candStem)
+		maxLen := citedStemLen
+		if candStemLen > maxLen {
+			maxLen = candStemLen
+		}
+		if maxLen > 0 {
+			diff := citedStemLen - candStemLen
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > int((1.0-tier2SimilarityThreshold)*float64(maxLen)) {
+				continue
+			}
 		}
 		score := similarity(citedStem, candStem)
 		switch {
