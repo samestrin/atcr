@@ -1,0 +1,7 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+LOW|internal/cache/store.go:137|Potential race condition on file mtime|The `evict` method reads directory entries and their mtimes while `Get` updates them via `os.Chtimes`. While both are under `s.mu`, `os.Chtimes` is a system call that may not be perfectly atomic with `os.ReadDir` in all environments, though the mutex largely mitigates this.|correctness|15|`s.mu` protects the Store, but filesystem mtime updates are best-effort|otto
+MEDIUM|internal/fanout/engine.go:596|Missing FallbackFrom in synthesized cache-hit Result|Add FallbackFrom: a.FallbackFrom to the Result struct|correctness|5|Synthesized Result omits a.FallbackFrom, losing fallback provenance on cache hit|bruce
+MEDIUM|internal/cache/store.go:89|Silent failure to remove corrupt cache entry|Log removal error and return error to caller or retry|error-handling|5|_ = os.Remove(path) ignores removal errors|greta
+LOW|internal/cache/store.go:138|LRU eviction silently ignores file deletion errors|Log deletion failures and consider alerting on persistent reclaim failure|error-handling|10|if err := os.Remove(f.path); err == nil { total -= f.size }|greta

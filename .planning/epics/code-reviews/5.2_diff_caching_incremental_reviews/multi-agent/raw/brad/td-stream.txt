@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/engine.go:596|Missing FallbackFrom in synthesized cache-hit Result|Add FallbackFrom: a.FallbackFrom to the Result struct|correctness|5|Synthesized Result omits a.FallbackFrom, losing fallback provenance on cache hit|bruce
