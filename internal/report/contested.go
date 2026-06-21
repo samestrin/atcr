@@ -66,7 +66,7 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 			b.WriteString("- Overturned: refuted, retained but excluded from the gate.\n")
 		default:
 			if c.Reason != "" {
-				fmt.Fprintf(b, "- Unresolved: %s.\n", esc(c.Reason))
+				fmt.Fprintf(b, "- Unresolved: %s.\n", escTrunc(c.Reason))
 			} else {
 				b.WriteString("- Unresolved.\n")
 			}
