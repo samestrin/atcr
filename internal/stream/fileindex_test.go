@@ -1,6 +1,8 @@
 package stream
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +61,23 @@ func TestBuildFileIndex_NonGitDir(t *testing.T) {
 // directory configured).
 func TestBuildFileIndex_EmptyRoot(t *testing.T) {
 	assert.Nil(t, BuildFileIndex(""))
+}
+
+// TestBuildFileIndexWithLogger_LogsGitFailure: when the git invocation fails the
+// index still degrades to nil, but the underlying error is surfaced at WARN so a
+// silently disabled path-matcher in CI is distinguishable from a healthy run.
+// Previously every git failure was collapsed into a bare `return nil` with the
+// error discarded entirely. Verified by removing git from PATH (bogus PATH).
+func TestBuildFileIndexWithLogger_LogsGitFailure(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	idx := BuildFileIndexWithLogger(t.TempDir(), logger)
+
+	assert.Nil(t, idx, "git failure must still degrade to a nil index")
+	assert.Contains(t, buf.String(), "git ls-files", "the discarded git error must be logged before returning nil")
 }
 
 // TestFileIndex_DirBasenames: the directory index lists the basenames tracked

@@ -1,10 +1,13 @@
 package stream
 
 import (
+	"log/slog"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // FileIndex is the candidate file index built once per reconcile run from
@@ -37,6 +40,20 @@ type FileIndex struct {
 // root is empty, root is not a git repository, or git is unavailable. A repo
 // with no tracked files yields a non-nil but empty index.
 func BuildFileIndex(root string) *FileIndex {
+	return BuildFileIndexWithLogger(root, nil)
+}
+
+// BuildFileIndexWithLogger is BuildFileIndex with an explicit diagnostic sink.
+// The nil-return contract is unchanged — an empty, non-repo, or git-unavailable
+// root still degrades to "existence-only, no suggestion" — but the underlying
+// git failure is logged at WARN before returning nil, so a silently disabled
+// path matcher in CI (git missing, corrupt repo, timeout) is distinguishable
+// from a healthy run. An empty root is the legitimate "validation disabled" case
+// and is NOT logged. A nil logger is treated as a discard sink.
+func BuildFileIndexWithLogger(root string, logger *slog.Logger) *FileIndex {
+	if logger == nil {
+		logger = log.Discard()
+	}
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
