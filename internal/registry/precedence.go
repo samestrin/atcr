@@ -94,6 +94,9 @@ type Settings struct {
 	// MaxParallel bounds concurrent parallel-lane agent calls in the fan-out
 	// engine; 0 is the documented unbounded escape hatch.
 	MaxParallel int
+	// CacheMaxBytes is the resolved total-size cap for the diff cache (Epic 5.2)
+	// passed to cache.NewStore; 0 is the documented unbounded escape hatch.
+	CacheMaxBytes int64
 	// MaxRetries is the resolved retry budget passed to the llmclient per call
 	// (Epic 4.6); 0 means a single attempt with no retry.
 	MaxRetries int
@@ -120,12 +123,19 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 		TimeoutSecs:       DefaultTimeoutSecs,
 		PayloadByteBudget: DefaultPayloadByteBudget,
 		MaxParallel:       DefaultMaxParallel,
+		CacheMaxBytes:     DefaultCacheMaxBytes,
 		MaxRetries:        DefaultMaxRetries,
 		InitialBackoffMs:  DefaultInitialBackoffMs,
 	}
 
 	if reg != nil {
 		applyTier(&s, reg.PayloadMode, reg.TimeoutSecs, reg.PayloadByteBudget, reg.MaxParallel)
+		// CacheMaxBytes lives at the registry (global) and project tiers only,
+		// like the retry tunables — overlaid here, not through applyTier's fixed
+		// four-field signature. A pointer means an explicit 0 (unbounded) survives.
+		if reg.CacheMaxBytes != nil {
+			s.CacheMaxBytes = *reg.CacheMaxBytes
+		}
 		// Retry tunables live only at the registry (global) tier and the agent
 		// tier (Epic 4.6) — the project tier intentionally does not carry them,
 		// so they are overlaid here rather than through applyTier.
@@ -138,6 +148,9 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	}
 	if proj != nil {
 		applyTier(&s, proj.PayloadMode, proj.TimeoutSecs, proj.PayloadByteBudget, proj.MaxParallel)
+		if proj.CacheMaxBytes != nil {
+			s.CacheMaxBytes = *proj.CacheMaxBytes
+		}
 	}
 
 	if cli.PayloadByteBudget != nil {
@@ -188,6 +201,11 @@ func ResolveSettings(cli CLIOverrides, proj *ProjectConfig, reg *Registry) (Sett
 	// PayloadByteBudget: 0 = unlimited (valid); negative is always invalid.
 	if s.PayloadByteBudget < 0 {
 		return Settings{}, fmt.Errorf("payload_byte_budget must be >= 0 (0 = unlimited), got %d", s.PayloadByteBudget)
+	}
+	// CacheMaxBytes: 0 = unbounded (valid); negative is always invalid. A
+	// directly-constructed proj/reg (bypassing the file loader) could carry one.
+	if s.CacheMaxBytes < 0 {
+		return Settings{}, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", s.CacheMaxBytes)
 	}
 	// Retry tunables (Epic 4.6): a directly-constructed reg (bypassing the file
 	// loader) can carry out-of-range values; catch them so the engine never
