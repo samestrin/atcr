@@ -87,15 +87,22 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 }
 
 // severityTransition renders the severity change a split produced, e.g.
-// " (HIGH → MEDIUM)", or " (HIGH)" when unchanged/absent.
+// " (HIGH → MEDIUM)"; " (HIGH, excluded)" for an overturned (refuted, non-gating)
+// finding; or " (HIGH)" for any other live, gating severity.
 func severityTransition(c Contested) string {
 	if c.Outcome == "split" && c.SettledSeverity != "" && c.SettledSeverity != c.OriginalSeverity {
 		return fmt.Sprintf(" (%s → %s)", esc(c.OriginalSeverity), esc(c.SettledSeverity))
 	}
-	if c.OriginalSeverity != "" {
-		return fmt.Sprintf(" (%s)", esc(c.OriginalSeverity))
+	if c.OriginalSeverity == "" {
+		return ""
 	}
-	return ""
+	if c.Outcome == "overturn" {
+		// An overturned finding is refuted and excluded from the gate (IsFailing is
+		// false). Annotate the tag so it is not read as a live, gating severity
+		// identical to an upheld finding's.
+		return fmt.Sprintf(" (%s, excluded)", esc(c.OriginalSeverity))
+	}
+	return fmt.Sprintf(" (%s)", esc(c.OriginalSeverity))
 }
 
 // challengeBadge renders the structured ChallengeSurvived marker the `atcr debate`
