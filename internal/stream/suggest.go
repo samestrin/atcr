@@ -61,6 +61,14 @@ func (x *FileIndex) CaseCorrection(citedRel string) (suggestion string, mismatch
 //
 // Tier 1 is tried first because an exact-basename match is near-certain and
 // needs no threshold; Tier 2 only runs when Tier 1 finds nothing.
+//
+// Trade-off: a lone Tier 1 match with zero path-segment overlap (e.g., a very
+// common basename such as handler.go appearing in an unrelated directory) will
+// be suggested confidently even though it may be the wrong file. This is
+// mandated by AC2, which requires a lone exact-basename match to be suggested
+// without an overlap threshold. Callers that need stricter filtering may
+// post-filter suggestions by directory similarity or require a minimum segment
+// overlap before presenting the result.
 func (x *FileIndex) MissingSuggestion(citedRel string) string {
 	if x == nil {
 		return ""
@@ -77,6 +85,9 @@ func (x *FileIndex) MissingSuggestion(citedRel string) string {
 
 // tier1 ranks exact-basename matches in other directories by path-segment
 // overlap with the cited path, returning a unique winner or "".
+//
+// For a lone match (len(candidates) == 1) the result is returned regardless of
+// overlap, per AC2. See MissingSuggestion for the documented trade-off.
 func (x *FileIndex) tier1(rel, base, dir string) string {
 	candidates := x.ByBasename(base)
 	if len(candidates) == 0 {
