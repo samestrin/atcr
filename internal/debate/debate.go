@@ -126,6 +126,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	var res Result
 
 	for _, it := range sel.Selected {
+		if ctx.Err() != nil {
+			ir := ItemResult{File: it.File, Line: it.Line, Kind: it.Kind, Problem: it.Problem, OriginalSeverity: it.Severity, Outcome: OutcomeUnresolved, Reason: "context_cancelled"}
+			items = append(items, ir)
+			tally(&res, ir)
+			continue
+		}
 		ir := debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
 		items = append(items, ir)
 		tally(&res, ir)
