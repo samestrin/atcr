@@ -142,7 +142,13 @@ func existsContained(root, joined string) existence {
 	}
 	realRoot, err := filepath.EvalSymlinks(absRoot)
 	if err != nil {
-		realRoot = absRoot // best effort; containment still re-checked below
+		// The root cannot be symlink-resolved (broken link, permission). Don't
+		// silently treat the unresolved path as authoritative — a degraded
+		// containment check that looks identical to a clean one. Count it (the same
+		// observability mechanism the indeterminate branch uses, avoiding a logger
+		// in this signature), then fall back to the lexical absRoot best-effort.
+		metrics.Counter("atcr_path_validation_root_unresolved_total").Inc()
+		realRoot = absRoot
 	}
 	resolved, err := filepath.EvalSymlinks(absJoined)
 	switch {
