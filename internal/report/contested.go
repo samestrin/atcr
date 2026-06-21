@@ -56,7 +56,7 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 	}
 	fmt.Fprintf(b, "\n## Contested findings\n\nDebated %d finding(s) through cross-examination (proposer/challenger/judge).\n", len(cr.Items))
 	for i, c := range cr.Items {
-		fmt.Fprintf(b, "\n### %d. %s — %s%s\n", i+1, esc(c.Outcome), codeSpan(c.File, c.Line), severityTransition(c))
+		fmt.Fprintf(b, "\n### %d. %s — %s%s%s\n", i+1, esc(c.Outcome), codeSpan(c.File, c.Line), severityTransition(c), challengeBadge(c))
 		switch c.Outcome {
 		case "uphold":
 			b.WriteString("- Upheld: survived hostile challenge.\n")
@@ -94,6 +94,18 @@ func severityTransition(c Contested) string {
 	}
 	if c.OriginalSeverity != "" {
 		return fmt.Sprintf(" (%s)", esc(c.OriginalSeverity))
+	}
+	return ""
+}
+
+// challengeBadge renders the structured ChallengeSurvived marker the `atcr debate`
+// help promises. It marks uphold and split entries whose finding survived the
+// cross-examination (ChallengeSurvived is set for both, cleared for an overturn), so
+// a split survivor is distinguished from a bare split rather than the field being
+// dead plumbing the renderer never reads.
+func challengeBadge(c Contested) string {
+	if c.ChallengeSurvived && (c.Outcome == "uphold" || c.Outcome == "split") {
+		return " _(challenge-survived)_"
 	}
 	return ""
 }
