@@ -62,7 +62,7 @@ func indexFromPaths(raw []string) *FileIndex {
 		folded:   make(map[string][]string),
 	}
 	for _, r := range raw {
-		rel := strings.TrimSpace(r)
+		rel := r
 		if rel == "" {
 			continue
 		}
