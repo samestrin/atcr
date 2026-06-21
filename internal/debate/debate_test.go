@@ -127,6 +127,37 @@ func TestRunDebate_SplitOverwritesSeverity(t *testing.T) {
 	assert.True(t, f[0].Verification.ChallengeSurvived)
 }
 
+// TestRunDebate_SplitWithNoSettledSeverityRecordsNone: a split ruling that gives
+// no settled_severity settled nothing. It must NOT backfill the original severity
+// into the record (which would mask a no-op ruling as a legitimate adjustment);
+// the finding's severity is left untouched and debate.json records no settled
+// severity for it.
+func TestRunDebate_SplitWithNoSettledSeverityRecordsNone(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()}) // HIGH
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "proposer defends"},
+		{content: "challenger attacks"},
+		{content: `{"outcome":"split","reasoning":"real but cannot settle the level"}`}, // no settled_severity
+	}}
+
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Split)
+
+	// Finding severity untouched.
+	f := readFindings(t, dir)
+	assert.Equal(t, "HIGH", f[0].Severity)
+
+	// debate.json must record no settled severity for a split that settled none.
+	var df DebateFile
+	raw, err := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &df))
+	require.Len(t, df.Items, 1)
+	assert.Empty(t, df.Items[0].SettledSeverity,
+		"a split with no settled_severity must record none, not echo the original")
+}
+
 func TestRunDebate_WritesDebateJSONAndManifestStage(t *testing.T) {
 	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
 	cc := &fakeChatCompleter{turns: []chatTurn{
