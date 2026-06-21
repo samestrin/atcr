@@ -307,6 +307,33 @@ func TestRunDebate_IdempotentReRun(t *testing.T) {
 	assert.Equal(t, 0, res.Selected, "an already-upheld finding must not be re-debated")
 }
 
+func TestRunDebate_ContextCancelled_StopsLoop(t *testing.T) {
+	f1 := splitFinding()
+	f2 := splitFinding()
+	f2.File, f2.Line, f2.Severity = "b.go", 20, "CRITICAL"
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f1, f2})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Unresolved)
+	assert.Zero(t, cc.idx, "no provider calls should be issued after cancellation")
+
+	var df DebateFile
+	raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, json.Unmarshal(raw, &df))
+	require.Len(t, df.Items, 2)
+	for _, item := range df.Items {
+		assert.Equal(t, OutcomeUnresolved, item.Outcome)
+		assert.Equal(t, "context_cancelled", item.Reason)
+	}
+}
+
 func TestReadDebateFile(t *testing.T) {
 	// Absent file → found=false, no error.
 	dir := t.TempDir()
