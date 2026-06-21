@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samestrin/atcr/internal/debate"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/gitrange"
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -42,6 +43,8 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+	cmd.Flags().Bool("debate", false, "one-shot: chain a cross-examination stage (proposer/challenger/judge) after reconcile/verify, settling disputed findings")
+	cmd.Flags().Bool("single-model", false, "with --debate: allow the same-model persona fallback when fewer than 3 distinct models are available")
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
@@ -129,6 +132,11 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 	}
+
+	// --debate chains the cross-examination stage after reconcile (and verify, when
+	// present). It needs no extra validation: it runs on reconciled findings and is
+	// independent of --verify, though the canonical chain is --verify --debate.
+	debateFlag, _ := cmd.Flags().GetBool("debate")
 
 	// --require-verified hardens the one-shot gate to count only VERIFIED findings.
 	// It is meaningless without both a gate (--fail-on) and the verify stage that
@@ -263,7 +271,7 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// error and short-circuits before this line. The FailureMarker correction in
 	// ReadManifestPartial is only needed by the out-of-process `atcr reconcile`
 	// path that runs after the fact against the on-disk summary.json.
-	if threshold != "" || verifyFlag {
+	if threshold != "" || verifyFlag || debateFlag {
 		rec, rerr := reconcile.RunReconcile(ctx, result.Dir, nil, reconcile.Options{
 			ReconciledAt: time.Now(),
 			Partial:      result.Summary.Partial,
@@ -274,8 +282,10 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "reconciled %d finding(s)\n", rec.Summary.TotalFindings)
 
-		// --verify implies the reconcile stage (run exactly once, above) and then
-		// chains the adversarial verify stage in the same process (AC 04-02).
+		// --verify chains the adversarial verify stage after the single reconcile
+		// (AC 04-02). --debate then chains the cross-examination stage. Both mutate
+		// the on-disk findings, so the one-shot gate runs LAST, on the post-chain
+		// findings — a refuted or overturned finding never blocks the gate.
 		if verifyFlag {
 			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
 				Fresh:       boolFlag(cmd, "fresh"),
@@ -289,15 +299,29 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				"verified %d finding(s): %d confirmed, %d refuted, %d unverifiable\n",
 				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
 				vres.VerdictCounts.Unverifiable)
-			// Gate on the post-verify findings so a refuted finding never blocks the
-			// one-shot gate (the whole point of the verify stage).
+		}
+		if debateFlag {
+			dres, derr := debate.Debate(ctx, ".", result.Dir, cfg.Registry, debate.Options{
+				SingleModel: boolFlag(cmd, "single-model"),
+			})
+			if derr != nil {
+				return debateFailureError(derr)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"debated %d item(s): %d upheld, %d overturned, %d split, %d unresolved (%d overflow)\n",
+				dres.Selected, dres.Upheld, dres.Overturned, dres.Split, dres.Unresolved, dres.Overflow)
+		}
+
+		// Gate on the post-chain findings.json when a stage rewrote it; otherwise
+		// gate the reconcile result directly.
+		if verifyFlag || debateFlag {
 			if threshold != "" {
 				findings, ferr := reconcile.ReadReconciledFindings(result.Dir)
 				if ferr != nil {
 					return usageError(ferr)
 				}
 				if n := reconcile.CountFailingJSON(findings, threshold, requireVerified); n > 0 {
-					return fmt.Errorf("%d finding(s) at or above %s survived verification", n, threshold)
+					return fmt.Errorf("%d finding(s) at or above %s survived the review", n, threshold)
 				}
 			}
 			return nil
