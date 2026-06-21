@@ -49,7 +49,11 @@ type Result struct {
 // three-turn debate per item through the Epic 2.0 tool loop, and integrates the
 // judge rulings: it re-emits findings.json with the settled verdicts/severities,
 // writes reconciled/debate.json, records "debate" in the manifest stages, and
-// writes per-item transcripts under debate/.
+// writes per-item transcripts under debate/. It deliberately does NOT re-emit the
+// verify-stage snapshots summary.json (verdictCounts) or verification.json: after
+// debate, findings.json together with debate.json is the authoritative record of
+// settled verdicts/severities, while those two snapshots remain as-of-verify audit
+// artifacts that may legitimately lag findings.json (see the artifacts group below).
 //
 // It is the single orchestrator shared by `atcr debate`, `atcr review
 // --verify --debate`, and the atcr_debate MCP tool. repoRoot is the git repo the
@@ -171,6 +175,13 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Build all three stage artifacts in memory first, then flush them as one
 	// atomic group so a mid-sequence failure cannot leave partial state
 	// (e.g. findings.json updated but manifest.json or debate.json missing).
+	//
+	// Scope note: the atomic group is exactly debate.json + findings.json +
+	// manifest.json. The verify-stage snapshots summary.json (verdictCounts) and
+	// verification.json are intentionally NOT recomputed here — they are
+	// point-in-time verify audit artifacts. findings.json (with debate.json) is the
+	// authoritative post-debate record; any consumer needing settled verdict counts
+	// must derive them from findings.json, not from the now-stale summary.json.
 	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
