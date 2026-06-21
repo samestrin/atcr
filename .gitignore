@@ -59,6 +59,12 @@ Thumbs.db
 .planning/.config/.active_sprint
 .planning/.active_sprint
 
+# atcr workspace runtime outputs (diff cache + reviewer outputs, never committed).
+# Committed here (not just .git/info/exclude) so the rule travels to every clone
+# and to CI, where the diff cache (up to cache_max_bytes) and review JSON would
+# otherwise be untracked-but-not-ignored and catchable by `git add .`.
+.atcr/
+
 # Code review session outputs (verification/ tracked; logs are committed)
 .planning/**/code-review/claude/
 .planning/**/code-review/multi-agent/

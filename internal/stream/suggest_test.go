@@ -168,6 +168,16 @@ func TestMissingSuggestion_NeverSuggestsSelf(t *testing.T) {
 	assert.Empty(t, idx.MissingSuggestion("internal/auth/validate.go"))
 }
 
+// TestMissingSuggestion_NeverSuggestsTrackedSelfMulti: a tracked path that is
+// absent on disk must not be "corrected" to a same-basename sibling when it is
+// itself one of multiple Tier 1 candidates.
+func TestMissingSuggestion_NeverSuggestsTrackedSelfMulti(t *testing.T) {
+	idx := indexFromPaths([]string{"a/validate.go", "b/validate.go"})
+	require.NotNil(t, idx)
+
+	assert.Empty(t, idx.MissingSuggestion("a/validate.go"))
+}
+
 // TestMissingSuggestion_NoCandidates: an unknown basename in an unknown
 // directory yields no suggestion.
 func TestMissingSuggestion_NoCandidates(t *testing.T) {

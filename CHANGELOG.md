@@ -1,3 +1,25 @@
+## [Technical Debt] - 2026-06-21
+
+### Fixed
+
+- Normalized backslash path separators in file-index lookups so cited paths match regardless of the build OS.
+- Clarified that path case folding uses ASCII-lowercase, not full Unicode case folding.
+- Prevented path-suggestion from offering a sibling correction when the cited path itself is tracked.
+- Added a length-difference early-out before Levenshtein distance computation in Tier 2 suggestions.
+- Surfaced corrupt cache-entry removal errors instead of failing silently.
+- Documented the deliberate cache eviction error-swallow asymmetry under the store mutex.
+- Added observability for indeterminate path existence checks via a metrics counter.
+- Logged discarded git failures during file-index builds instead of swallowing them.
+- Made path-escape containment checks separator-independent across platforms.
+- Surfaced swallowed EvalSymlinks root errors via a metrics counter.
+- Committed the `.atcr/` ignore rule so cache and review outputs are ignored in fresh clones and CI.
+- Carried `ToolsRequested` on synthesized cache-hit results to match live invocation shape.
+- Protected the newest cache entry during eviction so oversized writes survive their own eviction pass.
+- Made `atcr init` emit `.atcr/.gitignore` so cache and reviews are never committed by default.
+- Folded backend provider identity into diff-cache keys to prevent cross-provider cache collisions.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [5.4.0] - 2026-06-21
 
 A flagged file path now comes with a way forward. When a reviewer cites a path that does not exist, the reconcile pipeline builds a one-time index of the repository's real tracked files (`git ls-files`) and suggests the file the finding most likely meant — a wrong directory, a basename typo, or a case-only difference — rendered as a `(did you mean …)` line next to the warning. Suggestions are advisory only: the original cited path is always preserved and never rewritten. The existence check is also now symlink-safe, closing an oracle where a repo symlink could report a file outside the repo as present, and case-only typos are caught even on case-insensitive macOS/Windows filesystems where they previously resolved silently.

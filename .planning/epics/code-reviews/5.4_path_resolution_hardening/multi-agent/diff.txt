@@ -1,0 +1,1415 @@
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index 5308ad9..8b8958d 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -84,6 +84,12 @@ type JSONFinding struct {
+ 	// Consumers and the report layer key display off path_warning.
+ 	PathValid   bool   `json:"path_valid,omitempty"`
+ 	PathWarning string `json:"path_warning,omitempty"`
++	// PathSuggestion is the candidate-index correction for a hallucinated path
++	// (Epic 5.4): the real tracked file the finding most likely meant. omitempty
++	// keeps findings.json byte-identical to pre-5.4 output when no suggestion is
++	// present. It is advisory only — File (the original cited path) is never
++	// rewritten — and is set only alongside a non-empty path_warning.
++	PathSuggestion string `json:"path_suggestion,omitempty"`
+ }
+ 
+ // JSONFindings converts the merged findings to their JSON schema records.
+@@ -91,20 +97,21 @@ func (r Result) JSONFindings() []JSONFinding {
+ 	out := make([]JSONFinding, 0, len(r.Findings))
+ 	for _, m := range r.Findings {
+ 		out = append(out, JSONFinding{
+-			Severity:     m.Severity,
+-			File:         m.File,
+-			Line:         m.Line,
+-			Problem:      m.Problem,
+-			Fix:          m.Fix,
+-			Category:     m.Category,
+-			EstMinutes:   m.EstMinutes,
+-			Evidence:     m.Evidence,
+-			Reviewers:    m.Reviewers,
+-			Confidence:   m.Confidence,
+-			Disagreement: m.Disagreement,
+-			Verification: m.Verification,
+-			PathValid:    m.PathValid,
+-			PathWarning:  m.PathWarning,
++			Severity:       m.Severity,
++			File:           m.File,
++			Line:           m.Line,
++			Problem:        m.Problem,
++			Fix:            m.Fix,
++			Category:       m.Category,
++			EstMinutes:     m.EstMinutes,
++			Evidence:       m.Evidence,
++			Reviewers:      m.Reviewers,
++			Confidence:     m.Confidence,
++			Disagreement:   m.Disagreement,
++			Verification:   m.Verification,
++			PathValid:      m.PathValid,
++			PathWarning:    m.PathWarning,
++			PathSuggestion: m.PathSuggestion,
+ 		})
+ 	}
+ 	return out
+@@ -318,9 +325,15 @@ func writeFindingsList(b *bytes.Buffer, findings []Merged) {
+ 			codeSpan(m.File, m.Line), esc(m.Confidence), esc(joinOrNone(m.Reviewers)))
+ 		if m.PathWarning != "" {
+ 			// Hallucinated path (Epic 5.0): the finding is kept, not dropped — the
+-			// path is flagged so a user can correct it. esc() neutralizes any
+-			// markup in a reviewer-controlled path.
+-			fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
++			// path is flagged so a user can correct it. A candidate-index
++			// suggestion (Epic 5.4), when present, points at the real file. esc()
++			// neutralizes any markup in the reviewer-controlled path; the
++			// suggestion comes from git ls-files but is esc'd for symmetry.
++			if m.PathSuggestion != "" {
++				fmt.Fprintf(b, "  - ⚠️ File not found: %s (did you mean %s?)\n", esc(m.File), esc(m.PathSuggestion))
++			} else {
++				fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(m.File))
++			}
+ 		}
+ 		if m.Disagreement != "" {
+ 			fmt.Fprintf(b, "  - Severity disagreement: %s\n", esc(m.Disagreement))
+diff --git a/internal/reconcile/emit_test.go b/internal/reconcile/emit_test.go
+index 651fa05..a71c999 100644
+--- a/internal/reconcile/emit_test.go
++++ b/internal/reconcile/emit_test.go
+@@ -1,6 +1,7 @@
+ package reconcile
+ 
+ import (
++	"bytes"
+ 	"encoding/json"
+ 	"os"
+ 	"path/filepath"
+@@ -340,3 +341,51 @@ func TestJSONFindings_PreservesVerification(t *testing.T) {
+ 	require.NoError(t, err)
+ 	assert.NotContains(t, string(data), "verification", "nil Verification must stay omitted")
+ }
++
++// TestJSONFinding_PathSuggestionOmittedWhenEmpty: a finding with no suggestion
++// must serialize without a path_suggestion key — byte-identical to pre-5.4
++// output (Epic 5.4 AC6 / Success Criteria: no findings.json change when absent).
++func TestJSONFinding_PathSuggestionOmittedWhenEmpty(t *testing.T) {
++	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
++	data, err := json.Marshal(f)
++	require.NoError(t, err)
++	assert.NotContains(t, string(data), "path_suggestion", "empty suggestion must be omitted")
++}
++
++// TestJSONFindings_CarriesPathSuggestion: a Merged finding's PathSuggestion is
++// carried into the JSON schema and survives a RenderJSON round-trip (AC6).
++func TestJSONFindings_CarriesPathSuggestion(t *testing.T) {
++	m := Merged{Finding: mf("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}
++	m.PathWarning = "file not found"
++	m.PathSuggestion = "internal/auth/validate.go"
++	res := Result{Findings: []Merged{m}}
++
++	got := res.JSONFindings()
++	require.Len(t, got, 1)
++	assert.Equal(t, "internal/auth/validate.go", got[0].PathSuggestion)
++
++	dir := t.TempDir()
++	reconDir := filepath.Join(dir, reconciledSubdir)
++	require.NoError(t, Emit(reconDir, res))
++	readBack, err := ReadReconciledFindings(dir)
++	require.NoError(t, err)
++	require.Len(t, readBack, 1)
++	assert.Equal(t, "internal/auth/validate.go", readBack[0].PathSuggestion)
++	// The original hallucinated path is preserved (suggest-only, AC7).
++	assert.Equal(t, "internal/auth/validator.go", readBack[0].File)
++}
++
++// TestRenderMarkdown_ShowsPathSuggestion: report.md renders a "(did you mean …)"
++// clause next to the file-not-found warning when a suggestion exists (AC6).
++func TestRenderMarkdown_ShowsPathSuggestion(t *testing.T) {
++	m := Merged{Finding: mf("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}
++	m.PathWarning = "file not found"
++	m.PathSuggestion = "internal/auth/validate.go"
++
++	var b bytes.Buffer
++	require.NoError(t, RenderMarkdown(&b, Result{Findings: []Merged{m}}))
++	out := b.String()
++	assert.Contains(t, out, "File not found")
++	assert.Contains(t, out, "did you mean")
++	assert.Contains(t, out, "internal/auth/validate.go")
++}
+diff --git a/internal/reconcile/pathsuggest_e2e_test.go b/internal/reconcile/pathsuggest_e2e_test.go
+new file mode 100644
+index 0000000..33253e1
+--- /dev/null
++++ b/internal/reconcile/pathsuggest_e2e_test.go
+@@ -0,0 +1,83 @@
++package reconcile
++
++import (
++	"context"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// gitRepoWithFiles initializes a throwaway git repo, commits the given tracked
++// relpaths, and returns the root. The candidate index reads `git ls-files`, so
++// suggestions only work against tracked files.
++func gitRepoWithFiles(t *testing.T, relpaths ...string) string {
++	t.Helper()
++	root := t.TempDir()
++	run := func(args ...string) {
++		cmd := exec.Command("git", args...)
++		cmd.Dir = root
++		out, err := cmd.CombinedOutput()
++		require.NoErrorf(t, err, "git %v: %s", args, out)
++	}
++	run("init", "-q")
++	run("config", "user.email", "t@t.t")
++	run("config", "user.name", "t")
++	for _, rel := range relpaths {
++		abs := filepath.Join(root, filepath.FromSlash(rel))
++		require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
++		require.NoError(t, os.WriteFile(abs, []byte("package x\n"), 0o644))
++	}
++	run("add", "-A")
++	run("commit", "-q", "-m", "init")
++	return root
++}
++
++// TestRunReconcile_SuggestsHallucinatedPathEndToEnd is the Epic 5.4 AC8 end-to-
++// end acceptance test: a review citing a typo'd path (validator.go, where the
++// real tracked file is validate.go in the same directory) flows through the full
++// reconcile pipeline against a real git repo, and the correction surfaces as a
++// PathSuggestion in the merged result, in findings.json (path_suggestion), and
++// as a "(did you mean …)" clause in report.md — while the original hallucinated
++// path is preserved (suggest-only, AC7).
++func TestRunReconcile_SuggestsHallucinatedPathEndToEnd(t *testing.T) {
++	root := gitRepoWithFiles(t, "internal/auth/validate.go")
++
++	reviewDir := t.TempDir()
++	sources := filepath.Join(reviewDir, "sources")
++	writeFindings(t, sources, "greta/findings.txt",
++		"HIGH|internal/auth/validator.go:12|hallucinated path finding|fix|security|10|ev|greta\n")
++
++	res, err := RunReconcile(context.Background(), reviewDir, nil, Options{
++		ReconciledAt: time.Unix(1700000000, 0).UTC(),
++		Root:         root,
++	})
++	require.NoError(t, err)
++	require.Len(t, res.Findings, 1)
++
++	hall := res.Findings[0]
++	assert.Equal(t, "internal/auth/validator.go", hall.File, "original cited path preserved (AC7)")
++	assert.False(t, hall.PathValid)
++	assert.Equal(t, stream.PathNotFoundWarning, hall.PathWarning)
++	assert.Equal(t, "internal/auth/validate.go", hall.PathSuggestion)
++
++	// findings.json carries the suggestion (report command's input).
++	js, err := ReadReconciledFindings(reviewDir)
++	require.NoError(t, err)
++	require.Len(t, js, 1)
++	assert.Equal(t, "internal/auth/validate.go", js[0].PathSuggestion)
++	assert.Equal(t, "internal/auth/validator.go", js[0].File)
++
++	// report.md shows the "(did you mean …)" correction.
++	reportMD, err := os.ReadFile(filepath.Join(reviewDir, "reconciled", ReportMD))
++	require.NoError(t, err)
++	md := string(reportMD)
++	assert.Contains(t, md, "⚠️ File not found: internal/auth/validator.go")
++	assert.Contains(t, md, "did you mean")
++	assert.Contains(t, md, "internal/auth/validate.go")
++}
+diff --git a/internal/reconcile/validate.go b/internal/reconcile/validate.go
+index 63c85a9..fb07157 100644
+--- a/internal/reconcile/validate.go
++++ b/internal/reconcile/validate.go
+@@ -2,17 +2,24 @@ package reconcile
+ 
+ import "github.com/samestrin/atcr/internal/stream"
+ 
+-// validateFindingPaths stamps each merged finding's PathValid/PathWarning by
+-// checking whether its file exists under root (Epic 5.0 AC1). An empty root
+-// disables validation — no base directory is configured — so the deterministic
+-// reconcile tests that build synthetic findings are never coupled to the
+-// filesystem. The check runs after merge (on the emitted records) rather than in
+-// the pure Reconcile pass, keeping Reconcile I/O-free.
++// validateFindingPaths stamps each merged finding's PathValid/PathWarning and,
++// when a hallucinated path has a confident correction, PathSuggestion (Epic 5.0
++// AC1 + Epic 5.4). An empty root disables validation — no base directory is
++// configured — so the deterministic reconcile tests that build synthetic
++// findings are never coupled to the filesystem. The check runs after merge (on
++// the emitted records) rather than in the pure Reconcile pass, keeping Reconcile
++// I/O-free.
++//
++// The candidate file index is built ONCE here (Epic 5.4 AC1) from `git ls-files`
++// and shared across every finding, never rebuilt per-finding. A nil index
++// (root is not a git repo, or git is unavailable) degrades to existence-only
++// validation with no suggestion.
+ func validateFindingPaths(findings []Merged, root string) {
+ 	if root == "" {
+ 		return
+ 	}
++	idx := stream.BuildFileIndex(root)
+ 	for i := range findings {
+-		stream.ValidatePath(&findings[i].Finding, root)
++		stream.ValidatePath(&findings[i].Finding, root, idx)
+ 	}
+ }
+diff --git a/internal/report/render.go b/internal/report/render.go
+index af338d9..6f0a2db 100644
+--- a/internal/report/render.go
++++ b/internal/report/render.go
+@@ -313,12 +313,20 @@ func isRefuted(f reconcile.JSONFinding) bool {
+ 
+ // writePathWarning emits the hallucinated-path warning line for a finding whose
+ // file failed existence validation (Epic 5.0). A no-op when the path is valid or
+-// was never validated (PathWarning empty). The path is HTML-escaped so a
+-// reviewer-controlled path cannot inject markup.
++// was never validated (PathWarning empty). When the candidate index produced a
++// correction (Epic 5.4), a "(did you mean …)" clause points at the real file
++// while the original cited path is preserved. Both paths are HTML-escaped so a
++// reviewer-controlled path cannot inject markup; this single helper backs every
++// report view (markdown, checklist, and the refuted section).
+ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
+-	if f.PathWarning != "" {
+-		fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(f.File))
++	if f.PathWarning == "" {
++		return
++	}
++	if f.PathSuggestion != "" {
++		fmt.Fprintf(b, "  - ⚠️ File not found: %s (did you mean %s?)\n", esc(f.File), esc(f.PathSuggestion))
++		return
+ 	}
++	fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(f.File))
+ }
+ 
+ // writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an
+diff --git a/internal/report/validate_test.go b/internal/report/validate_test.go
+index 046d702..e0f07e7 100644
+--- a/internal/report/validate_test.go
++++ b/internal/report/validate_test.go
+@@ -52,6 +52,60 @@ func TestRender_Markdown_RefutedShowsPathWarning(t *testing.T) {
+ 	assert.Contains(t, out, "⚠️ File not found: internal/auth/validator.go")
+ }
+ 
++// flaggedWithSuggestion returns one flagged finding that also carries a
++// candidate-index correction (Epic 5.4).
++func flaggedWithSuggestion() []reconcile.JSONFinding {
++	f := flagged()
++	f[0].PathSuggestion = "internal/auth/validate.go"
++	return f
++}
++
++// TestRender_Markdown_ShowsPathSuggestion: the md report renders a "(did you
++// mean …)" clause next to the warning, preserving the original cited path (AC6).
++func TestRender_Markdown_ShowsPathSuggestion(t *testing.T) {
++	var b bytes.Buffer
++	require.NoError(t, Render(&b, flaggedWithSuggestion(), FormatMarkdown))
++
++	out := b.String()
++	assert.Contains(t, out, "⚠️ File not found: internal/auth/validator.go")
++	assert.Contains(t, out, "did you mean")
++	assert.Contains(t, out, "internal/auth/validate.go")
++}
++
++// TestRender_Checklist_ShowsPathSuggestion: the checklist view also carries the
++// suggestion.
++func TestRender_Checklist_ShowsPathSuggestion(t *testing.T) {
++	var b bytes.Buffer
++	require.NoError(t, Render(&b, flaggedWithSuggestion(), FormatChecklist))
++
++	out := b.String()
++	assert.Contains(t, out, "did you mean")
++	assert.Contains(t, out, "internal/auth/validate.go")
++}
++
++// TestRender_Markdown_RefutedShowsPathSuggestion: the refuted collapsed section
++// also renders the suggestion.
++func TestRender_Markdown_RefutedShowsPathSuggestion(t *testing.T) {
++	f := flaggedWithSuggestion()
++	f[0].Verification = &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "kai"}
++
++	var b bytes.Buffer
++	require.NoError(t, Render(&b, f, FormatMarkdown))
++
++	out := b.String()
++	require.Contains(t, out, "Refuted Findings")
++	assert.Contains(t, out, "did you mean")
++}
++
++// TestRender_Markdown_NoSuggestionClauseWhenAbsent: a flagged finding without a
++// suggestion renders the bare warning — no dangling "(did you mean …)".
++func TestRender_Markdown_NoSuggestionClauseWhenAbsent(t *testing.T) {
++	var b bytes.Buffer
++	require.NoError(t, Render(&b, flagged(), FormatMarkdown))
++
++	assert.NotContains(t, b.String(), "did you mean")
++}
++
+ // TestRender_Markdown_NoWarningWhenValid: a valid path adds no warning, so a
+ // clean report is unchanged.
+ func TestRender_Markdown_NoWarningWhenValid(t *testing.T) {
+diff --git a/internal/stream/fileindex.go b/internal/stream/fileindex.go
+new file mode 100644
+index 0000000..bf63558
+--- /dev/null
++++ b/internal/stream/fileindex.go
+@@ -0,0 +1,121 @@
++package stream
++
++import (
++	"os/exec"
++	"path"
++	"path/filepath"
++	"strings"
++)
++
++// FileIndex is the candidate file index built once per reconcile run from
++// `git ls-files` (Epic 5.4 AC1). It is the missing primitive the tiered path
++// matcher reasons against: with the repo's real, tracked file list in hand,
++// case-exact matching, wrong-directory detection, and typo suggestion all
++// become lookups rather than filesystem probes.
++//
++// All keys are slash-normalized (git emits forward slashes on every platform;
++// reviewer-cited paths are normalized on the way in) so matching is
++// platform-independent. The index is read-only after BuildFileIndex returns.
++type FileIndex struct {
++	tracked  map[string]struct{} // exact relpath set
++	basename map[string][]string // basename -> tracked relpaths
++	dirFiles map[string][]string // dir -> basenames tracked directly under it
++	folded   map[string][]string // lower(relpath) -> tracked relpaths (case-fold)
++}
++
++// BuildFileIndex runs `git ls-files` under root and builds the candidate index.
++// It returns nil — signalling "degrade to existence-only, no suggestion" — when
++// root is empty, root is not a git repository, or git is unavailable. A repo
++// with no tracked files yields a non-nil but empty index.
++func BuildFileIndex(root string) *FileIndex {
++	if strings.TrimSpace(root) == "" {
++		return nil
++	}
++	// -z gives NUL-delimited paths so filenames with spaces/newlines survive.
++	cmd := exec.Command("git", "-C", root, "ls-files", "-z")
++	out, err := cmd.Output()
++	if err != nil {
++		// Not a git repo, git missing, or other failure: graceful degradation.
++		return nil
++	}
++	return indexFromPaths(strings.Split(string(out), "\x00"))
++}
++
++// indexFromPaths builds the index maps from raw (possibly NUL-split, possibly
++// non-slash) relpaths. Split from BuildFileIndex so the resolver logic can be
++// tested with synthetic path sets — notably the case-ambiguity scenario, which
++// is physically unconstructable on a case-insensitive filesystem.
++func indexFromPaths(raw []string) *FileIndex {
++	idx := &FileIndex{
++		tracked:  make(map[string]struct{}),
++		basename: make(map[string][]string),
++		dirFiles: make(map[string][]string),
++		folded:   make(map[string][]string),
++	}
++	for _, r := range raw {
++		rel := strings.TrimSpace(r)
++		if rel == "" {
++			continue
++		}
++		rel = filepath.ToSlash(rel)
++		if _, seen := idx.tracked[rel]; seen {
++			continue
++		}
++		idx.tracked[rel] = struct{}{}
++
++		base := path.Base(rel)
++		idx.basename[base] = append(idx.basename[base], rel)
++
++		d := path.Dir(rel) // "." for top-level files
++		idx.dirFiles[d] = append(idx.dirFiles[d], base)
++
++		fold := strings.ToLower(rel)
++		idx.folded[fold] = append(idx.folded[fold], rel)
++	}
++	return idx
++}
++
++// Has reports whether relpath is a byte-exact tracked file.
++func (x *FileIndex) Has(relpath string) bool {
++	if x == nil {
++		return false
++	}
++	_, ok := x.tracked[filepath.ToSlash(relpath)]
++	return ok
++}
++
++// ByBasename returns the tracked relpaths whose basename equals base.
++func (x *FileIndex) ByBasename(base string) []string {
++	if x == nil {
++		return nil
++	}
++	return x.basename[base]
++}
++
++// DirBasenames returns the basenames tracked directly under dir (slash-form,
++// no trailing slash; "." for the repo root). Empty when the directory tracks no
++// files — which Tier 2 reads as "directory does not exist in the repo".
++func (x *FileIndex) DirBasenames(dir string) []string {
++	if x == nil {
++		return nil
++	}
++	return x.dirFiles[filepath.ToSlash(dir)]
++}
++
++// HasDir reports whether any tracked file lives directly under dir.
++func (x *FileIndex) HasDir(dir string) bool {
++	if x == nil {
++		return false
++	}
++	return len(x.dirFiles[filepath.ToSlash(dir)]) > 0
++}
++
++// ByFold returns the tracked relpaths equal to relpath under Unicode-simple
++// case folding (lowercase). A correctly-cased citation returns itself; a
++// case-typo returns the real path(s).
++func (x *FileIndex) ByFold(relpath string) []string {
++	if x == nil {
++		return nil
++	}
++	return x.folded[strings.ToLower(filepath.ToSlash(relpath))]
++}
+diff --git a/internal/stream/fileindex_test.go b/internal/stream/fileindex_test.go
+new file mode 100644
+index 0000000..6879a98
+--- /dev/null
++++ b/internal/stream/fileindex_test.go
+@@ -0,0 +1,85 @@
++package stream
++
++import (
++	"os"
++	"os/exec"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// gitRepo initializes a throwaway git repo at a temp dir, writes the given
++// relpaths (with package-stub content), commits them, and returns the root. The
++// candidate index is built from `git ls-files`, so files must be tracked.
++func gitRepo(t *testing.T, relpaths ...string) string {
++	t.Helper()
++	root := t.TempDir()
++	run := func(args ...string) {
++		cmd := exec.Command("git", args...)
++		cmd.Dir = root
++		out, err := cmd.CombinedOutput()
++		require.NoErrorf(t, err, "git %v: %s", args, out)
++	}
++	run("init", "-q")
++	run("config", "user.email", "t@t.t")
++	run("config", "user.name", "t")
++	for _, rel := range relpaths {
++		abs := filepath.Join(root, filepath.FromSlash(rel))
++		require.NoError(t, os.MkdirAll(filepath.Dir(abs), 0o755))
++		require.NoError(t, os.WriteFile(abs, []byte("package x\n"), 0o644))
++	}
++	run("add", "-A")
++	run("commit", "-q", "-m", "init")
++	return root
++}
++
++// TestBuildFileIndex_TracksFiles: a built index reports tracked relpaths and
++// indexes them by basename.
++func TestBuildFileIndex_TracksFiles(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go", "cmd/atcr/main.go")
++
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.True(t, idx.Has("internal/auth/validate.go"))
++	assert.False(t, idx.Has("internal/auth/validator.go"))
++	assert.ElementsMatch(t, []string{"internal/auth/validate.go"}, idx.ByBasename("validate.go"))
++}
++
++// TestBuildFileIndex_NonGitDir: a directory that is not a git repo yields a nil
++// index — callers degrade to existence-only (no suggestion).
++func TestBuildFileIndex_NonGitDir(t *testing.T) {
++	idx := BuildFileIndex(t.TempDir())
++	assert.Nil(t, idx)
++}
++
++// TestBuildFileIndex_EmptyRoot: an empty root yields a nil index (no base
++// directory configured).
++func TestBuildFileIndex_EmptyRoot(t *testing.T) {
++	assert.Nil(t, BuildFileIndex(""))
++}
++
++// TestFileIndex_DirBasenames: the directory index lists the basenames tracked
++// under a given directory, used by Tier 2.
++func TestFileIndex_DirBasenames(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go", "internal/auth/login.go", "cmd/atcr/main.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.ElementsMatch(t, []string{"validate.go", "login.go"}, idx.DirBasenames("internal/auth"))
++	assert.Empty(t, idx.DirBasenames("internal/nope"))
++}
++
++// TestFileIndex_FoldedLookup: the case-folded index resolves a path that differs
++// only by case to the real tracked path(s), used by Tier 3.
++func TestFileIndex_FoldedLookup(t *testing.T) {
++	root := gitRepo(t, "internal/auth/parser.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.ElementsMatch(t, []string{"internal/auth/parser.go"}, idx.ByFold("internal/auth/Parser.go"))
++	assert.ElementsMatch(t, []string{"internal/auth/parser.go"}, idx.ByFold("INTERNAL/AUTH/PARSER.GO"))
++	assert.Empty(t, idx.ByFold("internal/auth/other.go"))
++}
+diff --git a/internal/stream/levenshtein.go b/internal/stream/levenshtein.go
+new file mode 100644
+index 0000000..f76ac26
+--- /dev/null
++++ b/internal/stream/levenshtein.go
+@@ -0,0 +1,64 @@
++package stream
++
++// levenshtein returns the edit distance (insertions, deletions, substitutions)
++// between a and b. It backs the Tier 2 typo matcher, which compares a cited
++// filename's stem against the real files in the same directory. The
++// implementation uses the standard two-row dynamic-programming table, O(len(a)*
++// len(b)) time and O(min) extra space.
++func levenshtein(a, b string) int {
++	ra, rb := []rune(a), []rune(b)
++	// Keep the inner loop over the shorter string to bound the row length.
++	if len(ra) < len(rb) {
++		ra, rb = rb, ra
++	}
++	if len(rb) == 0 {
++		return len(ra)
++	}
++	prev := make([]int, len(rb)+1)
++	curr := make([]int, len(rb)+1)
++	for j := range prev {
++		prev[j] = j
++	}
++	for i := 1; i <= len(ra); i++ {
++		curr[0] = i
++		for j := 1; j <= len(rb); j++ {
++			cost := 1
++			if ra[i-1] == rb[j-1] {
++				cost = 0
++			}
++			curr[j] = min3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
++		}
++		prev, curr = curr, prev
++	}
++	return prev[len(rb)]
++}
++
++// similarity is a 0..1 closeness ratio normalized by the longer input: 1.0 for
++// identical strings, approaching 0 as they diverge. Two empty strings are
++// defined as identical (1.0). Tier 2 compares stems against
++// tier2SimilarityThreshold using this metric.
++func similarity(a, b string) float64 {
++	if a == b {
++		return 1.0
++	}
++	la, lb := len([]rune(a)), len([]rune(b))
++	longest := la
++	if lb > longest {
++		longest = lb
++	}
++	if longest == 0 {
++		return 1.0
++	}
++	return 1.0 - float64(levenshtein(a, b))/float64(longest)
++}
++
++func min3(a, b, c int) int {
++	m := a
++	if b < m {
++		m = b
++	}
++	if c < m {
++		m = c
++	}
++	return m
++}
+diff --git a/internal/stream/levenshtein_test.go b/internal/stream/levenshtein_test.go
+new file mode 100644
+index 0000000..ae2f918
+--- /dev/null
++++ b/internal/stream/levenshtein_test.go
+@@ -0,0 +1,46 @@
++package stream
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++// TestLevenshtein_Distance covers the canonical edit-distance cases the Tier 2
++// typo matcher depends on, including the motivating 5.0 example.
++//
++// NOTE: the 5.0 plan (and this epic's Open Question 1) asserted that
++// validator->validate is edit distance 1; it is actually 2 (shared prefix
++// "validat", then "or" vs "e" = one substitution + one deletion). The Tier 2
++// threshold is tuned to the real example, not the mis-stated number — see
++// tier2SimilarityThreshold in suggest.go.
++func TestLevenshtein_Distance(t *testing.T) {
++	cases := []struct {
++		a, b string
++		want int
++	}{
++		{"", "", 0},
++		{"abc", "", 3},
++		{"", "abc", 3},
++		{"abc", "abc", 0},
++		{"validator", "validate", 2},
++		{"kitten", "sitting", 3},
++		{"flaw", "lawn", 2},
++		{"Parser", "parser", 1}, // single case-differing char
++	}
++	for _, c := range cases {
++		got := levenshtein(c.a, c.b)
++		assert.Equalf(t, c.want, got, "levenshtein(%q,%q)", c.a, c.b)
++	}
++}
++
++// TestSimilarity returns a 0..1 ratio normalized by the longer string; identical
++// strings are 1.0, fully disjoint approaches 0. The validator/validate stem pair
++// clears the tuned Tier 2 0.75 threshold; config/cfg does not.
++func TestSimilarity(t *testing.T) {
++	assert.Equal(t, 1.0, similarity("", ""))
++	assert.Equal(t, 1.0, similarity("abc", "abc"))
++	assert.InDelta(t, 0.777, similarity("validator", "validate"), 0.01)
++	assert.True(t, similarity("validator", "validate") >= 0.75)
++	assert.True(t, similarity("config", "cfg") < 0.75)
++}
+diff --git a/internal/stream/parser.go b/internal/stream/parser.go
+index 35269fb..97caa30 100644
+--- a/internal/stream/parser.go
++++ b/internal/stream/parser.go
+@@ -64,6 +64,13 @@ type Finding struct {
+ 	// finding (PathValid defaults to false) is never falsely flagged.
+ 	PathValid   bool   // true once validated and the file exists
+ 	PathWarning string // e.g. "file not found"; empty when valid or unvalidated
++
++	// PathSuggestion is the candidate-index correction for a hallucinated path
++	// (Epic 5.4): the real tracked file a flagged finding most likely meant. It
++	// is suggest-only — File is never rewritten — and stays empty when the path
++	// is valid, when no confident single candidate exists, or when no index is
++	// available (non-git repo). Set only alongside a non-empty PathWarning.
++	PathSuggestion string // e.g. "internal/auth/validate.go"; empty when none
+ }
+ 
+ // SkippedRow records a line skipped as malformed (wrong column count), with its
+diff --git a/internal/stream/suggest.go b/internal/stream/suggest.go
+new file mode 100644
+index 0000000..a676bb4
+--- /dev/null
++++ b/internal/stream/suggest.go
+@@ -0,0 +1,196 @@
++package stream
++
++import (
++	"path"
++	"path/filepath"
++	"strings"
++)
++
++// tier2SimilarityThreshold is the minimum stem similarity for a Tier 2 typo
++// suggestion. The 5.0 plan and this epic's Open Question 1 recommended ~0.85 on
++// the assumption that the canonical example (validator -> validate) was edit
++// distance 1; it is actually distance 2 (shared prefix "validat", then "or" vs
++// "e"), giving stem similarity 1 - 2/9 ≈ 0.78. The epic's binding directive is
++// to tune "against the 5.0 examples rather than a round number", so the
++// threshold is set to admit that example with margin while still rejecting
++// clearly-different names (e.g. config/cfg ≈ 0.50).
++const tier2SimilarityThreshold = 0.75
++
++// CaseCorrection implements Tier 3 (case-only difference). It reports whether
++// citedRel differs from a tracked file only by case, and — when exactly one
++// such file exists — the correctly-cased path to suggest.
++//
++//   - byte-exact tracked citation       -> ("", false)  (correctly cited)
++//   - single case-folded match, no exact -> (realPath, true)
++//   - multiple case-folded matches        -> ("", true)   (mismatch, ambiguous)
++//   - no case-folded match                -> ("", false)  (genuine miss; see MissingSuggestion)
++//
++// mismatch is independent of the filesystem: it fires even on case-insensitive
++// filesystems where os.Stat reports the cited path as present (AC3), so the
++// caller must consult it before trusting an existence check.
++func (x *FileIndex) CaseCorrection(citedRel string) (suggestion string, mismatch bool) {
++	if x == nil {
++		return "", false
++	}
++	rel := filepath.ToSlash(citedRel)
++	if x.Has(rel) {
++		return "", false // correctly cited, byte-exact
++	}
++	folded := x.ByFold(rel)
++	switch len(folded) {
++	case 0:
++		return "", false // not a case issue
++	case 1:
++		return folded[0], true
++	default:
++		return "", true // ambiguous: mismatch but no single winner
++	}
++}
++
++// MissingSuggestion implements Tier 1 then Tier 2 for a path absent from the
++// index. It returns the single best correctly-spelled candidate, or "" when
++// none is confident enough:
++//
++//   - Tier 1 (exact basename elsewhere): the cited basename matches tracked
++//     files in other directories. One match -> suggest it (no edit distance). On
++//     a tie, rank by shared path segments; a unique winner is suggested, else "".
++//   - Tier 2 (basename typo, same directory): the cited directory tracks files
++//     but not this basename. Compare the cited stem against each same-directory
++//     file's stem (matching extension only) by similarity; the single closest
++//     above tier2SimilarityThreshold is suggested.
++//
++// Tier 1 is tried first because an exact-basename match is near-certain and
++// needs no threshold; Tier 2 only runs when Tier 1 finds nothing.
++func (x *FileIndex) MissingSuggestion(citedRel string) string {
++	if x == nil {
++		return ""
++	}
++	rel := filepath.ToSlash(citedRel)
++	base := path.Base(rel)
++	dir := path.Dir(rel)
++
++	if s := x.tier1(rel, base, dir); s != "" {
++		return s
++	}
++	return x.tier2(rel, base, dir)
++}
++
++// tier1 ranks exact-basename matches in other directories by path-segment
++// overlap with the cited path, returning a unique winner or "".
++func (x *FileIndex) tier1(rel, base, dir string) string {
++	candidates := x.ByBasename(base)
++	if len(candidates) == 0 {
++		return ""
++	}
++	if len(candidates) == 1 {
++		// Only meaningful when it is not the cited path itself; an absent path
++		// is never in the tracked set, so a lone match is always elsewhere.
++		if candidates[0] != rel {
++			return candidates[0]
++		}
++		return ""
++	}
++	bestScore, best, tie := -1, "", false
++	for _, c := range candidates {
++		if c == rel {
++			continue
++		}
++		score := segOverlap(dir, path.Dir(c))
++		switch {
++		case score > bestScore:
++			bestScore, best, tie = score, c, false
++		case score == bestScore:
++			tie = true
++		}
++	}
++	if tie || best == "" {
++		return "" // ambiguous: a wrong guess is worse than none
++	}
++	return best
++}
++
++// tier2 finds the closest same-directory file by stem similarity (matching
++// extension), above the threshold and with a unique winner.
++func (x *FileIndex) tier2(rel, base, dir string) string {
++	if !x.HasDir(dir) {
++		return ""
++	}
++	citedStem, citedExt := splitStem(base)
++	bestScore, best, tie := tier2SimilarityThreshold, "", false
++	for _, cand := range x.DirBasenames(dir) {
++		if cand == base {
++			continue // never suggest the cited path back to itself
++		}
++		candStem, candExt := splitStem(cand)
++		if candExt != citedExt {
++			continue // Tier 2 stays within a file type
++		}
++		if prefixDerivation(citedStem, candStem) {
++			// One stem is a strict prefix of the other: a pluralization or
++			// derivation (user/users, handler/handlers, parse/parser), which are
++			// commonly distinct coexisting files, not a typo. Similarity cannot
++			// separate these from a real typo — they often score HIGHER than the
++			// canonical validator/validate (0.78) — so guard structurally and
++			// emit no suggestion rather than a confident wrong one.
++			continue
++		}
++		score := similarity(citedStem, candStem)
++		switch {
++		case score > bestScore:
++			bestScore, best, tie = score, cand, false
++		case score == bestScore:
++			tie = true
++		}
++	}
++	if tie || best == "" {
++		return ""
++	}
++	if dir == "." {
++		return best
++	}
++	return dir + "/" + best
++}
++
++// segOverlap counts directory path segments shared (as a set) between two
++// slash-separated directory paths. "." (no directory) contributes nothing.
++func segOverlap(a, b string) int {
++	set := make(map[string]struct{})
++	for _, s := range strings.Split(a, "/") {
++		if s != "" && s != "." {
++			set[s] = struct{}{}
++		}
++	}
++	n := 0
++	for _, s := range strings.Split(b, "/") {
++		if s == "" || s == "." {
++			continue
++		}
++		if _, ok := set[s]; ok {
++			n++
++		}
++	}
++	return n
++}
++
++// prefixDerivation reports whether one stem is a strict prefix of the other —
++// the signature of a pluralization or derivation (user->users, parse->parser)
++// rather than a typo. It deliberately does NOT fire for validator/validate,
++// which share a prefix but where neither contains the other.
++func prefixDerivation(a, b string) bool {
++	if a == b {
++		return false
++	}
++	short, long := a, b
++	if len(b) < len(a) {
++		short, long = b, a
++	}
++	return strings.HasPrefix(long, short)
++}
++
++// splitStem splits a basename into its stem and extension (including the dot),
++// e.g. "validate.go" -> ("validate", ".go"). A dotfile with no extension keeps
++// the whole name as the stem.
++func splitStem(base string) (stem, ext string) {
++	ext = path.Ext(base)
++	return strings.TrimSuffix(base, ext), ext
++}
+diff --git a/internal/stream/suggest_test.go b/internal/stream/suggest_test.go
+new file mode 100644
+index 0000000..0483286
+--- /dev/null
++++ b/internal/stream/suggest_test.go
+@@ -0,0 +1,179 @@
++package stream
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// --- Tier 3: case-only correction (CaseCorrection) ---
++
++// TestCaseCorrection_CaseTypo: a path differing only by case from a tracked file
++// is reported as a mismatch and the correctly-cased path is suggested (AC3).
++func TestCaseCorrection_CaseTypo(t *testing.T) {
++	root := gitRepo(t, "internal/auth/parser.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	sug, mismatch := idx.CaseCorrection("internal/auth/Parser.go")
++	assert.True(t, mismatch)
++	assert.Equal(t, "internal/auth/parser.go", sug)
++}
++
++// TestCaseCorrection_ExactIsValid: a byte-exact citation is not a mismatch and
++// yields no suggestion.
++func TestCaseCorrection_ExactIsValid(t *testing.T) {
++	root := gitRepo(t, "internal/auth/parser.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	sug, mismatch := idx.CaseCorrection("internal/auth/parser.go")
++	assert.False(t, mismatch)
++	assert.Empty(t, sug)
++}
++
++// TestCaseCorrection_NoFoldedMatch: a path with no case-folded tracked match is
++// not a case mismatch (it is a genuine miss, handled by the missing tiers).
++func TestCaseCorrection_NoFoldedMatch(t *testing.T) {
++	root := gitRepo(t, "internal/auth/parser.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	sug, mismatch := idx.CaseCorrection("internal/auth/nope.go")
++	assert.False(t, mismatch)
++	assert.Empty(t, sug)
++}
++
++// TestCaseCorrection_AmbiguousNoSuggestion: when two tracked files differ only
++// by case, a differently-cased citation is a mismatch but ambiguous — no
++// suggestion.
++func TestCaseCorrection_AmbiguousNoSuggestion(t *testing.T) {
++	// Two files differing only by case cannot coexist on a case-insensitive
++	// filesystem, so this scenario is built from a synthetic path set rather
++	// than a real repo.
++	idx := indexFromPaths([]string{"internal/auth/parser.go", "internal/auth/Parser.go"})
++	require.NotNil(t, idx)
++
++	sug, mismatch := idx.CaseCorrection("internal/auth/PARSER.go")
++	assert.True(t, mismatch)
++	assert.Empty(t, sug)
++}
++
++// --- Tier 1: exact basename elsewhere (MissingSuggestion) ---
++
++// TestMissingSuggestion_Tier1WrongDir: the cited dir is wrong but the exact
++// basename exists in exactly one other directory — suggest it, no threshold (AC2).
++func TestMissingSuggestion_Tier1WrongDir(t *testing.T) {
++	root := gitRepo(t, "pkg/auth/validator.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Equal(t, "pkg/auth/validator.go", idx.MissingSuggestion("internal/auth/validator.go"))
++}
++
++// TestMissingSuggestion_Tier1Ranked: the basename exists in two directories; the
++// one sharing more path segments with the cited path wins.
++func TestMissingSuggestion_Tier1Ranked(t *testing.T) {
++	root := gitRepo(t, "internal/auth/handler.go", "web/ui/handler.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Equal(t, "internal/auth/handler.go", idx.MissingSuggestion("internal/auth/sub/handler.go"))
++}
++
++// TestMissingSuggestion_Tier1AmbiguousNoSuggestion: two equally-good basename
++// matches (no segment overlap to break the tie) yield no suggestion.
++func TestMissingSuggestion_Tier1AmbiguousNoSuggestion(t *testing.T) {
++	root := gitRepo(t, "alpha/handler.go", "beta/handler.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Empty(t, idx.MissingSuggestion("gamma/handler.go"))
++}
++
++// --- Tier 2: basename typo in an existing directory (MissingSuggestion) ---
++
++// TestMissingSuggestion_Tier2Typo: the directory exists, the basename does not,
++// and the closest real file in that directory clears the threshold (AC4).
++func TestMissingSuggestion_Tier2Typo(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Equal(t, "internal/auth/validate.go", idx.MissingSuggestion("internal/auth/validator.go"))
++}
++
++// TestMissingSuggestion_Tier2BelowThreshold: a basename too dissimilar from any
++// file in the existing directory yields no suggestion (AC4 below-threshold).
++func TestMissingSuggestion_Tier2BelowThreshold(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Empty(t, idx.MissingSuggestion("internal/auth/xyz.go"))
++}
++
++// TestMissingSuggestion_Tier2ExtensionGuard: a same-stem file with a different
++// extension is not suggested (Tier 2 requires matching extension).
++func TestMissingSuggestion_Tier2ExtensionGuard(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.md")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Empty(t, idx.MissingSuggestion("internal/auth/validator.go"))
++}
++
++// TestMissingSuggestion_Tier2RejectsPluralDerivation: a missing path whose stem
++// is a strict prefix/suffix derivation of a real sibling (pluralization,
++// agent-noun) must NOT be suggested — these are commonly distinct coexisting
++// files and score higher than a real typo. Independent-review MEDIUM.
++func TestMissingSuggestion_Tier2RejectsPluralDerivation(t *testing.T) {
++	cases := []struct{ tracked, cited string }{
++		{"internal/store/user.go", "internal/store/users.go"},
++		{"internal/http/handler.go", "internal/http/handlers.go"},
++		{"internal/parse/parse.go", "internal/parse/parser.go"},
++		{"internal/net/route.go", "internal/net/router.go"},
++	}
++	for _, c := range cases {
++		idx := indexFromPaths([]string{c.tracked})
++		assert.Emptyf(t, idx.MissingSuggestion(c.cited),
++			"derivation %q should not be suggested toward %q", c.cited, c.tracked)
++	}
++}
++
++// TestMissingSuggestion_Tier2KeepsTrueTypo: the canonical validator->validate
++// typo survives the derivation guard (neither stem is a prefix of the other).
++func TestMissingSuggestion_Tier2KeepsTrueTypo(t *testing.T) {
++	idx := indexFromPaths([]string{"internal/auth/validate.go"})
++	assert.Equal(t, "internal/auth/validate.go", idx.MissingSuggestion("internal/auth/validator.go"))
++}
++
++// TestMissingSuggestion_Tier1BeatsTier2: when the exact basename exists
++// elsewhere, Tier 1 wins over any same-dir typo candidate.
++func TestMissingSuggestion_Tier1BeatsTier2(t *testing.T) {
++	root := gitRepo(t, "pkg/util/validator.go", "internal/auth/validate.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Equal(t, "pkg/util/validator.go", idx.MissingSuggestion("internal/auth/validator.go"))
++}
++
++// TestMissingSuggestion_NeverSuggestsSelf: a path tracked in git but absent on
++// disk (so the missing tiers run) must not be suggested back to itself by Tier 2.
++func TestMissingSuggestion_NeverSuggestsSelf(t *testing.T) {
++	idx := indexFromPaths([]string{"internal/auth/validate.go"})
++	require.NotNil(t, idx)
++
++	assert.Empty(t, idx.MissingSuggestion("internal/auth/validate.go"))
++}
++
++// TestMissingSuggestion_NoCandidates: an unknown basename in an unknown
++// directory yields no suggestion.
++func TestMissingSuggestion_NoCandidates(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go")
++	idx := BuildFileIndex(root)
++	require.NotNil(t, idx)
++
++	assert.Empty(t, idx.MissingSuggestion("totally/different/thing.go"))
++}
+diff --git a/internal/stream/validate.go b/internal/stream/validate.go
+index 9bc90c6..1754a18 100644
+--- a/internal/stream/validate.go
++++ b/internal/stream/validate.go
+@@ -26,14 +26,27 @@ const PathNotFoundWarning = "file not found"
+ //     indeterminate result must not masquerade as "file not found".
+ //
+ // root defaults to "." (the process working directory, which is the repo root
+-// for every atcr entry point — see internal/verify, which threads the same "."
+-// root) when empty. A nil finding is a no-op.
++// for every atcr entry point — the cmd/atcr reconcile/review/resume commands all
++// thread Root="." into reconcile, the sole caller) when empty. A nil finding is
++// a no-op.
+ //
+-// Limitation: existence is checked with os.Stat, which is case-insensitive on
+-// the default macOS/Windows filesystems — a path differing from the real file
+-// only in case (Parser.go vs parser.go) resolves as present there and is not
+-// flagged. A case-exact check is a deferred enhancement (tracked in TD).
+-func ValidatePath(f *Finding, root string) {
++// Symlink safety (Epic 5.4 AC5): existence is resolved with filepath.EvalSymlinks
++// and the result is re-checked for containment under the (also symlink-resolved)
++// root. A repo symlink that points outside the repo therefore cannot turn a
++// reviewer-controlled File into an existence oracle for the host filesystem —
++// the bare os.Stat used in 5.0 followed such a link and reported the external
++// file as present.
++//
++// Case sensitivity (Epic 5.4 AC3) is handled at the reconcile layer via the
++// candidate index (CaseCorrection), not here: os.Stat/EvalSymlinks remain
++// case-insensitive on the default macOS/Windows filesystems, so a case-only typo
++// still resolves as present at this layer and is caught by the index instead.
++//
++// idx is the candidate file index for this reconcile run (Epic 5.4), built once
++// from `git ls-files` and shared across every finding. It powers PathSuggestion
++// and the case-only check; a nil idx (non-git repo, or git unavailable) cleanly
++// degrades to 5.0 existence-only behavior with no suggestion.
++func ValidatePath(f *Finding, root string, idx *FileIndex) {
+ 	if f == nil {
+ 		return
+ 	}
+@@ -48,24 +61,81 @@ func ValidatePath(f *Finding, root string) {
+ 	// traversal ("../../x") or absolute ("/etc/passwd") File could otherwise stat
+ 	// a file outside the reviewed repo — an existence oracle, and a path outside
+ 	// the repo is not a valid review location anyway. Such a path is flagged
+-	// invalid rather than probed. Lexical containment (no EvalSymlinks) is
+-	// proportionate: this is existence-only and never reads file contents.
++	// invalid rather than probed (and never suggested — it is not a typo). This
++	// lexical guard is cheap and runs before any filesystem call; the symlink-
++	// resolved containment check below catches the cases lexical analysis cannot
++	// (a path that escapes only after a symlinked segment is followed).
+ 	if rel, err := filepath.Rel(root, joined); err != nil ||
+ 		rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+ 		f.PathValid = false
+ 		f.PathWarning = PathNotFoundWarning
+ 		return
+ 	}
+-	_, err := os.Stat(joined)
+-	switch {
+-	case err == nil:
++	// Tier 3 (case-only) is checked before existence: on a case-insensitive
++	// filesystem os.Stat/EvalSymlinks would report a case-typo as present, so the
++	// index — not the filesystem — is authoritative for case. A byte-exact
++	// citation reports no mismatch and falls through to the existence check.
++	if idx != nil {
++		if suggestion, mismatch := idx.CaseCorrection(f.File); mismatch {
++			f.PathValid = false
++			f.PathWarning = PathNotFoundWarning
++			f.PathSuggestion = suggestion // "" when ambiguous (multiple cases)
++			return
++		}
++	}
++	switch existsContained(root, joined) {
++	case existsInside:
+ 		f.PathValid = true
+ 		f.PathWarning = ""
+-	case os.IsNotExist(err):
++	case existsOutsideOrAbsent:
+ 		f.PathValid = false
+ 		f.PathWarning = PathNotFoundWarning
+-	default:
++		if idx != nil {
++			// Tier 1 (exact basename elsewhere) then Tier 2 (same-dir typo).
++			f.PathSuggestion = idx.MissingSuggestion(f.File)
++		}
++	default: // existsIndeterminate
+ 		// Indeterminate (permission, I/O): leave the finding unflagged rather
+ 		// than assert a "not found" we cannot prove.
+ 	}
+ }
++
++type existence int
++
++const (
++	existsIndeterminate existence = iota
++	existsInside
++	existsOutsideOrAbsent
++)
++
++// existsContained reports whether joined resolves to a real file that still
++// lives under root once every symlink in both paths is resolved. A path that is
++// absent, or that escapes root via a symlink, is existsOutsideOrAbsent; a
++// permission/IO error that proves nothing is existsIndeterminate.
++func existsContained(root, joined string) existence {
++	absRoot, err := filepath.Abs(root)
++	if err != nil {
++		absRoot = root
++	}
++	absJoined, err := filepath.Abs(joined)
++	if err != nil {
++		absJoined = joined
++	}
++	realRoot, err := filepath.EvalSymlinks(absRoot)
++	if err != nil {
++		realRoot = absRoot // best effort; containment still re-checked below
++	}
++	resolved, err := filepath.EvalSymlinks(absJoined)
++	switch {
++	case err == nil:
++		rel, rerr := filepath.Rel(realRoot, resolved)
++		if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
++			return existsOutsideOrAbsent // escaped the repo via a symlink
++		}
++		return existsInside
++	case os.IsNotExist(err):
++		return existsOutsideOrAbsent
++	default:
++		return existsIndeterminate
++	}
++}
+diff --git a/internal/stream/validate_test.go b/internal/stream/validate_test.go
+index 4467082..3734a3c 100644
+--- a/internal/stream/validate_test.go
++++ b/internal/stream/validate_test.go
+@@ -17,7 +17,7 @@ func TestValidatePath_ExistingFile(t *testing.T) {
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, "internal/auth/validate.go"), []byte("package auth\n"), 0o644))
+ 
+ 	f := Finding{File: "internal/auth/validate.go", Line: 10}
+-	ValidatePath(&f, root)
++	ValidatePath(&f, root, nil)
+ 
+ 	assert.True(t, f.PathValid)
+ 	assert.Empty(t, f.PathWarning)
+@@ -29,7 +29,7 @@ func TestValidatePath_MissingFile(t *testing.T) {
+ 	root := t.TempDir()
+ 
+ 	f := Finding{File: "internal/auth/validator.go", Line: 10}
+-	ValidatePath(&f, root)
++	ValidatePath(&f, root, nil)
+ 
+ 	assert.False(t, f.PathValid)
+ 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
+@@ -43,7 +43,7 @@ func TestValidatePath_Typo(t *testing.T) {
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, "internal/auth/validate.go"), []byte("package auth\n"), 0o644))
+ 
+ 	f := Finding{File: "internal/auth/validator.go", Line: 5}
+-	ValidatePath(&f, root)
++	ValidatePath(&f, root, nil)
+ 
+ 	assert.False(t, f.PathValid)
+ 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
+@@ -58,7 +58,7 @@ func TestValidatePath_WrongDirectory(t *testing.T) {
+ 	require.NoError(t, os.WriteFile(filepath.Join(root, "pkg/auth/validator.go"), []byte("package auth\n"), 0o644))
+ 
+ 	f := Finding{File: "internal/auth/validator.go", Line: 5}
+-	ValidatePath(&f, root)
++	ValidatePath(&f, root, nil)
+ 
+ 	assert.False(t, f.PathValid)
+ 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
+@@ -68,7 +68,7 @@ func TestValidatePath_WrongDirectory(t *testing.T) {
+ // nothing to validate and must never be falsely flagged.
+ func TestValidatePath_EmptyFileLeftUnflagged(t *testing.T) {
+ 	f := Finding{File: "", Line: 0}
+-	ValidatePath(&f, t.TempDir())
++	ValidatePath(&f, t.TempDir(), nil)
+ 
+ 	assert.False(t, f.PathValid)
+ 	assert.Empty(t, f.PathWarning)
+@@ -78,7 +78,7 @@ func TestValidatePath_EmptyFileLeftUnflagged(t *testing.T) {
+ // (the package dir during tests), where parser.go exists.
+ func TestValidatePath_EmptyRootDefaultsToCwd(t *testing.T) {
+ 	f := Finding{File: "parser.go"}
+-	ValidatePath(&f, "")
++	ValidatePath(&f, "", nil)
+ 
+ 	assert.True(t, f.PathValid)
+ 	assert.Empty(t, f.PathWarning)
+@@ -94,7 +94,7 @@ func TestValidatePath_EscapesRootIsInvalid(t *testing.T) {
+ 	t.Cleanup(func() { _ = os.Remove(parentFile) })
+ 
+ 	f := Finding{File: "../atcr-outside.go"}
+-	ValidatePath(&f, root)
++	ValidatePath(&f, root, nil)
+ 
+ 	assert.False(t, f.PathValid)
+ 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
+@@ -106,7 +106,7 @@ func TestValidatePath_EscapesRootIsInvalid(t *testing.T) {
+ func TestValidatePath_AbsolutePathNeutralized(t *testing.T) {
+ 	root := t.TempDir()
+ 	f := Finding{File: "/etc/hosts"}
+-	ValidatePath(&f, root)
++	ValidatePath(&f, root, nil)
+ 
+ 	assert.False(t, f.PathValid)
+ 	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
+@@ -114,5 +114,109 @@ func TestValidatePath_AbsolutePathNeutralized(t *testing.T) {
+ 
+ // TestValidatePath_NilSafe: a nil finding pointer is a no-op, not a panic.
+ func TestValidatePath_NilSafe(t *testing.T) {
+-	assert.NotPanics(t, func() { ValidatePath(nil, t.TempDir()) })
++	assert.NotPanics(t, func() { ValidatePath(nil, t.TempDir(), nil) })
++}
++
++// TestValidatePath_SymlinkEscapeFlagged: a symlinked path segment that resolves
++// outside the repo root must NOT be reported as present (Epic 5.4 AC5 — no
++// existence oracle). The cleaned path "link/target" has no ".." so it clears the
++// lexical guard; only symlink resolution catches the escape.
++func TestValidatePath_SymlinkEscapeFlagged(t *testing.T) {
++	root := t.TempDir()
++	outside := t.TempDir() // a sibling temp dir, outside root
++	require.NoError(t, os.WriteFile(filepath.Join(outside, "target"), []byte("x\n"), 0o644))
++	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
++
++	f := Finding{File: "link/target"}
++	ValidatePath(&f, root, nil)
++
++	assert.False(t, f.PathValid, "a file reached only via a symlink out of the repo must not be valid")
++	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
++}
++
++// TestValidatePath_SuggestsWrongDirectory: with a candidate index, a wrong-
++// directory hallucination yields the real file as PathSuggestion (AC2/AC6).
++func TestValidatePath_SuggestsWrongDirectory(t *testing.T) {
++	root := gitRepo(t, "pkg/auth/validator.go")
++	idx := BuildFileIndex(root)
++
++	f := Finding{File: "internal/auth/validator.go"}
++	ValidatePath(&f, root, idx)
++
++	assert.False(t, f.PathValid)
++	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
++	assert.Equal(t, "pkg/auth/validator.go", f.PathSuggestion)
++}
++
++// TestValidatePath_SuggestsTypo: a same-directory typo yields the closest file
++// (the 5.0 motivating example) as PathSuggestion (AC4).
++func TestValidatePath_SuggestsTypo(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go")
++	idx := BuildFileIndex(root)
++
++	f := Finding{File: "internal/auth/validator.go"}
++	ValidatePath(&f, root, idx)
++
++	assert.False(t, f.PathValid)
++	assert.Equal(t, "internal/auth/validate.go", f.PathSuggestion)
++}
++
++// TestValidatePath_SuggestsCaseTypo: a case-only difference is flagged invalid
++// and suggests the correctly-cased path — even though os.Stat resolves it as
++// present on a case-insensitive filesystem (AC3).
++func TestValidatePath_SuggestsCaseTypo(t *testing.T) {
++	root := gitRepo(t, "internal/auth/parser.go")
++	idx := BuildFileIndex(root)
++
++	f := Finding{File: "internal/auth/Parser.go"}
++	ValidatePath(&f, root, idx)
++
++	assert.False(t, f.PathValid, "a case-only typo must be flagged even on case-insensitive FS")
++	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
++	assert.Equal(t, "internal/auth/parser.go", f.PathSuggestion)
++}
++
++// TestValidatePath_ValidFileNoSuggestion: a correctly-cited tracked file stays
++// valid with no suggestion.
++func TestValidatePath_ValidFileNoSuggestion(t *testing.T) {
++	root := gitRepo(t, "internal/auth/validate.go")
++	idx := BuildFileIndex(root)
++
++	f := Finding{File: "internal/auth/validate.go"}
++	ValidatePath(&f, root, idx)
++
++	assert.True(t, f.PathValid)
++	assert.Empty(t, f.PathWarning)
++	assert.Empty(t, f.PathSuggestion)
++}
++
++// TestValidatePath_SymlinkEscapeNoSuggestion: AC5 full — a symlink-escaping path
++// stays flagged invalid AND emits no suggestion, even with an index present.
++func TestValidatePath_SymlinkEscapeNoSuggestion(t *testing.T) {
++	root := gitRepo(t, "internal/real.go")
++	outside := t.TempDir()
++	require.NoError(t, os.WriteFile(filepath.Join(outside, "known"), []byte("x\n"), 0o644))
++	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
++	idx := BuildFileIndex(root)
++
++	f := Finding{File: "link/known"}
++	ValidatePath(&f, root, idx)
++
++	assert.False(t, f.PathValid)
++	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
++	assert.Empty(t, f.PathSuggestion)
++}
++
++// TestValidatePath_NilIndexNoSuggestion: with no index (non-git repo), a missing
++// path is flagged invalid but gets no suggestion — graceful degradation to 5.0
++// existence-only behavior.
++func TestValidatePath_NilIndexNoSuggestion(t *testing.T) {
++	root := t.TempDir()
++
++	f := Finding{File: "internal/auth/validator.go"}
++	ValidatePath(&f, root, nil)
++
++	assert.False(t, f.PathValid)
++	assert.Equal(t, PathNotFoundWarning, f.PathWarning)
++	assert.Empty(t, f.PathSuggestion)
+ }

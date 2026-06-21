@@ -71,8 +71,12 @@ func (s *Store) Get(key string) (string, bool, error) {
 	var e entry
 	if jerr := json.Unmarshal(data, &e); jerr != nil || e.Key != key {
 		// Corrupt or mismatched entry: drop it so the next run repopulates a
-		// clean record, and report a miss rather than an error.
-		_ = os.Remove(path)
+		// clean record, and report a miss rather than an error. A failure to
+		// remove the entry is itself a genuine IO error, so surface it (per the
+		// contract above) instead of masking it as a clean miss.
+		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return "", false, rerr
+		}
 		return "", false, nil
 	}
 	// Refresh recency for LRU eviction (best-effort: a touch failure only makes
@@ -108,6 +112,12 @@ func (s *Store) Put(key, content string) error {
 
 // evict deletes least-recently-used entries until the total on-disk size is at
 // or under maxBytes. maxBytes <= 0 disables eviction. Caller must hold s.mu.
+//
+// The mtime-based recency ordering is not racy: Get refreshes an entry's mtime
+// via os.Chtimes while holding s.mu for its whole body, and evict reads those
+// mtimes via os.ReadDir only from Put, which also holds s.mu. The single store
+// mutex fully serializes the two — they are never concurrent — so the ordering
+// is exact, not merely approximate.
 func (s *Store) evict() {
 	if s.maxBytes <= 0 {
 		return
@@ -139,10 +149,24 @@ func (s *Store) evict() {
 	}
 	// Oldest first — least-recently-used (Get refreshes mtime).
 	sort.Slice(files, func(i, j int) bool { return files[i].mtime.Before(files[j].mtime) })
-	for _, f := range files {
+	// Protect the most-recently-written entry (newest mtime, last after the sort)
+	// from its own eviction pass: a single entry larger than maxBytes would
+	// otherwise be deleted by the Put that just wrote it, making it permanently
+	// uncacheable and re-called every run. Accept a transient over-cap instead of
+	// churning the new entry.
+	newest := len(files) - 1
+	for i, f := range files {
 		if total <= s.maxBytes {
 			break
 		}
+		if i == newest {
+			continue
+		}
+		// Best-effort: a failed delete only defers reclaiming disk to the next
+		// Put (it never fails one), so the error is intentionally swallowed.
+		// This is deliberately asymmetric with the Get-path corrupt-entry
+		// removal, which surfaces its error — there a failed delete would serve
+		// stale corrupt data forever, whereas here it is harmless.
 		if err := os.Remove(f.path); err == nil {
 			total -= f.size
 		}

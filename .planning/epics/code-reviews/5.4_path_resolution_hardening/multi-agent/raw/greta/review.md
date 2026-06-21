@@ -1,0 +1,1 @@
+LOW|internal/stream/fileindex.go:52|strings.TrimSpace may inadvertently strip valid leading/trailing spaces from git-tracked filenames|Remove TrimSpace as git ls-files -z output is strictly NUL-delimited and requires no whitespace trimming|correctness|2|TrimSpace on NUL-delimited paths modifies valid filenames|greta

@@ -1,0 +1,10 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+LOW|internal/stream/fileindex.go:51|Potential for trailing NUL character in path|Trim the trailing NUL byte if `git ls-files -z` output ends with one|correctness|10|`strings.Split(string(out), "\x00")` on a NUL-terminated list creates an empty trailing string|otto
+HIGH|internal/stream/suggest.go:156|prefixDerivation incorrectly flags validator/validate as derivation|Check for specific derivation suffixes instead of HasPrefix|correctness|10|HasPrefix("validator","validate") is true, skipping valid suggestion|bruce
+MEDIUM|internal/stream/fileindex.go:50|exec.Command error swallowed silently|Log or record the error so callers can distinguish "no git" from "git failed"|error-handling|15|`if err != nil { return nil }` discards the error|bruce
+LOW|internal/stream/fileindex.go:63|indexFromPaths does not deduplicate NUL-split empty strings|Strip trailing empty string from strings.Split when input ends with NUL|correctness|5|`strings.Split(string(out), "\x00")` may produce a trailing empty element|bruce
+LOW|internal/stream/suggest.go:148|segOverlap uses set intersection; O(n*m) for large repos|Use a map for one side and iterate the other; negligible for typical repos|performance|10|`for _, s := range strings.Split(b, "/")` nested loop|bruce
+LOW|internal/stream/validate.go:86|EvalSymlinks errors on root are silently swallowed|Warn or fall back to lexical containment only when root cannot be resolved|error-handling|10|`if err != nil { realRoot = absRoot }` with no log|bruce
+LOW|internal/stream/fileindex.go:52|strings.TrimSpace may inadvertently strip valid leading/trailing spaces from git-tracked filenames|Remove TrimSpace as git ls-files -z output is strictly NUL-delimited and requires no whitespace trimming|correctness|2|TrimSpace on NUL-delimited paths modifies valid filenames|greta

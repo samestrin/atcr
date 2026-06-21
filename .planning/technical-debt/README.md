@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 3 | 19 | 0 |
-| LOW | 20 | 17 | 0 |
+| MEDIUM | 2 | 19 | 0 |
+| LOW | 10 | 17 | 0 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 23 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 60
+**Last Modified:** 2026-06-21 | **Open Items:** 12 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -33,32 +33,19 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
-### [2026-06-21] From Sprint: epic-5.4
 
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 6 | [ ] | LOW | internal/stream/fileindex.go:34 | BuildFileIndex runs git -C root ls-files which lists paths relative to root/ if root is a repo subdirectory while finding.File paths are root-relative by contract; consistent today (callers pass "." = repo root) but a subdir Root would silently yield zero suggestions | Document the Root=repo-root contract on BuildFileIndex or resolve git toplevel and reconcile path bases if subdir roots ever become supported | ERROR_HANDLING | 30 | execute-epic-independent |
-| 6 | [ ] | LOW | internal/stream/validate.go:96 | existsIndeterminate (EvalSymlinks permission/IO error) leaves a finding entirely unflagged with no log or metric, so a systematic permission problem suppressing all path validation would be invisible in production | Thread an optional logger or counter into the validation layer and emit a debug signal on the indeterminate branch | OBSERVABILITY | 15 | execute-epic-independent |
-| 6 | [ ] | LOW | internal/stream/suggest.go:96 | Tier 1 suggests a lone exact-basename match in a completely unrelated directory with zero path-segment overlap (AC2-mandated, no threshold); for very common basenames this can be a confidently-wrong suggestion | Optionally require a minimum segment overlap for lone Tier 1 matches, or accept per AC2 and document the trade-off | CORRECTNESS | 30 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: 5.2_diff_caching_incremental_reviews
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 5 | [ ] | MEDIUM | internal/cache/store.go:89 | Silent failure to remove corrupt cache entry | Log removal error and return error to caller or retry | error-handling | 5 | code-review | greta | MEDIUM |
-| 5 | [ ] | LOW | internal/cache/store.go:137 | Potential race condition on file mtime | The `evict` method reads directory entries and their mtimes while `Get` updates them via `os.Chtimes`. While both are under `s.mu`, `os.Chtimes` is a system call that may not be perfectly atomic with `os.ReadDir` in all environments, though the mutex largely mitigates this. | correctness | 15 | code-review | otto | MEDIUM |
-| 5 | [ ] | LOW | internal/cache/store.go:137 | LRU eviction silently ignores file deletion errors | The `evict` method reads directory entries and their mtimes while `Get` updates them via `os.Chtimes`. While both are under `s.mu`, `os.Chtimes` is a system call that may not be perfectly atomic with `os.ReadDir` in all environments, though the mutex largely mitigates this. | correctness | 15 | code-review | greta | MEDIUM |
-| U | [ ] | LOW | .gitignore:0 | The diff cache writes reviewer outputs (up to the 50 MiB cap) to .atcr/cache/. The epic clarification assumed this dir is "gitignored like .atcr/reviews", but the only ignore rule for .atcr/ lives in .git/info/exclude (line 18), which is a LOCAL, per-clone, untracked file — it is NOT committed and does not travel with the repo. On a fresh clone, in CI, or for any collaborator, .atcr/cache/ is untracked-but-not-ignored, so reviewer-output JSON (which can contain code snippets and review prose) can be accidentally staged by 'git add .' and the cache can bloat the repo. 5.2 amplifies a pre-existing pattern by adding a new high-churn directory under the same unshared protection. | Add '.atcr/' (or explicitly '.atcr/cache/' and '.atcr/reviews/') to the committed .gitignore so the ignore rule is shared across clones and CI, not dependent on each developer's local .git/info/exclude. | ops | 15 | code-review | claude | MEDIUM |
 | U | [ ] | MEDIUM | internal/fanout/engine.go:596 | Missing FallbackFrom in synthesized cache-hit Result | Add FallbackFrom: a.FallbackFrom to the Result struct | correctness | 5 | code-review | bruce | MEDIUM |
-| U | [ ] | LOW | internal/fanout/review.go:613 | diffCacheKey(prompt, model, temperature) keys a cache entry on the model-id STRING but not the provider/BaseURL. atcr supports arbitrary OpenAI-compatible providers, so two roster agents can share an identical model id (e.g. "gpt-4o-mini" or a local model name) served by different endpoints/API-key envs. With identical rendered prompt + identical model id + identical temperature, the two agents derive the SAME cache key, so the second replays the first backend's output — a cross-provider cache collision that serves one endpoint's review for the other. Narrow (most rosters use distinct model ids), but real for multi-provider-same-model rosters. | In diffCacheKey, fold a provider discriminator (the resolved BaseURL host, or the registry provider name) into the tuning token passed to cache.Key alongside the temperature, so distinct backends never share an entry. Update internal/fanout/cache_test.go with a same-model/different-provider miss case. | correctness | 45 | code-review | claude | MEDIUM |
+
 ### [2026-06-20] From Sprint: epic-5.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | U | [ ] | LOW | internal/cache/store.go:115 | Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries | Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis | PERFORMANCE | 30 | execute-epic-cumulative |
-| U | [ ] | LOW | internal/cache/store.go:118 | A single cache entry larger than cache_max_bytes is written by Put then immediately removed by evict (oldest-first loop reaches the just-written newest file while still over cap), so an oversized reviewer output is permanently uncacheable and re-called every run after a wasted write | In evict, protect the most-recently-written (newest mtime) entry from deletion, accepting a transient over-cap rather than churning the new entry | EDGE_CASES | 20 | execute-epic-independent |
-| U | [ ] | LOW | cmd/atcr/init.go:96 | atcr init writes no .gitignore, so .atcr/cache (up to 50MB of LLM reviews of source, persisted long-term) is only excluded from git if the user manually ignored .atcr/; absent that, cached review content can be committed (this repo is covered by .git/info/exclude, but atcr's end users are not) | Have atcr init emit a .atcr/.gitignore covering cache/ and reviews/, or have cache.Store drop a .gitignore in its own dir on first write | SECURITY | 20 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/engine.go:600 | The synthesized cache-hit Result omits ToolsRequested that invokeSingleShot sets (=a.Tools); harmless today because only non-tool agents reach the cached path so a.Tools is false, but the divergence is a latent trap if the cache scope ever widens | Build the cache-hit Result via a shared constructor that copies the same field set invokeSingleShot produces, so the two OK-result shapes cannot drift | CORRECTNESS | 15 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: epic-5.0
 
