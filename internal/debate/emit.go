@@ -107,6 +107,13 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 		if !ok {
 			continue
 		}
+		// reconcile.Verification contract: the writing stage MUST validate Verdict
+		// against the enum before persisting — an empty or out-of-enum verdict is a
+		// contract violation downstream consumers choke on. Skip the whole ruling
+		// (severity included) rather than persisting a malformed verification block.
+		if !validVerdict(ra.verdict) {
+			continue
+		}
 		if ra.severity != "" {
 			findings[i].Severity = ra.severity
 		}
@@ -117,6 +124,18 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 			ChallengeSurvived: ra.survived,
 		}
 		findings[i].Confidence = reconcile.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
+	}
+}
+
+// validVerdict reports whether v is a canonical reconcile verdict. applyRulings
+// gates on this before persisting so a malformed verdict (empty or out-of-enum) is
+// never written into a Verification block (reconcile.Verification's writer contract).
+func validVerdict(v string) bool {
+	switch v {
+	case reconcile.VerdictConfirmed, reconcile.VerdictRefuted, reconcile.VerdictUnverifiable:
+		return true
+	default:
+		return false
 	}
 }
 
