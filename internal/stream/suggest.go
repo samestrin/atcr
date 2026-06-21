@@ -101,8 +101,10 @@ func (x *FileIndex) tier1(rel, base, dir string) string {
 		return ""
 	}
 	bestScore, best, tie := -1, "", false
+	selfTracked := false
 	for _, c := range candidates {
 		if c == rel {
+			selfTracked = true
 			continue
 		}
 		score := segOverlap(dir, path.Dir(c))
@@ -115,6 +117,11 @@ func (x *FileIndex) tier1(rel, base, dir string) string {
 	}
 	if tie || best == "" {
 		return "" // ambiguous: a wrong guess is worse than none
+	}
+	if selfTracked {
+		// The cited path is itself tracked; a tracked path is never a hallucination
+		// to correct, regardless of on-disk state.
+		return ""
 	}
 	return best
 }
