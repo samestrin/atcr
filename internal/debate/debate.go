@@ -149,18 +149,20 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		}
 	}
 
-	if len(rulings) > 0 {
-		applyRulings(findings, rulings)
-		if err := writeFindings(reviewDir, findings); err != nil {
-			return Result{}, err
-		}
-	}
+	// Write the debate record first: it holds every completed ruling and must
+	// survive a subsequent findings-write failure.
 	if err := writeDebateFile(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
 		Overflow:      overflowItems(sel.Overflow),
 	}); err != nil {
 		return Result{}, err
+	}
+	if len(rulings) > 0 {
+		applyRulings(findings, rulings)
+		if err := writeFindings(reviewDir, findings); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := updateManifestStage(reviewDir); err != nil {
 		return Result{}, err
