@@ -20,6 +20,14 @@ const minSecretLen = 8
 // persisted on the slot). Values are deduped by resolved value and any value
 // shorter than minSecretLen is skipped to avoid over-redaction. The resolved
 // values are never logged: they flow only into the Redactor by value.
+//
+// Snapshot contract (known limitation): the values are resolved once, at this
+// call, and handed to the Redactor by value. A key set or rotated in the
+// environment AFTER this call returns is therefore not added to the exact-value
+// scrub list and could appear verbatim in a later log line. This is acceptable
+// because every entry point resolves keys here before any provider call runs
+// (cmd/atcr review.go/resume.go via correlateAndRedact, the MCP handler via
+// reviewContext), so the live scrub set always covers the keys the run uses.
 func (p *PreparedReview) SecretValues() []string {
 	var secrets []string
 	seen := make(map[string]struct{})
