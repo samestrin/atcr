@@ -313,12 +313,20 @@ func isRefuted(f reconcile.JSONFinding) bool {
 
 // writePathWarning emits the hallucinated-path warning line for a finding whose
 // file failed existence validation (Epic 5.0). A no-op when the path is valid or
-// was never validated (PathWarning empty). The path is HTML-escaped so a
-// reviewer-controlled path cannot inject markup.
+// was never validated (PathWarning empty). When the candidate index produced a
+// correction (Epic 5.4), a "(did you mean …)" clause points at the real file
+// while the original cited path is preserved. Both paths are HTML-escaped so a
+// reviewer-controlled path cannot inject markup; this single helper backs every
+// report view (markdown, checklist, and the refuted section).
 func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
-	if f.PathWarning != "" {
-		fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(f.File))
+	if f.PathWarning == "" {
+		return
 	}
+	if f.PathSuggestion != "" {
+		fmt.Fprintf(b, "  - ⚠️ File not found: %s (did you mean %s?)\n", esc(f.File), esc(f.PathSuggestion))
+		return
+	}
+	fmt.Fprintf(b, "  - ⚠️ File not found: %s\n", esc(f.File))
 }
 
 // writeSkepticBlock renders the per-finding Skeptic section: name, verdict, an

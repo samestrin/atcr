@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 3 | 19 | 0 |
-| LOW | 17 | 17 | 0 |
+| LOW | 20 | 17 | 0 |
 
 
-**Last Modified:** 2026-06-20 | **Open Items:** 20 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 57
+**Last Modified:** 2026-06-21 | **Open Items:** 23 | **Deferred Items:** 37 | **Resolved Items:** 0 | **Total Items:** 60
 
 ## Directory Structure
 
@@ -32,6 +32,14 @@ technical-debt/
 2. **Larger items**: Create a new document in `sprints/pending/`
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
+
+### [2026-06-21] From Sprint: epic-5.4
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 6 | [ ] | LOW | internal/stream/fileindex.go:34 | BuildFileIndex runs git -C root ls-files which lists paths relative to root/ if root is a repo subdirectory while finding.File paths are root-relative by contract; consistent today (callers pass "." = repo root) but a subdir Root would silently yield zero suggestions | Document the Root=repo-root contract on BuildFileIndex or resolve git toplevel and reconcile path bases if subdir roots ever become supported | ERROR_HANDLING | 30 | execute-epic-independent |
+| 6 | [ ] | LOW | internal/stream/validate.go:96 | existsIndeterminate (EvalSymlinks permission/IO error) leaves a finding entirely unflagged with no log or metric, so a systematic permission problem suppressing all path validation would be invisible in production | Thread an optional logger or counter into the validation layer and emit a debug signal on the indeterminate branch | OBSERVABILITY | 15 | execute-epic-independent |
+| 6 | [ ] | LOW | internal/stream/suggest.go:96 | Tier 1 suggests a lone exact-basename match in a completely unrelated directory with zero path-segment overlap (AC2-mandated, no threshold); for very common basenames this can be a confidently-wrong suggestion | Optionally require a minimum segment overlap for lone Tier 1 matches, or accept per AC2 and document the trade-off | CORRECTNESS | 30 | execute-epic-independent |
 
 ### [2026-06-20] From Sprint: 5.2_diff_caching_incremental_reviews
 
