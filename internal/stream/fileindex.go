@@ -127,9 +127,9 @@ func (x *FileIndex) HasDir(dir string) bool {
 	return len(x.dirFiles[toSlashKeys(dir)]) > 0
 }
 
-// ByFold returns the tracked relpaths equal to relpath under Unicode-simple
-// case folding (lowercase). A correctly-cased citation returns itself; a
-// case-typo returns the real path(s).
+// ByFold returns the tracked relpaths equal to relpath under ASCII-lowercase
+// matching (not full Unicode case folding). A correctly-cased citation returns
+// itself; a case-typo returns the real path(s).
 func (x *FileIndex) ByFold(relpath string) []string {
 	if x == nil {
 		return nil
