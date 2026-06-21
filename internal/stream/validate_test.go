@@ -263,6 +263,29 @@ func TestValidatePath_IndeterminateEmitsMetric(t *testing.T) {
 		"an indeterminate path check must increment the observability counter")
 }
 
+// TestValidatePath_RootUnresolvedEmitsMetric: when the validation root itself
+// cannot be symlink-resolved (a broken symlink, a permission error), the code
+// previously fell back to the unresolved path silently — a degraded containment
+// check with no signal. The failure must now be observable via a counter, the
+// same mechanism the indeterminate branch uses, so a misconfigured root does not
+// silently weaken every path check.
+//
+// The failure is forced with a root that is a symlink to a nonexistent target:
+// filepath.EvalSymlinks on it returns an error that is not a clean "not found"
+// of the file under it, exercising the root-resolution failure branch.
+func TestValidatePath_RootUnresolvedEmitsMetric(t *testing.T) {
+	metrics.DefaultRegistry.Reset()
+
+	root := filepath.Join(t.TempDir(), "broken-root")
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nonexistent-target"), root))
+
+	f := Finding{File: "child.go", Line: 3}
+	ValidatePath(&f, root, nil)
+
+	assert.Equal(t, int64(1), metrics.Counter("atcr_path_validation_root_unresolved_total").Value(),
+		"an unresolvable validation root must increment the observability counter")
+}
+
 // TestValidatePath_NilIndexNoSuggestion: with no index (non-git repo), a missing
 // path is flagged invalid but gets no suggestion — graceful degradation to 5.0
 // existence-only behavior.
