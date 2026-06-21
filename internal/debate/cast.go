@@ -155,14 +155,15 @@ func pickDistinct(reg *registry.Registry, role, label string, excludeModels []st
 	return Caster{}, false
 }
 
-// resolveProvider resolves an agent's provider. A nil Providers map (an
-// unvalidated test registry) yields a zero provider that the caller tolerates; a
-// non-nil map with the key absent fails so a seat with no endpoint/key is never
-// cast.
+// resolveProvider resolves an agent's provider. A nil Providers map or a
+// zero-value provider fails so a seat with no endpoint/key is never cast.
 func resolveProvider(reg *registry.Registry, cfg registry.AgentConfig) (registry.Provider, bool) {
 	if reg.Providers == nil {
-		return registry.Provider{}, true
+		return registry.Provider{}, false
 	}
 	p, ok := reg.Providers[cfg.Provider]
-	return p, ok
+	if !ok || p.BaseURL == "" {
+		return registry.Provider{}, false
+	}
+	return p, true
 }
