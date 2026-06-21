@@ -112,6 +112,12 @@ func (s *Store) Put(key, content string) error {
 
 // evict deletes least-recently-used entries until the total on-disk size is at
 // or under maxBytes. maxBytes <= 0 disables eviction. Caller must hold s.mu.
+//
+// The mtime-based recency ordering is not racy: Get refreshes an entry's mtime
+// via os.Chtimes while holding s.mu for its whole body, and evict reads those
+// mtimes via os.ReadDir only from Put, which also holds s.mu. The single store
+// mutex fully serializes the two — they are never concurrent — so the ordering
+// is exact, not merely approximate.
 func (s *Store) evict() {
 	if s.maxBytes <= 0 {
 		return
@@ -147,6 +153,11 @@ func (s *Store) evict() {
 		if total <= s.maxBytes {
 			break
 		}
+		// Best-effort: a failed delete only defers reclaiming disk to the next
+		// Put (it never fails one), so the error is intentionally swallowed.
+		// This is deliberately asymmetric with the Get-path corrupt-entry
+		// removal, which surfaces its error — there a failed delete would serve
+		// stale corrupt data forever, whereas here it is harmless.
 		if err := os.Remove(f.path); err == nil {
 			total -= f.size
 		}
