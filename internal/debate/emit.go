@@ -120,9 +120,17 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 	}
 }
 
+// writeFindingsHook, when non-nil, is called instead of the real write and its
+// return value is used. Tests use this to inject write faults without touching
+// the filesystem.
+var writeFindingsHook func(reviewDir string, findings []reconcile.JSONFinding) error
+
 // writeFindings serializes the findings slice to reconciled/findings.json
 // atomically (indented, trailing newline), mirroring the verify re-emit.
 func writeFindings(reviewDir string, findings []reconcile.JSONFinding) error {
+	if writeFindingsHook != nil {
+		return writeFindingsHook(reviewDir, findings)
+	}
 	path := filepath.Join(reviewDir, reconciledSubdir, reconcile.FindingsJSON)
 	data, err := json.MarshalIndent(findings, "", "  ")
 	if err != nil {

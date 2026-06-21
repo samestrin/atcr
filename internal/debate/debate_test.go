@@ -3,6 +3,7 @@ package debate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -332,6 +333,26 @@ func TestRunDebate_ContextCancelled_StopsLoop(t *testing.T) {
 		assert.Equal(t, OutcomeUnresolved, item.Outcome)
 		assert.Equal(t, "context_cancelled", item.Reason)
 	}
+}
+
+func TestRunDebate_WritesDebateFileBeforeFindings(t *testing.T) {
+	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
+	}}
+
+	var debateExistsWhenFindingsWritten bool
+	oldHook := writeFindingsHook
+	writeFindingsHook = func(reviewDir string, findings []reconcile.JSONFinding) error {
+		_, err := os.Stat(filepath.Join(reviewDir, reconciledSubdir, DebateJSON))
+		debateExistsWhenFindingsWritten = err == nil
+		return errors.New("injected findings write failure")
+	}
+	defer func() { writeFindingsHook = oldHook }()
+
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.Error(t, err)
+	assert.True(t, debateExistsWhenFindingsWritten, "debate.json must be written before findings.json")
 }
 
 func TestReadDebateFile(t *testing.T) {
