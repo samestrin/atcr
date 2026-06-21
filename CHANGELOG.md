@@ -1,3 +1,23 @@
+## [5.4.0] - 2026-06-21
+
+A flagged file path now comes with a way forward. When a reviewer cites a path that does not exist, the reconcile pipeline builds a one-time index of the repository's real tracked files (`git ls-files`) and suggests the file the finding most likely meant — a wrong directory, a basename typo, or a case-only difference — rendered as a `(did you mean …)` line next to the warning. Suggestions are advisory only: the original cited path is always preserved and never rewritten. The existence check is also now symlink-safe, closing an oracle where a repo symlink could report a file outside the repo as present, and case-only typos are caught even on case-insensitive macOS/Windows filesystems where they previously resolved silently.
+
+### Added
+
+- Candidate file index built once per reconcile run from `git ls-files` (gitignore-pruned, tracked files only), backing path-correction suggestions
+- `path_suggestion` field on the `findings.json` record (omitempty — absent and byte-identical to prior output when there is no suggestion) and a `⚠️ File not found: <path> (did you mean <real>?)` line in `report.md`, `atcr report`, and the checklist and refuted views
+- Tiered path matching: exact basename in another directory (no edit-distance threshold), a same-directory basename typo above a tuned similarity threshold (with a guard against pluralization/derivation siblings), and case-only differences
+
+### Changed
+
+- The finding existence check resolves symlinks and re-verifies containment under the repo root (`filepath.EvalSymlinks`) instead of a bare `os.Stat`, so a symlinked path segment can no longer probe for files outside the reviewed repository
+
+### Fixed
+
+- Case-only path typos (e.g. `Parser.go` for `parser.go`) are now flagged and corrected even on case-insensitive filesystems, where the prior existence check reported them as valid
+
+*Shipped via /execute-epic (epic 5.4)*
+
 ## [5.2.0] - 2026-06-20
 
 Repeated reviews of an unchanged diff no longer re-spend tokens. Each reviewer's output is now content-addressed under `.atcr/cache` and replayed on a re-run when the rendered prompt, model, and temperature are identical — so iterating with `atcr review` on a branch that has not changed (or changed elsewhere) skips the LLM call for every cached agent. Caching is scoped to the single-shot review fan-out only; tool-enabled agents (which read live code) and the verification stage are never cached. A failed or timed-out review is never cached.
