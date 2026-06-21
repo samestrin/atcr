@@ -91,6 +91,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
+	// Deduplicate findings on the {File,Line,Problem} triple before the radar is
+	// built. The reconciler does not guarantee uniqueness of this triple, and a
+	// ruling keyed on it would otherwise mutate every matching finding (and
+	// idempotency filtering would drop items that were never debated).
+	findings = deduplicateFindings(findings)
+
 	// Rebuild the radar from the current findings so the selection includes
 	// post-verify verification_disagreement items (absent from the reconcile-time
 	// disagreements.json snapshot) alongside severity splits and gray-zone clusters.
@@ -196,6 +202,24 @@ func filterAlreadyDebated(items []reconcile.DisagreementItem, findings []reconci
 			continue
 		}
 		out = append(out, it)
+	}
+	return out
+}
+
+// deduplicateFindings returns a copy of findings with only the first occurrence of
+// each {File,Line,Problem} triple retained. This keeps rulings from silently
+// mutating multiple findings that happen to share the same location and problem
+// text.
+func deduplicateFindings(findings []reconcile.JSONFinding) []reconcile.JSONFinding {
+	seen := make(map[FindingKey]bool, len(findings))
+	out := make([]reconcile.JSONFinding, 0, len(findings))
+	for _, f := range findings {
+		key := FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, f)
 	}
 	return out
 }
