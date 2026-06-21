@@ -165,6 +165,11 @@ type Registry struct {
 	// MaxParallel is a pointer so an explicit 0 (unbounded) survives default
 	// application in ResolveSettings.
 	MaxParallel *int `yaml:"max_parallel,omitempty"`
+	// CacheMaxBytes is the user-level (global) tier of the diff-cache size cap
+	// (Epic 5.2); a pointer so an explicit 0 (unbounded) survives default
+	// application. The project tier overrides it; unset falls through to the
+	// embedded DefaultCacheMaxBytes.
+	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
 
 	// Retry/backoff tunables (Epic 4.6) — the user-level (global) tier of the
 	// precedence chain, mirroring TimeoutSecs. Pointers so an explicit 0
@@ -237,6 +242,9 @@ func (r *Registry) validate() error {
 	}
 	if r.MaxParallel != nil && *r.MaxParallel < 0 {
 		errs = append(errs, fmt.Errorf("max_parallel must be >= 0 (0 = unbounded), got %d", *r.MaxParallel))
+	}
+	if r.CacheMaxBytes != nil && *r.CacheMaxBytes < 0 {
+		errs = append(errs, fmt.Errorf("cache_max_bytes must be >= 0 (0 = unbounded), got %d", *r.CacheMaxBytes))
 	}
 	// Retry tunables (Epic 4.6): 0 retries is valid (single attempt); the base
 	// delay must be positive so the exponential schedule has a starting point.
