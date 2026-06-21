@@ -303,6 +303,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				vres.FindingsProcessed, vres.VerdictCounts.Confirmed, vres.VerdictCounts.Refuted,
 				vres.VerdictCounts.Unverifiable)
 		}
+		// A debate failure here intentionally leaves the verify findings already
+		// written to disk: they are valid artifacts the operator can still inspect,
+		// and re-running --debate resumes from them. There is no cross-stage rollback;
+		// the failure is surfaced via debateFailureError. The debate stage's own
+		// internal write durability is tracked separately as TD at
+		// internal/debate/debate.go:146.
 		if debateFlag {
 			dres, derr := debate.Debate(ctx, ".", result.Dir, cfg.Registry, debate.Options{
 				SingleModel: boolFlag(cmd, "single-model"),
