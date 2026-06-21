@@ -212,3 +212,36 @@ func TestRunDebate_GrayZoneMergeIsIdempotent(t *testing.T) {
 	assert.True(t, after2[0].ClusterMerged)
 	assert.Equal(t, []string{"alice", "bob"}, after2[0].Reviewers)
 }
+
+// TestRunDebate_GrayZoneMergeLeavesAdjudicationArtifactsUntouched: inline gray-zone
+// application (Option A) and the authored adjudication.json path are independent
+// (AC3). A debate merge rewrites only findings.json/debate.json/manifest.json — it
+// must not rewrite the reconcile-time ambiguous.json sidecar, nor synthesize an
+// adjudication.json or ambiguous.original.json (the authored path's artifacts).
+func TestRunDebate_GrayZoneMergeLeavesAdjudicationArtifactsUntouched(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"off by one in loop", "MEDIUM", "alice",
+		"loop boundary error causes overflow", "HIGH", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	ambPath := filepath.Join(dir, reconciledSubdir, reconcile.AmbiguousJSON)
+	before, err := os.ReadFile(ambPath)
+	require.NoError(t, err)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err = runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(ambPath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "debate must not rewrite the reconcile-time ambiguous.json")
+
+	for _, name := range []string{reconcile.AdjudicationJSON, reconcile.OriginalAmbiguousJSON} {
+		_, statErr := os.Stat(filepath.Join(dir, reconciledSubdir, name))
+		assert.True(t, os.IsNotExist(statErr), "debate must not create the authored-path artifact %s", name)
+	}
+}
