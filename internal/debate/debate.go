@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -155,22 +156,39 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		}
 	}
 
-	// Write the debate record first: it holds every completed ruling and must
-	// survive a subsequent findings-write failure.
-	if err := writeDebateFile(reviewDir, DebateFile{
+	// Build all three stage artifacts in memory first, then flush them as one
+	// atomic group so a mid-sequence failure cannot leave partial state
+	// (e.g. findings.json updated but manifest.json or debate.json missing).
+	debatePath, debateBytes, err := computeDebateBytes(reviewDir, DebateFile{
 		SchemaVersion: DebateSchemaVersion,
 		Items:         items,
 		Overflow:      overflowItems(sel.Overflow),
-	}); err != nil {
+	})
+	if err != nil {
 		return Result{}, err
 	}
+
 	if len(rulings) > 0 {
 		applyRulings(findings, rulings)
-		if err := writeFindings(reviewDir, findings); err != nil {
-			return Result{}, err
-		}
 	}
-	if err := updateManifestStage(reviewDir); err != nil {
+	findingsPath, findingsBytes, err := computeFindingsBytes(reviewDir, findings)
+	if err != nil {
+		return Result{}, err
+	}
+
+	manifestPath, manifestBytes, err := computeManifestStageBytes(reviewDir)
+	if err != nil {
+		return Result{}, err
+	}
+
+	artifacts := []atomicwrite.Entry{
+		{Path: debatePath, Data: debateBytes},
+		{Path: findingsPath, Data: findingsBytes},
+	}
+	if manifestBytes != nil {
+		artifacts = append(artifacts, atomicwrite.Entry{Path: manifestPath, Data: manifestBytes})
+	}
+	if err := atomicwrite.WriteGroup(artifacts); err != nil {
 		return Result{}, err
 	}
 

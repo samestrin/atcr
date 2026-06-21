@@ -3,7 +3,6 @@ package debate
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -335,24 +334,24 @@ func TestRunDebate_ContextCancelled_StopsLoop(t *testing.T) {
 	}
 }
 
-func TestRunDebate_WritesDebateFileBeforeFindings(t *testing.T) {
+func TestRunDebate_GroupWriteIsAtomic(t *testing.T) {
 	dir := reviewDirWith(t, []reconcile.JSONFinding{splitFinding()})
+	// Corrupt manifest.json so computeManifestStageBytes fails before the group
+	// write. Because the three files are flushed via WriteGroup, no partial
+	// artifact (debate.json or findings.json) should land.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile), []byte("not json"), 0o644))
+
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
 	}}
 
-	var debateExistsWhenFindingsWritten bool
-	oldHook := writeFindingsHook
-	writeFindingsHook = func(reviewDir string, findings []reconcile.JSONFinding) error {
-		_, err := os.Stat(filepath.Join(reviewDir, reconciledSubdir, DebateJSON))
-		debateExistsWhenFindingsWritten = err == nil
-		return errors.New("injected findings write failure")
-	}
-	defer func() { writeFindingsHook = oldHook }()
-
 	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
 	require.Error(t, err)
-	assert.True(t, debateExistsWhenFindingsWritten, "debate.json must be written before findings.json")
+
+	_, err = os.Stat(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	assert.True(t, os.IsNotExist(err), "debate.json must not be written when group write fails")
+	f, _ := reconcile.ReadReconciledFindings(dir)
+	assert.Empty(t, f[0].Verification, "findings.json must not be mutated when group write fails")
 }
 
 func TestReadDebateFile(t *testing.T) {

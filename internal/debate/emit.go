@@ -120,28 +120,31 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 	}
 }
 
-// writeFindingsHook, when non-nil, is called instead of the real write and its
-// return value is used. Tests use this to inject write faults without touching
-// the filesystem.
-var writeFindingsHook func(reviewDir string, findings []reconcile.JSONFinding) error
+// computeFindingsBytes serializes the findings slice to indented JSON with a
+// trailing newline and returns the target path plus bytes. It mirrors the verify
+// re-emit format.
+func computeFindingsBytes(reviewDir string, findings []reconcile.JSONFinding) (string, []byte, error) {
+	path := filepath.Join(reviewDir, reconciledSubdir, reconcile.FindingsJSON)
+	data, err := json.MarshalIndent(findings, "", "  ")
+	if err != nil {
+		return "", nil, err
+	}
+	return path, append(data, '\n'), nil
+}
 
 // writeFindings serializes the findings slice to reconciled/findings.json
 // atomically (indented, trailing newline), mirroring the verify re-emit.
 func writeFindings(reviewDir string, findings []reconcile.JSONFinding) error {
-	if writeFindingsHook != nil {
-		return writeFindingsHook(reviewDir, findings)
-	}
-	path := filepath.Join(reviewDir, reconciledSubdir, reconcile.FindingsJSON)
-	data, err := json.MarshalIndent(findings, "", "  ")
+	path, data, err := computeFindingsBytes(reviewDir, findings)
 	if err != nil {
 		return err
 	}
-	return atomicfs.WriteFileAtomic(path, append(data, '\n'))
+	return atomicfs.WriteFileAtomic(path, data)
 }
 
-// writeDebateFile serializes the debate document to reconciled/debate.json
-// atomically.
-func writeDebateFile(reviewDir string, df DebateFile) error {
+// computeDebateBytes serializes the debate document to indented JSON with a
+// trailing newline and returns the target path plus bytes.
+func computeDebateBytes(reviewDir string, df DebateFile) (string, []byte, error) {
 	if df.Items == nil {
 		df.Items = []ItemResult{}
 	}
@@ -151,24 +154,35 @@ func writeDebateFile(reviewDir string, df DebateFile) error {
 	path := filepath.Join(reviewDir, reconciledSubdir, DebateJSON)
 	data, err := json.MarshalIndent(df, "", "  ")
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	return atomicfs.WriteFileAtomic(path, append(data, '\n'))
+	return path, append(data, '\n'), nil
 }
 
-// updateManifestStage appends "debate" to the manifest's stages list,
-// idempotently. A manifest with no stages is seeded with "review" first. A missing
-// manifest is returned as os.ErrNotExist; a malformed one as a parse error,
-// leaving the file untouched. Mirrors verify.UpdateManifestStage.
-func updateManifestStage(reviewDir string) error {
-	path := filepath.Join(reviewDir, manifestFile)
-	raw, err := os.ReadFile(path)
+// writeDebateFile serializes the debate document to reconciled/debate.json
+// atomically.
+func writeDebateFile(reviewDir string, df DebateFile) error {
+	path, data, err := computeDebateBytes(reviewDir, df)
 	if err != nil {
 		return err
 	}
+	return atomicfs.WriteFileAtomic(path, data)
+}
+
+// computeManifestStageBytes appends "debate" to the manifest's stages list,
+// idempotently, and returns the target path plus the updated JSON bytes. A
+// manifest with no stages is seeded with "review" first. A missing manifest is
+// returned as os.ErrNotExist; a malformed one as a parse error, leaving the file
+// untouched. Mirrors verify.UpdateManifestStage.
+func computeManifestStageBytes(reviewDir string) (string, []byte, error) {
+	path := filepath.Join(reviewDir, manifestFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, err
+	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Errorf("parsing manifest.json: %w", err)
+		return "", nil, fmt.Errorf("parsing manifest.json: %w", err)
 	}
 	if m == nil {
 		m = map[string]any{}
@@ -182,7 +196,9 @@ func updateManifestStage(reviewDir string) error {
 	}
 	for _, s := range stages {
 		if s == debateStage {
-			return nil // already recorded
+			// Already recorded: return a no-op marker so the atomic group can skip
+			// re-writing this file.
+			return path, nil, nil
 		}
 	}
 	if len(stages) == 0 {
@@ -191,9 +207,24 @@ func updateManifestStage(reviewDir string) error {
 	m["stages"] = append(stages, debateStage)
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
+		return "", nil, err
+	}
+	return path, append(out, '\n'), nil
+}
+
+// updateManifestStage appends "debate" to the manifest's stages list,
+// idempotently. A manifest with no stages is seeded with "review" first. A missing
+// manifest is returned as os.ErrNotExist; a malformed one as a parse error,
+// leaving the file untouched. Mirrors verify.UpdateManifestStage.
+func updateManifestStage(reviewDir string) error {
+	path, data, err := computeManifestStageBytes(reviewDir)
+	if err != nil {
 		return err
 	}
-	return atomicfs.WriteFileAtomic(path, append(out, '\n'))
+	if data == nil {
+		return nil
+	}
+	return atomicfs.WriteFileAtomic(path, data)
 }
 
 // ReadDebateFile reads reviewDir/reconciled/debate.json. It returns found=false
