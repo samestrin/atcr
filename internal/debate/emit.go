@@ -95,9 +95,13 @@ func itemID(item reconcile.DisagreementItem) string {
 }
 
 // applyRulings mutates the findings slice in place: for each finding matched by
-// key, it writes the judge's verdict block (with the challenge-survived marker and
-// the judge as the producing agent), recomputes confidence from the verdict, and —
-// for a split ruling — overwrites the severity with the judge's settled value. A
+// key, it records the judge's verdict and challenge-survived marker, recomputes
+// confidence from the verdict, and — for a split ruling — overwrites the severity
+// with the judge's settled value. A finding already verified (Epic 3.0) keeps its
+// existing Verification.Skeptic (the multi-voter list) and Notes (verify reasoning)
+// as the audit trail — only the verdict/survived marker is updated; the judge and
+// reasoning are recorded separately in reconciled/debate.json. A finding with no
+// prior verification gets a fresh block with the judge as the producing agent. A
 // finding with no ruling is left untouched, so a non-debated finding's block is
 // byte-identical.
 func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) {
@@ -107,33 +111,67 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 		if !ok {
 			continue
 		}
+		// reconcile.Verification contract: the writing stage MUST validate Verdict
+		// against the enum before persisting — an empty or out-of-enum verdict is a
+		// contract violation downstream consumers choke on. Skip the whole ruling
+		// (severity included) rather than persisting a malformed verification block.
+		if !validVerdict(ra.verdict) {
+			continue
+		}
 		if ra.severity != "" {
 			findings[i].Severity = ra.severity
 		}
-		findings[i].Verification = &reconcile.Verification{
-			Verdict:           ra.verdict,
-			Skeptic:           ra.judge,
-			Notes:             ra.reasoning,
-			ChallengeSurvived: ra.survived,
+		if v := findings[i].Verification; v != nil {
+			// The finding already carries a verify-stage verification (Epic 3.0):
+			// Skeptic is the comma-joined multi-voter list and Notes the original
+			// verify reasoning — the audit trail the radar keys verification_disagreement
+			// on (reconcile.isVerificationTie reads Skeptic). Record only the debate
+			// outcome and preserve that provenance; the judge + reasoning are recorded
+			// separately in reconciled/debate.json (ItemResult.Judge/Reasoning).
+			v.Verdict = ra.verdict
+			v.ChallengeSurvived = ra.survived
+		} else {
+			// No prior verification (debate ran standalone): the judge is the only
+			// agent that produced this verdict, so record it as the skeptic with its
+			// reasoning as notes — the only audit trail available on this path.
+			findings[i].Verification = &reconcile.Verification{
+				Verdict:           ra.verdict,
+				Skeptic:           ra.judge,
+				Notes:             ra.reasoning,
+				ChallengeSurvived: ra.survived,
+			}
 		}
 		findings[i].Confidence = reconcile.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
 	}
 }
 
-// writeFindings serializes the findings slice to reconciled/findings.json
-// atomically (indented, trailing newline), mirroring the verify re-emit.
-func writeFindings(reviewDir string, findings []reconcile.JSONFinding) error {
+// validVerdict reports whether v is a canonical reconcile verdict. applyRulings
+// gates on this before persisting so a malformed verdict (empty or out-of-enum) is
+// never written into a Verification block (reconcile.Verification's writer contract).
+func validVerdict(v string) bool {
+	switch v {
+	case reconcile.VerdictConfirmed, reconcile.VerdictRefuted, reconcile.VerdictUnverifiable:
+		return true
+	default:
+		return false
+	}
+}
+
+// computeFindingsBytes serializes the findings slice to indented JSON with a
+// trailing newline and returns the target path plus bytes. It mirrors the verify
+// re-emit format.
+func computeFindingsBytes(reviewDir string, findings []reconcile.JSONFinding) (string, []byte, error) {
 	path := filepath.Join(reviewDir, reconciledSubdir, reconcile.FindingsJSON)
 	data, err := json.MarshalIndent(findings, "", "  ")
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	return atomicfs.WriteFileAtomic(path, append(data, '\n'))
+	return path, append(data, '\n'), nil
 }
 
-// writeDebateFile serializes the debate document to reconciled/debate.json
-// atomically.
-func writeDebateFile(reviewDir string, df DebateFile) error {
+// computeDebateBytes serializes the debate document to indented JSON with a
+// trailing newline and returns the target path plus bytes.
+func computeDebateBytes(reviewDir string, df DebateFile) (string, []byte, error) {
 	if df.Items == nil {
 		df.Items = []ItemResult{}
 	}
@@ -143,24 +181,35 @@ func writeDebateFile(reviewDir string, df DebateFile) error {
 	path := filepath.Join(reviewDir, reconciledSubdir, DebateJSON)
 	data, err := json.MarshalIndent(df, "", "  ")
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	return atomicfs.WriteFileAtomic(path, append(data, '\n'))
+	return path, append(data, '\n'), nil
 }
 
-// updateManifestStage appends "debate" to the manifest's stages list,
-// idempotently. A manifest with no stages is seeded with "review" first. A missing
-// manifest is returned as os.ErrNotExist; a malformed one as a parse error,
-// leaving the file untouched. Mirrors verify.UpdateManifestStage.
-func updateManifestStage(reviewDir string) error {
-	path := filepath.Join(reviewDir, manifestFile)
-	raw, err := os.ReadFile(path)
+// writeDebateFile serializes the debate document to reconciled/debate.json
+// atomically.
+func writeDebateFile(reviewDir string, df DebateFile) error {
+	path, data, err := computeDebateBytes(reviewDir, df)
 	if err != nil {
 		return err
 	}
+	return atomicfs.WriteFileAtomic(path, data)
+}
+
+// computeManifestStageBytes appends "debate" to the manifest's stages list,
+// idempotently, and returns the target path plus the updated JSON bytes. A
+// manifest with no stages is seeded with "review" first. A missing manifest is
+// returned as os.ErrNotExist; a malformed one as a parse error, leaving the file
+// untouched. Mirrors verify.UpdateManifestStage.
+func computeManifestStageBytes(reviewDir string) (string, []byte, error) {
+	path := filepath.Join(reviewDir, manifestFile)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, err
+	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Errorf("parsing manifest.json: %w", err)
+		return "", nil, fmt.Errorf("parsing manifest.json: %w", err)
 	}
 	if m == nil {
 		m = map[string]any{}
@@ -174,7 +223,9 @@ func updateManifestStage(reviewDir string) error {
 	}
 	for _, s := range stages {
 		if s == debateStage {
-			return nil // already recorded
+			// Already recorded: return a no-op marker so the atomic group can skip
+			// re-writing this file.
+			return path, nil, nil
 		}
 	}
 	if len(stages) == 0 {
@@ -183,9 +234,9 @@ func updateManifestStage(reviewDir string) error {
 	m["stages"] = append(stages, debateStage)
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	return atomicfs.WriteFileAtomic(path, append(out, '\n'))
+	return path, append(out, '\n'), nil
 }
 
 // ReadDebateFile reads reviewDir/reconciled/debate.json. It returns found=false

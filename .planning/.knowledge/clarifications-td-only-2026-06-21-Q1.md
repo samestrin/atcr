@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-21-cbcbcb
-question: "Does FallbackFrom need to be set inside the synthesized cache-hit Result in engine.go invokeAgent?"
+id: mem-2026-06-21-1fb1e6
+question: "When debate failure leaves verify findings on disk (no rollback), what behavior should the CLI chaining at cmd/atcr/review.go implement: atomic temp-staging, rollback/delete, or accept partial state?"
 created: 2026-06-21
 last_retrieved: ""
 sprints: []
-files: [internal/fanout/engine.go]
-tags: [td-clarification, td-only, correctness, engine, cache, FallbackFrom, invokeSlot]
+files: [cmd/atcr/review.go:306, internal/debate/debate.go:146]
+tags: [td-clarification, td-only, architecture, debate, verify, partial-state, error-handling]
 retrievals: 0
 status: active
-type: clarifications skill, td-only mode, 2026-06-21
+type: td-clarification
 ---
 
-# Does FallbackFrom need to be set inside the synthesized cach
+# When debate failure leaves verify findings on disk (no rollb
 
 ## Decision
 
-No. FallbackFrom is stamped by invokeSlot (internal/fanout/engine.go:476) uniformly on the returned Result for both cached and live paths. The synthesized cache-hit Result returned from invokeCachedSingleShot intentionally mirrors invokeSingleShot, which also omits FallbackFrom from the struct literal. Any TD finding that suggests adding FallbackFrom inside the cache-hit Result is a false positive — the Agent struct has no FallbackFrom field and the field is set at the invokeSlot level, not inside individual result constructors.
+Option (c) — accept the partial state and document it with a comment. Verify findings on disk are valid, structured artifacts (confirmed/refuted/unverifiable verdicts) the user can inspect; debateFailureError already surfaces the failure. Atomic staging (option a) requires significant refactoring of how verify and debate share result.Dir. Rollback (option b) destroys useful debugging state. The debate package's own internal durability concern (applyRulings → writeFindings → writeDebateFile ordering) is tracked separately at internal/debate/debate.go:146. Fix: add a brief comment at cmd/atcr/review.go just before the `if debateFlag` block (~line 306) documenting that a debate failure intentionally leaves verify findings on disk.
 
 ## Rationale
 
@@ -27,4 +27,5 @@ No. FallbackFrom is stamped by invokeSlot (internal/fanout/engine.go:476) unifor
 
 ## Code Reference
 
-- internal/fanout/engine.go
+- cmd/atcr/review.go:306
+- internal/debate/debate.go:146

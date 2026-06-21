@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/samestrin/atcr/internal/atomicwrite"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
@@ -317,8 +318,8 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 
 	// Compute all 4 artifact byte-slices then flush in a single atomic group to
-	// minimise the partial-write window (writeGroupAtomic stages every file to a
-	// temp before the first rename, then renames them in sequence).
+	// minimise the partial-write window (atomicwrite.WriteGroup stages every file
+	// to a temp before the first rename, then renames them in sequence).
 	counts := CountVerdicts(results)
 
 	findingsPath, findingsData, err := computeFindingsBytes(findings, reviewDir)
@@ -338,13 +339,13 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
-	artifacts := []stagingEntry{
-		{path: findingsPath, data: findingsData},
-		{path: verPath, data: verData},
-		{path: sumPath, data: sumData},
+	artifacts := []atomicwrite.Entry{
+		{Path: findingsPath, Data: findingsData},
+		{Path: verPath, Data: verData},
+		{Path: sumPath, Data: sumData},
 	}
 	if !mfNoOp {
-		artifacts = append(artifacts, stagingEntry{path: mfPath, data: mfData})
+		artifacts = append(artifacts, atomicwrite.Entry{Path: mfPath, Data: mfData})
 	}
 	// Idempotency (Epic 4.7 AC5): this flush overwrites verification.json AND
 	// re-writes the reconcile-owned findings.json/summary.json as one atomic group.
@@ -356,7 +357,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if err := backupExistingVerification(reviewDir); err != nil {
 		return Result{}, err
 	}
-	if err := writeGroupAtomic(artifacts); err != nil {
+	if err := atomicwrite.WriteGroup(artifacts); err != nil {
 		return Result{}, err
 	}
 
@@ -371,53 +372,6 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		FindingsProcessed: processed,
 		DurationMs:        int(time.Since(start).Milliseconds()),
 	}, nil
-}
-
-// stagingEntry is one artifact in a writeGroupAtomic batch.
-type stagingEntry struct {
-	path string
-	data []byte
-}
-
-// writeGroupAtomic stages all entries to temp files then renames them in
-// sequence, minimising the partial-write window. All data is flushed before the
-// first rename; temps for entries that were not renamed are cleaned up on return.
-func writeGroupAtomic(artifacts []stagingEntry) error {
-	temps := make([]string, len(artifacts))
-	renamed := make([]bool, len(artifacts))
-	defer func() {
-		for i, t := range temps {
-			if t != "" && !renamed[i] {
-				_ = os.Remove(t)
-			}
-		}
-	}()
-	for i, a := range artifacts {
-		dir := filepath.Dir(a.path)
-		tmp, err := os.CreateTemp(dir, "."+filepath.Base(a.path)+".tmp-*")
-		if err != nil {
-			return err
-		}
-		temps[i] = tmp.Name()
-		if _, err := tmp.Write(a.data); err != nil {
-			_ = tmp.Close()
-			return err
-		}
-		if err := tmp.Chmod(0o644); err != nil {
-			_ = tmp.Close()
-			return err
-		}
-		if err := tmp.Close(); err != nil {
-			return err
-		}
-	}
-	for i, a := range artifacts {
-		if err := os.Rename(temps[i], a.path); err != nil {
-			return err
-		}
-		renamed[i] = true
-	}
-	return nil
 }
 
 // verifyFinding produces the verdict (the compact block for findings.json) and

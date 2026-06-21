@@ -24,6 +24,7 @@ const modulePath = "github.com/samestrin/atcr"
 // entry). Absence of a directory here fails the completeness check.
 var allowedInternalImports = map[string][]string{
 	"atomicfs":       {},
+	"atomicwrite":    {"atomicfs"},
 	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
 	"stream":         {"metrics"},  // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle)
 	"gitrange":       {},
@@ -41,8 +42,8 @@ var allowedInternalImports = map[string][]string{
 	"reconcile":      {"stream", "atomicfs"},
 	"scorecard":      {"llmclient", "reconcile", "fanout"},
 	"report":         {"stream", "reconcile"},
-	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2)
-	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "log"}, // cross-examination stage; mirrors verify's harness (epic 6.0)
+	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper
+	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
 	// integration holds only end-to-end _test.go files (no production code).
 	// The dependency-direction walk skips _test.go, so this entry exists to

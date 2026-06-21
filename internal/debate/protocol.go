@@ -2,9 +2,10 @@ package debate
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
@@ -61,7 +62,7 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 	// cannot forge a closing tag and inject instructions — the early-close defense
 	// the verify stage uses on skeptic prompts. Shared across seats so the judge
 	// sees the same framing the proposer and challenger argued under.
-	sentinel := fmt.Sprintf("%08x", rand.Uint32())
+	sentinel := newSentinel()
 
 	// Turn 1 — proposer defends the finding.
 	rec.ProposerStatement = rec.runTurn(ctx, cast.Proposer, 1, buildProposerPrompt(item, sentinel), cc, disp, tr)
@@ -75,6 +76,19 @@ func RunDebate(ctx context.Context, item reconcile.DisagreementItem, cast Cast, 
 		buildJudgePrompt(item, rec.ProposerStatement, rec.ChallengerStatement, sentinel), cc, disp, tr)
 
 	return rec
+}
+
+// newSentinel returns the per-item block sentinel used to tag untrusted finding and
+// reviewer content so it cannot forge a closing tag. It is a security boundary, so
+// the value must be unpredictable.
+func newSentinel() string {
+	var b [16]byte // 128 bits, hex-encoded to 32 chars
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing means the system RNG is broken; there is no safe
+		// non-random fallback for a security boundary token, so fail loudly.
+		panic("debate: crypto/rand unavailable: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // runTurn drives one seat through the tool loop, records the turn to the
@@ -184,15 +198,28 @@ func itemBlock(item reconcile.DisagreementItem) string {
 	fmt.Fprintf(&b, "Severity: %s\n", item.Severity)
 	fmt.Fprintf(&b, "Dispute kind: %s\n", item.Kind)
 	if item.Disagreement != "" {
-		fmt.Fprintf(&b, "Severity disagreement: %s\n", item.Disagreement)
+		fmt.Fprintf(&b, "Severity disagreement: %s\n", flattenUntrusted(item.Disagreement))
 	}
 	if item.Problem != "" {
-		fmt.Fprintf(&b, "Problem: %s\n", item.Problem)
+		fmt.Fprintf(&b, "Problem: %s\n", flattenUntrusted(item.Problem))
 	}
 	for _, p := range item.Positions {
-		fmt.Fprintf(&b, "Position (%s, %s): %s\n", p.Reviewer, p.Severity, p.Problem)
+		fmt.Fprintf(&b, "Position (%s, %s): %s\n", p.Reviewer, p.Severity, flattenUntrusted(p.Problem))
 	}
 	return b.String()
+}
+
+// flattenUntrusted collapses newlines in an untrusted free-text field to spaces so
+// it stays on its single labelled line in itemBlock. The per-item sentinel guards
+// against closing-tag forgery; this guards the in-block injection it does not cover —
+// reviewer- or model-authored content embedding blank lines and fake structural cues
+// (a forged "Position (...)" line, a fake section boundary) that a seat might read as
+// prompt structure rather than data. Content is preserved, only flattened.
+func flattenUntrusted(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
 
 // block wraps untrusted content in a sentinel-tagged block (<name-SENTINEL>…),

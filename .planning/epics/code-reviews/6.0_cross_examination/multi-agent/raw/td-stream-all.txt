@@ -1,0 +1,15 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|internal/debate/cast.go:162|resolveProvider returns true for nil Providers map, bypassing provider validation in tests|Guard nil check at call sites or make nil Providers return false|correctness|15|"if reg.Providers == nil { return registry.Provider{}, true }"|bruce
+LOW|internal/debate/envelope.go:130|truncate may split multi-byte UTF-8 sequences incorrectly|Use rune-based truncation or check full continuation bytes|correctness|10|"for cut > 0 && (s[cut]&0xC0) == 0x80 { cut-- }"|bruce
+MEDIUM|internal/debate/debate.go:129|harness failure logs warning but cc/disp remain nil, causing all items to be unresolved without clear error propagation|Return error or ensure items record a distinct unresolved reason when harness fails|error-handling|15|"if herr != nil { log.FromContext(ctx).Warn(...) } else { cc, disp = c, d }"|bruce
+LOW|internal/debate/protocol.go:71|rand.Uint32() used for sentinel without seeding, reducing uniqueness in tests|Use crypto/rand for cryptographic uniqueness or seed math/rand in tests|security|5|"sentinel := fmt.Sprintf(\"%08x\", rand.Uint32())"|bruce
+MEDIUM|internal/debate/protocol.go:172|Weak randomness for prompt injection defense boundary|Use crypto/rand or increase entropy length|security|10|sentinel := fmt.Sprintf("%08x", rand.Uint32())|greta
+HIGH|internal/verify/confidence_v2.go:3|Missing import of strings|Add import "strings"|error-handling|5|Missing import causes compile error|bruce
+MEDIUM|internal/debate/cast_test.go:13|Undefined Config type|Import internal/debate/select|maintainability|5|Config referenced without import|bruce
+HIGH|internal/debate/cast.go:12|Use of undefined Config type|Add import "internal/debate/select"|maintainability|5|Config used without import|bruce
+LOW|internal/debate/debate.go:133|Potential data race on Result tally|The `tally` function modifies the `res` Result struct within a loop. While currently sequential, if `debateOne` were ever parallelized, this would race.|Add a mutex or use atomic counters for Result tallies|correctness|10|`tally(&res, ir)` called in a sequential loop, but structurally risky if parallelized|otto
+LOW|internal/debate/debate.go:135|rulings map key uses raw Problem string|Trim/normalize Problem before keying|correctness|5|it.Problem may have whitespace diffs vs findings|bruce
+LOW|internal/debate/debate.go:115|harness failure logs warning but continues|Fail fast or clarify warning impact|error-handling|5|cc/disp remain nil, all items unresolved|bruce
+LOW|cmd/atcr/review.go:299|debate failure leaves verify findings on disk|Consider atomic stage chaining or rollback|maintainability|10|verify writes before debate runs|bruce

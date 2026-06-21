@@ -1,0 +1,3 @@
+LOW|internal/debate/debate.go:135|rulings map key uses raw Problem string|Trim/normalize Problem before keying|correctness|5|it.Problem may have whitespace diffs vs findings|bruce
+LOW|internal/debate/debate.go:115|harness failure logs warning but continues|Fail fast or clarify warning impact|error-handling|5|cc/disp remain nil, all items unresolved|bruce
+LOW|cmd/atcr/review.go:299|debate failure leaves verify findings on disk|Consider atomic stage chaining or rollback|maintainability|10|verify writes before debate runs|bruce

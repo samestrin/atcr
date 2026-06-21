@@ -1,0 +1,1 @@
+MEDIUM|internal/debate/protocol.go:172|Weak randomness for prompt injection defense boundary|Use crypto/rand or increase entropy length|security|10|sentinel := fmt.Sprintf("%08x", rand.Uint32())|greta
