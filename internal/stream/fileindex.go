@@ -38,14 +38,22 @@ func BuildFileIndex(root string) *FileIndex {
 		// Not a git repo, git missing, or other failure: graceful degradation.
 		return nil
 	}
+	return indexFromPaths(strings.Split(string(out), "\x00"))
+}
+
+// indexFromPaths builds the index maps from raw (possibly NUL-split, possibly
+// non-slash) relpaths. Split from BuildFileIndex so the resolver logic can be
+// tested with synthetic path sets — notably the case-ambiguity scenario, which
+// is physically unconstructable on a case-insensitive filesystem.
+func indexFromPaths(raw []string) *FileIndex {
 	idx := &FileIndex{
 		tracked:  make(map[string]struct{}),
 		basename: make(map[string][]string),
 		dirFiles: make(map[string][]string),
 		folded:   make(map[string][]string),
 	}
-	for _, raw := range strings.Split(string(out), "\x00") {
-		rel := strings.TrimSpace(raw)
+	for _, r := range raw {
+		rel := strings.TrimSpace(r)
 		if rel == "" {
 			continue
 		}
