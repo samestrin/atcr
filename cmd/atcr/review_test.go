@@ -406,6 +406,43 @@ func TestReviewCmd_RequireVerifiedNeedsVerifyAndFailOn(t *testing.T) {
 	require.Equal(t, 2, code)
 }
 
+// TestReviewCmd_RequireVerifiedAllowedWithDebate verifies the CLI guard no longer
+// rejects --require-verified when --debate is set without --verify. A debate
+// uphold/split writes verdict "confirmed" (promoted to VERIFIED), so debate alone
+// genuinely produces verified findings — matching the MCP handleDebate, which
+// requires only a threshold. The earlier guard made the CLI a usage error while the
+// equivalent MCP call worked (a CLI-vs-MCP divergence).
+func TestReviewCmd_RequireVerifiedAllowedWithDebate(t *testing.T) {
+	isolate(t)
+	// --require-verified --debate --fail-on HIGH must NOT fire the precondition
+	// error (it will fail later for unrelated reasons in this bare workspace, but
+	// not with the require-verified usage message).
+	_, out := execCmdCapture(t, "review", "--require-verified", "--debate", "--fail-on", "HIGH")
+	require.NotContains(t, out, "--require-verified requires",
+		"--require-verified must be allowed with --debate alone (parity with MCP handleDebate)")
+
+	// Still a usage error without a threshold: a strict gate with nothing to gate on.
+	code, out2 := execCmdCapture(t, "review", "--require-verified", "--debate")
+	require.Equal(t, 2, code)
+	require.Contains(t, out2, "--require-verified requires")
+}
+
+// TestReviewCmd_SingleModelNeedsDebate verifies `review --single-model` without
+// --debate is a usage error (exit 2): the flag only affects the debate stage's
+// casting, so set alone it is silently a no-op with no feedback — mirroring the
+// --require-verified guard.
+func TestReviewCmd_SingleModelNeedsDebate(t *testing.T) {
+	isolate(t)
+	code, out := execCmdCapture(t, "review", "--single-model")
+	require.Equal(t, 2, code)
+	require.Contains(t, out, "--single-model requires --debate")
+
+	// With --debate it is accepted (fails later for unrelated reasons in this bare
+	// workspace, but not with the single-model usage message).
+	_, out2 := execCmdCapture(t, "review", "--single-model", "--debate")
+	require.NotContains(t, out2, "--single-model requires --debate")
+}
+
 // TestBoolFlag_UndefinedFlagPanics verifies that boolFlag panics when called
 // with an undefined flag name — a programming error that must fail loudly
 // rather than silently returning false.

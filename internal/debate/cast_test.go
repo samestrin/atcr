@@ -117,3 +117,19 @@ func TestCastRoles_ProposerProviderResolved(t *testing.T) {
 	assert.Equal(t, "K", cast.Proposer.Provider.APIKeyEnv)
 	assert.Equal(t, "https://x", cast.Judge.Provider.BaseURL)
 }
+
+func TestCastRoles_NilProviders_FailsFast(t *testing.T) {
+	// A registry with agents but no Providers map should fail at cast time rather
+	// than casting zero-value providers that halt every turn.
+	reg := &registry.Registry{
+		Providers: nil,
+		Agents: map[string]registry.AgentConfig{
+			"alice": {Provider: "p", Model: "model-a", Role: registry.RoleReviewer},
+			"bob":   {Provider: "p", Model: "model-b", Role: registry.RoleSkeptic},
+			"carol": {Provider: "p", Model: "model-c", Role: registry.RoleJudge},
+		},
+	}
+	_, ok, reason := CastRoles(reg, splitItem("alice"), Config{})
+	assert.False(t, ok)
+	assert.Equal(t, ReasonNoProposer, reason)
+}

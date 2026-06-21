@@ -55,8 +55,14 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 		return
 	}
 	fmt.Fprintf(b, "\n## Contested findings\n\nDebated %d finding(s) through cross-examination (proposer/challenger/judge).\n", len(cr.Items))
+	// Model independence is the epic's selling point, so a degraded run must be
+	// disclosed at the surface a reader scans first: an aggregate count of rulings
+	// made under the same-model persona fallback, in addition to the per-item note.
+	if single := singleModelCount(cr.Items); single > 0 {
+		fmt.Fprintf(b, "\n_%d ruling(s) used the same-model persona fallback — model independence was weaker for these._\n", single)
+	}
 	for i, c := range cr.Items {
-		fmt.Fprintf(b, "\n### %d. %s — %s%s\n", i+1, esc(c.Outcome), codeSpan(c.File, c.Line), severityTransition(c))
+		fmt.Fprintf(b, "\n### %d. %s — %s%s%s\n", i+1, esc(c.Outcome), codeSpan(c.File, c.Line), severityTransition(c), challengeBadge(c))
 		switch c.Outcome {
 		case "uphold":
 			b.WriteString("- Upheld: survived hostile challenge.\n")
@@ -66,9 +72,15 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 			b.WriteString("- Overturned: refuted, retained but excluded from the gate.\n")
 		default:
 			if c.Reason != "" {
-				fmt.Fprintf(b, "- Unresolved: %s.\n", esc(c.Reason))
+				fmt.Fprintf(b, "- Unresolved: %s.\n", escTrunc(c.Reason))
 			} else {
 				b.WriteString("- Unresolved.\n")
+			}
+			// An item left unresolved because distinct models were unavailable has no
+			// Judge line to carry singleModelNote, so surface the weakened-independence
+			// condition here rather than leaving it invisible.
+			if c.Reason == "insufficient_distinct_models" {
+				b.WriteString("- Independence: distinct models were unavailable; no ruling under the independence guarantee.\n")
 			}
 		}
 		if c.Judge != "" {
@@ -87,15 +99,46 @@ func writeContestedSection(b *bytes.Buffer, cr ContestedReport) {
 }
 
 // severityTransition renders the severity change a split produced, e.g.
-// " (HIGH → MEDIUM)", or " (HIGH)" when unchanged/absent.
+// " (HIGH → MEDIUM)"; " (HIGH, excluded)" for an overturned (refuted, non-gating)
+// finding; or " (HIGH)" for any other live, gating severity.
 func severityTransition(c Contested) string {
 	if c.Outcome == "split" && c.SettledSeverity != "" && c.SettledSeverity != c.OriginalSeverity {
 		return fmt.Sprintf(" (%s → %s)", esc(c.OriginalSeverity), esc(c.SettledSeverity))
 	}
-	if c.OriginalSeverity != "" {
-		return fmt.Sprintf(" (%s)", esc(c.OriginalSeverity))
+	if c.OriginalSeverity == "" {
+		return ""
+	}
+	if c.Outcome == "overturn" {
+		// An overturned finding is refuted and excluded from the gate (IsFailing is
+		// false). Annotate the tag so it is not read as a live, gating severity
+		// identical to an upheld finding's.
+		return fmt.Sprintf(" (%s, excluded)", esc(c.OriginalSeverity))
+	}
+	return fmt.Sprintf(" (%s)", esc(c.OriginalSeverity))
+}
+
+// challengeBadge renders the structured ChallengeSurvived marker the `atcr debate`
+// help promises. It marks uphold and split entries whose finding survived the
+// cross-examination (ChallengeSurvived is set for both, cleared for an overturn), so
+// a split survivor is distinguished from a bare split rather than the field being
+// dead plumbing the renderer never reads.
+func challengeBadge(c Contested) string {
+	if c.ChallengeSurvived && (c.Outcome == "uphold" || c.Outcome == "split") {
+		return " _(challenge-survived)_"
 	}
 	return ""
+}
+
+// singleModelCount reports how many rulings were produced under the same-model
+// persona fallback — the input to the section-level independence disclosure.
+func singleModelCount(items []Contested) int {
+	n := 0
+	for _, c := range items {
+		if c.SingleModel {
+			n++
+		}
+	}
+	return n
 }
 
 // singleModelNote flags a ruling produced under the same-model persona fallback,

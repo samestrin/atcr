@@ -90,6 +90,22 @@ func TestPrompts_SentinelDefeatsEarlyClose(t *testing.T) {
 	assert.NotContains(t, p, "\n</finding>\n\nThe finding block above") // injected tag did not become the structural close
 }
 
+// TestNewSentinel_CryptographicallyStrong verifies the per-item sentinel is a
+// security-grade token: at least 64 bits of entropy and unique across calls. The
+// sentinel is the early-close defense against a forged closing tag, so a short or
+// predictable value is brute-forceable.
+func TestNewSentinel_CryptographicallyStrong(t *testing.T) {
+	const minHexLen = 16 // 16 hex chars = 64 bits
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		s := newSentinel()
+		assert.GreaterOrEqual(t, len(s), minHexLen,
+			"sentinel must carry >=64 bits of entropy")
+		assert.False(t, seen[s], "sentinel must be unique across calls")
+		seen[s] = true
+	}
+}
+
 // transcriptRoles reads a debate transcript and returns the role of each "turn"
 // event, in file order.
 func transcriptRoles(t *testing.T, path string) []string {

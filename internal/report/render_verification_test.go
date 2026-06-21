@@ -230,6 +230,21 @@ func TestRenderReport_RefutedEmptySkeptic(t *testing.T) {
 	assert.Contains(t, b.String(), "skeptic: (unknown)")
 }
 
+// TestRenderReport_DebatedFindingRendersJudge — a finding that survived cross-
+// examination (ChallengeSurvived) attributes the verdict to the judge, not a
+// skeptic, so a human reviewer is not misled.
+func TestRenderReport_DebatedFindingRendersJudge(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED",
+			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "carol", Notes: "upheld after challenge", ChallengeSurvived: true}},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Judge: carol — confirmed")
+	assert.NotContains(t, out, "Skeptic: carol")
+}
+
 // TestRenderV1Findings — findings WITHOUT verification blocks render byte-identical
 // to the pre-Epic-3.0 golden files (AC 06-02 Scenario 1). Reuses sample() (no
 // verification) against the unchanged report.md / checklist.md goldens.
