@@ -2,7 +2,6 @@ package stream
 
 import (
 	"path"
-	"path/filepath"
 	"strings"
 )
 
@@ -32,7 +31,7 @@ func (x *FileIndex) CaseCorrection(citedRel string) (suggestion string, mismatch
 	if x == nil {
 		return "", false
 	}
-	rel := filepath.ToSlash(citedRel)
+	rel := toSlashKeys(citedRel)
 	if x.Has(rel) {
 		return "", false // correctly cited, byte-exact
 	}
@@ -73,7 +72,7 @@ func (x *FileIndex) MissingSuggestion(citedRel string) string {
 	if x == nil {
 		return ""
 	}
-	rel := filepath.ToSlash(citedRel)
+	rel := toSlashKeys(citedRel)
 	base := path.Base(rel)
 	dir := path.Dir(rel)
 

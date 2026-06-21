@@ -50,6 +50,14 @@ func BuildFileIndex(root string) *FileIndex {
 	return indexFromPaths(strings.Split(string(out), "\x00"))
 }
 
+// toSlashKeys normalizes a relpath to forward-slash form regardless of the
+// build OS. filepath.ToSlash only converts OS-native separators, so on Unix it
+// leaves backslashes untouched; reviewer-cited paths may contain backslashes,
+// which must normalize to match git's slash-only output.
+func toSlashKeys(p string) string {
+	return filepath.ToSlash(strings.ReplaceAll(p, "\\", "/"))
+}
+
 // indexFromPaths builds the index maps from raw (possibly NUL-split, possibly
 // non-slash) relpaths. Split from BuildFileIndex so the resolver logic can be
 // tested with synthetic path sets — notably the case-ambiguity scenario, which
@@ -66,7 +74,7 @@ func indexFromPaths(raw []string) *FileIndex {
 		if rel == "" {
 			continue
 		}
-		rel = filepath.ToSlash(rel)
+		rel = toSlashKeys(rel)
 		if _, seen := idx.tracked[rel]; seen {
 			continue
 		}
@@ -89,7 +97,7 @@ func (x *FileIndex) Has(relpath string) bool {
 	if x == nil {
 		return false
 	}
-	_, ok := x.tracked[filepath.ToSlash(relpath)]
+	_, ok := x.tracked[toSlashKeys(relpath)]
 	return ok
 }
 
@@ -108,7 +116,7 @@ func (x *FileIndex) DirBasenames(dir string) []string {
 	if x == nil {
 		return nil
 	}
-	return x.dirFiles[filepath.ToSlash(dir)]
+	return x.dirFiles[toSlashKeys(dir)]
 }
 
 // HasDir reports whether any tracked file lives directly under dir.
@@ -116,7 +124,7 @@ func (x *FileIndex) HasDir(dir string) bool {
 	if x == nil {
 		return false
 	}
-	return len(x.dirFiles[filepath.ToSlash(dir)]) > 0
+	return len(x.dirFiles[toSlashKeys(dir)]) > 0
 }
 
 // ByFold returns the tracked relpaths equal to relpath under Unicode-simple
@@ -126,5 +134,5 @@ func (x *FileIndex) ByFold(relpath string) []string {
 	if x == nil {
 		return nil
 	}
-	return x.folded[strings.ToLower(filepath.ToSlash(relpath))]
+	return x.folded[strings.ToLower(toSlashKeys(relpath))]
 }
