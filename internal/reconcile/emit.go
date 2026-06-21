@@ -156,6 +156,14 @@ func Emit(reconciledDir string, r Result) error {
 // RenderText writes the reconciled 9-column findings.txt. The disagreement
 // annotation, which has no column of its own, is folded into EVIDENCE so the
 // machine contract preserves it.
+//
+// PathValid/PathWarning (the Epic 5.0 hallucinated-path signal) are
+// intentionally NOT carried here: findings.txt is a fixed 9-column schema with
+// no field for them, and — unlike the disagreement annotation — they are not
+// folded into EVIDENCE so the column contract stays byte-stable for existing
+// parsers. A consumer that needs the path-validation warning must read
+// findings.json (path_warning) or report.md (the rendered "File not found"
+// line), which are the authoritative carriers.
 func RenderText(w io.Writer, r Result) error {
 	findings := make([]stream.Finding, 0, len(r.Findings))
 	for _, m := range r.Findings {
