@@ -95,9 +95,13 @@ func itemID(item reconcile.DisagreementItem) string {
 }
 
 // applyRulings mutates the findings slice in place: for each finding matched by
-// key, it writes the judge's verdict block (with the challenge-survived marker and
-// the judge as the producing agent), recomputes confidence from the verdict, and —
-// for a split ruling — overwrites the severity with the judge's settled value. A
+// key, it records the judge's verdict and challenge-survived marker, recomputes
+// confidence from the verdict, and — for a split ruling — overwrites the severity
+// with the judge's settled value. A finding already verified (Epic 3.0) keeps its
+// existing Verification.Skeptic (the multi-voter list) and Notes (verify reasoning)
+// as the audit trail — only the verdict/survived marker is updated; the judge and
+// reasoning are recorded separately in reconciled/debate.json. A finding with no
+// prior verification gets a fresh block with the judge as the producing agent. A
 // finding with no ruling is left untouched, so a non-debated finding's block is
 // byte-identical.
 func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleApply) {
@@ -117,11 +121,25 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 		if ra.severity != "" {
 			findings[i].Severity = ra.severity
 		}
-		findings[i].Verification = &reconcile.Verification{
-			Verdict:           ra.verdict,
-			Skeptic:           ra.judge,
-			Notes:             ra.reasoning,
-			ChallengeSurvived: ra.survived,
+		if v := findings[i].Verification; v != nil {
+			// The finding already carries a verify-stage verification (Epic 3.0):
+			// Skeptic is the comma-joined multi-voter list and Notes the original
+			// verify reasoning — the audit trail the radar keys verification_disagreement
+			// on (reconcile.isVerificationTie reads Skeptic). Record only the debate
+			// outcome and preserve that provenance; the judge + reasoning are recorded
+			// separately in reconciled/debate.json (ItemResult.Judge/Reasoning).
+			v.Verdict = ra.verdict
+			v.ChallengeSurvived = ra.survived
+		} else {
+			// No prior verification (debate ran standalone): the judge is the only
+			// agent that produced this verdict, so record it as the skeptic with its
+			// reasoning as notes — the only audit trail available on this path.
+			findings[i].Verification = &reconcile.Verification{
+				Verdict:           ra.verdict,
+				Skeptic:           ra.judge,
+				Notes:             ra.reasoning,
+				ChallengeSurvived: ra.survived,
+			}
 		}
 		findings[i].Confidence = reconcile.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
 	}
