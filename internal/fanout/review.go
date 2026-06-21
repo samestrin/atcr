@@ -613,19 +613,32 @@ func maxTokensPtr() *int { v := defaultMaxTokens; return &v }
 // diffCacheKey derives the Epic 5.2 diff-cache key for a review call. It keys on
 // the FULL rendered prompt — which already embeds the payload, the resolved
 // persona, the per-agent scope focus (Epic 2.2), and the base/head refs, i.e.
-// every text input the model receives — plus the model id and the temperature
-// (the tuning param that changes the output). Keying on the rendered prompt
-// rather than the raw payload+persona is what guarantees a scope or persona
-// change invalidates the entry instead of silently replaying a stale review.
-// MaxTokens is constant across review agents (defaultMaxTokens), so it is
-// intentionally omitted. min_severity/max_findings are deterministic post-LLM
-// filters and are correctly NOT in the key.
+// every text input the model receives — plus the model id, the resolved backend
+// (baseURL), and the temperature (the tuning param that changes the output).
+// Keying on the rendered prompt rather than the raw payload+persona is what
+// guarantees a scope or persona change invalidates the entry instead of silently
+// replaying a stale review. The backend is folded in because atcr supports
+// arbitrary OpenAI-compatible providers: two roster agents can share an identical
+// model id (e.g. "gpt-4o-mini" or a local model name) served by different
+// endpoints, and without the backend in the key the second would replay the
+// first endpoint's review — a cross-provider cache collision. MaxTokens is
+// constant across review agents (defaultMaxTokens), so it is intentionally
+// omitted. min_severity/max_findings are deterministic post-LLM filters and are
+// correctly NOT in the key.
 func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 	temp := "default"
 	if temperature != nil {
 		temp = strconv.FormatFloat(*temperature, 'g', -1, 64)
 	}
-	return cache.Key(cache.HashText(prompt), model, temp)
+	// Fold the backend into the tuning token (NUL-separated so a backend string
+	// can never bleed into the temperature) so distinct endpoints never share an
+	// entry. An empty baseURL (e.g. direct Agent construction in tests) collapses
+	// to the pre-existing temperature-only token, preserving old keys.
+	tuning := temp
+	if baseURL != "" {
+		tuning = baseURL + "\x00" + temp
+	}
+	return cache.Key(cache.HashText(prompt), model, tuning)
 }
 
 // buildAgent resolves an agent's persona, renders its prompt against the payload
