@@ -58,3 +58,26 @@ func TestFilterMergedClusters_CollisionDoesNotOverSuppress(t *testing.T) {
 	require.Len(t, out, 1, "ambiguous display key must not over-suppress the unmerged cluster")
 	assert.Equal(t, "shared longest problem text", out[0].Problem)
 }
+
+// TestFilterMergedClusters_LocationFallbackSuppressesDriftedProblem pins the
+// drift case: a gray-zone cluster was merged in a prior run, but the radar item's
+// representative problem no longer matches the cluster's display key (e.g. the
+// reconcile and debate implementations drifted, or the merged survivor's problem
+// was rewritten). Without a fallback, the item silently passes through and is
+// re-debated. The location-keyed fallback suppresses it when a merged survivor
+// with a non-empty ClusterID sits at the same File+Line.
+func TestFilterMergedClusters_LocationFallbackSuppressesDriftedProblem(t *testing.T) {
+	c := grayCluster("amb-1", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c})
+
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "drifted representative problem"},
+	}
+
+	out := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "beta problem text", ClusterMerged: true, ClusterID: "amb-1"},
+	}, clusterIdx)
+	require.Empty(t, out, "a drifted gray-zone item at a merged location must be suppressed by location fallback")
+}
