@@ -74,6 +74,10 @@ const (
 	// interpolated verbatim into the fix prompt as a constraint line, so it is
 	// bounded like the persona to limit prompt-stuffing by untrusted free text.
 	MaxExecutorRuleLen = 512
+	// MaxExecutorRules caps the number of executor coding rules (Epic 7.0.1). Too
+	// many short rules can still stuff the fix prompt, so the count is bounded at
+	// load mirroring the per-rule cap.
+	MaxExecutorRules = 64
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
@@ -533,8 +537,11 @@ func (r *Registry) validateExecutor() []error {
 	}
 	// Rules (Epic 7.0.1): each rule is interpolated as a constraint line in the fix
 	// prompt. Reject blank entries (a YAML typo, not "no rule"), control characters
-	// (CR/LF prompt-line forgery), and over-long entries — mirroring the scope and
-	// persona guards.
+	// (CR/LF prompt-line forgery), over-long entries, and an excessive rule count —
+	// mirroring the scope and persona guards.
+	if len(e.Rules) > MaxExecutorRules {
+		errs = append(errs, fmt.Errorf("executor: rules must be at most %d entries", MaxExecutorRules))
+	}
 	for i, rule := range e.Rules {
 		switch {
 		case strings.TrimSpace(rule) == "":
