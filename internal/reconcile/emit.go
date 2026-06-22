@@ -107,6 +107,15 @@ type JSONFinding struct {
 	// idempotency marker the debate radar filters on so a re-run never re-merges an
 	// already-applied cluster (AC4); it is never set by any reconcile-time path.
 	ClusterMerged bool `json:"cluster_merged,omitempty"`
+	// ClusterID is the stable, content-addressed AmbiguousCluster.ID of the
+	// gray-zone cluster that produced an inline-merged survivor (Epic 6.2). It is
+	// stamped alongside ClusterMerged by the cross-examination apply path and lets
+	// the debate radar key merge idempotency on cluster identity rather than
+	// File+Line alone — so a second DISTINCT cluster co-located at the same
+	// canonical File+Line is no longer over-suppressed once the first is merged.
+	// omitempty keeps every non-merged record byte-identical to pre-6.2
+	// findings.json; it is never set by any reconcile-time path.
+	ClusterID string `json:"cluster_id,omitempty"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.

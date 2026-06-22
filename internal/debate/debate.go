@@ -120,7 +120,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	clusterIdx := indexClusters(grayClusters)
 	// Idempotency (AC4): drop gray-zone items whose cluster a prior debate already
 	// merged inline, so a re-run never re-debates or re-merges an applied cluster.
-	df.Items = filterMergedClusters(df.Items, findings)
+	df.Items = filterMergedClusters(df.Items, findings, clusterIdx)
 	// Idempotency: drop findings a prior debate already settled (upheld/split mark
 	// ChallengeSurvived). An upheld severity-split keeps its Disagreement annotation,
 	// so without this guard it re-enters the radar and a re-run re-bills it at three

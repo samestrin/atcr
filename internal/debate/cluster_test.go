@@ -85,6 +85,7 @@ func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
 	f := readFindings(t, dir)
 	require.Len(t, f, 1, "the two gray-zone members must be unioned into one record")
 	assert.True(t, f[0].ClusterMerged, "the surviving merged record must be flagged cluster_merged")
+	assert.Equal(t, "amb-1", f[0].ClusterID, "the survivor must carry the source cluster's stable ID (Epic 6.2 AC2)")
 	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
 	assert.Equal(t, "HIGH", f[0].Severity)
 	assert.Equal(t, 10, f[0].Line)
@@ -422,32 +423,60 @@ func TestFirstClusterRulingCollision_GuardsRulingsKeyspace(t *testing.T) {
 	assert.Equal(t, "a.go:10", firstClusterRulingCollision(rulings, clusters), "a gray member location that also keys the rulings map must be reported")
 }
 
-// TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed pins the known
-// co-location limitation (TD cluster.go:50): filterMergedClusters keys idempotency
-// on File+Line only, so once one gray-zone cluster at a location is merged (a
-// ClusterMerged record present), a SECOND distinct gray-zone cluster sharing that
-// canonical File+Line is also filtered out pre-debate, even though it was never
-// merged. This is accepted as LOW/self-healing — the second cluster re-surfaces on
-// the next fresh reconcile. The test pins both the first-run pass-through and the
-// re-run over-suppression so the behavior is caught if the key ever changes.
-func TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed(t *testing.T) {
-	// Two DISTINCT gray-zone radar items sharing one canonical File+Line.
+// TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID inverts the former
+// over-suppression pin (Epic 6.2 AC4): filterMergedClusters now keys idempotency on
+// cluster identity (ClusterID), not File+Line alone. Two DISTINCT gray-zone clusters
+// sharing one canonical File+Line — merging cluster #1 (its survivor carries
+// ClusterMerged + the cluster's stable ID) must suppress ONLY cluster #1's radar
+// item on a re-run; cluster #2, never merged, must still be processed.
+func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
+	// Two DISTINCT clusters at the same canonical File+Line, with stable IDs. Each
+	// member B is strictly longer so clusterDisplayProblem is deterministic and the
+	// radar item resolves back to its cluster via indexClusters.
+	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+	c2 := grayCluster("amb-2", "a.go", 10, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")
+	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+
+	// Two DISTINCT gray-zone radar items sharing one canonical File+Line, each
+	// carrying its cluster's representative (longest-member) problem.
 	items := []reconcile.DisagreementItem{
-		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one problem"},
-		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster two problem"},
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster two longer problem"},
 	}
 
 	// First run: no ClusterMerged record exists yet — both items pass through.
 	firstRun := filterMergedClusters(items, []reconcile.JSONFinding{
-		{File: "a.go", Line: 10, Problem: "cluster one problem"},
-	})
+		{File: "a.go", Line: 10, Problem: "c1a"},
+	}, clusterIdx)
 	assert.Len(t, firstRun, 2, "first run (no ClusterMerged record) must not filter either co-located cluster")
 
 	// Re-run: cluster #1 was merged (its survivor sits at a.go:10 flagged
-	// ClusterMerged). The location-only key now suppresses BOTH co-located items —
-	// including cluster #2, which was never merged (the documented limitation).
+	// ClusterMerged with ClusterID amb-1). Identity-keyed filtering suppresses ONLY
+	// cluster #1; cluster #2 (amb-2), never merged, is still processed.
 	reRun := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-1"},
+	}, clusterIdx)
+	require.Len(t, reRun, 1, "only the merged cluster's item is suppressed; the co-located distinct cluster survives")
+	assert.Equal(t, "cluster two longer problem", reRun[0].Problem, "the surviving item must be cluster #2 (amb-2)")
+}
+
+// TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress pins the
+// backward-compat path (Epic 6.2): a ClusterMerged survivor written by a pre-6.2
+// debate carries no ClusterID. Identity-keyed filtering matches only non-empty IDs,
+// so such a legacy record suppresses nothing — the cluster is re-debated once (an
+// idempotent no-op) and self-heals, rather than a blank ID silently matching a
+// blank-keyed item.
+func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) {
+	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+	}
+
+	// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
+	out := filterMergedClusters(items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
-	})
-	assert.Empty(t, reRun, "the location-only idempotency key over-suppresses the co-located cluster #2 (known limitation)")
+	}, clusterIdx)
+	require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
+	assert.Equal(t, "cluster one longer problem", out[0].Problem)
 }

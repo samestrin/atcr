@@ -1,3 +1,15 @@
+## [6.2.0] - 2026-06-21
+
+### Added
+
+- `cluster_id` field on `findings.json` records (omitempty): the stable, content-addressed ID of the gray-zone cluster that produced an inline-merged survivor. Non-merged records stay byte-identical to pre-6.2 output.
+
+### Fixed
+
+- Gray-zone merge idempotency is now keyed on cluster identity (`cluster_id`) rather than File+Line alone, so a second distinct cluster co-located at the same canonical File+Line is no longer over-suppressed once the first is merged.
+
+*Shipped via /execute-epic (epic 6.2)*
+
 ## [6.1.0] - 2026-06-21
 
 ### Added

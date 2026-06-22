@@ -43,34 +43,37 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // filterMergedClusters drops gray-zone radar items whose cluster a prior debate
 // already merged inline (Epic 6.1 AC4), so a re-run never re-debates or re-merges
 // an already-applied cluster. A cluster is "already applied" when a findings.json
-// record flagged ClusterMerged sits at the gray-zone item's location (the merged
-// survivor is placed at the cluster's canonical File+Line). Non-gray-zone items
-// pass through untouched. Returns items unchanged when no record is flagged, so a
-// first-ever debate run does no extra work.
+// record flagged ClusterMerged carries that cluster's stable ClusterID (Epic 6.2):
+// idempotency is keyed on cluster identity, so a gray-zone item is suppressed only
+// when its OWN cluster was merged — a second DISTINCT cluster co-located at the same
+// canonical File+Line is no longer over-suppressed. Each item resolves to its
+// cluster (and thus its ID) via clusterIdx, the same {File,Line,Problem} index
+// runDebate uses to apply rulings. Non-gray-zone items pass through untouched.
+// Returns items unchanged when no record is flagged, so a first-ever debate run does
+// no extra work.
 //
-// Known limitation (accepted, LOW/self-healing): idempotency is keyed on File+Line
-// only — chosen so the key survives a member whose problem text drifted (see
-// locationKey). If two DISTINCT gray-zone clusters resolve to the same canonical
-// File+Line, merging the first flags ClusterMerged there, and the second cluster's
-// radar item is then suppressed pre-debate even though it was never merged. The
-// second cluster is not corrupted; it re-surfaces on the next fresh reconcile. A
-// precise fix (filter by cluster identity rather than location) is tracked
-// separately as the epic-6.1 "U" item, since it requires a cluster-id field on the
-// merged finding (a reconcile-schema change outside this function's scope).
-func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding) []reconcile.DisagreementItem {
-	mergedLocs := map[string]bool{}
+// Only non-empty ClusterIDs are matched. A legacy ClusterMerged survivor written by
+// a pre-6.2 debate carries no ClusterID, so it suppresses nothing here — the cluster
+// is re-debated once (an idempotent no-op via applyOneClusterMerge's already-merged
+// guard) and self-heals as soon as it is re-stamped. An item whose cluster is not in
+// clusterIdx (e.g. its representative problem drifted) likewise passes through and is
+// re-debated rather than silently dropped.
+func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
+	mergedIDs := map[string]bool{}
 	for _, f := range findings {
-		if f.ClusterMerged {
-			mergedLocs[locationKey(f.File, f.Line)] = true
+		if f.ClusterMerged && f.ClusterID != "" {
+			mergedIDs[f.ClusterID] = true
 		}
 	}
-	if len(mergedLocs) == 0 {
+	if len(mergedIDs) == 0 {
 		return items
 	}
 	out := make([]reconcile.DisagreementItem, 0, len(items))
 	for _, it := range items {
-		if it.Kind == reconcile.KindGrayZone && mergedLocs[locationKey(it.File, it.Line)] {
-			continue
+		if it.Kind == reconcile.KindGrayZone {
+			if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok && mergedIDs[c.ID] {
+				continue
+			}
 		}
 		out = append(out, it)
 	}
@@ -206,6 +209,9 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.Ambiguou
 	merged := reconcile.MergeJSONFindings(group)
 	merged.File, merged.Line = c.File, c.Line
 	merged.ClusterMerged = true
+	// Stamp the source cluster's stable, content-addressed ID (Epic 6.2 AC2) so
+	// filterMergedClusters can key idempotency on cluster identity, not File+Line.
+	merged.ClusterID = c.ID
 
 	out := make([]reconcile.JSONFinding, 0, len(findings)-len(group)+1)
 	for i := range findings {
