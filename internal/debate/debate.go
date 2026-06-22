@@ -117,10 +117,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	if err != nil {
 		log.FromContext(ctx).Warn("debate: ambiguous.json unreadable; gray-zone merges disabled", "err", err.Error())
 	}
-	clusterIdx := indexClusters(grayClusters)
+	// Avoid allocating an empty cluster index when there are no gray-zone clusters;
+	// filterMergedClusters safely handles a nil map as "no clusters to match".
+	var clusterIdx map[FindingKey]reconcile.AmbiguousCluster
+	if len(grayClusters) > 0 {
+		clusterIdx = indexClusters(grayClusters)
+	}
 	// Idempotency (AC4): drop gray-zone items whose cluster a prior debate already
 	// merged inline, so a re-run never re-debates or re-merges an applied cluster.
-	df.Items = filterMergedClusters(df.Items, findings, clusterIdx)
+	df.Items = filterMergedClusters(ctx, df.Items, findings, clusterIdx)
 	// Idempotency: drop findings a prior debate already settled (upheld/split mark
 	// ChallengeSurvived). An upheld severity-split keeps its Disagreement annotation,
 	// so without this guard it re-enters the radar and a re-run re-bills it at three

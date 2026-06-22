@@ -115,6 +115,8 @@ When `verification` is present, readers must treat an absent or unrecognized `ve
 
 **Confidence v2.** When a finding is verified, its `confidence` is recomputed onto a four-tier axis, ordered `VERIFIED > HIGH > MEDIUM > LOW`: a `confirmed` verdict promotes the finding to `VERIFIED`, a `refuted` verdict demotes it to `LOW` (retained for audit, never deleted), and `unverifiable` leaves the v1 confidence unchanged. The v1 tiers (`HIGH`/`MEDIUM`/`LOW`, the reviewer-agreement signal) are unchanged for unverified findings. Full mechanics and gate semantics are in [verification.md](verification.md).
 
+**Inline-merge markers (Epic 6.1 / 6.2).** A finding produced by the cross-examination stage's gray-zone "merge" ruling (`atcr debate`) carries two additive fields: `cluster_merged` (`true` on the survivor that unioned a gray-zone cluster's members) and `cluster_id` (the stable, content-addressed id of that source cluster, which lets the debate radar key merge-idempotency on cluster identity rather than `FILE:LINE` alone). Both are `omitempty` and are stamped **only** by the debate apply path — never by `atcr reconcile` — so a non-merged or non-debated record stays byte-identical to pre-6.x output. Per the additive-only evolution policy below, they ride `atcr-findings/v1` with no version bump; a strict consumer that rejects unknown JSON keys (`DisallowUnknownFields`-style) must tolerate them as it must any additive v1 field.
+
 ## Reserved fields in companion artifacts
 
 The other v1 review artifacts carry reserved fields for the agentic stages on the same "parsed, not yet acted on" basis. Consumers must tolerate their presence and absence:

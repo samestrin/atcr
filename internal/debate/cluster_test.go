@@ -89,6 +89,8 @@ func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
 	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
 	assert.Equal(t, "HIGH", f[0].Severity)
 	assert.Equal(t, 10, f[0].Line)
+	assert.Equal(t, "loop boundary error causes overflow", f[0].Problem,
+		"the merged survivor keeps the longest member problem (the union's representative)")
 }
 
 // TestRunDebate_GrayZoneSeparateLeavesUnmerged: a judge "separate" ruling leaves
@@ -112,6 +114,7 @@ func TestRunDebate_GrayZoneSeparateLeavesUnmerged(t *testing.T) {
 	require.Len(t, f, 2, "a separate ruling must leave both members in findings.json")
 	for _, x := range f {
 		assert.False(t, x.ClusterMerged, "no record may be flagged cluster_merged on a separate ruling")
+		assert.Empty(t, x.ClusterID, "no record may carry a ClusterID on a separate ruling")
 	}
 }
 
@@ -352,15 +355,15 @@ func TestRunDebate_CorruptAmbiguousJSONLogsWarning(t *testing.T) {
 }
 
 // TestIndexClusters_RoundTripsBuildDisagreementsProblem pins the cross-package
-// coupling the clusterIdx lookup silently depends on (TD cluster.go:38): the
-// gray-zone radar item's Problem is produced by reconcile.longestProblem inside
-// BuildDisagreements, while indexClusters keys the cluster by clusterDisplayProblem.
+// round-trip the clusterIdx lookup depends on: the gray-zone radar item's Problem is
+// produced by reconcile.ClusterDisplayProblem inside BuildDisagreements, and
+// indexClusters keys the cluster by that same reconcile.ClusterDisplayProblem.
 // runDebate looks a debated DisagreementItem up in the clusterIdx by
-// {File, Line, Problem}; if the two representative-problem implementations ever
-// tie-break differently, the lookup fails and a "merge" ruling silently no-ops.
-// This round-trips a cluster through BuildDisagreements -> indexClusters so the two
-// are guaranteed to agree, including the equal-length-problem tie the TD item called
-// out (both functions compare with strict greater-than, so the FIRST member wins).
+// {File, Line, Problem}; collapsing the two former representative-problem impls
+// (reconcile.longestProblem and debate.clusterDisplayProblem) into one shared helper
+// makes the agreement structural, but this test still guards the round-trip end to
+// end — including the equal-length-problem tie the TD item called out (strict
+// greater-than, so the FIRST member wins).
 func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -378,7 +381,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 				tc.probA, "MEDIUM", "alice",
 				tc.probB, "HIGH", "bob")
 
-			// The radar item's Problem comes from reconcile.longestProblem.
+			// The radar item's Problem comes from reconcile.ClusterDisplayProblem.
 			df := reconcile.BuildDisagreements(nil, []reconcile.AmbiguousCluster{cluster})
 			var item reconcile.DisagreementItem
 			found := false
@@ -390,7 +393,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 			}
 			require.True(t, found, "BuildDisagreements must surface the cluster as a gray_zone radar item")
 
-			// indexClusters keys on clusterDisplayProblem; the debated item resolves
+			// indexClusters keys on reconcile.ClusterDisplayProblem; the debated item resolves
 			// back by its Problem only if the two representatives agree.
 			idx := indexClusters([]reconcile.AmbiguousCluster{cluster})
 			got, ok := idx[FindingKey{File: item.File, Line: item.Line, Problem: item.Problem}]
@@ -431,7 +434,7 @@ func TestFirstClusterRulingCollision_GuardsRulingsKeyspace(t *testing.T) {
 // item on a re-run; cluster #2, never merged, must still be processed.
 func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	// Two DISTINCT clusters at the same canonical File+Line, with stable IDs. Each
-	// member B is strictly longer so clusterDisplayProblem is deterministic and the
+	// member B is strictly longer so ClusterDisplayProblem is deterministic and the
 	// radar item resolves back to its cluster via indexClusters.
 	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
 	c2 := grayCluster("amb-2", "a.go", 10, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")
@@ -445,7 +448,7 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	}
 
 	// First run: no ClusterMerged record exists yet — both items pass through.
-	firstRun := filterMergedClusters(items, []reconcile.JSONFinding{
+	firstRun := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "c1a"},
 	}, clusterIdx)
 	assert.Len(t, firstRun, 2, "first run (no ClusterMerged record) must not filter either co-located cluster")
@@ -453,7 +456,7 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	// Re-run: cluster #1 was merged (its survivor sits at a.go:10 flagged
 	// ClusterMerged with ClusterID amb-1). Identity-keyed filtering suppresses ONLY
 	// cluster #1; cluster #2 (amb-2), never merged, is still processed.
-	reRun := filterMergedClusters(items, []reconcile.JSONFinding{
+	reRun := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-1"},
 	}, clusterIdx)
 	require.Len(t, reRun, 1, "only the merged cluster's item is suppressed; the co-located distinct cluster survives")
@@ -467,16 +470,50 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 // idempotent no-op) and self-heals, rather than a blank ID silently matching a
 // blank-keyed item.
 func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) {
-	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
-	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
-	items := []reconcile.DisagreementItem{
-		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
-	}
+	t.Run("single cluster legacy survivor", func(t *testing.T) {
+		c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+		clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
+		items := []reconcile.DisagreementItem{
+			{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+		}
 
-	// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
-	out := filterMergedClusters(items, []reconcile.JSONFinding{
-		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
-	}, clusterIdx)
-	require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
-	assert.Equal(t, "cluster one longer problem", out[0].Problem)
+		// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
+		out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
+			{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
+		}, clusterIdx)
+		require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
+		assert.Equal(t, "cluster one longer problem", out[0].Problem)
+	})
+
+	t.Run("mixed legacy and new-ID survivors", func(t *testing.T) {
+		c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+		c2 := grayCluster("amb-2", "b.go", 20, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")
+		clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+		items := []reconcile.DisagreementItem{
+			{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+			{Kind: reconcile.KindGrayZone, File: "b.go", Line: 20, Problem: "cluster two longer problem"},
+		}
+
+		// One legacy merged record (no ClusterID) plus one new merged record (with ClusterID).
+		out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
+			{File: "a.go", Line: 10, Problem: "legacy survivor", ClusterMerged: true},
+			{File: "b.go", Line: 20, Problem: "new survivor", ClusterMerged: true, ClusterID: "amb-2"},
+		}, clusterIdx)
+		require.Len(t, out, 1, "only the new-ID cluster's item may be suppressed; the legacy record suppresses nothing")
+		assert.Equal(t, "cluster one longer problem", out[0].Problem, "the legacy cluster's item must survive")
+	})
+}
+
+// TestFilterMergedClusters_NilClusterIdxPassesThrough documents that callers may
+// pass a nil cluster index (e.g. when no gray-zone clusters exist) without
+// triggering a panic, and that gray-zone items pass through unchanged.
+func TestFilterMergedClusters_NilClusterIdxPassesThrough(t *testing.T) {
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "gray item"},
+	}
+	out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-1"},
+	}, nil)
+	require.Len(t, out, 1, "nil clusterIdx must not suppress items")
+	assert.Equal(t, "gray item", out[0].Problem)
 }
