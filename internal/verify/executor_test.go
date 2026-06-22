@@ -266,6 +266,20 @@ func TestGenerateFixes_BoundedByMaxParallel(t *testing.T) {
 	assert.Greater(t, peak, 0, "fixes should have been generated")
 }
 
+// TestGenerateFixes_ClearsStaleFixWarningOnSuccess proves a successful fix clears
+// any FixWarning left by a prior failed/empty run, so a finding never carries both
+// a valid Fix and a stale warning claiming the fix is absent.
+func TestGenerateFixes_ClearsStaleFixWarningOnSuccess(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+			FixWarning: "fix generation failed: provider boom"},
+	}
+	rec := &recordingExecutor{out: "use a parameterized query"}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	assert.Equal(t, "use a parameterized query", findings[0].Fix)
+	assert.Equal(t, "", findings[0].FixWarning, "a successful re-run must clear the stale fix warning")
+}
+
 // TestGenerateFixes_StopsOnCanceledContext proves the dispatch loop bails as soon
 // as the context is canceled instead of grinding through every remaining finding.
 // With a pre-canceled context no executor round-trip should be entered at all.
