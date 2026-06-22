@@ -459,3 +459,24 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	require.Len(t, reRun, 1, "only the merged cluster's item is suppressed; the co-located distinct cluster survives")
 	assert.Equal(t, "cluster two longer problem", reRun[0].Problem, "the surviving item must be cluster #2 (amb-2)")
 }
+
+// TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress pins the
+// backward-compat path (Epic 6.2): a ClusterMerged survivor written by a pre-6.2
+// debate carries no ClusterID. Identity-keyed filtering matches only non-empty IDs,
+// so such a legacy record suppresses nothing — the cluster is re-debated once (an
+// idempotent no-op) and self-heals, rather than a blank ID silently matching a
+// blank-keyed item.
+func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) {
+	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+	}
+
+	// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
+	out := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
+	}, clusterIdx)
+	require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
+	assert.Equal(t, "cluster one longer problem", out[0].Problem)
+}
