@@ -28,6 +28,8 @@ func newGithubCmd() *cobra.Command {
 	cmd.Flags().String("api-url", "", "GitHub REST API base (default: $GITHUB_API_URL or https://api.github.com)")
 	cmd.Flags().String("fail-on", "", "exit 1 (and mark the check failed) if any finding at/above this severity survives")
 	cmd.Flags().String("check-name", "atcr", "name of the GitHub check run")
+	cmd.Flags().Bool("inline-comments", false, "also post inline PR review comments (default: check + artifacts only)")
+	cmd.Flags().Int("pr", 0, "pull request number (required with --inline-comments)")
 	return cmd
 }
 
@@ -83,6 +85,15 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	apiURLFlag, _ := cmd.Flags().GetString("api-url")
 	apiURL := envOr(apiURLFlag, "GITHUB_API_URL")
 
+	// Validate the inline-comments/pr pairing before any network call so a
+	// misconfiguration is a fast usage error (exit 2), not masked by a later
+	// check-post failure.
+	inline, _ := cmd.Flags().GetBool("inline-comments")
+	pr, _ := cmd.Flags().GetInt("pr")
+	if inline && pr <= 0 {
+		return usageError(errors.New("--inline-comments requires --pr <number>"))
+	}
+
 	arg := ""
 	if len(args) == 1 {
 		arg = args[0]
@@ -115,10 +126,46 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "posted check %q to %s/%s @ %s: %s (%d finding(s))\n",
 		checkName, owner, repo, sha, conclusion, len(findings))
 
+	// Inline comments are opt-in (AC4): the check + artifacts are the baseline,
+	// comments are the enhancement. When enabled, a PR number is mandatory.
+	if inline {
+		if err := postInlineComments(cmd, client, owner, repo, pr, sha, findings); err != nil {
+			return err
+		}
+	}
+
 	// The merge gate also rides the process exit code, so a consumer can gate on
 	// either the check conclusion or the step's exit status.
 	if conclusion == "failure" {
 		return &codedError{code: exitFailure, err: fmt.Errorf("%d finding(s) at or above %s", failCount, failOn)}
 	}
+	return nil
+}
+
+// postInlineComments posts one inline review comment per anchorable finding.
+// Posting is best-effort: GitHub returns 422 for a comment whose line is not
+// part of the PR diff (a finding on an unchanged line), which is expected and
+// must not fail the run. But if EVERY comment fails, that signals a systemic
+// problem (bad token, missing pull-requests:write) and is surfaced as an error.
+func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, findings []reconcile.JSONFinding) error {
+	comments := ghaction.BuildInlineComments(findings)
+	if len(comments) == 0 {
+		return nil
+	}
+	posted, failed := 0, 0
+	var lastErr error
+	for _, c := range comments {
+		if err := client.CreateReviewComment(cmd.Context(), owner, repo, pr, sha, c); err != nil {
+			failed++
+			lastErr = err
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not post comment at %s:%d: %v\n", c.Path, c.Line, err)
+			continue
+		}
+		posted++
+	}
+	if posted == 0 && failed > 0 {
+		return &codedError{code: exitFailure, err: fmt.Errorf("all %d inline comment(s) failed to post: %w", failed, lastErr)}
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d skipped)\n", posted, owner, repo, pr, failed)
 	return nil
 }
