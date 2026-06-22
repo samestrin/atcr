@@ -114,10 +114,11 @@ func TestRunDebate_GrayZoneSeparateLeavesUnmerged(t *testing.T) {
 	}
 }
 
-// TestRunDebate_GrayZoneMergeDriftAndNoOverCapture: when a member's problem text
-// drifted (it was further-merged with a third finding) but is the sole record at
-// its location, the merge still unions it (the third-finding wrinkle). An
-// unrelated finding co-located at a DIFFERENT line is never absorbed.
+// TestRunDebate_GrayZoneMergeDriftAndNoOverCapture: cross-line drift recovery is
+// no longer allowed. A member whose problem drifted to a different line and is
+// the sole record there is NOT absorbed, even if that different line is a member
+// location, because no other member anchored exactly at that line. An unrelated
+// finding at a yet-different line is also untouched.
 func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
@@ -125,7 +126,8 @@ func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 		grayFinding("a.go", 50, "totally unrelated finding", "LOW", "carol"),
 	}
 	// Cluster member B's raw problem ("beta problem text") no longer matches the
-	// drifted record at a.go:12, but that location holds exactly one record.
+	// drifted record at a.go:12, and no member matched exactly at a.go:12, so
+	// recovery is disabled by the exactMatchedLocs guard.
 	cluster := grayCluster("amb-1", "a.go", 10,
 		"alpha problem text", "MEDIUM", "alice",
 		"beta problem text", "HIGH", "bob")
@@ -138,21 +140,37 @@ func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 	require.Equal(t, 1, res.Selected)
 
 	f := readFindings(t, dir)
-	require.Len(t, f, 2, "the two members union to one; the unrelated finding is untouched")
-	var merged, unrelated *reconcile.JSONFinding
+	require.Len(t, f, 3, "cross-line drift is disabled; all three original findings remain separate")
 	for i := range f {
-		if f[i].Line == 50 {
-			unrelated = &f[i]
-		} else {
-			merged = &f[i]
-		}
+		assert.False(t, f[i].ClusterMerged, "no finding should be merged when cross-line drift recovery is disabled")
 	}
-	require.NotNil(t, merged)
-	require.NotNil(t, unrelated)
-	assert.True(t, merged.ClusterMerged)
-	assert.Equal(t, []string{"alice", "bob"}, merged.Reviewers)
-	assert.False(t, unrelated.ClusterMerged, "the unrelated co-file finding must never be absorbed")
-	assert.Equal(t, "totally unrelated finding", unrelated.Problem)
+}
+
+// TestRunDebate_GrayZoneMergeDoesNotAbsorbUnrelatedAtMemberLoc: member A matches
+// exactly, member B's location holds a single unrelated finding, and no member
+// matched exactly at B's line. The unrelated finding must be preserved and the
+// cluster must not merge (per the cluster.go:132 acceptance test).
+func TestRunDebate_GrayZoneMergeDoesNotAbsorbUnrelatedAtMemberLoc(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
+		grayFinding("a.go", 12, "unrelated finding at member B's line", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	cluster.Findings[1].Line = 12
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 2, "the unrelated finding at a.go:12 must not be absorbed")
+	for i := range f {
+		assert.False(t, f[i].ClusterMerged, "no merge should occur when member B's line holds only an unrelated finding")
+	}
+	assert.Equal(t, "unrelated finding at member B's line", f[1].Problem)
 }
 
 // TestRunDebate_GrayZoneMergeSameLineDrift: two members co-located at the SAME
