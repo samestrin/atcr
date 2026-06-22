@@ -368,6 +368,31 @@ func TestJSONFinding_PathSuggestionOmittedWhenEmpty(t *testing.T) {
 	assert.NotContains(t, string(data), "path_suggestion", "empty suggestion must be omitted")
 }
 
+// TestJSONFinding_ClusterIDOmittedWhenEmpty: a non-merged finding (no ClusterID)
+// must serialize without a cluster_id key — byte-identical to pre-6.2 output
+// (Epic 6.2 AC1).
+func TestJSONFinding_ClusterIDOmittedWhenEmpty(t *testing.T) {
+	f := JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Reviewers: []string{"greta"}, Confidence: "MEDIUM"}
+	data, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "cluster_id", "empty cluster_id must be omitted")
+}
+
+// TestJSONFinding_ClusterIDRoundTrips: a findings.json record carrying a
+// cluster_id parses into the struct and re-marshals intact (Epic 6.2 AC1) — the
+// id rides alongside cluster_merged on an inline-merged survivor.
+func TestJSONFinding_ClusterIDRoundTrips(t *testing.T) {
+	raw := `{"severity":"HIGH","file":"a.go","line":1,"problem":"p","fix":"f","category":"security","est_minutes":10,"evidence":"e","reviewers":["greta"],"confidence":"HIGH","cluster_merged":true,"cluster_id":"amb-1"}`
+	var f JSONFinding
+	require.NoError(t, json.Unmarshal([]byte(raw), &f))
+	assert.Equal(t, "amb-1", f.ClusterID)
+	assert.True(t, f.ClusterMerged)
+
+	out, err := json.Marshal(f)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"cluster_id":"amb-1"`)
+}
+
 // TestJSONFindings_CarriesPathSuggestion: a Merged finding's PathSuggestion is
 // carried into the JSON schema and survives a RenderJSON round-trip (AC6).
 func TestJSONFindings_CarriesPathSuggestion(t *testing.T) {
