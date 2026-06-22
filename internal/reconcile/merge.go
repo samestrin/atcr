@@ -6,6 +6,7 @@
 package reconcile
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -112,7 +113,7 @@ func distinctReviewers(group []stream.Finding) []string {
 // distinct known severity, the "<lo> vs <hi>" disagreement annotation.
 func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 	seen := map[string]bool{}
-	maxRank, minRank := -1, 1<<31
+	maxRank, minRank := -1, math.MaxInt
 	var minSev string
 	for _, f := range group {
 		norm := stream.NormalizeSeverity(f.Severity)
@@ -376,9 +377,11 @@ func mergeVerification(group []JSONFinding) *Verification {
 		if v == nil {
 			continue
 		}
-		if v.Skeptic != "" && !seen[v.Skeptic] {
-			seen[v.Skeptic] = true
-			skeptics = append(skeptics, v.Skeptic)
+		for _, name := range splitNames(v.Skeptic) {
+			if name != "" && !seen[name] {
+				seen[name] = true
+				skeptics = append(skeptics, name)
+			}
 		}
 		if chosen == nil || verdictRank(v.Verdict) > verdictRank(chosen.Verdict) {
 			chosen = v
@@ -388,6 +391,6 @@ func mergeVerification(group []JSONFinding) *Verification {
 		return nil
 	}
 	out := *chosen // copy so the source finding's block is not mutated
-	out.Skeptic = strings.Join(skeptics, ",")
+	out.Skeptic = strings.Join(skeptics, ", ")
 	return &out
 }
