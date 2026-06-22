@@ -1,3 +1,19 @@
+## [7.0.1] - 2026-06-22
+
+Executor model configuration — tightly control fix-generation determinism and style from the registry without editing ATCR source.
+
+### Added
+
+- Executor `temperature` setting (validated to `[0, 2]`) — controls the API temperature for fix generation. It is sent on every fix call and defaults to `0.0` when omitted, so generated fixes are deterministic and reproducible.
+- Executor `system_prompt` override — when set, it fully replaces the default `"You are <persona>, a code-fix executor…"` framing (the `persona` is superseded for that call); the finding metadata, rules, and code snippet are still appended after it. Capped at 4096 characters.
+- Executor `rules` list — project coding guidelines appended to the fix prompt as a constraints block so generated fixes match your conventions (and pass linters on the first CI run). Each rule is validated at load: non-empty, free of control characters, and at most 512 characters.
+
+### Changed
+
+- The executor now always sends a `temperature` to the provider (defaulting to `0.0`), whereas previously it sent none and inherited the provider's own — often non-deterministic — default. Existing `executor:` configs without an explicit `temperature` will now produce deterministic fixes; set `temperature` explicitly to opt into a higher value.
+
+*Shipped via /execute-epic (epic 7.0.1)*
+
 ## [Technical Debt] - 2026-06-22
 
 ### Fixed

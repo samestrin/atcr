@@ -49,3 +49,11 @@ executor:
   role: executor
   min_severity_for_fix: MEDIUM   # MEDIUM | HIGH | CRITICAL | LOW (default MEDIUM)
   # fix_timeout: 120             # optional per-fix timeout (seconds)
+  # Fix-generation tunables (Epic 7.0.1) — control fix style/determinism here
+  # instead of editing ATCR source.
+  temperature: 0.0               # API temperature [0,2]; default 0.0 (deterministic fixes)
+  # system_prompt: |             # optional: replaces the default fixer framing verbatim (supersedes persona)
+  #   You are a senior Go engineer. Emit only gofmt-clean, idiomatic Go and nothing else.
+  rules:                         # optional coding guidelines appended to the fix prompt as constraints
+    - Use tabs for indentation
+    - Avoid panic() in library code; return errors instead
