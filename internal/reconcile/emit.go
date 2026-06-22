@@ -65,6 +65,9 @@ const (
 
 // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,
 // re-readable structured contract the report command renders views over.
+// The schema is additively extended by later epics (path-validation 5.x,
+// cross-examination 6.x); all such fields are omitempty for backward
+// byte-compatibility with pre-extension findings.json.
 //
 // Verification is reserved for Epic 3.0 (adversarial verification) — parsed if
 // present, but never populated by any v1 code path and omitted from 1.x output.
