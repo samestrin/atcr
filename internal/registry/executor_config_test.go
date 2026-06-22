@@ -157,3 +157,18 @@ executor:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required field 'model' is missing")
 }
+
+// A mixed-case executor role must be accepted (case-insensitive validation) and
+// stored canonically lowercase so downstream exact-match comparisons (which use
+// the lowercase RoleExecutor constant) keep working.
+func TestExecutor_RoleCaseInsensitive(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  role: Executor
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.Equal(t, RoleExecutor, reg.Executor.Role, "mixed-case role must normalize to canonical 'executor'")
+}
