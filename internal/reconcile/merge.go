@@ -262,14 +262,7 @@ func mergeEvidence(group []stream.Finding) string {
 			parts = append(parts, f.Evidence)
 		}
 	}
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += " / "
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, " / ")
 }
 
 // confidenceFor maps the distinct-reviewer count to a confidence level.
@@ -394,14 +387,7 @@ func joinEvidence(group []JSONFinding) string {
 		seen[f.Evidence] = true
 		parts = append(parts, f.Evidence)
 	}
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += " / "
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, " / ")
 }
 
 // verdictRank orders verify verdicts for the cluster-merge precedence in
