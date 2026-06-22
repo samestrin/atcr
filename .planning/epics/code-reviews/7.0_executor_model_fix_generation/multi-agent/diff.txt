@@ -1,0 +1,951 @@
+diff --git a/examples/registry-with-executor.yaml b/examples/registry-with-executor.yaml
+new file mode 100644
+index 0000000..1d0a8f4
+--- /dev/null
++++ b/examples/registry-with-executor.yaml
+@@ -0,0 +1,52 @@
++# Example registry with an executor model (Epic 7.0).
++#
++# The review panel (agents:) catches bugs with multiple models; the single
++# executor model generates fixes for verified findings only. Fix generation is
++# opt-in: it runs during `atcr verify` / `atcr review --verify` only because an
++# executor: block is present. Remove the block and ATCR behaves exactly as the
++# registry-without-executor.yaml example.
++providers:
++  anthropic:
++    api_key_env: ANTHROPIC_API_KEY
++  openai:
++    api_key_env: OPENAI_API_KEY
++  google:
++    api_key_env: GOOGLE_API_KEY
++
++agents:
++  bruce:
++    provider: anthropic
++    model: claude-sonnet-4-6
++    persona: bruce
++    role: reviewer
++  greta:
++    provider: openai
++    model: gpt-4-turbo
++    persona: greta
++    role: reviewer
++  kai:
++    provider: google
++    model: gemini-pro
++    persona: kai
++    role: reviewer
++  # A skeptic (different model than the reviewers) adversarially verifies findings
++  # before the executor spends tokens fixing them.
++  skeptic-opus:
++    provider: anthropic
++    model: claude-opus-4-8
++    role: skeptic
++    supports_function_calling: true
++
++# The executor is a SINGLE model run only in the fix phase — not part of the
++# review panel. Use a more capable model here: spend on fix quality, not review
++# breadth. Fixes are generated only for findings that are HIGH-or-better
++# confidence (VERIFIED included) AND at or above min_severity_for_fix.
++executor:
++  name: opus
++  provider: anthropic
++  model: claude-opus-4-8
++  persona: fixer
++  role: executor
++  min_severity_for_fix: MEDIUM   # MEDIUM | HIGH | CRITICAL | LOW (default MEDIUM)
++  batch_fixes: false             # MVP generates fixes one finding at a time
++  # fix_timeout: 120             # optional per-fix timeout (seconds)
+diff --git a/examples/registry-without-executor.yaml b/examples/registry-without-executor.yaml
+new file mode 100644
+index 0000000..b19bcf8
+--- /dev/null
++++ b/examples/registry-without-executor.yaml
+@@ -0,0 +1,30 @@
++# Example registry WITHOUT an executor model — the default ATCR behavior.
++#
++# With no executor: block, ATCR runs review + reconcile + (optional) verification
++# and emits findings with the reviewers' own fix suggestions. No fix-generation
++# phase runs and no executor tokens are spent. This is fully backward-compatible:
++# adding an executor: block (see registry-with-executor.yaml) is purely additive.
++providers:
++  anthropic:
++    api_key_env: ANTHROPIC_API_KEY
++  openai:
++    api_key_env: OPENAI_API_KEY
++  google:
++    api_key_env: GOOGLE_API_KEY
++
++agents:
++  bruce:
++    provider: anthropic
++    model: claude-sonnet-4-6
++    persona: bruce
++    role: reviewer
++  greta:
++    provider: openai
++    model: gpt-4-turbo
++    persona: greta
++    role: reviewer
++  kai:
++    provider: google
++    model: gemini-pro
++    persona: kai
++    role: reviewer
+diff --git a/internal/reconcile/confidence.go b/internal/reconcile/confidence.go
+index 36f4536..f176a1c 100644
+--- a/internal/reconcile/confidence.go
++++ b/internal/reconcile/confidence.go
+@@ -29,3 +29,27 @@ func ConfidenceForVerdict(prior, verdict string) string {
+ 		return prior
+ 	}
+ }
++
++// confidenceRank is the v2 confidence ordinal rubric (VERIFIED > HIGH > MEDIUM >
++// LOW), the single source consumers gate on. An unknown tier maps to 0 so
++// ConfidenceAtOrAbove fails closed for it.
++var confidenceRank = map[string]int{
++	ConfLow:            1,
++	ConfMedium:         2,
++	ConfHigh:           3,
++	ConfidenceVerified: 4,
++}
++
++// ConfidenceAtOrAbove reports whether confidence c is at or above floor in the
++// v2 ordering (VERIFIED > HIGH > MEDIUM > LOW). Both arguments are normalized to
++// canonical upper-case so the comparison is case- and whitespace-insensitive. It
++// fails closed (returns false) when either value is empty or an unrecognized
++// tier — a gate must never fire on a token it does not understand.
++func ConfidenceAtOrAbove(c, floor string) bool {
++	cr := confidenceRank[strings.ToUpper(strings.TrimSpace(c))]
++	fr := confidenceRank[strings.ToUpper(strings.TrimSpace(floor))]
++	if cr == 0 || fr == 0 {
++		return false
++	}
++	return cr >= fr
++}
+diff --git a/internal/reconcile/confidence_test.go b/internal/reconcile/confidence_test.go
+new file mode 100644
+index 0000000..dbcad77
+--- /dev/null
++++ b/internal/reconcile/confidence_test.go
+@@ -0,0 +1,27 @@
++package reconcile
++
++import "testing"
++
++func TestConfidenceAtOrAbove(t *testing.T) {
++	cases := []struct {
++		conf  string
++		floor string
++		want  bool
++	}{
++		{ConfidenceVerified, ConfHigh, true}, // VERIFIED is above HIGH
++		{ConfHigh, ConfHigh, true},           // equal
++		{ConfMedium, ConfHigh, false},        // below
++		{ConfLow, ConfHigh, false},           // below
++		{ConfHigh, ConfMedium, true},         // above
++		{"verified", ConfHigh, true},         // case-insensitive
++		{"  HIGH  ", ConfHigh, true},         // whitespace-insensitive
++		{"BOGUS", ConfHigh, false},           // unknown finding confidence fails closed
++		{ConfHigh, "BOGUS", false},           // unknown floor fails closed
++		{"", ConfHigh, false},                // empty fails closed
++	}
++	for _, c := range cases {
++		if got := ConfidenceAtOrAbove(c.conf, c.floor); got != c.want {
++			t.Errorf("ConfidenceAtOrAbove(%q,%q)=%v want %v", c.conf, c.floor, got, c.want)
++		}
++	}
++}
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index 6595ac6..b9782ce 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -123,6 +123,14 @@ type JSONFinding struct {
+ 	// merge stamping: reconcile-time producers MUST leave it empty, and omitempty
+ 	// keeps every non-merged record byte-identical to pre-6.2 findings.json.
+ 	ClusterID string `json:"cluster_id,omitempty"`
++	// FixWarning records a non-fatal fix-generation failure (Epic 7.0): when the
++	// executor errors or returns an empty completion for a finding it was eligible
++	// to fix, the warning is stamped here instead of failing the run, so a
++	// downstream consumer (the report, the Epic 7.3 PR action) can see the fix was
++	// attempted and why it is absent. omitempty keeps every finding without a
++	// fix-generation failure byte-identical to pre-7.0 findings.json; reconcile-time
++	// producers MUST leave it empty (it is set only by the verify fix phase).
++	FixWarning string `json:"fix_warning,omitempty"`
+ }
+ 
+ // JSONFindings converts the merged findings to their JSON schema records.
+diff --git a/internal/registry/config.go b/internal/registry/config.go
+index d6d2ff7..a87b600 100644
+--- a/internal/registry/config.go
++++ b/internal/registry/config.go
+@@ -45,6 +45,20 @@ const (
+ 	RoleReviewer = "reviewer"
+ 	RoleSkeptic  = "skeptic"
+ 	RoleJudge    = "judge"
++	// RoleExecutor names the optional single fix-generation model (Epic 7.0). It
++	// is NOT a reviewer-panel role: an executor lives in the top-level executor:
++	// block, not in agents:, so roleValid (which gates agent roles) intentionally
++	// excludes it. It is validated only against ExecutorConfig.Role.
++	RoleExecutor = "executor"
++)
++
++// Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
++// applied when the executor block sets none; DefaultFixMinSeverity is the severity
++// floor below which a verified finding gets no generated fix (the executor's
++// min_severity_for_fix; epic Open-Q4 Option B).
++const (
++	DefaultExecutorPersona = "fixer"
++	DefaultFixMinSeverity  = "MEDIUM"
+ )
+ 
+ // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
+@@ -113,6 +127,28 @@ type VerifyConfig struct {
+ 	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
+ }
+ 
++// ExecutorConfig is the optional top-level fix-generation model (Epic 7.0). It is
++// backward-compatible: an absent executor: block leaves Registry.Executor nil and
++// ATCR behaves exactly as before (no fix generation). The executor is a SINGLE
++// model run exclusively in the fix phase — it is not part of the review panel, so
++// it lives outside agents: and carries its own role (always "executor"). Provider
++// references a key in providers:; Model is the model id; Persona defaults to
++// "fixer". MinSeverity (yaml: min_severity_for_fix) is the severity floor a
++// verified finding must meet to receive a fix (default MEDIUM, normalized to
++// canonical upper-case at load). BatchFixes is parsed but the MVP generates fixes
++// per-finding (Open-Q2 Option A), so it defaults false. TimeoutSecs (yaml:
++// fix_timeout) is a pointer so an explicit value is distinguishable from unset.
++type ExecutorConfig struct {
++	Name        string `yaml:"name,omitempty"`
++	Provider    string `yaml:"provider"`
++	Model       string `yaml:"model"`
++	Persona     string `yaml:"persona,omitempty"`
++	Role        string `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
++	MinSeverity string `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
++	BatchFixes  bool   `yaml:"batch_fixes,omitempty"`          // MVP is per-finding; reserved for batched generation
++	TimeoutSecs *int   `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
++}
++
+ // AgentConfig binds a provider+model to a reviewer persona. Temperature and
+ // TimeoutSecs are pointers so an explicit zero survives default application.
+ //
+@@ -247,6 +283,11 @@ type Registry struct {
+ 	// without a debate block still yields the resolved defaults.
+ 	Debate DebateConfig `yaml:"debate,omitempty"`
+ 
++	// Executor is the optional fix-generation model (Epic 7.0). A pointer so an
++	// absent block (nil) — the backward-compatible default — is distinguishable
++	// from a configured one; nil means no fix generation runs.
++	Executor *ExecutorConfig `yaml:"executor,omitempty"`
++
+ 	// ProviderSource and AgentSource record the tier (and defining file) each
+ 	// effective entry came from after the project overlay merge — user or
+ 	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
+@@ -352,10 +393,43 @@ func (r *Registry) validate() error {
+ 	for _, name := range sortedKeys(r.Agents) {
+ 		errs = append(errs, r.validateAgent(name, r.Agents[name])...)
+ 	}
++	errs = append(errs, r.validateExecutor()...)
+ 
+ 	return errors.Join(errs...)
+ }
+ 
++// validateExecutor returns every fault found in the optional executor block (Epic
++// 7.0). A nil block (no fix generation) is valid and yields no faults. Like the
++// agent checks it accumulates rather than short-circuits (Epic 4.2 / AC6): the
++// provider must be present and reference a defined provider, the model is
++// required, role (if set) must be "executor", min_severity_for_fix (if set) must
++// be a canonical review severity, and fix_timeout must be within bounds.
++func (r *Registry) validateExecutor() []error {
++	e := r.Executor
++	if e == nil {
++		return nil
++	}
++	var errs []error
++	if e.Provider == "" {
++		errs = append(errs, errors.New("executor: required field 'provider' is missing"))
++	} else if _, ok := r.Providers[e.Provider]; !ok {
++		errs = append(errs, fmt.Errorf("executor references unknown provider '%s'", e.Provider))
++	}
++	if e.Model == "" {
++		errs = append(errs, errors.New("executor: required field 'model' is missing"))
++	}
++	if e.Role != "" && e.Role != RoleExecutor {
++		errs = append(errs, fmt.Errorf("executor: role must be 'executor', got '%s'", e.Role))
++	}
++	if normalized := stream.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
++		errs = append(errs, fmt.Errorf("executor: min_severity_for_fix must be one of CRITICAL, HIGH, MEDIUM, LOW, got %q", e.MinSeverity))
++	}
++	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
++		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
++	}
++	return errs
++}
++
+ // validateProvider returns every fault found in a single provider entry (Epic
+ // 4.2 / AC6 — accumulate rather than short-circuit).
+ func validateProvider(name string, p Provider) []error {
+@@ -507,6 +581,28 @@ func (r *Registry) applyDefaults() {
+ 	if len(r.Debate.Triggers) == 0 {
+ 		r.Debate.Triggers = DefaultDebateTriggers()
+ 	}
++	// Executor defaults (Epic 7.0): an unset persona resolves to "fixer", an unset
++	// role to "executor", and an unset min_severity_for_fix to MEDIUM (a set value
++	// is canonicalized — validation already rejected any non-canonical value, so
++	// NormalizeSeverity here only fixes casing). An unset name falls back to
++	// "executor" so attribution ("fix by <name>") always has a token. A nil block
++	// (no fix generation) is left untouched.
++	if r.Executor != nil {
++		if r.Executor.Persona == "" {
++			r.Executor.Persona = DefaultExecutorPersona
++		}
++		if r.Executor.Role == "" {
++			r.Executor.Role = RoleExecutor
++		}
++		if r.Executor.Name == "" {
++			r.Executor.Name = RoleExecutor
++		}
++		if r.Executor.MinSeverity == "" {
++			r.Executor.MinSeverity = DefaultFixMinSeverity
++		} else {
++			r.Executor.MinSeverity = stream.NormalizeSeverity(r.Executor.MinSeverity)
++		}
++	}
+ }
+ 
+ // AgentsByRole returns the agents whose effective role matches role, keyed by
+diff --git a/internal/registry/examples_test.go b/internal/registry/examples_test.go
+new file mode 100644
+index 0000000..05799e8
+--- /dev/null
++++ b/internal/registry/examples_test.go
+@@ -0,0 +1,31 @@
++package registry
++
++import (
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// TestExampleRegistriesLoad guards the shipped example registries (Epic 7.0)
++// against drift: both must load and validate, the with-executor example must
++// resolve a defaulted executor, and the without-executor example must leave
++// Executor nil (the backward-compatible default).
++func TestExampleRegistriesLoad(t *testing.T) {
++	examples := filepath.Join("..", "..", "examples")
++
++	withExec, err := LoadRegistry(filepath.Join(examples, "registry-with-executor.yaml"))
++	require.NoError(t, err, "registry-with-executor.yaml must load and validate")
++	require.NotNil(t, withExec.Executor)
++	assert.Equal(t, RoleExecutor, withExec.Executor.Role)
++	assert.Equal(t, "MEDIUM", withExec.Executor.MinSeverity)
++	assert.Equal(t, "fixer", withExec.Executor.Persona)
++	assert.NotEmpty(t, withExec.Executor.Model)
++	_, ok := withExec.Providers[withExec.Executor.Provider]
++	assert.True(t, ok, "executor provider must reference a defined provider")
++
++	noExec, err := LoadRegistry(filepath.Join(examples, "registry-without-executor.yaml"))
++	require.NoError(t, err, "registry-without-executor.yaml must load and validate")
++	assert.Nil(t, noExec.Executor, "no executor block means no fix generation")
++}
+diff --git a/internal/registry/executor_config_test.go b/internal/registry/executor_config_test.go
+new file mode 100644
+index 0000000..74c387d
+--- /dev/null
++++ b/internal/registry/executor_config_test.go
+@@ -0,0 +1,131 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// executorBaseProviders is a minimal valid registry the executor block is appended to.
++const executorBaseProviders = `
++providers:
++  anthropic:
++    api_key_env: ANTHROPIC_API_KEY
++agents:
++  bruce:
++    provider: anthropic
++    model: claude-sonnet-4-6
++    role: reviewer
++`
++
++func TestExecutor_AbsentByDefault(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders))
++	require.NoError(t, err)
++	assert.Nil(t, reg.Executor, "executor must be nil when no executor block is configured")
++}
++
++func TestExecutor_ParsedWhenPresent(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  name: opus
++  provider: anthropic
++  model: claude-opus-4-8
++  persona: fixer
++  role: executor
++`))
++	require.NoError(t, err)
++	require.NotNil(t, reg.Executor)
++	assert.Equal(t, "opus", reg.Executor.Name)
++	assert.Equal(t, "anthropic", reg.Executor.Provider)
++	assert.Equal(t, "claude-opus-4-8", reg.Executor.Model)
++	assert.Equal(t, "fixer", reg.Executor.Persona)
++	assert.Equal(t, RoleExecutor, reg.Executor.Role)
++}
++
++func TestExecutor_DefaultsApplied(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: anthropic
++  model: claude-opus-4-8
++`))
++	require.NoError(t, err)
++	require.NotNil(t, reg.Executor)
++	assert.Equal(t, RoleExecutor, reg.Executor.Role, "role defaults to executor")
++	assert.Equal(t, DefaultExecutorPersona, reg.Executor.Persona, "persona defaults to fixer")
++	assert.Equal(t, DefaultFixMinSeverity, reg.Executor.MinSeverity, "min_severity_for_fix defaults to MEDIUM")
++	assert.False(t, reg.Executor.BatchFixes, "batch_fixes defaults to false (per-finding MVP)")
++}
++
++func TestExecutor_MinSeverityForFixExplicitAndNormalized(t *testing.T) {
++	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: anthropic
++  model: claude-opus-4-8
++  min_severity_for_fix: high
++`))
++	require.NoError(t, err)
++	require.NotNil(t, reg.Executor)
++	assert.Equal(t, "HIGH", reg.Executor.MinSeverity)
++}
++
++func TestExecutor_MissingProvider(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  model: claude-opus-4-8
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "provider")
++}
++
++func TestExecutor_UnknownProvider(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: nope
++  model: claude-opus-4-8
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "unknown provider")
++}
++
++func TestExecutor_MissingModel(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: anthropic
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "model")
++}
++
++func TestExecutor_InvalidRole(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: anthropic
++  model: claude-opus-4-8
++  role: reviewer
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "executor")
++}
++
++func TestExecutor_InvalidMinSeverityForFix(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: anthropic
++  model: claude-opus-4-8
++  min_severity_for_fix: BLOCKER
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "min_severity_for_fix")
++}
++
++func TestExecutor_InvalidFixTimeout(t *testing.T) {
++	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
++executor:
++  provider: anthropic
++  model: claude-opus-4-8
++  fix_timeout: -5
++`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "fix_timeout")
++}
+diff --git a/internal/verify/executor.go b/internal/verify/executor.go
+new file mode 100644
+index 0000000..5f98a80
+--- /dev/null
++++ b/internal/verify/executor.go
+@@ -0,0 +1,180 @@
++package verify
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/log"
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/registry"
++)
++
++// executorCompleter is the single-shot model call the fix-generation phase needs.
++// *llmclient.Client satisfies it. It is the seam that lets tests drive fix
++// generation with a scripted completer instead of a real provider.
++type executorCompleter interface {
++	Complete(ctx context.Context, inv llmclient.Invocation) (string, error)
++}
++
++// newExecutorClient builds the production executor completer. It is a package-level
++// seam (rather than a runVerify parameter) so the executor wiring does not churn
++// runVerify's many call sites; tests override it via swapExecutorClient.
++var newExecutorClient = func() executorCompleter { return llmclient.New() }
++
++// fixSnippetRadius is the number of lines read on each side of a finding's line to
++// give the executor real code context (Epic 7.0 snippet tier).
++const fixSnippetRadius = 30
++
++// fixAttributionPrefix is the marker appended to a finding's Evidence after a fix
++// is generated; it doubles as the idempotency guard (a finding already carrying it
++// is not re-generated on a verify re-run).
++const fixAttributionPrefix = "fix by "
++
++// generateFixes is the fix-generation phase (Epic 7.0). For every finding whose
++// confidence is HIGH-or-better (so VERIFIED — the tier the verify stage promotes
++// confirmed findings to — is included) AND whose severity meets the executor's
++// min_severity_for_fix floor, it reads a code snippet around the finding from the
++// review snapshot (via the read-only dispatcher) and asks the single executor model
++// for a minimal fix, writing it into the finding's Fix column and appending
++// "fix by <name>" to Evidence.
++//
++// It mutates findings in place and is run after verdict application / confidence
++// recompute and before the artifacts are serialized, so fixes ride into
++// findings.json. Failure isolation mirrors the verify stage: a snippet read
++// failure, an executor error, or an empty completion leaves that finding's existing
++// Fix/Evidence untouched and is logged, never returned — fix generation never fails
++// the run. A nil executor or completer is a no-op; disp may be nil (snapshot
++// unavailable), in which case the snippet is omitted and the executor works from the
++// finding text alone.
++func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher) {
++	if ex == nil || complete == nil {
++		return
++	}
++	// Defense-in-depth: registry validation already guarantees the executor's
++	// provider is defined, so this guard never fires on a validated registry. It
++	// protects the direct-call path (e.g. tests building a Registry in memory) from
++	// a nil-map panic and documents the invariant rather than assuming it.
++	prov, ok := reg.Providers[ex.Provider]
++	if !ok {
++		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
++		return
++	}
++	minSev := ex.MinSeverity
++	if minSev == "" {
++		minSev = registry.DefaultFixMinSeverity
++	}
++	for i := range findings {
++		f := &findings[i]
++		if !reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) {
++			continue
++		}
++		if !meetsSeverityFloor(f.Severity, minSev) {
++			continue
++		}
++		// Idempotency + cost control: a finding this executor already attributed (a
++		// prior verify run generated its fix) is not re-generated. The guard is
++		// name-specific so unrelated evidence text that merely contains "fix by "
++		// does not suppress generation.
++		if strings.Contains(f.Evidence, fixAttributionPrefix+ex.Name) {
++			continue
++		}
++		snippet := readFixSnippet(ctx, disp, f.File, f.Line)
++		prompt := buildFixPrompt(*f, snippet, ex.Persona)
++		out, err := callExecutor(ctx, complete, prov, ex, prompt)
++		if err != nil {
++			logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
++			f.FixWarning = "fix generation failed: " + err.Error()
++			continue
++		}
++		fix := strings.TrimSpace(out)
++		if fix == "" {
++			logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
++			f.FixWarning = "fix generation returned an empty completion"
++			continue
++		}
++		f.Fix = fix
++		f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
++	}
++}
++
++// callExecutor invokes the executor model for one finding, applying the optional
++// per-fix timeout (fix_timeout) as a context deadline scoped to this single call.
++func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string) (string, error) {
++	callCtx := ctx
++	if ex.TimeoutSecs != nil && *ex.TimeoutSecs > 0 {
++		var cancel context.CancelFunc
++		callCtx, cancel = context.WithTimeout(ctx, time.Duration(*ex.TimeoutSecs)*time.Second)
++		defer cancel()
++	}
++	return complete.Complete(callCtx, llmclient.Invocation{
++		BaseURL:   prov.BaseURL,
++		APIKeyEnv: prov.APIKeyEnv,
++		Model:     ex.Model,
++		Prompt:    prompt,
++	})
++}
++
++// readFixSnippet reads up to fixSnippetRadius lines on each side of line from file
++// in the review snapshot, via the read-only read_file tool on the dispatcher. It
++// returns "" (best-effort) when the dispatcher is unavailable, the file is empty,
++// or the read fails — the executor then works from the finding text alone.
++func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int) string {
++	if disp == nil || strings.TrimSpace(file) == "" {
++		return ""
++	}
++	start := line - fixSnippetRadius
++	if start < 1 {
++		start = 1
++	}
++	end := line + fixSnippetRadius
++	args, err := json.Marshal(struct {
++		Path      string `json:"path"`
++		StartLine int    `json:"start_line"`
++		EndLine   int    `json:"end_line"`
++	}{Path: file, StartLine: start, EndLine: end})
++	if err != nil {
++		return ""
++	}
++	res, err := disp.Execute(ctx, "read_file", args)
++	if err != nil {
++		return ""
++	}
++	return res.Content
++}
++
++// buildFixPrompt renders the executor prompt for one finding: a fix-focused persona
++// instruction, the finding metadata, the reviewer's existing fix suggestion (when
++// present, to refine rather than reinvent), and the source snippet (when available).
++func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
++	if strings.TrimSpace(persona) == "" {
++		persona = registry.DefaultExecutorPersona
++	}
++	var b strings.Builder
++	fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
++	fmt.Fprintf(&b, "Severity: %s\nLocation: %s:%d\nCategory: %s\nProblem: %s\n", f.Severity, f.File, f.Line, f.Category, f.Problem)
++	if strings.TrimSpace(f.Fix) != "" {
++		fmt.Fprintf(&b, "Reviewer-suggested fix (refine into a minimal, correct change): %s\n", f.Fix)
++	}
++	if strings.TrimSpace(snippet) != "" {
++		fmt.Fprintf(&b, "\nSource context around %s:%d (each line is prefixed with its line number as `N: `; do NOT include those line-number prefixes in your fix):\n```\n%s\n```\n", f.File, f.Line, snippet)
++	}
++	return b.String()
++}
++
++// appendFixAttribution appends "fix by <name>" to a finding's Evidence, joining
++// with the existing separator. It is idempotent: an Evidence already carrying the
++// attribution is returned unchanged.
++func appendFixAttribution(evidence, name string) string {
++	attr := fixAttributionPrefix + name
++	if strings.TrimSpace(evidence) == "" {
++		return attr
++	}
++	if strings.Contains(evidence, attr) {
++		return evidence
++	}
++	return evidence + "; " + attr
++}
+diff --git a/internal/verify/executor_test.go b/internal/verify/executor_test.go
+new file mode 100644
+index 0000000..757e935
+--- /dev/null
++++ b/internal/verify/executor_test.go
+@@ -0,0 +1,218 @@
++package verify
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// recordingExecutor is a scripted executorCompleter that records every prompt and
++// returns a fixed completion/error, so a test can assert call count and prompt
++// contents without a provider.
++type recordingExecutor struct {
++	out     string
++	err     error
++	calls   int
++	prompts []string
++}
++
++func (r *recordingExecutor) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
++	r.calls++
++	r.prompts = append(r.prompts, inv.Prompt)
++	return r.out, r.err
++}
++
++func execConfig(minSev string) *registry.ExecutorConfig {
++	return &registry.ExecutorConfig{
++		Name: "opus", Provider: "p", Model: "m-exec", Persona: "fixer",
++		Role: registry.RoleExecutor, MinSeverity: minSev,
++	}
++}
++
++func execRegistry(minSev string) *registry.Registry {
++	return &registry.Registry{
++		Providers: map[string]registry.Provider{"p": {BaseURL: "http://x.invalid", APIKeyEnv: "K"}},
++		Executor:  execConfig(minSev),
++	}
++}
++
++func TestGenerateFixes_PopulatesFixAndAttribution(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "sqli", Confidence: ConfidenceVerified,
++			Evidence: "Found by bruce; confidence HIGH"},
++	}
++	rec := &recordingExecutor{out: "use a parameterized query"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++
++	assert.Equal(t, 1, rec.calls)
++	assert.Equal(t, "use a parameterized query", findings[0].Fix)
++	assert.Contains(t, findings[0].Evidence, "fix by opus")
++}
++
++func TestGenerateFixes_SkipsBelowConfidence(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfMedium, Fix: "orig"},
++	}
++	rec := &recordingExecutor{out: "new fix"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++
++	assert.Equal(t, 0, rec.calls, "MEDIUM confidence is below the HIGH floor")
++	assert.Equal(t, "orig", findings[0].Fix)
++}
++
++func TestGenerateFixes_SkipsBelowSeverity(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "LOW", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
++	}
++	rec := &recordingExecutor{out: "new fix"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++
++	assert.Equal(t, 0, rec.calls, "LOW severity is below the MEDIUM fix floor")
++	assert.Equal(t, "orig", findings[0].Fix)
++}
++
++func TestGenerateFixes_FailureIsolation(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig", Evidence: "ev"},
++	}
++	rec := &recordingExecutor{err: errors.New("provider boom")}
++	require.NotPanics(t, func() {
++		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++	})
++	assert.Equal(t, 1, rec.calls)
++	assert.Equal(t, "orig", findings[0].Fix, "failed fix leaves the reviewer fix untouched")
++	assert.Equal(t, "ev", findings[0].Evidence, "no attribution on failure")
++	assert.Contains(t, findings[0].FixWarning, "fix generation failed", "failure is recorded on the finding for downstream consumers")
++}
++
++func TestGenerateFixes_EmptyCompletionLeavesFix(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
++	}
++	rec := &recordingExecutor{out: "   "}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++	assert.Equal(t, "orig", findings[0].Fix)
++	assert.Contains(t, findings[0].FixWarning, "empty completion")
++}
++
++func TestGenerateFixes_Idempotent(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
++			Fix: "already fixed", Evidence: "Found by bruce; fix by opus"},
++	}
++	rec := &recordingExecutor{out: "new fix"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++	assert.Equal(t, 0, rec.calls, "an already-attributed finding is not re-generated")
++	assert.Equal(t, "already fixed", findings[0].Fix)
++}
++
++func TestGenerateFixes_AttributionGuardIsNameSpecific(t *testing.T) {
++	// Evidence mentions "fix by " but not this executor (opus); generation must run.
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
++			Evidence: "reviewer suggested a fix by hand"},
++	}
++	rec := &recordingExecutor{out: "real fix"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++	assert.Equal(t, 1, rec.calls)
++	assert.Equal(t, "real fix", findings[0].Fix)
++	assert.Contains(t, findings[0].Evidence, "fix by opus")
++}
++
++func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 42, Problem: "p", Confidence: ConfidenceVerified},
++	}
++	// okDispatcher returns Content "file contents" for read_file.
++	rec := &recordingExecutor{out: "fix"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
++	require.Len(t, rec.prompts, 1)
++	assert.Contains(t, rec.prompts[0], "file contents", "snippet read from the snapshot is embedded in the prompt")
++}
++
++// swapExecutorClient overrides the package executor-client seam and returns a
++// restore func, so an integration test can inject a scripted completer.
++func swapExecutorClient(fn func() executorCompleter) func() {
++	prev := newExecutorClient
++	newExecutorClient = fn
++	return func() { newExecutorClient = prev }
++}
++
++func TestGenerateFixes_NilExecutorOrCompleterNoop(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
++	}
++	require.NotPanics(t, func() {
++		generateFixes(context.Background(), findings, nil, execRegistry("MEDIUM"), &recordingExecutor{}, okDispatcher())
++		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), nil, okDispatcher())
++	})
++	assert.Equal(t, "orig", findings[0].Fix)
++}
++
++// Integration: an executor configured on the registry generates a fix during
++// runVerify and the fix lands in findings.json with executor attribution.
++func TestRunVerify_ExecutorGeneratesFixIntoArtifact(t *testing.T) {
++	dir := pipelineReview(t, []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "sqli", Confidence: "HIGH", Reviewers: []string{"rev"},
++			Evidence: "Found by rev; confidence HIGH"},
++	})
++	reg := execRegistry("MEDIUM") // no skeptic agents → finding stays HIGH (no eligible skeptic)
++
++	rec := &recordingExecutor{out: "use a parameterized query: db.Query(q, id)"}
++	restore := swapExecutorClient(func() executorCompleter { return rec })
++	defer restore()
++
++	_, err := runVerify(context.Background(), dir, reg, Options{}, scriptedHarness(`{}`))
++	require.NoError(t, err)
++
++	got := readFindings(t, dir)
++	assert.Equal(t, "use a parameterized query: db.Query(q, id)", got[0].Fix)
++	assert.Contains(t, got[0].Evidence, "fix by opus")
++	assert.GreaterOrEqual(t, rec.calls, 1)
++}
++
++// TestRunVerify_ExecutorOutputSchema locks the resolved output-format contract
++// (Epic 7.0): the generated fix populates the existing `fix` key (column 4) and the
++// executor attribution rides in the existing `evidence` key (column 7) — NO new
++// per-finding executor column is added, so the 9-column schema is preserved.
++func TestRunVerify_ExecutorOutputSchema(t *testing.T) {
++	dir := pipelineReview(t, []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "sqli", Confidence: "HIGH", Reviewers: []string{"rev"},
++			Evidence: "Found by rev; confidence HIGH"},
++	})
++	rec := &recordingExecutor{out: "parameterize the query"}
++	restore := swapExecutorClient(func() executorCompleter { return rec })
++	defer restore()
++
++	_, err := runVerify(context.Background(), dir, execRegistry("MEDIUM"), Options{}, scriptedHarness(`{}`))
++	require.NoError(t, err)
++
++	raw, err := os.ReadFile(filepath.Join(dir, reconciledSubdir, reconcile.FindingsJSON))
++	require.NoError(t, err)
++	s := string(raw)
++	assert.Contains(t, s, `"fix": "parameterize the query"`)
++	assert.Contains(t, s, "fix by opus")
++	assert.NotContains(t, s, `"executor"`, "executor attribution rides in evidence, not a new column/key")
++}
++
++// Integration: with no executor configured, runVerify behaves exactly as before —
++// the fix column is left as the reviewer supplied it.
++func TestRunVerify_NoExecutorLeavesFixUnchanged(t *testing.T) {
++	dir := pipelineReview(t, []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH", Reviewers: []string{"rev"}, Fix: "reviewer fix"},
++	})
++	_, err := runVerify(context.Background(), dir, skepticRegistry(), Options{}, scriptedHarness(`{"verdict":"confirmed"}`))
++	require.NoError(t, err)
++	got := readFindings(t, dir)
++	assert.Equal(t, "reviewer fix", got[0].Fix)
++	assert.NotContains(t, got[0].Evidence, "fix by")
++	assert.FileExists(t, filepath.Join(dir, reconciledSubdir, "verification.json"))
++}
+diff --git a/internal/verify/pipeline.go b/internal/verify/pipeline.go
+index 15e014f..710acf8 100644
+--- a/internal/verify/pipeline.go
++++ b/internal/verify/pipeline.go
+@@ -159,6 +159,30 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 		jobs = append(jobs, job{finding: f, key: FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}, skeptics: sk})
+ 	}
+ 
++	// Fix phase (Epic 7.0) also needs the snapshot, to read code context around a
++	// finding. Build the harness when an executor is configured AND at least one
++	// finding could qualify for a fix on severity alone (the confidence gate is
++	// applied post-recompute in generateFixes). This runs over every finding —
++	// including ones skipped for verification — so a verified-but-skipped finding
++	// still gets a fix.
++	if reg.Executor != nil && !needTool {
++		fixMinSev := reg.Executor.MinSeverity
++		if fixMinSev == "" {
++			fixMinSev = registry.DefaultFixMinSeverity
++		}
++		// Mirror generateFixes' full eligibility (confidence AND severity) so a
++		// registry with an executor but only low-confidence findings does not build
++		// a snapshot that yields zero fixes. This branch runs only when no skeptic
++		// needs the tool harness, so no finding here will be promoted to VERIFIED by
++		// verification — current confidence is the final confidence for the gate.
++		for _, f := range findings {
++			if reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) && meetsSeverityFloor(f.Severity, fixMinSev) {
++				needTool = true
++				break
++			}
++		}
++	}
++
+ 	// Build the tool harness (snapshot → jail → dispatcher) only when at least
+ 	// one finding has an eligible skeptic. A snapshot failure is non-fatal: the
+ 	// affected findings degrade to unverifiable rather than failing the run.
+@@ -224,6 +248,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 		findings[i].Confidence = confidenceV2(findings[i].Confidence, v.Verdict)
+ 	}
+ 
++	// Fix-generation phase (Epic 7.0): once confidence is final, ask the single
++	// executor model for a minimal fix on every HIGH-or-better finding above the
++	// fix severity floor, populating the FIX column before the artifacts are
++	// serialized. A nil executor leaves findings untouched (no behavior change).
++	if reg.Executor != nil {
++		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp)
++	}
++
+ 	// Build the complete verification.json from in-memory findings (no disk
+ 	// round-trip) so a no-op re-run reproduces the same snapshot rather than an
+ 	// empty file: every finding that carries a verdict is recorded, using this

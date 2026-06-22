@@ -1,0 +1,2 @@
+MEDIUM|internal/verify/executor.go:135|Unclamped line number causes wrong snippet read|Add guard for line < 1 before calculating start/end|correctness|5|start := line - fixSnippetRadius; if line <= 0, reads file header instead|bruce
+LOW|internal/registry/config.go:415|Case-sensitive role validation confuses users|Normalize role to lower case before comparing to RoleExecutor|maintainability|3|e.Role != RoleExecutor fails on 'Executor' vs 'executor'|bruce

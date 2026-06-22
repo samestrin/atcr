@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/pipeline.go:160|Executor snapshot need check uses pre-verification confidence, can miss snippets for promoted findings|Use severity-only gate (any finding severity >= min_sev) or move after verification|correctness|10|Check uses f.Confidence before verification; later promotion to VERIFIED lacks snippet|bruce

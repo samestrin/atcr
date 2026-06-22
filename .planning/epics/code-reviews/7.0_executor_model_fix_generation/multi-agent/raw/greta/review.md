@@ -1,0 +1,3 @@
+HIGH|internal/verify/executor.go:137|Path traversal via untrusted finding file path|Sanitize and restrict path to snapshot root before dispatching|security|15|Path: file passed directly to read_file without sandboxing|greta
+MEDIUM|internal/verify/executor.go:151|Prompt injection via untrusted finding metadata|Delimit untrusted inputs or use structured message roles|security|20|fmt.Fprintf injects f.Problem/f.Fix directly into executor prompt|greta
+MEDIUM|internal/verify/executor.go:98|Sensitive data exposure via executor error in findings artifact|Sanitize error messages or use a generic failure message before assignment|security|10|err.Error() directly appended to FixWarning and serialized to JSON|greta
