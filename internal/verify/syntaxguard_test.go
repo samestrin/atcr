@@ -58,9 +58,25 @@ func TestValidateGoFixSyntax_InvalidUnfencedCode(t *testing.T) {
 }
 
 func TestValidateGoFixSyntax_InvalidShortAssign(t *testing.T) {
-	// `:=` is a strong Go signal; the snippet is malformed.
+	// The flagging signal here is the TRAILING OPEN BRACE (blockOpenRe), NOT `:=`.
+	// looksLikeGoCode keys only on declKeyword/blockOpen/blockClose; `:=` is
+	// deliberately not a code signal because inline `:=` appears in prose change-
+	// instructions (see TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged).
+	// This snippet is malformed and flagged because its line ends in an open brace.
 	src := "x := func( {"
-	require.Error(t, validateGoFixSyntax(src), "broken code with := must be flagged")
+	require.Error(t, validateGoFixSyntax(src), "broken code whose line ends in an open brace must be flagged")
+}
+
+// Characterization of the guard's deliberate conservative-recall boundary: an
+// unfenced, single-line broken fragment with NO block structure (no trailing open
+// brace, no leading close brace, no declaration keyword) is indistinguishable from a
+// prose change-instruction and is intentionally NOT flagged. This is a documented
+// trade-off (false-negative preferred over false-positive); do not "fix" it by
+// loosening looksLikeGoCode, which would reintroduce the false-positive class the
+// guard exists to avoid.
+func TestValidateGoFixSyntax_BrokenUnfencedNoBlockStructureNotFlagged(t *testing.T) {
+	src := "result = compute(a, b"
+	assert.NoError(t, validateGoFixSyntax(src), "an unfenced broken one-liner with no block structure is the documented conservative-recall boundary")
 }
 
 func TestValidateGoFixSyntax_ProseInstructionNotFlagged(t *testing.T) {
