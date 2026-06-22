@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 2 | 21 | 0 |
-| LOW | 4 | 21 | 0 |
+| LOW | 6 | 21 | 0 |
 
 
-**Last Modified:** 2026-06-22 | **Open Items:** 6 | **Deferred Items:** 43 | **Resolved Items:** 0 | **Total Items:** 49
+**Last Modified:** 2026-06-22 | **Open Items:** 8 | **Deferred Items:** 43 | **Resolved Items:** 0 | **Total Items:** 51
 
 ## Directory Structure
 
@@ -34,6 +34,13 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-22] From Sprint: epic-7.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/reconcile/disagree.go:456 | WriteRadarItems/WriteRadarSection panic if the exported renderText (RadarTextRenderer) param is nil — no guard on the newly-exported API | Default a nil renderText to esc at the top of WriteRadarSection and WriteRadarItems | EDGE_CASES | 15 | execute-epic-stage3 |
+| U | [ ] | LOW | internal/reconcile/disagree_test.go:171 | TestWriteRadarItems_TextRendererControlsTruncation uses an ad-hoc 80-rune truncator rather than the real report.escTrunc 500-rune cap (the production 500 boundary is pinned only indirectly via report's existing GrayZoneEscapesAndTruncates test) | Add an explicit report-side assertion exercising the real escTrunc 500-rune cap through reconcile.WriteRadarItems, or document that coverage lives in the existing report truncation test | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-22] From Sprint: epic-7.1
 
