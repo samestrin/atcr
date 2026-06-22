@@ -89,6 +89,8 @@ func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
 	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
 	assert.Equal(t, "HIGH", f[0].Severity)
 	assert.Equal(t, 10, f[0].Line)
+	assert.Equal(t, "loop boundary error causes overflow", f[0].Problem,
+		"the merged survivor keeps the longest member problem (the union's representative)")
 }
 
 // TestRunDebate_GrayZoneSeparateLeavesUnmerged: a judge "separate" ruling leaves
