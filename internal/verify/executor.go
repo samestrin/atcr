@@ -66,11 +66,11 @@ func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfi
 // on, so no mutex is needed. Failure isolation mirrors the verify stage: a snippet read
 // failure, an executor error, or an empty completion leaves that finding's existing
 // Fix/Evidence untouched and is logged, never returned — fix generation never fails
-// the run. A nil executor or completer is a no-op; disp may be nil (snapshot
+// the run. A nil executor, completer, or registry is a no-op; disp may be nil (snapshot
 // unavailable), in which case the snippet is omitted and the executor works from the
 // finding text alone.
 func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher, sharedTimeoutSecs int) {
-	if ex == nil || complete == nil {
+	if ex == nil || complete == nil || reg == nil {
 		return
 	}
 	// Defense-in-depth: registry validation already guarantees the executor's
