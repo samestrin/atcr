@@ -157,6 +157,15 @@ func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")
 }
 
+// blockOpenRe must only fire on a clean block-open line (non-brace content then a
+// single trailing brace), not any line that merely ends in '{'. A prose-ish line
+// carrying an inner brace and no other code signal must pass through unflagged so the
+// guard does not false-flag a change-instruction as broken Go.
+func TestValidateGoFixSyntax_InlineDoubleBraceLineNotFlagged(t *testing.T) {
+	src := "replace it with x{y{"
+	assert.NoError(t, validateGoFixSyntax(src), "a line with an inner brace must not be treated as a Go block open")
+}
+
 func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(""), "empty fix must not be flagged")
 	assert.NoError(t, validateGoFixSyntax("   \n\t"), "whitespace-only fix must not be flagged")
