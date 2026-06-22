@@ -319,23 +319,47 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 	// tension (TD merge.go:282).
 	disagreement = widestDisagreement(maxSev, disagreement, group)
 	reviewers := unionReviewers(group)
-	return JSONFinding{
-		Severity:       maxSev,
-		File:           group[0].File,
-		Line:           group[0].Line,
-		Problem:        longestField(sf, func(f stream.Finding) string { return f.Problem }),
-		Fix:            longestField(sf, func(f stream.Finding) string { return f.Fix }),
-		Category:       modalCategory(sf),
-		EstMinutes:     maxEstMinutes(sf),
-		Evidence:       joinEvidence(group),
-		Reviewers:      reviewers,
-		Confidence:     confidenceFor(len(reviewers)),
-		Disagreement:   disagreement,
-		Verification:   mergeVerification(group),
-		PathValid:      group[0].PathValid,
-		PathWarning:    group[0].PathWarning,
-		PathSuggestion: group[0].PathSuggestion,
+	merged := JSONFinding{
+		Severity:     maxSev,
+		File:         group[0].File,
+		Line:         group[0].Line,
+		Problem:      longestField(sf, func(f stream.Finding) string { return f.Problem }),
+		Fix:          longestField(sf, func(f stream.Finding) string { return f.Fix }),
+		Category:     modalCategory(sf),
+		EstMinutes:   maxEstMinutes(sf),
+		Evidence:     joinEvidence(group),
+		Reviewers:    reviewers,
+		Confidence:   confidenceFor(len(reviewers)),
+		Disagreement: disagreement,
+		Verification: mergeVerification(group),
 	}
+	merged.PathValid, merged.PathWarning, merged.PathSuggestion = mergePathFields(group)
+	return merged
+}
+
+// mergePathFields picks coherent Epic 5.0/5.4 path-validation fields for a cluster
+// merge. PathWarning (authoritative, file-existence keyed) and PathSuggestion (set
+// only on a candidate-index-corrected member) are each taken as the first non-empty
+// across the group, so a sibling's hallucinated-path warning or its correction is
+// never lost just because group[0] happened to be a clean/uncorrected member —
+// members may even span lines under cross-line drift, so group[0]'s fields are not
+// authoritative (TD merge.go:297, merge.go:296). PathValid is auxiliary (see the
+// JSONFinding contract) and is kept consistent with the surviving warning: a record
+// carrying a warning is not a valid path; with no warning anywhere, group[0]'s
+// validated state is preserved.
+func mergePathFields(group []JSONFinding) (valid bool, warning, suggestion string) {
+	for _, f := range group {
+		if warning == "" {
+			warning = f.PathWarning
+		}
+		if suggestion == "" {
+			suggestion = f.PathSuggestion
+		}
+	}
+	if warning != "" {
+		return false, warning, suggestion
+	}
+	return group[0].PathValid, "", suggestion
 }
 
 // unionReviewers returns the sorted, deduplicated union of every member record's
