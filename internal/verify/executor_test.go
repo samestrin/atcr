@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -152,6 +154,116 @@ func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
 	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
 	require.Len(t, rec.prompts, 1)
 	assert.Contains(t, rec.prompts[0], "file contents", "snippet read from the snapshot is embedded in the prompt")
+}
+
+// blockingExecutor records the peak number of Complete calls in flight at once.
+// Every call announces its arrival on `arrived`, then parks on `release` so all
+// concurrent calls pile up before any return — letting a test observe true peak
+// concurrency rather than racing on timing.
+type blockingExecutor struct {
+	mu       sync.Mutex
+	inFlight int
+	peak     int
+	arrived  chan struct{}
+	release  chan struct{}
+}
+
+func (b *blockingExecutor) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
+	b.mu.Lock()
+	b.inFlight++
+	if b.inFlight > b.peak {
+		b.peak = b.inFlight
+	}
+	b.mu.Unlock()
+	b.arrived <- struct{}{}
+	<-b.release
+	b.mu.Lock()
+	b.inFlight--
+	b.mu.Unlock()
+	return "fix", nil
+}
+
+// TestGenerateFixes_RunsConcurrently proves fix generation runs as a bounded
+// worker pool, not serially: with N eligible findings and max_parallel=N, all N
+// executor calls must be in flight at once. Serial generation parks the first
+// call on `release` forever, so the N-th arrival never comes and the test times
+// out — the RED state for this item.
+func TestGenerateFixes_RunsConcurrently(t *testing.T) {
+	const n = 4
+	findings := make([]reconcile.JSONFinding, n)
+	for i := range findings {
+		findings[i] = reconcile.JSONFinding{
+			Severity: "HIGH", File: "a.go", Line: i + 1, Problem: "p", Confidence: ConfidenceVerified,
+		}
+	}
+	be := &blockingExecutor{arrived: make(chan struct{}, n), release: make(chan struct{})}
+	reg := execRegistry("MEDIUM")
+	reg.Verify.MaxParallel = n
+
+	done := make(chan struct{})
+	go func() {
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher())
+		close(done)
+	}()
+
+	for i := 0; i < n; i++ {
+		select {
+		case <-be.arrived:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d/%d fix calls ran concurrently — generateFixes is serial", i, n)
+		}
+	}
+	close(be.release)
+	<-done
+
+	be.mu.Lock()
+	peak := be.peak
+	be.mu.Unlock()
+	assert.Equal(t, n, peak, "all %d fixes should run concurrently under the worker pool", n)
+	for i := range findings {
+		assert.Equal(t, "fix", findings[i].Fix)
+	}
+}
+
+// TestGenerateFixes_BoundedByMaxParallel proves the worker pool honors its cap:
+// with more eligible findings than max_parallel, peak concurrency never exceeds
+// the cap (so the pool bounds executor round-trips rather than launching all at
+// once).
+func TestGenerateFixes_BoundedByMaxParallel(t *testing.T) {
+	const n, cap = 6, 2
+	findings := make([]reconcile.JSONFinding, n)
+	for i := range findings {
+		findings[i] = reconcile.JSONFinding{
+			Severity: "HIGH", File: "a.go", Line: i + 1, Problem: "p", Confidence: ConfidenceVerified,
+		}
+	}
+	// Release each call shortly after it arrives, so the pool keeps cycling
+	// workers while peak in-flight stays capped.
+	be := &blockingExecutor{arrived: make(chan struct{}, n), release: make(chan struct{})}
+	reg := execRegistry("MEDIUM")
+	reg.Verify.MaxParallel = cap
+
+	done := make(chan struct{})
+	go func() {
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher())
+		close(done)
+	}()
+
+	// Drain arrivals and let calls return one at a time; the pool must never
+	// have more than `cap` calls in flight.
+	go func() {
+		for i := 0; i < n; i++ {
+			<-be.arrived
+			be.release <- struct{}{}
+		}
+	}()
+	<-done
+
+	be.mu.Lock()
+	peak := be.peak
+	be.mu.Unlock()
+	assert.LessOrEqual(t, peak, cap, "peak in-flight must not exceed max_parallel")
+	assert.Greater(t, peak, 0, "fixes should have been generated")
 }
 
 // swapExecutorClient overrides the package executor-client seam and returns a
