@@ -1,3 +1,21 @@
+## [Technical Debt] - 2026-06-22
+
+### Fixed
+
+- Narrowed `blockOpenRe` so it only matches a single trailing block-open brace, closing the false-fire on any brace-ending line.
+- Hardened `fenceRe` to accept `c#`/`f#` language tags, require an anchored close fence, support four-backtick fences, and tolerate trailing whitespace.
+- Capped the input size in `validateGoFixSyntax` so oversized fixes cannot cause unbounded parsing cost.
+- Guarded `generateFixes` against a nil registry to prevent runtime panics.
+- Documented the `FixWarning` ownership boundary in `generateFixes`.
+- Locked in `FixWarning` JSON round-tripping, markdown golden rendering, and injection/truncation coverage with tests.
+- Corrected the `InvalidShortAssign` rationale and characterized the conservative-recall boundary.
+- Recorded the conservative-recall WONTFIX rationale in `parseGoFix` and `extractFencedCode`.
+- Removed the misleading "compile" wording from the syntax-guard header (it parses only, no type checking).
+- Resolved TD items 137, 94, and 167; deferred item 130 per clarification answers.
+- Created epic 7.5 syntax-guard refinements and pointed the deferred TD row at it.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [7.1.0] - 2026-06-22
 
 A fast, local validation layer that checks generated fixes are syntactically valid before they are presented, so syntax-broken fixes are caught immediately without running the full test suite.

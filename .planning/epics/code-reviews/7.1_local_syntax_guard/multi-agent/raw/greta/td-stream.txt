@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/syntaxguard.go:83|Missing common language alias in nonGoFenceLangs|Add "golang" and other common aliases to the map|maintainability|5|LLMs often use ```golang which falls through to Go parser|greta

@@ -1,0 +1,9 @@
+{
+  "agent_name": "archer-backup",
+  "model": "mellum2",
+  "status": "ok",
+  "duration_ms": 3887,
+  "fallback_used": true,
+  "fallback_from": "archer",
+  "original_error": "stream idle timeout: no activity for 2m0s: context deadline exceeded"
+}
