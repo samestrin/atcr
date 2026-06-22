@@ -242,6 +242,31 @@ func TestExecutorConfig_EffectiveExecutorTimeoutSecs(t *testing.T) {
 
 func floatPtr(f float64) *float64 { return &f }
 
+// The fix-generation tunables (Epic 7.0.1) hydrate together alongside the existing
+// executor fields, so the documented example shape loads and every value lands on
+// the parsed ExecutorConfig (AC4 — config values correctly hydrate the executor).
+func TestExecutor_FixTunablesHydrateTogether(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  name: opus
+  provider: anthropic
+  model: claude-opus-4-8
+  min_severity_for_fix: HIGH
+  temperature: 0.2
+  system_prompt: "You are a senior Go engineer. Emit only gofmt-clean code."
+  rules:
+    - Use tabs for indentation
+    - Avoid panic() in library code
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	require.NotNil(t, reg.Executor.Temperature)
+	assert.Equal(t, 0.2, *reg.Executor.Temperature)
+	assert.Equal(t, "You are a senior Go engineer. Emit only gofmt-clean code.", reg.Executor.SystemPrompt)
+	assert.Equal(t, []string{"Use tabs for indentation", "Avoid panic() in library code"}, reg.Executor.Rules)
+	assert.Equal(t, "HIGH", reg.Executor.MinSeverity)
+}
+
 // Temperature (Epic 7.0.1) mirrors AgentConfig.Temperature: a *float64 so an
 // explicit 0.0 survives, validated to the [0,2] range. It is parsed verbatim and
 // left as written (the 0.0 default is resolved at call time via
