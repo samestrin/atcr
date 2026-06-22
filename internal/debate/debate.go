@@ -110,8 +110,13 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Gray-zone cluster decisions (Epic 6.1) apply inline: load the clusters so a
 	// judge "merge" ruling can union the member findings in findings.json directly
 	// (Option A), and drop clusters a prior debate already merged so a re-run is a
-	// no-op (AC4). A missing/corrupt ambiguous.json degrades to no gray-zone work.
-	grayClusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)
+	// no-op (AC4). A missing or empty ambiguous.json degrades to no gray-zone work;
+	// a present-but-unparseable file is logged so merge rulings are not silently
+	// dropped.
+	grayClusters, err := reconcile.ReadAmbiguousClusters(reviewDir)
+	if err != nil {
+		log.FromContext(ctx).Warn("debate: ambiguous.json unreadable; gray-zone merges disabled", "err", err.Error())
+	}
 	clusterIdx := indexClusters(grayClusters)
 	// Idempotency (AC4): drop gray-zone items whose cluster a prior debate already
 	// merged inline, so a re-run never re-debates or re-merges an applied cluster.
