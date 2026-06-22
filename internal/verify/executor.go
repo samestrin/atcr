@@ -168,10 +168,12 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 		EndLine   int    `json:"end_line"`
 	}{Path: file, StartLine: start, EndLine: end})
 	if err != nil {
+		logPipelineWarning(log.FromContext(ctx), "fix_snippet_unavailable", fmt.Sprintf("%s:%d: %v", file, line, err))
 		return ""
 	}
 	res, err := disp.Execute(ctx, "read_file", args)
 	if err != nil {
+		logPipelineWarning(log.FromContext(ctx), "fix_snippet_unavailable", fmt.Sprintf("%s:%d: %v", file, line, err))
 		return ""
 	}
 	return res.Content
