@@ -7,12 +7,12 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 21 | 0 |
-| LOW | 3 | 20 | 0 |
+| HIGH | 6 | 1 | 0 |
+| MEDIUM | 9 | 21 | 2 |
+| LOW | 15 | 20 | 73 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 3 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 45
+**Last Modified:** 2026-06-22 | **Open Items:** 30 | **Deferred Items:** 42 | **Resolved Items:** 75 | **Total Items:** 147
 
 ## Directory Structure
 
@@ -43,9 +43,9 @@ technical-debt/
 | 2 | [ ] | MEDIUM | internal/registry/config.go:410 | Missing validation for BatchFixes | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | bruce | MEDIUM |
 | 2 | [ ] | LOW | internal/registry/config.go:410 | validateExecutor checks e.Provider == "" and e.Model == "" for emptiness instead of strings.TrimSpace, inconsistent with the validateProvider/validateAgent idiom elsewhere in the file. A YAML value of provider: " " (quoted space) is non-empty, passes the missing-field check, and falls into the unknown-provider branch producing the confusing error "executor references unknown provider ' '" instead of "required field missing". Model has no whitespace guard at all, so model: " " is accepted and passed to the provider verbatim. | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | claude | MEDIUM |
 | 2 | [ ] | LOW | internal/registry/config.go:410 | Case-sensitive role validation confuses users | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/registry/config.go:425 | Incomplete TimeoutSecs validation | Validate TimeoutSecs when not nil | maintainability | 3 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/registry/examples_test.go:15 | Hardcoded path | Use filepath.Join for portability | maintainability | 3 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/registry/examples_test.go:22 | Hardcoded path | Use filepath.Join for portability | maintainability | 3 | code-review | bruce | MEDIUM |
+| 2 | [x] | LOW | internal/registry/config.go:425 | Incomplete TimeoutSecs validation | Validate TimeoutSecs when not nil | maintainability | 3 | code-review | bruce | MEDIUM |
+| 2 | [x] | LOW | internal/registry/examples_test.go:15 | Hardcoded path | Use filepath.Join for portability | maintainability | 3 | code-review | bruce | MEDIUM |
+| 2 | [x] | LOW | internal/registry/examples_test.go:22 | Hardcoded path | Use filepath.Join for portability | maintainability | 3 | code-review | bruce | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/verify/executor.go:0 | [Epic 7.0 AC9] Acceptance criterion not delivered: "Performance test shows <10% overhead for fix generation." No Benchmark or performance test exists in internal/verify/ measuring fix-generation overhead. CI exercises fix generation only with an injected fake completer, so the <10% overhead claim is unproven. AC9 is not in the epic's recorded IN-scope Boundaries list, so this was implicitly de-scoped, but the AC checkbox remains unsatisfied. (intent_note: AC9 de-scoped per epic Clarifications — not in IN-scope Boundaries) | Add a Go benchmark (or a timing-based test) that measures runVerify wall-clock with vs without an executor configured over a representative finding set, asserting the executor phase adds <10% overhead — or formally de-scope AC9 in the epic and document why (per-finding LLM latency dominates and is provider-bound). | testing | 120 | code-review | claude | MEDIUM |
 | 3 | [ ] | LOW | internal/verify/executor.go:66 | The fix min_severity floor is resolved with the same empty-check + DefaultFixMinSeverity fallback in three places: generateFixes (executor.go:66-69), the snapshot pre-check (pipeline.go:169-171), and applyDefaults (config.go:601). On a loaded registry applyDefaults already canonicalizes it, so the two inline fallbacks are defensive dead code that exist only for in-memory test structs — a drift surface where a fix in one copy can miss the others. | Extract a single EffectiveFixMinSeverity() method on ExecutorConfig (mirroring EffectiveTimeoutSecs) and call it from both generateFixes and the pipeline pre-check, deleting the inline fallbacks. | maintainability | 30 | code-review | claude | MEDIUM |
 | 3 | [ ] | LOW | internal/verify/executor.go:70 | generateFixes loops findings one at a time and blocks on each callExecutor, so wall-clock cost is the sum of all executor latencies. This is asymmetric with the adjacent skeptic phase, which deliberately uses a bounded worker pool (reg.Verify.MaxParallel, pipeline.go:210-226). On a review with many HIGH/VERIFIED findings the serial loop is materially slower with no documented rationale. Per-finding generation is the stated MVP design (Open-Q2 Option A), so this may be intentional. (intent_note: per-finding serial design accepted per epic Open-Q2 Option A) | Either reuse the bounded-semaphore + WaitGroup pattern around the per-finding body (writing each result to its own index to keep the in-place mutation race-free), or add a comment explaining the intentional serial design and per-finding budget. | performance | 60 | code-review | claude | MEDIUM |
@@ -56,85 +56,85 @@ technical-debt/
 | 3 | [ ] | MEDIUM | internal/verify/executor.go:98 | Sensitive data exposure via executor error in findings artifact | In the success branch of generateFixes, clear the warning: set f.FixWarning = "" when f.Fix is assigned. Add a test that seeds a finding with a pre-existing FixWarning, runs a succeeding scripted completer, and asserts FixWarning == "" and Fix == new value. | security | 15 | code-review | greta | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/verify/executor.go:98 | generateFixes sets f.FixWarning on the failure and empty-completion paths (executor.go:90,96) but the success path (executor.go:99-100) writes f.Fix and appends attribution without resetting f.FixWarning. FixWarning round-trips through findings.json via the verify path's direct struct marshal. A finding that failed fix generation on a prior verify run, then succeeds on a re-run, ends up carrying BOTH a valid Fix and a stale fix_warning claiming the fix is absent — a contradictory record the Epic 7.3 PR consumer (named in the FixWarning doc comment) would see. | In the success branch of generateFixes, clear the warning: set f.FixWarning = "" when f.Fix is assigned. Add a test that seeds a finding with a pre-existing FixWarning, runs a succeeding scripted completer, and asserts FixWarning == "" and Fix == new value. | security | 15 | code-review | claude | MEDIUM |
 | 3 | [ ] | HIGH | internal/verify/executor.go:98 | Unhandled error in disp.Execute | In the success branch of generateFixes, clear the warning: set f.FixWarning = "" when f.Fix is assigned. Add a test that seeds a finding with a pre-existing FixWarning, runs a succeeding scripted completer, and asserts FixWarning == "" and Fix == new value. | security | 15 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor.go:108 | callExecutor applies fix_timeout only when ex.TimeoutSecs is non-nil and positive; fix_timeout is nil by default and the config comment says "nil = inherit shared timeout" but nothing here inherits it, so a default executor applies NO per-call deadline. Combined with the serial loop, an unconfigured executor against a hung provider can block the entire verify run on a single finding with no aggregate ceiling. | Apply an effective per-call deadline even when fix_timeout is nil by inheriting the shared verify timeout (mirroring EffectiveTimeoutSecs), so a default executor against a hung provider cannot block the run unbounded. | correctness | 30 | code-review | claude | MEDIUM |
+| U | [ ] | LOW | internal/verify/executor.go:108 | callExecutor applies fix_timeout only when ex.TimeoutSecs is non-nil and positive; fix_timeout is nil by default and the config comment says "nil = inherit shared timeout" but nothing here inherits it, so a default executor applies NO per-call deadline. Combined with the serial loop, an unconfigured executor against a hung provider can block the entire verify run on a single finding with no aggregate ceiling. | Apply an effective per-call deadline even when fix_timeout is nil by inheriting the shared verify timeout (mirroring EffectiveTimeoutSecs), so a default executor against a hung provider cannot block the run unbounded. | correctness | 30 | code-review | claude | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/verify/executor.go:108 | Potential for redundant LLM calls on re-runs | The idempotency check strings.Contains(f.Evidence, fixAttributionPrefix+ex.Name) relies on the Evidence field being preserved across runs. If the reconciliation phase (which precedes this) regenerates the Evidence string from scratch, the executor will re-generate fixes for every finding on every verify run, increasing costs. Key idempotency on a structural marker instead. | correctness | 30 | code-review | otto | MEDIUM |
-| 3 | [ ] | MEDIUM | internal/verify/executor.go:118 | Incomplete prompt construction | Add missing newline after fixer instruction | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor.go:130 | Redundant trimSpace call | Remove redundant strings.TrimSpace | maintainability | 1 | code-review | bruce | MEDIUM |
-| 3 | [ ] | MEDIUM | internal/verify/executor.go:135 | Unclamped line number causes wrong snippet read | Clamp the finding line number to the snapshot file bounds before reading, and sanitize/restrict the path to the snapshot root before dispatching. | correctness | 15 | code-review | bruce | MEDIUM |
+| 3 | [x] | MEDIUM | internal/verify/executor.go:118 | Incomplete prompt construction | Add missing newline after fixer instruction | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor.go:130 | Redundant trimSpace call | Remove redundant strings.TrimSpace | maintainability | 1 | code-review | bruce | MEDIUM |
+| 3 | [x] | MEDIUM | internal/verify/executor.go:135 | Unclamped line number causes wrong snippet read | Clamp the finding line number to the snapshot file bounds before reading, and sanitize/restrict the path to the snapshot root before dispatching. | correctness | 15 | code-review | bruce | MEDIUM |
 | 3 | [ ] | HIGH | internal/verify/executor.go:135 | Path traversal via untrusted finding file path | Clamp the finding line number to the snapshot file bounds before reading, and sanitize/restrict the path to the snapshot root before dispatching. | correctness | 15 | code-review | greta | MEDIUM |
 | 3 | [ ] | LOW | internal/verify/executor.go:142 | readFixSnippet swallows every disp.Execute error and json.Marshal error into a bare return "" with no logging. When the harness built but a specific file read fails (finding File absent from snapshot, or end_line<1 from a negative Line), the executor silently generates a fix from finding text alone — a materially worse fix — and nothing records that context was missing, unlike the skeptic path which logs failures at debug. | Log a debug-level pipeline warning (e.g. "fix_snippet_unavailable", file:line: err) before returning "" on the disp.Execute error path, mirroring the skeptic-failure logging discipline. Assert the debug log fires when the dispatcher returns an error. | error-handling | 15 | code-review | claude | MEDIUM |
 | 3 | [ ] | LOW | internal/verify/executor.go:142 | Inefficient string concatenation | Log a debug-level pipeline warning (e.g. "fix_snippet_unavailable", file:line: err) before returning "" on the disp.Execute error path, mirroring the skeptic-failure logging discipline. Assert the debug log fires when the dispatcher returns an error. | error-handling | 15 | code-review | bruce | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/verify/executor.go:151 | Prompt injection via untrusted finding metadata | Delimit untrusted inputs or use structured message roles | security | 20 | code-review | greta | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/verify/executor.go:157 | buildFixPrompt interpolates user/registry-controlled free text directly into the executor system prompt: ex.Persona ("You are %s, a code-fix executor..."), plus f.Problem, f.Fix, and the repo source snippet. validateExecutor never constrains Persona (no CR/LF strip, no length cap), so a persona or finding/snippet containing role-redefinition text rides into the one model whose output is written to the Fix column and destined for an automated PR action. Blast radius is bounded (registry is self-authored; output only lands in a column, not executed) hence MEDIUM not HIGH. | Constrain Persona at load (reject control chars, cap length) like Scope entries are validated, or treat it as a lookup key into known personas. At minimum strip CR/LF from Persona in buildFixPrompt. Document the snippet/finding text as an untrusted data boundary in buildFixPrompt's comment. | security | 30 | code-review | claude | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:28 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:35 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:42 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:49 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:56 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:63 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:70 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:77 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:84 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:91 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:98 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:105 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:112 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:119 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:126 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:133 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:140 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:147 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:154 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:161 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:168 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:175 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:182 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:189 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:196 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:203 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:210 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:217 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:224 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:231 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:238 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:245 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:252 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:259 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:266 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:273 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:280 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:287 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:294 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:301 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:308 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:315 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:322 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:329 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:336 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:343 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:350 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:357 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:364 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:371 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:378 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:385 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:392 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:399 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:406 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:413 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:420 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:427 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:434 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:441 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:448 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:455 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:462 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:469 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:476 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:483 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:490 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:497 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
-| 3 | [ ] | LOW | internal/verify/executor_test.go:504 | Hardcoded provider name | Use variable for | misc | 0 | code-review | bob2 | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:28 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:35 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:42 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:49 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:56 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:63 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:70 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:77 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:84 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:91 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:98 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:105 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:112 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:119 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:126 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:133 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:140 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:147 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:154 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:161 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:168 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:175 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:182 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:189 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:196 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:203 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:210 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:217 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:224 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:231 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:238 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:245 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:252 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:259 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:266 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:273 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:280 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:287 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:294 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:301 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:308 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:315 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:322 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:329 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:336 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:343 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:350 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:357 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:364 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:371 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:378 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:385 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:392 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:399 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:406 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:413 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:420 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:427 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:434 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:441 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:448 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:455 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:462 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:469 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:476 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:483 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:490 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:497 | Hardcoded provider name | Use variable for provider name | maintainability | 2 | code-review | bruce | MEDIUM |
+| 3 | [x] | LOW | internal/verify/executor_test.go:504 | Hardcoded provider name | Use variable for | misc | 0 | code-review | bob2 | MEDIUM |
 | 3 | [ ] | MEDIUM | internal/verify/pipeline.go:160 | Executor snapshot need check uses pre-verification confidence, can miss snippets for promoted findings | Use severity-only gate (any finding severity >= min_sev) or move after verification | correctness | 10 | code-review | bruce | MEDIUM |
 | 3 | [ ] | HIGH | internal/verify/pipeline.go:172 | Incorrect confidence gate | Use ConfidenceAtOrAbove instead of direct comparison | correctness | 5 | code-review | bruce | MEDIUM |
 | 3 | [ ] | HIGH | internal/verify/pipeline.go:185 | Missing severity normalization | Normalize fixMinSev before comparison | correctness | 5 | code-review | bruce | MEDIUM |
@@ -147,8 +147,8 @@ technical-debt/
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | 1 | [ ] | LOW | internal/verify/executor.go:54 | Fix generation calls the executor sequentially per finding; a review with many HIGH-or-better findings incurs N serial LLM round-trips | Batch fixes into one executor call (batch_fixes config is already parsed) or run them through a bounded worker pool like the skeptic stage | PERFORMANCE | 60 | execute-epic-stage3 |
-| 1 | [ ] | LOW | internal/verify/executor.go:66 | The executor idempotency guard uses strings.Contains(Evidence, "fix by "+name) which is a prefix match; an executor named "op" is falsely treated as already-attributed when evidence contains "fix by opus" | Match the attribution as a delimited token (compare the "; fix by <name>" segment or split Evidence on "; ") rather than a raw substring | EDGE_CASES | 15 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/verify/pipeline.go:251 | newExecutorClient() (llmclient.New) is constructed whenever reg.Executor != nil even when no finding is eligible for a fix, allocating a client that is never used | Construct the executor client lazily inside generateFixes only after an eligible finding is found, or pass a constructor func | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/verify/executor.go:66 | The executor idempotency guard uses strings.Contains(Evidence, "fix by "+name) which is a prefix match; an executor named "op" is falsely treated as already-attributed when evidence contains "fix by opus" | Match the attribution as a delimited token (compare the "; fix by <name>" segment or split Evidence on "; ") rather than a raw substring | EDGE_CASES | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/verify/pipeline.go:251 | newExecutorClient() (llmclient.New) is constructed whenever reg.Executor != nil even when no finding is eligible for a fix, allocating a client that is never used | Construct the executor client lazily inside generateFixes only after an eligible finding is found, or pass a constructor func | UNDER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-06-21] From Sprint: epic-6.0
 
