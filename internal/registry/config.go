@@ -63,6 +63,15 @@ const (
 	// interpolated verbatim into the fix-generation prompt, so an over-long value
 	// is bounded at load to limit prompt-stuffing by untrusted free text.
 	MaxExecutorPersonaLen = 512
+	// MaxExecutorSystemPromptLen caps the executor system_prompt override (Epic
+	// 7.0.1). The override replaces the default framing verbatim, so it is bounded
+	// at load to limit prompt-stuffing. It is larger than the persona cap because it
+	// is a full instruction block, not a single token interpolated mid-sentence.
+	MaxExecutorSystemPromptLen = 4096
+	// MaxExecutorRuleLen caps each executor coding rule (Epic 7.0.1). Each rule is
+	// interpolated verbatim into the fix prompt as a constraint line, so it is
+	// bounded like the persona to limit prompt-stuffing by untrusted free text.
+	MaxExecutorRuleLen = 512
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
@@ -141,14 +150,25 @@ type VerifyConfig struct {
 // verified finding must meet to receive a fix (default MEDIUM, normalized to
 // canonical upper-case at load). TimeoutSecs (yaml: fix_timeout) is a pointer so
 // an explicit value is distinguishable from unset.
+//
+// Fix-generation tunables (Epic 7.0.1): Temperature, SystemPrompt, and Rules let
+// the user control fix style/determinism without editing ATCR source. Temperature
+// is a pointer so an explicit 0.0 survives load; its 0.0 default (deterministic
+// fixes) is resolved at call time via EffectiveExecutorTemperature, not mutated at
+// load. SystemPrompt, when set, replaces the default fix-prompt framing verbatim
+// (persona is superseded for that call). Rules are coding guidelines appended to
+// the fix prompt as constraints. All three are optional and backward-compatible.
 type ExecutorConfig struct {
-	Name        string `yaml:"name,omitempty"`
-	Provider    string `yaml:"provider"`
-	Model       string `yaml:"model"`
-	Persona     string `yaml:"persona,omitempty"`
-	Role        string `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
-	MinSeverity string `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
-	TimeoutSecs *int   `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
+	Name         string   `yaml:"name,omitempty"`
+	Provider     string   `yaml:"provider"`
+	Model        string   `yaml:"model"`
+	Persona      string   `yaml:"persona,omitempty"`
+	Role         string   `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
+	MinSeverity  string   `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
+	TimeoutSecs  *int     `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
+	Temperature  *float64 `yaml:"temperature,omitempty"`          // API temperature [0,2]; nil = deterministic 0.0 default
+	SystemPrompt string   `yaml:"system_prompt,omitempty"`        // full fix-prompt framing override; supersedes persona when set
+	Rules        []string `yaml:"rules,omitempty"`                // coding guidelines appended to the fix prompt as constraints
 }
 
 // EffectiveFixMinSeverity returns the executor's own min_severity_for_fix when
@@ -178,6 +198,20 @@ func (e ExecutorConfig) EffectiveExecutorTimeoutSecs(s Settings) int {
 		return s.TimeoutSecs
 	}
 	return DefaultTimeoutSecs
+}
+
+// EffectiveExecutorTemperature returns the API temperature for the executor's fix
+// calls: the executor's own temperature when set, otherwise the deterministic 0.0
+// default (Epic 7.0.1). The pointer distinguishes an explicit 0.0 from unset, but
+// both resolve to 0.0 here — the executor sends a temperature on every call rather
+// than inheriting the provider's own (often non-deterministic) default. It mirrors
+// EffectiveFixMinSeverity / EffectiveExecutorTimeoutSecs: the single resolver so the
+// nil → 0.0 fallback lives in one place.
+func (e ExecutorConfig) EffectiveExecutorTemperature() float64 {
+	if e.Temperature != nil {
+		return *e.Temperature
+	}
+	return 0.0
 }
 
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
@@ -482,6 +516,32 @@ func (r *Registry) validateExecutor() []error {
 	}
 	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
 		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
+	}
+	// Temperature (Epic 7.0.1): bounded to [0,2] like the agent guard. A pointer so
+	// an explicit 0.0 (the deterministic default) is distinguishable from unset.
+	if e.Temperature != nil && (*e.Temperature < 0 || *e.Temperature > 2) {
+		errs = append(errs, errors.New("executor: temperature must be within [0, 2]"))
+	}
+	// SystemPrompt (Epic 7.0.1) replaces the fix-prompt framing verbatim; cap its
+	// length to bound prompt-stuffing. Control characters are intentionally NOT
+	// rejected — unlike persona (a mid-sentence token), a system prompt is a full
+	// instruction block where multi-line content is legitimate.
+	if len(e.SystemPrompt) > MaxExecutorSystemPromptLen {
+		errs = append(errs, fmt.Errorf("executor: system_prompt must be at most %d characters", MaxExecutorSystemPromptLen))
+	}
+	// Rules (Epic 7.0.1): each rule is interpolated as a constraint line in the fix
+	// prompt. Reject blank entries (a YAML typo, not "no rule"), control characters
+	// (CR/LF prompt-line forgery), and over-long entries — mirroring the scope and
+	// persona guards.
+	for i, rule := range e.Rules {
+		switch {
+		case strings.TrimSpace(rule) == "":
+			errs = append(errs, fmt.Errorf("executor: rules[%d] must not be empty", i))
+		case strings.IndexFunc(rule, func(r rune) bool { return r < 32 }) >= 0:
+			errs = append(errs, fmt.Errorf("executor: rules[%d] must not contain control characters", i))
+		case len(rule) > MaxExecutorRuleLen:
+			errs = append(errs, fmt.Errorf("executor: rules[%d] must be at most %d characters", i, MaxExecutorRuleLen))
+		}
 	}
 	return errs
 }

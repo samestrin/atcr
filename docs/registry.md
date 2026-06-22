@@ -276,6 +276,12 @@ executor:
   role: executor               # must be "executor" (defaulted)
   min_severity_for_fix: MEDIUM # fix floor: LOW | MEDIUM | HIGH | CRITICAL (default MEDIUM)
   fix_timeout: 120             # optional per-fix timeout (seconds)
+  temperature: 0.0             # API temperature [0,2]; default 0.0 (deterministic fixes)
+  system_prompt: |             # optional: replaces the default fixer framing verbatim (supersedes persona)
+    You are a senior Go engineer. Emit only gofmt-clean, idiomatic Go.
+  rules:                       # optional coding guidelines appended to the fix prompt
+    - Use tabs for indentation
+    - Avoid panic() in library code; return errors instead
 ```
 
 | Key | Default | Notes |
@@ -283,12 +289,17 @@ executor:
 | `name` | `executor` | Attribution label; the finding's evidence gains `fix by <name>`. |
 | `provider` | — | Required. Must reference a key in `providers:`. |
 | `model` | — | Required. The fix-generation model id. |
-| `persona` | `fixer` | Persona token used in the executor prompt. |
+| `persona` | `fixer` | Persona token used in the executor prompt. Superseded by `system_prompt` when that is set. |
 | `role` | `executor` | Must be `executor` if set; any other value is a load error. |
 | `min_severity_for_fix` | `MEDIUM` | A finding is fixed only when its severity is at or above this floor. Normalized to upper-case; a non-canonical value is a load error. |
 | `fix_timeout` | inherit | Optional per-fix timeout in seconds; a non-positive or out-of-range value is a load error. |
+| `temperature` | `0.0` | API temperature for fix calls. Must be within `[0, 2]`; an out-of-range value is a load error. Sent on every call — when omitted it defaults to `0.0` so fixes are deterministic (rather than inheriting the provider's own, often higher, default). |
+| `system_prompt` | — | Optional. Replaces the default `"You are <persona>, a code-fix executor…"` framing verbatim; `persona` is then ignored for the call. The finding metadata, rules, and code snippet are still appended after it. Capped at 4096 characters. |
+| `rules` | — | Optional list of coding guidelines appended to the fix prompt as a constraints block, so generated fixes match your project's conventions. Each rule must be non-empty, free of control characters, and at most 512 characters; a violation is a load error. |
 
 A fix is generated only for a finding that is **HIGH-or-better confidence** (so a `VERIFIED` finding — one a skeptic confirmed — is included) **AND** at or above `min_severity_for_fix`. The executor reads a snippet of the cited code from the review snapshot for context, then writes a minimal fix into the finding's `fix` column and appends `fix by <name>` to its `evidence` (no new column is added). Generation is idempotent per executor: a re-run does not re-fix an already-attributed finding. A failed or empty completion leaves the reviewer's own fix suggestion in place and never fails the run.
+
+The `temperature`, `system_prompt`, and `rules` fields (Epic 7.0.1) let you control fix determinism and style without editing ATCR source — e.g. pinning `temperature: 0.0` for reproducible fixes, or adding `rules` so generated fixes pass your linters on the first CI run. Cross-provider temperature normalization (Anthropic vs OpenAI ranges) is handled at the gateway layer, not in ATCR: the value is validated to `[0, 2]` and passed through unchanged.
 
 The runnable examples [`examples/registry-with-executor.yaml`](../examples/registry-with-executor.yaml) and [`examples/registry-without-executor.yaml`](../examples/registry-without-executor.yaml) show both shapes side by side.
 
