@@ -80,6 +80,21 @@ func TestMergeJSONFindings_NoVerificationStaysNil(t *testing.T) {
 	assert.Nil(t, MergeJSONFindings(group).Verification)
 }
 
+// TestMergeJSONFindings_PreservesMemberDisagreementLowerBound: a member is itself
+// a reconciled record that may already carry a wider "<lo> vs <hi>" span than its
+// scalar Severity. Merging a member annotated "LOW vs HIGH" (scalar HIGH) with a
+// MEDIUM member must keep LOW as the lower bound, not narrow it to "MEDIUM vs HIGH"
+// from the scalar severities alone (TD merge.go:282).
+func TestMergeJSONFindings_PreservesMemberDisagreementLowerBound(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 10, Problem: "issue A with the longer problem text", Reviewers: []string{"alice"}, Disagreement: "LOW vs HIGH"},
+		{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "issue B", Reviewers: []string{"bob"}},
+	}
+	m := MergeJSONFindings(group)
+	assert.Equal(t, "HIGH", m.Severity)
+	assert.Equal(t, "LOW vs HIGH", m.Disagreement, "a member's pre-existing wider span must not be narrowed to the scalar-severity range at cluster merge")
+}
+
 // TestJSONFinding_ClusterMergedOmitempty: the Epic 6.1 idempotency marker is
 // omitempty, so a non-merged record serializes byte-identically to a pre-6.1
 // findings.json (the field is absent), and only a merged record carries it.
