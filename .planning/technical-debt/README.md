@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 21 | 0 |
-| LOW | 0 | 20 | 0 |
+| LOW | 3 | 20 | 0 |
 
 
-**Last Modified:** 2026-06-22 | **Open Items:** 0 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 42
+**Last Modified:** 2026-06-22 | **Open Items:** 3 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 45
 
 ## Directory Structure
 
@@ -35,7 +35,13 @@ technical-debt/
 
 
 
-### [2026-06-21] From Sprint: epic-7.0
+### [2026-06-22] From Sprint: epic-7.0.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/registry/config.go:525 | system_prompt permits control chars (CR/LF) so an unverified registry value could forge prompt lines in the verbatim framing; mitigated only by the self-authored-registry assumption | Document the control-char trust boundary explicitly in registry.md (or strip raw CR/LF not part of intended multi-line structure) | SECURITY | 15 | execute-epic-independent |
+| U | [ ] | LOW | docs/registry.md:294 | Docs claim gateway-layer temperature normalization but a direct (non-gateway) provider call above its native max (e.g. 1.8 vs Anthropic 1.0) is rejected at request time with no pre-validation warning | Add a doc caveat that values above a provider native max need a normalizing gateway, or surface the provider rejection in the fix_failed warning | OBSERVABILITY | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/registry/executor_config_test.go:254 | TestExecutor_SystemPromptOverLengthRejected asserts only that the error mentions system_prompt, not that the failure is the length guard rather than an incidental YAML parse error | Assert the error contains the specific "must be at most" length message, or quote the scalar to isolate the validation path | UNDER_ENGINEERING | 5 | execute-epic-independent |
 
 ### [2026-06-21] From Sprint: epic-6.0
 
