@@ -241,6 +241,9 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 		}
 		b.WriteString("\n")
 	}
+	// Explicit boundary between the instruction/config section and the reviewer-sourced
+	// finding data, so crafted finding text cannot blur the instruction context.
+	b.WriteString("---\n\n")
 	fmt.Fprintf(&b, "Severity: %s\nLocation: %s:%d\nCategory: %s\nProblem: %s\n", f.Severity, f.File, f.Line, f.Category, f.Problem)
 	if strings.TrimSpace(f.Fix) != "" {
 		fmt.Fprintf(&b, "Reviewer-suggested fix (refine into a minimal, correct change): %s\n", f.Fix)
