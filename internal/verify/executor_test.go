@@ -30,18 +30,34 @@ func (r *recordingExecutor) Complete(_ context.Context, inv llmclient.Invocation
 	return r.out, r.err
 }
 
+// testExecProvider is the provider name shared by execConfig and execRegistry.
+// The executor's Provider field and the registry's Providers map key must match
+// or validation rejects the registry, so both reference this single constant.
+const testExecProvider = "p"
+
 func execConfig(minSev string) *registry.ExecutorConfig {
 	return &registry.ExecutorConfig{
-		Name: "opus", Provider: "p", Model: "m-exec", Persona: "fixer",
+		Name: "opus", Provider: testExecProvider, Model: "m-exec", Persona: "fixer",
 		Role: registry.RoleExecutor, MinSeverity: minSev,
 	}
 }
 
 func execRegistry(minSev string) *registry.Registry {
 	return &registry.Registry{
-		Providers: map[string]registry.Provider{"p": {BaseURL: "http://x.invalid", APIKeyEnv: "K"}},
+		Providers: map[string]registry.Provider{testExecProvider: {BaseURL: "http://x.invalid", APIKeyEnv: "K"}},
 		Executor:  execConfig(minSev),
 	}
+}
+
+func TestReadFixSnippet_DoesNotShortCircuitWhitespacePath(t *testing.T) {
+	// The empty/whitespace short-circuit in readFixSnippet is redundant: the
+	// dispatcher's jail rejects empty paths, and any read error already maps to
+	// "". Removing the trim lets the dispatcher decide, which is what the
+	// downstream jail/tool handler does anyway.
+	disp := okDispatcher()
+	got := readFixSnippet(context.Background(), disp, "   ", 10)
+	assert.Equal(t, "file contents", got, "whitespace-only path should still be dispatched")
+	assert.Equal(t, 1, disp.count(), "trim short-circuit prevented the dispatcher call")
 }
 
 func TestGenerateFixes_PopulatesFixAndAttribution(t *testing.T) {
