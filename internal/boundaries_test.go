@@ -42,6 +42,7 @@ var allowedInternalImports = map[string][]string{
 	"reconcile":      {"stream", "atomicfs"},
 	"scorecard":      {"llmclient", "reconcile", "fanout"},
 	"report":         {"stream", "reconcile"},
+	"ghaction":       {"reconcile"},                                                                                                    // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper
 	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},

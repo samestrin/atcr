@@ -177,6 +177,7 @@ func newRootCmd() *cobra.Command {
 		newVerifyCmd(),
 		newDebateCmd(),
 		newReportCmd(),
+		newGithubCmd(),
 		newRangeCmd(),
 		newStatusCmd(),
 		newInitCmd(),
