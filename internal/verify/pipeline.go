@@ -50,6 +50,12 @@ type Options struct {
 	Fresh       bool
 	Thorough    bool
 	MinSeverity string
+	// SharedTimeoutSecs is the resolved shared verify timeout (Settings.TimeoutSecs)
+	// the fix-generation phase applies as a per-call executor deadline when the
+	// executor sets no fix_timeout of its own. Zero falls back to the 600s default
+	// inside ExecutorConfig.EffectiveExecutorTimeoutSecs, so a caller that cannot
+	// resolve Settings (e.g. the MCP path) still gets a bounded executor call.
+	SharedTimeoutSecs int
 }
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
@@ -250,7 +256,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// fix severity floor, populating the FIX column before the artifacts are
 	// serialized. A nil executor leaves findings untouched (no behavior change).
 	if reg.Executor != nil {
-		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp)
+		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp, opts.SharedTimeoutSecs)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk

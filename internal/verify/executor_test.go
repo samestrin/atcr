@@ -71,7 +71,7 @@ func TestGenerateFixes_PopulatesFixAndAttribution(t *testing.T) {
 			Evidence: "Found by bruce; confidence HIGH"},
 	}
 	rec := &recordingExecutor{out: "use a parameterized query"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "use a parameterized query", findings[0].Fix)
@@ -83,7 +83,7 @@ func TestGenerateFixes_SkipsBelowConfidence(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfMedium, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 
 	assert.Equal(t, 0, rec.calls, "MEDIUM confidence is below the HIGH floor")
 	assert.Equal(t, "orig", findings[0].Fix)
@@ -94,7 +94,7 @@ func TestGenerateFixes_SkipsBelowSeverity(t *testing.T) {
 		{Severity: "LOW", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 
 	assert.Equal(t, 0, rec.calls, "LOW severity is below the MEDIUM fix floor")
 	assert.Equal(t, "orig", findings[0].Fix)
@@ -106,7 +106,7 @@ func TestGenerateFixes_FailureIsolation(t *testing.T) {
 	}
 	rec := &recordingExecutor{err: errors.New("provider boom")}
 	require.NotPanics(t, func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	})
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "orig", findings[0].Fix, "failed fix leaves the reviewer fix untouched")
@@ -119,7 +119,7 @@ func TestGenerateFixes_EmptyCompletionLeavesFix(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "   "}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, "orig", findings[0].Fix)
 	assert.Contains(t, findings[0].FixWarning, "empty completion")
 }
@@ -130,7 +130,7 @@ func TestGenerateFixes_Idempotent(t *testing.T) {
 			Fix: "already fixed", Evidence: "Found by bruce; fix by opus"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, 0, rec.calls, "an already-attributed finding is not re-generated")
 	assert.Equal(t, "already fixed", findings[0].Fix)
 }
@@ -142,7 +142,7 @@ func TestGenerateFixes_AttributionGuardIsNameSpecific(t *testing.T) {
 			Evidence: "reviewer suggested a fix by hand"},
 	}
 	rec := &recordingExecutor{out: "real fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "real fix", findings[0].Fix)
 	assert.Contains(t, findings[0].Evidence, "fix by opus")
@@ -160,9 +160,30 @@ func TestGenerateFixes_AttributionGuardIsTokenNotPrefix(t *testing.T) {
 	ex := execConfig("MEDIUM")
 	ex.Name = "op" // a strict prefix of the existing "fix by opus" attribution
 	rec := &recordingExecutor{out: "real fix"}
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, 1, rec.calls, "executor 'op' must not be suppressed by 'fix by opus'")
 	assert.Contains(t, findings[0].Evidence, "; fix by op")
+}
+
+// deadlineProbe is an executorCompleter that records whether the context it was
+// invoked with carried a deadline, so a test can assert callExecutor applies one.
+type deadlineProbe struct{ sawDeadline bool }
+
+func (d *deadlineProbe) Complete(ctx context.Context, _ llmclient.Invocation) (string, error) {
+	_, d.sawDeadline = ctx.Deadline()
+	return "fix", nil
+}
+
+// A default executor (nil fix_timeout) must still get a per-call deadline from the
+// resolved shared timeout, so a hung provider cannot block the verify run unbounded.
+func TestCallExecutor_AppliesDeadlineWhenFixTimeoutNil(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	probe := &deadlineProbe{}
+	ex := execConfig("MEDIUM") // TimeoutSecs nil — no fix_timeout of its own
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), probe, okDispatcher(), 600)
+	assert.True(t, probe.sawDeadline, "callExecutor must apply a deadline even when fix_timeout is nil")
 }
 
 func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
@@ -171,7 +192,7 @@ func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
 	}
 	// okDispatcher returns Content "file contents" for read_file.
 	rec := &recordingExecutor{out: "fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	assert.Contains(t, rec.prompts[0], "file contents", "snippet read from the snapshot is embedded in the prompt")
 }
@@ -222,7 +243,7 @@ func TestGenerateFixes_RunsConcurrently(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher())
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher(), 0)
 		close(done)
 	}()
 
@@ -265,7 +286,7 @@ func TestGenerateFixes_BoundedByMaxParallel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher())
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher(), 0)
 		close(done)
 	}()
 
@@ -308,7 +329,7 @@ func TestGenerateFixes_ClearsStaleFixWarningOnSuccess(t *testing.T) {
 			FixWarning: "fix generation failed: provider boom"},
 	}
 	rec := &recordingExecutor{out: "use a parameterized query"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, "use a parameterized query", findings[0].Fix)
 	assert.Equal(t, "", findings[0].FixWarning, "a successful re-run must clear the stale fix warning")
 }
@@ -326,7 +347,7 @@ func TestGenerateFixes_StopsOnCanceledContext(t *testing.T) {
 	rec := &recordingExecutor{out: "fix"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before generation starts
-	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, 0, rec.calls, "a canceled context must stop fix generation before any executor call")
 }
 
@@ -343,8 +364,8 @@ func TestGenerateFixes_NilExecutorOrCompleterNoop(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
 	}
 	require.NotPanics(t, func() {
-		generateFixes(context.Background(), findings, nil, execRegistry("MEDIUM"), &recordingExecutor{}, okDispatcher())
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), nil, okDispatcher())
+		generateFixes(context.Background(), findings, nil, execRegistry("MEDIUM"), &recordingExecutor{}, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), nil, okDispatcher(), 0)
 	})
 	assert.Equal(t, "orig", findings[0].Fix)
 }

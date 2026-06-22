@@ -55,7 +55,7 @@ const fixAttributionPrefix = "fix by "
 // the run. A nil executor or completer is a no-op; disp may be nil (snapshot
 // unavailable), in which case the snippet is omitted and the executor works from the
 // finding text alone.
-func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher) {
+func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher, sharedTimeoutSecs int) {
 	if ex == nil || complete == nil {
 		return
 	}
@@ -108,7 +108,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			defer func() { <-sem }()
 			snippet := readFixSnippet(ctx, disp, f.File, f.Line)
 			prompt := buildFixPrompt(*f, snippet, ex.Persona)
-			out, err := callExecutor(ctx, complete, prov, ex, prompt)
+			out, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
 			if err != nil {
 				logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
 				f.FixWarning = "fix generation failed: " + err.Error()
@@ -130,15 +130,16 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 	wg.Wait()
 }
 
-// callExecutor invokes the executor model for one finding, applying the optional
-// per-fix timeout (fix_timeout) as a context deadline scoped to this single call.
-func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string) (string, error) {
-	callCtx := ctx
-	if ex.TimeoutSecs != nil && *ex.TimeoutSecs > 0 {
-		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, time.Duration(*ex.TimeoutSecs)*time.Second)
-		defer cancel()
-	}
+// callExecutor invokes the executor model for one finding, applying a per-call
+// deadline scoped to this single call. The deadline is the executor's own
+// fix_timeout when set, otherwise the resolved shared verify timeout (600s
+// default) — see ExecutorConfig.EffectiveExecutorTimeoutSecs. It is applied
+// unconditionally so a default executor (nil fix_timeout) against a hung provider
+// cannot block the verify run unbounded.
+func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, error) {
+	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
+	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
 	return complete.Complete(callCtx, llmclient.Invocation{
 		BaseURL:   prov.BaseURL,
 		APIKeyEnv: prov.APIKeyEnv,

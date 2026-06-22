@@ -562,6 +562,10 @@ func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		Fresh:       in.Fresh,
 		Thorough:    in.Thorough,
 		MinSeverity: minSev,
+		// This path loads only the registry (no resolved Settings), so leave the
+		// shared timeout at 0; EffectiveExecutorTimeoutSecs falls back to the 600s
+		// default, keeping the executor call bounded.
+		SharedTimeoutSecs: 0,
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {

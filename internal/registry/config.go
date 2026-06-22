@@ -164,6 +164,22 @@ func (e ExecutorConfig) EffectiveFixMinSeverity() string {
 	return e.MinSeverity
 }
 
+// EffectiveExecutorTimeoutSecs returns the per-fix call deadline in seconds: the
+// executor's own fix_timeout when set, otherwise the resolved shared verify
+// timeout, falling back to DefaultTimeoutSecs (600s) when neither is positive.
+// Mirroring AgentConfig.EffectiveTimeoutSecs, it lets callExecutor apply a
+// deadline unconditionally so a default executor (nil fix_timeout) against a hung
+// provider cannot block the verify run unbounded.
+func (e ExecutorConfig) EffectiveExecutorTimeoutSecs(s Settings) int {
+	if e.TimeoutSecs != nil && *e.TimeoutSecs > 0 {
+		return *e.TimeoutSecs
+	}
+	if s.TimeoutSecs > 0 {
+		return s.TimeoutSecs
+	}
+	return DefaultTimeoutSecs
+}
+
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
 // TimeoutSecs are pointers so an explicit zero survives default application.
 //

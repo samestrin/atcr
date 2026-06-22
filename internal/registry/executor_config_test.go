@@ -227,6 +227,19 @@ executor:
 	assert.Contains(t, err.Error(), "name")
 }
 
+// EffectiveExecutorTimeoutSecs resolves the per-fix call deadline: the executor's
+// own fix_timeout wins; an unset fix_timeout inherits the resolved shared timeout;
+// and with neither positive it falls back to the 600s default so a deadline always
+// applies.
+func TestExecutorConfig_EffectiveExecutorTimeoutSecs(t *testing.T) {
+	assert.Equal(t, 42, ExecutorConfig{TimeoutSecs: intPtr(42)}.EffectiveExecutorTimeoutSecs(Settings{TimeoutSecs: 900}),
+		"explicit fix_timeout wins over the shared timeout")
+	assert.Equal(t, 900, ExecutorConfig{}.EffectiveExecutorTimeoutSecs(Settings{TimeoutSecs: 900}),
+		"unset fix_timeout inherits the resolved shared timeout")
+	assert.Equal(t, DefaultTimeoutSecs, ExecutorConfig{}.EffectiveExecutorTimeoutSecs(Settings{}),
+		"neither set falls back to the 600s default")
+}
+
 // A mixed-case executor role must be accepted (case-insensitive validation) and
 // stored canonically lowercase so downstream exact-match comparisons (which use
 // the lowercase RoleExecutor constant) keep working.
