@@ -300,9 +300,10 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		// findings — a refuted or overturned finding never blocks the gate.
 		if verifyFlag {
 			vres, verr := verify.Verify(ctx, ".", result.Dir, cfg.Registry, verify.Options{
-				Fresh:       boolFlag(cmd, "fresh"),
-				Thorough:    boolFlag(cmd, "thorough"),
-				MinSeverity: verifyMinSev,
+				Fresh:             boolFlag(cmd, "fresh"),
+				Thorough:          boolFlag(cmd, "thorough"),
+				MinSeverity:       verifyMinSev,
+				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
 			})
 			if verr != nil {
 				return verifyFailureError(verr)

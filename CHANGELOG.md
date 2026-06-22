@@ -1,3 +1,25 @@
+## [Technical Debt] - 2026-06-22
+
+### Fixed
+
+- Removed the unused `ExecutorConfig.BatchFixes` field to eliminate a silently misleading registry option.
+- Hardened `validateExecutor` provider and model checks with `strings.TrimSpace` so whitespace-only values report a clear missing-field error.
+- Made agent and executor role validation case-insensitive and canonicalized stored role values.
+- Validated executor `persona` at load time (control characters and length cap) and documented `buildFixPrompt` untrusted-data boundaries.
+- De-scoped epic 7.0 AC9 (fix-generation performance benchmark) with rationale against the fake-completer test harness.
+- Added `ExecutorConfig.EffectiveFixMinSeverity()` and replaced duplicated inline fix-severity-floor fallbacks.
+- Replaced substring-based executor attribution with a delimited-token guard and validated executor names against the agents map.
+- Applied an effective per-call executor timeout even when `fix_timeout` is nil, preventing unbounded blocking on a hung provider.
+- Parallelized fix generation with a bounded worker pool, capping wall-clock cost for many eligible findings.
+- Bailed `generateFixes` early on context cancellation so SIGINT stops new executor calls promptly.
+- Cleared stale `FixWarning` values when a fix succeeds, removing contradictory finding records on re-runs.
+- Logged `fix_snippet_unavailable` debug warnings instead of silently swallowing snippet-read failures.
+- Removed a redundant `TrimSpace` short-circuit in `readFixSnippet`.
+- Constructed the executor client lazily after the first fix-eligible finding, avoiding unused client allocation.
+- De-scoped epic 7.0 AC10 (quantitative cost analysis) and added a reflection drift-guard test for `JSONFindings()` field coverage.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [7.0.0] - 2026-06-21
 
 Executor model for fix generation — multi-model review breadth plus a single, more capable model that generates fixes for the findings worth fixing.

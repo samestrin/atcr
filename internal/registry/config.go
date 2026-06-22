@@ -59,6 +59,10 @@ const (
 const (
 	DefaultExecutorPersona = "fixer"
 	DefaultFixMinSeverity  = "MEDIUM"
+	// MaxExecutorPersonaLen caps the executor persona length. The persona is
+	// interpolated verbatim into the fix-generation prompt, so an over-long value
+	// is bounded at load to limit prompt-stuffing by untrusted free text.
+	MaxExecutorPersonaLen = 512
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
@@ -135,9 +139,8 @@ type VerifyConfig struct {
 // references a key in providers:; Model is the model id; Persona defaults to
 // "fixer". MinSeverity (yaml: min_severity_for_fix) is the severity floor a
 // verified finding must meet to receive a fix (default MEDIUM, normalized to
-// canonical upper-case at load). BatchFixes is parsed but the MVP generates fixes
-// per-finding (Open-Q2 Option A), so it defaults false. TimeoutSecs (yaml:
-// fix_timeout) is a pointer so an explicit value is distinguishable from unset.
+// canonical upper-case at load). TimeoutSecs (yaml: fix_timeout) is a pointer so
+// an explicit value is distinguishable from unset.
 type ExecutorConfig struct {
 	Name        string `yaml:"name,omitempty"`
 	Provider    string `yaml:"provider"`
@@ -145,8 +148,36 @@ type ExecutorConfig struct {
 	Persona     string `yaml:"persona,omitempty"`
 	Role        string `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
 	MinSeverity string `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
-	BatchFixes  bool   `yaml:"batch_fixes,omitempty"`          // MVP is per-finding; reserved for batched generation
 	TimeoutSecs *int   `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
+}
+
+// EffectiveFixMinSeverity returns the executor's own min_severity_for_fix when
+// set, otherwise the MEDIUM default — mirroring EffectiveTimeoutSecs. On a
+// loaded registry applyDefaults already canonicalizes MinSeverity, so this only
+// supplies the fallback for in-memory ExecutorConfig values (e.g. test structs).
+// It is the single resolver generateFixes and the verify snapshot pre-check
+// share so the empty-check + DefaultFixMinSeverity fallback lives in one place.
+func (e ExecutorConfig) EffectiveFixMinSeverity() string {
+	if e.MinSeverity == "" {
+		return DefaultFixMinSeverity
+	}
+	return e.MinSeverity
+}
+
+// EffectiveExecutorTimeoutSecs returns the per-fix call deadline in seconds: the
+// executor's own fix_timeout when set, otherwise the resolved shared verify
+// timeout, falling back to DefaultTimeoutSecs (600s) when neither is positive.
+// Mirroring AgentConfig.EffectiveTimeoutSecs, it lets callExecutor apply a
+// deadline unconditionally so a default executor (nil fix_timeout) against a hung
+// provider cannot block the verify run unbounded.
+func (e ExecutorConfig) EffectiveExecutorTimeoutSecs(s Settings) int {
+	if e.TimeoutSecs != nil && *e.TimeoutSecs > 0 {
+		return *e.TimeoutSecs
+	}
+	if s.TimeoutSecs > 0 {
+		return s.TimeoutSecs
+	}
+	return DefaultTimeoutSecs
 }
 
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
@@ -223,8 +254,13 @@ var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM":
 // agents whose Role is empty. The loader intentionally leaves Role empty rather
 // than defaulting it so that activating stages can distinguish "explicitly set"
 // from "inherited default" (option-a decision, recorded in epic-3 planning).
+//
+// Role names are matched case-insensitively (mirroring the severity rubric,
+// which normalizes case via stream.NormalizeSeverity): the value is lower-cased
+// and trimmed before comparison, and applyDefaults stores the canonical
+// lowercase form so downstream exact-match comparisons stay valid.
 func roleValid(r string) bool {
-	switch r {
+	switch strings.ToLower(strings.TrimSpace(r)) {
 	case "", RoleReviewer, RoleSkeptic, RoleJudge:
 		return true
 	default:
@@ -410,19 +446,39 @@ func (r *Registry) validateExecutor() []error {
 		return nil
 	}
 	var errs []error
-	if e.Provider == "" {
+	if strings.TrimSpace(e.Provider) == "" {
 		errs = append(errs, errors.New("executor: required field 'provider' is missing"))
 	} else if _, ok := r.Providers[e.Provider]; !ok {
 		errs = append(errs, fmt.Errorf("executor references unknown provider '%s'", e.Provider))
 	}
-	if e.Model == "" {
+	if strings.TrimSpace(e.Model) == "" {
 		errs = append(errs, errors.New("executor: required field 'model' is missing"))
 	}
-	if e.Role != "" && e.Role != RoleExecutor {
+	if normalized := strings.ToLower(strings.TrimSpace(e.Role)); normalized != "" && normalized != RoleExecutor {
 		errs = append(errs, fmt.Errorf("executor: role must be 'executor', got '%s'", e.Role))
 	}
 	if normalized := stream.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		errs = append(errs, fmt.Errorf("executor: min_severity_for_fix must be one of CRITICAL, HIGH, MEDIUM, LOW, got %q", e.MinSeverity))
+	}
+	// The persona is interpolated verbatim into the fix-generation prompt
+	// (buildFixPrompt), so an untrusted CR/LF or other control character could
+	// forge prompt lines / redefine the model's role (prompt injection). Reject
+	// control characters and cap the length at load, mirroring the Scope guard.
+	if strings.IndexFunc(e.Persona, func(r rune) bool { return r < 32 }) >= 0 {
+		errs = append(errs, errors.New("executor: persona must not contain control characters"))
+	}
+	if len(e.Persona) > MaxExecutorPersonaLen {
+		errs = append(errs, fmt.Errorf("executor: persona must be at most %d characters", MaxExecutorPersonaLen))
+	}
+	// The name is interpolated into the "fix by <name>" attribution appended to the
+	// free-text Evidence column, joined with the "; " separator. Reject control
+	// characters (which could forge attribution/prompt lines) and the "; " separator
+	// (which would forge phantom attribution segments), mirroring the persona guard.
+	if strings.IndexFunc(e.Name, func(r rune) bool { return r < 32 }) >= 0 {
+		errs = append(errs, errors.New("executor: name must not contain control characters"))
+	}
+	if strings.Contains(e.Name, "; ") {
+		errs = append(errs, errors.New("executor: name must not contain the '; ' evidence separator"))
 	}
 	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
 		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
@@ -557,6 +613,12 @@ func (r *Registry) applyDefaults() {
 		for i, s := range a.Scope {
 			a.Scope[i] = strings.TrimSpace(s)
 		}
+		// Canonicalize role to lowercase so downstream exact-match comparisons
+		// (AgentsByRole, the Stage 3/4 routing) see a stable token regardless of
+		// how it was written. An empty role stays empty — the option-a "explicitly
+		// set vs inherited default" distinction is preserved (the loader still does
+		// not default it to reviewer).
+		a.Role = strings.ToLower(strings.TrimSpace(a.Role))
 		r.Agents[name] = a
 	}
 	// Verification defaults (Epic 3.0): an unset min_severity resolves to MEDIUM,
@@ -591,6 +653,7 @@ func (r *Registry) applyDefaults() {
 		if r.Executor.Persona == "" {
 			r.Executor.Persona = DefaultExecutorPersona
 		}
+		r.Executor.Role = strings.ToLower(strings.TrimSpace(r.Executor.Role))
 		if r.Executor.Role == "" {
 			r.Executor.Role = RoleExecutor
 		}

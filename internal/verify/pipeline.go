@@ -50,6 +50,12 @@ type Options struct {
 	Fresh       bool
 	Thorough    bool
 	MinSeverity string
+	// SharedTimeoutSecs is the resolved shared verify timeout (Settings.TimeoutSecs)
+	// the fix-generation phase applies as a per-call executor deadline when the
+	// executor sets no fix_timeout of its own. Zero falls back to the 600s default
+	// inside ExecutorConfig.EffectiveExecutorTimeoutSecs, so a caller that cannot
+	// resolve Settings (e.g. the MCP path) still gets a bounded executor call.
+	SharedTimeoutSecs int
 }
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
@@ -165,22 +171,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// applied post-recompute in generateFixes). This runs over every finding —
 	// including ones skipped for verification — so a verified-but-skipped finding
 	// still gets a fix.
-	if reg.Executor != nil && !needTool {
-		fixMinSev := reg.Executor.MinSeverity
-		if fixMinSev == "" {
-			fixMinSev = registry.DefaultFixMinSeverity
-		}
-		// Mirror generateFixes' full eligibility (confidence AND severity) so a
-		// registry with an executor but only low-confidence findings does not build
-		// a snapshot that yields zero fixes. This branch runs only when no skeptic
-		// needs the tool harness, so no finding here will be promoted to VERIFIED by
-		// verification — current confidence is the final confidence for the gate.
-		for _, f := range findings {
-			if reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) && meetsSeverityFloor(f.Severity, fixMinSev) {
-				needTool = true
-				break
-			}
-		}
+	//
+	// anyFixEligible mirrors generateFixes' full eligibility (confidence AND
+	// severity) so a registry with an executor but only low-confidence findings does
+	// not build a snapshot that yields zero fixes. This branch runs only when no
+	// skeptic needs the tool harness, so no finding here will be promoted to VERIFIED
+	// by verification — current confidence is the final confidence for the gate.
+	if reg.Executor != nil && !needTool && anyFixEligible(findings, reg.Executor) {
+		needTool = true
 	}
 
 	// Build the tool harness (snapshot → jail → dispatcher) only when at least
@@ -252,8 +250,12 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// executor model for a minimal fix on every HIGH-or-better finding above the
 	// fix severity floor, populating the FIX column before the artifacts are
 	// serialized. A nil executor leaves findings untouched (no behavior change).
-	if reg.Executor != nil {
-		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp)
+	// Gate client construction on the same confidence+severity eligibility scan the
+	// snapshot pre-check uses: when no finding qualifies for a fix, neither the
+	// snapshot harness nor the executor client is built (the scan here sees the final
+	// post-verification confidence, so a finding promoted to VERIFIED still qualifies).
+	if reg.Executor != nil && anyFixEligible(findings, reg.Executor) {
+		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp, opts.SharedTimeoutSecs)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk

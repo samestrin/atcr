@@ -48,5 +48,4 @@ executor:
   persona: fixer
   role: executor
   min_severity_for_fix: MEDIUM   # MEDIUM | HIGH | CRITICAL | LOW (default MEDIUM)
-  batch_fixes: false             # MVP generates fixes one finding at a time
   # fix_timeout: 120             # optional per-fix timeout (seconds)

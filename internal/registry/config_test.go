@@ -605,6 +605,17 @@ func TestRegistryLoad_ReservedRolesAccepted(t *testing.T) {
 	}
 }
 
+// TestRegistryLoad_RoleCaseInsensitive verifies a mixed-case agent role is
+// accepted (case-insensitive validation), stored canonically lowercase, and
+// discoverable via AgentsByRole — matching the load-time case normalization the
+// severity rubric already uses.
+func TestRegistryLoad_RoleCaseInsensitive(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, "providers:\n  p:\n    api_key_env: KEY\nagents:\n  a:\n    provider: p\n    model: m\n    role: Reviewer\n"))
+	require.NoError(t, err)
+	assert.Equal(t, RoleReviewer, reg.Agents["a"].Role, "mixed-case agent role must normalize to canonical lowercase")
+	assert.Contains(t, reg.AgentsByRole(RoleReviewer), "a", "normalized role must be discoverable via AgentsByRole")
+}
+
 // TestAgentConfig_ToolBudgetBytesIsInt64 is a compile-time assertion that
 // ToolBudgetBytes uses *int64 to match the *int64 ToolBytes in status.json and
 // the *int64 PayloadByteBudget — all byte-quantity fields must share the same

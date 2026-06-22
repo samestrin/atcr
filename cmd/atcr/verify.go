@@ -59,9 +59,10 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	fresh, _ := cmd.Flags().GetBool("fresh")
 	thorough, _ := cmd.Flags().GetBool("thorough")
 	res, err := verify.Verify(cmd.Context(), ".", reviewDir, cfg.Registry, verify.Options{
-		Fresh:       fresh,
-		Thorough:    thorough,
-		MinSeverity: minSev,
+		Fresh:             fresh,
+		Thorough:          thorough,
+		MinSeverity:       minSev,
+		SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {
