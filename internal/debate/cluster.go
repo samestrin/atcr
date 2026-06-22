@@ -180,6 +180,16 @@ func firstClusterRulingCollision(rulings map[FindingKey]ruleApply, clusters []re
 // two matched records, or any matched record already flagged ClusterMerged (a
 // re-run past the radar filter), is a strict no-op rather than a corruption.
 func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, bool) {
+	// Invariant: a gray-zone cluster always carries a stable, content-addressed
+	// AmbiguousCluster.ID (a non-empty sha256 hex) by construction. A blank ID can
+	// only come from a hand-edited or corrupt ambiguous.json. Refuse to stamp a
+	// ClusterMerged survivor with an empty ClusterID: filterMergedClusters would
+	// treat it as a legacy record and never suppress it, so the cluster would be
+	// re-debated every run with no path to self-heal (cluster.go:55-60). A strict
+	// no-op is safer than writing a poisoned survivor.
+	if c.ID == "" {
+		return findings, false
+	}
 	memberExact := map[FindingKey]bool{}
 	memberLocs := map[string]bool{}
 	for _, mf := range c.Findings {
