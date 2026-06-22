@@ -125,6 +125,28 @@ func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax("   \n\t"), "whitespace-only fix must not be flagged")
 }
 
+// A pathological multi-hundred-KB completion that is plausibly Go (block
+// structure) yet does not parse must be short-circuited by the size cap rather
+// than driven through the triple full-file AST parse. Above the cap the guard
+// returns nil. Untrusted model output can be arbitrarily large; the triple
+// parser.ParseFile passes run concurrently across the worker pool, so an
+// unbounded parse is a real cost.
+func TestValidateGoFixSyntax_OversizedInputNotFlagged(t *testing.T) {
+	big := strings.Repeat("func f() {\n", 30000) // ~300KB, unbalanced braces — plausibly Go, does not parse
+	require.Greater(t, len(big), 256*1024, "fixture must exceed the size cap")
+	assert.NoError(t, validateGoFixSyntax(big), "input above the size cap must short-circuit to nil")
+}
+
+// BenchmarkValidateGoFixSyntax_LargeInput asserts the large-input path is bounded:
+// with the size cap in place it must not perform the triple AST build.
+func BenchmarkValidateGoFixSyntax_LargeInput(b *testing.B) {
+	big := strings.Repeat("func f() {\n", 30000)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = validateGoFixSyntax(big)
+	}
+}
+
 func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
 	src := "func add(a, b int) int {\n\treturn a +\n}"
 	err := validateGoFixSyntax(src)
