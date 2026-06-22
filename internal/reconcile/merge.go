@@ -143,6 +143,36 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 	return max, disagreement
 }
 
+// widestDisagreement extends a scalar-severity disagreement with each member's
+// pre-existing "<lo> vs <hi>" range, so a member that already recorded a wider
+// span than its scalar Severity is not narrowed at cluster merge. It returns the
+// "<lo> vs <max>" annotation when any source (the scalar disagreement, or a
+// member's recorded range) carries a lower bound below maxSev, else the original
+// scalar disagreement unchanged. Members' range lower bounds are read from the
+// "<lo> vs <hi>" form spreadFromDisagreement parses; here only the <lo> tier is
+// needed, so it is taken directly.
+func widestDisagreement(maxSev, scalarDisagreement string, group []JSONFinding) string {
+	maxRank := SeverityRank[maxSev]
+	loRank, loSev := maxRank, maxSev
+	consider := func(rangeAnnotation string) {
+		if rangeAnnotation == "" {
+			return
+		}
+		lo := stream.NormalizeSeverity(strings.SplitN(rangeAnnotation, " vs ", 2)[0])
+		if r, ok := SeverityRank[lo]; ok && r < loRank {
+			loRank, loSev = r, lo
+		}
+	}
+	consider(scalarDisagreement)
+	for _, f := range group {
+		consider(f.Disagreement)
+	}
+	if loRank < maxRank {
+		return loSev + " vs " + maxSev
+	}
+	return scalarDisagreement
+}
+
 // longestField returns the longest value of sel across the group (ties keep the
 // first seen, for determinism).
 func longestField(group []stream.Finding, sel func(stream.Finding) string) string {
@@ -281,6 +311,13 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 		}
 	}
 	maxSev, disagreement := mergeSeverity(sf)
+	// A member is itself a reconciled record that may already carry a wider
+	// "<lo> vs <hi>" span than its scalar Severity (e.g. "LOW vs HIGH" while
+	// Severity is "HIGH"). mergeSeverity sees only the scalar severities, so fold
+	// each member's pre-existing range lower bound back in — otherwise the merged
+	// annotation silently narrows to the scalar max/min and understates reviewer
+	// tension (TD merge.go:282).
+	disagreement = widestDisagreement(maxSev, disagreement, group)
 	reviewers := unionReviewers(group)
 	return JSONFinding{
 		Severity:       maxSev,
