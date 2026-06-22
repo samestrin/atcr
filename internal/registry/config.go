@@ -454,6 +454,16 @@ func (r *Registry) validateExecutor() []error {
 	if len(e.Persona) > MaxExecutorPersonaLen {
 		errs = append(errs, fmt.Errorf("executor: persona must be at most %d characters", MaxExecutorPersonaLen))
 	}
+	// The name is interpolated into the "fix by <name>" attribution appended to the
+	// free-text Evidence column, joined with the "; " separator. Reject control
+	// characters (which could forge attribution/prompt lines) and the "; " separator
+	// (which would forge phantom attribution segments), mirroring the persona guard.
+	if strings.IndexFunc(e.Name, func(r rune) bool { return r < 32 }) >= 0 {
+		errs = append(errs, errors.New("executor: name must not contain control characters"))
+	}
+	if strings.Contains(e.Name, "; ") {
+		errs = append(errs, errors.New("executor: name must not contain the '; ' evidence separator"))
+	}
 	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
 		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
 	}

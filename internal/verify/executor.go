@@ -94,10 +94,11 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			continue
 		}
 		// Idempotency + cost control: a finding this executor already attributed (a
-		// prior verify run generated its fix) is not re-generated. The guard is
-		// name-specific so unrelated evidence text that merely contains "fix by "
-		// does not suppress generation.
-		if strings.Contains(f.Evidence, fixAttributionPrefix+ex.Name) {
+		// prior verify run generated its fix) is not re-generated. The guard matches
+		// a delimited "; "-token, not a raw substring, so a name that is a strict
+		// prefix of another ("op" vs "opus") or unrelated evidence prose containing
+		// "fix by <name>" mid-sentence does not silently suppress generation.
+		if hasFixAttribution(f.Evidence, ex.Name) {
 			continue
 		}
 		wg.Add(1)
@@ -204,15 +205,30 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
 	return b.String()
 }
 
+// hasFixAttribution reports whether evidence already carries this executor's
+// "fix by <name>" attribution as a delimited "; "-separated token. Matching a
+// whole token rather than a raw substring prevents a name that is a strict prefix
+// of another ("op" vs "opus") — or unrelated evidence prose containing
+// "fix by <name>" mid-sentence — from being falsely treated as already-attributed.
+func hasFixAttribution(evidence, name string) bool {
+	attr := fixAttributionPrefix + name
+	for _, seg := range strings.Split(evidence, "; ") {
+		if strings.TrimSpace(seg) == attr {
+			return true
+		}
+	}
+	return false
+}
+
 // appendFixAttribution appends "fix by <name>" to a finding's Evidence, joining
 // with the existing separator. It is idempotent: an Evidence already carrying the
-// attribution is returned unchanged.
+// attribution as a delimited token is returned unchanged.
 func appendFixAttribution(evidence, name string) string {
 	attr := fixAttributionPrefix + name
 	if strings.TrimSpace(evidence) == "" {
 		return attr
 	}
-	if strings.Contains(evidence, attr) {
+	if hasFixAttribution(evidence, name) {
 		return evidence
 	}
 	return evidence + "; " + attr
