@@ -468,16 +468,36 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 // idempotent no-op) and self-heals, rather than a blank ID silently matching a
 // blank-keyed item.
 func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) {
-	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
-	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
-	items := []reconcile.DisagreementItem{
-		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
-	}
+	t.Run("single cluster legacy survivor", func(t *testing.T) {
+		c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+		clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
+		items := []reconcile.DisagreementItem{
+			{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+		}
 
-	// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
-	out := filterMergedClusters(items, []reconcile.JSONFinding{
-		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
-	}, clusterIdx)
-	require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
-	assert.Equal(t, "cluster one longer problem", out[0].Problem)
+		// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
+		out := filterMergedClusters(items, []reconcile.JSONFinding{
+			{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
+		}, clusterIdx)
+		require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
+		assert.Equal(t, "cluster one longer problem", out[0].Problem)
+	})
+
+	t.Run("mixed legacy and new-ID survivors", func(t *testing.T) {
+		c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
+		c2 := grayCluster("amb-2", "b.go", 20, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")
+		clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+		items := []reconcile.DisagreementItem{
+			{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
+			{Kind: reconcile.KindGrayZone, File: "b.go", Line: 20, Problem: "cluster two longer problem"},
+		}
+
+		// One legacy merged record (no ClusterID) plus one new merged record (with ClusterID).
+		out := filterMergedClusters(items, []reconcile.JSONFinding{
+			{File: "a.go", Line: 10, Problem: "legacy survivor", ClusterMerged: true},
+			{File: "b.go", Line: 20, Problem: "new survivor", ClusterMerged: true, ClusterID: "amb-2"},
+		}, clusterIdx)
+		require.Len(t, out, 1, "only the new-ID cluster's item may be suppressed; the legacy record suppresses nothing")
+		assert.Equal(t, "cluster one longer problem", out[0].Problem, "the legacy cluster's item must survive")
+	})
 }
