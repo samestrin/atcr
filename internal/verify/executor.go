@@ -121,7 +121,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			defer wg.Done()
 			defer func() { <-sem }()
 			snippet := readFixSnippet(ctx, disp, f.File, f.Line)
-			prompt := buildFixPrompt(*f, snippet, ex.Persona)
+			prompt := buildFixPrompt(*f, snippet, ex)
 			out, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
 			if err != nil {
 				logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
@@ -198,24 +198,47 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 	return res.Content
 }
 
-// buildFixPrompt renders the executor prompt for one finding: a fix-focused persona
-// instruction, the finding metadata, the reviewer's existing fix suggestion (when
-// present, to refine rather than reinvent), and the source snippet (when available).
+// buildFixPrompt renders the executor prompt for one finding: a fix-focused framing
+// instruction, optional user-supplied coding rules, the finding metadata, the
+// reviewer's existing fix suggestion (when present, to refine rather than reinvent),
+// and the source snippet (when available).
 //
-// Untrusted-data boundary: persona, the finding fields (Problem, Fix), and the
-// source snippet are all interpolated verbatim into this single prompt string —
-// llmclient.Invocation carries no role separation, so there is no structured way to
-// fence them. The persona is sanitized at load (validateExecutor rejects control
-// characters and caps length) to block CR/LF prompt-line forgery; the finding text
-// and snippet are reviewer/repo-derived data, not instructions. Blast radius is
-// bounded: the registry is self-authored and the output only lands in the Fix
-// column (it is never executed), so this is documented rather than actively escaped.
-func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
-	if strings.TrimSpace(persona) == "" {
-		persona = registry.DefaultExecutorPersona
-	}
+// Framing (Epic 7.0.1): when ex.SystemPrompt is set it replaces the default
+// "You are <persona>, a code-fix executor..." line verbatim and the persona is
+// superseded for that call (clarification opt-a); otherwise the default persona
+// framing is used. ex.Rules, when present, are appended as a constraints block
+// directly after the framing so they bind the whole request.
+//
+// Untrusted-data boundary: the framing (persona or system_prompt), rules, the
+// finding fields (Problem, Fix), and the source snippet are all interpolated
+// verbatim into this single prompt string — llmclient.Invocation carries no role
+// separation, so there is no structured way to fence them. Persona and each rule are
+// sanitized at load (validateExecutor rejects control characters and caps length) to
+// block CR/LF prompt-line forgery; system_prompt is length-capped (multi-line framing
+// is legitimate there). The finding text and snippet are reviewer/repo-derived data,
+// not instructions. Blast radius is bounded: the registry is self-authored and the
+// output only lands in the Fix column (it is never executed), so this is documented
+// rather than actively escaped.
+func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.ExecutorConfig) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
+	if sp := strings.TrimSpace(ex.SystemPrompt); sp != "" {
+		// Custom framing fully replaces the default; persona is superseded.
+		b.WriteString(sp)
+		b.WriteString("\n\n")
+	} else {
+		persona := ex.Persona
+		if strings.TrimSpace(persona) == "" {
+			persona = registry.DefaultExecutorPersona
+		}
+		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
+	}
+	if len(ex.Rules) > 0 {
+		b.WriteString("Coding rules to follow (apply these to your fix):\n")
+		for _, rule := range ex.Rules {
+			fmt.Fprintf(&b, "- %s\n", rule)
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "Severity: %s\nLocation: %s:%d\nCategory: %s\nProblem: %s\n", f.Severity, f.File, f.Line, f.Category, f.Problem)
 	if strings.TrimSpace(f.Fix) != "" {
 		fmt.Fprintf(&b, "Reviewer-suggested fix (refine into a minimal, correct change): %s\n", f.Fix)
