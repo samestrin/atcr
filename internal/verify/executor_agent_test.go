@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -205,6 +206,40 @@ func TestBuildExecutorAgent_ForwardsProviderAndBudget(t *testing.T) {
 func TestBuildExecutorAgent_DefaultMaxTurnsWhenUnset(t *testing.T) {
 	a := buildExecutorAgent(agentExecConfig(), testExecProviderVal(), "p", 0)
 	assert.Equal(t, registry.DefaultExecutorMaxToolCalls, a.MaxTurns, "unset max_tool_calls defaults to 10")
+}
+
+// Integration (Phase 3): a registry with agent_mode=true runs end-to-end through
+// runVerify. The harness ChatCompleter drives the executor tool loop and the parsed
+// fix lands in findings.json — proving runVerify threads cc into generateFixes. No
+// skeptic is eligible (the registry has only a reviewer), so the harness is still
+// built via the anyFixEligible path and cc serves only the executor; the single-shot
+// snippet completer is swapped out and asserted untouched.
+func TestRunVerify_AgentMode_PopulatesFixEndToEnd(t *testing.T) {
+	snippet := &recordingExecutor{out: "SNIPPET PATH MUST NOT RUN"}
+	restore := swapExecutorClient(func() executorCompleter { return snippet })
+	defer restore()
+
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "sqli", Confidence: "HIGH", Reviewers: []string{"rev"}},
+	})
+	reg := &registry.Registry{
+		Providers: map[string]registry.Provider{"p": {BaseURL: "http://x.invalid", APIKeyEnv: "K"}},
+		Agents:    map[string]registry.AgentConfig{"rev": {Provider: "p", Model: "m-rev", Role: registry.RoleReviewer}},
+		Executor: &registry.ExecutorConfig{
+			Name: "opus", Provider: "p", Model: "m-exec", Persona: "fixer",
+			Role: registry.RoleExecutor, MinSeverity: "MEDIUM", AgentMode: true,
+		},
+	}
+	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+		return finalChat(`{"fix": "use a parameterized query", "explanation": "blocks sqli"}`), okDispatcher(), nil, nil
+	}
+	_, err := runVerify(context.Background(), dir, reg, Options{}, harness)
+	require.NoError(t, err)
+
+	got := readFindings(t, dir)
+	assert.Equal(t, "use a parameterized query", got[0].Fix, "agent-mode fix must land in findings.json end-to-end")
+	assert.Contains(t, got[0].Evidence, "fix by opus")
+	assert.Equal(t, 0, snippet.calls, "agent mode must not invoke the single-shot snippet completer")
 }
 
 func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
