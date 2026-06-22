@@ -85,6 +85,7 @@ func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
 	f := readFindings(t, dir)
 	require.Len(t, f, 1, "the two gray-zone members must be unioned into one record")
 	assert.True(t, f[0].ClusterMerged, "the surviving merged record must be flagged cluster_merged")
+	assert.Equal(t, "amb-1", f[0].ClusterID, "the survivor must carry the source cluster's stable ID (Epic 6.2 AC2)")
 	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
 	assert.Equal(t, "HIGH", f[0].Severity)
 	assert.Equal(t, 10, f[0].Line)
