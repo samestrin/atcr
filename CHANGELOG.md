@@ -1,3 +1,17 @@
+## [7.2.0] - 2026-06-22
+
+Consolidated the two divergent disagreement-radar renderers into a single shared, parameterized implementation, eliminating the risk of escaping/formatting drift between the reconciled and display report paths. Rendered output is unchanged.
+
+### Changed
+
+- The disagreements radar is now produced by one shared renderer in `internal/reconcile` (`WriteRadarSection` / `WriteRadarItems`), parameterized by a heading prefix and a free-text body renderer (`RadarTextRenderer`). `internal/report` calls it with display-oriented truncation (`escTrunc`, 500-rune cap); the reconciled report passes verbatim escaping (`esc`). Output is byte-identical.
+
+### Removed
+
+- The duplicate radar-rendering code in `internal/report` (`writeRadarSection`, `writeRadarItems`) and its now-dead `formatScore` and `reviewerOrUnknown` helpers.
+
+*Shipped via /execute-epic (epic 7.2)*
+
 ## [Technical Debt] - 2026-06-22
 
 ### Fixed

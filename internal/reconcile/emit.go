@@ -342,8 +342,10 @@ func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
 
 	// Disagreement radar above the consensus findings (Epic 3.2). Nothing is
 	// written when there is no tension, so report.md is byte-identical to the
-	// pre-3.2 output for a review with no disagreements.
-	writeRadarSection(&b, df)
+	// pre-3.2 output for a review with no disagreements. The reconciled report
+	// uses esc (verbatim/archival) for free-text body fields; the display view
+	// in internal/report passes escTrunc through the same shared renderer.
+	WriteRadarSection(&b, df, esc)
 
 	if len(r.Findings) == 0 {
 		b.WriteString("\nNo findings.\n")

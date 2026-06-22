@@ -596,3 +596,82 @@ func TestSpreadFromDisagreement_MixedCase(t *testing.T) {
 		}
 	}
 }
+
+// markerItem builds a one-item radar exercising every renderable field so the
+// shared renderer's routing (fixed-vocabulary via esc vs free-text via the
+// injected renderer) can be asserted.
+func markerItem() DisagreementItem {
+	return DisagreementItem{
+		Kind:         KindSeveritySplit,
+		File:         "x.go",
+		Line:         1,
+		Severity:     "HIGH",
+		Problem:      "the-problem",
+		Detail:       "the-detail",
+		Independence: 1,
+		Reviewers:    []string{"a"},
+		Disagreement: "LOW vs HIGH",
+		Skeptics:     "skep-a, skep-b",
+		Positions:    []Position{{Reviewer: "a", Severity: "HIGH", Problem: "pos-problem"}},
+	}
+}
+
+func TestWriteRadarItems_HonorsHeadingAndTextRenderer(t *testing.T) {
+	var b bytes.Buffer
+	// renderText wraps free text in «» so we can prove body fields route through
+	// the injected renderer while fixed-vocabulary fields stay on esc.
+	WriteRadarItems(&b, []DisagreementItem{markerItem()}, "#### ", func(s string) string { return "«" + s + "»" })
+	out := b.String()
+
+	assert.Contains(t, out, "#### 1.", "heading prefix param must drive the item heading")
+	assert.Contains(t, out, "«the-problem»", "Problem must route through the injected text renderer")
+	assert.Contains(t, out, "«the-detail»", "Detail must route through the injected text renderer")
+	assert.Contains(t, out, "«pos-problem»", "position Problem must route through the injected text renderer")
+	// Fixed-vocabulary fields never go through the injected renderer.
+	assert.NotContains(t, out, "«HIGH»", "severity is fixed-vocabulary, stays on esc")
+	assert.NotContains(t, out, "«LOW vs HIGH»", "disagreement is fixed-vocabulary, stays on esc")
+	assert.Contains(t, out, "Skeptics split: skep-a, skep-b", "skeptics route through esc")
+	assert.Contains(t, out, "Reviewers: a (independence 1)", "reviewers route through esc/joinOrNone")
+}
+
+func TestWriteRadarSection_EmitsHeaderThenItemsVerbatim(t *testing.T) {
+	df := DisagreementsFile{Items: []DisagreementItem{markerItem()}}
+	var b bytes.Buffer
+	WriteRadarSection(&b, df, esc)
+	out := b.String()
+	assert.Contains(t, out, "## Disagreements", "section header emitted")
+	assert.Contains(t, out, "### 1.", "items render under the ### heading prefix")
+	assert.Contains(t, out, "the-problem", "esc renders the problem verbatim")
+}
+
+func TestWriteRadarSection_EmptyWritesNothing(t *testing.T) {
+	var b bytes.Buffer
+	WriteRadarSection(&b, DisagreementsFile{}, esc)
+	assert.Empty(t, b.String(), "no items → no output")
+}
+
+// TestWriteRadarItems_TextRendererControlsTruncation pins AC4: the single
+// intentional difference between the reconciled (verbatim) and display
+// (truncated) radar renderers is the injected text renderer. The reconciled path
+// passes esc (full body); the display path passes report.escTrunc (500-rune cap).
+func TestWriteRadarItems_TextRendererControlsTruncation(t *testing.T) {
+	long := strings.Repeat("A", 600)
+	item := DisagreementItem{
+		Kind: KindSoloFinding, File: "x.go", Line: 1, Severity: "HIGH",
+		Problem: long, Independence: 1, Reviewers: []string{"a"},
+	}
+
+	var verbatim, truncated bytes.Buffer
+	WriteRadarItems(&verbatim, []DisagreementItem{item}, "### ", esc)
+	WriteRadarItems(&truncated, []DisagreementItem{item}, "### ", func(s string) string {
+		r := []rune(s)
+		if len(r) > 80 {
+			return string(r[:80]) + "..."
+		}
+		return s
+	})
+
+	assert.Contains(t, verbatim.String(), long, "esc renderer keeps the full body verbatim")
+	assert.NotContains(t, truncated.String(), long, "a truncating renderer shortens the body")
+	assert.Contains(t, truncated.String(), "...", "truncating renderer appends an ellipsis")
+}
