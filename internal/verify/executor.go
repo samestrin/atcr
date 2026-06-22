@@ -54,6 +54,10 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 	if ex == nil || complete == nil {
 		return
 	}
+	// Defense-in-depth: registry validation already guarantees the executor's
+	// provider is defined, so this guard never fires on a validated registry. It
+	// protects the direct-call path (e.g. tests building a Registry in memory) from
+	// a nil-map panic and documents the invariant rather than assuming it.
 	prov, ok := reg.Providers[ex.Provider]
 	if !ok {
 		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
@@ -83,11 +87,13 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		out, err := callExecutor(ctx, complete, prov, ex, prompt)
 		if err != nil {
 			logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
+			f.FixWarning = "fix generation failed: " + err.Error()
 			continue
 		}
 		fix := strings.TrimSpace(out)
 		if fix == "" {
 			logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+			f.FixWarning = "fix generation returned an empty completion"
 			continue
 		}
 		f.Fix = fix
@@ -154,7 +160,7 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
 		fmt.Fprintf(&b, "Reviewer-suggested fix (refine into a minimal, correct change): %s\n", f.Fix)
 	}
 	if strings.TrimSpace(snippet) != "" {
-		fmt.Fprintf(&b, "\nSource context around %s:%d:\n```\n%s\n```\n", f.File, f.Line, snippet)
+		fmt.Fprintf(&b, "\nSource context around %s:%d (each line is prefixed with its line number as `N: `; do NOT include those line-number prefixes in your fix):\n```\n%s\n```\n", f.File, f.Line, snippet)
 	}
 	return b.String()
 }

@@ -90,6 +90,7 @@ func TestGenerateFixes_FailureIsolation(t *testing.T) {
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "orig", findings[0].Fix, "failed fix leaves the reviewer fix untouched")
 	assert.Equal(t, "ev", findings[0].Evidence, "no attribution on failure")
+	assert.Contains(t, findings[0].FixWarning, "fix generation failed", "failure is recorded on the finding for downstream consumers")
 }
 
 func TestGenerateFixes_EmptyCompletionLeavesFix(t *testing.T) {
@@ -99,6 +100,7 @@ func TestGenerateFixes_EmptyCompletionLeavesFix(t *testing.T) {
 	rec := &recordingExecutor{out: "   "}
 	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
 	assert.Equal(t, "orig", findings[0].Fix)
+	assert.Contains(t, findings[0].FixWarning, "empty completion")
 }
 
 func TestGenerateFixes_Idempotent(t *testing.T) {
