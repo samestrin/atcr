@@ -23,11 +23,16 @@ import (
 // fenceRe matches a markdown code fence anywhere in the input (not anchored to the
 // start), capturing the optional language tag (group 1) and the fenced body (group
 // 2). Leading/trailing prose around the fence is ignored, so the very common LLM
-// shape "Here is the fix:\n```go\n...\n```" is handled. The newline before the
-// closing fence is optional, so a closing ``` on the same line as the last code
-// line still matches. Input is CRLF-normalized before matching (see
-// normalizeNewlines), so the LF-only pattern also covers CRLF fences.
-var fenceRe = regexp.MustCompile("(?s)```([A-Za-z0-9_+-]*)\n(.*?)\n?```")
+// shape "Here is the fix:\n```go\n...\n```" is handled. The opening run is `{3,} so a
+// CommonMark 4-backtick fence (used when the body itself contains a triple backtick)
+// is captured as a unit rather than sliced at the inner three backticks; the language
+// tag admits '#' (c#, f#) and may be followed by trailing whitespace. The closing run
+// is anchored to its own line end ([ \t]*$ under (?m)), so an inline ``` mid-line —
+// e.g. inside a Go string literal "```" — cannot prematurely close the block and
+// truncate valid code. The pre-close newline stays optional (\n?), so a closing ```
+// on the same line as the last code line still matches. Input is CRLF-normalized
+// before matching (see normalizeNewlines), so the LF-only pattern also covers CRLF.
+var fenceRe = regexp.MustCompile("(?sm)`{3,}([A-Za-z0-9_+#-]*)[ \t]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
 
 // declKeywordRe matches a line that begins (after optional whitespace) with a Go
 // top-level / statement keyword that is a strong signal the text is code rather
@@ -54,7 +59,8 @@ var nonGoFenceLangs = map[string]bool{
 	"typescript": true, "jsx": true, "tsx": true, "sh": true, "bash": true,
 	"shell": true, "zsh": true, "rust": true, "rs": true, "java": true,
 	"kotlin": true, "kt": true, "c": true, "cpp": true, "c++": true, "cc": true,
-	"cs": true, "csharp": true, "ruby": true, "rb": true, "php": true,
+	"cs": true, "c#": true, "csharp": true, "fs": true, "f#": true, "fsharp": true,
+	"ruby": true, "rb": true, "php": true,
 	"swift": true, "sql": true, "html": true, "css": true, "scss": true,
 	"yaml": true, "yml": true, "json": true, "toml": true, "xml": true,
 	"text": true, "txt": true, "markdown": true, "md": true, "diff": true,
