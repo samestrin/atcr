@@ -1,0 +1,2 @@
+HIGH|internal/verify/syntaxguard_test.go:56|Unused err variable causes compilation failure|Use err in require.Error call|correctness|2|err declared but not used in test|bruce
+MEDIUM|internal/verify/syntaxguard.go:30|Fence regex misses spaces after backticks|Allow \s* after opening backticks and before newline|correctness|5|space after backticks prevents fence recognition|bruce

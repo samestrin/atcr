@@ -1,0 +1,1 @@
+LOW|internal/verify/syntaxguard.go:23|fenceRe character class excludes '#' (c#, f#)|Add '#' to character class: [A-Za-z0-9_+#-]*|correctness|5|Language tags like c# and f# are not detected, content falls through to unfenced path|bruce

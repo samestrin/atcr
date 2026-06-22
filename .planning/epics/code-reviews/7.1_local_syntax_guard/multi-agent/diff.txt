@@ -1,0 +1,453 @@
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index b9782ce..b272250 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -123,12 +123,14 @@ type JSONFinding struct {
+ 	// merge stamping: reconcile-time producers MUST leave it empty, and omitempty
+ 	// keeps every non-merged record byte-identical to pre-6.2 findings.json.
+ 	ClusterID string `json:"cluster_id,omitempty"`
+-	// FixWarning records a non-fatal fix-generation failure (Epic 7.0): when the
++	// FixWarning records a non-fatal fix-generation warning (Epic 7.0): when the
+ 	// executor errors or returns an empty completion for a finding it was eligible
+-	// to fix, the warning is stamped here instead of failing the run, so a
+-	// downstream consumer (the report, the Epic 7.3 PR action) can see the fix was
+-	// attempted and why it is absent. omitempty keeps every finding without a
+-	// fix-generation failure byte-identical to pre-7.0 findings.json; reconcile-time
++	// to fix — or when the generated fix fails the local syntax guard (Epic 7.1),
++	// stamped as "invalid_syntax: <parser error>" while the attempted fix stays in
++	// Fix — the warning is stamped here instead of failing the run, so a downstream
++	// consumer (the report, the Epic 7.3 PR action) can see the fix was attempted
++	// and why it is absent or flagged. omitempty keeps every finding without a
++	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
+ 	// producers MUST leave it empty (it is set only by the verify fix phase).
+ 	FixWarning string `json:"fix_warning,omitempty"`
+ }
+diff --git a/internal/report/render.go b/internal/report/render.go
+index 159ec9f..92829ac 100644
+--- a/internal/report/render.go
++++ b/internal/report/render.go
+@@ -161,6 +161,11 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
+ 		if f.Fix != "" {
+ 			fmt.Fprintf(&b, "  - Fix: %s\n", escTrunc(f.Fix))
+ 		}
++		// Fix-generation warning (Epic 7.0 fix_warning, incl. the 7.1 invalid_syntax
++		// flag): surface it so a flagged or absent fix is visible to the reader.
++		if f.FixWarning != "" {
++			fmt.Fprintf(&b, "  - ⚠️ Fix warning: %s\n", escTrunc(f.FixWarning))
++		}
+ 		if f.Evidence != "" {
+ 			fmt.Fprintf(&b, "  - Evidence: %s\n", escTrunc(f.Evidence))
+ 		}
+diff --git a/internal/report/render_test.go b/internal/report/render_test.go
+index dcfc841..04be761 100644
+--- a/internal/report/render_test.go
++++ b/internal/report/render_test.go
+@@ -30,6 +30,24 @@ func sample() []reconcile.JSONFinding {
+ 	}
+ }
+ 
++// A finding carrying a fix-generation warning (e.g. the Epic 7.1 invalid_syntax
++// flag) must surface that warning in the markdown report so the user sees the fix
++// was flagged and why.
++func TestRenderMarkdown_ShowsFixWarning(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "func x() {",
++			Confidence: "HIGH", Reviewers: []string{"rev"},
++			FixWarning: "invalid_syntax: 2:1: expected '}'"},
++	}
++	var b strings.Builder
++	require.NoError(t, Render(&b, findings, FormatMarkdown))
++	out := b.String()
++	assert.Contains(t, out, "Fix warning:", "the fix-warning label must surface in the markdown report")
++	// The message text is HTML-escaped by the renderer; assert the unescaped portion.
++	assert.Contains(t, out, "invalid_syntax: 2:1: expected",
++		"the fix warning message must surface in the markdown report")
++}
++
+ func TestValidFormat(t *testing.T) {
+ 	assert.True(t, ValidFormat("md"))
+ 	assert.True(t, ValidFormat("json"))
+diff --git a/internal/verify/executor.go b/internal/verify/executor.go
+index 8f20805..432dc03 100644
+--- a/internal/verify/executor.go
++++ b/internal/verify/executor.go
+@@ -135,10 +135,18 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
+ 				return
+ 			}
+ 			f.Fix = fix
+-			// Clear any warning a prior failed/empty run left on this finding so it
+-			// never carries both a valid Fix and a stale "fix is absent" warning.
+-			f.FixWarning = ""
+ 			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
++			// Local syntax guard (Epic 7.1): parse the generated fix before it is
++			// presented. A fix that is plausibly Go code yet fails to parse is flagged
++			// via FixWarning while the attempted fix stays visible; prose change-
++			// instructions and valid code clear any warning a prior failed/empty/invalid
++			// run left, so a finding never carries both a good Fix and a stale warning.
++			if synErr := validateGoFixSyntax(fix); synErr != nil {
++				logPipelineWarning(log.FromContext(ctx), "executor_invalid_syntax", fmt.Sprintf("%s:%d: %v", f.File, f.Line, synErr))
++				f.FixWarning = "invalid_syntax: " + synErr.Error()
++			} else {
++				f.FixWarning = ""
++			}
+ 		}(f)
+ 	}
+ 	wg.Wait()
+diff --git a/internal/verify/executor_test.go b/internal/verify/executor_test.go
+index 87d274f..1aa05e9 100644
+--- a/internal/verify/executor_test.go
++++ b/internal/verify/executor_test.go
+@@ -81,6 +81,55 @@ func TestGenerateFixes_PopulatesFixAndAttribution(t *testing.T) {
+ 	assert.Contains(t, findings[0].Evidence, "fix by opus")
+ }
+ 
++// A syntactically invalid Go code fix is flagged via FixWarning (Epic 7.1) but the
++// attempted fix and its attribution remain visible so the user sees what was tried
++// and why it was flagged.
++func TestGenerateFixes_FlagsInvalidSyntax(t *testing.T) {
++	const broken = "func add(a, b int) int {\n\treturn a + b\n" // missing closing brace
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Evidence: "ev"},
++	}
++	rec := &recordingExecutor{out: broken}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
++	assert.Equal(t, strings.TrimSpace(broken), findings[0].Fix, "the attempted fix stays visible")
++	assert.Contains(t, findings[0].FixWarning, "invalid_syntax", "syntactically invalid Go must be flagged")
++	assert.Contains(t, findings[0].Evidence, "fix by opus", "attribution is still recorded for an attempted fix")
++}
++
++// A syntactically valid Go code fix carries no FixWarning.
++func TestGenerateFixes_ValidSyntaxNoWarning(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
++	}
++	rec := &recordingExecutor{out: "func add(a, b int) int {\n\treturn a + b\n}"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
++	assert.Equal(t, "", findings[0].FixWarning, "valid Go must not be flagged")
++}
++
++// A free-form prose change-instruction (the executor's "or a precise change
++// instruction" output mode) must never be flagged as invalid syntax.
++func TestGenerateFixes_ProseFixNoWarning(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
++	}
++	rec := &recordingExecutor{out: "use a parameterized query instead of string concatenation"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
++	assert.Equal(t, "", findings[0].FixWarning, "a prose change-instruction must not be flagged")
++	assert.Equal(t, "use a parameterized query instead of string concatenation", findings[0].Fix)
++}
++
++// An invalid-syntax flag from a prior run must be cleared when a later run produces
++// a syntactically valid fix (no stale invalid_syntax warning alongside a good fix).
++func TestGenerateFixes_ClearsStaleInvalidSyntaxOnValidFix(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
++			FixWarning: "invalid_syntax: 2:11: expected '}'"},
++	}
++	rec := &recordingExecutor{out: "func add(a, b int) int { return a + b }"}
++	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
++	assert.Equal(t, "", findings[0].FixWarning, "a valid re-run must clear the stale invalid_syntax warning")
++}
++
+ func TestGenerateFixes_SkipsBelowConfidence(t *testing.T) {
+ 	findings := []reconcile.JSONFinding{
+ 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfMedium, Fix: "orig"},
+diff --git a/internal/verify/syntaxguard.go b/internal/verify/syntaxguard.go
+new file mode 100644
+index 0000000..781a202
+--- /dev/null
++++ b/internal/verify/syntaxguard.go
+@@ -0,0 +1,151 @@
++package verify
++
++import (
++	"go/parser"
++	"go/token"
++	"regexp"
++	"strings"
++)
++
++// Local syntax/compile guard for generated fixes (Epic 7.1).
++//
++// The executor's Fix field is free-form: the prompt asks for "corrected code or a
++// precise change instruction" (executor.go), so a fix may be a complete Go file, a
++// bare declaration, a statement fragment, a fenced code block, or plain English
++// prose. validateGoFixSyntax parses the fix with go/parser and reports a syntax
++// error ONLY when the content is plausibly Go code yet fails to parse. Prose and
++// explicitly non-Go fenced blocks pass through (nil), because a false "invalid"
++// flag on a legitimate fix degrades trust — the exact failure mode this guard
++// exists to prevent. The trade-off is conservative recall: an unfenced fragment
++// with no block structure (no braces, no `:=`, no leading declaration keyword) is
++// not flagged even if malformed, since it is indistinguishable from prose.
++
++// fenceRe matches a markdown code fence anywhere in the input (not anchored to the
++// start), capturing the optional language tag (group 1) and the fenced body (group
++// 2). Leading/trailing prose around the fence is ignored, so the very common LLM
++// shape "Here is the fix:\n```go\n...\n```" is handled. The newline before the
++// closing fence is optional, so a closing ``` on the same line as the last code
++// line still matches. Input is CRLF-normalized before matching (see
++// normalizeNewlines), so the LF-only pattern also covers CRLF fences.
++var fenceRe = regexp.MustCompile("(?s)```([A-Za-z0-9_+-]*)\n(.*?)\n?```")
++
++// declKeywordRe matches a line that begins (after optional whitespace) with a Go
++// top-level / statement keyword that is a strong signal the text is code rather
++// than prose. Anchored per-line via the multiline flag.
++var declKeywordRe = regexp.MustCompile(`(?m)^\s*(package|import|func|type|var|const)\b`)
++
++// blockOpenRe matches a line whose last non-whitespace character is an opening
++// brace (e.g. "func add() {", "if x != nil {"). This is block structure prose
++// almost never produces — unlike an inline "&Options{Retries: 3}" where the brace
++// sits mid-line — so it is a reliable code signal.
++var blockOpenRe = regexp.MustCompile(`(?m)\{[ \t]*$`)
++
++// blockCloseRe matches a line that begins with a closing brace (e.g. "}",
++// "} else {"). Same rationale as blockOpenRe.
++var blockCloseRe = regexp.MustCompile(`(?m)^[ \t]*\}`)
++
++// packageClauseRe detects a package clause, i.e. the fix is shaped as a full file.
++var packageClauseRe = regexp.MustCompile(`(?m)^\s*package\s+\w`)
++
++// nonGoFenceLangs are fenced-block language tags that explicitly denote a language
++// other than Go. A fix fenced as one of these is not the Go guard's concern.
++var nonGoFenceLangs = map[string]bool{
++	"python": true, "py": true, "js": true, "javascript": true, "ts": true,
++	"typescript": true, "jsx": true, "tsx": true, "sh": true, "bash": true,
++	"shell": true, "zsh": true, "rust": true, "rs": true, "java": true,
++	"kotlin": true, "kt": true, "c": true, "cpp": true, "c++": true, "cc": true,
++	"cs": true, "csharp": true, "ruby": true, "rb": true, "php": true,
++	"swift": true, "sql": true, "html": true, "css": true, "scss": true,
++	"yaml": true, "yml": true, "json": true, "toml": true, "xml": true,
++	"text": true, "txt": true, "markdown": true, "md": true, "diff": true,
++	"patch": true, "dockerfile": true, "make": true, "makefile": true,
++}
++
++// validateGoFixSyntax returns a non-nil error when fix is plausibly Go code that
++// fails to parse, and nil otherwise (valid Go, prose, or non-Go content).
++func validateGoFixSyntax(fix string) error {
++	fix = normalizeNewlines(fix)
++	code, lang, hadFence := extractFencedCode(fix)
++	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
++		return nil // explicitly another language — not this guard's concern
++	}
++	code = strings.TrimSpace(code)
++	if code == "" {
++		return nil
++	}
++	parseErr := parseGoFix(code)
++	if parseErr == nil {
++		return nil // parses cleanly as Go under at least one strategy
++	}
++	// Did not parse. Flag only when the content is plausibly code; otherwise it is
++	// a prose change-instruction and must pass untouched.
++	if hadFence || looksLikeGoCode(code) {
++		return parseErr
++	}
++	return nil
++}
++
++// parseGoFix tries to parse src as Go under three strategies, from most to least
++// complete: as a whole file, as top-level declarations (prefixed with a synthetic
++// package clause), and as statements (wrapped in a synthetic function body). It
++// returns nil if any strategy parses cleanly. When none do, it returns the error
++// from the strategy that best matches the content's shape, so the message is
++// meaningful (a file-shaped fix reports the file error, etc.).
++func parseGoFix(src string) error {
++	fset := token.NewFileSet()
++	const mode = parser.SkipObjectResolution
++
++	_, fileErr := parser.ParseFile(fset, "", src, mode)
++	if fileErr == nil {
++		return nil
++	}
++	_, declErr := parser.ParseFile(fset, "", "package p\n"+src, mode)
++	if declErr == nil {
++		return nil
++	}
++	_, stmtErr := parser.ParseFile(fset, "", "package p\nfunc _() {\n"+src+"\n}\n", mode)
++	if stmtErr == nil {
++		return nil
++	}
++
++	switch {
++	case packageClauseRe.MatchString(src):
++		return fileErr
++	case declKeywordRe.MatchString(src):
++		return declErr
++	default:
++		return stmtErr
++	}
++}
++
++// looksLikeGoCode reports whether unfenced text carries a strong LINE-STRUCTURAL
++// signal of Go source: a line beginning with a declaration keyword, a line ending
++// in an opening brace, or a line beginning with a closing brace. These are forms
++// prose almost never produces. Crucially it does NOT treat an inline brace or `:=`
++// embedded mid-sentence as code — "Pass &Options{Retries: 3} to the constructor"
++// or "replace it with count := len(items)" are legitimate prose change-instructions
++// and must pass through unflagged (false positives degrade trust). The cost is
++// conservative recall: a one-line broken expression with no block structure is not
++// flagged, since it is indistinguishable from prose.
++func looksLikeGoCode(s string) bool {
++	return declKeywordRe.MatchString(s) || blockOpenRe.MatchString(s) || blockCloseRe.MatchString(s)
++}
++
++// extractFencedCode returns the inner content of the first markdown code fence in
++// fix along with its language tag and true; when fix is not fenced it returns fix
++// unchanged, an empty language, and false. fix is expected to be newline-normalized.
++func extractFencedCode(fix string) (code, lang string, fenced bool) {
++	m := fenceRe.FindStringSubmatch(fix)
++	if m == nil {
++		return fix, "", false
++	}
++	return m[2], m[1], true
++}
++
++// normalizeNewlines collapses CRLF and lone CR line endings to LF so the LF-only
++// fence and line-structural regexes apply uniformly regardless of the provider's
++// line-ending convention.
++func normalizeNewlines(s string) string {
++	s = strings.ReplaceAll(s, "\r\n", "\n")
++	return strings.ReplaceAll(s, "\r", "\n")
++}
+diff --git a/internal/verify/syntaxguard_test.go b/internal/verify/syntaxguard_test.go
+new file mode 100644
+index 0000000..c39aace
+--- /dev/null
++++ b/internal/verify/syntaxguard_test.go
+@@ -0,0 +1,135 @@
++package verify
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// validateGoFixSyntax is the local syntax guard (Epic 7.1): it parses a generated
++// fix with go/parser and returns a non-nil error ONLY when the fix is plausibly Go
++// code yet fails to parse. Free-form prose change-instructions and explicitly
++// non-Go fenced blocks pass through with a nil error so a legitimate fix is never
++// falsely flagged (false positives degrade trust, which is exactly what this guard
++// exists to prevent).
++
++func TestValidateGoFixSyntax_ValidFullFile(t *testing.T) {
++	src := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
++	assert.NoError(t, validateGoFixSyntax(src), "a complete, valid Go file must pass")
++}
++
++func TestValidateGoFixSyntax_ValidTopLevelDecl(t *testing.T) {
++	// A function declaration with no package clause (a common minimal-change fix).
++	src := "func add(a, b int) int {\n\treturn a + b\n}"
++	assert.NoError(t, validateGoFixSyntax(src), "a valid top-level decl (no package) must pass")
++}
++
++func TestValidateGoFixSyntax_ValidStatementSnippet(t *testing.T) {
++	// A bare statement fragment that is only valid inside a function body.
++	src := "if err != nil {\n\treturn err\n}"
++	assert.NoError(t, validateGoFixSyntax(src), "a valid statement fragment must pass")
++}
++
++func TestValidateGoFixSyntax_ValidFencedGo(t *testing.T) {
++	src := "```go\nfunc add(a, b int) int {\n\treturn a + b\n}\n```"
++	assert.NoError(t, validateGoFixSyntax(src), "valid Go inside a ```go fence must pass")
++}
++
++func TestValidateGoFixSyntax_InvalidFencedGo(t *testing.T) {
++	// Missing closing brace — clearly code (fenced), clearly broken.
++	src := "```go\nfunc add(a, b int) int {\n\treturn a + b\n```"
++	err := validateGoFixSyntax(src)
++	require.Error(t, err, "syntactically broken Go inside a fence must be flagged")
++}
++
++func TestValidateGoFixSyntax_InvalidFullFile(t *testing.T) {
++	// A full file (package clause present) whose body is syntactically broken.
++	src := "package main\n\nfunc main() {\n\treturn a +\n}\n"
++	require.Error(t, validateGoFixSyntax(src), "a broken full Go file must be flagged")
++}
++
++func TestValidateGoFixSyntax_InvalidUnfencedCode(t *testing.T) {
++	// No fence, but braces make it plainly code; the body is broken Go.
++	src := "func add(a, b int) int {\n\treturn a +\n}"
++	err := validateGoFixSyntax(src)
++	require.Error(t, err, "broken Go with block structure must be flagged even without a fence")
++}
++
++func TestValidateGoFixSyntax_InvalidShortAssign(t *testing.T) {
++	// `:=` is a strong Go signal; the snippet is malformed.
++	src := "x := func( {"
++	require.Error(t, validateGoFixSyntax(src), "broken code with := must be flagged")
++}
++
++func TestValidateGoFixSyntax_ProseInstructionNotFlagged(t *testing.T) {
++	src := "Add a nil check before calling Connect() so a closed pool does not panic."
++	assert.NoError(t, validateGoFixSyntax(src), "a prose change-instruction must never be flagged")
++}
++
++func TestValidateGoFixSyntax_ProseWithKeywordsNotFlagged(t *testing.T) {
++	// Contains the words "if" and "return" but no code structure (no braces, no :=).
++	src := "If the input is nil, return an error to the caller instead of dereferencing it."
++	assert.NoError(t, validateGoFixSyntax(src), "prose mentioning keywords but lacking code structure must not be flagged")
++}
++
++// Prose that embeds an inline Go-ish fragment (a struct literal, a := expression)
++// inside a sentence must NOT be flagged: the brace/:= is mid-sentence, not block
++// structure. These are the realistic "precise change instruction" outputs the
++// guard must pass through (independent-review HIGH).
++func TestValidateGoFixSyntax_ProseWithInlineBracesNotFlagged(t *testing.T) {
++	src := "Pass &Options{Retries: 3} to the constructor instead of nil."
++	assert.NoError(t, validateGoFixSyntax(src), "prose embedding an inline struct literal must not be flagged")
++}
++
++func TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged(t *testing.T) {
++	src := "Replace it with count := len(items) and return early when it is zero."
++	assert.NoError(t, validateGoFixSyntax(src), "prose embedding an inline := expression must not be flagged")
++}
++
++// A fenced code block preceded by prose ("Here is the fix:\n```go ... ```") is the
++// most common LLM output shape; the fence must be detected and only the fenced Go
++// validated (independent-review HIGH).
++func TestValidateGoFixSyntax_LeadingProseBeforeFenceValid(t *testing.T) {
++	src := "Here is the fix:\n\n```go\nfunc add(a, b int) int { return a + b }\n```"
++	assert.NoError(t, validateGoFixSyntax(src), "valid Go in a fence with leading prose must pass")
++}
++
++func TestValidateGoFixSyntax_LeadingProseBeforeFenceInvalid(t *testing.T) {
++	src := "Here is the fix:\n\n```go\nfunc broken() int {\n\treturn\n```"
++	require.Error(t, validateGoFixSyntax(src), "broken Go in a fence with leading prose must be flagged")
++}
++
++// A fenced block emitted with CRLF line endings must be recognized and its valid Go
++// must pass (independent-review HIGH).
++func TestValidateGoFixSyntax_CRLFFencedValid(t *testing.T) {
++	src := "```go\r\nfunc add(a, b int) int {\r\n\treturn a + b\r\n}\r\n```"
++	assert.NoError(t, validateGoFixSyntax(src), "valid Go in a CRLF-terminated fence must pass")
++}
++
++// A fence whose closing ``` sits on the same line as the last code line (no newline
++// before the close) must still be recognized (independent-review MEDIUM).
++func TestValidateGoFixSyntax_ClosingFenceSameLineValid(t *testing.T) {
++	src := "```go\nfunc add(a, b int) int { return a + b }```"
++	assert.NoError(t, validateGoFixSyntax(src), "valid Go with the closing fence on the code line must pass")
++}
++
++func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
++	src := "```python\ndef add(a, b):\n    return a + b\n```"
++	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")
++}
++
++func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
++	assert.NoError(t, validateGoFixSyntax(""), "empty fix must not be flagged")
++	assert.NoError(t, validateGoFixSyntax("   \n\t"), "whitespace-only fix must not be flagged")
++}
++
++func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
++	src := "func add(a, b int) int {\n\treturn a +\n}"
++	err := validateGoFixSyntax(src)
++	require.Error(t, err)
++	// The parser error should carry a recognizable syntax-error signal.
++	assert.True(t, strings.Contains(err.Error(), "expected") || strings.Contains(err.Error(), "unexpected"),
++		"the returned error should be a go/parser syntax error, got: %v", err)
++}

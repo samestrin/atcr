@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 2 | 21 | 0 |
-| LOW | 4 | 21 | 0 |
+| MEDIUM | 0 | 22 | 0 |
+| LOW | 0 | 21 | 0 |
 
 
-**Last Modified:** 2026-06-22 | **Open Items:** 6 | **Deferred Items:** 43 | **Resolved Items:** 0 | **Total Items:** 49
+**Last Modified:** 2026-06-22 | **Open Items:** 0 | **Deferred Items:** 44 | **Resolved Items:** 0 | **Total Items:** 44
 
 ## Directory Structure
 
@@ -39,12 +39,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/verify/syntaxguard.go:30 | A markdown code fence without a newline before its closing ``` (e.g. ```go\ncode```) is not recognized by fenceRe and falls through to raw-string parsing, which can false-flag otherwise-valid fenced Go. | Make fenceRe tolerant of a missing pre-close newline, or strip stray backtick fences before parsing. | EDGE_CASES | 15 | execute-epic-stage3 |
-| 1 | [ ] | LOW | internal/verify/syntaxguard.go:113 | Prose change-instructions that literally contain both { and } (e.g. "wrap it in a struct{} literal") satisfy looksLikeGoCode and, failing to parse, could be false-flagged as invalid_syntax. | Tighten looksLikeGoCode (e.g. require a brace-delimited block spanning a newline, or a stronger code signal) to exclude inline braces in prose. | EDGE_CASES | 20 | execute-epic-cumulative |
-| 1 | [ ] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). | EDGE_CASES | 30 | execute-epic-independent |
-| 1 | [ ] | MEDIUM | internal/verify/syntaxguard.go:94 | parseGoFix OR-s three permissive parse strategies, so a fix mixing a declaration and a statement (or a bare expression) can parse under an unintended strategy and mask a genuinely broken fix (false negative). | Detect the fix shape first and parse under a single matching strategy; deferred because tightening would raise false positives, contrary to the epic's deliberate conservative bias toward false-negatives over false-positives. | CORRECTNESS | 45 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/verify/executor.go:148 | generateFixes unconditionally clears f.FixWarning on the valid-syntax branch, taking exclusive ownership of FixWarning; a future caller that pre-seeds a non-syntax warning would have it silently overwritten. | Document that generateFixes owns FixWarning, or only clear values matching its own prefixes; pre-existing behavior, no current caller pre-seeds. | REGRESSION_RISK | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/report/render.go:167 | The fix-warning report line uses a raw ⚠️ emoji glyph; on a non-UTF-8 consumer it may render as mojibake. | Consider a plain-text marker; kept as-is for now because it matches the existing writePathWarning ⚠️ convention in the same file (consistency). | OBSERVABILITY | 10 | execute-epic-independent |
+| 1 | [/] | MEDIUM | internal/verify/syntaxguard.go:130 | An unfenced multi-line JSON/config snippet with block braces can still satisfy looksLikeGoCode and be parsed as Go, producing a spurious invalid_syntax flag on non-Go content (residual after heuristic hardening). | Detect obviously non-Go brace content (JSON object / key:value lines) before treating block braces as a Go signal; deferred as a separate design refinement (unfenced non-Go fixes are rare; fenced non-Go is already handled). [Deferred 2026-06-22 to Epic Plan 7.5 syntax-guard-refinements per clarification] | EDGE_CASES | 30 | execute-epic-independent |
 
 ### [2026-06-22] From Sprint: 7.0.1_executor_model_configuration
 
