@@ -78,6 +78,17 @@ const (
 	// many short rules can still stuff the fix prompt, so the count is bounded at
 	// load mirroring the per-rule cap.
 	MaxExecutorRules = 64
+	// DefaultExecutorMaxToolCalls is the agent-mode (Epic 7.4) tool-call budget
+	// applied when max_tool_calls is unset or non-positive. It bounds the executor's
+	// read/search loop per finding; 10 is conservative — the executor's task (read
+	// the cited code, then propose one fix) is narrower than a skeptic's.
+	DefaultExecutorMaxToolCalls = 10
+	// MaxExecutorToolCalls caps an explicitly-configured max_tool_calls. It is pinned
+	// to MaxAgentTurns because invokeExecutor drives the same fanout tool loop as a
+	// skeptic (max_tool_calls maps to the agent's MaxTurns budget), whose per-agent
+	// turn budget the engine already caps at MaxAgentTurns — so the executor cannot
+	// exceed the loop's hard ceiling either.
+	MaxExecutorToolCalls = MaxAgentTurns
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
@@ -175,6 +186,25 @@ type ExecutorConfig struct {
 	Temperature  *float64 `yaml:"temperature,omitempty"`          // API temperature [0,2]; nil = deterministic 0.0 default
 	SystemPrompt string   `yaml:"system_prompt,omitempty"`        // full fix-prompt framing override; supersedes persona when set
 	Rules        []string `yaml:"rules,omitempty"`                // coding guidelines appended to the fix prompt as constraints
+	// Agent-mode tool loop (Epic 7.4). AgentMode opts the executor into a read-only
+	// tool loop (reusing the skeptics' dispatcher) so it can read files / search the
+	// codebase before proposing a fix; default false = the Epic 7.0 snippet path,
+	// unchanged. MaxToolCalls bounds that loop per finding (maps to the fanout agent's
+	// MaxTurns budget); it is a pointer so an explicit value is distinguishable from
+	// unset (nil → DefaultExecutorMaxToolCalls), mirroring AgentConfig.MaxTurns.
+	AgentMode    bool `yaml:"agent_mode,omitempty"`     // Epic 7.4: opt-in tool-loop fix generation (default false)
+	MaxToolCalls *int `yaml:"max_tool_calls,omitempty"` // Epic 7.4: agent-mode tool-call budget; nil = default 10
+}
+
+// EffectiveMaxToolCalls returns the agent-mode tool-call budget: the executor's own
+// max_tool_calls when set positive, otherwise DefaultExecutorMaxToolCalls (10). It
+// is the single resolver invokeExecutor uses so the nil/non-positive → 10 fallback
+// lives in one place, mirroring EffectiveFixMinSeverity / EffectiveExecutorTimeoutSecs.
+func (e ExecutorConfig) EffectiveMaxToolCalls() int {
+	if e.MaxToolCalls != nil && *e.MaxToolCalls > 0 {
+		return *e.MaxToolCalls
+	}
+	return DefaultExecutorMaxToolCalls
 }
 
 // EffectiveFixMinSeverity returns the executor's own min_severity_for_fix when
@@ -551,6 +581,17 @@ func (r *Registry) validateExecutor() []error {
 		case len(rule) > MaxExecutorRuleLen:
 			errs = append(errs, fmt.Errorf("executor: rules[%d] must be at most %d characters", i, MaxExecutorRuleLen))
 		}
+	}
+	// Agent-mode tool budget (Epic 7.4): an explicit max_tool_calls is bounded
+	// 1..MaxExecutorToolCalls, mirroring max_turns (1..MaxAgentTurns) and max_findings
+	// (1..MaxFindingsCap). The executor lives outside agents:, so validateExecutor is
+	// its only validation gate — without this an explicit ≤0 or over-cap value would
+	// reach the tool loop. A nil pointer (unset) is valid and resolves to the default.
+	// agent_mode itself needs no guard: it is a field on this block, so it cannot be
+	// set without an executor block (AC8 is satisfied-by-construction via the e == nil
+	// early return above).
+	if e.MaxToolCalls != nil && (*e.MaxToolCalls <= 0 || *e.MaxToolCalls > MaxExecutorToolCalls) {
+		errs = append(errs, fmt.Errorf("executor: max_tool_calls must be within 1..%d", MaxExecutorToolCalls))
 	}
 	return errs
 }
