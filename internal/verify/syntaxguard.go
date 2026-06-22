@@ -110,6 +110,14 @@ func validateGoFixSyntax(fix string) error {
 // returns nil if any strategy parses cleanly. When none do, it returns the error
 // from the strategy that best matches the content's shape, so the message is
 // meaningful (a file-shaped fix reports the file error, etc.).
+//
+// Conservative-recall by design (WONTFIX): the three strategies are OR-ed
+// deliberately so ambiguous content gets every reasonable chance to parse before
+// being flagged. This can let a fix mixing a declaration and a statement parse under
+// an unintended strategy and mask a genuinely broken fix (a false negative). That is
+// the intended trade-off — the guard prefers a false negative over a false positive,
+// since a false "invalid" flag on a legitimate fix degrades trust. Tightening this to
+// a single shape-matched strategy is a recorded WONTFIX, not an oversight.
 func parseGoFix(src string) error {
 	fset := token.NewFileSet()
 	const mode = parser.SkipObjectResolution
@@ -153,6 +161,14 @@ func looksLikeGoCode(s string) bool {
 // extractFencedCode returns the inner content of the first markdown code fence in
 // fix along with its language tag and true; when fix is not fenced it returns fix
 // unchanged, an empty language, and false. fix is expected to be newline-normalized.
+//
+// Only the FIRST fence is examined (accepted limitation, conservative-recall by
+// design): a multi-block response shaped as a non-Go fence (e.g. ```text) followed by
+// a broken Go fence validates the first block, matches nonGoFenceLangs, and returns
+// nil — the broken Go in the second fence is never parsed (a silent false negative).
+// Extending to scan every fence is deliberately out of scope; it would shift the
+// guard's false-positive/false-negative balance, and the guard exists to avoid false
+// positives that degrade trust. The gap is documented rather than fixed.
 func extractFencedCode(fix string) (code, lang string, fenced bool) {
 	m := fenceRe.FindStringSubmatch(fix)
 	if m == nil {
