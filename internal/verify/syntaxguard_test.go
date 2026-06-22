@@ -74,6 +74,47 @@ func TestValidateGoFixSyntax_ProseWithKeywordsNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "prose mentioning keywords but lacking code structure must not be flagged")
 }
 
+// Prose that embeds an inline Go-ish fragment (a struct literal, a := expression)
+// inside a sentence must NOT be flagged: the brace/:= is mid-sentence, not block
+// structure. These are the realistic "precise change instruction" outputs the
+// guard must pass through (independent-review HIGH).
+func TestValidateGoFixSyntax_ProseWithInlineBracesNotFlagged(t *testing.T) {
+	src := "Pass &Options{Retries: 3} to the constructor instead of nil."
+	assert.NoError(t, validateGoFixSyntax(src), "prose embedding an inline struct literal must not be flagged")
+}
+
+func TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged(t *testing.T) {
+	src := "Replace it with count := len(items) and return early when it is zero."
+	assert.NoError(t, validateGoFixSyntax(src), "prose embedding an inline := expression must not be flagged")
+}
+
+// A fenced code block preceded by prose ("Here is the fix:\n```go ... ```") is the
+// most common LLM output shape; the fence must be detected and only the fenced Go
+// validated (independent-review HIGH).
+func TestValidateGoFixSyntax_LeadingProseBeforeFenceValid(t *testing.T) {
+	src := "Here is the fix:\n\n```go\nfunc add(a, b int) int { return a + b }\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "valid Go in a fence with leading prose must pass")
+}
+
+func TestValidateGoFixSyntax_LeadingProseBeforeFenceInvalid(t *testing.T) {
+	src := "Here is the fix:\n\n```go\nfunc broken() int {\n\treturn\n```"
+	require.Error(t, validateGoFixSyntax(src), "broken Go in a fence with leading prose must be flagged")
+}
+
+// A fenced block emitted with CRLF line endings must be recognized and its valid Go
+// must pass (independent-review HIGH).
+func TestValidateGoFixSyntax_CRLFFencedValid(t *testing.T) {
+	src := "```go\r\nfunc add(a, b int) int {\r\n\treturn a + b\r\n}\r\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "valid Go in a CRLF-terminated fence must pass")
+}
+
+// A fence whose closing ``` sits on the same line as the last code line (no newline
+// before the close) must still be recognized (independent-review MEDIUM).
+func TestValidateGoFixSyntax_ClosingFenceSameLineValid(t *testing.T) {
+	src := "```go\nfunc add(a, b int) int { return a + b }```"
+	assert.NoError(t, validateGoFixSyntax(src), "valid Go with the closing fence on the code line must pass")
+}
+
 func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 	src := "```python\ndef add(a, b):\n    return a + b\n```"
 	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")

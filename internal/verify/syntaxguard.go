@@ -20,14 +20,29 @@ import (
 // with no block structure (no braces, no `:=`, no leading declaration keyword) is
 // not flagged even if malformed, since it is indistinguishable from prose.
 
-// fenceRe matches the opening fence of a markdown code block, capturing the
-// optional language tag (e.g. "go", "python", "").
-var fenceRe = regexp.MustCompile("(?s)^\\s*```([A-Za-z0-9_+-]*)\\n(.*?)\\n```\\s*$")
+// fenceRe matches a markdown code fence anywhere in the input (not anchored to the
+// start), capturing the optional language tag (group 1) and the fenced body (group
+// 2). Leading/trailing prose around the fence is ignored, so the very common LLM
+// shape "Here is the fix:\n```go\n...\n```" is handled. The newline before the
+// closing fence is optional, so a closing ``` on the same line as the last code
+// line still matches. Input is CRLF-normalized before matching (see
+// normalizeNewlines), so the LF-only pattern also covers CRLF fences.
+var fenceRe = regexp.MustCompile("(?s)```([A-Za-z0-9_+-]*)\n(.*?)\n?```")
 
 // declKeywordRe matches a line that begins (after optional whitespace) with a Go
 // top-level / statement keyword that is a strong signal the text is code rather
 // than prose. Anchored per-line via the multiline flag.
 var declKeywordRe = regexp.MustCompile(`(?m)^\s*(package|import|func|type|var|const)\b`)
+
+// blockOpenRe matches a line whose last non-whitespace character is an opening
+// brace (e.g. "func add() {", "if x != nil {"). This is block structure prose
+// almost never produces — unlike an inline "&Options{Retries: 3}" where the brace
+// sits mid-line — so it is a reliable code signal.
+var blockOpenRe = regexp.MustCompile(`(?m)\{[ \t]*$`)
+
+// blockCloseRe matches a line that begins with a closing brace (e.g. "}",
+// "} else {"). Same rationale as blockOpenRe.
+var blockCloseRe = regexp.MustCompile(`(?m)^[ \t]*\}`)
 
 // packageClauseRe detects a package clause, i.e. the fix is shaped as a full file.
 var packageClauseRe = regexp.MustCompile(`(?m)^\s*package\s+\w`)
@@ -49,8 +64,9 @@ var nonGoFenceLangs = map[string]bool{
 // validateGoFixSyntax returns a non-nil error when fix is plausibly Go code that
 // fails to parse, and nil otherwise (valid Go, prose, or non-Go content).
 func validateGoFixSyntax(fix string) error {
+	fix = normalizeNewlines(fix)
 	code, lang, hadFence := extractFencedCode(fix)
-	if hadFence && nonGoFenceLangs[strings.ToLower(lang)] {
+	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
 		return nil // explicitly another language — not this guard's concern
 	}
 	code = strings.TrimSpace(code)
@@ -102,27 +118,34 @@ func parseGoFix(src string) error {
 	}
 }
 
-// looksLikeGoCode reports whether unfenced text carries a strong structural signal
-// of Go source: block braces, a short-variable-declaration token, or a line that
-// begins with a declaration keyword. Prose that merely mentions keywords (without
-// braces or `:=`) is intentionally not treated as code, to avoid false flags.
+// looksLikeGoCode reports whether unfenced text carries a strong LINE-STRUCTURAL
+// signal of Go source: a line beginning with a declaration keyword, a line ending
+// in an opening brace, or a line beginning with a closing brace. These are forms
+// prose almost never produces. Crucially it does NOT treat an inline brace or `:=`
+// embedded mid-sentence as code — "Pass &Options{Retries: 3} to the constructor"
+// or "replace it with count := len(items)" are legitimate prose change-instructions
+// and must pass through unflagged (false positives degrade trust). The cost is
+// conservative recall: a one-line broken expression with no block structure is not
+// flagged, since it is indistinguishable from prose.
 func looksLikeGoCode(s string) bool {
-	if strings.Contains(s, ":=") {
-		return true
-	}
-	if strings.Contains(s, "{") && strings.Contains(s, "}") {
-		return true
-	}
-	return declKeywordRe.MatchString(s)
+	return declKeywordRe.MatchString(s) || blockOpenRe.MatchString(s) || blockCloseRe.MatchString(s)
 }
 
 // extractFencedCode returns the inner content of the first markdown code fence in
 // fix along with its language tag and true; when fix is not fenced it returns fix
-// unchanged, an empty language, and false.
+// unchanged, an empty language, and false. fix is expected to be newline-normalized.
 func extractFencedCode(fix string) (code, lang string, fenced bool) {
-	m := fenceRe.FindStringSubmatch(strings.TrimSpace(fix))
+	m := fenceRe.FindStringSubmatch(fix)
 	if m == nil {
 		return fix, "", false
 	}
 	return m[2], m[1], true
+}
+
+// normalizeNewlines collapses CRLF and lone CR line endings to LF so the LF-only
+// fence and line-structural regexes apply uniformly regardless of the provider's
+// line-ending convention.
+func normalizeNewlines(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
 }
