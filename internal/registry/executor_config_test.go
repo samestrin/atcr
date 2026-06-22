@@ -188,6 +188,17 @@ executor:
 	assert.Contains(t, err.Error(), "persona")
 }
 
+// EffectiveFixMinSeverity is the single resolver for the fix severity floor:
+// the executor's own min_severity_for_fix when set, else the MEDIUM default. It
+// replaces the empty-check + DefaultFixMinSeverity fallback that generateFixes
+// and the pipeline snapshot pre-check each repeated inline (a drift surface).
+func TestExecutorConfig_EffectiveFixMinSeverity(t *testing.T) {
+	assert.Equal(t, DefaultFixMinSeverity, ExecutorConfig{}.EffectiveFixMinSeverity(),
+		"unset min_severity_for_fix falls back to the MEDIUM default")
+	assert.Equal(t, "HIGH", ExecutorConfig{MinSeverity: "HIGH"}.EffectiveFixMinSeverity(),
+		"an explicit floor is returned unchanged")
+}
+
 // A mixed-case executor role must be accepted (case-insensitive validation) and
 // stored canonically lowercase so downstream exact-match comparisons (which use
 // the lowercase RoleExecutor constant) keep working.

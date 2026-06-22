@@ -151,6 +151,19 @@ type ExecutorConfig struct {
 	TimeoutSecs *int   `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
 }
 
+// EffectiveFixMinSeverity returns the executor's own min_severity_for_fix when
+// set, otherwise the MEDIUM default — mirroring EffectiveTimeoutSecs. On a
+// loaded registry applyDefaults already canonicalizes MinSeverity, so this only
+// supplies the fallback for in-memory ExecutorConfig values (e.g. test structs).
+// It is the single resolver generateFixes and the verify snapshot pre-check
+// share so the empty-check + DefaultFixMinSeverity fallback lives in one place.
+func (e ExecutorConfig) EffectiveFixMinSeverity() string {
+	if e.MinSeverity == "" {
+		return DefaultFixMinSeverity
+	}
+	return e.MinSeverity
+}
+
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
 // TimeoutSecs are pointers so an explicit zero survives default application.
 //
