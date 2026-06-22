@@ -380,7 +380,11 @@ executor:
   system_prompt: `+long+`
 `))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "system_prompt")
+	// Assert the specific length-guard message rather than just "system_prompt":
+	// a bare substring check would also pass on an incidental YAML parse error,
+	// masking whether the length cap actually fired.
+	assert.Contains(t, err.Error(), "system_prompt must be at most",
+		"failure must be the length guard, not an incidental YAML parse error")
 }
 
 // system_prompt intentionally allows control characters (including \n for
