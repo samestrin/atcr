@@ -116,16 +116,22 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.Ambiguou
 
 	matched := map[int]bool{}
 	exactHits := 0
+	exactMatchedLocs := map[string]bool{}
 	// Pass 1: exact member matches.
 	for i, f := range findings {
 		if memberExact[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] {
 			matched[i] = true
 			exactHits++
+			exactMatchedLocs[locationKey(f.File, f.Line)] = true
 		}
 	}
-	// Pass 2: drift recovery. Group the still-unmatched records by member location;
-	// a member location with exactly one unmatched record contributes it (the
-	// drifted member). Two or more is ambiguous and contributes nothing.
+	// Pass 2: drift recovery. Group the still-unmatched records by member location.
+	// A member location with exactly one unmatched record contributes it ONLY if
+	// another member already matched exactly at that same location (same-line
+	// drift). This anchors recovery to the safe co-location case and prevents a
+	// sole unrelated record at a different member line from being absorbed.
+	// Two or more unmatched records at a location is ambiguous and contributes
+	// nothing.
 	unmatchedAtLoc := map[string][]int{}
 	for i, f := range findings {
 		if matched[i] {
@@ -136,8 +142,8 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.Ambiguou
 			unmatchedAtLoc[lk] = append(unmatchedAtLoc[lk], i)
 		}
 	}
-	for _, idxs := range unmatchedAtLoc {
-		if len(idxs) == 1 {
+	for lk, idxs := range unmatchedAtLoc {
+		if exactMatchedLocs[lk] && len(idxs) == 1 {
 			matched[idxs[0]] = true
 		}
 	}
