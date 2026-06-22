@@ -1,3 +1,21 @@
+## [7.0.0] - 2026-06-21
+
+Executor model for fix generation — multi-model review breadth plus a single, more capable model that generates fixes for the findings worth fixing.
+
+### Added
+
+- Optional top-level `executor:` registry block: a single model that generates fixes for verified findings during `atcr verify`, `atcr review --verify`, and the `atcr_verify` MCP tool. Opt-in and fully backward-compatible — with no `executor:` block, no fix phase runs and behavior is unchanged.
+- Fix targeting gates on HIGH-or-better confidence (so skeptic-confirmed `VERIFIED` findings are included) AND severity at or above `min_severity_for_fix` (default MEDIUM). The executor reads a code snippet around each finding from the review snapshot for context, writes the fix into the finding's `fix` column, and appends `fix by <name>` to its evidence (no new column — the 9-column schema is preserved).
+- Executor configuration: `min_severity_for_fix`, `batch_fixes`, and `fix_timeout`; a `fix_warning` field on findings recording non-fatal fix-generation failures; and the `reconcile.ConfidenceAtOrAbove` confidence-ordering helper.
+- Example registries (`examples/registry-with-executor.yaml`, `examples/registry-without-executor.yaml`) and an executor section in `docs/registry.md`.
+
+### Notes
+
+- Fix generation is failure-isolated: an executor error or empty completion leaves the reviewer's own fix in place and never fails the verify run.
+- Posting these fixes as inline PR comments is owned by Epic 7.3 (the GitHub Action), which consumes the `fix` column populated here.
+
+*Shipped via /execute-epic (epic 7.0)*
+
 ## [Technical Debt] - 2026-06-21
 
 ### Fixed
