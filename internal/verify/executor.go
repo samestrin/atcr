@@ -123,7 +123,7 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 // returns "" (best-effort) when the dispatcher is unavailable, the file is empty,
 // or the read fails — the executor then works from the finding text alone.
 func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int) string {
-	if disp == nil || strings.TrimSpace(file) == "" {
+	if disp == nil {
 		return ""
 	}
 	start := line - fixSnippetRadius
