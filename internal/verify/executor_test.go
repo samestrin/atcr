@@ -638,3 +638,18 @@ func TestBuildFixPrompt_FindingDataSeparatedByDelimiter(t *testing.T) {
 	assert.True(t, framingIdx < delimIdx, "framing must precede the delimiter")
 	assert.True(t, delimIdx < findingIdx, "delimiter must precede the finding data")
 }
+
+// generateFixes must treat a nil registry as a graceful no-op (defense-in-depth):
+// the in-memory direct-call/test path can pass a nil reg, and dereferencing
+// reg.Providers would panic with a nil-map deref and crash the verify run instead
+// of the advertised no-op.
+func TestGenerateFixes_NilRegistryNoPanic(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "func add() {}"}
+	require.NotPanics(t, func() {
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), nil, rec, okDispatcher(), 0)
+	}, "a nil registry must be a graceful no-op, not a panic")
+	assert.Equal(t, 0, rec.calls, "no executor calls when registry is nil")
+}

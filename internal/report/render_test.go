@@ -92,6 +92,63 @@ func TestRender_GoldenFiles(t *testing.T) {
 	}
 }
 
+// sampleWithFixWarning is a dedicated fixture whose finding carries a FixWarning so a
+// golden file can lock the 7.1 fix-warning line (glyph, indentation, position) byte-
+// for-byte. Kept separate from sample() so the clean-output goldens and the tests
+// that assert no fix_warning key (TestRender_FixWarningJSONOmitemptyAndRoundTrip)
+// stay valid.
+func sampleWithFixWarning() []reconcile.JSONFinding {
+	return []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "auth.go", Line: 42, Problem: "token never expires",
+			Fix: "func checkExpiry() {", Category: "security", EstMinutes: 15,
+			Evidence: "expiresAt unread", Reviewers: []string{"greta"}, Confidence: "HIGH",
+			FixWarning: "invalid_syntax: 2:1: expected '}'"},
+	}
+}
+
+// TestRender_FixWarningGolden locks the 7.1 fix-warning markdown line byte-for-byte so
+// a reformat, glyph change, or repositioning of the warning line is caught (the
+// markdown golden driven by sample() carries no FixWarning, so it cannot). Regenerate
+// with `-update`.
+func TestRender_FixWarningGolden(t *testing.T) {
+	path := filepath.Join("testdata", "fix_warning.md")
+	var b strings.Builder
+	require.NoError(t, Render(&b, sampleWithFixWarning(), FormatMarkdown))
+	got := b.String()
+
+	if *update {
+		require.NoError(t, os.MkdirAll("testdata", 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+		return
+	}
+
+	want, err := os.ReadFile(path)
+	require.NoErrorf(t, err, "missing golden %s — run: go test ./internal/report -update", path)
+	assert.Equalf(t, string(want), got, "fix-warning render drifted from golden %s; if intended, run -update", path)
+}
+
+// The Epic 7.0/7.1 back-compat invariant: fix_warning is omitempty, so a finding
+// without a warning serializes byte-identically to a pre-7.0 finding (no fix_warning
+// key), and a set warning round-trips through Unmarshal. Mirrors the verification-
+// field omitted-when-absent precedent (TestRender_VerificationBlockAddsSkepticSection).
+func TestRender_FixWarningJSONOmitemptyAndRoundTrip(t *testing.T) {
+	t.Run("omitted-when-empty", func(t *testing.T) {
+		var b strings.Builder
+		require.NoError(t, Render(&b, sample(), FormatJSON))
+		assert.NotContains(t, b.String(), "fix_warning", "an empty FixWarning must not emit a fix_warning key")
+	})
+
+	t.Run("round-trips-when-set", func(t *testing.T) {
+		var b strings.Builder
+		require.NoError(t, Render(&b, sampleWithFixWarning(), FormatJSON))
+		assert.Contains(t, b.String(), "fix_warning", "a set FixWarning must emit the fix_warning key")
+		var got []reconcile.JSONFinding
+		require.NoError(t, json.Unmarshal([]byte(b.String()), &got))
+		require.Len(t, got, 1)
+		assert.Equal(t, "invalid_syntax: 2:1: expected '}'", got[0].FixWarning, "FixWarning must round-trip through Unmarshal")
+	})
+}
+
 func TestRender_JSONRoundTrips(t *testing.T) {
 	var b strings.Builder
 	require.NoError(t, Render(&b, sample(), FormatJSON))
@@ -171,6 +228,25 @@ func TestRender_HTMLInjectionEscapedInMarkdown(t *testing.T) {
 	out := b.String()
 	assert.NotContains(t, out, "<script>")
 	assert.NotContains(t, out, "\n## Forged", "newline-injected heading flattened")
+}
+
+// FixWarning is parser-derived text that can echo attacker-controlled fix content, so
+// the markdown renderer must escape and truncate it via escTrunc (render.go:167) like
+// every other free-text field. Mirrors TestRender_HTMLInjectionEscapedInMarkdown but
+// for FixWarning, and additionally exercises the >maxTextLen truncation path.
+func TestRender_FixWarningInjectionAndTruncationEscapedInMarkdown(t *testing.T) {
+	long := strings.Repeat("x", 600) // exceeds maxTextLen (500) to force truncation
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "MEDIUM",
+			FixWarning: "<script>alert(1)</script>\n## Forged `code` " + long},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Fix warning:", "the fix-warning line must render")
+	assert.NotContains(t, out, "<script>", "a script tag in FixWarning must be HTML-escaped")
+	assert.NotContains(t, out, "\n## Forged", "a newline-injected heading in FixWarning must be flattened")
+	assert.Contains(t, out, "...", "an over-maxTextLen FixWarning must be truncated with an ellipsis")
 }
 
 func TestCodeSpan_BacktickPathCannotBreakOut(t *testing.T) {
