@@ -221,8 +221,13 @@ var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM":
 // agents whose Role is empty. The loader intentionally leaves Role empty rather
 // than defaulting it so that activating stages can distinguish "explicitly set"
 // from "inherited default" (option-a decision, recorded in epic-3 planning).
+//
+// Role names are matched case-insensitively (mirroring the severity rubric,
+// which normalizes case via stream.NormalizeSeverity): the value is lower-cased
+// and trimmed before comparison, and applyDefaults stores the canonical
+// lowercase form so downstream exact-match comparisons stay valid.
 func roleValid(r string) bool {
-	switch r {
+	switch strings.ToLower(strings.TrimSpace(r)) {
 	case "", RoleReviewer, RoleSkeptic, RoleJudge:
 		return true
 	default:
@@ -416,7 +421,7 @@ func (r *Registry) validateExecutor() []error {
 	if strings.TrimSpace(e.Model) == "" {
 		errs = append(errs, errors.New("executor: required field 'model' is missing"))
 	}
-	if e.Role != "" && e.Role != RoleExecutor {
+	if normalized := strings.ToLower(strings.TrimSpace(e.Role)); normalized != "" && normalized != RoleExecutor {
 		errs = append(errs, fmt.Errorf("executor: role must be 'executor', got '%s'", e.Role))
 	}
 	if normalized := stream.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
@@ -555,6 +560,12 @@ func (r *Registry) applyDefaults() {
 		for i, s := range a.Scope {
 			a.Scope[i] = strings.TrimSpace(s)
 		}
+		// Canonicalize role to lowercase so downstream exact-match comparisons
+		// (AgentsByRole, the Stage 3/4 routing) see a stable token regardless of
+		// how it was written. An empty role stays empty — the option-a "explicitly
+		// set vs inherited default" distinction is preserved (the loader still does
+		// not default it to reviewer).
+		a.Role = strings.ToLower(strings.TrimSpace(a.Role))
 		r.Agents[name] = a
 	}
 	// Verification defaults (Epic 3.0): an unset min_severity resolves to MEDIUM,
@@ -589,6 +600,7 @@ func (r *Registry) applyDefaults() {
 		if r.Executor.Persona == "" {
 			r.Executor.Persona = DefaultExecutorPersona
 		}
+		r.Executor.Role = strings.ToLower(strings.TrimSpace(r.Executor.Role))
 		if r.Executor.Role == "" {
 			r.Executor.Role = RoleExecutor
 		}
