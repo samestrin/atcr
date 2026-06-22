@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -320,6 +321,40 @@ func TestJSONFinding_EmptyVerdictLoadsDefensively(t *testing.T) {
 	require.Len(t, got, 1)
 	require.NotNil(t, got[0].Verification)
 	assert.Equal(t, "", got[0].Verification.Verdict, "empty verdict preserved as-is; consumers treat it as unverified per docs/findings-format.md")
+}
+
+// TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly is a reflection-based
+// drift guard: JSONFindings() hand-copies fields from Merged into JSONFinding with
+// no compiler help, so a field added to the source without a matching copy here
+// would be silently dropped. Given a Merged with every source field set non-zero,
+// every JSONFinding field must be populated EXCEPT the three output-only fields
+// (FixWarning, ClusterMerged, ClusterID) that downstream stages — the verify fix
+// phase and the debate cluster-merge — set directly, and that reconcile-time
+// producers must leave empty (see the field comments). Adding a fourth such
+// downstream-only field means extending the allowlist here deliberately.
+func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
+	downstreamOnly := map[string]bool{"FixWarning": true, "ClusterMerged": true, "ClusterID": true}
+	m := Merged{
+		Finding: stream.Finding{
+			Severity: "HIGH", File: "a.go", Line: 7, Problem: "p", Fix: "f", Category: "c",
+			EstMinutes: 5, Evidence: "e", Reviewers: []string{"r"}, Confidence: "HIGH",
+			PathValid: true, PathWarning: "w", PathSuggestion: "s",
+		},
+		Disagreement: "LOW vs HIGH",
+		Verification: &Verification{Verdict: "confirmed"},
+	}
+	got := Result{Findings: []Merged{m}}.JSONFindings()
+	require.Len(t, got, 1)
+	v := reflect.ValueOf(got[0])
+	tp := v.Type()
+	for i := 0; i < tp.NumField(); i++ {
+		name := tp.Field(i).Name
+		if downstreamOnly[name] {
+			assert.True(t, v.Field(i).IsZero(), "%s is downstream-only and must not be populated by reconcile JSONFindings()", name)
+			continue
+		}
+		assert.False(t, v.Field(i).IsZero(), "JSONFindings() did not copy field %s from Merged — field-addition drift", name)
+	}
 }
 
 // TestJSONFindings_PreservesVerification verifies that a Merged finding with a
