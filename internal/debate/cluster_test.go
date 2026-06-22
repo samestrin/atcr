@@ -349,3 +349,82 @@ func TestRunDebate_CorruptAmbiguousJSONLogsWarning(t *testing.T) {
 	assert.Contains(t, buf.String(), "ambiguous.json unreadable", "corrupt ambiguous.json must be logged")
 	assert.Contains(t, buf.String(), "gray-zone merges disabled", "warning must explain the consequence")
 }
+
+// TestIndexClusters_RoundTripsBuildDisagreementsProblem pins the cross-package
+// coupling the clusterIdx lookup silently depends on (TD cluster.go:38): the
+// gray-zone radar item's Problem is produced by reconcile.longestProblem inside
+// BuildDisagreements, while indexClusters keys the cluster by clusterDisplayProblem.
+// runDebate looks a debated DisagreementItem up in the clusterIdx by
+// {File, Line, Problem}; if the two representative-problem implementations ever
+// tie-break differently, the lookup fails and a "merge" ruling silently no-ops.
+// This round-trips a cluster through BuildDisagreements -> indexClusters so the two
+// are guaranteed to agree, including the equal-length-problem tie the TD item called
+// out (both functions compare with strict greater-than, so the FIRST member wins).
+func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
+	cases := []struct {
+		name         string
+		probA, probB string
+	}{
+		// Member B is strictly longer: both sides pick B.
+		{"distinct lengths", "short problem", "a substantially longer problem description"},
+		// Equal-length problems (differ only in the final token) force the tie:
+		// strict greater-than means the FIRST member (A) wins on both sides.
+		{"equal-length tie", "duplicate finding text AAAA", "duplicate finding text BBBB"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := grayCluster("amb-1", "a.go", 10,
+				tc.probA, "MEDIUM", "alice",
+				tc.probB, "HIGH", "bob")
+
+			// The radar item's Problem comes from reconcile.longestProblem.
+			df := reconcile.BuildDisagreements(nil, []reconcile.AmbiguousCluster{cluster})
+			var item reconcile.DisagreementItem
+			found := false
+			for _, it := range df.Items {
+				if it.Kind == reconcile.KindGrayZone {
+					item, found = it, true
+					break
+				}
+			}
+			require.True(t, found, "BuildDisagreements must surface the cluster as a gray_zone radar item")
+
+			// indexClusters keys on clusterDisplayProblem; the debated item resolves
+			// back by its Problem only if the two representatives agree.
+			idx := indexClusters([]reconcile.AmbiguousCluster{cluster})
+			got, ok := idx[FindingKey{File: item.File, Line: item.Line, Problem: item.Problem}]
+			require.True(t, ok, "the radar item's Problem must resolve back to its cluster via indexClusters")
+			assert.Equal(t, cluster.ID, got.ID)
+		})
+	}
+}
+
+// TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed pins the known
+// co-location limitation (TD cluster.go:50): filterMergedClusters keys idempotency
+// on File+Line only, so once one gray-zone cluster at a location is merged (a
+// ClusterMerged record present), a SECOND distinct gray-zone cluster sharing that
+// canonical File+Line is also filtered out pre-debate, even though it was never
+// merged. This is accepted as LOW/self-healing — the second cluster re-surfaces on
+// the next fresh reconcile. The test pins both the first-run pass-through and the
+// re-run over-suppression so the behavior is caught if the key ever changes.
+func TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed(t *testing.T) {
+	// Two DISTINCT gray-zone radar items sharing one canonical File+Line.
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one problem"},
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster two problem"},
+	}
+
+	// First run: no ClusterMerged record exists yet — both items pass through.
+	firstRun := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "cluster one problem"},
+	})
+	assert.Len(t, firstRun, 2, "first run (no ClusterMerged record) must not filter either co-located cluster")
+
+	// Re-run: cluster #1 was merged (its survivor sits at a.go:10 flagged
+	// ClusterMerged). The location-only key now suppresses BOTH co-located items —
+	// including cluster #2, which was never merged (the documented limitation).
+	reRun := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
+	})
+	assert.Empty(t, reRun, "the location-only idempotency key over-suppresses the co-located cluster #2 (known limitation)")
+}

@@ -47,6 +47,16 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // survivor is placed at the cluster's canonical File+Line). Non-gray-zone items
 // pass through untouched. Returns items unchanged when no record is flagged, so a
 // first-ever debate run does no extra work.
+//
+// Known limitation (accepted, LOW/self-healing): idempotency is keyed on File+Line
+// only — chosen so the key survives a member whose problem text drifted (see
+// locationKey). If two DISTINCT gray-zone clusters resolve to the same canonical
+// File+Line, merging the first flags ClusterMerged there, and the second cluster's
+// radar item is then suppressed pre-debate even though it was never merged. The
+// second cluster is not corrupted; it re-surfaces on the next fresh reconcile. A
+// precise fix (filter by cluster identity rather than location) is tracked
+// separately as the epic-6.1 "U" item, since it requires a cluster-id field on the
+// merged finding (a reconcile-schema change outside this function's scope).
 func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding) []reconcile.DisagreementItem {
 	mergedLocs := map[string]bool{}
 	for _, f := range findings {
