@@ -563,3 +563,12 @@ func TestRunVerify_NoExecutorLeavesFixUnchanged(t *testing.T) {
 	assert.NotContains(t, got[0].Evidence, "fix by")
 	assert.FileExists(t, filepath.Join(dir, reconciledSubdir, "verification.json"))
 }
+
+// buildFixPrompt must not panic when ex is nil; it returns an empty string as a
+// safe fallback. The caller generateFixes already guards nil, but the helper should
+// be resilient to any direct or future call site that omits that guard.
+func TestBuildFixPrompt_NilExecutorConfig(t *testing.T) {
+	f := reconcile.JSONFinding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p"}
+	result := buildFixPrompt(f, "", nil)
+	assert.Equal(t, "", result, "nil ex must return empty string without panic")
+}
