@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -441,6 +442,27 @@ executor:
   rules:
     - "`+long+`"
 `))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rules")
+}
+
+// Too many rules defeat the per-rule cap by splitting a large prompt-stuffing
+// payload across many short entries. The total rule count is bounded at load.
+func TestExecutor_RulesCountCapRejected(t *testing.T) {
+	rules := make([]string, MaxExecutorRules+1)
+	for i := range rules {
+		rules[i] = "short rule"
+	}
+	yamlRules := ""
+	for _, r := range rules {
+		yamlRules += fmt.Sprintf("    - %q\n", r)
+	}
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  rules:
+`+yamlRules))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rules")
 }
