@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Local syntax/compile guard for generated fixes (Epic 7.1).
+// Local syntax guard for generated fixes (Epic 7.1).
 //
 // The executor's Fix field is free-form: the prompt asks for "corrected code or a
 // precise change instruction" (executor.go), so a fix may be a complete Go file, a
