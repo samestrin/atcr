@@ -394,6 +394,41 @@ func TestRunDebate_GrayZoneRecordedNotApplied(t *testing.T) {
 	assert.Equal(t, ClusterMerge, gray.ClusterDecision)
 }
 
+// TestRunDebate_GrayZoneNoClusterDecisionRecordsReason: when the judge returns a
+// valid outcome but omits or gives an unparseable cluster_decision for a gray-zone
+// item, debate.json must record a distinct reason so the no-decision case is
+// auditable and not silently treated as an intentional "separate" ruling.
+func TestRunDebate_GrayZoneNoClusterDecisionRecordsReason(t *testing.T) {
+	f1 := reconcile.JSONFinding{Severity: "MEDIUM", File: "a.go", Line: 5, Problem: "leak A", Reviewers: []string{"alice"}, Confidence: "MEDIUM"}
+	f2 := reconcile.JSONFinding{Severity: "MEDIUM", File: "a.go", Line: 5, Problem: "leak B", Reviewers: []string{"carol"}, Confidence: "MEDIUM"}
+	dir := reviewDirWith(t, []reconcile.JSONFinding{f1, f2})
+	writeAmbiguous(t, dir, `[{"id":"amb-1","file":"a.go","line":5,"similarity":0.9,"findings":[
+	  {"Severity":"MEDIUM","File":"a.go","Line":5,"Problem":"leak A","Reviewer":"alice"},
+	  {"Severity":"MEDIUM","File":"a.go","Line":5,"Problem":"leak B","Reviewer":"carol"}]}]`)
+
+	// Judge returns a valid outcome but no cluster_decision.
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"MEDIUM"}`},
+	}}
+	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, res.Selected, 1)
+
+	var df DebateFile
+	raw, _ := os.ReadFile(filepath.Join(dir, reconciledSubdir, DebateJSON))
+	require.NoError(t, json.Unmarshal(raw, &df))
+	var gray *ItemResult
+	for i := range df.Items {
+		if df.Items[i].Kind == reconcile.KindGrayZone {
+			gray = &df.Items[i]
+		}
+	}
+	require.NotNil(t, gray, "expected a gray_zone item recorded")
+	assert.Empty(t, gray.ClusterDecision, "cluster_decision must remain empty when judge gives none")
+	assert.Equal(t, "no_cluster_decision", gray.Reason,
+		"a gray-zone item with no cluster decision must be auditable in debate.json")
+}
+
 func writeAmbiguous(t *testing.T, dir, content string) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, reconciledSubdir, reconcile.AmbiguousJSON), []byte(content), 0o644))

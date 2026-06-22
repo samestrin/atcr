@@ -1,6 +1,7 @@
 package debate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -112,10 +114,11 @@ func TestRunDebate_GrayZoneSeparateLeavesUnmerged(t *testing.T) {
 	}
 }
 
-// TestRunDebate_GrayZoneMergeDriftAndNoOverCapture: when a member's problem text
-// drifted (it was further-merged with a third finding) but is the sole record at
-// its location, the merge still unions it (the third-finding wrinkle). An
-// unrelated finding co-located at a DIFFERENT line is never absorbed.
+// TestRunDebate_GrayZoneMergeDriftAndNoOverCapture: cross-line drift recovery is
+// no longer allowed. A member whose problem drifted to a different line and is
+// the sole record there is NOT absorbed, even if that different line is a member
+// location, because no other member anchored exactly at that line. An unrelated
+// finding at a yet-different line is also untouched.
 func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
@@ -123,7 +126,8 @@ func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 		grayFinding("a.go", 50, "totally unrelated finding", "LOW", "carol"),
 	}
 	// Cluster member B's raw problem ("beta problem text") no longer matches the
-	// drifted record at a.go:12, but that location holds exactly one record.
+	// drifted record at a.go:12, and no member matched exactly at a.go:12, so
+	// recovery is disabled by the exactMatchedLocs guard.
 	cluster := grayCluster("amb-1", "a.go", 10,
 		"alpha problem text", "MEDIUM", "alice",
 		"beta problem text", "HIGH", "bob")
@@ -136,21 +140,37 @@ func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
 	require.Equal(t, 1, res.Selected)
 
 	f := readFindings(t, dir)
-	require.Len(t, f, 2, "the two members union to one; the unrelated finding is untouched")
-	var merged, unrelated *reconcile.JSONFinding
+	require.Len(t, f, 3, "cross-line drift is disabled; all three original findings remain separate")
 	for i := range f {
-		if f[i].Line == 50 {
-			unrelated = &f[i]
-		} else {
-			merged = &f[i]
-		}
+		assert.False(t, f[i].ClusterMerged, "no finding should be merged when cross-line drift recovery is disabled")
 	}
-	require.NotNil(t, merged)
-	require.NotNil(t, unrelated)
-	assert.True(t, merged.ClusterMerged)
-	assert.Equal(t, []string{"alice", "bob"}, merged.Reviewers)
-	assert.False(t, unrelated.ClusterMerged, "the unrelated co-file finding must never be absorbed")
-	assert.Equal(t, "totally unrelated finding", unrelated.Problem)
+}
+
+// TestRunDebate_GrayZoneMergeDoesNotAbsorbUnrelatedAtMemberLoc: member A matches
+// exactly, member B's location holds a single unrelated finding, and no member
+// matched exactly at B's line. The unrelated finding must be preserved and the
+// cluster must not merge (per the cluster.go:132 acceptance test).
+func TestRunDebate_GrayZoneMergeDoesNotAbsorbUnrelatedAtMemberLoc(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
+		grayFinding("a.go", 12, "unrelated finding at member B's line", "HIGH", "bob"),
+	}
+	cluster := grayCluster("amb-1", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	cluster.Findings[1].Line = 12
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	f := readFindings(t, dir)
+	require.Len(t, f, 2, "the unrelated finding at a.go:12 must not be absorbed")
+	for i := range f {
+		assert.False(t, f[i].ClusterMerged, "no merge should occur when member B's line holds only an unrelated finding")
+	}
+	assert.Equal(t, "unrelated finding at member B's line", f[1].Problem)
 }
 
 // TestRunDebate_GrayZoneMergeSameLineDrift: two members co-located at the SAME
@@ -271,4 +291,163 @@ func TestRunDebate_GrayZoneMergeLeavesAdjudicationArtifactsUntouched(t *testing.
 		_, statErr := os.Stat(filepath.Join(dir, reconciledSubdir, name))
 		assert.True(t, os.IsNotExist(statErr), "debate must not create the authored-path artifact %s", name)
 	}
+}
+
+// TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn: a single-member gray-zone
+// cluster is structurally unmergeable (a merge needs at least two members). The
+// merge must be a silent no-op and must NOT be reported as a ruling that "could
+// not be applied", which would mislead operators.
+func TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "only member", "MEDIUM", "alice"),
+	}
+	cluster := reconcile.AmbiguousCluster{
+		ID: "amb-1", File: "a.go", Line: 10, Similarity: 0.5,
+		Findings: []stream.Finding{
+			{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "only member", Reviewer: "alice"},
+		},
+	}
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	var buf bytes.Buffer
+	logger, err := log.New("warn", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err = runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.NotContains(t, buf.String(), "could not be applied",
+		"single-member cluster must not trigger the 'could not be applied' warning")
+}
+
+// TestRunDebate_CorruptAmbiguousJSONLogsWarning: a present-but-unparseable
+// ambiguous.json must be logged at WARN so the operator knows gray-zone merge
+// rulings are being dropped, rather than silently degrading to zero clusters.
+func TestRunDebate_CorruptAmbiguousJSONLogsWarning(t *testing.T) {
+	// No selectable findings — we only want to assert the ambiguous.json warning.
+	findings := []reconcile.JSONFinding{
+		{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "x", Reviewers: []string{}},
+	}
+	cluster := grayCluster("amb-1", "a.go", 10, "a", "MEDIUM", "alice", "b", "MEDIUM", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	// Corrupt the sidecar after the helper wrote a valid one.
+	ambPath := filepath.Join(dir, reconciledSubdir, reconcile.AmbiguousJSON)
+	require.NoError(t, os.WriteFile(ambPath, []byte("not-json"), 0o644))
+
+	var buf bytes.Buffer
+	logger, err := log.New("warn", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	cc := &fakeChatCompleter{turns: []chatTurn{}}
+	_, err = runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "ambiguous.json unreadable", "corrupt ambiguous.json must be logged")
+	assert.Contains(t, buf.String(), "gray-zone merges disabled", "warning must explain the consequence")
+}
+
+// TestIndexClusters_RoundTripsBuildDisagreementsProblem pins the cross-package
+// coupling the clusterIdx lookup silently depends on (TD cluster.go:38): the
+// gray-zone radar item's Problem is produced by reconcile.longestProblem inside
+// BuildDisagreements, while indexClusters keys the cluster by clusterDisplayProblem.
+// runDebate looks a debated DisagreementItem up in the clusterIdx by
+// {File, Line, Problem}; if the two representative-problem implementations ever
+// tie-break differently, the lookup fails and a "merge" ruling silently no-ops.
+// This round-trips a cluster through BuildDisagreements -> indexClusters so the two
+// are guaranteed to agree, including the equal-length-problem tie the TD item called
+// out (both functions compare with strict greater-than, so the FIRST member wins).
+func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
+	cases := []struct {
+		name         string
+		probA, probB string
+	}{
+		// Member B is strictly longer: both sides pick B.
+		{"distinct lengths", "short problem", "a substantially longer problem description"},
+		// Equal-length problems (differ only in the final token) force the tie:
+		// strict greater-than means the FIRST member (A) wins on both sides.
+		{"equal-length tie", "duplicate finding text AAAA", "duplicate finding text BBBB"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := grayCluster("amb-1", "a.go", 10,
+				tc.probA, "MEDIUM", "alice",
+				tc.probB, "HIGH", "bob")
+
+			// The radar item's Problem comes from reconcile.longestProblem.
+			df := reconcile.BuildDisagreements(nil, []reconcile.AmbiguousCluster{cluster})
+			var item reconcile.DisagreementItem
+			found := false
+			for _, it := range df.Items {
+				if it.Kind == reconcile.KindGrayZone {
+					item, found = it, true
+					break
+				}
+			}
+			require.True(t, found, "BuildDisagreements must surface the cluster as a gray_zone radar item")
+
+			// indexClusters keys on clusterDisplayProblem; the debated item resolves
+			// back by its Problem only if the two representatives agree.
+			idx := indexClusters([]reconcile.AmbiguousCluster{cluster})
+			got, ok := idx[FindingKey{File: item.File, Line: item.Line, Problem: item.Problem}]
+			require.True(t, ok, "the radar item's Problem must resolve back to its cluster via indexClusters")
+			assert.Equal(t, cluster.ID, got.ID)
+		})
+	}
+}
+
+// TestFirstClusterRulingCollision_GuardsRulingsKeyspace pins the Epic 6.1
+// invariant that gray-zone cluster members never share a location with a
+// single-finding rulings key (gray-zone items are classified into the cluster
+// branch in runDebate and never enter the rulings map). The guard returns the
+// colliding "File:Line" when the invariant is broken — a tripwire for a future
+// radar change that let a gray member also surface as a solo/split tier item — and
+// "" when it holds (TD cluster.go:applyClusterMerges).
+func TestFirstClusterRulingCollision_GuardsRulingsKeyspace(t *testing.T) {
+	clusters := []reconcile.AmbiguousCluster{
+		grayCluster("c1", "a.go", 10, "p1", "HIGH", "alice", "p2", "MEDIUM", "bob"),
+	}
+
+	// Invariant holds: the rulings key is at a different location than any member.
+	rulings := map[FindingKey]ruleApply{
+		{File: "b.go", Line: 99, Problem: "unrelated single-finding"}: {verdict: "confirmed"},
+	}
+	assert.Empty(t, firstClusterRulingCollision(rulings, clusters), "no collision when rulings and cluster members are at distinct locations")
+
+	// Invariant broken: a rulings key collides with a cluster member's location.
+	rulings[FindingKey{File: "a.go", Line: 10, Problem: "leaked into rulings"}] = ruleApply{verdict: "confirmed"}
+	assert.Equal(t, "a.go:10", firstClusterRulingCollision(rulings, clusters), "a gray member location that also keys the rulings map must be reported")
+}
+
+// TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed pins the known
+// co-location limitation (TD cluster.go:50): filterMergedClusters keys idempotency
+// on File+Line only, so once one gray-zone cluster at a location is merged (a
+// ClusterMerged record present), a SECOND distinct gray-zone cluster sharing that
+// canonical File+Line is also filtered out pre-debate, even though it was never
+// merged. This is accepted as LOW/self-healing — the second cluster re-surfaces on
+// the next fresh reconcile. The test pins both the first-run pass-through and the
+// re-run over-suppression so the behavior is caught if the key ever changes.
+func TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed(t *testing.T) {
+	// Two DISTINCT gray-zone radar items sharing one canonical File+Line.
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one problem"},
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster two problem"},
+	}
+
+	// First run: no ClusterMerged record exists yet — both items pass through.
+	firstRun := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "cluster one problem"},
+	})
+	assert.Len(t, firstRun, 2, "first run (no ClusterMerged record) must not filter either co-located cluster")
+
+	// Re-run: cluster #1 was merged (its survivor sits at a.go:10 flagged
+	// ClusterMerged). The location-only key now suppresses BOTH co-located items —
+	// including cluster #2, which was never merged (the documented limitation).
+	reRun := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
+	})
+	assert.Empty(t, reRun, "the location-only idempotency key over-suppresses the co-located cluster #2 (known limitation)")
 }

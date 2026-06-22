@@ -40,7 +40,9 @@ const (
 type Verification struct {
 	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
 	Skeptic string `json:"skeptic"` // agent that produced the verdict
-	Notes   string `json:"notes,omitempty"`
+	// Notes is populated only from the winning verdict during a cluster-merge;
+	// minority-verdict reasoning is intentionally not preserved.
+	Notes string `json:"notes,omitempty"`
 	// ChallengeSurvived marks a finding upheld by the cross-examination stage
 	// (Epic 6.0): the judge ruled uphold or split, so the finding survived hostile
 	// challenge. omitempty keeps every pre-6.0 and non-debated findings.json block

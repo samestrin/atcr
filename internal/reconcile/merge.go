@@ -6,6 +6,7 @@
 package reconcile
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -112,7 +113,7 @@ func distinctReviewers(group []stream.Finding) []string {
 // distinct known severity, the "<lo> vs <hi>" disagreement annotation.
 func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 	seen := map[string]bool{}
-	maxRank, minRank := -1, 1<<31
+	maxRank, minRank := -1, math.MaxInt
 	var minSev string
 	for _, f := range group {
 		norm := stream.NormalizeSeverity(f.Severity)
@@ -140,6 +141,36 @@ func mergeSeverity(group []stream.Finding) (max, disagreement string) {
 		disagreement = minSev + " vs " + max
 	}
 	return max, disagreement
+}
+
+// widestDisagreement extends a scalar-severity disagreement with each member's
+// pre-existing "<lo> vs <hi>" range, so a member that already recorded a wider
+// span than its scalar Severity is not narrowed at cluster merge. It returns the
+// "<lo> vs <max>" annotation when any source (the scalar disagreement, or a
+// member's recorded range) carries a lower bound below maxSev, else the original
+// scalar disagreement unchanged. Members' range lower bounds are read from the
+// "<lo> vs <hi>" form spreadFromDisagreement parses; here only the <lo> tier is
+// needed, so it is taken directly.
+func widestDisagreement(maxSev, scalarDisagreement string, group []JSONFinding) string {
+	maxRank := SeverityRank[maxSev]
+	loRank, loSev := maxRank, maxSev
+	consider := func(rangeAnnotation string) {
+		if rangeAnnotation == "" {
+			return
+		}
+		lo := stream.NormalizeSeverity(strings.SplitN(rangeAnnotation, " vs ", 2)[0])
+		if r, ok := SeverityRank[lo]; ok && r < loRank {
+			loRank, loSev = r, lo
+		}
+	}
+	consider(scalarDisagreement)
+	for _, f := range group {
+		consider(f.Disagreement)
+	}
+	if loRank < maxRank {
+		return loSev + " vs " + maxSev
+	}
+	return scalarDisagreement
 }
 
 // longestField returns the longest value of sel across the group (ties keep the
@@ -231,14 +262,7 @@ func mergeEvidence(group []stream.Finding) string {
 			parts = append(parts, f.Evidence)
 		}
 	}
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += " / "
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, " / ")
 }
 
 // confidenceFor maps the distinct-reviewer count to a confidence level.
@@ -280,24 +304,55 @@ func MergeJSONFindings(group []JSONFinding) JSONFinding {
 		}
 	}
 	maxSev, disagreement := mergeSeverity(sf)
+	// A member is itself a reconciled record that may already carry a wider
+	// "<lo> vs <hi>" span than its scalar Severity (e.g. "LOW vs HIGH" while
+	// Severity is "HIGH"). mergeSeverity sees only the scalar severities, so fold
+	// each member's pre-existing range lower bound back in — otherwise the merged
+	// annotation silently narrows to the scalar max/min and understates reviewer
+	// tension (TD merge.go:282).
+	disagreement = widestDisagreement(maxSev, disagreement, group)
 	reviewers := unionReviewers(group)
-	return JSONFinding{
-		Severity:       maxSev,
-		File:           group[0].File,
-		Line:           group[0].Line,
-		Problem:        longestField(sf, func(f stream.Finding) string { return f.Problem }),
-		Fix:            longestField(sf, func(f stream.Finding) string { return f.Fix }),
-		Category:       modalCategory(sf),
-		EstMinutes:     maxEstMinutes(sf),
-		Evidence:       joinEvidence(group),
-		Reviewers:      reviewers,
-		Confidence:     confidenceFor(len(reviewers)),
-		Disagreement:   disagreement,
-		Verification:   mergeVerification(group),
-		PathValid:      group[0].PathValid,
-		PathWarning:    group[0].PathWarning,
-		PathSuggestion: group[0].PathSuggestion,
+	merged := JSONFinding{
+		Severity:     maxSev,
+		File:         group[0].File,
+		Line:         group[0].Line,
+		Problem:      longestField(sf, func(f stream.Finding) string { return f.Problem }),
+		Fix:          longestField(sf, func(f stream.Finding) string { return f.Fix }),
+		Category:     modalCategory(sf),
+		EstMinutes:   maxEstMinutes(sf),
+		Evidence:     joinEvidence(group),
+		Reviewers:    reviewers,
+		Confidence:   confidenceFor(len(reviewers)),
+		Disagreement: disagreement,
+		Verification: mergeVerification(group),
 	}
+	merged.PathValid, merged.PathWarning, merged.PathSuggestion = mergePathFields(group)
+	return merged
+}
+
+// mergePathFields picks coherent Epic 5.0/5.4 path-validation fields for a cluster
+// merge. PathWarning (authoritative, file-existence keyed) and PathSuggestion (set
+// only on a candidate-index-corrected member) are each taken as the first non-empty
+// across the group, so a sibling's hallucinated-path warning or its correction is
+// never lost just because group[0] happened to be a clean/uncorrected member —
+// members may even span lines under cross-line drift, so group[0]'s fields are not
+// authoritative (TD merge.go:297, merge.go:296). PathValid is auxiliary (see the
+// JSONFinding contract) and is kept consistent with the surviving warning: a record
+// carrying a warning is not a valid path; with no warning anywhere, group[0]'s
+// validated state is preserved.
+func mergePathFields(group []JSONFinding) (valid bool, warning, suggestion string) {
+	for _, f := range group {
+		if warning == "" {
+			warning = f.PathWarning
+		}
+		if suggestion == "" {
+			suggestion = f.PathSuggestion
+		}
+	}
+	if warning != "" {
+		return false, warning, suggestion
+	}
+	return group[0].PathValid, "", suggestion
 }
 
 // unionReviewers returns the sorted, deduplicated union of every member record's
@@ -332,14 +387,7 @@ func joinEvidence(group []JSONFinding) string {
 		seen[f.Evidence] = true
 		parts = append(parts, f.Evidence)
 	}
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += " / "
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, " / ")
 }
 
 // verdictRank orders verify verdicts for the cluster-merge precedence in
@@ -376,9 +424,11 @@ func mergeVerification(group []JSONFinding) *Verification {
 		if v == nil {
 			continue
 		}
-		if v.Skeptic != "" && !seen[v.Skeptic] {
-			seen[v.Skeptic] = true
-			skeptics = append(skeptics, v.Skeptic)
+		for _, name := range splitNames(v.Skeptic) {
+			if name != "" && !seen[name] {
+				seen[name] = true
+				skeptics = append(skeptics, name)
+			}
 		}
 		if chosen == nil || verdictRank(v.Verdict) > verdictRank(chosen.Verdict) {
 			chosen = v
@@ -388,6 +438,6 @@ func mergeVerification(group []JSONFinding) *Verification {
 		return nil
 	}
 	out := *chosen // copy so the source finding's block is not mutated
-	out.Skeptic = strings.Join(skeptics, ",")
+	out.Skeptic = strings.Join(skeptics, ", ")
 	return &out
 }
