@@ -112,12 +112,16 @@ type JSONFinding struct {
 	ClusterMerged bool `json:"cluster_merged,omitempty"`
 	// ClusterID is the stable, content-addressed AmbiguousCluster.ID of the
 	// gray-zone cluster that produced an inline-merged survivor (Epic 6.2). It is
-	// stamped alongside ClusterMerged by the cross-examination apply path and lets
-	// the debate radar key merge idempotency on cluster identity rather than
-	// File+Line alone — so a second DISTINCT cluster co-located at the same
-	// canonical File+Line is no longer over-suppressed once the first is merged.
-	// omitempty keeps every non-merged record byte-identical to pre-6.2
-	// findings.json; it is never set by any reconcile-time path.
+	// stamped alongside ClusterMerged by the cross-examination apply path
+	// (internal/debate/cluster.go applyOneClusterMerge) and read by the debate
+	// radar (internal/debate/cluster.go filterMergedClusters), which keys merge
+	// idempotency on cluster identity rather than File+Line alone — so a second
+	// DISTINCT cluster co-located at the same canonical File+Line is no longer
+	// over-suppressed once the first is merged. The cross-package symbols are
+	// named (not line-numbered) so the reference survives line shifts; grep them
+	// if either path moves. This field is intended ONLY for that debate inline-
+	// merge stamping: reconcile-time producers MUST leave it empty, and omitempty
+	// keeps every non-merged record byte-identical to pre-6.2 findings.json.
 	ClusterID string `json:"cluster_id,omitempty"`
 }
 
