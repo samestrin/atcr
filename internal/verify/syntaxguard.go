@@ -61,9 +61,19 @@ var nonGoFenceLangs = map[string]bool{
 	"patch": true, "dockerfile": true, "make": true, "makefile": true,
 }
 
+// maxFixBytes caps the input validateGoFixSyntax will parse. parseGoFix runs up to
+// three full parser.ParseFile passes per fix, concurrently across the worker pool,
+// driven by untrusted model output; a pathological multi-megabyte completion is not
+// a realistic fix, so above this size the guard short-circuits to nil rather than
+// pay the triple AST build. 256KiB is far above any genuine code-snippet fix.
+const maxFixBytes = 256 * 1024
+
 // validateGoFixSyntax returns a non-nil error when fix is plausibly Go code that
 // fails to parse, and nil otherwise (valid Go, prose, or non-Go content).
 func validateGoFixSyntax(fix string) error {
+	if len(fix) > maxFixBytes {
+		return nil // pathological size: not a genuine fix — skip the triple AST parse
+	}
 	fix = normalizeNewlines(fix)
 	code, lang, hadFence := extractFencedCode(fix)
 	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
