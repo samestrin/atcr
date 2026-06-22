@@ -90,7 +90,9 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         ATCR_BIN: ${{ github.action_path }}/bin/atcr
         REPO: ${{ github.repository }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # Prefer the PR head SHA; fall back to github.sha so a non-pull_request
+        # trigger fails with atcr's own clear error rather than an empty --sha.
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         CHECK_NAME: ${{ inputs.check-name }}
         FAIL_ON: ${{ inputs.fail-on }}
         INLINE: ${{ inputs.inline-comments }}
