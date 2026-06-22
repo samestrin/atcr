@@ -110,8 +110,13 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// Gray-zone cluster decisions (Epic 6.1) apply inline: load the clusters so a
 	// judge "merge" ruling can union the member findings in findings.json directly
 	// (Option A), and drop clusters a prior debate already merged so a re-run is a
-	// no-op (AC4). A missing/corrupt ambiguous.json degrades to no gray-zone work.
-	grayClusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)
+	// no-op (AC4). A missing or empty ambiguous.json degrades to no gray-zone work;
+	// a present-but-unparseable file is logged so merge rulings are not silently
+	// dropped.
+	grayClusters, err := reconcile.ReadAmbiguousClusters(reviewDir)
+	if err != nil {
+		log.FromContext(ctx).Warn("debate: ambiguous.json unreadable; gray-zone merges disabled", "err", err.Error())
+	}
 	clusterIdx := indexClusters(grayClusters)
 	// Idempotency (AC4): drop gray-zone items whose cluster a prior debate already
 	// merged inline, so a re-run never re-debates or re-merges an applied cluster.
@@ -198,11 +203,19 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 				// map. A "merge" unions the cluster's members in findings.json inline
 				// (Option A); "separate" leaves them unmerged. The cluster is captured
 				// here and applied after the pool drains.
-				if ir.ClusterDecision == ClusterMerge {
+				switch ir.ClusterDecision {
+				case ClusterMerge:
 					if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok {
 						oc.clusterMerge = true
 						oc.cluster = c
 					}
+				case ClusterSeparate:
+					// Intentionally separate — no application beyond debate.json.
+				default:
+					// Empty or unparseable cluster decision on a real gray-zone item:
+					// record a distinct reason so the no-decision case is auditable
+					// rather than silently treated as separate.
+					oc.ir.Reason = "no_cluster_decision"
 				}
 			default:
 				oc.apply = true
@@ -251,6 +264,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
+	// Defensive invariant guard (Epic 6.1): gray-zone members are classified into
+	// the cluster branch above and never enter the single-finding rulings map, so
+	// their locations must be disjoint from the rulings keyspace. If a future
+	// radar/selection change broke that, applyRulings (below) and applyClusterMerges
+	// would both mutate the same finding — surface it loudly rather than corrupting
+	// findings.json silently.
+	if loc := firstClusterRulingCollision(rulings, mergeClusters); loc != "" {
+		log.FromContext(ctx).Warn("debate: gray-zone cluster member collides with a single-finding ruling key (Epic 6.1 invariant broken)", "location", loc)
+	}
 	if len(rulings) > 0 {
 		applyRulings(findings, rulings)
 	}
@@ -258,14 +280,14 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// Epic 6.1: union gray-zone clusters the judge ruled "merge" directly in the
 		// post-verify findings.json (Option A) — never via RunReconcile, which would
 		// rebuild from sources/ and erase the verify/debate verdicts above.
-		var applied int
-		findings, applied = applyClusterMerges(findings, mergeClusters)
-		if applied < len(mergeClusters) {
+		var applied, skipped int
+		findings, applied, skipped = applyClusterMerges(findings, mergeClusters)
+		if applied < len(mergeClusters)-skipped {
 			// A recorded merge ruling that could not be physically applied (its
 			// members were not both present in findings.json) is otherwise silent —
 			// debate.json still records the ruling, but findings.json is unchanged.
 			log.FromContext(ctx).Warn("debate: some gray-zone merge rulings could not be applied to findings.json",
-				"ruled", len(mergeClusters), "applied", applied)
+				"ruled", len(mergeClusters)-skipped, "applied", applied)
 		}
 	}
 	findingsPath, findingsBytes, err := computeFindingsBytes(reviewDir, findings)

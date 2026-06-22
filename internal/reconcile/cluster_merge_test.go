@@ -52,7 +52,22 @@ func TestMergeJSONFindings_VerificationPrecedence(t *testing.T) {
 	require.NotNil(t, m.Verification)
 	assert.Equal(t, VerdictConfirmed, m.Verification.Verdict, "confirmed must win over refuted")
 	assert.True(t, m.Verification.ChallengeSurvived)
-	assert.Equal(t, "sk1,sk2", m.Verification.Skeptic, "skeptic provenance from all members is unioned")
+	assert.Equal(t, "sk1, sk2", m.Verification.Skeptic, "skeptic provenance from all members is unioned")
+}
+
+// TestMergeJSONFindings_SkepticSplitAndDeduplicated: each member's Skeptic is a
+// comma-joined list of voter names. mergeVerification must split those lists,
+// deduplicate individual names, and omit empty tokens (e.g. trailing commas).
+func TestMergeJSONFindings_SkepticSplitAndDeduplicated(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue A", Reviewers: []string{"alice"},
+			Verification: &Verification{Verdict: VerdictRefuted, Skeptic: "sk1,sk2,", Notes: "disproved A"}},
+		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue B longer", Reviewers: []string{"bob"},
+			Verification: &Verification{Verdict: VerdictConfirmed, Skeptic: "sk2, sk3", Notes: "confirmed B"}},
+	}
+	m := MergeJSONFindings(group)
+	require.NotNil(t, m.Verification)
+	assert.Equal(t, "sk1, sk2, sk3", m.Verification.Skeptic, "individual skeptic names are split, deduped, and empty tokens omitted")
 }
 
 // TestMergeJSONFindings_NoVerificationStaysNil: with no member carrying a block,
@@ -63,6 +78,39 @@ func TestMergeJSONFindings_NoVerificationStaysNil(t *testing.T) {
 		{Severity: "LOW", File: "a.go", Line: 5, Problem: "ab", Reviewers: []string{"y"}},
 	}
 	assert.Nil(t, MergeJSONFindings(group).Verification)
+}
+
+// TestMergeJSONFindings_PreservesMemberDisagreementLowerBound: a member is itself
+// a reconciled record that may already carry a wider "<lo> vs <hi>" span than its
+// scalar Severity. Merging a member annotated "LOW vs HIGH" (scalar HIGH) with a
+// MEDIUM member must keep LOW as the lower bound, not narrow it to "MEDIUM vs HIGH"
+// from the scalar severities alone (TD merge.go:282).
+func TestMergeJSONFindings_PreservesMemberDisagreementLowerBound(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 10, Problem: "issue A with the longer problem text", Reviewers: []string{"alice"}, Disagreement: "LOW vs HIGH"},
+		{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "issue B", Reviewers: []string{"bob"}},
+	}
+	m := MergeJSONFindings(group)
+	assert.Equal(t, "HIGH", m.Severity)
+	assert.Equal(t, "LOW vs HIGH", m.Disagreement, "a member's pre-existing wider span must not be narrowed to the scalar-severity range at cluster merge")
+}
+
+// TestMergeJSONFindings_PreservesSiblingPathSuggestion: PathWarning is
+// file-existence keyed (identical across same-file members) but PathSuggestion
+// (Epic 5.4) is set only on a candidate-index-corrected member. When the corrected
+// member is ordered AFTER a clean member, the merged record must still carry the
+// sibling's warning + suggestion rather than blindly taking group[0]'s empty
+// fields, and path_valid must stay consistent with the surviving warning
+// (TD merge.go:297 and merge.go:296 — members may even span lines under drift).
+func TestMergeJSONFindings_PreservesSiblingPathSuggestion(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 10, Problem: "clean member ordered first", Reviewers: []string{"alice"}, PathValid: true},
+		{Severity: "LOW", File: "a.go", Line: 12, Problem: "flagged member carries the correction", Reviewers: []string{"bob"}, PathWarning: "path a.go not found under repo root", PathSuggestion: "real/a.go"},
+	}
+	m := MergeJSONFindings(group)
+	assert.Equal(t, "path a.go not found under repo root", m.PathWarning, "a sibling's hallucinated-path warning must survive the merge")
+	assert.Equal(t, "real/a.go", m.PathSuggestion, "a sibling's candidate-index correction must survive the merge")
+	assert.False(t, m.PathValid, "path_valid must stay consistent with the surviving warning, not blindly take group[0]'s true")
 }
 
 // TestJSONFinding_ClusterMergedOmitempty: the Epic 6.1 idempotency marker is
