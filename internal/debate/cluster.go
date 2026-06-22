@@ -206,6 +206,9 @@ func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.Ambiguou
 	merged := reconcile.MergeJSONFindings(group)
 	merged.File, merged.Line = c.File, c.Line
 	merged.ClusterMerged = true
+	// Stamp the source cluster's stable, content-addressed ID (Epic 6.2 AC2) so
+	// filterMergedClusters can key idempotency on cluster identity, not File+Line.
+	merged.ClusterID = c.ID
 
 	out := make([]reconcile.JSONFinding, 0, len(findings)-len(group)+1)
 	for i := range findings {
