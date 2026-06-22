@@ -41,8 +41,11 @@ func TestRenderMarkdown_ShowsFixWarning(t *testing.T) {
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
-	assert.Contains(t, b.String(), "invalid_syntax: 2:1: expected '}'",
-		"the fix warning must surface in the markdown report")
+	out := b.String()
+	assert.Contains(t, out, "Fix warning:", "the fix-warning label must surface in the markdown report")
+	// The message text is HTML-escaped by the renderer; assert the unescaped portion.
+	assert.Contains(t, out, "invalid_syntax: 2:1: expected",
+		"the fix warning message must surface in the markdown report")
 }
 
 func TestValidFormat(t *testing.T) {
