@@ -229,6 +229,72 @@ func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
 	assert.Contains(t, rec.prompts[0], "file contents", "snippet read from the snapshot is embedded in the prompt")
 }
 
+// A configured system_prompt fully replaces the default framing line and
+// supersedes the persona for that call (Epic 7.0.1 AC3, clarification opt-a).
+func TestBuildFixPrompt_SystemPromptOverridesFraming(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM") // Persona "fixer"
+	ex.SystemPrompt = "ACT AS A STRICT GO LINTER. Emit only gofmt-clean code."
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.prompts, 1)
+	p := rec.prompts[0]
+	assert.Contains(t, p, "ACT AS A STRICT GO LINTER.", "custom system_prompt must frame the request")
+	assert.NotContains(t, p, "a code-fix executor", "default framing must be replaced by system_prompt")
+	assert.NotContains(t, p, "You are fixer", "persona is superseded when system_prompt is set")
+	// The finding metadata must still be appended after the custom framing.
+	assert.Contains(t, p, "Location: a.go:1", "finding metadata still appended after the override")
+}
+
+// Configured rules are appended to the fix prompt as constraints (Epic 7.0.1 AC3).
+func TestBuildFixPrompt_RulesAppended(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM")
+	ex.Rules = []string{"Use tabs for indentation", "Avoid panic() in library code"}
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.prompts, 1)
+	p := rec.prompts[0]
+	assert.Contains(t, p, "Use tabs for indentation", "rule 1 must appear in the prompt")
+	assert.Contains(t, p, "Avoid panic() in library code", "rule 2 must appear in the prompt")
+}
+
+// system_prompt and rules compose: a custom framing plus rules both reach the
+// prompt, and the persona framing is still suppressed.
+func TestBuildFixPrompt_SystemPromptAndRulesCompose(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM")
+	ex.SystemPrompt = "You fix Go code."
+	ex.Rules = []string{"No global state"}
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.prompts, 1)
+	p := rec.prompts[0]
+	assert.Contains(t, p, "You fix Go code.")
+	assert.Contains(t, p, "No global state")
+	assert.NotContains(t, p, "a code-fix executor")
+}
+
+// With no system_prompt the default persona framing is retained (regression guard
+// for the Epic 7.0 behavior).
+func TestBuildFixPrompt_DefaultFramingWhenNoSystemPrompt(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM") // no system_prompt, no rules, Persona "fixer"
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.prompts, 1)
+	assert.Contains(t, rec.prompts[0], "You are fixer, a code-fix executor",
+		"default framing retained when no system_prompt override")
+}
+
 // blockingExecutor records the peak number of Complete calls in flight at once.
 // Every call announces its arrival on `arrived`, then parks on `release` so all
 // concurrent calls pile up before any return — letting a test observe true peak
