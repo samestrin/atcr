@@ -264,6 +264,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		return Result{}, err
 	}
 
+	// Defensive invariant guard (Epic 6.1): gray-zone members are classified into
+	// the cluster branch above and never enter the single-finding rulings map, so
+	// their locations must be disjoint from the rulings keyspace. If a future
+	// radar/selection change broke that, applyRulings (below) and applyClusterMerges
+	// would both mutate the same finding — surface it loudly rather than corrupting
+	// findings.json silently.
+	if loc := firstClusterRulingCollision(rulings, mergeClusters); loc != "" {
+		log.FromContext(ctx).Warn("debate: gray-zone cluster member collides with a single-finding ruling key (Epic 6.1 invariant broken)", "location", loc)
+	}
 	if len(rulings) > 0 {
 		applyRulings(findings, rulings)
 	}

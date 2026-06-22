@@ -399,6 +399,29 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 	}
 }
 
+// TestFirstClusterRulingCollision_GuardsRulingsKeyspace pins the Epic 6.1
+// invariant that gray-zone cluster members never share a location with a
+// single-finding rulings key (gray-zone items are classified into the cluster
+// branch in runDebate and never enter the rulings map). The guard returns the
+// colliding "File:Line" when the invariant is broken — a tripwire for a future
+// radar change that let a gray member also surface as a solo/split tier item — and
+// "" when it holds (TD cluster.go:applyClusterMerges).
+func TestFirstClusterRulingCollision_GuardsRulingsKeyspace(t *testing.T) {
+	clusters := []reconcile.AmbiguousCluster{
+		grayCluster("c1", "a.go", 10, "p1", "HIGH", "alice", "p2", "MEDIUM", "bob"),
+	}
+
+	// Invariant holds: the rulings key is at a different location than any member.
+	rulings := map[FindingKey]ruleApply{
+		{File: "b.go", Line: 99, Problem: "unrelated single-finding"}: {verdict: "confirmed"},
+	}
+	assert.Empty(t, firstClusterRulingCollision(rulings, clusters), "no collision when rulings and cluster members are at distinct locations")
+
+	// Invariant broken: a rulings key collides with a cluster member's location.
+	rulings[FindingKey{File: "a.go", Line: 10, Problem: "leaked into rulings"}] = ruleApply{verdict: "confirmed"}
+	assert.Equal(t, "a.go:10", firstClusterRulingCollision(rulings, clusters), "a gray member location that also keys the rulings map must be reported")
+}
+
 // TestFilterMergedClusters_CoLocatedDistinctClustersOverSuppressed pins the known
 // co-location limitation (TD cluster.go:50): filterMergedClusters keys idempotency
 // on File+Line only, so once one gray-zone cluster at a location is merged (a

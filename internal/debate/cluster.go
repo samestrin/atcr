@@ -101,6 +101,34 @@ func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.A
 	return findings, applied, skipped
 }
 
+// firstClusterRulingCollision returns the first "File:Line" where a gray-zone
+// cluster member coincides with a single-finding rulings key, or "" when the
+// Epic 6.1 invariant holds: gray-zone items are classified into the cluster branch
+// in runDebate and never enter the rulings map, so their member locations are
+// disjoint from the rulings keyspace (the radar excludes gray members from the
+// solo/split tiers today). It is a defensive tripwire — a future radar/selection
+// change that let a gray member also surface as a solo/split tier item would
+// otherwise let applyRulings and applyClusterMerges both mutate the same finding
+// silently. Keyed on locationKey (File+Line), matching how the two apply paths
+// would actually collide.
+func firstClusterRulingCollision(rulings map[FindingKey]ruleApply, clusters []reconcile.AmbiguousCluster) string {
+	if len(rulings) == 0 {
+		return ""
+	}
+	ruledLocs := make(map[string]bool, len(rulings))
+	for k := range rulings {
+		ruledLocs[locationKey(k.File, k.Line)] = true
+	}
+	for _, c := range clusters {
+		for _, mf := range c.Findings {
+			if ruledLocs[locationKey(mf.File, mf.Line)] {
+				return mf.File + ":" + strconv.Itoa(mf.Line)
+			}
+		}
+	}
+	return ""
+}
+
 // applyOneClusterMerge unions one cluster's members in findings and reports
 // whether the merge was applied. Members are matched to findings.json records in
 // two passes: first by exact File+Line+Problem, then — for members whose problem
