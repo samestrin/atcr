@@ -410,12 +410,12 @@ func (r *Registry) validateExecutor() []error {
 		return nil
 	}
 	var errs []error
-	if e.Provider == "" {
+	if strings.TrimSpace(e.Provider) == "" {
 		errs = append(errs, errors.New("executor: required field 'provider' is missing"))
 	} else if _, ok := r.Providers[e.Provider]; !ok {
 		errs = append(errs, fmt.Errorf("executor references unknown provider '%s'", e.Provider))
 	}
-	if e.Model == "" {
+	if strings.TrimSpace(e.Model) == "" {
 		errs = append(errs, errors.New("executor: required field 'model' is missing"))
 	}
 	if e.Role != "" && e.Role != RoleExecutor {
