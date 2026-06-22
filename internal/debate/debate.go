@@ -198,11 +198,19 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 				// map. A "merge" unions the cluster's members in findings.json inline
 				// (Option A); "separate" leaves them unmerged. The cluster is captured
 				// here and applied after the pool drains.
-				if ir.ClusterDecision == ClusterMerge {
+				switch ir.ClusterDecision {
+				case ClusterMerge:
 					if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok {
 						oc.clusterMerge = true
 						oc.cluster = c
 					}
+				case ClusterSeparate:
+					// Intentionally separate — no application beyond debate.json.
+				default:
+					// Empty or unparseable cluster decision on a real gray-zone item:
+					// record a distinct reason so the no-decision case is auditable
+					// rather than silently treated as separate.
+					oc.ir.Reason = "no_cluster_decision"
 				}
 			default:
 				oc.apply = true
