@@ -57,7 +57,7 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // precise fix (filter by cluster identity rather than location) is tracked
 // separately as the epic-6.1 "U" item, since it requires a cluster-id field on the
 // merged finding (a reconcile-schema change outside this function's scope).
-func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding) []reconcile.DisagreementItem {
+func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
 	mergedLocs := map[string]bool{}
 	for _, f := range findings {
 		if f.ClusterMerged {
