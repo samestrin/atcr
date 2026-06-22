@@ -1,8 +1,10 @@
 package verify
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/assert"
@@ -264,6 +267,19 @@ func TestGenerateFixes_BoundedByMaxParallel(t *testing.T) {
 	be.mu.Unlock()
 	assert.LessOrEqual(t, peak, cap, "peak in-flight must not exceed max_parallel")
 	assert.Greater(t, peak, 0, "fixes should have been generated")
+}
+
+// TestReadFixSnippet_LogsWhenDispatcherFails proves a swallowed dispatcher error
+// is recorded (mirroring the skeptic-failure logging discipline) instead of
+// silently degrading the fix to finding-text-only with no trace.
+func TestReadFixSnippet_LogsWhenDispatcherFails(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+	disp := &fakeDispatcher{err: errors.New("read boom")}
+	got := readFixSnippet(ctx, disp, "a.go", 10)
+	assert.Equal(t, "", got, "a dispatcher error still yields an empty snippet")
+	assert.Contains(t, buf.String(), "fix_snippet_unavailable", "the swallowed dispatcher error must be logged")
 }
 
 // TestGenerateFixes_ClearsStaleFixWarningOnSuccess proves a successful fix clears
