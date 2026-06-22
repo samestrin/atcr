@@ -1,0 +1,30 @@
+# Example registry WITHOUT an executor model — the default ATCR behavior.
+#
+# With no executor: block, ATCR runs review + reconcile + (optional) verification
+# and emits findings with the reviewers' own fix suggestions. No fix-generation
+# phase runs and no executor tokens are spent. This is fully backward-compatible:
+# adding an executor: block (see registry-with-executor.yaml) is purely additive.
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  openai:
+    api_key_env: OPENAI_API_KEY
+  google:
+    api_key_env: GOOGLE_API_KEY
+
+agents:
+  bruce:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    persona: bruce
+    role: reviewer
+  greta:
+    provider: openai
+    model: gpt-4-turbo
+    persona: greta
+    role: reviewer
+  kai:
+    provider: google
+    model: gemini-pro
+    persona: kai
+    role: reviewer

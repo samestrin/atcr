@@ -159,6 +159,30 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		jobs = append(jobs, job{finding: f, key: FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}, skeptics: sk})
 	}
 
+	// Fix phase (Epic 7.0) also needs the snapshot, to read code context around a
+	// finding. Build the harness when an executor is configured AND at least one
+	// finding could qualify for a fix on severity alone (the confidence gate is
+	// applied post-recompute in generateFixes). This runs over every finding —
+	// including ones skipped for verification — so a verified-but-skipped finding
+	// still gets a fix.
+	if reg.Executor != nil && !needTool {
+		fixMinSev := reg.Executor.MinSeverity
+		if fixMinSev == "" {
+			fixMinSev = registry.DefaultFixMinSeverity
+		}
+		// Mirror generateFixes' full eligibility (confidence AND severity) so a
+		// registry with an executor but only low-confidence findings does not build
+		// a snapshot that yields zero fixes. This branch runs only when no skeptic
+		// needs the tool harness, so no finding here will be promoted to VERIFIED by
+		// verification — current confidence is the final confidence for the gate.
+		for _, f := range findings {
+			if reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) && meetsSeverityFloor(f.Severity, fixMinSev) {
+				needTool = true
+				break
+			}
+		}
+	}
+
 	// Build the tool harness (snapshot → jail → dispatcher) only when at least
 	// one finding has an eligible skeptic. A snapshot failure is non-fatal: the
 	// affected findings degrade to unverifiable rather than failing the run.
@@ -222,6 +246,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		}
 		findings[i].Verification = v
 		findings[i].Confidence = confidenceV2(findings[i].Confidence, v.Verdict)
+	}
+
+	// Fix-generation phase (Epic 7.0): once confidence is final, ask the single
+	// executor model for a minimal fix on every HIGH-or-better finding above the
+	// fix severity floor, populating the FIX column before the artifacts are
+	// serialized. A nil executor leaves findings untouched (no behavior change).
+	if reg.Executor != nil {
+		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk

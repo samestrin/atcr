@@ -1,0 +1,52 @@
+# Example registry with an executor model (Epic 7.0).
+#
+# The review panel (agents:) catches bugs with multiple models; the single
+# executor model generates fixes for verified findings only. Fix generation is
+# opt-in: it runs during `atcr verify` / `atcr review --verify` only because an
+# executor: block is present. Remove the block and ATCR behaves exactly as the
+# registry-without-executor.yaml example.
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  openai:
+    api_key_env: OPENAI_API_KEY
+  google:
+    api_key_env: GOOGLE_API_KEY
+
+agents:
+  bruce:
+    provider: anthropic
+    model: claude-sonnet-4-6
+    persona: bruce
+    role: reviewer
+  greta:
+    provider: openai
+    model: gpt-4-turbo
+    persona: greta
+    role: reviewer
+  kai:
+    provider: google
+    model: gemini-pro
+    persona: kai
+    role: reviewer
+  # A skeptic (different model than the reviewers) adversarially verifies findings
+  # before the executor spends tokens fixing them.
+  skeptic-opus:
+    provider: anthropic
+    model: claude-opus-4-8
+    role: skeptic
+    supports_function_calling: true
+
+# The executor is a SINGLE model run only in the fix phase — not part of the
+# review panel. Use a more capable model here: spend on fix quality, not review
+# breadth. Fixes are generated only for findings that are HIGH-or-better
+# confidence (VERIFIED included) AND at or above min_severity_for_fix.
+executor:
+  name: opus
+  provider: anthropic
+  model: claude-opus-4-8
+  persona: fixer
+  role: executor
+  min_severity_for_fix: MEDIUM   # MEDIUM | HIGH | CRITICAL | LOW (default MEDIUM)
+  batch_fixes: false             # MVP generates fixes one finding at a time
+  # fix_timeout: 120             # optional per-fix timeout (seconds)
