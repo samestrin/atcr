@@ -30,6 +30,24 @@ func sample() []reconcile.JSONFinding {
 	}
 }
 
+// A finding carrying a fix-generation warning (e.g. the Epic 7.1 invalid_syntax
+// flag) must surface that warning in the markdown report so the user sees the fix
+// was flagged and why.
+func TestRenderMarkdown_ShowsFixWarning(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Fix: "func x() {",
+			Confidence: "HIGH", Reviewers: []string{"rev"},
+			FixWarning: "invalid_syntax: 2:1: expected '}'"},
+	}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "Fix warning:", "the fix-warning label must surface in the markdown report")
+	// The message text is HTML-escaped by the renderer; assert the unescaped portion.
+	assert.Contains(t, out, "invalid_syntax: 2:1: expected",
+		"the fix warning message must surface in the markdown report")
+}
+
 func TestValidFormat(t *testing.T) {
 	assert.True(t, ValidFormat("md"))
 	assert.True(t, ValidFormat("json"))

@@ -123,12 +123,14 @@ type JSONFinding struct {
 	// merge stamping: reconcile-time producers MUST leave it empty, and omitempty
 	// keeps every non-merged record byte-identical to pre-6.2 findings.json.
 	ClusterID string `json:"cluster_id,omitempty"`
-	// FixWarning records a non-fatal fix-generation failure (Epic 7.0): when the
+	// FixWarning records a non-fatal fix-generation warning (Epic 7.0): when the
 	// executor errors or returns an empty completion for a finding it was eligible
-	// to fix, the warning is stamped here instead of failing the run, so a
-	// downstream consumer (the report, the Epic 7.3 PR action) can see the fix was
-	// attempted and why it is absent. omitempty keeps every finding without a
-	// fix-generation failure byte-identical to pre-7.0 findings.json; reconcile-time
+	// to fix — or when the generated fix fails the local syntax guard (Epic 7.1),
+	// stamped as "invalid_syntax: <parser error>" while the attempted fix stays in
+	// Fix — the warning is stamped here instead of failing the run, so a downstream
+	// consumer (the report, the Epic 7.3 PR action) can see the fix was attempted
+	// and why it is absent or flagged. omitempty keeps every finding without a
+	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
 	// producers MUST leave it empty (it is set only by the verify fix phase).
 	FixWarning string `json:"fix_warning,omitempty"`
 }

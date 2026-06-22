@@ -81,6 +81,55 @@ func TestGenerateFixes_PopulatesFixAndAttribution(t *testing.T) {
 	assert.Contains(t, findings[0].Evidence, "fix by opus")
 }
 
+// A syntactically invalid Go code fix is flagged via FixWarning (Epic 7.1) but the
+// attempted fix and its attribution remain visible so the user sees what was tried
+// and why it was flagged.
+func TestGenerateFixes_FlagsInvalidSyntax(t *testing.T) {
+	const broken = "func add(a, b int) int {\n\treturn a + b\n" // missing closing brace
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Evidence: "ev"},
+	}
+	rec := &recordingExecutor{out: broken}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	assert.Equal(t, strings.TrimSpace(broken), findings[0].Fix, "the attempted fix stays visible")
+	assert.Contains(t, findings[0].FixWarning, "invalid_syntax", "syntactically invalid Go must be flagged")
+	assert.Contains(t, findings[0].Evidence, "fix by opus", "attribution is still recorded for an attempted fix")
+}
+
+// A syntactically valid Go code fix carries no FixWarning.
+func TestGenerateFixes_ValidSyntaxNoWarning(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "func add(a, b int) int {\n\treturn a + b\n}"}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	assert.Equal(t, "", findings[0].FixWarning, "valid Go must not be flagged")
+}
+
+// A free-form prose change-instruction (the executor's "or a precise change
+// instruction" output mode) must never be flagged as invalid syntax.
+func TestGenerateFixes_ProseFixNoWarning(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "use a parameterized query instead of string concatenation"}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	assert.Equal(t, "", findings[0].FixWarning, "a prose change-instruction must not be flagged")
+	assert.Equal(t, "use a parameterized query instead of string concatenation", findings[0].Fix)
+}
+
+// An invalid-syntax flag from a prior run must be cleared when a later run produces
+// a syntactically valid fix (no stale invalid_syntax warning alongside a good fix).
+func TestGenerateFixes_ClearsStaleInvalidSyntaxOnValidFix(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+			FixWarning: "invalid_syntax: 2:11: expected '}'"},
+	}
+	rec := &recordingExecutor{out: "func add(a, b int) int { return a + b }"}
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	assert.Equal(t, "", findings[0].FixWarning, "a valid re-run must clear the stale invalid_syntax warning")
+}
+
 func TestGenerateFixes_SkipsBelowConfidence(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfMedium, Fix: "orig"},
