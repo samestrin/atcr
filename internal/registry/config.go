@@ -431,6 +431,16 @@ func (r *Registry) validateExecutor() []error {
 	if normalized := stream.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		errs = append(errs, fmt.Errorf("executor: min_severity_for_fix must be one of CRITICAL, HIGH, MEDIUM, LOW, got %q", e.MinSeverity))
 	}
+	// The persona is interpolated verbatim into the fix-generation prompt
+	// (buildFixPrompt), so an untrusted CR/LF or other control character could
+	// forge prompt lines / redefine the model's role (prompt injection). Reject
+	// control characters and cap the length at load, mirroring the Scope guard.
+	if strings.IndexFunc(e.Persona, func(r rune) bool { return r < 32 }) >= 0 {
+		errs = append(errs, errors.New("executor: persona must not contain control characters"))
+	}
+	if len(e.Persona) > MaxExecutorPersonaLen {
+		errs = append(errs, fmt.Errorf("executor: persona must be at most %d characters", MaxExecutorPersonaLen))
+	}
 	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
 		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
 	}

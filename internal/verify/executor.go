@@ -182,6 +182,15 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 // buildFixPrompt renders the executor prompt for one finding: a fix-focused persona
 // instruction, the finding metadata, the reviewer's existing fix suggestion (when
 // present, to refine rather than reinvent), and the source snippet (when available).
+//
+// Untrusted-data boundary: persona, the finding fields (Problem, Fix), and the
+// source snippet are all interpolated verbatim into this single prompt string —
+// llmclient.Invocation carries no role separation, so there is no structured way to
+// fence them. The persona is sanitized at load (validateExecutor rejects control
+// characters and caps length) to block CR/LF prompt-line forgery; the finding text
+// and snippet are reviewer/repo-derived data, not instructions. Blast radius is
+// bounded: the registry is self-authored and the output only lands in the Fix
+// column (it is never executed), so this is documented rather than actively escaped.
 func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
 	if strings.TrimSpace(persona) == "" {
 		persona = registry.DefaultExecutorPersona
