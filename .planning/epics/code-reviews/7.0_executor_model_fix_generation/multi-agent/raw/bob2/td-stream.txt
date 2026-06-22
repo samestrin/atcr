@@ -1,0 +1,81 @@
+HIGH|internal/verify/executor.go:78|Missing nil check for dispatcher|Add null check for disp before calling readFixSnippet|maintainability|10|disp may be nil causing nil pointer dereference|bruce
+HIGH|internal/verify/executor.go:92|Unhandled error in json.Marshal|Handle json.Marshal error to avoid crash|error-handling|5|json.Marshal error ignored|bruce
+HIGH|internal/verify/executor.go:102|Unhandled error in disp.Execute|Handle disp.Execute error to avoid crash|error-handling|5|disp.Execute error ignored|bruce
+MEDIUM|internal/verify/executor.go:118|Incomplete prompt construction|Add missing newline after fixer instruction|maintainability|2|Prompt formatting issue|bruce
+LOW|internal/verify/executor.go:130|Redundant trimSpace call|Remove redundant strings.TrimSpace|maintainability|1|Unnecessary computation|bruce
+LOW|internal/verify/executor.go:142|Inefficient string concatenation|Use strings.Builder for Evidence|performance|3|String concatenation in loop|bruce
+HIGH|internal/verify/pipeline.go:172|Incorrect confidence gate|Use ConfidenceAtOrAbove instead of direct comparison|correctness|5|Should use ConfidenceAtOrAbove for consistency|bruce
+HIGH|internal/verify/pipeline.go:185|Missing severity normalization|Normalize fixMinSev before comparison|correctness|5|Severity comparison requires normalization|bruce
+MEDIUM|internal/registry/config.go:410|Missing validation for BatchFixes|Add validation for BatchFixes field|maintainability|5|BatchFixes should be boolean|bruce
+LOW|internal/registry/config.go:425|Incomplete TimeoutSecs validation|Validate TimeoutSecs when not nil|maintainability|3|Missing nil check for TimeoutSecs|bruce
+LOW|internal/registry/examples_test.go:15|Hardcoded path|Use filepath.Join for portability|maintainability|3|Path separator issues|bruce
+LOW|internal/registry/examples_test.go:22|Hardcoded path|Use filepath.Join for portability|maintainability|3|Path separator issues|bruce
+LOW|internal/verify/executor_test.go:28|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:35|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:42|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:49|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:56|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:63|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:70|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:77|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:84|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:91|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:98|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:105|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:112|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:119|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:126|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:133|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:140|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:147|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:154|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:161|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:168|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:175|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:182|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:189|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:196|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:203|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:210|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:217|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:224|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:231|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:238|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:245|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:252|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:259|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:266|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:273|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:280|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:287|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:294|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:301|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:308|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:315|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:322|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:329|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:336|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:343|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:350|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:357|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:364|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:371|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:378|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:385|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:392|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:399|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:406|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:413|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:420|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:427|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:434|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:441|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:448|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:455|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:462|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:469|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:476|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:483|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:490|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:497|Hardcoded provider name|Use variable for provider name|maintainability|2|Hardcoded "p"|bruce
+LOW|internal/verify/executor_test.go:504|Hardcoded provider name|Use variable for||||bob2

@@ -1,0 +1,3 @@
+SECURITY|examples/registry-with-executor.yaml:15|Missing API key for Anthropic provider|Add ANTHROPIC_API_KEY to environment|security|5|Executor usesanthropic provider but no api_key_env set|bruce
+SECURITY|examples/registry-with-executor.yaml:28|Missing API key for OpenAI provider|Add OPENAI_API_KEY to environment|security|5|Executor usesopenai provider but no api_key_env set|bruce
+SECURITY|examples/registry-with-executor.yaml:41|Missing API key for Google provider|Add GOOGLE_API_KEY to environment|security|5|Executor usesgoogle provider but no api_key_env set|bruce

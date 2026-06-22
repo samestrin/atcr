@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -34,6 +35,20 @@ const fixSnippetRadius = 30
 // is not re-generated on a verify re-run).
 const fixAttributionPrefix = "fix by "
 
+// anyFixEligible reports whether at least one finding qualifies for fix generation
+// on the executor's confidence+severity gate (the same per-finding gate
+// generateFixes applies). The pipeline uses it to avoid building BOTH the snapshot
+// harness and the executor client for a registry whose findings yield zero fixes.
+func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfig) bool {
+	fixMinSev := ex.EffectiveFixMinSeverity()
+	for i := range findings {
+		if reconcile.ConfidenceAtOrAbove(findings[i].Confidence, reconcile.ConfHigh) && meetsSeverityFloor(findings[i].Severity, fixMinSev) {
+			return true
+		}
+	}
+	return false
+}
+
 // generateFixes is the fix-generation phase (Epic 7.0). For every finding whose
 // confidence is HIGH-or-better (so VERIFIED — the tier the verify stage promotes
 // confirmed findings to — is included) AND whose severity meets the executor's
@@ -44,13 +59,17 @@ const fixAttributionPrefix = "fix by "
 //
 // It mutates findings in place and is run after verdict application / confidence
 // recompute and before the artifacts are serialized, so fixes ride into
-// findings.json. Failure isolation mirrors the verify stage: a snippet read
+// findings.json. Eligible findings are processed by a bounded worker pool (cap
+// reg.Verify.MaxParallel, default 4) rather than serially — each fix is an
+// independent executor round-trip — and every worker mutates only its own
+// findings element, the same per-index-write invariant the skeptic stage relies
+// on, so no mutex is needed. Failure isolation mirrors the verify stage: a snippet read
 // failure, an executor error, or an empty completion leaves that finding's existing
 // Fix/Evidence untouched and is logged, never returned — fix generation never fails
 // the run. A nil executor or completer is a no-op; disp may be nil (snapshot
 // unavailable), in which case the snippet is omitted and the executor works from the
 // finding text alone.
-func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher) {
+func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher, sharedTimeoutSecs int) {
 	if ex == nil || complete == nil {
 		return
 	}
@@ -63,11 +82,24 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
 		return
 	}
-	minSev := ex.MinSeverity
-	if minSev == "" {
-		minSev = registry.DefaultFixMinSeverity
+	minSev := ex.EffectiveFixMinSeverity()
+	// Bounded worker pool (mirrors the skeptic stage in pipeline.go): the
+	// eligibility filters below are cheap and stay on the calling goroutine, but
+	// each eligible finding's snippet read + executor round-trip + writes run in
+	// their own goroutine under a semaphore capped at reg.Verify.MaxParallel.
+	maxPar := reg.Verify.MaxParallel
+	if maxPar <= 0 {
+		maxPar = 4
 	}
+	sem := make(chan struct{}, maxPar)
+	var wg sync.WaitGroup
 	for i := range findings {
+		// Bail promptly on cancellation: without this the loop keeps enqueuing
+		// every remaining finding even after ctx is done, and a nil fix_timeout
+		// can leave each callExecutor blocked on a provider that ignores ctx.
+		if ctx.Err() != nil {
+			break
+		}
 		f := &findings[i]
 		if !reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) {
 			continue
@@ -76,40 +108,52 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			continue
 		}
 		// Idempotency + cost control: a finding this executor already attributed (a
-		// prior verify run generated its fix) is not re-generated. The guard is
-		// name-specific so unrelated evidence text that merely contains "fix by "
-		// does not suppress generation.
-		if strings.Contains(f.Evidence, fixAttributionPrefix+ex.Name) {
+		// prior verify run generated its fix) is not re-generated. The guard matches
+		// a delimited "; "-token, not a raw substring, so a name that is a strict
+		// prefix of another ("op" vs "opus") or unrelated evidence prose containing
+		// "fix by <name>" mid-sentence does not silently suppress generation.
+		if hasFixAttribution(f.Evidence, ex.Name) {
 			continue
 		}
-		snippet := readFixSnippet(ctx, disp, f.File, f.Line)
-		prompt := buildFixPrompt(*f, snippet, ex.Persona)
-		out, err := callExecutor(ctx, complete, prov, ex, prompt)
-		if err != nil {
-			logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
-			f.FixWarning = "fix generation failed: " + err.Error()
-			continue
-		}
-		fix := strings.TrimSpace(out)
-		if fix == "" {
-			logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
-			f.FixWarning = "fix generation returned an empty completion"
-			continue
-		}
-		f.Fix = fix
-		f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(f *reconcile.JSONFinding) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			snippet := readFixSnippet(ctx, disp, f.File, f.Line)
+			prompt := buildFixPrompt(*f, snippet, ex.Persona)
+			out, err := callExecutor(ctx, complete, prov, ex, prompt, sharedTimeoutSecs)
+			if err != nil {
+				logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
+				f.FixWarning = "fix generation failed: " + err.Error()
+				return
+			}
+			fix := strings.TrimSpace(out)
+			if fix == "" {
+				logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+				f.FixWarning = "fix generation returned an empty completion"
+				return
+			}
+			f.Fix = fix
+			// Clear any warning a prior failed/empty run left on this finding so it
+			// never carries both a valid Fix and a stale "fix is absent" warning.
+			f.FixWarning = ""
+			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
+		}(f)
 	}
+	wg.Wait()
 }
 
-// callExecutor invokes the executor model for one finding, applying the optional
-// per-fix timeout (fix_timeout) as a context deadline scoped to this single call.
-func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string) (string, error) {
-	callCtx := ctx
-	if ex.TimeoutSecs != nil && *ex.TimeoutSecs > 0 {
-		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, time.Duration(*ex.TimeoutSecs)*time.Second)
-		defer cancel()
-	}
+// callExecutor invokes the executor model for one finding, applying a per-call
+// deadline scoped to this single call. The deadline is the executor's own
+// fix_timeout when set, otherwise the resolved shared verify timeout (600s
+// default) — see ExecutorConfig.EffectiveExecutorTimeoutSecs. It is applied
+// unconditionally so a default executor (nil fix_timeout) against a hung provider
+// cannot block the verify run unbounded.
+func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, error) {
+	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
+	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
 	return complete.Complete(callCtx, llmclient.Invocation{
 		BaseURL:   prov.BaseURL,
 		APIKeyEnv: prov.APIKeyEnv,
@@ -123,7 +167,7 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 // returns "" (best-effort) when the dispatcher is unavailable, the file is empty,
 // or the read fails — the executor then works from the finding text alone.
 func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int) string {
-	if disp == nil || strings.TrimSpace(file) == "" {
+	if disp == nil {
 		return ""
 	}
 	start := line - fixSnippetRadius
@@ -137,10 +181,12 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 		EndLine   int    `json:"end_line"`
 	}{Path: file, StartLine: start, EndLine: end})
 	if err != nil {
+		logPipelineWarning(log.FromContext(ctx), "fix_snippet_unavailable", fmt.Sprintf("%s:%d: %v", file, line, err))
 		return ""
 	}
 	res, err := disp.Execute(ctx, "read_file", args)
 	if err != nil {
+		logPipelineWarning(log.FromContext(ctx), "fix_snippet_unavailable", fmt.Sprintf("%s:%d: %v", file, line, err))
 		return ""
 	}
 	return res.Content
@@ -149,6 +195,15 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 // buildFixPrompt renders the executor prompt for one finding: a fix-focused persona
 // instruction, the finding metadata, the reviewer's existing fix suggestion (when
 // present, to refine rather than reinvent), and the source snippet (when available).
+//
+// Untrusted-data boundary: persona, the finding fields (Problem, Fix), and the
+// source snippet are all interpolated verbatim into this single prompt string —
+// llmclient.Invocation carries no role separation, so there is no structured way to
+// fence them. The persona is sanitized at load (validateExecutor rejects control
+// characters and caps length) to block CR/LF prompt-line forgery; the finding text
+// and snippet are reviewer/repo-derived data, not instructions. Blast radius is
+// bounded: the registry is self-authored and the output only lands in the Fix
+// column (it is never executed), so this is documented rather than actively escaped.
 func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
 	if strings.TrimSpace(persona) == "" {
 		persona = registry.DefaultExecutorPersona
@@ -165,15 +220,30 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet, persona string) string {
 	return b.String()
 }
 
+// hasFixAttribution reports whether evidence already carries this executor's
+// "fix by <name>" attribution as a delimited "; "-separated token. Matching a
+// whole token rather than a raw substring prevents a name that is a strict prefix
+// of another ("op" vs "opus") — or unrelated evidence prose containing
+// "fix by <name>" mid-sentence — from being falsely treated as already-attributed.
+func hasFixAttribution(evidence, name string) bool {
+	attr := fixAttributionPrefix + name
+	for _, seg := range strings.Split(evidence, "; ") {
+		if strings.TrimSpace(seg) == attr {
+			return true
+		}
+	}
+	return false
+}
+
 // appendFixAttribution appends "fix by <name>" to a finding's Evidence, joining
 // with the existing separator. It is idempotent: an Evidence already carrying the
-// attribution is returned unchanged.
+// attribution as a delimited token is returned unchanged.
 func appendFixAttribution(evidence, name string) string {
 	attr := fixAttributionPrefix + name
 	if strings.TrimSpace(evidence) == "" {
 		return attr
 	}
-	if strings.Contains(evidence, attr) {
+	if hasFixAttribution(evidence, name) {
 		return evidence
 	}
 	return evidence + "; " + attr

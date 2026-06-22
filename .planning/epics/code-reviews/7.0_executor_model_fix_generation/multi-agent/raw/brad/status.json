@@ -1,0 +1,6 @@
+{
+  "agent_name": "brad",
+  "model": "openai/qwen-3.7-plus",
+  "status": "ok",
+  "duration_ms": 191678
+}
