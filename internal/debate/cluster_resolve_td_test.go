@@ -81,3 +81,28 @@ func TestFilterMergedClusters_LocationFallbackSuppressesDriftedProblem(t *testin
 	}, clusterIdx)
 	require.Empty(t, out, "a drifted gray-zone item at a merged location must be suppressed by location fallback")
 }
+
+// TestApplyOneClusterMerge_EmptyClusterIDIsNoOp pins the construction invariant
+// that a gray-zone cluster always carries a stable AmbiguousCluster.ID (a non-
+// empty sha256 hex). A cluster with a blank ID — reachable only via a hand-edited
+// or corrupt ambiguous.json — must NOT produce a ClusterMerged survivor: such a
+// survivor carries an empty ClusterID, which filterMergedClusters treats as a
+// legacy record and never suppresses, so the cluster would be re-debated every
+// run with no way to self-heal. applyOneClusterMerge must refuse the merge.
+func TestApplyOneClusterMerge_EmptyClusterIDIsNoOp(t *testing.T) {
+	c := grayCluster("", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
+		grayFinding("a.go", 10, "beta problem text", "HIGH", "bob"),
+	}
+
+	out, ok := applyOneClusterMerge(findings, c)
+	require.False(t, ok, "a cluster with an empty ID must not be applied")
+	require.Len(t, out, 2, "no records may be unioned when the merge is refused")
+	for _, f := range out {
+		assert.False(t, f.ClusterMerged, "no survivor may be flagged cluster_merged")
+		assert.Empty(t, f.ClusterID, "no survivor may carry a ClusterID")
+	}
+}
