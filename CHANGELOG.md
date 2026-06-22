@@ -1,3 +1,15 @@
+## [7.3.0] - 2026-06-22
+
+Shipped a maintained GitHub Action that runs the atcr panel on a pull request and surfaces findings where developers work — a PR check that gates the merge and, optionally, inline comments rendering the suggested fix.
+
+### Added
+
+- A composite GitHub Action (`action.yml`) that builds atcr, runs `atcr review` + `atcr reconcile` on a pull request, and posts the result as a PR check honoring `--fail-on`, with opt-in inline comments. Context and inputs flow through `env:` to avoid Actions script injection.
+- `atcr github` subcommand: renders reconciled findings onto a pull request as a check run (with a findings table and a pass/fail conclusion), and — behind the default-off `--inline-comments` toggle — posts inline comments formatted "ATCR found: <problem>. Fix: <fix>. Suggested by: <executor>", parsing the executor from the finding's evidence attribution token.
+- `docs/github-action.md` documenting usage, inputs, required permissions, the `fetch-depth: 0` requirement, and a manual real-PR smoke-test procedure; referenced from `docs/ci-integration.md`.
+
+*Shipped via /execute-epic (epic 7.3)*
+
 ## [7.2.0] - 2026-06-22
 
 Consolidated the two divergent disagreement-radar renderers into a single shared, parameterized implementation, eliminating the risk of escaping/formatting drift between the reconciled and display report paths. Rendered output is unchanged.
