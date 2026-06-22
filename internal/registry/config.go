@@ -135,9 +135,8 @@ type VerifyConfig struct {
 // references a key in providers:; Model is the model id; Persona defaults to
 // "fixer". MinSeverity (yaml: min_severity_for_fix) is the severity floor a
 // verified finding must meet to receive a fix (default MEDIUM, normalized to
-// canonical upper-case at load). BatchFixes is parsed but the MVP generates fixes
-// per-finding (Open-Q2 Option A), so it defaults false. TimeoutSecs (yaml:
-// fix_timeout) is a pointer so an explicit value is distinguishable from unset.
+// canonical upper-case at load). TimeoutSecs (yaml: fix_timeout) is a pointer so
+// an explicit value is distinguishable from unset.
 type ExecutorConfig struct {
 	Name        string `yaml:"name,omitempty"`
 	Provider    string `yaml:"provider"`
@@ -145,7 +144,6 @@ type ExecutorConfig struct {
 	Persona     string `yaml:"persona,omitempty"`
 	Role        string `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
 	MinSeverity string `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
-	BatchFixes  bool   `yaml:"batch_fixes,omitempty"`          // MVP is per-finding; reserved for batched generation
 	TimeoutSecs *int   `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
 }
 

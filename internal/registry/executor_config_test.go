@@ -54,7 +54,6 @@ executor:
 	assert.Equal(t, RoleExecutor, reg.Executor.Role, "role defaults to executor")
 	assert.Equal(t, DefaultExecutorPersona, reg.Executor.Persona, "persona defaults to fixer")
 	assert.Equal(t, DefaultFixMinSeverity, reg.Executor.MinSeverity, "min_severity_for_fix defaults to MEDIUM")
-	assert.False(t, reg.Executor.BatchFixes, "batch_fixes defaults to false (per-finding MVP)")
 }
 
 func TestExecutor_MinSeverityForFixExplicitAndNormalized(t *testing.T) {

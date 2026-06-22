@@ -275,7 +275,6 @@ executor:
   persona: fixer               # default: fixer
   role: executor               # must be "executor" (defaulted)
   min_severity_for_fix: MEDIUM # fix floor: LOW | MEDIUM | HIGH | CRITICAL (default MEDIUM)
-  batch_fixes: false           # MVP generates fixes one finding at a time
   fix_timeout: 120             # optional per-fix timeout (seconds)
 ```
 
@@ -287,7 +286,6 @@ executor:
 | `persona` | `fixer` | Persona token used in the executor prompt. |
 | `role` | `executor` | Must be `executor` if set; any other value is a load error. |
 | `min_severity_for_fix` | `MEDIUM` | A finding is fixed only when its severity is at or above this floor. Normalized to upper-case; a non-canonical value is a load error. |
-| `batch_fixes` | `false` | Parsed; the MVP generates fixes per-finding. Reserved for batched generation. |
 | `fix_timeout` | inherit | Optional per-fix timeout in seconds; a non-positive or out-of-range value is a load error. |
 
 A fix is generated only for a finding that is **HIGH-or-better confidence** (so a `VERIFIED` finding — one a skeptic confirmed — is included) **AND** at or above `min_severity_for_fix`. The executor reads a snippet of the cited code from the review snapshot for context, then writes a minimal fix into the finding's `fix` column and appends `fix by <name>` to its `evidence` (no new column is added). Generation is idempotent per executor: a re-run does not re-fix an already-attributed finding. A failed or empty completion leaves the reviewer's own fix suggestion in place and never fails the run.
