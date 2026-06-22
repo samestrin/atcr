@@ -649,3 +649,29 @@ func TestWriteRadarSection_EmptyWritesNothing(t *testing.T) {
 	WriteRadarSection(&b, DisagreementsFile{}, esc)
 	assert.Empty(t, b.String(), "no items → no output")
 }
+
+// TestWriteRadarItems_TextRendererControlsTruncation pins AC4: the single
+// intentional difference between the reconciled (verbatim) and display
+// (truncated) radar renderers is the injected text renderer. The reconciled path
+// passes esc (full body); the display path passes report.escTrunc (500-rune cap).
+func TestWriteRadarItems_TextRendererControlsTruncation(t *testing.T) {
+	long := strings.Repeat("A", 600)
+	item := DisagreementItem{
+		Kind: KindSoloFinding, File: "x.go", Line: 1, Severity: "HIGH",
+		Problem: long, Independence: 1, Reviewers: []string{"a"},
+	}
+
+	var verbatim, truncated bytes.Buffer
+	WriteRadarItems(&verbatim, []DisagreementItem{item}, "### ", esc)
+	WriteRadarItems(&truncated, []DisagreementItem{item}, "### ", func(s string) string {
+		r := []rune(s)
+		if len(r) > 80 {
+			return string(r[:80]) + "..."
+		}
+		return s
+	})
+
+	assert.Contains(t, verbatim.String(), long, "esc renderer keeps the full body verbatim")
+	assert.NotContains(t, truncated.String(), long, "a truncating renderer shortens the body")
+	assert.Contains(t, truncated.String(), "...", "truncating renderer appends an ellipsis")
+}
