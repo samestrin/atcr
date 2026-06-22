@@ -1,6 +1,7 @@
 package debate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -271,4 +273,33 @@ func TestRunDebate_GrayZoneMergeLeavesAdjudicationArtifactsUntouched(t *testing.
 		_, statErr := os.Stat(filepath.Join(dir, reconciledSubdir, name))
 		assert.True(t, os.IsNotExist(statErr), "debate must not create the authored-path artifact %s", name)
 	}
+}
+
+// TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn: a single-member gray-zone
+// cluster is structurally unmergeable (a merge needs at least two members). The
+// merge must be a silent no-op and must NOT be reported as a ruling that "could
+// not be applied", which would mislead operators.
+func TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		grayFinding("a.go", 10, "only member", "MEDIUM", "alice"),
+	}
+	cluster := reconcile.AmbiguousCluster{
+		ID: "amb-1", File: "a.go", Line: 10, Similarity: 0.5,
+		Findings: []stream.Finding{
+			{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "only member", Reviewer: "alice"},
+		},
+	}
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	var buf bytes.Buffer
+	logger, err := log.New("warn", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
+	_, err = runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.NotContains(t, buf.String(), "could not be applied",
+		"single-member cluster must not trigger the 'could not be applied' warning")
 }
