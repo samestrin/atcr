@@ -73,9 +73,11 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // re-debated rather than silently dropped.
 func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
 	mergedIDs := map[string]bool{}
+	mergedAtLoc := map[string]bool{}
 	for _, f := range findings {
 		if f.ClusterMerged && f.ClusterID != "" {
 			mergedIDs[f.ClusterID] = true
+			mergedAtLoc[locationKey(f.File, f.Line)] = true
 		}
 	}
 	if len(mergedIDs) == 0 {
@@ -84,8 +86,18 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 	out := make([]reconcile.DisagreementItem, 0, len(items))
 	for _, it := range items {
 		if it.Kind == reconcile.KindGrayZone {
-			if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok && mergedIDs[c.ID] {
+			key := FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
+			if c, ok := clusterIdx[key]; ok && mergedIDs[c.ID] {
 				continue
+			}
+			// Fallback for the drift case: the representative problem changed so the
+			// item no longer matches clusterIdx, but a merged survivor with a real
+			// ClusterID sits at the same location. Conservatively suppress rather than
+			// re-debate a cluster that has already been applied.
+			if clusterIdx != nil {
+				if _, ok := clusterIdx[key]; !ok && mergedAtLoc[locationKey(it.File, it.Line)] {
+					continue
+				}
 			}
 		}
 		out = append(out, it)
