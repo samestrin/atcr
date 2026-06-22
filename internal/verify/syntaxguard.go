@@ -39,11 +39,14 @@ var fenceRe = regexp.MustCompile("(?sm)`{3,}([A-Za-z0-9_+#-]*)[ \t]*\n(.*?)\n?[ 
 // than prose. Anchored per-line via the multiline flag.
 var declKeywordRe = regexp.MustCompile(`(?m)^\s*(package|import|func|type|var|const)\b`)
 
-// blockOpenRe matches a line whose last non-whitespace character is an opening
-// brace (e.g. "func add() {", "if x != nil {"). This is block structure prose
-// almost never produces — unlike an inline "&Options{Retries: 3}" where the brace
-// sits mid-line — so it is a reliable code signal.
-var blockOpenRe = regexp.MustCompile(`(?m)\{[ \t]*$`)
+// blockOpenRe matches a line whose last non-whitespace character is a single opening
+// brace introducing a block (e.g. "func add() {", "if x != nil {"). The line is
+// anchored from start through a run of non-brace content to one trailing brace, so a
+// line carrying an inner brace ("foo{bar{") or an inline "&Options{Retries: 3}" with
+// the brace mid-line is NOT matched — block structure prose almost never produces, so
+// it stays a reliable code signal without over-matching any line that merely ends in
+// a brace.
+var blockOpenRe = regexp.MustCompile(`(?m)^[ \t]*[^{]*\{[ \t]*$`)
 
 // blockCloseRe matches a line that begins with a closing brace (e.g. "}",
 // "} else {"). Same rationale as blockOpenRe.
