@@ -59,6 +59,10 @@ const (
 const (
 	DefaultExecutorPersona = "fixer"
 	DefaultFixMinSeverity  = "MEDIUM"
+	// MaxExecutorPersonaLen caps the executor persona length. The persona is
+	// interpolated verbatim into the fix-generation prompt, so an over-long value
+	// is bounded at load to limit prompt-stuffing by untrusted free text.
+	MaxExecutorPersonaLen = 512
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
