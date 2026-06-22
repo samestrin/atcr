@@ -266,6 +266,23 @@ func TestGenerateFixes_BoundedByMaxParallel(t *testing.T) {
 	assert.Greater(t, peak, 0, "fixes should have been generated")
 }
 
+// TestGenerateFixes_StopsOnCanceledContext proves the dispatch loop bails as soon
+// as the context is canceled instead of grinding through every remaining finding.
+// With a pre-canceled context no executor round-trip should be entered at all.
+func TestGenerateFixes_StopsOnCanceledContext(t *testing.T) {
+	findings := make([]reconcile.JSONFinding, 4)
+	for i := range findings {
+		findings[i] = reconcile.JSONFinding{
+			Severity: "HIGH", File: "a.go", Line: i + 1, Problem: "p", Confidence: ConfidenceVerified,
+		}
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before generation starts
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher())
+	assert.Equal(t, 0, rec.calls, "a canceled context must stop fix generation before any executor call")
+}
+
 // swapExecutorClient overrides the package executor-client seam and returns a
 // restore func, so an integration test can inject a scripted completer.
 func swapExecutorClient(fn func() executorCompleter) func() {
