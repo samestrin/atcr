@@ -81,4 +81,17 @@ func TestBuildCheckOutput(t *testing.T) {
 		out := BuildCheckOutput(nil, "HIGH")
 		assert.Contains(t, strings.ToLower(out.Title), "no findings")
 	})
+
+	t.Run("oversized text is truncated below the GitHub limit", func(t *testing.T) {
+		many := make([]reconcile.JSONFinding, 4000)
+		for i := range many {
+			many[i] = reconcile.JSONFinding{
+				Severity: "LOW", File: "internal/some/very/long/path/to/a/file.go", Line: i,
+				Problem: "a reasonably detailed problem statement that takes up space", Confidence: "LOW",
+			}
+		}
+		out := BuildCheckOutput(many, "HIGH")
+		assert.LessOrEqual(t, len(out.Text), maxCheckTextBytes)
+		assert.Contains(t, out.Text, "truncated")
+	})
 }
