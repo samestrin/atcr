@@ -83,6 +83,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 	sem := make(chan struct{}, maxPar)
 	var wg sync.WaitGroup
 	for i := range findings {
+		// Bail promptly on cancellation: without this the loop keeps enqueuing
+		// every remaining finding even after ctx is done, and a nil fix_timeout
+		// can leave each callExecutor blocked on a provider that ignores ctx.
+		if ctx.Err() != nil {
+			break
+		}
 		f := &findings[i]
 		if !reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) {
 			continue
