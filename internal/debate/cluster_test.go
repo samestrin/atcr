@@ -303,3 +303,31 @@ func TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn(t *testing.T) {
 	assert.NotContains(t, buf.String(), "could not be applied",
 		"single-member cluster must not trigger the 'could not be applied' warning")
 }
+
+// TestRunDebate_CorruptAmbiguousJSONLogsWarning: a present-but-unparseable
+// ambiguous.json must be logged at WARN so the operator knows gray-zone merge
+// rulings are being dropped, rather than silently degrading to zero clusters.
+func TestRunDebate_CorruptAmbiguousJSONLogsWarning(t *testing.T) {
+	// No selectable findings — we only want to assert the ambiguous.json warning.
+	findings := []reconcile.JSONFinding{
+		{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "x", Reviewers: []string{}},
+	}
+	cluster := grayCluster("amb-1", "a.go", 10, "a", "MEDIUM", "alice", "b", "MEDIUM", "bob")
+	dir := reviewDirWithGray(t, findings, cluster)
+
+	// Corrupt the sidecar after the helper wrote a valid one.
+	ambPath := filepath.Join(dir, reconciledSubdir, reconcile.AmbiguousJSON)
+	require.NoError(t, os.WriteFile(ambPath, []byte("not-json"), 0o644))
+
+	var buf bytes.Buffer
+	logger, err := log.New("warn", "text", &buf)
+	require.NoError(t, err)
+	ctx := log.NewContext(context.Background(), logger)
+
+	cc := &fakeChatCompleter{turns: []chatTurn{}}
+	_, err = runDebate(ctx, dir, debateRoster(), Options{}, harness(cc))
+	require.NoError(t, err)
+
+	assert.Contains(t, buf.String(), "ambiguous.json unreadable", "corrupt ambiguous.json must be logged")
+	assert.Contains(t, buf.String(), "gray-zone merges disabled", "warning must explain the consequence")
+}
