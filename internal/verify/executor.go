@@ -212,13 +212,14 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 // Untrusted-data boundary: the framing (persona or system_prompt), rules, the
 // finding fields (Problem, Fix), and the source snippet are all interpolated
 // verbatim into this single prompt string — llmclient.Invocation carries no role
-// separation, so there is no structured way to fence them. Persona and each rule are
+// separation, so there is no structured API to fence them. Persona and each rule are
 // sanitized at load (validateExecutor rejects control characters and caps length) to
 // block CR/LF prompt-line forgery; system_prompt is length-capped (multi-line framing
-// is legitimate there). The finding text and snippet are reviewer/repo-derived data,
-// not instructions. Blast radius is bounded: the registry is self-authored and the
-// output only lands in the Fix column (it is never executed), so this is documented
-// rather than actively escaped.
+// is legitimate there). A --- delimiter is written between the instruction section
+// (framing + rules) and the finding data so crafted finding text cannot blur the
+// instruction context. The finding text and snippet are reviewer/repo-derived data,
+// not instructions; blast radius is bounded because the output only lands in the Fix
+// column (it is never executed).
 func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.ExecutorConfig) string {
 	if ex == nil {
 		return ""
