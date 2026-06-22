@@ -154,11 +154,17 @@ func callExecutor(ctx context.Context, complete executorCompleter, prov registry
 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
+	// Temperature is sent on every executor call (Epic 7.0.1): the resolver supplies
+	// the deterministic 0.0 default when temperature is unset, so fixes are
+	// predictable rather than inheriting the provider's own (often higher) default.
+	// Bind to a local so its address outlives this expression.
+	temp := ex.EffectiveExecutorTemperature()
 	return complete.Complete(callCtx, llmclient.Invocation{
-		BaseURL:   prov.BaseURL,
-		APIKeyEnv: prov.APIKeyEnv,
-		Model:     ex.Model,
-		Prompt:    prompt,
+		BaseURL:     prov.BaseURL,
+		APIKeyEnv:   prov.APIKeyEnv,
+		Model:       ex.Model,
+		Temperature: &temp,
+		Prompt:      prompt,
 	})
 }
 
