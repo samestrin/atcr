@@ -220,6 +220,9 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 // output only lands in the Fix column (it is never executed), so this is documented
 // rather than actively escaped.
 func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.ExecutorConfig) string {
+	if ex == nil {
+		return ""
+	}
 	var b strings.Builder
 	if sp := strings.TrimSpace(ex.SystemPrompt); sp != "" {
 		// Custom framing fully replaces the default; persona is superseded.
