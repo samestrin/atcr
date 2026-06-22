@@ -226,10 +226,9 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 		b.WriteString(sp)
 		b.WriteString("\n\n")
 	} else {
-		persona := ex.Persona
-		if strings.TrimSpace(persona) == "" {
-			persona = registry.DefaultExecutorPersona
-		}
+		// applyDefaults already resolves an empty persona to DefaultExecutorPersona at
+		// registry load, so buildFixPrompt should not re-derive it here.
+		persona := strings.TrimSpace(ex.Persona)
 		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
 	}
 	if len(ex.Rules) > 0 {
