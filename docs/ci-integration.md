@@ -39,3 +39,23 @@ Notes:
 ```
 
 Shallow checkouts (`fetch-depth: 1`) break merge-base resolution; atcr detects this and says so rather than producing a wrong range.
+
+## Maintained PR Action
+
+For a first-class pull-request surface — a PR **check** with a findings table
+and opt-in **inline comments** rendering the `FIX` column — use the maintained
+composite Action (`action.yml` at the repo root) instead of hand-wiring the
+steps above:
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }
+- uses: samestrin/atcr@v1
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    fail-on: high
+    inline-comments: true
+```
+
+See [github-action.md](github-action.md) for inputs, required permissions, and a
+manual smoke-test procedure.

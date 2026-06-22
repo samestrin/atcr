@@ -1,0 +1,106 @@
+name: 'ATCR PR Review'
+description: 'Run atcr multi-model review on a pull request and surface findings as a PR check and optional inline comments.'
+author: 'samestrin'
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+inputs:
+  openrouter-api-key:
+    description: 'OpenRouter API key used by `atcr review` (store as a repository secret).'
+    required: true
+  fail-on:
+    description: 'Severity threshold for the merge gate (CRITICAL, HIGH, MEDIUM, LOW). Leave empty for an informational, non-blocking check.'
+    required: false
+    default: 'high'
+  inline-comments:
+    description: 'Post inline PR review comments in addition to the check run (default: check + artifacts only).'
+    required: false
+    default: 'false'
+  base-ref:
+    description: 'Git ref to diff against. Defaults to origin/<the PR base branch>.'
+    required: false
+    default: ''
+  check-name:
+    description: 'Name of the GitHub check run.'
+    required: false
+    default: 'atcr'
+  github-token:
+    description: 'Token used to post the check run and comments. Needs checks:write and, for --inline-comments, pull-requests:write.'
+    required: false
+    default: ${{ github.token }}
+  go-version:
+    description: 'Go toolchain version used to build the atcr binary.'
+    required: false
+    default: '1.25'
+
+runs:
+  using: 'composite'
+  steps:
+    # Build atcr from the action's own checkout (github.action_path), not the
+    # consumer repo. The binary then runs against the consumer checkout below.
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    # Context/inputs are passed through `env:` and referenced as quoted shell
+    # variables — never interpolated directly into `run:` — to close the GitHub
+    # Actions script-injection class (e.g. a crafted branch name or input).
+    - name: Build atcr
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        ATCR_BIN: ${{ github.action_path }}/bin/atcr
+      run: go build -o "$ATCR_BIN" ./cmd/atcr
+
+    # Run the review against the consumer's checkout (github.workspace). The
+    # consumer workflow MUST check out with fetch-depth: 0 so atcr can resolve
+    # the merge-base; a shallow checkout breaks range resolution.
+    - name: atcr review
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
+        ATCR_BIN: ${{ github.action_path }}/bin/atcr
+        BASE_REF_INPUT: ${{ inputs.base-ref }}
+        PR_BASE_REF: ${{ github.base_ref }}
+      run: |
+        BASE_REF="$BASE_REF_INPUT"
+        if [ -z "$BASE_REF" ]; then BASE_REF="origin/$PR_BASE_REF"; fi
+        "$ATCR_BIN" review --base "$BASE_REF"
+
+    - name: atcr reconcile
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        ATCR_BIN: ${{ github.action_path }}/bin/atcr
+      run: |
+        "$ATCR_BIN" reconcile
+
+    # Render onto the PR. The gate rides this step's exit code (atcr github
+    # exits 1 when findings at/above --fail-on survive), so a failing gate fails
+    # the job — the merge-blocking check.
+    - name: atcr github
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ATCR_BIN: ${{ github.action_path }}/bin/atcr
+        REPO: ${{ github.repository }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        CHECK_NAME: ${{ inputs.check-name }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        INLINE: ${{ inputs.inline-comments }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        ARGS=(github --repo "$REPO" --sha "$HEAD_SHA" --check-name "$CHECK_NAME")
+        if [ -n "$FAIL_ON" ]; then
+          ARGS+=(--fail-on "$FAIL_ON")
+        fi
+        if [ "$INLINE" = "true" ]; then
+          ARGS+=(--inline-comments --pr "$PR_NUMBER")
+        fi
+        "$ATCR_BIN" "${ARGS[@]}"
