@@ -295,6 +295,24 @@ func TestBuildFixPrompt_DefaultFramingWhenNoSystemPrompt(t *testing.T) {
 		"default framing retained when no system_prompt override")
 }
 
+// buildFixPrompt must not duplicate the registry's default-persona resolution:
+// applyDefaults already sets Executor.Persona, so an empty Persona should stay
+// empty rather than be silently replaced by DefaultExecutorPersona again.
+func TestBuildFixPrompt_DoesNotReDeriveDefaultPersona(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM")
+	ex.Persona = "" // simulate the loaded-registry invariant: applyDefaults fills this
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.prompts, 1)
+	assert.NotContains(t, rec.prompts[0], "You are fixer",
+		"buildFixPrompt must not re-derive the default persona")
+	assert.Contains(t, rec.prompts[0], "You are , a code-fix executor",
+		"empty persona is rendered verbatim instead of being silently defaulted")
+}
+
 // blockingExecutor records the peak number of Complete calls in flight at once.
 // Every call announces its arrival on `arrived`, then parks on `release` so all
 // concurrent calls pile up before any return — letting a test observe true peak
