@@ -70,23 +70,40 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 	if len(mergedIDs) == 0 {
 		return items
 	}
-	out := make([]reconcile.DisagreementItem, 0, len(items))
-	for _, it := range items {
+	// The typical re-run suppresses 0-1 of N items, so out is allocated lazily on
+	// the first suppression and back-filled with the already-kept prefix. When no
+	// item is suppressed the original slice is returned without an allocation or
+	// copy.
+	var out []reconcile.DisagreementItem
+	for i, it := range items {
+		suppress := false
 		if it.Kind == reconcile.KindGrayZone {
 			key := FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
 			c, ok := clusterIdx[key]
-			if ok && mergedIDs[c.ID] {
-				continue
-			}
-			// Fallback for the drift case: the representative problem changed so the
-			// item no longer matches clusterIdx, but a merged survivor with a real
-			// ClusterID sits at the same location. Conservatively suppress rather than
-			// re-debate a cluster that has already been applied.
-			if !ok && clusterIdx != nil && mergedAtLoc[locationKey(it.File, it.Line)] {
-				continue
+			switch {
+			case ok && mergedIDs[c.ID]:
+				suppress = true
+			case !ok && clusterIdx != nil && mergedAtLoc[locationKey(it.File, it.Line)]:
+				// Fallback for the drift case: the representative problem changed so the
+				// item no longer matches clusterIdx, but a merged survivor with a real
+				// ClusterID sits at the same location. Conservatively suppress rather than
+				// re-debate a cluster that has already been applied.
+				suppress = true
 			}
 		}
-		out = append(out, it)
+		if suppress {
+			if out == nil {
+				out = make([]reconcile.DisagreementItem, 0, len(items))
+				out = append(out, items[:i]...)
+			}
+			continue
+		}
+		if out != nil {
+			out = append(out, it)
+		}
+	}
+	if out == nil {
+		return items
 	}
 	return out
 }
