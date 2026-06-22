@@ -95,8 +95,10 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 	writeSummaryGrid(&b, findings, verified)
 
 	// Disagreement radar above the consensus findings (Epic 3.2). Empty df →
-	// nothing written → output identical to the plain report.
-	writeRadarSection(&b, df)
+	// nothing written → output identical to the plain report. The display report
+	// passes escTrunc (500-rune cap) to the shared reconcile renderer; the
+	// reconciled report.md passes esc (verbatim) through the same code path.
+	reconcile.WriteRadarSection(&b, df, escTrunc)
 
 	// Contested-findings section (Epic 6.0): judge rulings over debated disputes.
 	// Empty cr → nothing written → output identical to the pre-6.0 report.
