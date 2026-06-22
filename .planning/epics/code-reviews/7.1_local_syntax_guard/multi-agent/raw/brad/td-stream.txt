@@ -1,1 +1,2 @@
-MEDIUM|internal/verify/executor.go:144|Parser error includes empty filename prefix causing messy warning|Trim leading colon from synErr.Error() before concatenation|maintainability|5|synErr.Error() yields ":2:1: expected...", resulting in "invalid_syntax: :2:1:..."|bruce
+LOW|internal/verify/syntaxguard.go:47|fenceRe regex rejects valid markdown fences with trailing spaces after language tag|Add optional whitespace \s* before newline in regex|correctness|5|regex expects \n immediately after [A-Za-z0-9_+-]*|bruce
+LOW|internal/verify/syntaxguard_test.go:72|Test comment claims := triggers flag, but looksLikeGoCode actually flags via trailing brace|Update comment to reflect actual heuristic trigger|maintainability|2|comment says := is signal, code uses blockOpenRe|bruce

@@ -2,5 +2,5 @@
   "agent_name": "mira",
   "model": "minimax-m3-mira",
   "status": "ok",
-  "duration_ms": 283165
+  "duration_ms": 139079
 }
