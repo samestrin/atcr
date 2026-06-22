@@ -374,7 +374,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 		File:         c.File,
 		Line:         c.Line,
 		Severity:     maxSev,
-		Problem:      longestProblem(c.Findings),
+		Problem:      ClusterDisplayProblem(c.Findings),
 		Score:        score,
 		Spread:       spread,
 		Independence: indep,
@@ -384,9 +384,13 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 	}
 }
 
-// longestProblem returns the longest PROBLEM in the cluster (a stable, content-
-// based representative of the contested location).
-func longestProblem(findings []stream.Finding) string {
+// ClusterDisplayProblem returns the longest PROBLEM among a cluster's members — a
+// stable, content-based representative of the contested location. It is the single
+// source of truth for a gray-zone cluster's display problem: grayZoneItem stamps the
+// radar item's Problem with it and debate.indexClusters keys clusters by it, so the
+// two never drift (the coupling formerly split across reconcile.longestProblem and
+// debate.clusterDisplayProblem).
+func ClusterDisplayProblem(findings []stream.Finding) string {
 	best := ""
 	for _, f := range findings {
 		if len(f.Problem) > len(best) {

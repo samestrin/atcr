@@ -1,3 +1,19 @@
+## [Technical Debt] - 2026-06-21
+
+### Fixed
+
+- Hardened `filterMergedClusters` against empty `ClusterID` lookups and added debug logging of suppressed-item counts.
+- Refused empty-ID cluster merges in `applyOneClusterMerge` to prevent re-debate loops on malformed clusters.
+- Collapsed duplicated `clusterDisplayProblem` logic into a single `reconcile.ClusterDisplayProblem` helper and added a round-trip test to pin the coupling.
+- Added a location-keyed fallback for drifted gray-zone items so merged clusters stay merged even when the representative problem text diverges.
+- Detected colliding display keys in `indexClusters` with a sentinel so distinct clusters sharing the same canonical key no longer overwrite each other.
+- Avoided empty cluster-index allocation and documented nil-safety for `filterMergedClusters`.
+- Extended `filterMergedClusters` tests to cover mixed legacy/new-ID survivor cases and separate-ruling `ClusterID` absence.
+- Updated `JSONFinding` type docs to reflect the additive `cluster_id`/`cluster_merged` schema extensions and cross-referenced the `ClusterID` field scope.
+- Pinned the reconcile-path-never-stamps-cluster-fields invariant with a test to guard AC1 byte-identity.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [6.2.0] - 2026-06-21
 
 ### Added

@@ -1,10 +1,17 @@
 package debate
 
 import (
+	"context"
 	"strconv"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
+
+// collisionSentinelID is stored in indexClusters when two distinct clusters share
+// the same File+Line+display-problem key. It prevents a gray-zone item from
+// resolving to an arbitrary cluster ID in that collision case.
+const collisionSentinelID = "atcr:collision"
 
 // locationKey is the file+line identity used to correlate a gray-zone cluster's
 // members to their findings.json records. It is intentionally coarser than
@@ -15,19 +22,6 @@ func locationKey(file string, line int) string {
 	return file + "\x00" + strconv.Itoa(line)
 }
 
-// clusterDisplayProblem returns the longest PROBLEM among a cluster's members —
-// the same representative BuildDisagreements writes as the gray-zone radar item's
-// Problem, so a debated DisagreementItem can be correlated back to its cluster.
-func clusterDisplayProblem(c reconcile.AmbiguousCluster) string {
-	best := ""
-	for _, f := range c.Findings {
-		if len(f.Problem) > len(best) {
-			best = f.Problem
-		}
-	}
-	return best
-}
-
 // indexClusters maps each gray-zone cluster by the identity its radar item
 // carries — File + Line + longest-member-problem — so a debated gray-zone
 // DisagreementItem (it.File, it.Line, it.Problem) resolves to the AmbiguousCluster
@@ -35,7 +29,15 @@ func clusterDisplayProblem(c reconcile.AmbiguousCluster) string {
 func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconcile.AmbiguousCluster {
 	out := make(map[FindingKey]reconcile.AmbiguousCluster, len(clusters))
 	for _, c := range clusters {
-		out[FindingKey{File: c.File, Line: c.Line, Problem: clusterDisplayProblem(c)}] = c
+		key := FindingKey{File: c.File, Line: c.Line, Problem: reconcile.ClusterDisplayProblem(c.Findings)}
+		if _, exists := out[key]; exists {
+			// Two distinct clusters share the same display key. Trust neither ID for
+			// identity-keyed suppression or merge application; let both items pass
+			// through and re-debate (an idempotent no-op for the merged one).
+			out[key] = reconcile.AmbiguousCluster{ID: collisionSentinelID}
+			continue
+		}
+		out[key] = c
 	}
 	return out
 }
@@ -58,25 +60,64 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // guard) and self-heals as soon as it is re-stamped. An item whose cluster is not in
 // clusterIdx (e.g. its representative problem drifted) likewise passes through and is
 // re-debated rather than silently dropped.
-func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
+func filterMergedClusters(ctx context.Context, items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
 	mergedIDs := map[string]bool{}
+	mergedAtLoc := map[string]bool{}
 	for _, f := range findings {
 		if f.ClusterMerged && f.ClusterID != "" {
 			mergedIDs[f.ClusterID] = true
+			mergedAtLoc[locationKey(f.File, f.Line)] = true
 		}
 	}
 	if len(mergedIDs) == 0 {
 		return items
 	}
-	out := make([]reconcile.DisagreementItem, 0, len(items))
-	for _, it := range items {
+	// The typical re-run suppresses 0-1 of N items, so out is allocated lazily on
+	// the first suppression and back-filled with the already-kept prefix. When no
+	// item is suppressed the original slice is returned without an allocation or
+	// copy.
+	var out []reconcile.DisagreementItem
+	suppressed := 0
+	for i, it := range items {
+		suppress := false
 		if it.Kind == reconcile.KindGrayZone {
-			if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok && mergedIDs[c.ID] {
-				continue
+			key := FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
+			c, ok := clusterIdx[key]
+			switch {
+			case ok && c.ID != "" && mergedIDs[c.ID]:
+				// The c.ID != "" guard makes the consumer self-defending: mergedIDs is
+				// built only from non-empty ClusterIDs (line 65), so a future producer
+				// that admitted a blank key upstream can never make every empty-ID
+				// cluster match mergedIDs[""] at once.
+				suppress = true
+			case !ok && clusterIdx != nil && mergedAtLoc[locationKey(it.File, it.Line)]:
+				// Fallback for the drift case: the representative problem changed so the
+				// item no longer matches clusterIdx, but a merged survivor with a real
+				// ClusterID sits at the same location. Conservatively suppress rather than
+				// re-debate a cluster that has already been applied.
+				suppress = true
 			}
 		}
-		out = append(out, it)
+		if suppress {
+			if out == nil {
+				out = make([]reconcile.DisagreementItem, 0, len(items))
+				out = append(out, items[:i]...)
+			}
+			suppressed++
+			continue
+		}
+		if out != nil {
+			out = append(out, it)
+		}
 	}
+	if out == nil {
+		return items
+	}
+	// Surface idempotency suppression so a wrong-ID match or unexpected pass-through
+	// is observable in prod. Emitted only when something was actually suppressed
+	// (out is non-nil iff suppressed > 0), keeping the no-op re-run path silent.
+	log.FromContext(ctx).Debug("debate: suppressed already-merged gray-zone items",
+		"suppressed", suppressed, "items", len(items))
 	return out
 }
 
@@ -148,6 +189,16 @@ func firstClusterRulingCollision(rulings map[FindingKey]ruleApply, clusters []re
 // two matched records, or any matched record already flagged ClusterMerged (a
 // re-run past the radar filter), is a strict no-op rather than a corruption.
 func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, bool) {
+	// Invariant: a gray-zone cluster always carries a stable, content-addressed
+	// AmbiguousCluster.ID (a non-empty sha256 hex) by construction. A blank ID can
+	// only come from a hand-edited or corrupt ambiguous.json. Refuse to stamp a
+	// ClusterMerged survivor with an empty ClusterID: filterMergedClusters would
+	// treat it as a legacy record and never suppress it, so the cluster would be
+	// re-debated every run with no path to self-heal (cluster.go:55-60). A strict
+	// no-op is safer than writing a poisoned survivor.
+	if c.ID == "" {
+		return findings, false
+	}
 	memberExact := map[FindingKey]bool{}
 	memberLocs := map[string]bool{}
 	for _, mf := range c.Findings {

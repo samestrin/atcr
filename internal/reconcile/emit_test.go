@@ -393,6 +393,31 @@ func TestJSONFinding_ClusterIDRoundTrips(t *testing.T) {
 	assert.Contains(t, string(out), `"cluster_id":"amb-1"`)
 }
 
+// TestJSONFindings_ReconcilePathNeverStampsClusterFields locks the AC1 negative
+// invariant from the reconcile side: building a Result and running it through
+// JSONFindings/RenderJSON must emit neither cluster_id nor cluster_merged, since
+// those fields are stamped only by the debate inline-merge path, never at
+// reconcile time. The existing cluster_id tests marshal a hand-built JSONFinding;
+// this one exercises the Result -> JSONFindings -> RenderJSON pipeline so a future
+// maintainer who adds ClusterID to Merged and wires it into JSONFindings trips a
+// reconcile-package test instead of silently breaking byte-identity.
+func TestJSONFindings_ReconcilePathNeverStampsClusterFields(t *testing.T) {
+	res := Result{Findings: []Merged{
+		{Finding: mf("HIGH", "a.go", 1, "p1", "f1", "security", 10, "e1", "greta")},
+		{Finding: mf("LOW", "b.go", 2, "p2", "f2", "style", 1, "e2", "bruce")},
+	}}
+
+	data, err := json.Marshal(res.JSONFindings())
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "cluster_id", "reconcile JSONFindings must never emit cluster_id")
+	assert.NotContains(t, string(data), "cluster_merged", "reconcile JSONFindings must never emit cluster_merged")
+
+	var buf bytes.Buffer
+	require.NoError(t, RenderJSON(&buf, res))
+	assert.NotContains(t, buf.String(), "cluster_id", "RenderJSON must never emit cluster_id")
+	assert.NotContains(t, buf.String(), "cluster_merged", "RenderJSON must never emit cluster_merged")
+}
+
 // TestJSONFindings_CarriesPathSuggestion: a Merged finding's PathSuggestion is
 // carried into the JSON schema and survives a RenderJSON round-trip (AC6).
 func TestJSONFindings_CarriesPathSuggestion(t *testing.T) {
