@@ -383,6 +383,23 @@ executor:
 	assert.Contains(t, err.Error(), "system_prompt")
 }
 
+// system_prompt intentionally allows control characters (including \n for
+// multi-line framing) unlike persona/rules which reject them. This test
+// documents the design decision so a future over-zealous validation guard
+// does not silently break legitimate multi-line system prompts.
+func TestExecutor_SystemPromptControlCharsAccepted(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  system_prompt: |
+    You are a senior Go engineer.
+    Emit only gofmt-clean output.
+    Do not add unasked-for tests.
+`))
+	require.NoError(t, err)
+}
+
 // rules (Epic 7.0.1) is an optional list of coding guidelines appended to the
 // executor context; it is parsed verbatim and the order is preserved.
 func TestExecutor_RulesParsed(t *testing.T) {
