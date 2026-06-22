@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 6 | 1 | 0 |
 | MEDIUM | 9 | 21 | 2 |
-| LOW | 15 | 20 | 73 |
+| LOW | 13 | 20 | 75 |
 
 
-**Last Modified:** 2026-06-22 | **Open Items:** 30 | **Deferred Items:** 42 | **Resolved Items:** 75 | **Total Items:** 147
+**Last Modified:** 2026-06-22 | **Open Items:** 28 | **Deferred Items:** 42 | **Resolved Items:** 77 | **Total Items:** 147
 
 ## Directory Structure
 
@@ -41,7 +41,7 @@ technical-debt/
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
 | 2 | [ ] | LOW | internal/registry/config.go:148 | ExecutorConfig.BatchFixes is declared and accepted from YAML (batch_fixes) and passes validation, but a full grep of non-test code shows zero readers — no code path branches on it. A user setting batch_fixes: true is silently misled into thinking batching is active. The struct comment documents it as reserved for an unbuilt feature. (intent_note: batch_fixes reserved per epic Open-Q2 — batching deferred to Option B) | Remove the field until the batched path exists, or emit a load-time warning when batch_fixes is set true so the user is not misled that it does something. | maintainability | 15 | code-review | claude | MEDIUM |
 | 2 | [ ] | MEDIUM | internal/registry/config.go:410 | Missing validation for BatchFixes | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | bruce | MEDIUM |
-| 2 | [ ] | LOW | internal/registry/config.go:410 | validateExecutor checks e.Provider == "" and e.Model == "" for emptiness instead of strings.TrimSpace, inconsistent with the validateProvider/validateAgent idiom elsewhere in the file. A YAML value of provider: " " (quoted space) is non-empty, passes the missing-field check, and falls into the unknown-provider branch producing the confusing error "executor references unknown provider ' '" instead of "required field missing". Model has no whitespace guard at all, so model: " " is accepted and passed to the provider verbatim. | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | claude | MEDIUM |
+| 2 | [x] | LOW | internal/registry/config.go:410 | validateExecutor checks e.Provider == "" and e.Model == "" for emptiness instead of strings.TrimSpace, inconsistent with the validateProvider/validateAgent idiom elsewhere in the file. A YAML value of provider: " " (quoted space) is non-empty, passes the missing-field check, and falls into the unknown-provider branch producing the confusing error "executor references unknown provider ' '" instead of "required field missing". Model has no whitespace guard at all, so model: " " is accepted and passed to the provider verbatim. | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | claude | MEDIUM |
 | 2 | [ ] | LOW | internal/registry/config.go:410 | Case-sensitive role validation confuses users | Use strings.TrimSpace(e.Provider) == "" and strings.TrimSpace(e.Model) == "" so a whitespace-only value reports the clear "required field missing" error, matching the rest of the file. | maintainability | 15 | code-review | bruce | MEDIUM |
 | 2 | [x] | LOW | internal/registry/config.go:425 | Incomplete TimeoutSecs validation | Validate TimeoutSecs when not nil | maintainability | 3 | code-review | bruce | MEDIUM |
 | 2 | [x] | LOW | internal/registry/examples_test.go:15 | Hardcoded path | Use filepath.Join for portability | maintainability | 3 | code-review | bruce | MEDIUM |
@@ -146,7 +146,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/verify/executor.go:54 | Fix generation calls the executor sequentially per finding; a review with many HIGH-or-better findings incurs N serial LLM round-trips | Batch fixes into one executor call (batch_fixes config is already parsed) or run them through a bounded worker pool like the skeptic stage | PERFORMANCE | 60 | execute-epic-stage3 |
+| 1 | [x] | LOW | internal/verify/executor.go:54 | Fix generation calls the executor sequentially per finding; a review with many HIGH-or-better findings incurs N serial LLM round-trips | Batch fixes into one executor call (batch_fixes config is already parsed) or run them through a bounded worker pool like the skeptic stage | PERFORMANCE | 60 | execute-epic-stage3 |
 | U | [ ] | LOW | internal/verify/executor.go:66 | The executor idempotency guard uses strings.Contains(Evidence, "fix by "+name) which is a prefix match; an executor named "op" is falsely treated as already-attributed when evidence contains "fix by opus" | Match the attribution as a delimited token (compare the "; fix by <name>" segment or split Evidence on "; ") rather than a raw substring | EDGE_CASES | 15 | execute-epic-independent |
 | U | [ ] | LOW | internal/verify/pipeline.go:251 | newExecutorClient() (llmclient.New) is constructed whenever reg.Executor != nil even when no finding is eligible for a fix, allocating a client that is never used | Construct the executor client lazily inside generateFixes only after an eligible finding is found, or pass a constructor func | UNDER_ENGINEERING | 15 | execute-epic-independent |
 
