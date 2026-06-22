@@ -35,6 +35,20 @@ const fixSnippetRadius = 30
 // is not re-generated on a verify re-run).
 const fixAttributionPrefix = "fix by "
 
+// anyFixEligible reports whether at least one finding qualifies for fix generation
+// on the executor's confidence+severity gate (the same per-finding gate
+// generateFixes applies). The pipeline uses it to avoid building BOTH the snapshot
+// harness and the executor client for a registry whose findings yield zero fixes.
+func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfig) bool {
+	fixMinSev := ex.EffectiveFixMinSeverity()
+	for i := range findings {
+		if reconcile.ConfidenceAtOrAbove(findings[i].Confidence, reconcile.ConfHigh) && meetsSeverityFloor(findings[i].Severity, fixMinSev) {
+			return true
+		}
+	}
+	return false
+}
+
 // generateFixes is the fix-generation phase (Epic 7.0). For every finding whose
 // confidence is HIGH-or-better (so VERIFIED — the tier the verify stage promotes
 // confirmed findings to — is included) AND whose severity meets the executor's
