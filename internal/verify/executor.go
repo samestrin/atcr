@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -44,7 +45,11 @@ const fixAttributionPrefix = "fix by "
 //
 // It mutates findings in place and is run after verdict application / confidence
 // recompute and before the artifacts are serialized, so fixes ride into
-// findings.json. Failure isolation mirrors the verify stage: a snippet read
+// findings.json. Eligible findings are processed by a bounded worker pool (cap
+// reg.Verify.MaxParallel, default 4) rather than serially — each fix is an
+// independent executor round-trip — and every worker mutates only its own
+// findings element, the same per-index-write invariant the skeptic stage relies
+// on, so no mutex is needed. Failure isolation mirrors the verify stage: a snippet read
 // failure, an executor error, or an empty completion leaves that finding's existing
 // Fix/Evidence untouched and is logged, never returned — fix generation never fails
 // the run. A nil executor or completer is a no-op; disp may be nil (snapshot
@@ -67,6 +72,16 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 	if minSev == "" {
 		minSev = registry.DefaultFixMinSeverity
 	}
+	// Bounded worker pool (mirrors the skeptic stage in pipeline.go): the
+	// eligibility filters below are cheap and stay on the calling goroutine, but
+	// each eligible finding's snippet read + executor round-trip + writes run in
+	// their own goroutine under a semaphore capped at reg.Verify.MaxParallel.
+	maxPar := reg.Verify.MaxParallel
+	if maxPar <= 0 {
+		maxPar = 4
+	}
+	sem := make(chan struct{}, maxPar)
+	var wg sync.WaitGroup
 	for i := range findings {
 		f := &findings[i]
 		if !reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) {
@@ -82,23 +97,30 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		if strings.Contains(f.Evidence, fixAttributionPrefix+ex.Name) {
 			continue
 		}
-		snippet := readFixSnippet(ctx, disp, f.File, f.Line)
-		prompt := buildFixPrompt(*f, snippet, ex.Persona)
-		out, err := callExecutor(ctx, complete, prov, ex, prompt)
-		if err != nil {
-			logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
-			f.FixWarning = "fix generation failed: " + err.Error()
-			continue
-		}
-		fix := strings.TrimSpace(out)
-		if fix == "" {
-			logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
-			f.FixWarning = "fix generation returned an empty completion"
-			continue
-		}
-		f.Fix = fix
-		f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(f *reconcile.JSONFinding) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			snippet := readFixSnippet(ctx, disp, f.File, f.Line)
+			prompt := buildFixPrompt(*f, snippet, ex.Persona)
+			out, err := callExecutor(ctx, complete, prov, ex, prompt)
+			if err != nil {
+				logPipelineWarning(log.FromContext(ctx), "executor_fix_failed", fmt.Sprintf("%s:%d: %v", f.File, f.Line, err))
+				f.FixWarning = "fix generation failed: " + err.Error()
+				return
+			}
+			fix := strings.TrimSpace(out)
+			if fix == "" {
+				logPipelineWarning(log.FromContext(ctx), "executor_empty_fix", fmt.Sprintf("%s:%d", f.File, f.Line))
+				f.FixWarning = "fix generation returned an empty completion"
+				return
+			}
+			f.Fix = fix
+			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
+		}(f)
 	}
+	wg.Wait()
 }
 
 // callExecutor invokes the executor model for one finding, applying the optional
