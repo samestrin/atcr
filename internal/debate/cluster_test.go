@@ -501,3 +501,17 @@ func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) 
 		assert.Equal(t, "cluster one longer problem", out[0].Problem, "the legacy cluster's item must survive")
 	})
 }
+
+// TestFilterMergedClusters_NilClusterIdxPassesThrough documents that callers may
+// pass a nil cluster index (e.g. when no gray-zone clusters exist) without
+// triggering a panic, and that gray-zone items pass through unchanged.
+func TestFilterMergedClusters_NilClusterIdxPassesThrough(t *testing.T) {
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "gray item"},
+	}
+	out := filterMergedClusters(items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-1"},
+	}, nil)
+	require.Len(t, out, 1, "nil clusterIdx must not suppress items")
+	assert.Equal(t, "gray item", out[0].Problem)
+}
