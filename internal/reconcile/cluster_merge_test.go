@@ -52,7 +52,22 @@ func TestMergeJSONFindings_VerificationPrecedence(t *testing.T) {
 	require.NotNil(t, m.Verification)
 	assert.Equal(t, VerdictConfirmed, m.Verification.Verdict, "confirmed must win over refuted")
 	assert.True(t, m.Verification.ChallengeSurvived)
-	assert.Equal(t, "sk1,sk2", m.Verification.Skeptic, "skeptic provenance from all members is unioned")
+	assert.Equal(t, "sk1, sk2", m.Verification.Skeptic, "skeptic provenance from all members is unioned")
+}
+
+// TestMergeJSONFindings_SkepticSplitAndDeduplicated: each member's Skeptic is a
+// comma-joined list of voter names. mergeVerification must split those lists,
+// deduplicate individual names, and omit empty tokens (e.g. trailing commas).
+func TestMergeJSONFindings_SkepticSplitAndDeduplicated(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue A", Reviewers: []string{"alice"},
+			Verification: &Verification{Verdict: VerdictRefuted, Skeptic: "sk1,sk2,", Notes: "disproved A"}},
+		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue B longer", Reviewers: []string{"bob"},
+			Verification: &Verification{Verdict: VerdictConfirmed, Skeptic: "sk2, sk3", Notes: "confirmed B"}},
+	}
+	m := MergeJSONFindings(group)
+	require.NotNil(t, m.Verification)
+	assert.Equal(t, "sk1, sk2, sk3", m.Verification.Skeptic, "individual skeptic names are split, deduped, and empty tokens omitted")
 }
 
 // TestMergeJSONFindings_NoVerificationStaysNil: with no member carrying a block,
