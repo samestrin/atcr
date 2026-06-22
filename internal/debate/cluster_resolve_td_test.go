@@ -1,11 +1,15 @@
 package debate
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
@@ -52,7 +56,7 @@ func TestFilterMergedClusters_CollisionDoesNotOverSuppress(t *testing.T) {
 
 	// Cluster #2 is merged; because the display key is ambiguous, the item must
 	// not resolve to c2's ID and therefore must not be suppressed.
-	out := filterMergedClusters(items, []reconcile.JSONFinding{
+	out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-2"},
 	}, clusterIdx)
 	require.Len(t, out, 1, "ambiguous display key must not over-suppress the unmerged cluster")
@@ -76,7 +80,7 @@ func TestFilterMergedClusters_LocationFallbackSuppressesDriftedProblem(t *testin
 		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "drifted representative problem"},
 	}
 
-	out := filterMergedClusters(items, []reconcile.JSONFinding{
+	out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "beta problem text", ClusterMerged: true, ClusterID: "amb-1"},
 	}, clusterIdx)
 	require.Empty(t, out, "a drifted gray-zone item at a merged location must be suppressed by location fallback")
@@ -105,4 +109,28 @@ func TestApplyOneClusterMerge_EmptyClusterIDIsNoOp(t *testing.T) {
 		assert.False(t, f.ClusterMerged, "no survivor may be flagged cluster_merged")
 		assert.Empty(t, f.ClusterID, "no survivor may carry a ClusterID")
 	}
+}
+
+// TestFilterMergedClusters_LogsSuppressedCount pins the observability contract:
+// when filterMergedClusters drops already-merged gray-zone items, it emits a
+// debug log carrying the suppressed count so an idempotency mis-fire (wrong-ID
+// match or unexpected pass-through) is visible in prod rather than silent.
+func TestFilterMergedClusters_LogsSuppressedCount(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	c := grayCluster("amb-1", "a.go", 10,
+		"alpha problem text", "MEDIUM", "alice",
+		"beta problem text", "HIGH", "bob")
+	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c})
+	items := []reconcile.DisagreementItem{
+		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "drifted representative problem"},
+	}
+
+	out := filterMergedClusters(ctx, items, []reconcile.JSONFinding{
+		{File: "a.go", Line: 10, Problem: "beta problem text", ClusterMerged: true, ClusterID: "amb-1"},
+	}, clusterIdx)
+	require.Empty(t, out, "the merged item must be suppressed by the location fallback")
+	assert.Contains(t, buf.String(), "suppressed=1", "a debug log must record the suppressed-item count")
 }

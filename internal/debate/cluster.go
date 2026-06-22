@@ -1,8 +1,10 @@
 package debate
 
 import (
+	"context"
 	"strconv"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
@@ -58,7 +60,7 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // guard) and self-heals as soon as it is re-stamped. An item whose cluster is not in
 // clusterIdx (e.g. its representative problem drifted) likewise passes through and is
 // re-debated rather than silently dropped.
-func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
+func filterMergedClusters(ctx context.Context, items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
 	mergedIDs := map[string]bool{}
 	mergedAtLoc := map[string]bool{}
 	for _, f := range findings {
@@ -75,6 +77,7 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 	// item is suppressed the original slice is returned without an allocation or
 	// copy.
 	var out []reconcile.DisagreementItem
+	suppressed := 0
 	for i, it := range items {
 		suppress := false
 		if it.Kind == reconcile.KindGrayZone {
@@ -100,6 +103,7 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 				out = make([]reconcile.DisagreementItem, 0, len(items))
 				out = append(out, items[:i]...)
 			}
+			suppressed++
 			continue
 		}
 		if out != nil {
@@ -109,6 +113,11 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 	if out == nil {
 		return items
 	}
+	// Surface idempotency suppression so a wrong-ID match or unexpected pass-through
+	// is observable in prod. Emitted only when something was actually suppressed
+	// (out is non-nil iff suppressed > 0), keeping the no-op re-run path silent.
+	log.FromContext(ctx).Debug("debate: suppressed already-merged gray-zone items",
+		"suppressed", suppressed, "items", len(items))
 	return out
 }
 

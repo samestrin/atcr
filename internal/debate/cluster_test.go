@@ -448,7 +448,7 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	}
 
 	// First run: no ClusterMerged record exists yet — both items pass through.
-	firstRun := filterMergedClusters(items, []reconcile.JSONFinding{
+	firstRun := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "c1a"},
 	}, clusterIdx)
 	assert.Len(t, firstRun, 2, "first run (no ClusterMerged record) must not filter either co-located cluster")
@@ -456,7 +456,7 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	// Re-run: cluster #1 was merged (its survivor sits at a.go:10 flagged
 	// ClusterMerged with ClusterID amb-1). Identity-keyed filtering suppresses ONLY
 	// cluster #1; cluster #2 (amb-2), never merged, is still processed.
-	reRun := filterMergedClusters(items, []reconcile.JSONFinding{
+	reRun := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-1"},
 	}, clusterIdx)
 	require.Len(t, reRun, 1, "only the merged cluster's item is suppressed; the co-located distinct cluster survives")
@@ -478,7 +478,7 @@ func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) 
 		}
 
 		// A legacy merged survivor: ClusterMerged set, but no ClusterID (pre-6.2).
-		out := filterMergedClusters(items, []reconcile.JSONFinding{
+		out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 			{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true},
 		}, clusterIdx)
 		require.Len(t, out, 1, "a ClusterMerged record with no ClusterID must not suppress any item")
@@ -495,7 +495,7 @@ func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) 
 		}
 
 		// One legacy merged record (no ClusterID) plus one new merged record (with ClusterID).
-		out := filterMergedClusters(items, []reconcile.JSONFinding{
+		out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 			{File: "a.go", Line: 10, Problem: "legacy survivor", ClusterMerged: true},
 			{File: "b.go", Line: 20, Problem: "new survivor", ClusterMerged: true, ClusterID: "amb-2"},
 		}, clusterIdx)
@@ -511,7 +511,7 @@ func TestFilterMergedClusters_NilClusterIdxPassesThrough(t *testing.T) {
 	items := []reconcile.DisagreementItem{
 		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "gray item"},
 	}
-	out := filterMergedClusters(items, []reconcile.JSONFinding{
+	out := filterMergedClusters(context.Background(), items, []reconcile.JSONFinding{
 		{File: "a.go", Line: 10, Problem: "merged survivor", ClusterMerged: true, ClusterID: "amb-1"},
 	}, nil)
 	require.Len(t, out, 1, "nil clusterIdx must not suppress items")
