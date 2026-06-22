@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -174,6 +175,30 @@ func TestRunVerify_ExecutorGeneratesFixIntoArtifact(t *testing.T) {
 	assert.Equal(t, "use a parameterized query: db.Query(q, id)", got[0].Fix)
 	assert.Contains(t, got[0].Evidence, "fix by opus")
 	assert.GreaterOrEqual(t, rec.calls, 1)
+}
+
+// TestRunVerify_ExecutorOutputSchema locks the resolved output-format contract
+// (Epic 7.0): the generated fix populates the existing `fix` key (column 4) and the
+// executor attribution rides in the existing `evidence` key (column 7) — NO new
+// per-finding executor column is added, so the 9-column schema is preserved.
+func TestRunVerify_ExecutorOutputSchema(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "sqli", Confidence: "HIGH", Reviewers: []string{"rev"},
+			Evidence: "Found by rev; confidence HIGH"},
+	})
+	rec := &recordingExecutor{out: "parameterize the query"}
+	restore := swapExecutorClient(func() executorCompleter { return rec })
+	defer restore()
+
+	_, err := runVerify(context.Background(), dir, execRegistry("MEDIUM"), Options{}, scriptedHarness(`{}`))
+	require.NoError(t, err)
+
+	raw, err := os.ReadFile(filepath.Join(dir, reconciledSubdir, reconcile.FindingsJSON))
+	require.NoError(t, err)
+	s := string(raw)
+	assert.Contains(t, s, `"fix": "parameterize the query"`)
+	assert.Contains(t, s, "fix by opus")
+	assert.NotContains(t, s, `"executor"`, "executor attribution rides in evidence, not a new column/key")
 }
 
 // Integration: with no executor configured, runVerify behaves exactly as before —
