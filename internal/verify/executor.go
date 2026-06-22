@@ -68,10 +68,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 		logPipelineWarning(log.FromContext(ctx), "executor_unknown_provider", ex.Provider)
 		return
 	}
-	minSev := ex.MinSeverity
-	if minSev == "" {
-		minSev = registry.DefaultFixMinSeverity
-	}
+	minSev := ex.EffectiveFixMinSeverity()
 	// Bounded worker pool (mirrors the skeptic stage in pipeline.go): the
 	// eligibility filters below are cheap and stay on the calling goroutine, but
 	// each eligible finding's snippet read + executor round-trip + writes run in

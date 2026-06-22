@@ -166,10 +166,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// including ones skipped for verification — so a verified-but-skipped finding
 	// still gets a fix.
 	if reg.Executor != nil && !needTool {
-		fixMinSev := reg.Executor.MinSeverity
-		if fixMinSev == "" {
-			fixMinSev = registry.DefaultFixMinSeverity
-		}
+		fixMinSev := reg.Executor.EffectiveFixMinSeverity()
 		// Mirror generateFixes' full eligibility (confidence AND severity) so a
 		// registry with an executor but only low-confidence findings does not build
 		// a snapshot that yields zero fixes. This branch runs only when no skeptic
