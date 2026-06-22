@@ -161,6 +161,11 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 		if f.Fix != "" {
 			fmt.Fprintf(&b, "  - Fix: %s\n", escTrunc(f.Fix))
 		}
+		// Fix-generation warning (Epic 7.0 fix_warning, incl. the 7.1 invalid_syntax
+		// flag): surface it so a flagged or absent fix is visible to the reader.
+		if f.FixWarning != "" {
+			fmt.Fprintf(&b, "  - ⚠️ Fix warning: %s\n", escTrunc(f.FixWarning))
+		}
 		if f.Evidence != "" {
 			fmt.Fprintf(&b, "  - Evidence: %s\n", escTrunc(f.Evidence))
 		}

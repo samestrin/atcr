@@ -135,10 +135,18 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				return
 			}
 			f.Fix = fix
-			// Clear any warning a prior failed/empty run left on this finding so it
-			// never carries both a valid Fix and a stale "fix is absent" warning.
-			f.FixWarning = ""
 			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
+			// Local syntax guard (Epic 7.1): parse the generated fix before it is
+			// presented. A fix that is plausibly Go code yet fails to parse is flagged
+			// via FixWarning while the attempted fix stays visible; prose change-
+			// instructions and valid code clear any warning a prior failed/empty/invalid
+			// run left, so a finding never carries both a good Fix and a stale warning.
+			if synErr := validateGoFixSyntax(fix); synErr != nil {
+				logPipelineWarning(log.FromContext(ctx), "executor_invalid_syntax", fmt.Sprintf("%s:%d: %v", f.File, f.Line, synErr))
+				f.FixWarning = "invalid_syntax: " + synErr.Error()
+			} else {
+				f.FixWarning = ""
+			}
 		}(f)
 	}
 	wg.Wait()
