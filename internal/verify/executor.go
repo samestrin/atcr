@@ -212,24 +212,27 @@ func readFixSnippet(ctx context.Context, disp Dispatcher, file string, line int)
 // Untrusted-data boundary: the framing (persona or system_prompt), rules, the
 // finding fields (Problem, Fix), and the source snippet are all interpolated
 // verbatim into this single prompt string — llmclient.Invocation carries no role
-// separation, so there is no structured way to fence them. Persona and each rule are
+// separation, so there is no structured API to fence them. Persona and each rule are
 // sanitized at load (validateExecutor rejects control characters and caps length) to
 // block CR/LF prompt-line forgery; system_prompt is length-capped (multi-line framing
-// is legitimate there). The finding text and snippet are reviewer/repo-derived data,
-// not instructions. Blast radius is bounded: the registry is self-authored and the
-// output only lands in the Fix column (it is never executed), so this is documented
-// rather than actively escaped.
+// is legitimate there). A --- delimiter is written between the instruction section
+// (framing + rules) and the finding data so crafted finding text cannot blur the
+// instruction context. The finding text and snippet are reviewer/repo-derived data,
+// not instructions; blast radius is bounded because the output only lands in the Fix
+// column (it is never executed).
 func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.ExecutorConfig) string {
+	if ex == nil {
+		return ""
+	}
 	var b strings.Builder
 	if sp := strings.TrimSpace(ex.SystemPrompt); sp != "" {
 		// Custom framing fully replaces the default; persona is superseded.
 		b.WriteString(sp)
 		b.WriteString("\n\n")
 	} else {
-		persona := ex.Persona
-		if strings.TrimSpace(persona) == "" {
-			persona = registry.DefaultExecutorPersona
-		}
+		// applyDefaults already resolves an empty persona to DefaultExecutorPersona at
+		// registry load, so buildFixPrompt should not re-derive it here.
+		persona := strings.TrimSpace(ex.Persona)
 		fmt.Fprintf(&b, "You are %s, a code-fix executor. Generate the minimal code change that fixes the finding below. Preserve the existing style and conventions. Output only the fix (corrected code or a precise change instruction); do not restate the problem.\n\n", persona)
 	}
 	if len(ex.Rules) > 0 {
@@ -239,6 +242,9 @@ func buildFixPrompt(f reconcile.JSONFinding, snippet string, ex *registry.Execut
 		}
 		b.WriteString("\n")
 	}
+	// Explicit boundary between the instruction/config section and the reviewer-sourced
+	// finding data, so crafted finding text cannot blur the instruction context.
+	b.WriteString("---\n\n")
 	fmt.Fprintf(&b, "Severity: %s\nLocation: %s:%d\nCategory: %s\nProblem: %s\n", f.Severity, f.File, f.Line, f.Category, f.Problem)
 	if strings.TrimSpace(f.Fix) != "" {
 		fmt.Fprintf(&b, "Reviewer-suggested fix (refine into a minimal, correct change): %s\n", f.Fix)

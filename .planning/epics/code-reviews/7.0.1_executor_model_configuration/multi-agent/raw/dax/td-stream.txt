@@ -1,0 +1,1 @@
+HIGH|internal/verify/executor.go:198|Potential nil pointer dereference in buildFixPrompt when ex is nil|Add nil check for ex at function start|error-handling|5|ex is now a pointer; no guard after signature change from string persona to *ExecutorConfig|bruce
