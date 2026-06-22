@@ -123,6 +123,9 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 				return
 			}
 			f.Fix = fix
+			// Clear any warning a prior failed/empty run left on this finding so it
+			// never carries both a valid Fix and a stale "fix is absent" warning.
+			f.FixWarning = ""
 			f.Evidence = appendFixAttribution(f.Evidence, ex.Name)
 		}(f)
 	}
