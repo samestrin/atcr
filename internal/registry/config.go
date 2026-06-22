@@ -3,12 +3,14 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -498,7 +500,7 @@ func (r *Registry) validateExecutor() []error {
 	// (buildFixPrompt), so an untrusted CR/LF or other control character could
 	// forge prompt lines / redefine the model's role (prompt injection). Reject
 	// control characters and cap the length at load, mirroring the Scope guard.
-	if strings.IndexFunc(e.Persona, func(r rune) bool { return r < 32 }) >= 0 {
+	if strings.IndexFunc(e.Persona, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
 		errs = append(errs, errors.New("executor: persona must not contain control characters"))
 	}
 	if len(e.Persona) > MaxExecutorPersonaLen {
@@ -508,7 +510,7 @@ func (r *Registry) validateExecutor() []error {
 	// free-text Evidence column, joined with the "; " separator. Reject control
 	// characters (which could forge attribution/prompt lines) and the "; " separator
 	// (which would forge phantom attribution segments), mirroring the persona guard.
-	if strings.IndexFunc(e.Name, func(r rune) bool { return r < 32 }) >= 0 {
+	if strings.IndexFunc(e.Name, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
 		errs = append(errs, errors.New("executor: name must not contain control characters"))
 	}
 	if strings.Contains(e.Name, "; ") {
@@ -519,7 +521,7 @@ func (r *Registry) validateExecutor() []error {
 	}
 	// Temperature (Epic 7.0.1): bounded to [0,2] like the agent guard. A pointer so
 	// an explicit 0.0 (the deterministic default) is distinguishable from unset.
-	if e.Temperature != nil && (*e.Temperature < 0 || *e.Temperature > 2) {
+	if e.Temperature != nil && (*e.Temperature < 0 || *e.Temperature > 2 || math.IsNaN(*e.Temperature) || math.IsInf(*e.Temperature, 0)) {
 		errs = append(errs, errors.New("executor: temperature must be within [0, 2]"))
 	}
 	// SystemPrompt (Epic 7.0.1) replaces the fix-prompt framing verbatim; cap its
@@ -537,7 +539,7 @@ func (r *Registry) validateExecutor() []error {
 		switch {
 		case strings.TrimSpace(rule) == "":
 			errs = append(errs, fmt.Errorf("executor: rules[%d] must not be empty", i))
-		case strings.IndexFunc(rule, func(r rune) bool { return r < 32 }) >= 0:
+		case strings.IndexFunc(rule, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0:
 			errs = append(errs, fmt.Errorf("executor: rules[%d] must not contain control characters", i))
 		case len(rule) > MaxExecutorRuleLen:
 			errs = append(errs, fmt.Errorf("executor: rules[%d] must be at most %d characters", i, MaxExecutorRuleLen))
@@ -589,7 +591,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	if a.TimeoutSecs != nil && (*a.TimeoutSecs <= 0 || *a.TimeoutSecs > MaxTimeoutSecs) {
 		errs = append(errs, agentErrf(name, "agent '%s': timeout_secs must be within 1..%d", name, MaxTimeoutSecs))
 	}
-	if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2) {
+	if a.Temperature != nil && (*a.Temperature < 0 || *a.Temperature > 2 || math.IsNaN(*a.Temperature) || math.IsInf(*a.Temperature, 0)) {
 		errs = append(errs, agentErrf(name, "agent '%s': temperature must be within [0, 2]", name))
 	}
 	if !payloadModeValid(a.Payload) {
@@ -624,7 +626,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	for _, s := range a.Scope {
 		if strings.TrimSpace(s) == "" {
 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not be empty", name))
-		} else if strings.IndexFunc(s, func(r rune) bool { return r < 32 }) >= 0 {
+		} else if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not contain control characters", name))
 		}
 	}
