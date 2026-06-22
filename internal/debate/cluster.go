@@ -40,7 +40,15 @@ func clusterDisplayProblem(c reconcile.AmbiguousCluster) string {
 func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconcile.AmbiguousCluster {
 	out := make(map[FindingKey]reconcile.AmbiguousCluster, len(clusters))
 	for _, c := range clusters {
-		out[FindingKey{File: c.File, Line: c.Line, Problem: clusterDisplayProblem(c)}] = c
+		key := FindingKey{File: c.File, Line: c.Line, Problem: clusterDisplayProblem(c)}
+		if _, exists := out[key]; exists {
+			// Two distinct clusters share the same display key. Trust neither ID for
+			// identity-keyed suppression or merge application; let both items pass
+			// through and re-debate (an idempotent no-op for the merged one).
+			out[key] = reconcile.AmbiguousCluster{ID: collisionSentinelID}
+			continue
+		}
+		out[key] = c
 	}
 	return out
 }
