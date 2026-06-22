@@ -148,6 +148,23 @@ func TestGenerateFixes_AttributionGuardIsNameSpecific(t *testing.T) {
 	assert.Contains(t, findings[0].Evidence, "fix by opus")
 }
 
+// The idempotency guard must match the attribution as a delimited "; "-token,
+// not a raw substring: an executor whose name is a strict prefix of another
+// ("op" vs "opus") must not be falsely treated as already-attributed by an
+// existing "fix by opus" segment, which would silently suppress its fix.
+func TestGenerateFixes_AttributionGuardIsTokenNotPrefix(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified,
+			Evidence: "Found by bruce; fix by opus"},
+	}
+	ex := execConfig("MEDIUM")
+	ex.Name = "op" // a strict prefix of the existing "fix by opus" attribution
+	rec := &recordingExecutor{out: "real fix"}
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher())
+	assert.Equal(t, 1, rec.calls, "executor 'op' must not be suppressed by 'fix by opus'")
+	assert.Contains(t, findings[0].Evidence, "; fix by op")
+}
+
 func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 42, Problem: "p", Confidence: ConfidenceVerified},

@@ -199,6 +199,34 @@ func TestExecutorConfig_EffectiveFixMinSeverity(t *testing.T) {
 		"an explicit floor is returned unchanged")
 }
 
+// The executor name is interpolated into the "fix by <name>" attribution appended
+// to the free-text Evidence column, joined with the "; " separator. A name
+// containing "; " would forge phantom attribution segments, so it is rejected at
+// load.
+func TestExecutor_NameWithSeparatorRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  name: "a; b"
+  provider: anthropic
+  model: claude-opus-4-8
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
+// A name carrying control characters could forge attribution/prompt lines, so it
+// is rejected at load mirroring the persona control-char guard.
+func TestExecutor_NameWithControlCharsRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  name: "a\tb"
+  provider: anthropic
+  model: claude-opus-4-8
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name")
+}
+
 // A mixed-case executor role must be accepted (case-insensitive validation) and
 // stored canonically lowercase so downstream exact-match comparisons (which use
 // the lowercase RoleExecutor constant) keep working.
