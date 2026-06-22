@@ -66,11 +66,11 @@ func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfi
 // on, so no mutex is needed. Failure isolation mirrors the verify stage: a snippet read
 // failure, an executor error, or an empty completion leaves that finding's existing
 // Fix/Evidence untouched and is logged, never returned — fix generation never fails
-// the run. A nil executor or completer is a no-op; disp may be nil (snapshot
+// the run. A nil executor, completer, or registry is a no-op; disp may be nil (snapshot
 // unavailable), in which case the snippet is omitted and the executor works from the
 // finding text alone.
 func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *registry.ExecutorConfig, reg *registry.Registry, complete executorCompleter, disp Dispatcher, sharedTimeoutSecs int) {
-	if ex == nil || complete == nil {
+	if ex == nil || complete == nil || reg == nil {
 		return
 	}
 	// Defense-in-depth: registry validation already guarantees the executor's
@@ -141,6 +141,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// via FixWarning while the attempted fix stays visible; prose change-
 			// instructions and valid code clear any warning a prior failed/empty/invalid
 			// run left, so a finding never carries both a good Fix and a stale warning.
+			//
+			// Ownership: generateFixes owns FixWarning end-to-end. The valid-syntax
+			// branch clears it unconditionally, so this stage assumes any prior value is
+			// its own (a failed/empty/invalid attempt from an earlier run). No current
+			// caller pre-seeds FixWarning; one that wanted to carry a non-syntax warning
+			// would need this clear narrowed to only generateFixes-owned prefixes.
 			if synErr := validateGoFixSyntax(fix); synErr != nil {
 				logPipelineWarning(log.FromContext(ctx), "executor_invalid_syntax", fmt.Sprintf("%s:%d: %v", f.File, f.Line, synErr))
 				f.FixWarning = "invalid_syntax: " + synErr.Error()

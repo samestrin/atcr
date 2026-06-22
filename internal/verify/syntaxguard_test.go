@@ -58,9 +58,25 @@ func TestValidateGoFixSyntax_InvalidUnfencedCode(t *testing.T) {
 }
 
 func TestValidateGoFixSyntax_InvalidShortAssign(t *testing.T) {
-	// `:=` is a strong Go signal; the snippet is malformed.
+	// The flagging signal here is the TRAILING OPEN BRACE (blockOpenRe), NOT `:=`.
+	// looksLikeGoCode keys only on declKeyword/blockOpen/blockClose; `:=` is
+	// deliberately not a code signal because inline `:=` appears in prose change-
+	// instructions (see TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged).
+	// This snippet is malformed and flagged because its line ends in an open brace.
 	src := "x := func( {"
-	require.Error(t, validateGoFixSyntax(src), "broken code with := must be flagged")
+	require.Error(t, validateGoFixSyntax(src), "broken code whose line ends in an open brace must be flagged")
+}
+
+// Characterization of the guard's deliberate conservative-recall boundary: an
+// unfenced, single-line broken fragment with NO block structure (no trailing open
+// brace, no leading close brace, no declaration keyword) is indistinguishable from a
+// prose change-instruction and is intentionally NOT flagged. This is a documented
+// trade-off (false-negative preferred over false-positive); do not "fix" it by
+// loosening looksLikeGoCode, which would reintroduce the false-positive class the
+// guard exists to avoid.
+func TestValidateGoFixSyntax_BrokenUnfencedNoBlockStructureNotFlagged(t *testing.T) {
+	src := "result = compute(a, b"
+	assert.NoError(t, validateGoFixSyntax(src), "an unfenced broken one-liner with no block structure is the documented conservative-recall boundary")
 }
 
 func TestValidateGoFixSyntax_ProseInstructionNotFlagged(t *testing.T) {
@@ -115,14 +131,82 @@ func TestValidateGoFixSyntax_ClosingFenceSameLineValid(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "valid Go with the closing fence on the code line must pass")
 }
 
+// The '#' must be captured as part of the fence language tag so a c#/f# block is
+// recognized as explicitly non-Go and skipped — even when its body carries Go-like
+// block structure that would otherwise be parsed and flagged.
+func TestValidateGoFixSyntax_CSharpFenceNotFlagged(t *testing.T) {
+	src := "```c#\npublic void F() {\n    var x = 1\n}\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "a c# fenced block must not be flagged by the Go guard")
+}
+
+func TestValidateGoFixSyntax_FSharpFenceNotFlagged(t *testing.T) {
+	src := "```f#\nlet f () =\n    let mutable x = 1\n    x\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "an f# fenced block must not be flagged by the Go guard")
+}
+
+// Valid Go whose body contains a string literal with a triple-backtick run must not
+// be truncated by a premature in-body fence close: the closing fence is recognized
+// only on its own line (anchored to line end), so an inline ``` cannot close the
+// block.
+func TestValidateGoFixSyntax_FencedGoWithTripleBacktickStringValid(t *testing.T) {
+	src := "```go\nfunc f() string {\n\treturn \"```\"\n}\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "an inline triple-backtick string must not prematurely close the fence")
+}
+
+// A CommonMark 4-backtick fence (used when the body itself contains a triple
+// backtick) must be matched as a unit: `{3,} captures the full opening/closing run
+// rather than slicing at the inner three backticks.
+func TestValidateGoFixSyntax_FourBacktickFenceValid(t *testing.T) {
+	src := "````go\nfunc f() string { return \"```\" }\n````"
+	assert.NoError(t, validateGoFixSyntax(src), "a 4-backtick fence wrapping triple-backtick Go must parse cleanly")
+}
+
+// Trailing whitespace after the opening fence's language tag (```go␠␠) must not
+// prevent fence recognition; valid Go inside still passes.
+func TestValidateGoFixSyntax_TrailingWhitespaceAfterOpenFenceValid(t *testing.T) {
+	src := "```go  \nfunc add(a, b int) int { return a + b }\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "whitespace after the opening backticks must be tolerated")
+}
+
 func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 	src := "```python\ndef add(a, b):\n    return a + b\n```"
 	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")
 }
 
+// blockOpenRe must only fire on a clean block-open line (non-brace content then a
+// single trailing brace), not any line that merely ends in '{'. A prose-ish line
+// carrying an inner brace and no other code signal must pass through unflagged so the
+// guard does not false-flag a change-instruction as broken Go.
+func TestValidateGoFixSyntax_InlineDoubleBraceLineNotFlagged(t *testing.T) {
+	src := "replace it with x{y{"
+	assert.NoError(t, validateGoFixSyntax(src), "a line with an inner brace must not be treated as a Go block open")
+}
+
 func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(""), "empty fix must not be flagged")
 	assert.NoError(t, validateGoFixSyntax("   \n\t"), "whitespace-only fix must not be flagged")
+}
+
+// A pathological multi-hundred-KB completion that is plausibly Go (block
+// structure) yet does not parse must be short-circuited by the size cap rather
+// than driven through the triple full-file AST parse. Above the cap the guard
+// returns nil. Untrusted model output can be arbitrarily large; the triple
+// parser.ParseFile passes run concurrently across the worker pool, so an
+// unbounded parse is a real cost.
+func TestValidateGoFixSyntax_OversizedInputNotFlagged(t *testing.T) {
+	big := strings.Repeat("func f() {\n", 30000) // ~300KB, unbalanced braces — plausibly Go, does not parse
+	require.Greater(t, len(big), 256*1024, "fixture must exceed the size cap")
+	assert.NoError(t, validateGoFixSyntax(big), "input above the size cap must short-circuit to nil")
+}
+
+// BenchmarkValidateGoFixSyntax_LargeInput asserts the large-input path is bounded:
+// with the size cap in place it must not perform the triple AST build.
+func BenchmarkValidateGoFixSyntax_LargeInput(b *testing.B) {
+	big := strings.Repeat("func f() {\n", 30000)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = validateGoFixSyntax(big)
+	}
 }
 
 func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {

@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/executor.go:144|Parser error includes empty filename prefix causing messy warning|Trim leading colon from synErr.Error() before concatenation|maintainability|5|synErr.Error() yields ":2:1: expected...", resulting in "invalid_syntax: :2:1:..."|bruce

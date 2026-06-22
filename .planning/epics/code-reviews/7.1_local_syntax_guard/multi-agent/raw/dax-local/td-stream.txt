@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/syntaxguard.go:38|`blockOpenRe` regex is overly broad|Use `(?m)^[ \t]*[^{]*\{[ \t]*$`|correctness|10|Matches inline braces like `&Options{Retries: 3}` as code|bruce
