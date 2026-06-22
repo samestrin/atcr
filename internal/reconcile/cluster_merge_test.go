@@ -95,6 +95,24 @@ func TestMergeJSONFindings_PreservesMemberDisagreementLowerBound(t *testing.T) {
 	assert.Equal(t, "LOW vs HIGH", m.Disagreement, "a member's pre-existing wider span must not be narrowed to the scalar-severity range at cluster merge")
 }
 
+// TestMergeJSONFindings_PreservesSiblingPathSuggestion: PathWarning is
+// file-existence keyed (identical across same-file members) but PathSuggestion
+// (Epic 5.4) is set only on a candidate-index-corrected member. When the corrected
+// member is ordered AFTER a clean member, the merged record must still carry the
+// sibling's warning + suggestion rather than blindly taking group[0]'s empty
+// fields, and path_valid must stay consistent with the surviving warning
+// (TD merge.go:297 and merge.go:296 — members may even span lines under drift).
+func TestMergeJSONFindings_PreservesSiblingPathSuggestion(t *testing.T) {
+	group := []JSONFinding{
+		{Severity: "LOW", File: "a.go", Line: 10, Problem: "clean member ordered first", Reviewers: []string{"alice"}, PathValid: true},
+		{Severity: "LOW", File: "a.go", Line: 12, Problem: "flagged member carries the correction", Reviewers: []string{"bob"}, PathWarning: "path a.go not found under repo root", PathSuggestion: "real/a.go"},
+	}
+	m := MergeJSONFindings(group)
+	assert.Equal(t, "path a.go not found under repo root", m.PathWarning, "a sibling's hallucinated-path warning must survive the merge")
+	assert.Equal(t, "real/a.go", m.PathSuggestion, "a sibling's candidate-index correction must survive the merge")
+	assert.False(t, m.PathValid, "path_valid must stay consistent with the surviving warning, not blindly take group[0]'s true")
+}
+
 // TestJSONFinding_ClusterMergedOmitempty: the Epic 6.1 idempotency marker is
 // omitempty, so a non-merged record serializes byte-identically to a pre-6.1
 // findings.json (the field is absent), and only a merged record carries it.
