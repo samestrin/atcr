@@ -81,7 +81,11 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 			key := FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
 			c, ok := clusterIdx[key]
 			switch {
-			case ok && mergedIDs[c.ID]:
+			case ok && c.ID != "" && mergedIDs[c.ID]:
+				// The c.ID != "" guard makes the consumer self-defending: mergedIDs is
+				// built only from non-empty ClusterIDs (line 65), so a future producer
+				// that admitted a blank key upstream can never make every empty-ID
+				// cluster match mergedIDs[""] at once.
 				suppress = true
 			case !ok && clusterIdx != nil && mergedAtLoc[locationKey(it.File, it.Line)]:
 				// Fallback for the drift case: the representative problem changed so the
