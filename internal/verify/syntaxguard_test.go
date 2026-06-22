@@ -44,6 +44,12 @@ func TestValidateGoFixSyntax_InvalidFencedGo(t *testing.T) {
 	require.Error(t, err, "syntactically broken Go inside a fence must be flagged")
 }
 
+func TestValidateGoFixSyntax_InvalidFullFile(t *testing.T) {
+	// A full file (package clause present) whose body is syntactically broken.
+	src := "package main\n\nfunc main() {\n\treturn a +\n}\n"
+	require.Error(t, validateGoFixSyntax(src), "a broken full Go file must be flagged")
+}
+
 func TestValidateGoFixSyntax_InvalidUnfencedCode(t *testing.T) {
 	// No fence, but braces make it plainly code; the body is broken Go.
 	src := "func add(a, b int) int {\n\treturn a +\n}"
