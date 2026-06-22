@@ -45,6 +45,20 @@ const (
 	RoleReviewer = "reviewer"
 	RoleSkeptic  = "skeptic"
 	RoleJudge    = "judge"
+	// RoleExecutor names the optional single fix-generation model (Epic 7.0). It
+	// is NOT a reviewer-panel role: an executor lives in the top-level executor:
+	// block, not in agents:, so roleValid (which gates agent roles) intentionally
+	// excludes it. It is validated only against ExecutorConfig.Role.
+	RoleExecutor = "executor"
+)
+
+// Executor defaults (Epic 7.0). DefaultExecutorPersona is the fix-focused persona
+// applied when the executor block sets none; DefaultFixMinSeverity is the severity
+// floor below which a verified finding gets no generated fix (the executor's
+// min_severity_for_fix; epic Open-Q4 Option B).
+const (
+	DefaultExecutorPersona = "fixer"
+	DefaultFixMinSeverity  = "MEDIUM"
 )
 
 // Verification defaults (Epic 3.0). DefaultVerifyMinSeverity is the floor below
@@ -111,6 +125,28 @@ type VerifyConfig struct {
 	MinSeverity string `yaml:"min_severity,omitempty"` // floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
 	Votes       int    `yaml:"votes,omitempty"`        // skeptics per finding (default 1)
 	MaxParallel int    `yaml:"max_parallel,omitempty"` // bounded worker pool cap (0 = default 4)
+}
+
+// ExecutorConfig is the optional top-level fix-generation model (Epic 7.0). It is
+// backward-compatible: an absent executor: block leaves Registry.Executor nil and
+// ATCR behaves exactly as before (no fix generation). The executor is a SINGLE
+// model run exclusively in the fix phase — it is not part of the review panel, so
+// it lives outside agents: and carries its own role (always "executor"). Provider
+// references a key in providers:; Model is the model id; Persona defaults to
+// "fixer". MinSeverity (yaml: min_severity_for_fix) is the severity floor a
+// verified finding must meet to receive a fix (default MEDIUM, normalized to
+// canonical upper-case at load). BatchFixes is parsed but the MVP generates fixes
+// per-finding (Open-Q2 Option A), so it defaults false. TimeoutSecs (yaml:
+// fix_timeout) is a pointer so an explicit value is distinguishable from unset.
+type ExecutorConfig struct {
+	Name        string `yaml:"name,omitempty"`
+	Provider    string `yaml:"provider"`
+	Model       string `yaml:"model"`
+	Persona     string `yaml:"persona,omitempty"`
+	Role        string `yaml:"role,omitempty"`                 // must be "executor" if set; defaults to executor
+	MinSeverity string `yaml:"min_severity_for_fix,omitempty"` // fix floor: LOW|MEDIUM|HIGH|CRITICAL (default MEDIUM)
+	BatchFixes  bool   `yaml:"batch_fixes,omitempty"`          // MVP is per-finding; reserved for batched generation
+	TimeoutSecs *int   `yaml:"fix_timeout,omitempty"`          // per-fix timeout (secs); nil = inherit shared timeout
 }
 
 // AgentConfig binds a provider+model to a reviewer persona. Temperature and
@@ -247,6 +283,11 @@ type Registry struct {
 	// without a debate block still yields the resolved defaults.
 	Debate DebateConfig `yaml:"debate,omitempty"`
 
+	// Executor is the optional fix-generation model (Epic 7.0). A pointer so an
+	// absent block (nil) — the backward-compatible default — is distinguishable
+	// from a configured one; nil means no fix generation runs.
+	Executor *ExecutorConfig `yaml:"executor,omitempty"`
+
 	// ProviderSource and AgentSource record the tier (and defining file) each
 	// effective entry came from after the project overlay merge — user or
 	// project. Not serialized (yaml:"-"); populated by stampSource (user) and
@@ -352,8 +393,41 @@ func (r *Registry) validate() error {
 	for _, name := range sortedKeys(r.Agents) {
 		errs = append(errs, r.validateAgent(name, r.Agents[name])...)
 	}
+	errs = append(errs, r.validateExecutor()...)
 
 	return errors.Join(errs...)
+}
+
+// validateExecutor returns every fault found in the optional executor block (Epic
+// 7.0). A nil block (no fix generation) is valid and yields no faults. Like the
+// agent checks it accumulates rather than short-circuits (Epic 4.2 / AC6): the
+// provider must be present and reference a defined provider, the model is
+// required, role (if set) must be "executor", min_severity_for_fix (if set) must
+// be a canonical review severity, and fix_timeout must be within bounds.
+func (r *Registry) validateExecutor() []error {
+	e := r.Executor
+	if e == nil {
+		return nil
+	}
+	var errs []error
+	if e.Provider == "" {
+		errs = append(errs, errors.New("executor: required field 'provider' is missing"))
+	} else if _, ok := r.Providers[e.Provider]; !ok {
+		errs = append(errs, fmt.Errorf("executor references unknown provider '%s'", e.Provider))
+	}
+	if e.Model == "" {
+		errs = append(errs, errors.New("executor: required field 'model' is missing"))
+	}
+	if e.Role != "" && e.Role != RoleExecutor {
+		errs = append(errs, fmt.Errorf("executor: role must be 'executor', got '%s'", e.Role))
+	}
+	if normalized := stream.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+		errs = append(errs, fmt.Errorf("executor: min_severity_for_fix must be one of CRITICAL, HIGH, MEDIUM, LOW, got %q", e.MinSeverity))
+	}
+	if e.TimeoutSecs != nil && (*e.TimeoutSecs <= 0 || *e.TimeoutSecs > MaxTimeoutSecs) {
+		errs = append(errs, fmt.Errorf("executor: fix_timeout must be within 1..%d", MaxTimeoutSecs))
+	}
+	return errs
 }
 
 // validateProvider returns every fault found in a single provider entry (Epic
@@ -506,6 +580,28 @@ func (r *Registry) applyDefaults() {
 	// distinguishable from unset.
 	if len(r.Debate.Triggers) == 0 {
 		r.Debate.Triggers = DefaultDebateTriggers()
+	}
+	// Executor defaults (Epic 7.0): an unset persona resolves to "fixer", an unset
+	// role to "executor", and an unset min_severity_for_fix to MEDIUM (a set value
+	// is canonicalized — validation already rejected any non-canonical value, so
+	// NormalizeSeverity here only fixes casing). An unset name falls back to
+	// "executor" so attribution ("fix by <name>") always has a token. A nil block
+	// (no fix generation) is left untouched.
+	if r.Executor != nil {
+		if r.Executor.Persona == "" {
+			r.Executor.Persona = DefaultExecutorPersona
+		}
+		if r.Executor.Role == "" {
+			r.Executor.Role = RoleExecutor
+		}
+		if r.Executor.Name == "" {
+			r.Executor.Name = RoleExecutor
+		}
+		if r.Executor.MinSeverity == "" {
+			r.Executor.MinSeverity = DefaultFixMinSeverity
+		} else {
+			r.Executor.MinSeverity = stream.NormalizeSeverity(r.Executor.MinSeverity)
+		}
 	}
 }
 

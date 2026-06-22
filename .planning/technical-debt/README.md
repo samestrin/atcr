@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 21 | 0 |
-| LOW | 0 | 20 | 0 |
+| LOW | 3 | 20 | 0 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 42
+**Last Modified:** 2026-06-21 | **Open Items:** 3 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 45
 
 ## Directory Structure
 
@@ -34,6 +34,14 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-21] From Sprint: epic-7.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/verify/executor.go:54 | Fix generation calls the executor sequentially per finding; a review with many HIGH-or-better findings incurs N serial LLM round-trips | Batch fixes into one executor call (batch_fixes config is already parsed) or run them through a bounded worker pool like the skeptic stage | PERFORMANCE | 60 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/verify/executor.go:66 | The executor idempotency guard uses strings.Contains(Evidence, "fix by "+name) which is a prefix match; an executor named "op" is falsely treated as already-attributed when evidence contains "fix by opus" | Match the attribution as a delimited token (compare the "; fix by <name>" segment or split Evidence on "; ") rather than a raw substring | EDGE_CASES | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/verify/pipeline.go:251 | newExecutorClient() (llmclient.New) is constructed whenever reg.Executor != nil even when no finding is eligible for a fix, allocating a client that is never used | Construct the executor client lazily inside generateFixes only after an eligible finding is found, or pass a constructor func | UNDER_ENGINEERING | 15 | execute-epic-independent |
 
 ### [2026-06-21] From Sprint: epic-6.0
 

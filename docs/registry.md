@@ -261,6 +261,41 @@ debate:
 
 See [cross-examination.md](cross-examination.md) for the full mechanics, the judge envelope, and gate semantics.
 
+## Executor (fix generation, active in 7.0)
+
+The review panel catches bugs with multiple models; a single **executor** model generates fixes for the findings worth fixing. This keeps fix generation cheap (one model, not N) and consistent (one model, one style), while letting you spend a more capable model on fix quality than on review breadth.
+
+Fix generation is **opt-in and additive**: add an optional top-level `executor:` block and the fix phase runs during `atcr verify`, `atcr review --verify`, and the `atcr_verify` MCP tool. Omit the block and ATCR behaves exactly as before — no fix phase, no executor tokens, no errors. The executor is **not** part of the review panel: it lives outside `agents:` and carries its own role (`executor`).
+
+```yaml
+executor:
+  name: opus                   # attribution label written into the finding's evidence
+  provider: anthropic          # must reference a provider in providers:
+  model: claude-opus-4-8
+  persona: fixer               # default: fixer
+  role: executor               # must be "executor" (defaulted)
+  min_severity_for_fix: MEDIUM # fix floor: LOW | MEDIUM | HIGH | CRITICAL (default MEDIUM)
+  batch_fixes: false           # MVP generates fixes one finding at a time
+  fix_timeout: 120             # optional per-fix timeout (seconds)
+```
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `name` | `executor` | Attribution label; the finding's evidence gains `fix by <name>`. |
+| `provider` | — | Required. Must reference a key in `providers:`. |
+| `model` | — | Required. The fix-generation model id. |
+| `persona` | `fixer` | Persona token used in the executor prompt. |
+| `role` | `executor` | Must be `executor` if set; any other value is a load error. |
+| `min_severity_for_fix` | `MEDIUM` | A finding is fixed only when its severity is at or above this floor. Normalized to upper-case; a non-canonical value is a load error. |
+| `batch_fixes` | `false` | Parsed; the MVP generates fixes per-finding. Reserved for batched generation. |
+| `fix_timeout` | inherit | Optional per-fix timeout in seconds; a non-positive or out-of-range value is a load error. |
+
+A fix is generated only for a finding that is **HIGH-or-better confidence** (so a `VERIFIED` finding — one a skeptic confirmed — is included) **AND** at or above `min_severity_for_fix`. The executor reads a snippet of the cited code from the review snapshot for context, then writes a minimal fix into the finding's `fix` column and appends `fix by <name>` to its `evidence` (no new column is added). Generation is idempotent per executor: a re-run does not re-fix an already-attributed finding. A failed or empty completion leaves the reviewer's own fix suggestion in place and never fails the run.
+
+The runnable examples [`examples/registry-with-executor.yaml`](../examples/registry-with-executor.yaml) and [`examples/registry-without-executor.yaml`](../examples/registry-without-executor.yaml) show both shapes side by side.
+
+> Posting these fixes as inline PR comments is owned by a separate GitHub Action (Epic 7.3); this stage stops at populating the `fix` column in the findings artifacts.
+
 ## Review-constraint fields (active in 2.2)
 
 Three optional per-agent guardrails bound what a reviewer contributes to the fan-out. They exist because a weak or mis-prompted model can drift off its role and flood the merged stream with low-value noise — e.g. hundreds of blank-line `LOW` style findings that bury the handful of `HIGH` findings stronger models caught. All three are optional and backward-compatible: an unset field imposes no constraint, so an existing registry keeps loading unchanged.

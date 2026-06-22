@@ -29,3 +29,27 @@ func ConfidenceForVerdict(prior, verdict string) string {
 		return prior
 	}
 }
+
+// confidenceRank is the v2 confidence ordinal rubric (VERIFIED > HIGH > MEDIUM >
+// LOW), the single source consumers gate on. An unknown tier maps to 0 so
+// ConfidenceAtOrAbove fails closed for it.
+var confidenceRank = map[string]int{
+	ConfLow:            1,
+	ConfMedium:         2,
+	ConfHigh:           3,
+	ConfidenceVerified: 4,
+}
+
+// ConfidenceAtOrAbove reports whether confidence c is at or above floor in the
+// v2 ordering (VERIFIED > HIGH > MEDIUM > LOW). Both arguments are normalized to
+// canonical upper-case so the comparison is case- and whitespace-insensitive. It
+// fails closed (returns false) when either value is empty or an unrecognized
+// tier — a gate must never fire on a token it does not understand.
+func ConfidenceAtOrAbove(c, floor string) bool {
+	cr := confidenceRank[strings.ToUpper(strings.TrimSpace(c))]
+	fr := confidenceRank[strings.ToUpper(strings.TrimSpace(floor))]
+	if cr == 0 || fr == 0 {
+		return false
+	}
+	return cr >= fr
+}
