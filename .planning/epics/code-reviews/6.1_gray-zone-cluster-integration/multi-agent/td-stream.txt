@@ -1,0 +1,11 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|internal/reconcile/merge.go:165|Missing import for sort package|The code uses sort.Strings(out) but the sort package is not imported in the diff|maintainability|2|sort.Strings(out) called in unionReviewers|otto
+MEDIUM|internal/debate/debate.go:112|Error from ReadAmbiguousClusters ignored|Log or handle error explicitly|error-handling|5|grayClusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)|bruce
+LOW|internal/reconcile/merge.go:315|Inefficient string concatenation in loop|Use strings.Builder for O(N) performance|performance|5|out += " / " + p in joinEvidence loop|bruce
+MEDIUM|internal/debate/cluster.go:120|Drift recovery may absorb unrelated finding if exactly one unmatched record at member location|Add stricter check: verify unmatched record's reviewer or evidence matches cluster member|correctness|15|"if len(idxs) == 1 { matched[idxs[0]] = true }" without verifying relation to cluster|bruce
+LOW|internal/debate/cluster.go:53|filterMergedClusters uses location only, not problem, could filter out a different gray-zone cluster at same location|Use full FindingKey (File+Line+Problem) for filtering|maintainability|5|"mergedLocs[locationKey(it.File, it.Line)]" ignores Problem, risking collision|bruce
+LOW|internal/reconcile/merge.go:300|mergeVerification may include empty skeptic strings in output|Filter out empty skeptics before joining|maintainability|5|"seen[v.Skeptic]" adds empty string if Skeptic is empty|bruce
+MEDIUM|internal/debate/debate.go:201|Unnormalized LLM cluster decision input|Trim and lowercase ir.ClusterDecision before equality check|correctness|5|if ir.ClusterDecision == ClusterMerge|greta
+LOW|internal/reconcile/merge.go:315|Inefficient string concatenation in evidence join|Replace loop with strings.Join(parts, " / ")|performance|3|out += p inside range loop|greta

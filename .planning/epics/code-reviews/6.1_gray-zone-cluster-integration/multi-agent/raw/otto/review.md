@@ -1,0 +1,1 @@
+MEDIUM|internal/reconcile/merge.go:165|Missing import for sort package|The code uses sort.Strings(out) but the sort package is not imported in the diff|maintainability|2|sort.Strings(out) called in unionReviewers|otto

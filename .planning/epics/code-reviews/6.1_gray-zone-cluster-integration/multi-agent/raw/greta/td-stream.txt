@@ -1,0 +1,2 @@
+MEDIUM|internal/debate/debate.go:201|Unnormalized LLM cluster decision input|Trim and lowercase ir.ClusterDecision before equality check|correctness|5|if ir.ClusterDecision == ClusterMerge|greta
+LOW|internal/reconcile/merge.go:315|Inefficient string concatenation in evidence join|Replace loop with strings.Join(parts, " / ")|performance|3|out += p inside range loop|greta

@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-21-1fb1e6
-question: "When debate failure leaves verify findings on disk (no rollback), what behavior should the CLI chaining at cmd/atcr/review.go implement: atomic temp-staging, rollback/delete, or accept partial state?"
+id: mem-2026-06-21-c1da88
+question: "clusterDisplayProblem vs reconcile.longestProblem: unify into one exported function or pin coupling with a round-trip regression test?"
 created: 2026-06-21
 last_retrieved: ""
 sprints: []
-files: [cmd/atcr/review.go:306, internal/debate/debate.go:146]
-tags: [td-clarification, td-only, architecture, debate, verify, partial-state, error-handling]
+files: [internal/debate/cluster.go, internal/reconcile/disagree.go]
+tags: [td-clarification, td-only, maintainability, scope, testing, debate, reconcile, gray-zone, cluster]
 retrievals: 0
 status: active
-type: td-clarification
+type: clarifications skill 2026-06-21
 ---
 
-# When debate failure leaves verify findings on disk (no rollb
+# clusterDisplayProblem vs reconcile.longestProblem: unify int
 
 ## Decision
 
-Option (c) — accept the partial state and document it with a comment. Verify findings on disk are valid, structured artifacts (confirmed/refuted/unverifiable verdicts) the user can inspect; debateFailureError already surfaces the failure. Atomic staging (option a) requires significant refactoring of how verify and debate share result.Dir. Rollback (option b) destroys useful debugging state. The debate package's own internal durability concern (applyRulings → writeFindings → writeDebateFile ordering) is tracked separately at internal/debate/debate.go:146. Fix: add a brief comment at cmd/atcr/review.go just before the `if debateFlag` block (~line 306) documenting that a debate failure intentionally leaves verify findings on disk.
+Use the round-trip regression test. Both functions are byte-identical (strict greater-than longest-problem, first-wins ties). Unifying requires exporting reconcile.longestProblem and crossing the debate→reconcile package boundary — outside group-2 scope per the Epic 6.1 design that keeps these packages loosely coupled. The test round-trips a cluster through BuildDisagreements → indexClusters lookup, including the equal-length-problem tie case, and pins the coupling without modifying either production function. Needs manual approval past the over-simplification gate (test-only change). JUSTIFICATION: internal/debate/cluster.go:16-24 (clusterDisplayProblem) and internal/reconcile/disagree.go (longestProblem) are logically identical; grayZoneItem calls longestProblem to set it.Problem which must match indexClusters' key built from clusterDisplayProblem(c). Epic 6.1 locked a narrow in-memory approach keeping debate and reconcile loosely coupled.
 
 ## Rationale
 
@@ -27,5 +27,5 @@ Option (c) — accept the partial state and document it with a comment. Verify f
 
 ## Code Reference
 
-- cmd/atcr/review.go:306
-- internal/debate/debate.go:146
+- internal/debate/cluster.go
+- internal/reconcile/disagree.go
