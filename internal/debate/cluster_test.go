@@ -355,15 +355,15 @@ func TestRunDebate_CorruptAmbiguousJSONLogsWarning(t *testing.T) {
 }
 
 // TestIndexClusters_RoundTripsBuildDisagreementsProblem pins the cross-package
-// coupling the clusterIdx lookup silently depends on (TD cluster.go:38): the
-// gray-zone radar item's Problem is produced by reconcile.longestProblem inside
-// BuildDisagreements, while indexClusters keys the cluster by clusterDisplayProblem.
+// round-trip the clusterIdx lookup depends on: the gray-zone radar item's Problem is
+// produced by reconcile.ClusterDisplayProblem inside BuildDisagreements, and
+// indexClusters keys the cluster by that same reconcile.ClusterDisplayProblem.
 // runDebate looks a debated DisagreementItem up in the clusterIdx by
-// {File, Line, Problem}; if the two representative-problem implementations ever
-// tie-break differently, the lookup fails and a "merge" ruling silently no-ops.
-// This round-trips a cluster through BuildDisagreements -> indexClusters so the two
-// are guaranteed to agree, including the equal-length-problem tie the TD item called
-// out (both functions compare with strict greater-than, so the FIRST member wins).
+// {File, Line, Problem}; collapsing the two former representative-problem impls
+// (reconcile.longestProblem and debate.clusterDisplayProblem) into one shared helper
+// makes the agreement structural, but this test still guards the round-trip end to
+// end — including the equal-length-problem tie the TD item called out (strict
+// greater-than, so the FIRST member wins).
 func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -381,7 +381,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 				tc.probA, "MEDIUM", "alice",
 				tc.probB, "HIGH", "bob")
 
-			// The radar item's Problem comes from reconcile.longestProblem.
+			// The radar item's Problem comes from reconcile.ClusterDisplayProblem.
 			df := reconcile.BuildDisagreements(nil, []reconcile.AmbiguousCluster{cluster})
 			var item reconcile.DisagreementItem
 			found := false
@@ -393,7 +393,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 			}
 			require.True(t, found, "BuildDisagreements must surface the cluster as a gray_zone radar item")
 
-			// indexClusters keys on clusterDisplayProblem; the debated item resolves
+			// indexClusters keys on reconcile.ClusterDisplayProblem; the debated item resolves
 			// back by its Problem only if the two representatives agree.
 			idx := indexClusters([]reconcile.AmbiguousCluster{cluster})
 			got, ok := idx[FindingKey{File: item.File, Line: item.Line, Problem: item.Problem}]
@@ -434,7 +434,7 @@ func TestFirstClusterRulingCollision_GuardsRulingsKeyspace(t *testing.T) {
 // item on a re-run; cluster #2, never merged, must still be processed.
 func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	// Two DISTINCT clusters at the same canonical File+Line, with stable IDs. Each
-	// member B is strictly longer so clusterDisplayProblem is deterministic and the
+	// member B is strictly longer so ClusterDisplayProblem is deterministic and the
 	// radar item resolves back to its cluster via indexClusters.
 	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
 	c2 := grayCluster("amb-2", "a.go", 10, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")

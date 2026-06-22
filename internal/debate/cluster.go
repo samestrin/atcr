@@ -20,19 +20,6 @@ func locationKey(file string, line int) string {
 	return file + "\x00" + strconv.Itoa(line)
 }
 
-// clusterDisplayProblem returns the longest PROBLEM among a cluster's members —
-// the same representative BuildDisagreements writes as the gray-zone radar item's
-// Problem, so a debated DisagreementItem can be correlated back to its cluster.
-func clusterDisplayProblem(c reconcile.AmbiguousCluster) string {
-	best := ""
-	for _, f := range c.Findings {
-		if len(f.Problem) > len(best) {
-			best = f.Problem
-		}
-	}
-	return best
-}
-
 // indexClusters maps each gray-zone cluster by the identity its radar item
 // carries — File + Line + longest-member-problem — so a debated gray-zone
 // DisagreementItem (it.File, it.Line, it.Problem) resolves to the AmbiguousCluster
@@ -40,7 +27,7 @@ func clusterDisplayProblem(c reconcile.AmbiguousCluster) string {
 func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconcile.AmbiguousCluster {
 	out := make(map[FindingKey]reconcile.AmbiguousCluster, len(clusters))
 	for _, c := range clusters {
-		key := FindingKey{File: c.File, Line: c.Line, Problem: clusterDisplayProblem(c)}
+		key := FindingKey{File: c.File, Line: c.Line, Problem: reconcile.ClusterDisplayProblem(c.Findings)}
 		if _, exists := out[key]; exists {
 			// Two distinct clusters share the same display key. Trust neither ID for
 			// identity-keyed suppression or merge application; let both items pass
