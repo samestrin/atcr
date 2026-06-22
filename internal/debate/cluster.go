@@ -69,19 +69,26 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 
 // applyClusterMerges unions the member findings of each gray-zone cluster the
 // judge ruled "merge" (Epic 6.1, Option A) directly in the findings slice. It
-// returns the rewritten slice and the count of clusters actually applied, so the
-// caller can surface a ruling that could not be physically applied. Each cluster
-// is handled independently by applyOneClusterMerge.
-func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, int) {
+// returns the rewritten slice, the count of clusters actually applied, and the
+// count of structurally unmergeable clusters (fewer than two members). The
+// caller uses the skipped count to keep the "could not be applied" warning
+// truthful: a one-member cluster is a no-op by definition, not a failed ruling.
+// Each multi-member cluster is handled independently by applyOneClusterMerge.
+func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, int, int) {
 	applied := 0
+	skipped := 0
 	for _, c := range clusters {
+		if len(c.Findings) < 2 {
+			skipped++
+			continue
+		}
 		var ok bool
 		findings, ok = applyOneClusterMerge(findings, c)
 		if ok {
 			applied++
 		}
 	}
-	return findings, applied
+	return findings, applied, skipped
 }
 
 // applyOneClusterMerge unions one cluster's members in findings and reports

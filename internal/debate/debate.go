@@ -258,14 +258,14 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// Epic 6.1: union gray-zone clusters the judge ruled "merge" directly in the
 		// post-verify findings.json (Option A) — never via RunReconcile, which would
 		// rebuild from sources/ and erase the verify/debate verdicts above.
-		var applied int
-		findings, applied = applyClusterMerges(findings, mergeClusters)
-		if applied < len(mergeClusters) {
+		var applied, skipped int
+		findings, applied, skipped = applyClusterMerges(findings, mergeClusters)
+		if applied < len(mergeClusters)-skipped {
 			// A recorded merge ruling that could not be physically applied (its
 			// members were not both present in findings.json) is otherwise silent —
 			// debate.json still records the ruling, but findings.json is unchanged.
 			log.FromContext(ctx).Warn("debate: some gray-zone merge rulings could not be applied to findings.json",
-				"ruled", len(mergeClusters), "applied", applied)
+				"ruled", len(mergeClusters)-skipped, "applied", applied)
 		}
 	}
 	findingsPath, findingsBytes, err := computeFindingsBytes(reviewDir, findings)
