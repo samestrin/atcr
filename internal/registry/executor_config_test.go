@@ -313,6 +313,33 @@ executor:
 	assert.Contains(t, err.Error(), "temperature")
 }
 
+// NaN and Inf fail all comparisons in Go, so a guard of the form `*t < 0 ||
+// *t > 2` silently accepts them. They must be rejected at load so they cannot
+// reach json.Marshal and fail generation at runtime.
+func TestExecutor_TemperatureNaNRejected(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  temperature: .nan
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "temperature")
+}
+
+func TestExecutor_TemperatureInfRejected(t *testing.T) {
+	for _, val := range []string{".inf", "+.inf", "-.inf"} {
+		_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  temperature: `+val+`
+`))
+		require.Error(t, err, "temperature %s must be rejected", val)
+		assert.Contains(t, err.Error(), "temperature")
+	}
+}
+
 // EffectiveExecutorTemperature is the single resolver for the executor's API
 // temperature: the executor's own value when set, else the deterministic 0.0
 // default (Epic 7.0.1 — fixes default to deterministic generation). It mirrors
