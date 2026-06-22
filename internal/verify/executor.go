@@ -141,6 +141,12 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			// via FixWarning while the attempted fix stays visible; prose change-
 			// instructions and valid code clear any warning a prior failed/empty/invalid
 			// run left, so a finding never carries both a good Fix and a stale warning.
+			//
+			// Ownership: generateFixes owns FixWarning end-to-end. The valid-syntax
+			// branch clears it unconditionally, so this stage assumes any prior value is
+			// its own (a failed/empty/invalid attempt from an earlier run). No current
+			// caller pre-seeds FixWarning; one that wanted to carry a non-syntax warning
+			// would need this clear narrowed to only generateFixes-owned prefixes.
 			if synErr := validateGoFixSyntax(fix); synErr != nil {
 				logPipelineWarning(log.FromContext(ctx), "executor_invalid_syntax", fmt.Sprintf("%s:%d: %v", f.File, f.Line, synErr))
 				f.FixWarning = "invalid_syntax: " + synErr.Error()
