@@ -6,6 +6,11 @@ import (
 	"github.com/samestrin/atcr/internal/reconcile"
 )
 
+// collisionSentinelID is stored in indexClusters when two distinct clusters share
+// the same File+Line+display-problem key. It prevents a gray-zone item from
+// resolving to an arbitrary cluster ID in that collision case.
+const collisionSentinelID = "atcr:collision"
+
 // locationKey is the file+line identity used to correlate a gray-zone cluster's
 // members to their findings.json records. It is intentionally coarser than
 // FindingKey: a member may have been further-merged with a third finding (≥0.7
