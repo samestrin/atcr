@@ -416,6 +416,24 @@ func TestRunVerify_ExecutorOutputSchema(t *testing.T) {
 	assert.NotContains(t, s, `"executor"`, "executor attribution rides in evidence, not a new column/key")
 }
 
+// The executor client must NOT be constructed when no finding qualifies for a fix
+// on the confidence+severity gate, so a zero-fix registry does no client
+// allocation (Epic 7.0 TD: the snapshot pre-check already avoids the harness for
+// zero-fix registries; the client must be gated symmetrically).
+func TestRunVerify_ExecutorClientNotBuiltWhenNoFindingEligible(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		// LOW confidence is below the HIGH fix floor → not fix-eligible.
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfLow, Reviewers: []string{"rev"}},
+	})
+	built := 0
+	restore := swapExecutorClient(func() executorCompleter { built++; return &recordingExecutor{} })
+	defer restore()
+
+	_, err := runVerify(context.Background(), dir, execRegistry("MEDIUM"), Options{}, scriptedHarness(`{}`))
+	require.NoError(t, err)
+	assert.Equal(t, 0, built, "newExecutorClient must not be called when no finding is fix-eligible")
+}
+
 // Integration: with no executor configured, runVerify behaves exactly as before —
 // the fix column is left as the reviewer supplied it.
 func TestRunVerify_NoExecutorLeavesFixUnchanged(t *testing.T) {
