@@ -129,3 +129,32 @@ executor:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fix_timeout")
 }
+
+// A quoted-space provider is non-empty under a bare == "" check, so it falls
+// through to the unknown-provider branch and reports the confusing "references
+// unknown provider ' '". validateExecutor must use strings.TrimSpace (matching
+// the validateProvider/validateAgent idiom) so a whitespace-only value reports
+// the clear "required field 'provider' is missing".
+func TestExecutor_WhitespaceProviderReportsMissing(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: " "
+  model: claude-opus-4-8
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required field 'provider' is missing")
+	assert.NotContains(t, err.Error(), "unknown provider")
+}
+
+// A quoted-space model passes the bare == "" check and is accepted verbatim,
+// then handed to the provider. validateExecutor must use strings.TrimSpace so a
+// whitespace-only model reports "required field 'model' is missing".
+func TestExecutor_WhitespaceModelReportsMissing(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: " "
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required field 'model' is missing")
+}
