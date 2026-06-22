@@ -1,0 +1,1 @@
+LOW|internal/debate/cluster.go:68|Potential nil map panic if indexClusters returns nil|Initialize clusterIdx as empty map in indexClusters or guard lookup|correctness|2|clusterIdx lookup safe in Go but defensive init improves robustness|bruce

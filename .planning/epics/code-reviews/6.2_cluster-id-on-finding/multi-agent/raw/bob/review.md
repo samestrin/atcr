@@ -1,0 +1,3 @@
+HIGH|internal/debate/cluster.go:73|Nil clusterIdx causes panic on gray-zone item|Add nil check for clusterIdx before lookup|correctness|5|clusterIdx[FindingKey{...}] panics if nil|bruce
+MEDIUM|internal/debate/cluster.go:73|FindingKey lookup uses item.Problem which may not match cluster's representative problem|Use cluster's canonical problem from indexClusters or add fallback|correctness|10|clusterIdx keyed by representative problem but item.Problem may differ|bruce
+LOW|internal/reconcile/emit.go:115|ClusterID field lacks validation for empty string vs omitted|Document that empty string and omitted are treated identically|maintainability|5|omitempty handles both but semantics unclear|bruce

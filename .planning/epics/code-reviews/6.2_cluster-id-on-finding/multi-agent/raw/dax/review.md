@@ -1,0 +1,1 @@
+LOW|internal/debate/cluster.go:74|filterMergedClusters may use incorrect cluster ID if two distinct clusters yield identical FindingKey in indexClusters|Document collision limitation in indexClusters or switch to a multi-map|correctness|10|clusterIdx[FindingKey{File,Line,Problem}] can overwrite entries when clusters share display problem|code-reviewer
