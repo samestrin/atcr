@@ -27,11 +27,13 @@ type recordingExecutor struct {
 	err     error
 	calls   int
 	prompts []string
+	temps   []*float64
 }
 
 func (r *recordingExecutor) Complete(_ context.Context, inv llmclient.Invocation) (string, error) {
 	r.calls++
 	r.prompts = append(r.prompts, inv.Prompt)
+	r.temps = append(r.temps, inv.Temperature)
 	return r.out, r.err
 }
 
@@ -163,6 +165,36 @@ func TestGenerateFixes_AttributionGuardIsTokenNotPrefix(t *testing.T) {
 	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
 	assert.Equal(t, 1, rec.calls, "executor 'op' must not be suppressed by 'fix by opus'")
 	assert.Contains(t, findings[0].Evidence, "; fix by op")
+}
+
+// An explicit executor temperature must be forwarded to the provider payload
+// (Epic 7.0.1 AC2) via llmclient.Invocation.Temperature.
+func TestCallExecutor_PassesExplicitTemperature(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM")
+	temp := 0.3
+	ex.Temperature = &temp
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.temps, 1)
+	require.NotNil(t, rec.temps[0], "executor temperature must reach the payload")
+	assert.Equal(t, 0.3, *rec.temps[0], "the configured temperature must be forwarded verbatim")
+}
+
+// With no temperature configured the executor must still send a deterministic 0.0
+// on the payload (Epic 7.0.1) — not omit it and inherit the provider's own default.
+func TestCallExecutor_DefaultsTemperatureToZero(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
+	}
+	rec := &recordingExecutor{out: "fix"}
+	ex := execConfig("MEDIUM") // Temperature nil
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	require.Len(t, rec.temps, 1)
+	require.NotNil(t, rec.temps[0], "executor must send a temperature even when unset")
+	assert.Equal(t, 0.0, *rec.temps[0], "unset temperature defaults to deterministic 0.0")
 }
 
 // deadlineProbe is an executorCompleter that records whether the context it was
