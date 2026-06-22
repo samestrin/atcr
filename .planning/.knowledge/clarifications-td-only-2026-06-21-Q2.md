@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-21-f7e99f
-question: "Should the cache Store eviction be optimized with a running total-size counter to avoid per-Put ReadDir scans?"
+id: mem-2026-06-21-239b41
+question: "filterMergedClusters location-key over-suppression: accept co-located cluster limitation or implement cluster-identity tracking?"
 created: 2026-06-21
 last_retrieved: ""
 sprints: []
-files: [internal/cache/store.go]
-tags: [td-clarification, td-only, performance, cache, eviction, mutex, store]
+files: [internal/debate/cluster.go]
+tags: [td-clarification, td-only, correctness, scope, testing, debate, gray-zone, cluster, idempotency]
 retrievals: 0
 status: active
-type: clarifications skill, td-only mode, 2026-06-21
+type: clarifications skill 2026-06-21
 ---
 
-# Should the cache Store eviction be optimized with a running 
+# filterMergedClusters location-key over-suppression: accept c
 
 ## Decision
 
-Leave as-is. The evict ReadDir+Stat scan is called only from Put while the store mutex is held (internal/cache/store.go:36-40, 116-120), so it is strictly sequential — it never runs concurrently with any other operation. LLM API round-trips dominate latency by orders of magnitude, so the O(n) scan is negligible in absolute terms. A running counter would touch Store struct, constructor, Put, evict, and Get's corrupt-entry removal — complexity that exceeds the LOW severity rating and any measured need. Leave as-is until a concrete performance measurement justifies the change.
+Accept and document the limitation. filterMergedClusters at internal/debate/cluster.go:50 keys solely on locationKey(File,Line); two distinct gray-zone clusters at the same canonical File+Line will have cluster #2 suppressed pre-debate after cluster #1 is merged. The condition is self-healing (cluster #2 re-debates on the next fresh reconcile, no data corruption). Cluster-identity tracking requires adding a field to reconcile.JSONFinding and reconcile.AmbiguousCluster — a cross-package schema change outside group-2 scope. The correct full fix is already tracked as a separate LOW item in the epic-6.1 section. Group-2 action: add a comment documenting the co-location limitation + a test with two co-located clusters pinning the known behavior. NOTE: indexClusters uses a 3-field FindingKey (File+Line+Problem) so it correctly distinguishes co-located clusters; the over-suppression is isolated to filterMergedClusters only.
 
 ## Rationale
 
@@ -27,4 +27,4 @@ Leave as-is. The evict ReadDir+Stat scan is called only from Put while the store
 
 ## Code Reference
 
-- internal/cache/store.go
+- internal/debate/cluster.go

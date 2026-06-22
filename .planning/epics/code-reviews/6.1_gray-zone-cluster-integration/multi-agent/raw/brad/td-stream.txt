@@ -1,0 +1,2 @@
+MEDIUM|internal/debate/debate.go:112|Error from ReadAmbiguousClusters ignored|Log or handle error explicitly|error-handling|5|grayClusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)|bruce
+LOW|internal/reconcile/merge.go:315|Inefficient string concatenation in loop|Use strings.Builder for O(N) performance|performance|5|out += " / " + p in joinEvidence loop|bruce

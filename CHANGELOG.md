@@ -29,6 +29,17 @@
 - Allowed `--require-verified` alongside `--debate` without requiring `--verify` in the CLI.
 - Consolidated debate trigger defaulting to a single source of truth in `ResolveConfig`.
 - Rejected `--single-model` on `atcr review` when `--debate` is not set.
+- Added a shared representative-problem function for `BuildDisagreements` and `clusterDisplayProblem`, pinning the gray-zone cluster coupling with a round-trip test.
+- Fixed `applyOneClusterMerge` cross-line drift recovery so an unrelated lone finding at a member location is no longer absorbed into the merge.
+- Skipped single-member clusters in the merge-applied count, removing the misleading "could not be applied" warning.
+- Captured and logged errors from reading `ambiguous.json` instead of silently degrading to zero clusters.
+- Normalized judge `cluster_decision` input before the merge/separate equality check.
+- Added a defensive assertion that gray-zone member locations never collide with the single-finding rulings keyspace.
+- Recorded a distinct no-decision reason in `debate.json` for empty or unparseable judge cluster rulings.
+- Preserved each member's existing `Disagreement` lower bound in `MergeJSONFindings` so merged records keep the full reviewer tension range.
+- Preserved the first non-empty `PathWarning`/`PathSuggestion` across cluster members instead of copying only the first group member.
+- Split and deduplicated comma-joined skeptic names in `mergeVerification`, guarding against empty tokens and corrupted provenance.
+- Replaced the evidence-join loop in `MergeJSONFindings` with `strings.Join`.
 
 *Shipped via /resolve-td + /finalize-td*
 

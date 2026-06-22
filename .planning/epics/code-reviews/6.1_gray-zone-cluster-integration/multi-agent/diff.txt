@@ -1,0 +1,813 @@
+diff --git a/internal/debate/cluster.go b/internal/debate/cluster.go
+new file mode 100644
+index 0000000..363e0d5
+--- /dev/null
++++ b/internal/debate/cluster.go
+@@ -0,0 +1,171 @@
++package debate
++
++import (
++	"strconv"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++)
++
++// locationKey is the file+line identity used to correlate a gray-zone cluster's
++// members to their findings.json records. It is intentionally coarser than
++// FindingKey: a member may have been further-merged with a third finding (≥0.7
++// similarity), replacing its problem text via longestField, so the full triple
++// would not match between the cluster's raw member and the reconciled record.
++func locationKey(file string, line int) string {
++	return file + "\x00" + strconv.Itoa(line)
++}
++
++// clusterDisplayProblem returns the longest PROBLEM among a cluster's members —
++// the same representative BuildDisagreements writes as the gray-zone radar item's
++// Problem, so a debated DisagreementItem can be correlated back to its cluster.
++func clusterDisplayProblem(c reconcile.AmbiguousCluster) string {
++	best := ""
++	for _, f := range c.Findings {
++		if len(f.Problem) > len(best) {
++			best = f.Problem
++		}
++	}
++	return best
++}
++
++// indexClusters maps each gray-zone cluster by the identity its radar item
++// carries — File + Line + longest-member-problem — so a debated gray-zone
++// DisagreementItem (it.File, it.Line, it.Problem) resolves to the AmbiguousCluster
++// whose members must be unioned.
++func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconcile.AmbiguousCluster {
++	out := make(map[FindingKey]reconcile.AmbiguousCluster, len(clusters))
++	for _, c := range clusters {
++		out[FindingKey{File: c.File, Line: c.Line, Problem: clusterDisplayProblem(c)}] = c
++	}
++	return out
++}
++
++// filterMergedClusters drops gray-zone radar items whose cluster a prior debate
++// already merged inline (Epic 6.1 AC4), so a re-run never re-debates or re-merges
++// an already-applied cluster. A cluster is "already applied" when a findings.json
++// record flagged ClusterMerged sits at the gray-zone item's location (the merged
++// survivor is placed at the cluster's canonical File+Line). Non-gray-zone items
++// pass through untouched. Returns items unchanged when no record is flagged, so a
++// first-ever debate run does no extra work.
++func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconcile.JSONFinding) []reconcile.DisagreementItem {
++	mergedLocs := map[string]bool{}
++	for _, f := range findings {
++		if f.ClusterMerged {
++			mergedLocs[locationKey(f.File, f.Line)] = true
++		}
++	}
++	if len(mergedLocs) == 0 {
++		return items
++	}
++	out := make([]reconcile.DisagreementItem, 0, len(items))
++	for _, it := range items {
++		if it.Kind == reconcile.KindGrayZone && mergedLocs[locationKey(it.File, it.Line)] {
++			continue
++		}
++		out = append(out, it)
++	}
++	return out
++}
++
++// applyClusterMerges unions the member findings of each gray-zone cluster the
++// judge ruled "merge" (Epic 6.1, Option A) directly in the findings slice. It
++// returns the rewritten slice and the count of clusters actually applied, so the
++// caller can surface a ruling that could not be physically applied. Each cluster
++// is handled independently by applyOneClusterMerge.
++func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, int) {
++	applied := 0
++	for _, c := range clusters {
++		var ok bool
++		findings, ok = applyOneClusterMerge(findings, c)
++		if ok {
++			applied++
++		}
++	}
++	return findings, applied
++}
++
++// applyOneClusterMerge unions one cluster's members in findings and reports
++// whether the merge was applied. Members are matched to findings.json records in
++// two passes: first by exact File+Line+Problem, then — for members whose problem
++// drifted (further-merged with a third finding) — by taking the sole still-
++// unmatched record at that member's location. Per-location drift recovery handles
++// the same-line case (two co-located members where one drifted): the drifted
++// member is the lone unmatched record left at that location after the exact pass.
++// More than one unmatched record at a member location is ambiguous, so none is
++// taken — an unrelated co-located finding is never absorbed. At least one exact
++// hit is required to anchor the cluster (so a cluster whose members were all
++// refuted/removed cannot union purely fallback-matched, possibly unrelated,
++// records). The matched records collapse via reconcile.MergeJSONFindings into one
++// record at the cluster's canonical location, flagged ClusterMerged. Fewer than
++// two matched records, or any matched record already flagged ClusterMerged (a
++// re-run past the radar filter), is a strict no-op rather than a corruption.
++func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, bool) {
++	memberExact := map[FindingKey]bool{}
++	memberLocs := map[string]bool{}
++	for _, mf := range c.Findings {
++		memberExact[FindingKey{File: mf.File, Line: mf.Line, Problem: mf.Problem}] = true
++		memberLocs[locationKey(mf.File, mf.Line)] = true
++	}
++
++	matched := map[int]bool{}
++	exactHits := 0
++	// Pass 1: exact member matches.
++	for i, f := range findings {
++		if memberExact[FindingKey{File: f.File, Line: f.Line, Problem: f.Problem}] {
++			matched[i] = true
++			exactHits++
++		}
++	}
++	// Pass 2: drift recovery. Group the still-unmatched records by member location;
++	// a member location with exactly one unmatched record contributes it (the
++	// drifted member). Two or more is ambiguous and contributes nothing.
++	unmatchedAtLoc := map[string][]int{}
++	for i, f := range findings {
++		if matched[i] {
++			continue
++		}
++		lk := locationKey(f.File, f.Line)
++		if memberLocs[lk] {
++			unmatchedAtLoc[lk] = append(unmatchedAtLoc[lk], i)
++		}
++	}
++	for _, idxs := range unmatchedAtLoc {
++		if len(idxs) == 1 {
++			matched[idxs[0]] = true
++		}
++	}
++
++	if exactHits == 0 || len(matched) < 2 {
++		return findings, false // not anchored, or members not both present
++	}
++	group := make([]reconcile.JSONFinding, 0, len(matched))
++	firstIdx := -1
++	for i := range findings {
++		if matched[i] {
++			if findings[i].ClusterMerged {
++				return findings, false // already applied: strict no-op
++			}
++			if firstIdx < 0 {
++				firstIdx = i
++			}
++			group = append(group, findings[i])
++		}
++	}
++
++	merged := reconcile.MergeJSONFindings(group)
++	merged.File, merged.Line = c.File, c.Line
++	merged.ClusterMerged = true
++
++	out := make([]reconcile.JSONFinding, 0, len(findings)-len(group)+1)
++	for i := range findings {
++		switch {
++		case i == firstIdx:
++			out = append(out, merged)
++		case matched[i]:
++			// dropped — folded into merged
++		default:
++			out = append(out, findings[i])
++		}
++	}
++	return out, true
++}
+diff --git a/internal/debate/cluster_test.go b/internal/debate/cluster_test.go
+new file mode 100644
+index 0000000..1a62d3a
+--- /dev/null
++++ b/internal/debate/cluster_test.go
+@@ -0,0 +1,274 @@
++package debate
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// grayFinding builds a findings.json record for a gray-zone cluster member.
++func grayFinding(file string, line int, problem, sev, reviewer string) reconcile.JSONFinding {
++	return reconcile.JSONFinding{
++		Severity: sev, File: file, Line: line, Problem: problem, Fix: "fix",
++		Category: "correctness", EstMinutes: 15, Evidence: "ev-" + reviewer,
++		Reviewers: []string{reviewer}, Confidence: "MEDIUM",
++	}
++}
++
++// reviewDirWithGray seeds reconciled/findings.json + ambiguous.json + manifest so
++// the radar surfaces the given gray-zone cluster as a debate item.
++func reviewDirWithGray(t *testing.T, findings []reconcile.JSONFinding, clusters ...reconcile.AmbiguousCluster) string {
++	t.Helper()
++	dir := t.TempDir()
++	recon := filepath.Join(dir, reconciledSubdir)
++	require.NoError(t, os.MkdirAll(recon, 0o755))
++	fdata, err := json.MarshalIndent(findings, "", "  ")
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(filepath.Join(recon, reconcile.FindingsJSON), append(fdata, '\n'), 0o644))
++	adata, err := json.MarshalIndent(clusters, "", "  ")
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(filepath.Join(recon, reconcile.AmbiguousJSON), append(adata, '\n'), 0o644))
++	require.NoError(t, os.WriteFile(filepath.Join(dir, manifestFile),
++		[]byte(`{"base":"a","head":"deadbeef","stages":["review","verify"]}`), 0o644))
++	return dir
++}
++
++// grayCluster builds a two-member ambiguous cluster co-located at file/line.
++func grayCluster(id, file string, line int, probA, sevA, revA, probB, sevB, revB string) reconcile.AmbiguousCluster {
++	return reconcile.AmbiguousCluster{
++		ID: id, File: file, Line: line, Similarity: 0.5,
++		Findings: []stream.Finding{
++			{Severity: sevA, File: file, Line: line, Problem: probA, Reviewer: revA},
++			{Severity: sevB, File: file, Line: line, Problem: probB, Reviewer: revB},
++		},
++	}
++}
++
++// grayJudgeTurns scripts proposer/challenger/judge turns where the judge returns a
++// gray-zone ruling with the given cluster_decision.
++func grayJudgeTurns(decision string) []chatTurn {
++	return []chatTurn{
++		{content: "proposer defends"},
++		{content: "challenger attacks"},
++		{content: `{"outcome":"uphold","cluster_decision":"` + decision + `","settled_severity":"HIGH","reasoning":"same root cause"}`},
++	}
++}
++
++// TestRunDebate_GrayZoneMergeUnionsFindings: a judge "merge" ruling physically
++// unions the cluster's two member findings into one record in findings.json
++// (AC1), unioning reviewers and flagging the survivor cluster_merged.
++func TestRunDebate_GrayZoneMergeUnionsFindings(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
++		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
++	}
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"off by one in loop", "MEDIUM", "alice",
++		"loop boundary error causes overflow", "HIGH", "bob")
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
++	require.NoError(t, err)
++	require.Equal(t, 1, res.Selected)
++
++	f := readFindings(t, dir)
++	require.Len(t, f, 1, "the two gray-zone members must be unioned into one record")
++	assert.True(t, f[0].ClusterMerged, "the surviving merged record must be flagged cluster_merged")
++	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
++	assert.Equal(t, "HIGH", f[0].Severity)
++	assert.Equal(t, 10, f[0].Line)
++}
++
++// TestRunDebate_GrayZoneSeparateLeavesUnmerged: a judge "separate" ruling leaves
++// the cluster's members unmerged in findings.json (AC2) and sets no flag.
++func TestRunDebate_GrayZoneSeparateLeavesUnmerged(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
++		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
++	}
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"off by one in loop", "MEDIUM", "alice",
++		"loop boundary error causes overflow", "HIGH", "bob")
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	cc := &fakeChatCompleter{turns: grayJudgeTurns("separate")}
++	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
++	require.NoError(t, err)
++	require.Equal(t, 1, res.Selected)
++
++	f := readFindings(t, dir)
++	require.Len(t, f, 2, "a separate ruling must leave both members in findings.json")
++	for _, x := range f {
++		assert.False(t, x.ClusterMerged, "no record may be flagged cluster_merged on a separate ruling")
++	}
++}
++
++// TestRunDebate_GrayZoneMergeDriftAndNoOverCapture: when a member's problem text
++// drifted (it was further-merged with a third finding) but is the sole record at
++// its location, the merge still unions it (the third-finding wrinkle). An
++// unrelated finding co-located at a DIFFERENT line is never absorbed.
++func TestRunDebate_GrayZoneMergeDriftAndNoOverCapture(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
++		grayFinding("a.go", 12, "longest merged problem text from a third finding", "HIGH", "bob"),
++		grayFinding("a.go", 50, "totally unrelated finding", "LOW", "carol"),
++	}
++	// Cluster member B's raw problem ("beta problem text") no longer matches the
++	// drifted record at a.go:12, but that location holds exactly one record.
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"alpha problem text", "MEDIUM", "alice",
++		"beta problem text", "HIGH", "bob")
++	cluster.Findings[1].Line = 12
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	res, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
++	require.NoError(t, err)
++	require.Equal(t, 1, res.Selected)
++
++	f := readFindings(t, dir)
++	require.Len(t, f, 2, "the two members union to one; the unrelated finding is untouched")
++	var merged, unrelated *reconcile.JSONFinding
++	for i := range f {
++		if f[i].Line == 50 {
++			unrelated = &f[i]
++		} else {
++			merged = &f[i]
++		}
++	}
++	require.NotNil(t, merged)
++	require.NotNil(t, unrelated)
++	assert.True(t, merged.ClusterMerged)
++	assert.Equal(t, []string{"alice", "bob"}, merged.Reviewers)
++	assert.False(t, unrelated.ClusterMerged, "the unrelated co-file finding must never be absorbed")
++	assert.Equal(t, "totally unrelated finding", unrelated.Problem)
++}
++
++// TestRunDebate_GrayZoneMergeSameLineDrift: two members co-located at the SAME
++// line where one member's problem drifted (further-merged with a third finding).
++// Per-location drift recovery unions the drifted member (the lone unmatched record
++// at that line after the exact-match pass), anchored by the other member's exact
++// match.
++func TestRunDebate_GrayZoneMergeSameLineDrift(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "alpha problem text", "MEDIUM", "alice"),
++		grayFinding("a.go", 10, "longest merged problem text from a third finding", "HIGH", "bob"),
++	}
++	// Member B's raw problem ("beta problem text") drifted; it is the lone unmatched
++	// record at a.go:10 after member A matches exactly.
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"alpha problem text", "MEDIUM", "alice",
++		"beta problem text", "HIGH", "bob")
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
++	require.NoError(t, err)
++
++	f := readFindings(t, dir)
++	require.Len(t, f, 1, "the anchored member plus the same-line drifted member union to one")
++	assert.True(t, f[0].ClusterMerged)
++	assert.Equal(t, []string{"alice", "bob"}, f[0].Reviewers)
++}
++
++// TestRunDebate_GrayZoneMergeRequiresExactAnchor: when NO cluster member matches a
++// findings.json record by exact File+Line+Problem (e.g. both members were
++// refuted/removed and unrelated findings now sit at those lines), the merge is a
++// strict no-op — a group of purely fallback-matched records is never unioned.
++func TestRunDebate_GrayZoneMergeRequiresExactAnchor(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "unrelated record now at line 10", "MEDIUM", "alice"),
++		grayFinding("a.go", 12, "unrelated record now at line 12", "HIGH", "bob"),
++	}
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"original member A text", "MEDIUM", "alice",
++		"original member B text", "HIGH", "bob")
++	cluster.Findings[1].Line = 12
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
++	require.NoError(t, err)
++
++	f := readFindings(t, dir)
++	require.Len(t, f, 2, "no exact member anchor: nothing may be unioned")
++	for _, x := range f {
++		assert.False(t, x.ClusterMerged)
++	}
++}
++
++// TestRunDebate_GrayZoneMergeIsIdempotent: a second debate run over an
++// already-applied cluster does not re-debate, re-merge, or corrupt it (AC4). The
++// merged survivor carries cluster_merged, so the radar filters the gray-zone item
++// out of selection on the re-run.
++func TestRunDebate_GrayZoneMergeIsIdempotent(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
++		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
++	}
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"off by one in loop", "MEDIUM", "alice",
++		"loop boundary error causes overflow", "HIGH", "bob")
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	// Run 1 applies the merge.
++	cc1 := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	_, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc1))
++	require.NoError(t, err)
++	after1 := readFindings(t, dir)
++	require.Len(t, after1, 1)
++	require.True(t, after1[0].ClusterMerged)
++
++	// Run 2: the cluster is already applied — it must be filtered out of selection.
++	cc2 := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	res2, err := runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc2))
++	require.NoError(t, err)
++	assert.Equal(t, 0, res2.Selected, "an already-merged cluster must not be re-selected")
++
++	after2 := readFindings(t, dir)
++	require.Len(t, after2, 1, "re-run must not duplicate or re-split the merged record")
++	assert.True(t, after2[0].ClusterMerged)
++	assert.Equal(t, []string{"alice", "bob"}, after2[0].Reviewers)
++}
++
++// TestRunDebate_GrayZoneMergeLeavesAdjudicationArtifactsUntouched: inline gray-zone
++// application (Option A) and the authored adjudication.json path are independent
++// (AC3). A debate merge rewrites only findings.json/debate.json/manifest.json — it
++// must not rewrite the reconcile-time ambiguous.json sidecar, nor synthesize an
++// adjudication.json or ambiguous.original.json (the authored path's artifacts).
++func TestRunDebate_GrayZoneMergeLeavesAdjudicationArtifactsUntouched(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		grayFinding("a.go", 10, "off by one in loop", "MEDIUM", "alice"),
++		grayFinding("a.go", 10, "loop boundary error causes overflow", "HIGH", "bob"),
++	}
++	cluster := grayCluster("amb-1", "a.go", 10,
++		"off by one in loop", "MEDIUM", "alice",
++		"loop boundary error causes overflow", "HIGH", "bob")
++	dir := reviewDirWithGray(t, findings, cluster)
++
++	ambPath := filepath.Join(dir, reconciledSubdir, reconcile.AmbiguousJSON)
++	before, err := os.ReadFile(ambPath)
++	require.NoError(t, err)
++
++	cc := &fakeChatCompleter{turns: grayJudgeTurns("merge")}
++	_, err = runDebate(context.Background(), dir, debateRoster(), Options{}, harness(cc))
++	require.NoError(t, err)
++
++	after, err := os.ReadFile(ambPath)
++	require.NoError(t, err)
++	assert.Equal(t, before, after, "debate must not rewrite the reconcile-time ambiguous.json")
++
++	for _, name := range []string{reconcile.AdjudicationJSON, reconcile.OriginalAmbiguousJSON} {
++		_, statErr := os.Stat(filepath.Join(dir, reconciledSubdir, name))
++		assert.True(t, os.IsNotExist(statErr), "debate must not create the authored-path artifact %s", name)
++	}
++}
+diff --git a/internal/debate/debate.go b/internal/debate/debate.go
+index 0adce84..dc03ea0 100644
+--- a/internal/debate/debate.go
++++ b/internal/debate/debate.go
+@@ -107,6 +107,15 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 	// post-verify verification_disagreement items (absent from the reconcile-time
+ 	// disagreements.json snapshot) alongside severity splits and gray-zone clusters.
+ 	df := reconcile.LoadDisagreements(reviewDir, findings)
++	// Gray-zone cluster decisions (Epic 6.1) apply inline: load the clusters so a
++	// judge "merge" ruling can union the member findings in findings.json directly
++	// (Option A), and drop clusters a prior debate already merged so a re-run is a
++	// no-op (AC4). A missing/corrupt ambiguous.json degrades to no gray-zone work.
++	grayClusters, _ := reconcile.ReadAmbiguousClusters(reviewDir)
++	clusterIdx := indexClusters(grayClusters)
++	// Idempotency (AC4): drop gray-zone items whose cluster a prior debate already
++	// merged inline, so a re-run never re-debates or re-merges an applied cluster.
++	df.Items = filterMergedClusters(df.Items, findings)
+ 	// Idempotency: drop findings a prior debate already settled (upheld/split mark
+ 	// ChallengeSurvived). An upheld severity-split keeps its Disagreement annotation,
+ 	// so without this guard it re-enters the radar and a re-run re-bills it at three
+@@ -154,10 +163,12 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 		maxPar = 4
+ 	}
+ 	type itemOutcome struct {
+-		ir    ItemResult
+-		apply bool
+-		key   FindingKey
+-		rule  ruleApply
++		ir           ItemResult
++		apply        bool
++		key          FindingKey
++		rule         ruleApply
++		clusterMerge bool
++		cluster      reconcile.AmbiguousCluster
+ 	}
+ 	outcomes := make([]itemOutcome, len(sel.Selected))
+ 	sem := make(chan struct{}, maxPar)
+@@ -178,10 +189,22 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 				ir = debateOne(ctx, debateDir, it, cfg, reg, cc, disp)
+ 			}
+ 			oc := itemOutcome{ir: ir}
+-			// Apply verdicts only to single-finding items. A gray-zone ruling is a
+-			// cluster-level merge/separate decision recorded for the existing
+-			// adjudication path, not a per-finding verdict (see Clarifications).
+-			if ir.Outcome != OutcomeUnresolved && it.Kind != reconcile.KindGrayZone {
++			switch {
++			case ir.Outcome == OutcomeUnresolved:
++				// An unresolved item settles nothing — no application either way.
++			case it.Kind == reconcile.KindGrayZone:
++				// Epic 6.1: a gray-zone ruling is a cluster-level decision, not a
++				// per-finding verdict, so it never enters the single-finding rulings
++				// map. A "merge" unions the cluster's members in findings.json inline
++				// (Option A); "separate" leaves them unmerged. The cluster is captured
++				// here and applied after the pool drains.
++				if ir.ClusterDecision == ClusterMerge {
++					if c, ok := clusterIdx[FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}]; ok {
++						oc.clusterMerge = true
++						oc.cluster = c
++					}
++				}
++			default:
+ 				oc.apply = true
+ 				oc.key = FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
+ 				oc.rule = ruleApply{
+@@ -197,12 +220,16 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 	}
+ 	wg.Wait()
+ 
++	var mergeClusters []reconcile.AmbiguousCluster
+ 	for _, oc := range outcomes {
+ 		items = append(items, oc.ir)
+ 		tally(&res, oc.ir)
+ 		if oc.apply {
+ 			rulings[oc.key] = oc.rule
+ 		}
++		if oc.clusterMerge {
++			mergeClusters = append(mergeClusters, oc.cluster)
++		}
+ 	}
+ 
+ 	// Build all three stage artifacts in memory first, then flush them as one
+@@ -227,6 +254,20 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 	if len(rulings) > 0 {
+ 		applyRulings(findings, rulings)
+ 	}
++	if len(mergeClusters) > 0 {
++		// Epic 6.1: union gray-zone clusters the judge ruled "merge" directly in the
++		// post-verify findings.json (Option A) — never via RunReconcile, which would
++		// rebuild from sources/ and erase the verify/debate verdicts above.
++		var applied int
++		findings, applied = applyClusterMerges(findings, mergeClusters)
++		if applied < len(mergeClusters) {
++			// A recorded merge ruling that could not be physically applied (its
++			// members were not both present in findings.json) is otherwise silent —
++			// debate.json still records the ruling, but findings.json is unchanged.
++			log.FromContext(ctx).Warn("debate: some gray-zone merge rulings could not be applied to findings.json",
++				"ruled", len(mergeClusters), "applied", applied)
++		}
++	}
+ 	findingsPath, findingsBytes, err := computeFindingsBytes(reviewDir, findings)
+ 	if err != nil {
+ 		return Result{}, err
+diff --git a/internal/reconcile/cluster_merge_test.go b/internal/reconcile/cluster_merge_test.go
+new file mode 100644
+index 0000000..3443d21
+--- /dev/null
++++ b/internal/reconcile/cluster_merge_test.go
+@@ -0,0 +1,79 @@
++package reconcile
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// TestMergeJSONFindings_UnionsMembers: collapsing two gray-zone member records
++// (the judge ruled "merge") applies the same field rules as Merge over the
++// already-reconciled JSONFinding shape — severity max with a disagreement
++// annotation, longest problem/fix, max est, unioned+sorted reviewers, and HIGH
++// confidence once two distinct reviewers are present.
++func TestMergeJSONFindings_UnionsMembers(t *testing.T) {
++	group := []JSONFinding{
++		{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "off by one in loop", Fix: "use <=", Category: "correctness", EstMinutes: 15, Evidence: "ev1", Reviewers: []string{"alice"}, Confidence: "MEDIUM"},
++		{Severity: "HIGH", File: "a.go", Line: 10, Problem: "loop boundary error causes overflow", Fix: "bound", Category: "correctness", EstMinutes: 30, Evidence: "ev2", Reviewers: []string{"bob"}, Confidence: "MEDIUM"},
++	}
++	m := MergeJSONFindings(group)
++	assert.Equal(t, "HIGH", m.Severity)
++	assert.Equal(t, "MEDIUM vs HIGH", m.Disagreement)
++	assert.Equal(t, "loop boundary error causes overflow", m.Problem)
++	assert.Equal(t, []string{"alice", "bob"}, m.Reviewers)
++	assert.Equal(t, ConfHigh, m.Confidence)
++	assert.Equal(t, 30, m.EstMinutes)
++	assert.Equal(t, "a.go", m.File)
++	assert.Equal(t, 10, m.Line)
++}
++
++// TestMergeJSONFindings_SingleIsIdentity: a one-member group has nothing to
++// collapse and is returned unchanged (the apply path never unions fewer than two
++// records, but the helper must be total).
++func TestMergeJSONFindings_SingleIsIdentity(t *testing.T) {
++	f := JSONFinding{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", Reviewers: []string{"a"}, Confidence: "MEDIUM"}
++	assert.Equal(t, f, MergeJSONFindings([]JSONFinding{f}))
++}
++
++// TestMergeJSONFindings_VerificationPrecedence: a confirmed member verdict wins
++// over a refuted one (confirmed > unverifiable > refuted) so a real issue is never
++// masked by a refuted sibling, and every member's skeptic provenance is unioned.
++func TestMergeJSONFindings_VerificationPrecedence(t *testing.T) {
++	group := []JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue A", Reviewers: []string{"alice"},
++			Verification: &Verification{Verdict: VerdictRefuted, Skeptic: "sk1", Notes: "disproved A"}},
++		{Severity: "HIGH", File: "a.go", Line: 5, Problem: "issue B longer", Reviewers: []string{"bob"},
++			Verification: &Verification{Verdict: VerdictConfirmed, Skeptic: "sk2", Notes: "confirmed B", ChallengeSurvived: true}},
++	}
++	m := MergeJSONFindings(group)
++	require.NotNil(t, m.Verification)
++	assert.Equal(t, VerdictConfirmed, m.Verification.Verdict, "confirmed must win over refuted")
++	assert.True(t, m.Verification.ChallengeSurvived)
++	assert.Equal(t, "sk1,sk2", m.Verification.Skeptic, "skeptic provenance from all members is unioned")
++}
++
++// TestMergeJSONFindings_NoVerificationStaysNil: with no member carrying a block,
++// the merged record has no verification (a non-debated finding stays byte-stable).
++func TestMergeJSONFindings_NoVerificationStaysNil(t *testing.T) {
++	group := []JSONFinding{
++		{Severity: "LOW", File: "a.go", Line: 5, Problem: "a", Reviewers: []string{"x"}},
++		{Severity: "LOW", File: "a.go", Line: 5, Problem: "ab", Reviewers: []string{"y"}},
++	}
++	assert.Nil(t, MergeJSONFindings(group).Verification)
++}
++
++// TestJSONFinding_ClusterMergedOmitempty: the Epic 6.1 idempotency marker is
++// omitempty, so a non-merged record serializes byte-identically to a pre-6.1
++// findings.json (the field is absent), and only a merged record carries it.
++func TestJSONFinding_ClusterMergedOmitempty(t *testing.T) {
++	plain, err := json.Marshal(JSONFinding{Severity: "LOW", File: "x.go", Line: 1, Problem: "p"})
++	require.NoError(t, err)
++	assert.NotContains(t, string(plain), "cluster_merged", "non-merged record must omit the field")
++
++	merged, err := json.Marshal(JSONFinding{Severity: "LOW", File: "x.go", Line: 1, Problem: "p", ClusterMerged: true})
++	require.NoError(t, err)
++	assert.True(t, strings.Contains(string(merged), `"cluster_merged":true`), "a merged record must carry the flag")
++}
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index 15899cc..d608463 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -98,6 +98,13 @@ type JSONFinding struct {
+ 	// present. It is advisory only — File (the original cited path) is never
+ 	// rewritten — and is set only alongside a non-empty path_warning.
+ 	PathSuggestion string `json:"path_suggestion,omitempty"`
++	// ClusterMerged marks the record that resulted from inline application of a
++	// judge gray-zone "merge" ruling (Epic 6.1): the cross-examination stage
++	// unioned a gray-zone cluster's members into this single finding. omitempty
++	// keeps every non-merged findings.json record byte-identical. It is the
++	// idempotency marker the debate radar filters on so a re-run never re-merges an
++	// already-applied cluster (AC4); it is never set by any reconcile-time path.
++	ClusterMerged bool `json:"cluster_merged,omitempty"`
+ }
+ 
+ // JSONFindings converts the merged findings to their JSON schema records.
+diff --git a/internal/reconcile/merge.go b/internal/reconcile/merge.go
+index 705b871..33c75fb 100644
+--- a/internal/reconcile/merge.go
++++ b/internal/reconcile/merge.go
+@@ -248,3 +248,146 @@ func confidenceFor(reviewerCount int) string {
+ 	}
+ 	return ConfMedium
+ }
++
++// MergeJSONFindings collapses a group of findings.json records — a gray-zone
++// cluster's members the judge ruled "merge" (Epic 6.1) — into one reconciled
++// record. It applies the same field rules as Merge (severity max with a
++// "<lo> vs <hi>" disagreement annotation, longest problem/fix, modal category,
++// max est-minutes) but over the already-reconciled JSONFinding shape, where
++// REVIEWERS is a list (the merge unions the per-record lists, not a single
++// per-source name). The location is the first member's file/line; EVIDENCE is the
++// distinct members' evidence joined by " / "; CONFIDENCE follows the unioned
++// reviewer count. Verification is combined by mergeVerification (verdict
++// precedence confirmed > unverifiable > refuted, skeptic provenance unioned) and
++// the Epic 5.0 path-validation fields carry the first member's — the members are
++// co-located, so their path status is identical. The caller sets ClusterMerged on
++// the result. A
++// zero- or one-member group is returned as-is (the apply path never unions fewer
++// than two records, but the helper stays total).
++func MergeJSONFindings(group []JSONFinding) JSONFinding {
++	if len(group) == 0 {
++		return JSONFinding{}
++	}
++	if len(group) == 1 {
++		return group[0]
++	}
++	sf := make([]stream.Finding, len(group))
++	for i, f := range group {
++		sf[i] = stream.Finding{
++			Severity: f.Severity, File: f.File, Line: f.Line,
++			Problem: f.Problem, Fix: f.Fix, Category: f.Category,
++			EstMinutes: f.EstMinutes, Evidence: f.Evidence,
++		}
++	}
++	maxSev, disagreement := mergeSeverity(sf)
++	reviewers := unionReviewers(group)
++	return JSONFinding{
++		Severity:       maxSev,
++		File:           group[0].File,
++		Line:           group[0].Line,
++		Problem:        longestField(sf, func(f stream.Finding) string { return f.Problem }),
++		Fix:            longestField(sf, func(f stream.Finding) string { return f.Fix }),
++		Category:       modalCategory(sf),
++		EstMinutes:     maxEstMinutes(sf),
++		Evidence:       joinEvidence(group),
++		Reviewers:      reviewers,
++		Confidence:     confidenceFor(len(reviewers)),
++		Disagreement:   disagreement,
++		Verification:   mergeVerification(group),
++		PathValid:      group[0].PathValid,
++		PathWarning:    group[0].PathWarning,
++		PathSuggestion: group[0].PathSuggestion,
++	}
++}
++
++// unionReviewers returns the sorted, deduplicated union of every member record's
++// REVIEWERS list (each JSONFinding already carries a reconciled list).
++func unionReviewers(group []JSONFinding) []string {
++	set := map[string]bool{}
++	for _, f := range group {
++		for _, r := range f.Reviewers {
++			if r != "" {
++				set[r] = true
++			}
++		}
++	}
++	out := make([]string, 0, len(set))
++	for r := range set {
++		out = append(out, r)
++	}
++	sort.Strings(out)
++	return out
++}
++
++// joinEvidence concatenates each member's distinct, non-empty EVIDENCE in member
++// order, joined by " / ". Duplicates (the same evidence string from co-located
++// members) collapse to one so the merged evidence does not double-count.
++func joinEvidence(group []JSONFinding) string {
++	seen := map[string]bool{}
++	parts := make([]string, 0, len(group))
++	for _, f := range group {
++		if f.Evidence == "" || seen[f.Evidence] {
++			continue
++		}
++		seen[f.Evidence] = true
++		parts = append(parts, f.Evidence)
++	}
++	out := ""
++	for i, p := range parts {
++		if i > 0 {
++			out += " / "
++		}
++		out += p
++	}
++	return out
++}
++
++// verdictRank orders verify verdicts for the cluster-merge precedence in
++// mergeVerification: confirmed (gate-blocking) outranks unverifiable, which
++// outranks refuted; an unknown/empty verdict ranks last.
++func verdictRank(verdict string) int {
++	switch strings.ToLower(strings.TrimSpace(verdict)) {
++	case VerdictConfirmed:
++		return 3
++	case VerdictUnverifiable:
++		return 2
++	case VerdictRefuted:
++		return 1
++	default:
++		return 0
++	}
++}
++
++// mergeVerification combines the member Verification blocks of an inline cluster
++// merge into one (Epic 6.1). The judge ruled the members duplicates, so they must
++// carry a single verdict: precedence is confirmed > unverifiable > refuted, so a
++// confirmed verification of the same underlying issue is never masked by a refuted
++// sibling phrasing, and a refuted verdict wins only when no member was confirmed
++// or unverifiable. The winning block's Verdict/Notes/ChallengeSurvived are kept
++// (ties resolve to the first member, for determinism), and every member's Skeptic
++// provenance is unioned (deduped, comma-joined) so no voter is lost. Returns nil
++// when no member carried a block.
++func mergeVerification(group []JSONFinding) *Verification {
++	var chosen *Verification
++	var skeptics []string
++	seen := map[string]bool{}
++	for i := range group {
++		v := group[i].Verification
++		if v == nil {
++			continue
++		}
++		if v.Skeptic != "" && !seen[v.Skeptic] {
++			seen[v.Skeptic] = true
++			skeptics = append(skeptics, v.Skeptic)
++		}
++		if chosen == nil || verdictRank(v.Verdict) > verdictRank(chosen.Verdict) {
++			chosen = v
++		}
++	}
++	if chosen == nil {
++		return nil
++	}
++	out := *chosen // copy so the source finding's block is not mutated
++	out.Skeptic = strings.Join(skeptics, ",")
++	return &out
++}

@@ -9,10 +9,10 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 21 | 0 |
-| LOW | 4 | 20 | 0 |
+| LOW | 0 | 20 | 0 |
 
 
-**Last Modified:** 2026-06-21 | **Open Items:** 4 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 46
+**Last Modified:** 2026-06-21 | **Open Items:** 0 | **Deferred Items:** 42 | **Resolved Items:** 0 | **Total Items:** 42
 
 ## Directory Structure
 
@@ -34,15 +34,6 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
-
-### [2026-06-21] From Sprint: epic-6.1
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | LOW | internal/debate/cluster.go:filterMergedClusters | Two distinct gray-zone clusters sharing the same canonical File+Line: merging one drops the other's radar item too (location-keyed filter), so the second is not debated until the next fresh reconcile (self-healing, non-corrupting) | Track the merged cluster identity (e.g. cluster id) on the survivor and filter by cluster identity rather than location alone | EDGE_CASES | 30 | execute-epic-stage3 |
-| 1 | [ ] | LOW | internal/debate/debate.go:201 | An empty/unparseable judge cluster_decision on a real gray-zone item is indistinguishable from an intentional separate (both fall through with no application beyond debate.json) | Record the no-decision case distinctly in debate.json (e.g. a reason) so an unparseable cluster ruling is auditable rather than silently treated as separate | REGRESSION_RISK | 20 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/debate/cluster.go:applyClusterMerges | No explicit guard/assertion locks the invariant that gray-zone member locations never collide with the single-finding rulings keyspace (the radar excludes gray members from solo/split tiers today); a future radar change could silently break it | Add a defensive assertion or test pinning that a gray-zone member location is never also a rulings-map key | INTEGRATION | 25 | execute-epic-independent |
-| U | [ ] | LOW | internal/reconcile/merge.go:296 | MergeJSONFindings copies PathValid/PathWarning/PathSuggestion from group[0] only, assuming co-located members share path status, but cross-line drift can union members at different lines whose Epic 5.0 path fields are not guaranteed identical | Take the path fields from the canonical-location member or re-derive them, rather than assuming group[0] when members may span lines | CORRECTNESS | 20 | execute-epic-independent |
 
 ### [2026-06-21] From Sprint: epic-6.0
 
@@ -150,23 +141,23 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| Solo | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
+| U | [/] | LOW | internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices) | Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4) | accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable. | ops | 0 | execute-sprint | execute-sprint | MEDIUM |
 
 ### [2026-06-14] From Sprint: 3.2_disagreement_radar
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| Solo | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
+| U | [/] | LOW | internal/reconcile/disagree.go:280 | Duplicate writeRadarSection rendering logic risks divergent escaping across packages (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Consolidate radar rendering into report package; reconcile should call report.writeRadarSection | security | 20 | code-review | greta | MEDIUM |
 | 4 | [/] | LOW | internal/reconcile/disagree.go:350 | Duplicated radar section rendering logic (Deferred: Epic Plan 7.2) | Extract shared writeRadarSection to a common package | maintainability | 10 | code-review | bruce | MEDIUM |
 | 4 | [/] | MEDIUM | internal/reconcile/disagree.go:354 | Duplicated radar markdown rendering diverges (Deferred: Epic Plan 7.2) | Extract shared writer or make reconcile use report package's escTrunc | maintainability | 10 | code-review | bruce | MEDIUM |
-| Solo | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
+| U | [/] | LOW | internal/reconcile/disagree.go:413 | Redundant implementation of writeRadarSection (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Remove duplicate function from internal/reconcile and use internal/report | maintainability | 15 | code-review | otto | MEDIUM |
 | 5 | [/] | MEDIUM | internal/report/disagree.go:47 | The radar markup is rendered by two divergent copies: writeRadarSection + formatScore in internal/report/disagree.go and a structurally different copy in internal/reconcile/disagree.go:389. They are intentionally not identical (report copy truncates via escTrunc + uses joinReviewers/reviewerOrUnknown; reconcile copy uses uncapped esc + joinOrNone), so a future markup change (new field, reordered bullets) must be made in both or the live `atcr report` radar and the archival reconciled/report.md silently drift. (Deferred: .planning/epics/active/7.2_radar-renderer-consolidation.md) | Extract one shared item renderer parameterized by a truncate-vs-verbatim flag and heading prefix; have both call sites delegate. Add a test that diffs the rendered markup of both paths on the same DisagreementsFile asserting the only intended difference is truncation. | correctness | 60 | code-review | bruce, claude | HIGH |
 
 ### [2026-06-14] From Sprint: 2.2_code_review_fanout_hardening
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| Solo | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
+| U | [/] | MEDIUM | internal/fanout/postprocess.go:14 | The severity-rank rubric {CRITICAL:4,HIGH:3,MEDIUM:2,LOW:1} is independently redefined in fanout/postprocess.go:17, reconcile/merge.go, verify, report, plus a set-form copy reviewSeverities in registry/config.go. postprocess looks up severityRank[strings.ToUpper(...)] while reconcile looks up the raw value, so a future severity change or non-canonical casing silently desyncs fan-out truncation from reconcile merging. The postprocess copy was newly added by Epic 2.2. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 3.5) | Extract a single canonical severity package (or export from internal/stream) exposing the ordered rank map plus normalizeSeverity, and have registry/fanout/reconcile/verify/report consume it. Verify by deleting the local maps and confirming the suite passes with one source of truth. | maintainability | 120 | code-review | claude | MEDIUM |
 
 ### [2026-06-14] From Review: llmclient OpenAI-compatible tool handling
 
