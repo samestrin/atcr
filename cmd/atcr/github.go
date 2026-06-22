@@ -123,7 +123,7 @@ func runGithub(cmd *cobra.Command, args []string) error {
 		return &codedError{code: exitFailure, err: err}
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "posted check %q to %s/%s @ %s: %s (%d finding(s))\n",
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted check %q to %s/%s @ %s: %s (%d finding(s))\n",
 		checkName, owner, repo, sha, conclusion, len(findings))
 
 	// Inline comments are opt-in (AC4): the check + artifacts are the baseline,
@@ -158,7 +158,7 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 		if err := client.CreateReviewComment(cmd.Context(), owner, repo, pr, sha, c); err != nil {
 			failed++
 			lastErr = err
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not post comment at %s:%d: %v\n", c.Path, c.Line, err)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not post comment at %s:%d: %v\n", c.Path, c.Line, err)
 			continue
 		}
 		posted++
@@ -166,6 +166,6 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 	if posted == 0 && failed > 0 {
 		return &codedError{code: exitFailure, err: fmt.Errorf("all %d inline comment(s) failed to post: %w", failed, lastErr)}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d skipped)\n", posted, owner, repo, pr, failed)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d skipped)\n", posted, owner, repo, pr, failed)
 	return nil
 }
