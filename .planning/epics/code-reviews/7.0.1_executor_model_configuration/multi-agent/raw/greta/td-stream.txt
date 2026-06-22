@@ -1,0 +1,2 @@
+MEDIUM|internal/verify/executor.go:225|Prompt injection risk via unescaped config fields|Add explicit delimiters or instruction boundaries between system_prompt/rules and finding data|security|15|system_prompt and rules interpolated verbatim without structural separation|greta
+MEDIUM|internal/registry/config.go:535|Unbounded rules slice length allows prompt context overflow|Add maximum count limit for rules array to prevent DoS or context exhaustion|security|10|len(e.Rules) is unchecked, allowing arbitrarily many 512-char rules|greta

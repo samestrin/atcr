@@ -1,3 +1,17 @@
+## [Technical Debt] - 2026-06-22
+
+### Fixed
+
+- Added a `---` delimiter between executor instructions and finding data in `buildFixPrompt`, closing the prompt-injection surface for forged metadata lines.
+- Guarded `buildFixPrompt` against a nil executor pointer to prevent runtime panics.
+- Enforced a maximum rule-count cap on executor `rules` so the list cannot defeat the per-rule length limit.
+- Rejected Unicode control characters and line separators in executor persona, name, rules, and agent scope.
+- Fixed persona default re-derivation in `buildFixPrompt` by relying on the loaded-registry invariant.
+- Rejected `NaN` and `Inf` values in executor `temperature` validation.
+- Documented the `system_prompt` control-character trust boundary and the direct-call temperature caveat in `registry.md`.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [7.0.1] - 2026-06-22
 
 Executor model configuration — tightly control fix-generation determinism and style from the registry without editing ATCR source.

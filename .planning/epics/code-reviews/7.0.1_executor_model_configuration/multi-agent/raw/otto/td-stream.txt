@@ -1,0 +1,1 @@
+LOW|internal/registry/config.go:524|Potential prompt injection via system_prompt|Add control character validation to SystemPrompt|security|15|system_prompt is length-capped but explicitly allows control characters unlike Persona/Rules|otto

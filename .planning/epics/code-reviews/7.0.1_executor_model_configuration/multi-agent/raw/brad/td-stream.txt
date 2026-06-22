@@ -1,0 +1,1 @@
+LOW|internal/registry/config.go:521|NaN/Inf temperature values bypass range validation|Add math.IsNaN/IsInf checks before range comparison|correctness|5|*e.Temperature < 0 evaluates false for NaN, allowing invalid values|code-reviewer
