@@ -87,17 +87,16 @@ func filterMergedClusters(items []reconcile.DisagreementItem, findings []reconci
 	for _, it := range items {
 		if it.Kind == reconcile.KindGrayZone {
 			key := FindingKey{File: it.File, Line: it.Line, Problem: it.Problem}
-			if c, ok := clusterIdx[key]; ok && mergedIDs[c.ID] {
+			c, ok := clusterIdx[key]
+			if ok && mergedIDs[c.ID] {
 				continue
 			}
 			// Fallback for the drift case: the representative problem changed so the
 			// item no longer matches clusterIdx, but a merged survivor with a real
 			// ClusterID sits at the same location. Conservatively suppress rather than
 			// re-debate a cluster that has already been applied.
-			if clusterIdx != nil {
-				if _, ok := clusterIdx[key]; !ok && mergedAtLoc[locationKey(it.File, it.Line)] {
-					continue
-				}
+			if !ok && clusterIdx != nil && mergedAtLoc[locationKey(it.File, it.Line)] {
+				continue
 			}
 		}
 		out = append(out, it)
