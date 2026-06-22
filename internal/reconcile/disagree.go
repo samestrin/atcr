@@ -409,19 +409,40 @@ func sortedKeys(set map[string]bool) []string {
 	return out
 }
 
-// writeRadarSection appends the "Disagreements" section to the reconciled
-// report.md, above the consensus findings. It writes nothing when there are no
-// items, so a review with no disagreements yields byte-identical report output.
-// Free text is routed through esc/codeSpan (emit.go), the same injection defenses
-// the rest of the report uses.
-func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
+// RadarTextRenderer escapes a free-text body field (Problem / Detail / a
+// position's problem) for markdown output. It is the single intentional
+// difference between the reconciled and display radar renderers: the reconciled
+// report passes esc (verbatim, archival fidelity); the focused display view
+// passes a truncating variant (report.escTrunc, 500-rune cap). Fixed-vocabulary
+// fields (kind, severity, file, reviewers, skeptics, disagreement) are never
+// routed through it — they always use esc/codeSpan/joinOrNone directly.
+type RadarTextRenderer func(string) string
+
+// WriteRadarSection appends the "## Disagreements" section (header + ranked
+// items) to b. It writes nothing when there are no items, so a review with no
+// disagreements yields byte-identical report output. renderText escapes the
+// free-text body fields (see RadarTextRenderer); items render under the "### "
+// heading prefix. This is the single shared renderer for the reconciled
+// report.md path and (via WriteRadarItems) the internal/report display paths —
+// it lives in reconcile because internal/report already imports reconcile and
+// the reverse would be circular.
+func WriteRadarSection(b *bytes.Buffer, df DisagreementsFile, renderText RadarTextRenderer) {
 	if len(df.Items) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "\n## Disagreements\n\nTop %d tension spot(s) — reviewer splits, solo findings, and gray-zone clusters, highest first.\n", len(df.Items))
-	for i, it := range df.Items {
-		fmt.Fprintf(b, "\n### %d. %s — %s (%s) · score %s\n",
-			i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
+	WriteRadarItems(b, df.Items, "### ", renderText)
+}
+
+// WriteRadarItems renders each ranked item under the given heading prefix
+// (e.g. "### " inside a report section, "## " for the standalone radar view).
+// Free-text body fields (Problem, Detail, a position's problem) route through
+// renderText; fixed-vocabulary fields route through esc/codeSpan/joinOrNone, the
+// same injection defenses the rest of the report uses.
+func WriteRadarItems(b *bytes.Buffer, items []DisagreementItem, heading string, renderText RadarTextRenderer) {
+	for i, it := range items {
+		fmt.Fprintf(b, "\n%s%d. %s — %s (%s) · score %s\n",
+			heading, i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
 		if it.Disagreement != "" {
 			fmt.Fprintf(b, "- Severity disagreement: %s\n", esc(it.Disagreement))
 		}
@@ -432,10 +453,10 @@ func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
 			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinOrNone(it.Reviewers)), it.Independence)
 		}
 		if it.Problem != "" {
-			fmt.Fprintf(b, "- Problem: %s\n", esc(it.Problem))
+			fmt.Fprintf(b, "- Problem: %s\n", renderText(it.Problem))
 		}
 		if it.Detail != "" {
-			fmt.Fprintf(b, "- Detail: %s\n", esc(it.Detail))
+			fmt.Fprintf(b, "- Detail: %s\n", renderText(it.Detail))
 		}
 		if len(it.Positions) > 0 {
 			b.WriteString("- Positions:\n")
@@ -444,7 +465,7 @@ func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
 				if name == "" {
 					name = "(unknown)"
 				}
-				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(name), esc(p.Severity), esc(p.Problem))
+				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(name), esc(p.Severity), renderText(p.Problem))
 			}
 		}
 	}
