@@ -1,3 +1,18 @@
+## [7.1.0] - 2026-06-22
+
+A fast, local validation layer that checks generated fixes are syntactically valid before they are presented, so syntax-broken fixes are caught immediately without running the full test suite.
+
+### Added
+
+- Local Go syntax guard for generated fixes: each executor-generated fix is parsed with `go/parser` before it is presented. A fix that is plausibly Go code yet fails to parse is flagged with an `invalid_syntax: <parser error>` warning while the attempted fix stays visible.
+- Fix-generation warnings (including the new `invalid_syntax` flag) now surface in the markdown review report.
+
+### Changed
+
+- The guard is deliberately conservative: free-form prose change-instructions and explicitly non-Go fenced blocks pass through unflagged, so a legitimate fix is never falsely marked invalid.
+
+*Shipped via /execute-epic (epic 7.1)*
+
 ## [Technical Debt] - 2026-06-22
 
 ### Fixed
