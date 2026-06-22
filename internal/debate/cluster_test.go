@@ -112,6 +112,7 @@ func TestRunDebate_GrayZoneSeparateLeavesUnmerged(t *testing.T) {
 	require.Len(t, f, 2, "a separate ruling must leave both members in findings.json")
 	for _, x := range f {
 		assert.False(t, x.ClusterMerged, "no record may be flagged cluster_merged on a separate ruling")
+		assert.Empty(t, x.ClusterID, "no record may carry a ClusterID on a separate ruling")
 	}
 }
 
