@@ -47,7 +47,7 @@ func FixAttribution(evidence string) string {
 // verification stage (Epic 3.0). A refuted finding is retained in the artifacts
 // for audit but must never block CI, mirroring the reconcile gate's semantics.
 func isRefuted(f reconcile.JSONFinding) bool {
-	return f.Verification != nil && strings.EqualFold(f.Verification.Verdict, reconcile.VerdictRefuted)
+	return f.Verification != nil && strings.EqualFold(strings.TrimSpace(f.Verification.Verdict), reconcile.VerdictRefuted)
 }
 
 // Conclusion computes the GitHub check-run conclusion for the findings under the
