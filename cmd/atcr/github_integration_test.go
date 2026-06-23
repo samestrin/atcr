@@ -31,6 +31,7 @@ func TestGithubCmd_EndToEndFlow(t *testing.T) {
 
 	var mu sync.Mutex
 	var checkBody map[string]any
+	var reviewBody map[string]any
 	var reviewComments []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -45,10 +46,9 @@ func TestGithubCmd_EndToEndFlow(t *testing.T) {
 			_, _ = w.Write([]byte(`[]`))
 			return
 		case r.URL.Path == "/repos/samestrin/atcr/pulls/12/reviews":
-			// Batch review — extract the comments array.
-			var review map[string]any
-			_ = json.Unmarshal(raw, &review)
-			if cs, ok := review["comments"].([]any); ok {
+			// Batch review — capture the full body and extract the comments array.
+			_ = json.Unmarshal(raw, &reviewBody)
+			if cs, ok := reviewBody["comments"].([]any); ok {
 				for _, c := range cs {
 					if cm, ok := c.(map[string]any); ok {
 						reviewComments = append(reviewComments, cm)
@@ -88,7 +88,9 @@ func TestGithubCmd_EndToEndFlow(t *testing.T) {
 	assert.Contains(t, output["text"], "internal/auth/token.go:42")
 
 	// Both findings anchor to changed lines, so two inline comments post as a
-	// single batched review.
+	// single batched review anchored to the PR head SHA.
+	require.NotNil(t, reviewBody, "a batch review must be posted")
+	assert.Equal(t, "headsha42", reviewBody["commit_id"], "review must be anchored to the head SHA")
 	require.Len(t, reviewComments, 2, "one inline comment per anchorable finding")
 
 	// Locate the HIGH finding's comment: anchored at FILE:LINE, AC3-formatted

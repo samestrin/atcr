@@ -199,6 +199,7 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("User-Agent", "atcr")
 		return req, nil
 	}
 
