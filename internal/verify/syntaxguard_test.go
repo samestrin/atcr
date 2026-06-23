@@ -249,6 +249,12 @@ func TestValidateGoFixSyntax_UnfencedJSONObjectNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON object must not be flagged as invalid Go")
 }
 
+// AC1 boundary: an empty JSON object has no block-brace lines and is not flagged.
+func TestValidateGoFixSyntax_EmptyJSONObjectNotFlagged(t *testing.T) {
+	src := "{}"
+	assert.NoError(t, validateGoFixSyntax(src), "an empty JSON object must not be flagged as invalid Go")
+}
+
 // AC1: nested unfenced JSON is likewise suppressed.
 func TestValidateGoFixSyntax_UnfencedNestedJSONNotFlagged(t *testing.T) {
 	src := "{\n  \"server\": {\n    \"host\": \"localhost\",\n    \"port\": 8080\n  }\n}"
