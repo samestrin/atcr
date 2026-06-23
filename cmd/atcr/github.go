@@ -152,7 +152,7 @@ func runGithub(cmd *cobra.Command, args []string) error {
 
 	// The merge gate also rides the process exit code, so a consumer can gate on
 	// either the check conclusion or the step's exit status.
-	if conclusion == "failure" {
+	if conclusion == ghaction.ConclusionFailure {
 		return &codedError{code: exitFailure, err: fmt.Errorf("%d finding(s) at or above %s", failCount, failOn)}
 	}
 	return nil

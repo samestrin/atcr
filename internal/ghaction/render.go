@@ -26,6 +26,15 @@ type CheckOutput struct {
 // rather than letting the post fail.
 const maxCheckTextBytes = 60000
 
+// Conclusion values are the GitHub check-run conclusion strings. Typed constants
+// prevent a typo at any emission or comparison site from silently producing a
+// wrong gate verdict without a compile-time error.
+const (
+	ConclusionFailure = "failure"
+	ConclusionSuccess = "success"
+	ConclusionNeutral = "neutral"
+)
+
 // FixAttribution extracts the executor name from a finding's Evidence field,
 // parsing the "fix by <name>" token written by the executor stage (Epic 7.0).
 // Evidence segments are joined with reconcile.EvidenceSep and the token prefix
@@ -59,7 +68,7 @@ func isRefuted(f reconcile.JSONFinding) bool {
 // failCount is the number of blocking findings (0 when the threshold is empty).
 func Conclusion(findings []reconcile.JSONFinding, failOn string) (string, int) {
 	if strings.TrimSpace(failOn) == "" {
-		return "neutral", 0
+		return ConclusionNeutral, 0
 	}
 	count := 0
 	for _, f := range findings {
@@ -68,9 +77,9 @@ func Conclusion(findings []reconcile.JSONFinding, failOn string) (string, int) {
 		}
 	}
 	if count > 0 {
-		return "failure", count
+		return ConclusionFailure, count
 	}
-	return "success", 0
+	return ConclusionSuccess, 0
 }
 
 // cell neutralizes a value for safe inclusion in a single markdown table cell.
@@ -124,9 +133,9 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 
 	var summary string
 	switch conclusion {
-	case "failure":
+	case ConclusionFailure:
 		summary = fmt.Sprintf("Gate failed: %d finding(s) at or above the threshold.", failCount)
-	case "success":
+	case ConclusionSuccess:
 		summary = "Gate passed: no findings at or above the threshold."
 	default:
 		summary = "Informational review — no merge gate configured."
@@ -134,9 +143,9 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 
 	var b strings.Builder
 	switch conclusion {
-	case "failure":
+	case ConclusionFailure:
 		fmt.Fprintf(&b, "**Gate failed:** %d finding(s) at or above the threshold.\n\n", failCount)
-	case "success":
+	case ConclusionSuccess:
 		b.WriteString("**Gate passed:** no findings at or above the threshold.\n\n")
 	default:
 		b.WriteString("Informational review — no merge gate configured.\n\n")
