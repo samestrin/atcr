@@ -397,8 +397,13 @@ func TestLooksLikeNonGoBraces(t *testing.T) {
 		// their presence does not override the JSON-key signal. Content with both a
 		// JSON-key line and non-declaration control flow is still suppressed as non-Go.
 		{"mixed: json key + non-declaration Go flow (if/return) is suppressed", "{\n  \"timeout\": 30\n  if x > 0 { return x }\n}", true},
-		// Bare/unquoted keys (YAML-style, TOML-style) are not detected as JSON-key
-		// lines: the suppression requires a double-quoted key at line start.
+		// Accepted residual false positive per the 7.5 quoted-key anchoring decision
+		// (syntaxguard.go:62): unfenced YAML/TOML/JSON5 with bare unquoted keys (e.g.
+		// `key: value`) is not suppressed because jsonKeyLineRe requires a double-quoted
+		// key at line start — bare ident: patterns also appear in Go struct literals,
+		// labels, and map entries, so widening suppression to cover them would add false
+		// negatives. validateGoFixSyntax may return a spurious invalid_syntax flag for
+		// this class; that is the accepted narrow limitation per AC4 false-negative policy.
 		{"bare unquoted key is not non-Go braces", "{\n  timeout: 30\n  retries: 3\n}", false},
 	}
 	for _, tt := range tests {
