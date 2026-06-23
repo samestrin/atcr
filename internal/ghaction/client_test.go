@@ -170,3 +170,47 @@ func TestPostDo_422ReturnsAPIError(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, apiErr.StatusCode)
 	assert.Contains(t, apiErr.Message, "Validation Failed")
 }
+
+// TestClient_RedactsTokenFromErrorMessages pins that a GitHub error body echoing
+// the Authorization header (Bearer <token>) cannot leak the token through either
+// the postDo *APIError message or the get wrapped error. Mirrors
+// llmclient.redactErrorSnippet's defense.
+func TestClient_RedactsTokenFromErrorMessages(t *testing.T) {
+	const token = "ghp_SECRETTOKEN1234567890abcdef"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		// Simulate GitHub/a proxy echoing the Authorization header into the error body.
+		_, _ = w.Write([]byte(`{"message":"bad credentials for ` + r.Header.Get("Authorization") + `"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: token, HTTPClient: srv.Client()}
+
+	postErr := c.post(context.Background(), "/repos/o/r/test", map[string]string{"k": "v"})
+	require.Error(t, postErr)
+	assert.NotContains(t, postErr.Error(), token, "token must not leak via postDo APIError message")
+	assert.Contains(t, postErr.Error(), "[redacted]", "Bearer token must be redacted in postDo message")
+
+	getErr := c.get(context.Background(), "/repos/o/r/x", nil)
+	require.Error(t, getErr)
+	assert.NotContains(t, getErr.Error(), token, "token must not leak via get error message")
+	assert.Contains(t, getErr.Error(), "[redacted]", "Bearer token must be redacted in get message")
+}
+
+func TestSleepCtxInterruptedByCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err := sleepCtx(ctx, time.Hour)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "sleepCtx must return the context error when cancelled mid-backoff")
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, time.Second, "sleepCtx must abandon the backoff promptly on cancellation, not block for the full duration")
+}
+
+func TestSleepCtxRunsToCompletion(t *testing.T) {
+	err := sleepCtx(context.Background(), 5*time.Millisecond)
+	assert.NoError(t, err, "sleepCtx must return nil when the backoff elapses without cancellation")
+}
