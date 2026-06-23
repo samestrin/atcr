@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -165,7 +166,7 @@ func TestEscapesRoot_SeparatorIndependent(t *testing.T) {
 // directory hallucination yields the real file as PathSuggestion (AC2/AC6).
 func TestValidatePath_SuggestsWrongDirectory(t *testing.T) {
 	root := gitRepo(t, "pkg/auth/validator.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 
 	f := Finding{File: "internal/auth/validator.go"}
 	ValidatePath(&f, root, idx)
@@ -179,7 +180,7 @@ func TestValidatePath_SuggestsWrongDirectory(t *testing.T) {
 // (the 5.0 motivating example) as PathSuggestion (AC4).
 func TestValidatePath_SuggestsTypo(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 
 	f := Finding{File: "internal/auth/validator.go"}
 	ValidatePath(&f, root, idx)
@@ -193,7 +194,7 @@ func TestValidatePath_SuggestsTypo(t *testing.T) {
 // present on a case-insensitive filesystem (AC3).
 func TestValidatePath_SuggestsCaseTypo(t *testing.T) {
 	root := gitRepo(t, "internal/auth/parser.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 
 	f := Finding{File: "internal/auth/Parser.go"}
 	ValidatePath(&f, root, idx)
@@ -207,7 +208,7 @@ func TestValidatePath_SuggestsCaseTypo(t *testing.T) {
 // valid with no suggestion.
 func TestValidatePath_ValidFileNoSuggestion(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 
 	f := Finding{File: "internal/auth/validate.go"}
 	ValidatePath(&f, root, idx)
@@ -224,7 +225,7 @@ func TestValidatePath_SymlinkEscapeNoSuggestion(t *testing.T) {
 	outside := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(outside, "known"), []byte("x\n"), 0o644))
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 
 	f := Finding{File: "link/known"}
 	ValidatePath(&f, root, idx)
