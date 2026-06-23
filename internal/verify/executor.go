@@ -439,7 +439,7 @@ func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, pro
 // propose the minimal fix") rather than the skeptic's adversarial framing, and the
 // response schema is the simpler {"fix", "explanation"} object parseExecutorResponse
 // expects. A per-call random sentinel tags the finding block so reviewer-authored
-// Problem/Fix/Evidence text cannot close it early (the injection guard
+// Problem/Fix/Evidence text cannot predict the closing tag (the injection guard
 // buildSkepticPrompt uses).
 func buildExecutorAgentPrompt(finding reconcile.JSONFinding) string {
 	var b [4]byte
