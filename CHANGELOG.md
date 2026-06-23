@@ -1,3 +1,13 @@
+## [Production-Readiness Review] - 2026-06-23
+
+Pre-Epic-8 production-readiness audit (component axis, adversarially verified across the five subsystem clusters). Verdict: ship-with-fixes — 0 critical, 1 high, 11 hardening items. The high-severity item is fixed below; the 11 hardening items are logged to technical-debt tracking.
+
+### Fixed
+
+- `atcr github --inline-comments` now paginates the existing-comment fetch in `ListReviewComments`. The GitHub REST list endpoint returns at most 30 comments per page by default, so on a pull request already carrying more than 30 ATCR inline comments the dedup pass silently missed the older comments and re-posted duplicates on every run. The fetch now walks every page (`per_page=100`) until a short page signals the end.
+
+*Shipped via /code-review production-readiness audit*
+
 ## [Technical Debt] - 2026-06-23
 
 ### Fixed
