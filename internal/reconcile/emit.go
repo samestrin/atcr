@@ -12,6 +12,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // Reconciled artifact filenames.
@@ -26,41 +27,27 @@ const (
 	DisagreementsJSON = "disagreements.json"
 )
 
-// Verification is the reserved per-finding adversarial-verification block for a
-// future stage (Epic 3.0). It is absent from every 1.x findings.json (the
-// omitempty pointer marshals to nothing when nil); readers and renderers must
-// tolerate both its absence and its presence.
+// Verification is ATCR's compatibility alias for the library Verification type.
+// The canonical definition was extracted to github.com/samestrin/atcr/reconcile
+// (Epic 8.0); this alias keeps internal/reconcile and every existing consumer
+// compiling unchanged until they flip to the library import in Phase 3. Because
+// it is a type alias, the type is identical — JSON serialization and the
+// *Verification pointer carried on Merged are byte-for-byte unchanged.
 //
-// Epic 3.0 contract: when populating this block, the writing stage MUST
-// validate Verdict against the allowed enum values (confirmed, refuted,
-// unverifiable) before persisting. ReadReconciledFindings (emit.go:145) does NOT
-// validate the enum so bad values are silently accepted on read — validation
-// is the writer's responsibility. An empty Verdict (verdict:"") is a contract
-// violation and will confuse downstream consumers.
-type Verification struct {
-	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
-	Skeptic string `json:"skeptic"` // agent that produced the verdict
-	// Notes is populated only from the winning verdict during a cluster-merge;
-	// minority-verdict reasoning is intentionally not preserved.
-	Notes string `json:"notes,omitempty"`
-	// ChallengeSurvived marks a finding upheld by the cross-examination stage
-	// (Epic 6.0): the judge ruled uphold or split, so the finding survived hostile
-	// challenge. omitempty keeps every pre-6.0 and non-debated findings.json block
-	// byte-identical — the marker appears only on a debated, surviving finding. It
-	// rides alongside Verdict (uphold→confirmed, split→confirmed at a settled
-	// severity, overturn→refuted), so the gate keys on Verdict as before and this
-	// is a display/audit marker, never a separate confidence tier.
-	ChallengeSurvived bool `json:"challenge_survived,omitempty"`
-}
+// Epic 3.0 contract (unchanged): when populating this block, the writing stage
+// MUST validate Verdict against the allowed enum values before persisting; an
+// empty Verdict is a contract violation. Readers do not re-validate the enum.
+type Verification = reclib.Verification
 
-// Verdict enum values for Verification.Verdict (Epic 3.0). The verify stage
-// validates skeptic output against this set before persisting; the gate reads
-// these constants to exclude refuted findings and, under requireVerified, to
-// count only confirmed ones.
+// Verdict enum values for Verification.Verdict (Epic 3.0), re-exported from the
+// extracted library so internal lookups and external callers keep a stable
+// symbol. The verify stage validates skeptic output against this set before
+// persisting; the gate reads these to exclude refuted findings and, under
+// requireVerified, to count only confirmed ones.
 const (
-	VerdictConfirmed    = "confirmed"
-	VerdictRefuted      = "refuted"
-	VerdictUnverifiable = "unverifiable"
+	VerdictConfirmed    = reclib.VerdictConfirmed
+	VerdictRefuted      = reclib.VerdictRefuted
+	VerdictUnverifiable = reclib.VerdictUnverifiable
 )
 
 // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,

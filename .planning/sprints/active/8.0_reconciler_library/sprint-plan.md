@@ -12,6 +12,25 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 
 ---
 
+## Clarifications
+
+### Phase 1 Clarifications (recorded 2026-06-23)
+
+**Key Decisions:**
+- `internal/stream/levenshtein.go` **stays in `internal/stream`** — it is NOT moved into the library. It is consumed only by `stream/suggest.go` (ATCR-internal path validation), not by `dedupe.go` (which uses token-set Jaccard). This is the deliberate 2026-06-23 post-discovery override of original-requirements Q5 (85% "move"), ratified by the maintainer. Moving it would smuggle path-validation machinery into the stdlib-only public module.
+- Only `internal/stream/severity.go` (`NormalizeSeverity`/`SeverityRank`) moves into the library (`reconcile/severity.go`).
+- Fixed stale drift-check at sprint-plan.md final-phase line: it previously read "severity + levenshtein moved"; corrected to reflect severity-only move.
+
+**Scope Boundaries:**
+- IN (library): core reconcile logic, `Verification`+verdicts+`mergeVerification`, library-owned `Finding`, `severity.go`.
+- OUT (stays ATCR-internal): `gate.go`, `validate.go`, `emit.go`/`discover.go` file-I/O layers, path-validation fields, **and `levenshtein.go`**.
+
+**Technical Approach:**
+- Type/IO split executed types-first, never moving I/O and types in the same commit; compile-check both packages between moves.
+- API lifted as-is; `Verification` becomes public; module is stdlib-only (empty `require`).
+
+---
+
 ## Sprint Overview
 
 **Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
@@ -140,7 +159,7 @@ From [plan/documentation/](plan/documentation/):
 
 **Stories:** 2 (partial), 1 (start) | **Focus:** Create the nested module, wire the root `replace` directive, split `emit.go`/`discover.go` into types-only (library) vs I/O (ATCR), stub the boundary adapter package.
 
-### 1.1 [ ] **[Module scaffold & replace wiring - RED](plan/user-stories/02-public-api-embeddability.md)**
+### 1.1 [x] **[Module scaffold & replace wiring - RED](plan/user-stories/02-public-api-embeddability.md)**
    **AC:** [02-01](plan/acceptance-criteria/02-01-nested-module-scaffold.md), [01-01](plan/acceptance-criteria/01-01-root-replace-directive-consumption.md)
    1. Analyze AC 02-01/01-01: identify testable units (module builds, `replace` resolves, root `go build` succeeds).
    2. Write/identify failing checks: `go build ./reconcile/...` (module does not yet exist → fails); a scaffold smoke test `reconcile/doc_test.go` referencing the package.
@@ -678,5 +697,5 @@ MUTATION_TOOL = UNAVAILABLE (no stryker/mutmut/cargo-mutants detected; Go projec
 ### Drift Analysis
 Compare the delivered sprint against [plan/original-requirements.md](plan/original-requirements.md):
 - [ ] All 8 epic acceptance criteria met (module + own CI; lifted public API; ATCR imports + tests pass; JSON adapter; godoc + runnable example; Apache 2.0 + commercial placeholder; independent tag-push CI; scorecard citation).
-- [ ] Confirm decisions from original-requirements Clarifications honored: nested module at `./reconcile/`, module path `github.com/samestrin/atcr/reconcile`, API lifted **as-is** (no `(*Result, error)` reshape), `Verification` public, severity + levenshtein moved per scope boundaries.
+- [ ] Confirm decisions from original-requirements Clarifications honored: nested module at `./reconcile/`, module path `github.com/samestrin/atcr/reconcile`, API lifted **as-is** (no `(*Result, error)` reshape), `Verification` public, severity moved to library (`reconcile/severity.go`); levenshtein stays in `internal/stream` (path-validation only, ATCR-internal).
 - [ ] No out-of-scope work pulled in (no HTTP/gRPC, no SDKs, no SARIF, no enforcement code, no clean-API reshape).
