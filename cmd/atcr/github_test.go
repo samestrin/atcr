@@ -408,6 +408,7 @@ func TestPostInlineComments_FallbackPerComment422IsSkipped(t *testing.T) {
 	assert.Equal(t, 0, posted, "both off-diff comments skipped")
 	assert.Equal(t, 0, deduped)
 	assert.Contains(t, stderr.String(), "422")
+	assert.Empty(t, out.String(), "all-skipped fallback must not print a stdout summary")
 }
 
 // TestPostInlineComments_FallbackPerCommentHardErrorPropagates pins that a
