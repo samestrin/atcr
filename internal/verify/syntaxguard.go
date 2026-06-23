@@ -1,7 +1,9 @@
 package verify
 
 import (
+	"errors"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"regexp"
 	"strings"
@@ -157,12 +159,27 @@ func parseGoFix(src string) error {
 
 	switch {
 	case packageClauseRe.MatchString(src):
-		return fileErr
+		return fileErr // file strategy: positions already relative to src
 	case declKeywordRe.MatchString(src):
-		return declErr
+		return stripPosition(declErr) // decl strategy: "package p\n" + src shifts lines by 1
 	default:
-		return stmtErr
+		return stripPosition(stmtErr) // stmt strategy: 2-line header shifts lines by 2
 	}
+}
+
+// stripPosition removes the position prefix (e.g. "3:13: ") from a scanner
+// error returned by go/parser. Wrapped parse strategies produce positions
+// relative to their synthetic header, not to the caller's src — stripping
+// the prefix avoids misleading the caller with a line number that points to
+// the wrong line in their input.
+func stripPosition(err error) error {
+	if err == nil {
+		return nil
+	}
+	if list, ok := err.(scanner.ErrorList); ok && len(list) > 0 {
+		return errors.New(list[0].Msg)
+	}
+	return err
 }
 
 // looksLikeGoCode reports whether unfenced text carries a strong LINE-STRUCTURAL
