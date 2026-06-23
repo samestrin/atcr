@@ -139,6 +139,7 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "atcr")
 		return req, nil
 	}
 
