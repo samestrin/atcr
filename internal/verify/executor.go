@@ -72,7 +72,7 @@ func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfi
 // unavailable), in which case the snippet is omitted and the executor works from the
 // finding text alone.
 // cc is the multi-turn ChatCompleter the skeptics use; it is non-nil only when the
-// tool harness was built (at least one skeptic ran or a fix was eligible). Agent
+// tool harness was built (at least one skeptic ran). Agent
 // mode (Epic 7.4) borrows it and disp to drive a read-only tool loop per finding
 // (invokeExecutor) instead of the single-shot snippet path. When ex.AgentMode is
 // set but cc or disp is nil (harness unavailable), generateFixes degrades to the
@@ -143,7 +143,14 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					// Agent mode requested but the harness is unavailable (no skeptics
 					// ran and no snapshot was built). Degrade to the snippet path rather
 					// than dropping the fix (AC6).
-					logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: dispatcher/chat unavailable, using snippet path", f.File, f.Line))
+					missing := []string{}
+					if cc == nil {
+						missing = append(missing, "chat")
+					}
+					if disp == nil {
+						missing = append(missing, "dispatcher")
+					}
+					logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: %s unavailable, using snippet path", f.File, f.Line, strings.Join(missing, "/")))
 				}
 				snippet := readFixSnippet(ctx, disp, f.File, f.Line)
 				prompt := buildFixPrompt(*f, snippet, ex)
@@ -196,6 +203,8 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 // unconditionally so a default executor (nil fix_timeout) against a hung provider
 // cannot block the verify run unbounded.
 func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, error) {
+	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
+	// Settings literal is sufficient here.
 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -393,12 +402,14 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, prompt string, sharedTimeoutSecs int) fanout.Agent {
 	temp := ex.EffectiveExecutorTemperature()
 	return fanout.Agent{
-		Name:        ex.Name,
-		Provider:    ex.Provider,
-		Prompt:      prompt,
-		Tools:       true,
-		SupportsFC:  true,
-		MaxTurns:    ex.EffectiveMaxToolCalls(),
+		Name:       ex.Name,
+		Provider:   ex.Provider,
+		Prompt:     prompt,
+		Tools:      true,
+		SupportsFC: true,
+		MaxTurns:   ex.EffectiveMaxToolCalls(),
+		// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
+		// Settings literal is sufficient here.
 		TimeoutSecs: ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs}),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,

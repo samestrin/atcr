@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,32 @@ func eligibleFinding() []reconcile.JSONFinding {
 	return []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "stores plaintext password",
 			Confidence: ConfidenceVerified, Evidence: "Found by bruce; confidence HIGH"},
+	}
+}
+
+// AC2 concurrent: multiple eligible findings are processed in parallel by the
+// agent-mode tool loop. Each finding gets its own fix and attribution, and the
+// shared completer/dispatcher state stays race-free under -race.
+func TestGenerateFixes_AgentMode_ConcurrentFindings(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "stores plaintext password",
+			Confidence: ConfidenceVerified, Evidence: "Found by bruce; confidence HIGH"},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "sql injection",
+			Confidence: ConfidenceVerified, Evidence: "Found by bruce; confidence HIGH"},
+		{Severity: "HIGH", File: "c.go", Line: 3, Problem: "nil dereference",
+			Confidence: ConfidenceVerified, Evidence: "Found by bruce; confidence HIGH"},
+	}
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		{content: `{"fix": "hash the password with bcrypt", "explanation": "x"}`},
+		{content: `{"fix": "use a parameterized query", "explanation": "y"}`},
+		{content: `{"fix": "guard the nil deref", "explanation": "z"}`},
+	}}
+	generateFixes(context.Background(), findings, agentExecConfig(), execRegistry("MEDIUM"), &recordingExecutor{}, cc, okDispatcher(), 0)
+
+	for i, f := range findings {
+		assert.NotEmpty(t, f.Fix, "finding %d should get a fix", i)
+		assert.Contains(t, f.Evidence, "fix by opus", "finding %d should be attributed", i)
+		assert.Equal(t, "", f.FixWarning, "finding %d should have no warning", i)
 	}
 }
 
@@ -122,18 +149,22 @@ func TestGenerateFixes_AgentMode_FallsBackWhenDispatcherNil(t *testing.T) {
 
 	assert.Equal(t, 1, rec.calls, "nil dispatcher must fall back to the single-shot snippet path")
 	assert.Equal(t, "snippet-path fix", findings[0].Fix)
-	assert.Contains(t, buf.String(), "agent_mode", "the fallback must be logged")
+	assert.Contains(t, buf.String(), "executor_agent_mode_fallback", "the fallback class must be logged")
 }
 
 // AC6 (companion): agent_mode=true but no ChatCompleter wired (nil) → snippet
 // fallback. Mirrors the nil-dispatcher case for the other half of the harness.
 func TestGenerateFixes_AgentMode_FallsBackWhenCCNil(t *testing.T) {
+	var buf bytes.Buffer
+	ctx := log.NewContext(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)))
+
 	findings := eligibleFinding()
 	rec := &recordingExecutor{out: "snippet-path fix"}
-	generateFixes(context.Background(), findings, agentExecConfig(), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
+	generateFixes(ctx, findings, agentExecConfig(), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 1, rec.calls, "nil ChatCompleter must fall back to the snippet path")
 	assert.Equal(t, "snippet-path fix", findings[0].Fix)
+	assert.Contains(t, buf.String(), "executor_agent_mode_fallback", "the fallback class must be logged")
 }
 
 // AC1: with agent_mode=false the snippet path runs unchanged even when a
@@ -170,6 +201,34 @@ func TestInvokeExecutor_ProviderErrorReturnsWarn(t *testing.T) {
 	assert.Equal(t, "", fix)
 	assert.Contains(t, warn, "agent_mode failed")
 	assert.Contains(t, warn, "boom")
+}
+
+// AC3 tripped budget: a StatusOK result that exhausted max_tool_calls still emits
+// the forced final answer and produces no FixWarning.
+func TestInvokeExecutor_TrippedBudgetStillEmitsFix(t *testing.T) {
+	ex := agentExecConfig()
+	ex.MaxToolCalls = intPtr(1)
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: `{"fix": "guard the nil deref", "explanation": "forced final answer"}`},
+	}}
+	fix, warn := invokeExecutor(context.Background(), ex, testExecProviderVal(),
+		eligibleFinding()[0], cc, okDispatcher(), 0)
+	assert.Equal(t, "guard the nil deref", fix)
+	assert.Equal(t, "", warn)
+}
+
+// AC4 timeout: a deadline that halts the tool loop yields StatusTimeout and the
+// warn carries both the status and the tripped-budget marker.
+func TestInvokeExecutor_TimeoutReturnsWarn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"fix": "x"}`, delay: 100 * time.Millisecond}}}
+	fix, warn := invokeExecutor(ctx, agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], cc, okDispatcher(), 0)
+	assert.Equal(t, "", fix)
+	assert.Contains(t, warn, "status: timeout")
+	assert.Contains(t, warn, "tripped budgets: timeout")
 }
 
 func TestInvokeExecutor_ParseErrorReturnsWarn(t *testing.T) {
