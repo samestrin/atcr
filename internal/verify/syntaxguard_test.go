@@ -185,6 +185,15 @@ func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")
 }
 
+// A non-Go fence whose info string contains trailing words (CommonMark allows an
+// info string after the language tag) must still be recognized as non-Go, even
+// when the fenced body carries Go-like block structure that would otherwise be
+// flagged as broken Go.
+func TestValidateGoFixSyntax_NonGoFenceWithInfoStringNotFlagged(t *testing.T) {
+	src := "```python extra\nfunc add(a, b int) int {\n\treturn a +\n}\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "a non-Go fence with trailing info string must not be flagged by the Go guard")
+}
+
 // blockOpenRe must only fire on a clean block-open line (non-brace content then a
 // single trailing brace), not any line that merely ends in '{'. A prose-ish line
 // carrying an inner brace and no other code signal must pass through unflagged so the

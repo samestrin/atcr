@@ -31,8 +31,9 @@ const fixAttributionPrefix = "fix by "
 // It returns "" when no attribution token is present (the common case before a
 // fix has been generated, or for a review that never ran the executor).
 func FixAttribution(evidence string) string {
-	for _, seg := range strings.Split(evidence, "; ") {
-		seg = strings.TrimSpace(seg)
+	segs := strings.Split(evidence, "; ")
+	for i := len(segs) - 1; i >= 0; i-- {
+		seg := strings.TrimSpace(segs[i])
 		if rest, ok := strings.CutPrefix(seg, fixAttributionPrefix); ok {
 			if name := strings.TrimSpace(rest); name != "" {
 				return name
