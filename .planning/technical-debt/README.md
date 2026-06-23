@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
 | MEDIUM | 0 | 23 | 0 |
-| LOW | 0 | 22 | 0 |
+| LOW | 3 | 22 | 0 |
 
-**Last Modified:** 2026-06-22 | **Open Items:** 0 | **Deferred Items:** 46 | **Resolved Items:** 0 | **Total Items:** 46
+**Last Modified:** 2026-06-22 | **Open Items:** 3 | **Deferred Items:** 46 | **Resolved Items:** 0 | **Total Items:** 49
 
 ## Directory Structure
 
@@ -33,6 +33,14 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-22] From Sprint: epic-7.6
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/ghaction/render_test.go:99 | BuildCheckOutput's neutral conclusion for non-empty findings with an empty fail-on threshold is verified only transitively via Conclusion, not asserted directly through the new 3-tuple return | Add a subtest asserting BuildCheckOutput(findings, "") returns ConclusionNeutral and failCount 0 | EDGE_CASES | 5 | execute-epic-stage3 |
+| U | [ ] | LOW | cmd/atcr/github.go:196 | A 404 from the /reviews endpoint is treated as batch-unsupported-on-GHE but can also mean the PR or repo path does not exist/ so a genuinely-missing --pr triggers N wasted per-comment POSTs before failing instead of failing fast | Distinguish endpoint-unsupported from resource-missing if the API allows it/ or document that 404 fallback may mask a bad --pr | EDGE_CASES | 30 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/github.go:216 | postCommentsIndividually is non-atomic/ a hard error mid-loop leaves some comments already posted to GitHub while the step exits 1 and the partial posted count is discarded by runGithub (acceptable because re-runs dedup already-posted comments) | Document the non-atomicity and dedup-on-retry idempotency in the function comment | ERROR_HANDLING | 15 | execute-epic-independent |
 
 ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
 
