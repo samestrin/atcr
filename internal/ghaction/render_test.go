@@ -68,6 +68,15 @@ func TestConclusion(t *testing.T) {
 	})
 }
 
+func TestBuildCheckOutputSummaryDistinctFromTitle(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+	}
+	out := BuildCheckOutput(findings, "HIGH")
+	assert.NotEqual(t, out.Title, out.Summary)
+	assert.Contains(t, strings.ToLower(out.Summary), "gate")
+}
+
 func TestBuildCheckOutputNormalizesSeverityCase(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "critical", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
