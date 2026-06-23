@@ -1,3 +1,13 @@
+## [7.4.0] - 2026-06-22
+
+Added an opt-in agent mode for the executor: instead of generating a fix from a single fixed code snippet, the executor can now explore the codebase with read-only tools before proposing a change — better for cross-file findings whose fix depends on a type, interface, or caller defined elsewhere. Default behavior is unchanged.
+
+### Added
+
+- `agent_mode` (default `false`) and `max_tool_calls` (default `10`, bounded `1..1000`) on the `executor:` registry block. When `agent_mode: true`, the executor borrows the skeptics' already-open read-only tool harness and runs a `read_file`/`grep`/`list_files` loop to gather context before proposing the minimal fix, reusing the existing snapshot (no second checkout). On reaching the tool-call budget it emits the best fix from the context gathered; a tool-loop timeout, provider error, or unparseable response records a fix warning on the finding and never fails the run. When the harness is unavailable it degrades to the unchanged snippet path with a logged warning.
+
+*Shipped via /execute-epic (epic 7.4)*
+
 ## [7.3.0] - 2026-06-22
 
 Shipped a maintained GitHub Action that runs the atcr panel on a pull request and surfaces findings where developers work — a PR check that gates the merge and, optionally, inline comments rendering the suggested fix.

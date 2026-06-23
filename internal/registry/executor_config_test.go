@@ -502,3 +502,91 @@ executor:
 	require.NotNil(t, reg.Executor)
 	assert.Equal(t, RoleExecutor, reg.Executor.Role, "mixed-case role must normalize to canonical 'executor'")
 }
+
+// agent_mode + max_tool_calls (Epic 7.4) hydrate onto the parsed ExecutorConfig.
+// agent_mode is a value bool (false default needs no explicit-vs-unset
+// distinction); max_tool_calls is a *int so an explicit value is distinguishable
+// from unset and a future "0 = unset" sentinel is unambiguous (AC2/AC3).
+func TestExecutor_AgentModeAndMaxToolCallsParsed(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  agent_mode: true
+  max_tool_calls: 15
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.True(t, reg.Executor.AgentMode, "agent_mode: true must hydrate")
+	require.NotNil(t, reg.Executor.MaxToolCalls, "max_tool_calls must be a pointer that survives load")
+	assert.Equal(t, 15, *reg.Executor.MaxToolCalls)
+}
+
+// agent_mode defaults off and max_tool_calls stays unset (nil) when neither is
+// configured — the Epic 7.0 snippet path is the unchanged default (AC1).
+func TestExecutor_AgentModeDefaultsOff(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+`))
+	require.NoError(t, err)
+	require.NotNil(t, reg.Executor)
+	assert.False(t, reg.Executor.AgentMode, "agent_mode defaults to false")
+	assert.Nil(t, reg.Executor.MaxToolCalls, "max_tool_calls is nil (unset) by default")
+}
+
+// max_tool_calls is bounded 1..MaxExecutorToolCalls, mirroring max_turns
+// (1..MaxAgentTurns) and max_findings (1..MaxFindingsCap). The executor is not in
+// agents:, so validateExecutor is its only validation gate — an explicit ≤0 or
+// over-cap value is rejected at load rather than reaching the tool loop (AC3).
+func TestExecutor_MaxToolCallsOutOfRangeRejected(t *testing.T) {
+	for _, val := range []string{"0", "-1", fmt.Sprintf("%d", MaxExecutorToolCalls+1)} {
+		_, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_tool_calls: `+val+`
+`))
+		require.Error(t, err, "max_tool_calls %s must be rejected", val)
+		assert.Contains(t, err.Error(), "max_tool_calls")
+	}
+}
+
+// A max_tool_calls at the exact bounds (1 and MaxExecutorToolCalls) is accepted.
+func TestExecutor_MaxToolCallsBoundaryAccepted(t *testing.T) {
+	for _, val := range []int{1, MaxExecutorToolCalls} {
+		reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders+`
+executor:
+  provider: anthropic
+  model: claude-opus-4-8
+  max_tool_calls: `+fmt.Sprintf("%d", val)+`
+`))
+		require.NoError(t, err, "max_tool_calls %d must be accepted", val)
+		require.NotNil(t, reg.Executor.MaxToolCalls)
+		assert.Equal(t, val, *reg.Executor.MaxToolCalls)
+	}
+}
+
+// EffectiveMaxToolCalls is the single resolver for the agent-mode tool-call
+// budget: the executor's own max_tool_calls when set positive, else the
+// DefaultExecutorMaxToolCalls (10) — mirroring EffectiveFixMinSeverity /
+// EffectiveExecutorTimeoutSecs so the fallback lives in one place.
+func TestExecutorConfig_EffectiveMaxToolCalls(t *testing.T) {
+	assert.Equal(t, DefaultExecutorMaxToolCalls, ExecutorConfig{}.EffectiveMaxToolCalls(),
+		"unset max_tool_calls falls back to the default 10")
+	assert.Equal(t, 25, ExecutorConfig{MaxToolCalls: intPtr(25)}.EffectiveMaxToolCalls(),
+		"an explicit positive max_tool_calls is returned unchanged")
+}
+
+// AC8 is satisfied-by-construction: agent_mode is a field on ExecutorConfig, and
+// Registry.Executor is *ExecutorConfig. An absent executor: block leaves the
+// pointer nil and validateExecutor returns immediately, so agent_mode: true is
+// inexpressible without an executor block. This test documents that the absent-
+// executor config is valid (the nil path) — the meaningful replacement for a guard
+// that can never fire.
+func TestExecutor_AbsentBlockValid_AC8(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, executorBaseProviders))
+	require.NoError(t, err, "a registry with no executor block must be valid")
+	assert.Nil(t, reg.Executor, "no executor block leaves Registry.Executor nil; agent_mode cannot be set")
+}

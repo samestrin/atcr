@@ -74,7 +74,7 @@ func TestGenerateFixes_PopulatesFixAndAttribution(t *testing.T) {
 			Evidence: "Found by bruce; confidence HIGH"},
 	}
 	rec := &recordingExecutor{out: "use a parameterized query"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "use a parameterized query", findings[0].Fix)
@@ -90,7 +90,7 @@ func TestGenerateFixes_FlagsInvalidSyntax(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Evidence: "ev"},
 	}
 	rec := &recordingExecutor{out: broken}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, strings.TrimSpace(broken), findings[0].Fix, "the attempted fix stays visible")
 	assert.Contains(t, findings[0].FixWarning, "invalid_syntax", "syntactically invalid Go must be flagged")
 	assert.Contains(t, findings[0].Evidence, "fix by opus", "attribution is still recorded for an attempted fix")
@@ -102,7 +102,7 @@ func TestGenerateFixes_ValidSyntaxNoWarning(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
 	}
 	rec := &recordingExecutor{out: "func add(a, b int) int {\n\treturn a + b\n}"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, "", findings[0].FixWarning, "valid Go must not be flagged")
 }
 
@@ -113,7 +113,7 @@ func TestGenerateFixes_ProseFixNoWarning(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified},
 	}
 	rec := &recordingExecutor{out: "use a parameterized query instead of string concatenation"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, "", findings[0].FixWarning, "a prose change-instruction must not be flagged")
 	assert.Equal(t, "use a parameterized query instead of string concatenation", findings[0].Fix)
 }
@@ -126,7 +126,7 @@ func TestGenerateFixes_ClearsStaleInvalidSyntaxOnValidFix(t *testing.T) {
 			FixWarning: "invalid_syntax: 2:11: expected '}'"},
 	}
 	rec := &recordingExecutor{out: "func add(a, b int) int { return a + b }"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, "", findings[0].FixWarning, "a valid re-run must clear the stale invalid_syntax warning")
 }
 
@@ -135,7 +135,7 @@ func TestGenerateFixes_SkipsBelowConfidence(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfMedium, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 0, rec.calls, "MEDIUM confidence is below the HIGH floor")
 	assert.Equal(t, "orig", findings[0].Fix)
@@ -146,7 +146,7 @@ func TestGenerateFixes_SkipsBelowSeverity(t *testing.T) {
 		{Severity: "LOW", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 
 	assert.Equal(t, 0, rec.calls, "LOW severity is below the MEDIUM fix floor")
 	assert.Equal(t, "orig", findings[0].Fix)
@@ -158,7 +158,7 @@ func TestGenerateFixes_FailureIsolation(t *testing.T) {
 	}
 	rec := &recordingExecutor{err: errors.New("provider boom")}
 	require.NotPanics(t, func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	})
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "orig", findings[0].Fix, "failed fix leaves the reviewer fix untouched")
@@ -171,7 +171,7 @@ func TestGenerateFixes_EmptyCompletionLeavesFix(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "   "}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, "orig", findings[0].Fix)
 	assert.Contains(t, findings[0].FixWarning, "empty completion")
 }
@@ -182,7 +182,7 @@ func TestGenerateFixes_Idempotent(t *testing.T) {
 			Fix: "already fixed", Evidence: "Found by bruce; fix by opus"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, 0, rec.calls, "an already-attributed finding is not re-generated")
 	assert.Equal(t, "already fixed", findings[0].Fix)
 }
@@ -194,7 +194,7 @@ func TestGenerateFixes_AttributionGuardIsNameSpecific(t *testing.T) {
 			Evidence: "reviewer suggested a fix by hand"},
 	}
 	rec := &recordingExecutor{out: "real fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, 1, rec.calls)
 	assert.Equal(t, "real fix", findings[0].Fix)
 	assert.Contains(t, findings[0].Evidence, "fix by opus")
@@ -212,7 +212,7 @@ func TestGenerateFixes_AttributionGuardIsTokenNotPrefix(t *testing.T) {
 	ex := execConfig("MEDIUM")
 	ex.Name = "op" // a strict prefix of the existing "fix by opus" attribution
 	rec := &recordingExecutor{out: "real fix"}
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, 1, rec.calls, "executor 'op' must not be suppressed by 'fix by opus'")
 	assert.Contains(t, findings[0].Evidence, "; fix by op")
 }
@@ -227,7 +227,7 @@ func TestCallExecutor_PassesExplicitTemperature(t *testing.T) {
 	ex := execConfig("MEDIUM")
 	temp := 0.3
 	ex.Temperature = &temp
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.temps, 1)
 	require.NotNil(t, rec.temps[0], "executor temperature must reach the payload")
 	assert.Equal(t, 0.3, *rec.temps[0], "the configured temperature must be forwarded verbatim")
@@ -241,7 +241,7 @@ func TestCallExecutor_DefaultsTemperatureToZero(t *testing.T) {
 	}
 	rec := &recordingExecutor{out: "fix"}
 	ex := execConfig("MEDIUM") // Temperature nil
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.temps, 1)
 	require.NotNil(t, rec.temps[0], "executor must send a temperature even when unset")
 	assert.Equal(t, 0.0, *rec.temps[0], "unset temperature defaults to deterministic 0.0")
@@ -264,7 +264,7 @@ func TestCallExecutor_AppliesDeadlineWhenFixTimeoutNil(t *testing.T) {
 	}
 	probe := &deadlineProbe{}
 	ex := execConfig("MEDIUM") // TimeoutSecs nil — no fix_timeout of its own
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), probe, okDispatcher(), 600)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), probe, nil, okDispatcher(), 600)
 	assert.True(t, probe.sawDeadline, "callExecutor must apply a deadline even when fix_timeout is nil")
 }
 
@@ -274,7 +274,7 @@ func TestGenerateFixes_SnippetEmbeddedInPrompt(t *testing.T) {
 	}
 	// okDispatcher returns Content "file contents" for read_file.
 	rec := &recordingExecutor{out: "fix"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	assert.Contains(t, rec.prompts[0], "file contents", "snippet read from the snapshot is embedded in the prompt")
 }
@@ -288,7 +288,7 @@ func TestBuildFixPrompt_SystemPromptOverridesFraming(t *testing.T) {
 	rec := &recordingExecutor{out: "fix"}
 	ex := execConfig("MEDIUM") // Persona "fixer"
 	ex.SystemPrompt = "ACT AS A STRICT GO LINTER. Emit only gofmt-clean code."
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	p := rec.prompts[0]
 	assert.Contains(t, p, "ACT AS A STRICT GO LINTER.", "custom system_prompt must frame the request")
@@ -306,7 +306,7 @@ func TestBuildFixPrompt_RulesAppended(t *testing.T) {
 	rec := &recordingExecutor{out: "fix"}
 	ex := execConfig("MEDIUM")
 	ex.Rules = []string{"Use tabs for indentation", "Avoid panic() in library code"}
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	p := rec.prompts[0]
 	assert.Contains(t, p, "Use tabs for indentation", "rule 1 must appear in the prompt")
@@ -323,7 +323,7 @@ func TestBuildFixPrompt_SystemPromptAndRulesCompose(t *testing.T) {
 	ex := execConfig("MEDIUM")
 	ex.SystemPrompt = "You fix Go code."
 	ex.Rules = []string{"No global state"}
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	p := rec.prompts[0]
 	assert.Contains(t, p, "You fix Go code.")
@@ -339,7 +339,7 @@ func TestBuildFixPrompt_DefaultFramingWhenNoSystemPrompt(t *testing.T) {
 	}
 	rec := &recordingExecutor{out: "fix"}
 	ex := execConfig("MEDIUM") // no system_prompt, no rules, Persona "fixer"
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	assert.Contains(t, rec.prompts[0], "You are fixer, a code-fix executor",
 		"default framing retained when no system_prompt override")
@@ -355,7 +355,7 @@ func TestBuildFixPrompt_DoesNotReDeriveDefaultPersona(t *testing.T) {
 	rec := &recordingExecutor{out: "fix"}
 	ex := execConfig("MEDIUM")
 	ex.Persona = "" // simulate the loaded-registry invariant: applyDefaults fills this
-	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	require.Len(t, rec.prompts, 1)
 	assert.NotContains(t, rec.prompts[0], "You are fixer",
 		"buildFixPrompt must not re-derive the default persona")
@@ -409,7 +409,7 @@ func TestGenerateFixes_RunsConcurrently(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, nil, okDispatcher(), 0)
 		close(done)
 	}()
 
@@ -452,7 +452,7 @@ func TestGenerateFixes_BoundedByMaxParallel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), reg, be, nil, okDispatcher(), 0)
 		close(done)
 	}()
 
@@ -495,7 +495,7 @@ func TestGenerateFixes_ClearsStaleFixWarningOnSuccess(t *testing.T) {
 			FixWarning: "fix generation failed: provider boom"},
 	}
 	rec := &recordingExecutor{out: "use a parameterized query"}
-	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, "use a parameterized query", findings[0].Fix)
 	assert.Equal(t, "", findings[0].FixWarning, "a successful re-run must clear the stale fix warning")
 }
@@ -513,7 +513,7 @@ func TestGenerateFixes_StopsOnCanceledContext(t *testing.T) {
 	rec := &recordingExecutor{out: "fix"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before generation starts
-	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, okDispatcher(), 0)
+	generateFixes(ctx, findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
 	assert.Equal(t, 0, rec.calls, "a canceled context must stop fix generation before any executor call")
 }
 
@@ -530,8 +530,8 @@ func TestGenerateFixes_NilExecutorOrCompleterNoop(t *testing.T) {
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: ConfidenceVerified, Fix: "orig"},
 	}
 	require.NotPanics(t, func() {
-		generateFixes(context.Background(), findings, nil, execRegistry("MEDIUM"), &recordingExecutor{}, okDispatcher(), 0)
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), nil, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, nil, execRegistry("MEDIUM"), &recordingExecutor{}, nil, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), nil, nil, okDispatcher(), 0)
 	})
 	assert.Equal(t, "orig", findings[0].Fix)
 }
@@ -649,7 +649,7 @@ func TestGenerateFixes_NilRegistryNoPanic(t *testing.T) {
 	}
 	rec := &recordingExecutor{out: "func add() {}"}
 	require.NotPanics(t, func() {
-		generateFixes(context.Background(), findings, execConfig("MEDIUM"), nil, rec, okDispatcher(), 0)
+		generateFixes(context.Background(), findings, execConfig("MEDIUM"), nil, rec, nil, okDispatcher(), 0)
 	}, "a nil registry must be a graceful no-op, not a panic")
 	assert.Equal(t, 0, rec.calls, "no executor calls when registry is nil")
 }

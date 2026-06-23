@@ -255,7 +255,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	// snapshot harness nor the executor client is built (the scan here sees the final
 	// post-verification confidence, so a finding promoted to VERIFIED still qualifies).
 	if reg.Executor != nil && anyFixEligible(findings, reg.Executor) {
-		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), disp, opts.SharedTimeoutSecs)
+		generateFixes(ctx, findings, reg.Executor, reg, newExecutorClient(), cc, disp, opts.SharedTimeoutSecs)
 	}
 
 	// Build the complete verification.json from in-memory findings (no disk

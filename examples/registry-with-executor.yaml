@@ -57,3 +57,10 @@ executor:
   rules:                         # optional coding guidelines appended to the fix prompt as constraints
     - Use tabs for indentation
     - Avoid panic() in library code; return errors instead
+  # Agent mode (Epic 7.4) — opt-in. When true, the executor borrows the skeptics'
+  # read-only tool harness and runs a read/search loop (read_file, grep, list_files)
+  # to explore the codebase before proposing a fix, instead of working from a single
+  # pre-loaded snippet. Better for cross-file findings; costs extra tool-call round
+  # trips (latency + tokens). Default false = the Epic 7.0 snippet path, unchanged.
+  agent_mode: false              # default false
+  max_tool_calls: 10             # agent-mode tool-call budget per finding (1..1000; default 10)
