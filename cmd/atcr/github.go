@@ -233,7 +233,9 @@ func postCommentsIndividually(cmd *cobra.Command, client *ghaction.Client, owner
 	if skipped > 0 {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d inline comment(s) skipped (HTTP 422 — off-diff)\n", skipped)
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d via per-comment fallback (%d already present)\n", posted, owner, repo, pr, deduped)
+	if posted > 0 || skipped < len(comments) {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d via per-comment fallback (%d already present)\n", posted, owner, repo, pr, deduped)
+	}
 	return posted, deduped, nil
 }
 
