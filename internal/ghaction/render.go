@@ -26,20 +26,17 @@ type CheckOutput struct {
 // rather than letting the post fail.
 const maxCheckTextBytes = 60000
 
-// fixAttributionPrefix mirrors the token the executor stage appends to a
-// finding's Evidence field (internal/verify/executor.go). Evidence segments are
-// joined with "; ", and the executor segment is exactly "fix by <name>".
-const fixAttributionPrefix = "fix by "
-
 // FixAttribution extracts the executor name from a finding's Evidence field,
-// parsing the "; fix by <name>" token written by the executor stage (Epic 7.0).
-// It returns "" when no attribution token is present (the common case before a
-// fix has been generated, or for a review that never ran the executor).
+// parsing the "fix by <name>" token written by the executor stage (Epic 7.0).
+// Evidence segments are joined with reconcile.EvidenceSep and the token prefix
+// is reconcile.FixAttributionPrefix — both defined in the reconcile package so
+// the producer (internal/verify) and this consumer share one source of truth.
+// Returns "" when no attribution token is present.
 func FixAttribution(evidence string) string {
-	segs := strings.Split(evidence, "; ")
+	segs := strings.Split(evidence, reconcile.EvidenceSep)
 	for i := len(segs) - 1; i >= 0; i-- {
 		seg := strings.TrimSpace(segs[i])
-		if rest, ok := strings.CutPrefix(seg, fixAttributionPrefix); ok {
+		if rest, ok := strings.CutPrefix(seg, reconcile.FixAttributionPrefix); ok {
 			if name := strings.TrimSpace(rest); name != "" {
 				return name
 			}
