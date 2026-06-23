@@ -217,6 +217,12 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 // treated as a non-fatal off-diff skip — mirroring the batch path's 422 handling
 // — while any other per-comment error aborts with exitFailure. Returns the
 // number posted and the (passed-through) dedup count.
+//
+// Note: this function is not atomic. If a non-422 error occurs part-way
+// through the loop, the comments posted before the error remain on the PR
+// while the step exits with exitFailure. Re-runs are idempotent because
+// deduplicateComments skips any existing ATCR comments, so orphaned comments
+// from a partial run do not produce duplicates on retry.
 func postCommentsIndividually(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, comments []ghaction.CommentRequest, deduped int) (int, int, error) {
 	posted, skipped := 0, 0
 	for _, c := range comments {
