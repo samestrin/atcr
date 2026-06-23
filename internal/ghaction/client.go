@@ -86,26 +86,48 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+path, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("building request: %w", err)
+	url := c.baseURL() + path
+	makeReq := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("posting %s: %w", path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	const maxRetries = 3
+	backoff := 250 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		req, err := makeReq()
+		if err != nil {
+			return fmt.Errorf("building request: %w", err)
+		}
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			if attempt < maxRetries {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return fmt.Errorf("posting %s: %w", path, err)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			_ = resp.Body.Close()
+			return nil
+		}
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		_ = resp.Body.Close()
+		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
 		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, githubMessage(respBody))
 	}
-	return nil
 }
 
 // githubMessage extracts the human-readable "message" from a GitHub error
