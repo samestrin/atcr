@@ -133,6 +133,9 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 	shownCount := 0
 	for _, f := range findings {
 		severity := cell(f.Severity)
+		if canon, err := reconcile.ParseSeverity(f.Severity); err == nil {
+			severity = canon
+		}
 		if isRefuted(f) {
 			severity = fmt.Sprintf("%s (refuted)", severity)
 		}
