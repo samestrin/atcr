@@ -134,17 +134,17 @@ technical-debt/
 | 10 | [x] | MEDIUM | internal/verify/executor_test.go:102 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
 | 10 | [x] | MEDIUM | internal/verify/executor_test.go:132 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
 | 10 | [x] | LOW | internal/verify/executor_test.go:182 | Incorrect error handling | Swallow errors without logging | error-handling | 2 | code-review | bruce | MEDIUM |
-| 10 | [ ] | LOW | internal/verify/log.go:45 | Unhandled error case | Log error and return default value | maintainability | 2 | code-review | bruce | MEDIUM |
+| 10 | [x] | LOW | internal/verify/log.go:45 | Unhandled error case | Log error and return default value | maintainability | 2 | code-review | bruce | MEDIUM |
 | 10 | [x] | MEDIUM | internal/verify/mock_test.go:110 | AC2 'executor reads the cited file first' is weakly pinned. TestGenerateFixes_AgentMode_ToolLoopThenFix asserts disp.count() >= 1, but the fake dispatcher only increments a counter; it does not record the tool name or arguments, so it never asserts read_file was actually dispatched (vs any tool) nor that the read preceded the JSON answer. Any non-zero dispatch satisfies the assertion. | Extend the fake dispatcher to record dispatched tool name(s) and assert read_file was among them; optionally assert ordering (read recorded before final content) so the 'first' in AC2 is genuinely pinned. | testing | 30 | code-review | claude | MEDIUM |
 | 10 | [x] | MEDIUM | internal/verify/pipeline.go:260 | Resource leak | Unbounded goroutines | performance | 15 | code-review | bruce | MEDIUM |
 | 10 | [x] | LOW | internal/verify/pipeline.go:275 | Resource leak | Unbounded goroutines | performance | 15 | code-review | bruce | MEDIUM |
 | 10 | [x] | LOW | internal/verify/pipeline_test.go:105 | Resource leak | Unbounded goroutines | performance | 15 | code-review | bruce | MEDIUM |
-| 10 | [ ] | LOW | internal/verify/pipeline_test.go:120 | Resource leak | Unbounded goroutines | performance | 15 | code-review | bruce | MEDIUM |
-| 10 | [ ] | MEDIUM | internal/verify/verify_test.go:102 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
-| 10 | [ ] | MEDIUM | internal/verify/verify_test.go:132 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
-| 10 | [ ] | LOW | internal/verify/verify_test.go:182 | Incorrect error handling | Swallow errors without logging | error-handling | 2 | code-review | bruce | MEDIUM |
-| 10 | [ ] | MEDIUM | internal/verify/verify_test.go:212 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
-| 10 | [ ] | LOW | internal/verify/verify_test.go:242 | Incorrect error handling | Swallow errors without logging | error-handling | 2 | code-review | bruce | MEDIUM |
+| 10 | [x] | LOW | internal/verify/pipeline_test.go:120 | Resource leak | Unbounded goroutines | performance | 15 | code-review | bruce | MEDIUM |
+| 10 | [x] | MEDIUM | internal/verify/verify_test.go:102 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
+| 10 | [x] | MEDIUM | internal/verify/verify_test.go:132 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
+| 10 | [x] | LOW | internal/verify/verify_test.go:182 | Incorrect error handling | Swallow errors without logging | error-handling | 2 | code-review | bruce | MEDIUM |
+| 10 | [x] | MEDIUM | internal/verify/verify_test.go:212 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
+| 10 | [x] | LOW | internal/verify/verify_test.go:242 | Incorrect error handling | Swallow errors without logging | error-handling | 2 | code-review | bruce | MEDIUM |
 
 ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
 
