@@ -331,7 +331,7 @@ func TestLooksLikeNonGoBraces(t *testing.T) {
 		{"quoted-key object is non-Go", "{\n  \"k\": 1\n}", true},
 		{"empty-key object is non-Go", "{\n  \"\": 1\n}", true},
 		{"unicode-key object is non-Go", "{\n  \"café\": 1\n}", true},
-		{"escaped-quote key pins current regex behavior", "{\n  \"a\\\"b\": 1\n}", false},
+		{"escaped-quote key is non-Go", "{\n  \"a\\\"b\": 1\n}", true},
 		{"a Go func is not non-Go braces", "func f() {\n\treturn 1\n}", false},
 		{"a Go type decl is not non-Go braces", "type T struct {\n\tX int\n}", false},
 		{"a quoted case label does not start the line", "switch s {\ncase \"x\":\n}", false},

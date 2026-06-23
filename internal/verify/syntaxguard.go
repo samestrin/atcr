@@ -59,7 +59,7 @@ var blockCloseRe = regexp.MustCompile(`(?m)^[ \t]*\}`)
 // which, being valid Go, parses cleanly and never reaches this guard (or, being
 // broken Go, is an acceptable false negative under the conservative-recall policy).
 // A `case "x":` label does NOT match — the line starts with `case`, not the quote.
-var jsonKeyLineRe = regexp.MustCompile(`(?m)^\s*"[^"]*"\s*:`)
+var jsonKeyLineRe = regexp.MustCompile(`(?m)^\s*"(?:[^"\\]|\\.)*"\s*:`)
 
 // packageClauseRe detects a package clause, i.e. the fix is shaped as a full file.
 var packageClauseRe = regexp.MustCompile(`(?m)^\s*package\s+\w`)
