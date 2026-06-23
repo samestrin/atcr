@@ -255,6 +255,13 @@ func TestValidateGoFixSyntax_EmptyJSONObjectNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "an empty JSON object must not be flagged as invalid Go")
 }
 
+// AC1 boundary: a trailing-comma JSON object is still JSON-shaped (quoted-key line)
+// and is suppressed rather than flagged invalid_syntax.
+func TestValidateGoFixSyntax_TrailingCommaJSONObjectNotFlagged(t *testing.T) {
+	src := "{\n  \"timeout\": 30,\n  \"retries\": 3,\n}"
+	assert.NoError(t, validateGoFixSyntax(src), "a trailing-comma JSON object must not be flagged as invalid Go")
+}
+
 // AC1: nested unfenced JSON is likewise suppressed.
 func TestValidateGoFixSyntax_UnfencedNestedJSONNotFlagged(t *testing.T) {
 	src := "{\n  \"server\": {\n    \"host\": \"localhost\",\n    \"port\": 8080\n  }\n}"
