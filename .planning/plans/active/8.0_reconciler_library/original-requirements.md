@@ -1,3 +1,17 @@
+# Original Requirements
+
+**Date:** June 23, 2026 09:26:44AM
+**Arguments:** @.planning/epics/active/8.0_reconciler_library.md
+**Target:** .planning/epics/active/8.0_reconciler_library.md
+
+## Purpose
+
+This document captures the original request verbatim. It is the source of truth for scope,
+objectives, and acceptance criteria. Downstream skill phases (analysis, plan.md, user stories,
+acceptance criteria, sprint design) derive from this content.
+
+## Content
+
 # Epic Plan 8.0: Reconciler Library
 
 **Estimated Durations**: 3 weeks
@@ -141,7 +155,7 @@ HTTP/gRPC service, Python/TypeScript SDKs, and cloud-hosted reconciliation are d
 
 - Nobody else ships a deterministic, disagreement-preserving reconciler.
 - If the reconciler becomes a reference implementation, ATCR's finding format gains standards gravity.
-- Network effects: more embeddings → more feedback → better reconciler → more adoption.
+- Network effects: more embeddings -> more feedback -> better reconciler -> more adoption.
 
 ## Risks
 
@@ -188,7 +202,7 @@ HTTP/gRPC service, Python/TypeScript SDKs, and cloud-hosted reconciliation are d
 **Technical Approach:**
 - Library defines its own `Finding` type carrying the 9 wire-format fields (Severity, File,
   Line, Problem, Fix, Category, EstMinutes, Evidence, Reviewer/Reviewers, Confidence). ATCR
-  adapts `stream.Finding` ↔ `reconcile.Finding` at the boundary; path-validation fields stay
+  adapts `stream.Finding` <-> `reconcile.Finding` at the boundary; path-validation fields stay
   in the adapter.
 - `Verification` becomes public library API (chosen over interface-decoupling) to keep
   `Merged`, `mergeVerification`, and `BuildDisagreements` behaviorally identical under the
@@ -214,5 +228,5 @@ HTTP/gRPC service, Python/TypeScript SDKs, and cloud-hosted reconciliation are d
       Phase 0. Confidence 92%.
 5. Q: `internal/stream` dependency — library-owned `Finding` type, or absorb stream wholesale?
    A: (a) Library-owned `Finding`; move only severity.go (`NormalizeSeverity`/`SeverityRank`)
-      and levenshtein.go into the library (both pure). `stream` is not pure (imports
+      and levishtein.go into the library (both pure). `stream` is not pure (imports
       `internal/metrics`), so it is NOT absorbed wholesale. Confidence 85%.
