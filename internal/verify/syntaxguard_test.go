@@ -274,6 +274,13 @@ func TestValidateGoFixSyntax_UnfencedJSONArrayNotFlagged(t *testing.T) {
 	require.NoError(t, validateGoFixSyntax(src), "an unfenced JSON array of objects must not be flagged")
 }
 
+// AC1 boundary: a single-key JSON object whose only key contains an escaped quote
+// must still be recognized as JSON-shaped and suppressed, not flagged invalid_syntax.
+func TestValidateGoFixSyntax_UnfencedJSONObjectEscapedQuoteKeyNotFlagged(t *testing.T) {
+	src := "{\n  \"a\\\"b\": 1\n}"
+	require.NoError(t, validateGoFixSyntax(src), "a single-key JSON object with an escaped-quote key must not be flagged")
+}
+
 // AC2 guard: the JSON suppression must only reduce flagging — broken Go with block
 // braces but NO JSON quoted-key shape must STILL be flagged (nothing previously
 // flagged-as-broken-Go becomes spared just because it has braces).
