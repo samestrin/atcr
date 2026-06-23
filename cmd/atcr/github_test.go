@@ -317,6 +317,61 @@ func TestPostInlineComments_422IsNonFatal(t *testing.T) {
 	assert.Contains(t, stderr.String(), "422")
 }
 
+// TestPostInlineComments_FallsBackToPerCommentOnUnsupportedBatch pins the
+// GitHub-Enterprise mitigation: when the batched /reviews endpoint is
+// unavailable (404 Not Found or 405 Method Not Allowed — older GHE versions),
+// postInlineComments falls back to posting each comment individually via
+// CreateReviewComment rather than failing the step. Other batch errors keep
+// propagating as exitFailure, and 422 keeps its non-fatal off-diff behavior
+// (TestPostInlineComments_422IsNonFatal), both unchanged.
+func TestPostInlineComments_FallsBackToPerCommentOnUnsupportedBatch(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var mu sync.Mutex
+			paths := map[string]int{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths[r.Method+" "+r.URL.Path]++
+				mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`[]`))
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+					w.WriteHeader(status) // batch endpoint unsupported on this host
+					_, _ = w.Write([]byte(`{"message":"unsupported"}`))
+				default: // per-comment POST /comments
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"id":1}`))
+				}
+			}))
+			defer srv.Close()
+
+			cmd := &cobra.Command{}
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetContext(context.Background())
+
+			client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+			findings := []reconcile.JSONFinding{
+				{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+				{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+			}
+
+			posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+			require.NoError(t, err, "404/405 from the batch endpoint must trigger fallback, not fail the step")
+			assert.Equal(t, 2, posted, "both comments posted via the per-comment fallback")
+			assert.Equal(t, 0, deduped)
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, 1, paths["POST /repos/owner/repo/pulls/1/reviews"], "batch attempted exactly once")
+			assert.Equal(t, 2, paths["POST /repos/owner/repo/pulls/1/comments"], "fell back to one POST per comment")
+		})
+	}
+}
+
 // TestReadReconciledFindings_MissingPreservesErrNotExist verifies that a missing
 // findings.json preserves os.ErrNotExist through the error chain so callers can
 // distinguish absent data (usage error, exit 2) from present-but-malformed data
