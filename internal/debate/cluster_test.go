@@ -13,7 +13,6 @@ import (
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/stream"
 )
 
 // grayFinding builds a findings.json record for a gray-zone cluster member.
@@ -47,7 +46,7 @@ func reviewDirWithGray(t *testing.T, findings []reconcile.JSONFinding, clusters 
 func grayCluster(id, file string, line int, probA, sevA, revA, probB, sevB, revB string) reconcile.AmbiguousCluster {
 	return reconcile.AmbiguousCluster{
 		ID: id, File: file, Line: line, Similarity: 0.5,
-		Findings: []stream.Finding{
+		Findings: []reconcile.Finding{
 			{Severity: sevA, File: file, Line: line, Problem: probA, Reviewer: revA},
 			{Severity: sevB, File: file, Line: line, Problem: probB, Reviewer: revB},
 		},
@@ -307,7 +306,7 @@ func TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn(t *testing.T) {
 	}
 	cluster := reconcile.AmbiguousCluster{
 		ID: "amb-1", File: "a.go", Line: 10, Similarity: 0.5,
-		Findings: []stream.Finding{
+		Findings: []reconcile.Finding{
 			{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "only member", Reviewer: "alice"},
 		},
 	}

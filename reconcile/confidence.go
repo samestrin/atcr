@@ -4,11 +4,9 @@ import "strings"
 
 // ConfidenceVerified is the top confidence tier — a finding whose verdict was
 // confirmed (by a skeptic in the verify stage, or by surviving a judge ruling in
-// the debate stage). The v2 ordering is VERIFIED > HIGH > MEDIUM > LOW. It lives
-// here, alongside the other confidence tiers and the JSONFinding it stamps, so
-// every stage that recomputes confidence from a verdict shares one definition
-// (Epic 6.0 folded the cross-examination stage onto this axis rather than adding a
-// DEBATED tier — see Clarifications).
+// the debate stage). The ordering is VERIFIED > HIGH > MEDIUM > LOW. It lives
+// here, alongside the other confidence tiers, so every stage that recomputes
+// confidence from a verdict shares one definition.
 const ConfidenceVerified = "VERIFIED"
 
 // ConfidenceForVerdict maps a finding's prior confidence and a verdict to its
@@ -17,8 +15,6 @@ const ConfidenceVerified = "VERIFIED"
 // string when no stage ran, or an unrecognized token — passes the prior
 // confidence through unchanged. Verdict comparison is case-insensitive so a
 // non-canonical casing does not silently fall through to the pass-through branch.
-// It is the single confidence-from-verdict rule shared by the verify and debate
-// stages.
 func ConfidenceForVerdict(prior, verdict string) string {
 	switch strings.ToLower(strings.TrimSpace(verdict)) {
 	case VerdictConfirmed:
@@ -30,7 +26,7 @@ func ConfidenceForVerdict(prior, verdict string) string {
 	}
 }
 
-// confidenceRank is the v2 confidence ordinal rubric (VERIFIED > HIGH > MEDIUM >
+// confidenceRank is the confidence ordinal rubric (VERIFIED > HIGH > MEDIUM >
 // LOW), the single source consumers gate on. An unknown tier maps to 0 so
 // ConfidenceAtOrAbove fails closed for it.
 var confidenceRank = map[string]int{
@@ -41,7 +37,7 @@ var confidenceRank = map[string]int{
 }
 
 // ConfidenceAtOrAbove reports whether confidence c is at or above floor in the
-// v2 ordering (VERIFIED > HIGH > MEDIUM > LOW). Both arguments are normalized to
+// ordering (VERIFIED > HIGH > MEDIUM > LOW). Both arguments are normalized to
 // canonical upper-case so the comparison is case- and whitespace-insensitive. It
 // fails closed (returns false) when either value is empty or an unrecognized
 // tier — a gate must never fire on a token it does not understand.

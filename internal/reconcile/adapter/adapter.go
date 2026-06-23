@@ -4,11 +4,6 @@
 // single place ATCR-internal path-validation fields are stamped back onto the
 // reconciled wire record — keeping that ATCR-specific machinery out of the
 // stdlib-only public library.
-//
-// Phase 1 establishes the package boundary with signatures only; the conversion
-// bodies (including path-validation stamping and *Verification pointer-identity
-// preservation) are implemented in Phase 2, driven by
-// TestBoundaryAdapter_FindingConversionRoundTrip.
 package adapter
 
 import (
@@ -18,22 +13,43 @@ import (
 )
 
 // ToFinding converts an ATCR stream.Finding (per-source input) into the library
-// reconcile.Finding. Path-validation fields are ATCR-internal and are not part
-// of the library type, so they are not carried here.
-//
-// Phase 1 stub — implemented in Phase 2 (Epic 8.0 task 2.2).
+// reconcile.Finding: the 9 wire fields plus the reviewer columns. Path-validation
+// fields are ATCR-internal and are not part of the library type, so they are not
+// carried here (they are re-stamped onto the JSONFinding after reconcile).
 func ToFinding(f stream.Finding) reconcile.Finding {
-	_ = f
-	panic("reconcile/adapter: ToFinding not implemented until Phase 2")
+	return reconcile.Finding{
+		Severity:   f.Severity,
+		File:       f.File,
+		Line:       f.Line,
+		Problem:    f.Problem,
+		Fix:        f.Fix,
+		Category:   f.Category,
+		EstMinutes: f.EstMinutes,
+		Evidence:   f.Evidence,
+		Reviewer:   f.Reviewer,
+		Reviewers:  f.Reviewers,
+		Confidence: f.Confidence,
+	}
 }
 
 // FromFinding converts a reconciled library reconcile.Finding back into an ATCR
 // stream.Finding so the ATCR I/O layer can stamp path-validation fields onto it.
-//
-// Phase 1 stub — implemented in Phase 2 (Epic 8.0 task 2.2).
+// The library finding's Disagreement and Verification ride on the JSONFinding
+// record (see ToJSONFinding), not on stream.Finding; path fields come back zeroed.
 func FromFinding(f reconcile.Finding) stream.Finding {
-	_ = f
-	panic("reconcile/adapter: FromFinding not implemented until Phase 2")
+	return stream.Finding{
+		Severity:   f.Severity,
+		File:       f.File,
+		Line:       f.Line,
+		Problem:    f.Problem,
+		Fix:        f.Fix,
+		Category:   f.Category,
+		EstMinutes: f.EstMinutes,
+		Evidence:   f.Evidence,
+		Reviewer:   f.Reviewer,
+		Reviewers:  f.Reviewers,
+		Confidence: f.Confidence,
+	}
 }
 
 // ToJSONFinding wraps a reconciled library reconcile.Finding back into ATCR's
@@ -43,9 +59,22 @@ func FromFinding(f reconcile.Finding) stream.Finding {
 // library finding; PathValid/PathWarning/PathSuggestion are copied from paths
 // (the originating ATCR stream.Finding); the *Verification pointer is shared
 // (identity preserved) so gate.go and internal/debate read/mutate the same block.
-//
-// Phase 1 stub — implemented in Phase 2 (Epic 8.0 task 2.2).
 func ToJSONFinding(f reconcile.Finding, paths stream.Finding) recon.JSONFinding {
-	_, _ = f, paths
-	panic("reconcile/adapter: ToJSONFinding not implemented until Phase 2")
+	return recon.JSONFinding{
+		Severity:       f.Severity,
+		File:           f.File,
+		Line:           f.Line,
+		Problem:        f.Problem,
+		Fix:            f.Fix,
+		Category:       f.Category,
+		EstMinutes:     f.EstMinutes,
+		Evidence:       f.Evidence,
+		Reviewers:      f.Reviewers,
+		Confidence:     f.Confidence,
+		Disagreement:   f.Disagreement,
+		Verification:   f.Verification,
+		PathValid:      paths.PathValid,
+		PathWarning:    paths.PathWarning,
+		PathSuggestion: paths.PathSuggestion,
+	}
 }

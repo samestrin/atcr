@@ -289,7 +289,7 @@ From [plan/documentation/](plan/documentation/):
    3. Verify it fails correctly (adapter is still a stub).
    **Files:** `internal/reconcile/adapter/adapter_test.go`, fixture baselines | **Duration:** 3-5h
 
-### 2.2 [ ] **[Core logic move + severity migration + adapter completion - GREEN](plan/user-stories/01-reference-implementation-preservation.md)**
+### 2.2 [x] **[Core logic move + severity migration + adapter completion - GREEN](plan/user-stories/01-reference-implementation-preservation.md)**
    Minimal code to pass (T1 per move), verify all pass (T2), COMMIT in mechanical batches. **No new RED tests for moved behavior — the existing corpus is the oracle.**
    1. Move `reconcile.go` → `reconcile/reconcile.go` (`Reconcile` entry + `Options`/`Result`/`Summary`; preserve `sortMerged`). (AC 02-02)
    2. Move `merge.go` → `reconcile/merge.go` — **only** `Merge`/`Merged` (path-free) + the pure helpers (`mergeSeverity`, `distinctReviewers`, `longestField`, `modalCategory`, `maxEstMinutes`, `mergeEvidence`, `confidenceFor`) + severity/confidence/category consts. **The `MergeJSONFindings` family (`MergeJSONFindings`, `mergeVerification`, `verdictRank`, `widestDisagreement`, `mergePathFields`, `unionReviewers`, `joinEvidence`) STAYS in `internal/reconcile` (Phase 2 Clarification Q2 — operates on ATCR-internal `JSONFinding`).** (AC 02-02)

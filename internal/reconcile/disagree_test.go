@@ -95,9 +95,9 @@ func TestBuildDisagreements_GrayZoneClusterSurfacedWithPositions(t *testing.T) {
 	clusters := []AmbiguousCluster{
 		{
 			ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
-			Findings: []stream.Finding{
-				mf("HIGH", "g.go", 7, "buffer overrun risk", "f", "security", 10, "e", "greta"),
-				mf("LOW", "g.go", 8, "minor bounds note", "f", "security", 10, "e", "kai"),
+			Findings: []Finding{
+				mfL("HIGH", "g.go", 7, "buffer overrun risk", "f", "security", 10, "e", "greta"),
+				mfL("LOW", "g.go", 8, "minor bounds note", "f", "security", 10, "e", "kai"),
 			},
 		},
 	}
@@ -115,9 +115,9 @@ func TestBuildDisagreements_GrayZoneClusterSurfacedWithPositions(t *testing.T) {
 func TestBuildDisagreements_GrayZoneMembersNotDoubleSurfacedAsSolo(t *testing.T) {
 	// The same two findings appear as singletons in findings.json AND as a
 	// gray-zone pair; they must surface once (as the cluster), never as solos.
-	clusterFindings := []stream.Finding{
-		mf("HIGH", "g.go", 7, "buffer overrun risk", "f", "security", 10, "e", "greta"),
-		mf("LOW", "g.go", 7, "minor bounds note", "f", "security", 10, "e", "kai"),
+	clusterFindings := []Finding{
+		mfL("HIGH", "g.go", 7, "buffer overrun risk", "f", "security", 10, "e", "greta"),
+		mfL("LOW", "g.go", 7, "minor bounds note", "f", "security", 10, "e", "kai"),
 	}
 	clusters := []AmbiguousCluster{{ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55, Findings: clusterFindings}}
 	findings := []JSONFinding{
@@ -146,9 +146,9 @@ func TestBuildDisagreements_GrayZoneAllOutOfScopeExcluded(t *testing.T) {
 	clusters := []AmbiguousCluster{
 		{
 			ID: "amb-oos", File: "pre.go", Line: 5, Similarity: 0.7,
-			Findings: []stream.Finding{
-				mf("HIGH", "pre.go", 5, "pre-existing A", "f", CategoryOutOfScope, 10, "e", "greta"),
-				mf("LOW", "pre.go", 5, "pre-existing B", "f", CategoryOutOfScope, 10, "e", "kai"),
+			Findings: []Finding{
+				mfL("HIGH", "pre.go", 5, "pre-existing A", "f", CategoryOutOfScope, 10, "e", "greta"),
+				mfL("LOW", "pre.go", 5, "pre-existing B", "f", CategoryOutOfScope, 10, "e", "kai"),
 			},
 		},
 	}
@@ -162,9 +162,9 @@ func TestBuildDisagreements_GrayZoneMixedScopeKept(t *testing.T) {
 	clusters := []AmbiguousCluster{
 		{
 			ID: "amb-mix", File: "src.go", Line: 10, Similarity: 0.6,
-			Findings: []stream.Finding{
-				mf("HIGH", "src.go", 10, "in-scope finding", "f", "security", 10, "e", "greta"),
-				mf("LOW", "src.go", 10, "pre-existing", "f", CategoryOutOfScope, 10, "e", "kai"),
+			Findings: []Finding{
+				mfL("HIGH", "src.go", 10, "in-scope finding", "f", "security", 10, "e", "greta"),
+				mfL("LOW", "src.go", 10, "pre-existing", "f", CategoryOutOfScope, 10, "e", "kai"),
 			},
 		},
 	}
@@ -397,9 +397,9 @@ func TestDisagreementsSchema_StableContract(t *testing.T) {
 	clusters := []AmbiguousCluster{
 		{
 			ID: "amb-1", File: "b.go", Line: 2, Similarity: 0.6,
-			Findings: []stream.Finding{
-				mf("HIGH", "b.go", 2, "risk A", "f", "security", 10, "e", "greta"),
-				mf("LOW", "b.go", 2, "risk B", "f", "security", 10, "e", "kai"),
+			Findings: []Finding{
+				mfL("HIGH", "b.go", 2, "risk A", "f", "security", 10, "e", "greta"),
+				mfL("LOW", "b.go", 2, "risk B", "f", "security", 10, "e", "kai"),
 			},
 		},
 	}
@@ -459,9 +459,9 @@ func TestBuildDisagreements_GrayZoneMembersExcludedWhenProblemTextDiffers(t *tes
 	// AmbiguousCluster.Findings retains the raw member's original problem. The
 	// gray-zone exclusion must still apply — otherwise the location
 	// double-surfaces as both gray_zone and solo/split.
-	clusterFindings := []stream.Finding{
-		mf("HIGH", "g.go", 7, "raw cluster problem A", "f", "security", 10, "e", "greta"),
-		mf("LOW", "g.go", 8, "raw cluster problem B", "f", "security", 10, "e", "kai"),
+	clusterFindings := []Finding{
+		mfL("HIGH", "g.go", 7, "raw cluster problem A", "f", "security", 10, "e", "greta"),
+		mfL("LOW", "g.go", 8, "raw cluster problem B", "f", "security", 10, "e", "kai"),
 	}
 	clusters := []AmbiguousCluster{{ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55, Findings: clusterFindings}}
 	// JSONFinding with problem text that differs from the cluster's raw members
@@ -509,7 +509,7 @@ func TestBuildDisagreements_EmptyClusterDoesNotPanic(t *testing.T) {
 	// allOutOfScope returns false for empty clusters, so they reach grayZoneItem.
 	// grayZoneItem must guard c.Findings[0] access with a len check.
 	clusters := []AmbiguousCluster{
-		{ID: "amb-empty", File: "e.go", Line: 1, Similarity: 0.5, Findings: []stream.Finding{}},
+		{ID: "amb-empty", File: "e.go", Line: 1, Similarity: 0.5, Findings: []Finding{}},
 	}
 	assert.NotPanics(t, func() {
 		df := BuildDisagreements(nil, clusters)
@@ -524,9 +524,9 @@ func TestBuildDisagreements_GrayZoneAllUnknownSeverityStillScoresAboveZero(t *te
 	// A gray-zone cluster whose members all carry unknown/blank severities must
 	// not score 0. The floor is exactly 1, so it sorts at or above a LOW solo
 	// (rank 1).
-	clusterFindings := []stream.Finding{
-		mf("", "u.go", 1, "unknown sev A", "f", "misc", 5, "e", "greta"),
-		mf("", "u.go", 2, "unknown sev B", "f", "misc", 5, "e", "kai"),
+	clusterFindings := []Finding{
+		mfL("", "u.go", 1, "unknown sev A", "f", "misc", 5, "e", "greta"),
+		mfL("", "u.go", 2, "unknown sev B", "f", "misc", 5, "e", "kai"),
 	}
 	clusters := []AmbiguousCluster{{ID: "amb-u", File: "u.go", Line: 1, Similarity: 0.5, Findings: clusterFindings}}
 	// Include a LOW solo so we can verify the cluster ranks at-or-above it.

@@ -3,7 +3,6 @@ package reconcile
 import (
 	"testing"
 
-	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -11,11 +10,11 @@ import (
 // at its own severity (AC 03-05 Scenario 1).
 func TestCountAtOrAbove_ExcludesRefuted(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "HIGH", Confidence: "HIGH"}},
-		{Finding: stream.Finding{Severity: "HIGH", Confidence: "HIGH"}},
-		{Finding: stream.Finding{Severity: "HIGH", Confidence: "HIGH"}},
-		{Finding: stream.Finding{Severity: "HIGH", Confidence: "LOW"}, Verification: &Verification{Verdict: "refuted", Skeptic: "s"}},
-		{Finding: stream.Finding{Severity: "LOW", Confidence: "LOW"}},
+		{Finding: Finding{Severity: "HIGH", Confidence: "HIGH"}},
+		{Finding: Finding{Severity: "HIGH", Confidence: "HIGH"}},
+		{Finding: Finding{Severity: "HIGH", Confidence: "HIGH"}},
+		{Finding: Finding{Severity: "HIGH", Confidence: "LOW", Verification: &Verification{Verdict: "refuted", Skeptic: "s"}}},
+		{Finding: Finding{Severity: "LOW", Confidence: "LOW"}},
 	}
 	assert.Equal(t, 3, CountAtOrAbove(findings, "HIGH", false), "3 non-refuted HIGH; refuted HIGH excluded")
 }
@@ -24,9 +23,9 @@ func TestCountAtOrAbove_ExcludesRefuted(t *testing.T) {
 // threshold (AC 03-05 Scenario 3 — unverifiable counts too, only refuted drops).
 func TestCountAtOrAbove_IncludesConfirmed(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "confirmed", Skeptic: "s"}},
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "unverifiable", Skeptic: "s"}},
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "refuted", Skeptic: "s"}},
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "confirmed", Skeptic: "s"}}},
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "unverifiable", Skeptic: "s"}}},
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "refuted", Skeptic: "s"}}},
 	}
 	assert.Equal(t, 2, CountAtOrAbove(findings, "HIGH", false), "confirmed + unverifiable count; refuted excluded")
 }
@@ -35,8 +34,8 @@ func TestCountAtOrAbove_IncludesConfirmed(t *testing.T) {
 // block) counts as non-refuted (AC 03-05 EC1).
 func TestCountAtOrAbove_V1Finding_NilVerification(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "HIGH"}},                                           // nil Verification
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: ""}}, // empty verdict
+		{Finding: Finding{Severity: "HIGH"}},                                           // nil Verification
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: ""}}}, // empty verdict
 	}
 	assert.Equal(t, 2, CountAtOrAbove(findings, "HIGH", false), "nil and empty-verdict findings both count")
 }
@@ -45,10 +44,10 @@ func TestCountAtOrAbove_V1Finding_NilVerification(t *testing.T) {
 // (VERIFIED) findings (AC 05-01 Scenario 2 / EC1 / EC2).
 func TestCountAtOrAbove_RequireVerified(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "confirmed"}},
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "unverifiable"}},
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "refuted"}},
-		{Finding: stream.Finding{Severity: "HIGH"}}, // v1 nil
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "confirmed"}}},
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "unverifiable"}}},
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "refuted"}}},
+		{Finding: Finding{Severity: "HIGH"}}, // v1 nil
 	}
 	assert.Equal(t, 1, CountAtOrAbove(findings, "HIGH", true), "only the confirmed finding counts when requireVerified")
 }
@@ -57,9 +56,9 @@ func TestCountAtOrAbove_RequireVerified(t *testing.T) {
 // (AC 03-05 EC4).
 func TestCountAtOrAbove_AllRefuted(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "CRITICAL"}, Verification: &Verification{Verdict: "refuted"}},
-		{Finding: stream.Finding{Severity: "HIGH"}, Verification: &Verification{Verdict: "refuted"}},
-		{Finding: stream.Finding{Severity: "LOW"}, Verification: &Verification{Verdict: "refuted"}},
+		{Finding: Finding{Severity: "CRITICAL", Verification: &Verification{Verdict: "refuted"}}},
+		{Finding: Finding{Severity: "HIGH", Verification: &Verification{Verdict: "refuted"}}},
+		{Finding: Finding{Severity: "LOW", Verification: &Verification{Verdict: "refuted"}}},
 	}
 	assert.Equal(t, 0, CountAtOrAbove(findings, "LOW", false))
 }
@@ -68,7 +67,7 @@ func TestCountAtOrAbove_AllRefuted(t *testing.T) {
 // of a confirmed verdict and regardless of requireVerified (AC 05-01 EC4).
 func TestCountAtOrAbove_OutOfScopePrecedence(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "CRITICAL", Category: CategoryOutOfScope}, Verification: &Verification{Verdict: "confirmed"}},
+		{Finding: Finding{Severity: "CRITICAL", Category: CategoryOutOfScope, Verification: &Verification{Verdict: "confirmed"}}},
 	}
 	assert.Equal(t, 0, CountAtOrAbove(findings, "CRITICAL", false))
 	assert.Equal(t, 0, CountAtOrAbove(findings, "CRITICAL", true))

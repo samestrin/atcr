@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -12,7 +11,7 @@ import (
 // verdict attaches a Verification block; the literal "nil" leaves Verification
 // nil (a v1 finding); "" attaches a Verification with an empty verdict.
 func mkMerged(sev, category, verdict string) Merged {
-	m := Merged{Finding: stream.Finding{Severity: sev, Category: category}}
+	m := Merged{Finding: Finding{Severity: sev, Category: category}}
 	if verdict != "nil" {
 		m.Verification = &Verification{Verdict: verdict, Skeptic: "s"}
 	}
@@ -128,7 +127,7 @@ func TestGateMatrix_RefutedNeverCounted(t *testing.T) {
 // but HIGH severity and no refutation still counts at a HIGH gate — the gate keys
 // on severity + verdict, not confidence (AC 05-01 EC5 / 05-02).
 func TestGateMatrix_NaturallyLowCounts(t *testing.T) {
-	f := []Merged{{Finding: stream.Finding{Severity: SevHigh, Confidence: ConfLow}}} // nil Verification
+	f := []Merged{{Finding: Finding{Severity: SevHigh, Confidence: ConfLow}}} // nil Verification
 	assert.Equal(t, 1, CountAtOrAbove(f, SevHigh, false))
 }
 
@@ -159,7 +158,7 @@ func TestGateMatrix_NonCanonicalCategory(t *testing.T) {
 // correctly (defense-in-depth for the JSON-gate path, which does not validate
 // severity on read).
 func TestGateMatrix_NonCanonicalSeverity(t *testing.T) {
-	f := []Merged{{Finding: stream.Finding{Severity: " high "}}}
+	f := []Merged{{Finding: Finding{Severity: " high "}}}
 	assert.Equal(t, 1, CountAtOrAbove(f, SevHigh, false), "lower/padded HIGH still counts at a HIGH gate")
 }
 

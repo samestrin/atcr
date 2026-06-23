@@ -193,12 +193,17 @@ func TestRenderMarkdown_PathWarningEscapesBacktickAndHTML(t *testing.T) {
 	// The "did you mean ..." warning line renders File and PathSuggestion through
 	// esc(), so backticks and HTML in those fields must be neutralized just like
 	// in report/render.go esc() (TD reconcile emit.go:332).
-	m := Merged{Finding: mf("HIGH", "a`<i>.go", 1, "p", "f", "security", 10, "e", "greta")}
-	m.PathWarning = "file not found"
-	m.PathSuggestion = "b`<i>.go"
+	// Path-validation fields ride on the JSONFinding (stamped after JSONFindings
+	// by validateFindingPaths, Epic 8.0 Phase 2 Clarification Q1), not on Merged.
+	rec := JSONFinding{
+		Severity: "HIGH", File: "a`<i>.go", Line: 1, Problem: "p", Fix: "f", Category: "security",
+		EstMinutes: 10, Evidence: "e", Reviewers: []string{"greta"}, Confidence: "MEDIUM",
+		PathWarning: "file not found", PathSuggestion: "b`<i>.go",
+	}
+	res := Result{Findings: []Merged{{Finding: mfL("HIGH", "a`<i>.go", 1, "p", "f", "security", 10, "e", "greta")}}, jsonFindings: []JSONFinding{rec}}
 
 	var b bytes.Buffer
-	require.NoError(t, RenderMarkdown(&b, Result{Findings: []Merged{m}}))
+	require.NoError(t, RenderMarkdown(&b, res))
 	out := b.String()
 	assert.Contains(t, out, "a&#96;&lt;i&gt;.go", "File with backtick must be escaped")
 	assert.Contains(t, out, "b&#96;&lt;i&gt;.go", "PathSuggestion with backtick must be escaped")
@@ -333,15 +338,21 @@ func TestJSONFinding_EmptyVerdictLoadsDefensively(t *testing.T) {
 // producers must leave empty (see the field comments). Adding a fourth such
 // downstream-only field means extending the allowlist here deliberately.
 func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
-	downstreamOnly := map[string]bool{"FixWarning": true, "ClusterMerged": true, "ClusterID": true}
+	// PathValid/PathWarning/PathSuggestion are stamped onto the JSONFinding AFTER
+	// JSONFindings() by validateFindingPaths (Epic 8.0 Phase 2 Clarification Q1) —
+	// the library Merged no longer carries them — so they join the other
+	// downstream-only fields that JSONFindings() must NOT populate.
+	downstreamOnly := map[string]bool{
+		"FixWarning": true, "ClusterMerged": true, "ClusterID": true,
+		"PathValid": true, "PathWarning": true, "PathSuggestion": true,
+	}
 	m := Merged{
-		Finding: stream.Finding{
+		Finding: Finding{
 			Severity: "HIGH", File: "a.go", Line: 7, Problem: "p", Fix: "f", Category: "c",
 			EstMinutes: 5, Evidence: "e", Reviewers: []string{"r"}, Confidence: "HIGH",
-			PathValid: true, PathWarning: "w", PathSuggestion: "s",
+			Disagreement: "LOW vs HIGH",
+			Verification: &Verification{Verdict: "confirmed"},
 		},
-		Disagreement: "LOW vs HIGH",
-		Verification: &Verification{Verdict: "confirmed"},
 	}
 	got := Result{Findings: []Merged{m}}.JSONFindings()
 	require.Len(t, got, 1)
@@ -361,11 +372,9 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
 // non-nil Verification block is carried through JSONFindings into findings.json
 // (Epic 3.0 forward-compatibility).
 func TestJSONFindings_PreservesVerification(t *testing.T) {
-	res := Result{Findings: []Merged{{
-		Finding:      mf("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "greta"),
-		Disagreement: "",
-		Verification: &Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"},
-	}}}
+	vf := mfL("HIGH", "a.go", 1, "p", "f", "security", 10, "e", "greta")
+	vf.Verification = &Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
+	res := Result{Findings: []Merged{{Finding: vf}}}
 
 	got := res.JSONFindings()
 	require.Len(t, got, 1)
@@ -387,7 +396,7 @@ func TestJSONFindings_PreservesVerification(t *testing.T) {
 	assert.Equal(t, "reproduced", readBack[0].Verification.Notes)
 
 	// A nil Verification must still marshal without a "verification" key.
-	res2 := Result{Findings: []Merged{{Finding: mf("LOW", "b.go", 2, "p2", "f2", "style", 1, "e", "bruce")}}}
+	res2 := Result{Findings: []Merged{{Finding: mfL("LOW", "b.go", 2, "p2", "f2", "style", 1, "e", "bruce")}}}
 	data, err := json.Marshal(res2.JSONFindings())
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "verification", "nil Verification must stay omitted")
@@ -438,8 +447,8 @@ func TestJSONFinding_ClusterIDRoundTrips(t *testing.T) {
 // reconcile-package test instead of silently breaking byte-identity.
 func TestJSONFindings_ReconcilePathNeverStampsClusterFields(t *testing.T) {
 	res := Result{Findings: []Merged{
-		{Finding: mf("HIGH", "a.go", 1, "p1", "f1", "security", 10, "e1", "greta")},
-		{Finding: mf("LOW", "b.go", 2, "p2", "f2", "style", 1, "e2", "bruce")},
+		{Finding: mfL("HIGH", "a.go", 1, "p1", "f1", "security", 10, "e1", "greta")},
+		{Finding: mfL("LOW", "b.go", 2, "p2", "f2", "style", 1, "e2", "bruce")},
 	}}
 
 	data, err := json.Marshal(res.JSONFindings())
@@ -456,10 +465,18 @@ func TestJSONFindings_ReconcilePathNeverStampsClusterFields(t *testing.T) {
 // TestJSONFindings_CarriesPathSuggestion: a Merged finding's PathSuggestion is
 // carried into the JSON schema and survives a RenderJSON round-trip (AC6).
 func TestJSONFindings_CarriesPathSuggestion(t *testing.T) {
-	m := Merged{Finding: mf("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}
-	m.PathWarning = "file not found"
-	m.PathSuggestion = "internal/auth/validate.go"
-	res := Result{Findings: []Merged{m}}
+	// Path-validation fields ride on the JSONFinding (Epic 8.0 Q1), so build the
+	// path-stamped record the way validateFindingPaths would, then verify Emit
+	// round-trips it.
+	rec := JSONFinding{
+		Severity: "HIGH", File: "internal/auth/validator.go", Line: 1, Problem: "p", Fix: "f",
+		Category: "security", EstMinutes: 10, Evidence: "e", Reviewers: []string{"greta"}, Confidence: "MEDIUM",
+		PathWarning: "file not found", PathSuggestion: "internal/auth/validate.go",
+	}
+	res := Result{
+		Findings:     []Merged{{Finding: mfL("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}},
+		jsonFindings: []JSONFinding{rec},
+	}
 
 	got := res.JSONFindings()
 	require.Len(t, got, 1)
@@ -479,12 +496,15 @@ func TestJSONFindings_CarriesPathSuggestion(t *testing.T) {
 // TestRenderMarkdown_ShowsPathSuggestion: report.md renders a "(did you mean …)"
 // clause next to the file-not-found warning when a suggestion exists (AC6).
 func TestRenderMarkdown_ShowsPathSuggestion(t *testing.T) {
-	m := Merged{Finding: mf("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}
-	m.PathWarning = "file not found"
-	m.PathSuggestion = "internal/auth/validate.go"
+	rec := JSONFinding{
+		Severity: "HIGH", File: "internal/auth/validator.go", Line: 1, Problem: "p", Fix: "f",
+		Category: "security", EstMinutes: 10, Evidence: "e", Reviewers: []string{"greta"}, Confidence: "MEDIUM",
+		PathWarning: "file not found", PathSuggestion: "internal/auth/validate.go",
+	}
+	res := Result{Findings: []Merged{{Finding: mfL("HIGH", "internal/auth/validator.go", 1, "p", "f", "security", 10, "e", "greta")}}, jsonFindings: []JSONFinding{rec}}
 
 	var b bytes.Buffer
-	require.NoError(t, RenderMarkdown(&b, Result{Findings: []Merged{m}}))
+	require.NoError(t, RenderMarkdown(&b, res))
 	out := b.String()
 	assert.Contains(t, out, "File not found")
 	assert.Contains(t, out, "did you mean")

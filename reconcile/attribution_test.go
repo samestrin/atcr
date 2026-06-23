@@ -1,17 +1,13 @@
 package reconcile
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-)
+import "testing"
 
 func TestEvidenceSepConstant(t *testing.T) {
-	assert.Equal(t, "; ", EvidenceSep)
+	eq(t, EvidenceSep, "; ", "evidence separator")
 }
 
 func TestFixAttributionPrefixConstant(t *testing.T) {
-	assert.Equal(t, "fix by ", FixAttributionPrefix)
+	eq(t, FixAttributionPrefix, "fix by ", "fix attribution prefix")
 }
 
 func TestHasFixAttribution(t *testing.T) {
@@ -32,7 +28,7 @@ func TestHasFixAttribution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, HasFixAttribution(tc.evidence, tc.executor))
+			eq(t, HasFixAttribution(tc.evidence, tc.executor), tc.want, tc.name)
 		})
 	}
 }
@@ -53,7 +49,7 @@ func TestAppendFixAttribution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, AppendFixAttribution(tc.evidence, tc.executor))
+			eq(t, AppendFixAttribution(tc.evidence, tc.executor), tc.want, tc.name)
 		})
 	}
 }

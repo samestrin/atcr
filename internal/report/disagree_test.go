@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,7 +63,7 @@ func TestRenderDisagreements_RanksHighestTensionFirst(t *testing.T) {
 func TestRenderDisagreements_GrayZoneShowsPositionsSideBySide(t *testing.T) {
 	clusters := []reconcile.AmbiguousCluster{{
 		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
-		Findings: []stream.Finding{
+		Findings: []reconcile.Finding{
 			{Severity: "HIGH", File: "g.go", Line: 7, Problem: "buffer overrun risk", Reviewer: "greta"},
 			{Severity: "LOW", File: "g.go", Line: 8, Problem: "minor bounds note", Reviewer: "kai"},
 		},
@@ -153,7 +152,7 @@ func TestRenderDisagreements_GrayZoneEscapesAndTruncates(t *testing.T) {
 	longProblem := strings.Repeat("A", 600)
 	clusters := []reconcile.AmbiguousCluster{{
 		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
-		Findings: []stream.Finding{
+		Findings: []reconcile.Finding{
 			{Severity: "HIGH", File: "g.go", Line: 7, Problem: "<script>alert(1)</script>buffer overrun risk", Reviewer: "gre`ta"},
 			{Severity: "LOW", File: "g.go", Line: 8, Problem: "minor bounds note", Reviewer: "kai"},
 		},
