@@ -3,7 +3,7 @@ Extract ATCR's deterministic reconciler from `internal/reconcile` into a standal
 
 ## Workflow Status
 - [x] **Plan Created**
-- [ ] **User Stories** - `/create-user-stories @.planning/plans/active/8.0_reconciler_library/`
+- [x] **User Stories** - `/create-user-stories @.planning/plans/active/8.0_reconciler_library/`
 - [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/8.0_reconciler_library/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/8.0_reconciler_library/`
@@ -36,3 +36,17 @@ Extract ATCR's deterministic reconciler from `internal/reconcile` into a standal
 - [Codebase Discovery](codebase-discovery.json)
 - [User Stories](user-stories/) (pending)
 - [Acceptance Criteria](acceptance-criteria/) (pending)
+- [Documentation](documentation/)
+
+## Documentation References
+
+Grounded documentation indexes (see [documentation/README.md](documentation/README.md)):
+
+### Critical
+- [Go Module & Standard Library](documentation/go-module-stdlib.md) — Go 1.25, nested module + `replace` directive, stdlib-only constraint.
+- [Reconciler Public API & Verification Interface](documentation/reconciler-api-verification.md) — lifted-as-is public API + verification contract / public-private boundary.
+- [JSON Format Adapter (reconcile-json/v1)](documentation/json-adapter.md) — `encoding/json` adapter + independent schema (AC#4).
+
+### Important
+- [Testing with testify](documentation/testing-testify.md) — test conventions + runnable godoc example (AC#5).
+- [Linting & CI/CD](documentation/linting-ci.md) — golangci-lint + dual-coverage module CI (AC#7).

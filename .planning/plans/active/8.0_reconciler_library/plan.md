@@ -1,13 +1,21 @@
 ## Plan Overview
-**Plan Type:** Feature Development
+**Plan Type:** feature
+**Last Modified:** June 23, 2026 05:31:19PM UTC
 **Plan Goal:** Extract ATCR's deterministic reconciler from `internal/reconcile` into a standalone, stdlib-only Go module (`github.com/samestrin/atcr/reconcile`) consumed via a root `replace` directive, with a clean public API lifted as-is, one JSON adapter, and a dual-licensing path. This turns the core architectural moat into a separable, inspectable asset other tools can embed — and makes ATCR the reference implementation — with zero behavioral change to ATCR itself.
 **Target Users:** ATCR maintainer (reference implementation), external tool authors / devtools vendors (embed + adapt), OSS adopters (Apache 2.0), proprietary vendors (commercial license), leaderboard consumers (reference-impl citation).
 **Framework/Technology:** Go 1.25; standalone nested module (`go.mod` at `./reconcile/`); stdlib-only library + `encoding/json` adapter; testify tests; golangci-lint; GitHub Actions CI.
 
+## Objectives
+1. Extract ATCR's deterministic reconciler from `internal/reconcile` into a standalone, stdlib-only Go module at `github.com/samestrin/atcr/reconcile` with its own `go.mod`.
+2. Stabilize the public API by lifting the existing surface as-is (`Reconcile`, `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`) so external tools can embed without importing the ATCR binary.
+3. Provide a JSON format adapter (`reconcile-json/v1`) that converts an external finding stream into `[]Source` and a `Result` back into an external finding stream.
+4. Establish a dual-licensing path with an Apache 2.0 `LICENSE` and a `LICENSE-COMMERCIAL.md` placeholder for proprietary embedding.
+5. Preserve ATCR as the reference implementation: all existing ATCR tests pass with zero behavioral change and byte-identical fixtures.
+
 ## Planning Deliverables
 ### User Stories
 - **Location:** [`user-stories/`](user-stories/)
-- **Status:** Pending - generate with `/create-user-stories @.planning/plans/active/8.0_reconciler_library/`
+- **Status:** Generated
 - **Estimated Count:** 6 stories
 
 ### Acceptance Criteria
@@ -19,13 +27,27 @@ The reconciler is genuinely unique: deterministic location clustering, token-set
 
 ## Technical Planning Notes
 - New module at `./reconcile/` with its own `go.mod`; root `go.mod` adds `replace github.com/samestrin/atcr/reconcile => ./reconcile`.
-- Library owns the canonical `SeverityRank`/`NormalizeSeverity` (collapse `merge.go:30`'s init-copy); the levenshtein scope is decided in Phase 0 — it is currently used only by ATCR path-validation (`stream/suggest.go`), not by dedupe (which uses Jaccard), so moving it adds a dependency with no core benefit.
+- Library owns the canonical `SeverityRank`/`NormalizeSeverity` (collapse `merge.go:30`'s init-copy). **Levenshtein stays in `internal/stream`** (Phase-0 resolved 2026-06-23): it is used only by ATCR path-validation (`stream/suggest.go`), not by dedupe (which uses Jaccard), so moving it would add a `stream → library` import with no core benefit.
 - `Verification` becomes public library API (chosen over interface-decoupling) so `mergeVerification`/`BuildDisagreements` stay behaviorally identical; `gate.go` (ATCR) imports the public type + `Verdict*` constants.
-- The library defines one `Finding` (core wire fields + `Disagreement` + `*Verification`); ATCR's `JSONFinding` wraps it + path-validation fields at the adapter boundary; `stream.Finding` ↔ `reconcile.Finding` conversion happens at the boundary.
-- The JSON adapter round-trips `atcr-findings/v1` (`docs/findings-format.md`): external stream → `[]Source` and `Result` → external stream.
+- The library defines one `Finding` (core wire fields + `Disagreement` + `*Verification`); ATCR's `JSONFinding` wraps it + path-validation fields at the adapter boundary. The boundary lives in a dedicated **`internal/reconcile/adapter`** package (Phase-0 resolved): `stream.Finding` ↔ `reconcile.Finding` conversion, path-validation stamping, and file I/O.
+- The JSON adapter uses a new **`reconcile-json/v1`** schema, versioned independently of `atcr-findings/v1` (Phase-0 resolved): input `{version, source, findings[]}` (object or array) → `[]Source`; output `Result` → `{version, reconciled_at, findings[reviewers[], confidence, disagreement?, verification?], summary, ambiguous[]}`. Path-validation fields are ATCR-internal and excluded from the external schema.
+- **Consumer import-flip (Phase-0 audit, 2026-06-23):** packages that re-import the library after the move are `cmd/atcr`, `internal/debate`, `internal/verify`, `internal/report`, `internal/ghaction`, `internal/mcp`, `internal/fanout`, plus `internal/scorecard` (reconcile types) and `internal/registry` (severity helpers). Severity-helper (`NormalizeSeverity`/`SeverityRank`) consumers span fanout, debate, verify, report, and registry — broader than fanout alone.
 
 ## Implementation Strategy
-Phase 0 resolves the public-API boundary: split `emit.go`/`discover.go` types from I/O, decide the levenshtein scope, and confirm the ATCR adapter location. Then scaffold the nested module + `go.mod`, mechanically move the pure types and logic (cluster, dedupe, merge, confidence, disagree, ambiguous, attribution, severity), swap ATCR imports to the library behind a thin boundary adapter, and verify the full test corpus stays byte-identical. Build the JSON adapter, README + godoc example, and licensing files, then add independent module CI on tag push. Each move is verified by `go test ./...` green in both modules before proceeding; the fixtures across epics must remain byte-identical.
+Phase 0 is resolved (2026-06-23): the public-API boundary is to split `emit.go`/`discover.go` types from I/O, levenshtein stays in `internal/stream`, and the ATCR adapter lives in `internal/reconcile/adapter`. Then scaffold the nested module + `go.mod`, mechanically move the pure types and logic (cluster, dedupe, merge, confidence, disagree, ambiguous, attribution, severity), swap ATCR imports to the library behind the boundary adapter, and verify the full test corpus stays byte-identical. Build the JSON adapter (`reconcile-json/v1`), README + godoc example, and licensing files, then add independent module CI on tag push plus a PR-time `./reconcile` test job in `ci.yml`. Each move is verified by `go test ./...` green in both modules before proceeding (note: root `go test ./...` does not cross the nested `go.mod`, so the library is tested via its own job); the fixtures across epics must remain byte-identical.
+
+## Documentation References
+
+Grounded documentation indexes (see [documentation/README.md](documentation/README.md)):
+
+### Critical
+- [Go Module & Standard Library](documentation/go-module-stdlib.md) — Go 1.25, nested module + `replace` directive, stdlib-only constraint.
+- [Reconciler Public API & Verification Interface](documentation/reconciler-api-verification.md) — lifted-as-is public API + verification contract / public-private boundary.
+- [JSON Format Adapter (reconcile-json/v1)](documentation/json-adapter.md) — `encoding/json` adapter + independent schema (AC#4).
+
+### Important
+- [Testing with testify](documentation/testing-testify.md) — test conventions + runnable godoc example (AC#5).
+- [Linting & CI/CD](documentation/linting-ci.md) — golangci-lint + dual-coverage module CI (AC#7).
 
 ## Recommended Packages
 No high-ROI packages identified (library is intentionally stdlib-only; testify + golangci-lint already cover test/lint needs, and the JSON adapter uses `encoding/json`).
@@ -39,7 +61,7 @@ No high-ROI packages identified (library is intentionally stdlib-only; testify +
 - **Persona: Leaderboard Maintainer / Release Engineer** — Journey: cite the standalone reference implementation and ship independent module CI on tag push.
 
 ## Planning Success Criteria
-- `github.com/samestrin/atcr/reconcile` exists with its own `go.mod` and passes its own CI (AC#1, AC#7).
+- `github.com/samestrin/atcr/reconcile` exists with its own `go.mod` and passes its own CI — `reconcile-module.yml` on tag push (AC#7) plus a PR-time `./reconcile` job in `ci.yml` (AC#1, AC#7).
 - Public API exposes `Reconcile(sources []Source, opts Options) Result` with stable lifted types (AC#2).
 - ATCR imports the module; all existing ATCR tests pass with zero behavioral change and byte-identical fixtures (AC#3).
 - JSON adapter converts an external finding stream into `[]Source` and a `Result` into an external finding stream (AC#4).
