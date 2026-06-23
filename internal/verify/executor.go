@@ -2,9 +2,10 @@ package verify
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,17 @@ type executorCompleter interface {
 // seam (rather than a runVerify parameter) so the executor wiring does not churn
 // runVerify's many call sites; tests override it via swapExecutorClient.
 var newExecutorClient = func() executorCompleter { return llmclient.New() }
+
+// fanoutRunner is the interface satisfied by *fanout.Engine. The package-level
+// newFanoutEngine seam lets tests inject a fake that returns zero results to
+// verify the defensive len(results)==0 guard in invokeExecutor.
+type fanoutRunner interface {
+	Run(ctx context.Context, slots []fanout.Slot) []fanout.Result
+}
+
+var newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption) fanoutRunner {
+	return fanout.NewEngine(cc, opts...)
+}
 
 // fixSnippetRadius is the number of lines read on each side of a finding's line to
 // give the executor real code context (Epic 7.0 snippet tier).
@@ -72,7 +84,7 @@ func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfi
 // unavailable), in which case the snippet is omitted and the executor works from the
 // finding text alone.
 // cc is the multi-turn ChatCompleter the skeptics use; it is non-nil only when the
-// tool harness was built (at least one skeptic ran or a fix was eligible). Agent
+// tool harness was built (at least one skeptic ran). Agent
 // mode (Epic 7.4) borrows it and disp to drive a read-only tool loop per finding
 // (invokeExecutor) instead of the single-shot snippet path. When ex.AgentMode is
 // set but cc or disp is nil (harness unavailable), generateFixes degrades to the
@@ -143,7 +155,14 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 					// Agent mode requested but the harness is unavailable (no skeptics
 					// ran and no snapshot was built). Degrade to the snippet path rather
 					// than dropping the fix (AC6).
-					logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: dispatcher/chat unavailable, using snippet path", f.File, f.Line))
+					missing := []string{}
+					if cc == nil {
+						missing = append(missing, "chat")
+					}
+					if disp == nil {
+						missing = append(missing, "dispatcher")
+					}
+					logPipelineWarning(log.FromContext(ctx), "executor_agent_mode_fallback", fmt.Sprintf("%s:%d: %s unavailable, using snippet path", f.File, f.Line, strings.Join(missing, "/")))
 				}
 				snippet := readFixSnippet(ctx, disp, f.File, f.Line)
 				prompt := buildFixPrompt(*f, snippet, ex)
@@ -196,6 +215,8 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 // unconditionally so a default executor (nil fix_timeout) against a hung provider
 // cannot block the verify run unbounded.
 func callExecutor(ctx context.Context, complete executorCompleter, prov registry.Provider, ex *registry.ExecutorConfig, prompt string, sharedTimeoutSecs int) (string, error) {
+	// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
+	// Settings literal is sufficient here.
 	timeout := ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs})
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -349,9 +370,11 @@ func appendFixAttribution(evidence, name string) string {
 // failure (AC4: timeout/error → FixWarning); a StatusOK result with a tripped budget
 // flows into the fix parser below. max_tool_calls → the agent's MaxTurns budget.
 func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string) {
+	logger := log.FromContext(ctx)
+	logger.Debug("agent-mode executor entry", "file", finding.File, "line", finding.Line, "max_tool_calls", ex.EffectiveMaxToolCalls())
 	prompt := buildExecutorAgentPrompt(finding)
 	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs)
-	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(log.FromContext(ctx)))
+	engine := newFanoutEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// One slot yields one result; guard the index so a zero-length return cannot
 	// panic (a panic would violate the never-fail-the-run contract).
@@ -393,12 +416,19 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, prompt string, sharedTimeoutSecs int) fanout.Agent {
 	temp := ex.EffectiveExecutorTemperature()
 	return fanout.Agent{
-		Name:        ex.Name,
-		Provider:    ex.Provider,
-		Prompt:      prompt,
-		Tools:       true,
-		SupportsFC:  true,
-		MaxTurns:    ex.EffectiveMaxToolCalls(),
+		Name:       ex.Name,
+		Provider:   ex.Provider,
+		Prompt:     prompt,
+		Tools:      true,
+		SupportsFC: true,
+		MaxTurns:   ex.EffectiveMaxToolCalls(),
+		// ToolBudgetBytes is intentionally 0 (unlimited): max_tool_calls bounds
+		// the number of turns, and the dispatcher caps individual read-file results,
+		// so cumulative bytes are implicitly bounded by MaxTurns × per-result cap.
+		// To add a hard byte ceiling, add tool_budget_bytes to ExecutorConfig and
+		// forward it here via derefInt64(ex.ToolBudgetBytes).
+		// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
+		// Settings literal is sufficient here.
 		TimeoutSecs: ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs}),
 		Invocation: llmclient.Invocation{
 			BaseURL:     prov.BaseURL,
@@ -416,10 +446,14 @@ func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, pro
 // propose the minimal fix") rather than the skeptic's adversarial framing, and the
 // response schema is the simpler {"fix", "explanation"} object parseExecutorResponse
 // expects. A per-call random sentinel tags the finding block so reviewer-authored
-// Problem/Fix/Evidence text cannot close it early (the injection guard
+// Problem/Fix/Evidence text cannot predict the closing tag (the injection guard
 // buildSkepticPrompt uses).
 func buildExecutorAgentPrompt(finding reconcile.JSONFinding) string {
-	sentinel := fmt.Sprintf("finding-%08x", rand.Uint32())
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
+	sentinel := fmt.Sprintf("finding-%08x", binary.BigEndian.Uint32(b[:]))
 	return buildExecutorAgentPromptWithSentinel(finding, sentinel)
 }
 

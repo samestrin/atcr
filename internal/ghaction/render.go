@@ -2,10 +2,15 @@ package ghaction
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 )
+
+// mdLinkRe matches markdown link syntax [text](url) to strip the URL and keep
+// only the display text, preventing clickable links in check-run table cells.
+var mdLinkRe = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 
 // CheckOutput is the rendered GitHub check-run output payload (the `output`
 // object of a check run: a title, a short summary, and a longer markdown text).
@@ -21,19 +26,26 @@ type CheckOutput struct {
 // rather than letting the post fail.
 const maxCheckTextBytes = 60000
 
-// fixAttributionPrefix mirrors the token the executor stage appends to a
-// finding's Evidence field (internal/verify/executor.go). Evidence segments are
-// joined with "; ", and the executor segment is exactly "fix by <name>".
-const fixAttributionPrefix = "fix by "
+// Conclusion values are the GitHub check-run conclusion strings. Typed constants
+// prevent a typo at any emission or comparison site from silently producing a
+// wrong gate verdict without a compile-time error.
+const (
+	ConclusionFailure = "failure"
+	ConclusionSuccess = "success"
+	ConclusionNeutral = "neutral"
+)
 
 // FixAttribution extracts the executor name from a finding's Evidence field,
-// parsing the "; fix by <name>" token written by the executor stage (Epic 7.0).
-// It returns "" when no attribution token is present (the common case before a
-// fix has been generated, or for a review that never ran the executor).
+// parsing the "fix by <name>" token written by the executor stage (Epic 7.0).
+// Evidence segments are joined with reconcile.EvidenceSep and the token prefix
+// is reconcile.FixAttributionPrefix — both defined in the reconcile package so
+// the producer (internal/verify) and this consumer share one source of truth.
+// Returns "" when no attribution token is present.
 func FixAttribution(evidence string) string {
-	for _, seg := range strings.Split(evidence, "; ") {
-		seg = strings.TrimSpace(seg)
-		if rest, ok := strings.CutPrefix(seg, fixAttributionPrefix); ok {
+	segs := strings.Split(evidence, reconcile.EvidenceSep)
+	for i := len(segs) - 1; i >= 0; i-- {
+		seg := strings.TrimSpace(segs[i])
+		if rest, ok := strings.CutPrefix(seg, reconcile.FixAttributionPrefix); ok {
 			if name := strings.TrimSpace(rest); name != "" {
 				return name
 			}
@@ -46,7 +58,7 @@ func FixAttribution(evidence string) string {
 // verification stage (Epic 3.0). A refuted finding is retained in the artifacts
 // for audit but must never block CI, mirroring the reconcile gate's semantics.
 func isRefuted(f reconcile.JSONFinding) bool {
-	return f.Verification != nil && strings.EqualFold(f.Verification.Verdict, reconcile.VerdictRefuted)
+	return f.Verification != nil && strings.EqualFold(strings.TrimSpace(f.Verification.Verdict), reconcile.VerdictRefuted)
 }
 
 // Conclusion computes the GitHub check-run conclusion for the findings under the
@@ -56,32 +68,33 @@ func isRefuted(f reconcile.JSONFinding) bool {
 // failCount is the number of blocking findings (0 when the threshold is empty).
 func Conclusion(findings []reconcile.JSONFinding, failOn string) (string, int) {
 	if strings.TrimSpace(failOn) == "" {
-		return "neutral", 0
+		return ConclusionNeutral, 0
 	}
 	count := 0
 	for _, f := range findings {
-		if isRefuted(f) {
-			continue
-		}
-		if reconcile.AtOrAbove(f.Severity, failOn) {
+		if reconcile.IsFailing(f.Severity, f.Category, f.Verification, failOn, false) {
 			count++
 		}
 	}
 	if count > 0 {
-		return "failure", count
+		return ConclusionFailure, count
 	}
-	return "success", 0
+	return ConclusionSuccess, 0
 }
 
-// cell neutralizes a value for safe inclusion in a single markdown table cell:
-// a literal pipe would break the column grammar, and an embedded newline would
-// split the row across physical lines.
+// cell neutralizes a value for safe inclusion in a single markdown table cell.
+// It collapses whitespace, strips markdown links, replaces pipes (which break
+// the column grammar), replaces embedded backticks (which would close the code
+// span prematurely), then wraps the whole value in a backtick code span so that
+// headings, bold, italic, HTML, and all other markdown render as inert literal text.
 func cell(s string) string {
-	s = strings.ReplaceAll(s, "|", "/")
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
-	return strings.TrimSpace(s)
+	s = mdLinkRe.ReplaceAllString(s, "$1")
+	s = strings.ReplaceAll(s, "|", "/")
+	s = strings.ReplaceAll(s, "`", "'")
+	return "`" + strings.TrimSpace(s) + "`"
 }
 
 // location renders a finding's FILE:LINE anchor, omitting the line when it is
@@ -111,32 +124,54 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 	if strings.TrimSpace(failOn) == "" {
 		title = fmt.Sprintf("atcr — %d finding(s)", total)
 	} else {
-		threshold, _ := reconcile.ParseSeverity(failOn)
+		threshold, err := reconcile.ParseSeverity(failOn)
+		if err != nil {
+			threshold = failOn
+		}
 		title = fmt.Sprintf("atcr — %d finding(s), %d at/above %s", total, failCount, threshold)
+	}
+
+	var summary string
+	switch conclusion {
+	case ConclusionFailure:
+		summary = fmt.Sprintf("Gate failed: %d finding(s) at or above the threshold.", failCount)
+	case ConclusionSuccess:
+		summary = "Gate passed: no findings at or above the threshold."
+	default:
+		summary = "Informational review — no merge gate configured."
 	}
 
 	var b strings.Builder
 	switch conclusion {
-	case "failure":
+	case ConclusionFailure:
 		fmt.Fprintf(&b, "**Gate failed:** %d finding(s) at or above the threshold.\n\n", failCount)
-	case "success":
+	case ConclusionSuccess:
 		b.WriteString("**Gate passed:** no findings at or above the threshold.\n\n")
 	default:
 		b.WriteString("Informational review — no merge gate configured.\n\n")
 	}
 	b.WriteString("| Severity | Location | Problem | Confidence |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
-	for i, f := range findings {
+	shownCount := 0
+	for _, f := range findings {
+		severity := cell(f.Severity)
+		if canon, err := reconcile.ParseSeverity(f.Severity); err == nil {
+			severity = canon
+		}
+		if isRefuted(f) {
+			severity = fmt.Sprintf("%s (refuted)", severity)
+		}
 		row := fmt.Sprintf("| %s | %s | %s | %s |\n",
-			cell(f.Severity), cell(location(f)), cell(f.Problem), cell(f.Confidence))
+			severity, cell(location(f)), cell(f.Problem), cell(f.Confidence))
 		// Stop before crossing GitHub's output.text limit, leaving room for the
 		// truncation notice. The remaining findings still live in the artifacts.
 		if b.Len()+len(row)+128 > maxCheckTextBytes {
-			fmt.Fprintf(&b, "\n_…table truncated: %d of %d findings shown. See the uploaded artifacts for the full set._\n", i, total)
+			fmt.Fprintf(&b, "\n_…table truncated: %d of %d findings shown. See the uploaded artifacts for the full set._\n", shownCount, total)
 			break
 		}
 		b.WriteString(row)
+		shownCount++
 	}
 
-	return CheckOutput{Title: title, Summary: title, Text: b.String()}
+	return CheckOutput{Title: title, Summary: summary, Text: b.String()}
 }

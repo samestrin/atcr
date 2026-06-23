@@ -675,3 +675,35 @@ func TestWriteRadarItems_TextRendererControlsTruncation(t *testing.T) {
 	assert.NotContains(t, truncated.String(), long, "a truncating renderer shortens the body")
 	assert.Contains(t, truncated.String(), "...", "truncating renderer appends an ellipsis")
 }
+
+func TestFormatScore_SpecialFloatValues(t *testing.T) {
+	assert.Equal(t, "NaN", formatScore(math.NaN()), "NaN renders explicitly without int64 conversion")
+	assert.Equal(t, "+Inf", formatScore(math.Inf(1)), "+Inf renders explicitly without int64 conversion")
+	assert.Equal(t, "-Inf", formatScore(math.Inf(-1)), "-Inf renders explicitly without int64 conversion")
+}
+
+func TestWriteRadarItems_GoldenMarkerItem(t *testing.T) {
+	var b bytes.Buffer
+	WriteRadarItems(&b, []DisagreementItem{markerItem()}, "### ", esc)
+
+	want := "\n### 1. severity_split — `x.go:1` (HIGH) · score 0\n" +
+		"- Severity disagreement: LOW vs HIGH\n" +
+		"- Skeptics split: skep-a, skep-b\n" +
+		"- Reviewers: a (independence 1)\n" +
+		"- Problem: the-problem\n" +
+		"- Detail: the-detail\n" +
+		"- Positions:\n" +
+		"  - a — HIGH: pos-problem\n"
+
+	assert.Equal(t, want, b.String(), "golden output for markerItem() must match exactly; mutations to spacing or separators should fail")
+}
+
+func TestWriteRadarItems_NilRendererDefaultsToEsc(t *testing.T) {
+	var b bytes.Buffer
+	// A nil renderer must not panic; it should fall back to esc so populated
+	// items render safely.
+	require.NotPanics(t, func() {
+		WriteRadarItems(&b, []DisagreementItem{markerItem()}, "### ", nil)
+	}, "WriteRadarItems with nil renderText must not panic")
+	assert.Contains(t, b.String(), "the-problem", "nil renderer fallback should still render the problem")
+}
