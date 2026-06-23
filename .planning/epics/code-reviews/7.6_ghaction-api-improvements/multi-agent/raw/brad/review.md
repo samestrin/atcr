@@ -1,0 +1,1 @@
+LOW|cmd/atcr/github.go:227|Prints success message even when 0 comments posted|Wrap print in if posted > 0|maintainability|2|Fallback prints "posted 0..." when all comments are 422-skipped|bruce

@@ -1,0 +1,1 @@
+LOW|cmd/atcr/github_test.go:440|Fallback hard-error test does not verify exitFailure code|Assert codedError code equals exitFailure|correctness|3|require.Error passes for any error type, not specifically codedError|reviewer

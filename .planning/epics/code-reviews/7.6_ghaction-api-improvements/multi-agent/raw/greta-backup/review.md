@@ -1,0 +1,2 @@
+LOW|cmd/atcr/github.go:228|422-skip count lost on hard error return|Include skipped count in error message or log before returning|error-handling|5|skipped++ in loop but warning only after loop; hard error returns early skipping warning
+LOW|cmd/atcr/github_test.go:433|Test doesn't verify codedError exitFailure code|Assert error is codedError with exitFailure code|correctness|5|require.Error checks error exists, not that it carries exitFailure
