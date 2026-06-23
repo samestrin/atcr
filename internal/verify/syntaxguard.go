@@ -158,15 +158,19 @@ func parseGoFix(src string) error {
 }
 
 // looksLikeGoCode reports whether unfenced text carries a strong LINE-STRUCTURAL
-// signal of Go source: a line beginning with a declaration keyword, a line ending
-// in an opening brace, or a line beginning with a closing brace. These are forms
-// prose almost never produces. Crucially it does NOT treat an inline brace or `:=`
-// embedded mid-sentence as code — "Pass &Options{Retries: 3} to the constructor"
-// or "replace it with count := len(items)" are legitimate prose change-instructions
-// and must pass through unflagged (false positives degrade trust). The cost is
-// conservative recall: a one-line broken expression with no block structure is not
-// flagged, since it is indistinguishable from prose.
+// signal of Go source: a line beginning with a declaration keyword, or paired
+// open/close braces indicating genuine block structure. These are forms prose almost
+// never produces. Crucially it does NOT treat an inline brace or `:=` embedded
+// mid-sentence as code — "Pass &Options{Retries: 3} to the constructor" or "replace
+// it with count := len(items)" are legitimate prose change-instructions and must pass
+// through unflagged (false positives degrade trust). The cost is conservative recall:
+// a one-line broken expression with no block structure is not flagged, since it is
+// indistinguishable from prose.
 // A Go declaration keyword is a strong, unambiguous Go signal — never suppressed.
+// A trailing opening brace alone is NOT a sufficient signal: prose change-instructions
+// can end in a lone { (e.g. "Wrap the body in the literal that opens with {"), which
+// satisfies blockOpenRe yet fails go/parser — a false positive. blockOpenRe must
+// co-occur with blockCloseRe (a matching close-brace line) to be treated as code.
 // Otherwise, obviously non-Go brace content (JSON/config, detected by
 // looksLikeNonGoBraces) suppresses the block-brace signal so an unfenced JSON/config
 // fix is not flagged (Epic 7.5). The suppression only ever turns a true into a false
@@ -180,7 +184,12 @@ func looksLikeGoCode(src string) bool {
 	if looksLikeNonGoBraces(src) {
 		return false
 	}
-	return blockOpenRe.MatchString(src) || blockCloseRe.MatchString(src)
+	// A trailing opening brace alone is not sufficient (prose can end in {): require a
+	// matching close-brace line to co-occur, which genuine block structure always has.
+	if blockOpenRe.MatchString(src) {
+		return blockCloseRe.MatchString(src)
+	}
+	return blockCloseRe.MatchString(src)
 }
 
 // looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go

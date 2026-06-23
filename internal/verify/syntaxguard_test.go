@@ -58,13 +58,13 @@ func TestValidateGoFixSyntax_InvalidUnfencedCode(t *testing.T) {
 }
 
 func TestValidateGoFixSyntax_InvalidShortAssign(t *testing.T) {
-	// The flagging signal here is the TRAILING OPEN BRACE (blockOpenRe), NOT `:=`.
-	// looksLikeGoCode keys only on declKeyword/blockOpen/blockClose; `:=` is
-	// deliberately not a code signal because inline `:=` appears in prose change-
-	// instructions (see TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged).
-	// This snippet is malformed and flagged because its line ends in an open brace.
+	// `:=` is deliberately not a code signal (inline `:=` appears in prose; see
+	// TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged). This line ends
+	// in a lone { with no matching close-brace line — blockOpenRe alone is no longer
+	// a sufficient code signal (it fires on prose too). This is a documented
+	// conservative-recall boundary: prefer the false negative over a false positive.
 	src := "x := func( {"
-	require.Error(t, validateGoFixSyntax(src), "broken code whose line ends in an open brace must be flagged")
+	assert.NoError(t, validateGoFixSyntax(src), "a line ending in { with no block-close is the conservative-recall boundary — not flagged")
 }
 
 // Characterization of the guard's deliberate conservative-recall boundary: an
