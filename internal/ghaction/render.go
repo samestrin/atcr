@@ -127,7 +127,8 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 	}
 	b.WriteString("| Severity | Location | Problem | Confidence |\n")
 	b.WriteString("| --- | --- | --- | --- |\n")
-	for i, f := range findings {
+	shownCount := 0
+	for _, f := range findings {
 		severity := cell(f.Severity)
 		if isRefuted(f) {
 			severity = fmt.Sprintf("%s (refuted)", severity)
@@ -137,10 +138,11 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 		// Stop before crossing GitHub's output.text limit, leaving room for the
 		// truncation notice. The remaining findings still live in the artifacts.
 		if b.Len()+len(row)+128 > maxCheckTextBytes {
-			fmt.Fprintf(&b, "\n_…table truncated: %d of %d findings shown. See the uploaded artifacts for the full set._\n", i, total)
+			fmt.Fprintf(&b, "\n_…table truncated: %d of %d findings shown. See the uploaded artifacts for the full set._\n", shownCount, total)
 			break
 		}
 		b.WriteString(row)
+		shownCount++
 	}
 
 	return CheckOutput{Title: title, Summary: title, Text: b.String()}
