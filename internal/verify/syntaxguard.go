@@ -64,6 +64,14 @@ var jsonKeyLineRe = regexp.MustCompile(`(?m)^\s*"(?:[^"\\]|\\.)*"\s*:`)
 // packageClauseRe detects a package clause, i.e. the fix is shaped as a full file.
 var packageClauseRe = regexp.MustCompile(`(?m)^\s*package\s+\w`)
 
+// funcSignatureRe matches a Go function declaration: the func keyword followed
+// by an identifier name and an opening parenthesis for the parameter list. The
+// paren disambiguates from prose change-instructions such as "func should return
+// an error", which never contain a trailing `(` on the same line. Methods with
+// receivers (func (r *T) Method(...)) are intentionally excluded — they are caught
+// by block structure when present, consistent with the conservative-recall policy.
+var funcSignatureRe = regexp.MustCompile(`(?m)^\s*func\s+\w[^()\n]*\(`)
+
 // nonGoFenceLangs are fenced-block language tags that explicitly denote a language
 // other than Go. A fix fenced as one of these is not the Go guard's concern.
 var nonGoFenceLangs = map[string]bool{
@@ -166,7 +174,11 @@ func parseGoFix(src string) error {
 // through unflagged (false positives degrade trust). The cost is conservative recall:
 // a one-line broken expression with no block structure is not flagged, since it is
 // indistinguishable from prose.
-// A Go declaration keyword is a strong, unambiguous Go signal — never suppressed.
+// `package <ident>` and `func <ident>(` are the two keyword patterns that are
+// prose-never: prose change-instructions almost never carry a package clause, and
+// "func should …" prose lacks the `<ident>(` shape. Other declaration keywords
+// (import, var, const, type) alone are ambiguous — "import the sync package" is
+// valid prose. Require block structure as co-signal for those.
 // A trailing opening brace alone is NOT a sufficient signal: prose change-instructions
 // can end in a lone { (e.g. "Wrap the body in the literal that opens with {"), which
 // satisfies blockOpenRe yet fails go/parser — a false positive. blockOpenRe must
@@ -178,7 +190,15 @@ func parseGoFix(src string) error {
 // conservative-recall guarantee (AC2/AC4). It is consulted only after parseGoFix has
 // already failed, so valid Go (including string-keyed map literals) never reaches it.
 func looksLikeGoCode(src string) bool {
-	if declKeywordRe.MatchString(src) {
+	// Two unambiguous code signals that prose almost never produces:
+	//   package <ident>  — prose change-instructions never open with a package clause.
+	//   func <ident>(    — prose starting with "func" (e.g. "func should return an
+	//                     error") never has a parenthesised parameter list immediately
+	//                     after the identifier; the paren is the disambiguation signal.
+	// Other declaration keywords (import, var, const, type) without block structure
+	// are ambiguous — "import the sync package" is valid prose. Require block
+	// structure as co-signal for those cases.
+	if packageClauseRe.MatchString(src) || funcSignatureRe.MatchString(src) {
 		return true
 	}
 	if looksLikeNonGoBraces(src) {
