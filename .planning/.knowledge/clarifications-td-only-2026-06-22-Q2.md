@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-22-10dcd7
-question: "When a TD fix description says \"Add a test asserting the chosen behavior,\" should the diff_smell hard/test_only gate block resolution?"
+id: mem-2026-06-22-6a19bf
+question: "How should the magic string literals \"failure\"/\"success\"/\"neutral\" used as GitHub conclusion values be replaced in the ghaction package?"
 created: 2026-06-22
 last_retrieved: ""
 sprints: []
-files: [internal/registry/config.go:529, internal/registry/executor_config_test.go]
-tags: [td-clarification, td-only, testing, diff_smell, false-positive, resolve-td, test-only]
+files: [internal/ghaction/render.go, cmd/atcr/github.go]
+tags: [td-clarification, td-only, ghaction, typed-constants, conclusion-values, github-action, maintainability]
 retrievals: 0
 status: active
-type: td-clarification
+type: clarifications skill 2026-06-22
 ---
 
-# When a TD fix description says "Add a test asserting the cho
+# How should the magic string literals "failure"/"success"/"ne
 
 ## Decision
 
-No — the diff_smell hard/test_only gate is a false positive when the TD row's Fix field explicitly calls for a test-only change. The gate correctly detects that no implementation changed, but that is the intended fix when the design decision is already made and documented in code. Example: TestExecutor_SystemPromptControlCharsAccepted (commit 2ea29f3) for config.go:529 — the fix was "Add a test asserting the chosen behavior" (that system_prompt allows control chars), so a test-only diff IS the correct artifact. The test serves as a regression guard. In resolve-td, override the gate and mark resolved when the Fix text is explicitly test-only.
+Define package-level typed constants in internal/ghaction/render.go: `const (conclusionFailure = "failure"; conclusionSuccess = "success"; conclusionNeutral = "neutral")`. Replace all raw literals at render.go:62 (return "neutral"), 71 (return "failure"), 73 (return "success"), 127/129/137/139 (switch arms), and github.go:155 (if conclusion == "failure"). Verify with grep that no raw comparison or emission sites remain. Test files may keep raw literals if they test wire-format values, but production comparison sites must use constants. The risk without constants is a silent typo at any site that breaks the merge gate without a compile error.
 
 ## Rationale
 
@@ -27,5 +27,5 @@ No — the diff_smell hard/test_only gate is a false positive when the TD row's 
 
 ## Code Reference
 
-- internal/registry/config.go:529
-- internal/registry/executor_config_test.go
+- internal/ghaction/render.go
+- cmd/atcr/github.go
