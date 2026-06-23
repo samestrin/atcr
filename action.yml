@@ -51,7 +51,7 @@ runs:
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
-        cache-dependency-path: go.sum
+        cache-dependency-path: ${{ github.action_path }}/go.sum
 
     # Context/inputs are passed through `env:` and referenced as quoted shell
     # variables — never interpolated directly into `run:` — to close the GitHub
