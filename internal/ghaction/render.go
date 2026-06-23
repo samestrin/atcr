@@ -61,10 +61,7 @@ func Conclusion(findings []reconcile.JSONFinding, failOn string) (string, int) {
 	}
 	count := 0
 	for _, f := range findings {
-		if isRefuted(f) {
-			continue
-		}
-		if reconcile.AtOrAbove(f.Severity, failOn) {
+		if reconcile.IsFailing(f.Severity, f.Category, f.Verification, failOn, false) {
 			count++
 		}
 	}
