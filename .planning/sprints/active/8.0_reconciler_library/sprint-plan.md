@@ -29,6 +29,21 @@ Before each phase, review `/CLAUDE.md` (or AGENTS.md).
 - Type/IO split executed types-first, never moving I/O and types in the same commit; compile-check both packages between moves.
 - API lifted as-is; `Verification` becomes public; module is stdlib-only (empty `require`).
 
+### Phase 2 Clarifications (recorded 2026-06-23)
+
+Resolves three boundary forks surfaced by the Phase-2 safety check, where the code-level reality contradicts the IN/OUT scope lists written before inspection. All three confirmed by the maintainer (avg confidence 90.7%).
+
+**Key Decisions:**
+- **Q1 — path-validation after the `Merged` split (1a):** Library `Merged` embeds the path-free library `Finding` (no `PathValid`/`PathWarning`/`PathSuggestion`). ATCR stamps path-validation on `[]JSONFinding` **after** `JSONFindings()` converts `[]Merged` — NOT on `&Merged.Finding`. `emit.go`'s `writeFindingsList` and `RenderText` are reworked to draw path data from the `JSONFinding` layer. Byte-identical oracle preserved because written files derive from `JSONFinding`.
+- **Q2 — disagreement/verification merge stays ATCR-internal (2a):** The `MergeJSONFindings` family (`MergeJSONFindings`, `mergeVerification`, `verdictRank`, `widestDisagreement`, `mergePathFields`, `unionReviewers`, `joinEvidence`) and all of `disagree.go` (`BuildDisagreements`, `DisagreementsFile`, the radar renderers) **stay in `internal/reconcile`** — every one takes/returns the ATCR-internal `JSONFinding` or uses `os`/`html`/markdown rendering, structurally incompatible with the stdlib-only library. **Sprint-plan task 2.2 step 4 ("Move disagree.go → reconcile/disagree.go") is removed.** The library public surface for this sprint EXCLUDES `BuildDisagreements`, `DisagreementsFile`, and the `MergeJSONFindings` family.
+- **Q3 — skipped-source bookkeeping stamped one layer up (3a):** Library `Source` stays `{Name, []Finding}` (no `SkippedFiles`). Library `Reconcile` always emits `Summary.SkippedSources = []` / `SkippedSourceCount = 0`; ATCR's `RunReconcile`/adapter layer stamps the real values onto `Result.Summary` from `discover.Source.SkippedFiles` after `Reconcile` returns. summary.json stays byte-identical.
+
+**Factual correction (original-requirements Clarifications Q4):** `mergeVerification` is NOT called from `Merge()` (the core algorithm); it is called only from `MergeJSONFindings` (the ATCR-internal post-reconcile gray-zone judge-ruling merge, consumed by `internal/debate`). It is therefore ATCR-internal, not part of the lifted library surface.
+
+**Scope Boundaries (revised):**
+- IN (library, Phase 2): `Reconcile`/`Options`/`Result`/`Summary`, `Merge`/`Merged` (path-free), `dedupe`/`cluster`/`confidence`/`attribution`, `AmbiguousCluster`/`AmbiguousID`/`AmbiguousHash`, severity (`SeverityRank`/`NormalizeSeverity`), `Verification`/verdicts.
+- OUT (stays ATCR-internal): `disagree.go` (radar + `BuildDisagreements`), the `MergeJSONFindings` family incl. `mergeVerification`/`verdictRank`, `JSONFinding`, path-validation stamping, `gate.go`/`validate.go`/`discover.go`/`emit.go` I/O, adjudication machinery.
+
 ---
 
 ## Sprint Overview
@@ -267,7 +282,7 @@ From [plan/documentation/](plan/documentation/):
 
 > **⚠️ Phase 1 GATE carry-forward (see `tech-debt-captured.md` TD-001..TD-004):** This is a **PORT, not a verbatim move.** The logic files (`merge.go`/`cluster.go`/`dedupe.go`/`reconcile.go`/`disagree.go`) embed/consume `stream.Finding`; moving them verbatim forces a forbidden `reconcile → internal/stream` import. Rewrite `stream.Finding → reconcile.Finding` per file, relocate `SeverityRank`/`NormalizeSeverity` (and eliminate the `merge.go:30` copy), and bridge the two `Source` types + path-validation fields in the adapter. `AmbiguousCluster` lives in `dedupe.go` (not `ambiguous.go`). Byte-identical fixtures remain the oracle after the field-name swap.
 
-### 2.1 [ ] **[Boundary adapter conversion - RED](plan/user-stories/01-reference-implementation-preservation.md)**
+### 2.1 [x] **[Boundary adapter conversion - RED](plan/user-stories/01-reference-implementation-preservation.md)**
    **AC:** [01-02](plan/acceptance-criteria/01-02-boundary-adapter-finding-conversion.md)
    1. **Capture the byte-identical baseline first:** snapshot `findings.json`, `ambiguous.json`, `disagreements.json` from a pre-extraction run; commit as test fixtures (oracle for Phase 3).
    2. Write the **new-behavior** RED test `TestBoundaryAdapter_FindingConversionRoundTrip` in `internal/reconcile/adapter/adapter_test.go`: `stream.Finding` → `reconcile.Finding` → `JSONFinding` preserving all 9 wire fields AND `PathValid`/`PathWarning`/`PathSuggestion`; assert `*Verification` pointer-identity preserved.
@@ -277,9 +292,9 @@ From [plan/documentation/](plan/documentation/):
 ### 2.2 [ ] **[Core logic move + severity migration + adapter completion - GREEN](plan/user-stories/01-reference-implementation-preservation.md)**
    Minimal code to pass (T1 per move), verify all pass (T2), COMMIT in mechanical batches. **No new RED tests for moved behavior — the existing corpus is the oracle.**
    1. Move `reconcile.go` → `reconcile/reconcile.go` (`Reconcile` entry + `Options`/`Result`/`Summary`; preserve `sortMerged`). (AC 02-02)
-   2. Move `merge.go` → `reconcile/merge.go` (`Merged`, `mergeVerification`, `verdictRank`, finding-merge rules). (AC 02-02)
+   2. Move `merge.go` → `reconcile/merge.go` — **only** `Merge`/`Merged` (path-free) + the pure helpers (`mergeSeverity`, `distinctReviewers`, `longestField`, `modalCategory`, `maxEstMinutes`, `mergeEvidence`, `confidenceFor`) + severity/confidence/category consts. **The `MergeJSONFindings` family (`MergeJSONFindings`, `mergeVerification`, `verdictRank`, `widestDisagreement`, `mergePathFields`, `unionReviewers`, `joinEvidence`) STAYS in `internal/reconcile` (Phase 2 Clarification Q2 — operates on ATCR-internal `JSONFinding`).** (AC 02-02)
    3. Move `dedupe.go` → `reconcile/dedupe.go` (Jaccard integer cross-multiply thresholds preserved exactly). (AC 02-02)
-   4. Move `disagree.go` → `reconcile/disagree.go` (`BuildDisagreements`). (AC 02-02)
+   4. ~~Move `disagree.go` → `reconcile/disagree.go`~~ **REMOVED (Phase 2 Clarification Q2):** `disagree.go` (`BuildDisagreements`, `DisagreementsFile`, radar renderers) stays ATCR-internal — consumes `JSONFinding` and uses `os`/`html`/markdown rendering, incompatible with the stdlib-only library.
    5. Move `confidence.go` → `reconcile/confidence.go` (`ConfidenceForVerdict`/`ConfidenceAtOrAbove`). (AC 02-02)
    6. Move `cluster.go` → `reconcile/cluster.go` (FILE, LINE±3 single-linkage). (AC 02-02)
    7. Move `ambiguous.go` → `reconcile/ambiguous.go` (`AmbiguousID`/`AmbiguousHash`/`AmbiguousCluster`). (AC 02-02)

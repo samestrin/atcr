@@ -226,6 +226,13 @@ HTTP/gRPC service, Python/TypeScript SDKs, and cloud-hosted reconciliation are d
       embedded in `Merged`) + library `Finding`. ATCR-internal = `gate.go`, `validate.go`,
       `emit.go` I/O. Both the `Verification` and `stream.Finding` entanglements resolved in
       Phase 0. Confidence 92%.
+      **Correction (2026-06-23, Phase 2 safety check):** `mergeVerification` is NOT public and does
+      NOT travel with the library. Code inspection showed it is called only from `MergeJSONFindings`
+      (the ATCR-internal post-reconcile gray-zone judge-ruling merge consumed by `internal/debate`),
+      not from `Merge()`; it takes `[]JSONFinding` (ATCR-internal, path-validation fields). It stays
+      in `internal/reconcile` along with the rest of the `MergeJSONFindings` family and `disagree.go`'s
+      `BuildDisagreements`. The `Verification` struct + verdict enum remain public; only the
+      `mergeVerification` helper is reclassified ATCR-internal. See sprint-plan Phase 2 Clarifications Q2.
 5. Q: `internal/stream` dependency — library-owned `Finding` type, or absorb stream wholesale?
    A: (a) Library-owned `Finding`; move only severity.go (`NormalizeSeverity`/`SeverityRank`)
       and levishtein.go into the library (both pure). `stream` is not pure (imports

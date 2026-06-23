@@ -1,0 +1,42 @@
+[
+  {
+    "id": "amb-3486712fcface105ccbc6410b24a5120",
+    "file": "pay.go",
+    "line": 10,
+    "similarity": 0.5714285714285714,
+    "findings": [
+      {
+        "Severity": "MEDIUM",
+        "File": "pay.go",
+        "Line": 10,
+        "Problem": "session token expires without refresh check",
+        "Fix": "add refresh",
+        "Category": "security",
+        "EstMinutes": 20,
+        "Evidence": "pool note",
+        "Reviewer": "greta",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      },
+      {
+        "Severity": "MEDIUM",
+        "File": "pay.go",
+        "Line": 12,
+        "Problem": "session token expires without bound",
+        "Fix": "cap it",
+        "Category": "security",
+        "EstMinutes": 20,
+        "Evidence": "host note",
+        "Reviewer": "host",
+        "Reviewers": null,
+        "Confidence": "",
+        "PathValid": false,
+        "PathWarning": "",
+        "PathSuggestion": ""
+      }
+    ]
+  }
+]

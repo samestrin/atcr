@@ -12,6 +12,7 @@
 package adapter
 
 import (
+	recon "github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
 	reconcile "github.com/samestrin/atcr/reconcile"
 )
@@ -33,4 +34,18 @@ func ToFinding(f stream.Finding) reconcile.Finding {
 func FromFinding(f reconcile.Finding) stream.Finding {
 	_ = f
 	panic("reconcile/adapter: FromFinding not implemented until Phase 2")
+}
+
+// ToJSONFinding wraps a reconciled library reconcile.Finding back into ATCR's
+// internal recon.JSONFinding, the single place ATCR-only path-validation fields
+// are stamped onto the reconciled wire record (Phase 2 Clarification Q1). The 9
+// wire fields, Reviewers, Confidence, and Disagreement carry over from the
+// library finding; PathValid/PathWarning/PathSuggestion are copied from paths
+// (the originating ATCR stream.Finding); the *Verification pointer is shared
+// (identity preserved) so gate.go and internal/debate read/mutate the same block.
+//
+// Phase 1 stub — implemented in Phase 2 (Epic 8.0 task 2.2).
+func ToJSONFinding(f reconcile.Finding, paths stream.Finding) recon.JSONFinding {
+	_, _ = f, paths
+	panic("reconcile/adapter: ToJSONFinding not implemented until Phase 2")
 }
