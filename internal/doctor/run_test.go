@@ -364,6 +364,27 @@ func TestClassify_NetworkErrorRedactsAPIKey(t *testing.T) {
 	assert.Contains(t, got.detail, "[redacted]")
 }
 
+// TestClassify_StatusErrorSnippetScrubsCredentials pins that the HTTPStatusError
+// path enforces the same credential exclusion as the network-error path: both the
+// API key value and any base_url userinfo (username/password embedded in a
+// misconfigured proxy URL) must be scrubbed from se.Snippet before it surfaces in
+// the report or JSON output.
+func TestClassify_StatusErrorSnippetScrubsCredentials(t *testing.T) {
+	const secret = "super-secret-api-key-xyz"
+	const proxyUser = "proxyuser"
+	const proxyPass = "proxypass123"
+	t.Setenv("SECRET_REDACT_KEY2", secret)
+	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://" + proxyUser + ":" + proxyPass + "@proxy.test/v1", APIKeyEnv: "SECRET_REDACT_KEY2"}
+	// An HTTP error whose snippet echoes the API key and the base_url userinfo.
+	snippet := "rejected key " + secret + " for " + proxyUser + ":" + proxyPass
+	got := classify("", &llmclient.HTTPStatusError{Status: 403, Snippet: snippet}, testNonce, 5, tgt)
+	assert.Equal(t, StatusAuthFailed, got.status)
+	assert.NotContains(t, got.detail, secret, "API key must be scrubbed from HTTPStatusError snippet")
+	assert.NotContains(t, got.detail, proxyPass, "base_url password must be scrubbed from HTTPStatusError snippet")
+	assert.NotContains(t, got.detail, proxyUser, "base_url username must be scrubbed from HTTPStatusError snippet")
+	assert.Contains(t, got.detail, "[redacted]")
+}
+
 func TestClassify_PromptEchoIsNotOK(t *testing.T) {
 	tgt := Target{Provider: "p", Model: "m", BaseURL: "https://x/v1", APIKeyEnv: "K"}
 	// An endpoint that echoes the request prompt verbatim contains the marker

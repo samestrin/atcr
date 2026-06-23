@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -38,12 +39,16 @@ type FileIndex struct {
 // It returns nil — signalling "degrade to existence-only, no suggestion" — when
 // root is empty, root is not a git repository, or git is unavailable. A repo
 // with no tracked files yields a non-nil but empty index.
-func BuildFileIndex(root string) *FileIndex {
+//
+// ctx bounds the underlying `git ls-files`: a cancelled or shut-down reconcile
+// kills the git child rather than blocking on it, and a cancellation degrades to
+// a nil index like any other git failure.
+func BuildFileIndex(ctx context.Context, root string) *FileIndex {
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
 	// -z gives NUL-delimited paths so filenames with spaces/newlines survive.
-	cmd := exec.Command("git", "-C", root, "ls-files", "-z")
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		// Not a git repo, git missing, or other failure: graceful degradation.

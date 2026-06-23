@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +14,7 @@ import (
 // is reported as a mismatch and the correctly-cased path is suggested (AC3).
 func TestCaseCorrection_CaseTypo(t *testing.T) {
 	root := gitRepo(t, "internal/auth/parser.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	sug, mismatch := idx.CaseCorrection("internal/auth/Parser.go")
@@ -25,7 +26,7 @@ func TestCaseCorrection_CaseTypo(t *testing.T) {
 // yields no suggestion.
 func TestCaseCorrection_ExactIsValid(t *testing.T) {
 	root := gitRepo(t, "internal/auth/parser.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	sug, mismatch := idx.CaseCorrection("internal/auth/parser.go")
@@ -37,7 +38,7 @@ func TestCaseCorrection_ExactIsValid(t *testing.T) {
 // not a case mismatch (it is a genuine miss, handled by the missing tiers).
 func TestCaseCorrection_NoFoldedMatch(t *testing.T) {
 	root := gitRepo(t, "internal/auth/parser.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	sug, mismatch := idx.CaseCorrection("internal/auth/nope.go")
@@ -66,7 +67,7 @@ func TestCaseCorrection_AmbiguousNoSuggestion(t *testing.T) {
 // basename exists in exactly one other directory — suggest it, no threshold (AC2).
 func TestMissingSuggestion_Tier1WrongDir(t *testing.T) {
 	root := gitRepo(t, "pkg/auth/validator.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Equal(t, "pkg/auth/validator.go", idx.MissingSuggestion("internal/auth/validator.go"))
@@ -76,7 +77,7 @@ func TestMissingSuggestion_Tier1WrongDir(t *testing.T) {
 // one sharing more path segments with the cited path wins.
 func TestMissingSuggestion_Tier1Ranked(t *testing.T) {
 	root := gitRepo(t, "internal/auth/handler.go", "web/ui/handler.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Equal(t, "internal/auth/handler.go", idx.MissingSuggestion("internal/auth/sub/handler.go"))
@@ -86,7 +87,7 @@ func TestMissingSuggestion_Tier1Ranked(t *testing.T) {
 // matches (no segment overlap to break the tie) yield no suggestion.
 func TestMissingSuggestion_Tier1AmbiguousNoSuggestion(t *testing.T) {
 	root := gitRepo(t, "alpha/handler.go", "beta/handler.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Empty(t, idx.MissingSuggestion("gamma/handler.go"))
@@ -98,7 +99,7 @@ func TestMissingSuggestion_Tier1AmbiguousNoSuggestion(t *testing.T) {
 // and the closest real file in that directory clears the threshold (AC4).
 func TestMissingSuggestion_Tier2Typo(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Equal(t, "internal/auth/validate.go", idx.MissingSuggestion("internal/auth/validator.go"))
@@ -108,7 +109,7 @@ func TestMissingSuggestion_Tier2Typo(t *testing.T) {
 // file in the existing directory yields no suggestion (AC4 below-threshold).
 func TestMissingSuggestion_Tier2BelowThreshold(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Empty(t, idx.MissingSuggestion("internal/auth/xyz.go"))
@@ -118,7 +119,7 @@ func TestMissingSuggestion_Tier2BelowThreshold(t *testing.T) {
 // extension is not suggested (Tier 2 requires matching extension).
 func TestMissingSuggestion_Tier2ExtensionGuard(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.md")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Empty(t, idx.MissingSuggestion("internal/auth/validator.go"))
@@ -153,7 +154,7 @@ func TestMissingSuggestion_Tier2KeepsTrueTypo(t *testing.T) {
 // elsewhere, Tier 1 wins over any same-dir typo candidate.
 func TestMissingSuggestion_Tier1BeatsTier2(t *testing.T) {
 	root := gitRepo(t, "pkg/util/validator.go", "internal/auth/validate.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Equal(t, "pkg/util/validator.go", idx.MissingSuggestion("internal/auth/validator.go"))
@@ -182,7 +183,7 @@ func TestMissingSuggestion_NeverSuggestsTrackedSelfMulti(t *testing.T) {
 // directory yields no suggestion.
 func TestMissingSuggestion_NoCandidates(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.Empty(t, idx.MissingSuggestion("totally/different/thing.go"))

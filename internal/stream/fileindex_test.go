@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +42,7 @@ func gitRepo(t *testing.T, relpaths ...string) string {
 func TestBuildFileIndex_TracksFiles(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go", "cmd/atcr/main.go")
 
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.True(t, idx.Has("internal/auth/validate.go"))
@@ -52,14 +53,14 @@ func TestBuildFileIndex_TracksFiles(t *testing.T) {
 // TestBuildFileIndex_NonGitDir: a directory that is not a git repo yields a nil
 // index — callers degrade to existence-only (no suggestion).
 func TestBuildFileIndex_NonGitDir(t *testing.T) {
-	idx := BuildFileIndex(t.TempDir())
+	idx := BuildFileIndex(context.Background(), t.TempDir())
 	assert.Nil(t, idx)
 }
 
 // TestBuildFileIndex_EmptyRoot: an empty root yields a nil index (no base
 // directory configured).
 func TestBuildFileIndex_EmptyRoot(t *testing.T) {
-	assert.Nil(t, BuildFileIndex(""))
+	assert.Nil(t, BuildFileIndex(context.Background(), ""))
 }
 
 // TestBuildFileIndex_CountsGitFailure: when the git invocation fails the index
@@ -71,18 +72,31 @@ func TestBuildFileIndex_CountsGitFailure(t *testing.T) {
 	metrics.DefaultRegistry.Reset()
 	t.Setenv("PATH", "") // git unavailable: ls-files fails
 
-	idx := BuildFileIndex(t.TempDir())
+	idx := BuildFileIndex(context.Background(), t.TempDir())
 
 	assert.Nil(t, idx, "git failure must still degrade to a nil index")
 	assert.Equal(t, int64(1), metrics.Counter("atcr_path_index_unavailable_total").Value(),
 		"a git failure that disables the index must increment the observability counter")
 }
 
+// TestBuildFileIndex_RespectsCancelledContext: a cancelled context aborts the
+// `git ls-files` child so a shut-down reconcile degrades to a nil index rather
+// than blocking on or completing the subprocess.
+func TestBuildFileIndex_RespectsCancelledContext(t *testing.T) {
+	root := gitRepo(t, "internal/auth/validate.go")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	idx := BuildFileIndex(ctx, root)
+	assert.Nil(t, idx, "a cancelled context must abort git ls-files and degrade to a nil index")
+}
+
 // TestFileIndex_DirBasenames: the directory index lists the basenames tracked
 // under a given directory, used by Tier 2.
 func TestFileIndex_DirBasenames(t *testing.T) {
 	root := gitRepo(t, "internal/auth/validate.go", "internal/auth/login.go", "cmd/atcr/main.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.ElementsMatch(t, []string{"validate.go", "login.go"}, idx.DirBasenames("internal/auth"))
@@ -93,7 +107,7 @@ func TestFileIndex_DirBasenames(t *testing.T) {
 // only by case to the real tracked path(s), used by Tier 3.
 func TestFileIndex_FoldedLookup(t *testing.T) {
 	root := gitRepo(t, "internal/auth/parser.go")
-	idx := BuildFileIndex(root)
+	idx := BuildFileIndex(context.Background(), root)
 	require.NotNil(t, idx)
 
 	assert.ElementsMatch(t, []string{"internal/auth/parser.go"}, idx.ByFold("internal/auth/Parser.go"))

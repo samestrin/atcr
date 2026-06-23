@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-23
+
+### Fixed
+
+- Made `BuildFileIndex` cancellation-aware so `git ls-files` honors context cancellation.
+- Honored context cancellation before skeptic dispatch in the verify pipeline.
+- Added best-effort cleanup of superseded `.bak` backups in `internal/atomicfs`.
+- Validated the `--output` path for `atcr leaderboard --export` through `validation.FilePath`.
+- Capped server-advertised `Retry-After` values to prevent unbounded or overflowing backoff waits.
+- Scrubbed `base_url` userinfo from `atcr doctor` `HTTPStatusError` snippets.
+- Stripped markdown link/image injection vectors from the GitHub Action defang path.
+- Warned on `GITHUB_OUTPUT` open/write failures in `atcr github` instead of swallowing errors.
+- Redacted GitHub tokens from `internal/ghaction` error messages.
+- Replaced `math/rand` with `crypto/rand` for the skeptic prompt-injection sentinel.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [Production-Readiness Review] - 2026-06-23
 
 Pre-Epic-8 production-readiness audit (component axis, adversarially verified across the five subsystem clusters). Verdict: ship-with-fixes — 0 critical, 1 high, 11 hardening items. The high-severity item is fixed below; the 11 hardening items are logged to technical-debt tracking.

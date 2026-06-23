@@ -145,6 +145,28 @@ func TestRunVerify_ConfirmedPromotesToVerified(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, reconciledSubdir, "verification.json"))
 }
 
+// TestRunVerify_CancelledContextStopsDispatch: when ctx is already cancelled, the
+// skeptic worker pool must bail before enqueuing any job (mirroring the ctx.Err()
+// guard in executor.go and debate.go), so no finding is verified or promoted.
+func TestRunVerify_CancelledContextStopsDispatch(t *testing.T) {
+	dir := pipelineReview(t, []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"rev"}},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before runVerify dispatches any skeptic job
+
+	res, err := runVerify(ctx, dir, skepticRegistry(), Options{},
+		scriptedHarness(`{"verdict":"confirmed","reasoning":"checked the line"}`))
+	require.NoError(t, err)
+
+	// No job should have been dispatched: no verdict recorded and the finding keeps
+	// its pre-verification confidence rather than being promoted to VERIFIED.
+	assert.Equal(t, VerdictCounts{}, res.VerdictCounts)
+	got := readFindings(t, dir)
+	assert.Nil(t, got[0].Verification)
+	assert.NotEqual(t, ConfidenceVerified, got[0].Confidence)
+}
+
 // TestRunVerify_RefutedDemotesToLow: a skeptic that refutes a finding demotes it
 // to LOW but retains it (AC 03-01).
 func TestRunVerify_RefutedDemotesToLow(t *testing.T) {

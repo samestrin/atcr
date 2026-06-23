@@ -240,7 +240,7 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		case 429:
 			status, hint = StatusRateLimited, "provider rate limit — retry later or test a smaller --agents subset"
 		}
-		return probeResult{status: status, latencyMS: latencyMS, hint: hint, detail: se.Snippet}
+		return probeResult{status: status, latencyMS: latencyMS, hint: hint, detail: scrubCredentials(se.Snippet, tgt)}
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -252,10 +252,17 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 		return probeResult{status: StatusTimeout, latencyMS: latencyMS, hint: "self-test canceled before the endpoint responded"}
 	}
 
-	detail := bounded(err.Error())
-	// Enforce credential exclusion rather than relying on the comment invariant.
-	// Scrub the API key value and any URL userinfo so a misconfigured proxy URL
-	// with embedded credentials cannot surface in the report or JSON output.
+	detail := scrubCredentials(bounded(err.Error()), tgt)
+	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: detail}
+}
+
+// scrubCredentials enforces credential exclusion on a detail string surfaced in
+// the report or JSON output, rather than relying on upstream redaction. It removes
+// the target's API key value and any base_url userinfo (username/password embedded
+// in a misconfigured proxy URL). Applied to every error detail — both the
+// HTTPStatusError snippet and the transport-error path — so the two paths cannot
+// drift in what they exclude.
+func scrubCredentials(detail string, tgt Target) string {
 	if key := os.Getenv(tgt.APIKeyEnv); key != "" {
 		detail = strings.ReplaceAll(detail, key, "[redacted]")
 	}
@@ -267,7 +274,7 @@ func classify(content string, err error, nonce string, latencyMS int64, tgt Targ
 			detail = strings.ReplaceAll(detail, usr, "[redacted]")
 		}
 	}
-	return probeResult{status: StatusNetworkError, latencyMS: latencyMS, detail: detail}
+	return detail
 }
 
 // bounded clamps a detail string to maxDetailBytes on a rune boundary so
