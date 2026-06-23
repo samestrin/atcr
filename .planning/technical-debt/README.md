@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 6 | 1 | 23 |
-| MEDIUM | 23 | 23 | 41 |
+| MEDIUM | 19 | 23 | 45 |
 | LOW | 25 | 22 | 55 |
 
-**Last Modified:** 2026-06-22 | **Open Items:** 54 | **Deferred Items:** 46 | **Resolved Items:** 119 | **Total Items:** 219
+**Last Modified:** 2026-06-22 | **Open Items:** 50 | **Deferred Items:** 46 | **Resolved Items:** 123 | **Total Items:** 219
 
 ## Directory Structure
 
