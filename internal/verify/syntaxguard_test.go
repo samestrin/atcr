@@ -269,6 +269,16 @@ func TestValidateGoFixSyntax_BrokenGoWithBracesStillFlagged_75(t *testing.T) {
 	require.Error(t, validateGoFixSyntax(src), "JSON suppression must not spare brace-structured broken Go")
 }
 
+// The size cap must apply to the extracted code, not the raw fix, so a small
+// fenced invalid-Go snippet is still validated even when wrapped in a huge prose
+// blob that would otherwise exceed the cap.
+func TestValidateGoFixSyntax_SizeCapAppliesToExtractedCode(t *testing.T) {
+	bigProse := strings.Repeat("This is a sentence. ", 20000) // >256KB
+	src := bigProse + "\n```go\nfunc add(\n```\n" + bigProse
+	err := validateGoFixSyntax(src)
+	require.Error(t, err, "invalid Go inside a small fence must be flagged even when wrapped in huge prose")
+}
+
 // AC2 boundary: the JSON anchor is a quoted key at LINE START. A broken Go switch
 // whose case label is a quoted string (`case "foo":`) does not start with the quote,
 // so it is not mistaken for JSON and remains flagged.
