@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 
 const highFinding = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom","fix":"do x","category":"security","est_minutes":10,"evidence":"e; fix by opus","reviewers":["greta"],"confidence":"HIGH"}]`
 const mediumFinding = `[{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
+const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom","fix":"do x","category":"security","est_minutes":10,"evidence":"e; fix by opus","reviewers":["greta"],"confidence":"HIGH"},{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
 
 // captureGitHub starts a fake GitHub REST server that records the body of the
 // check-run POST it receives.
@@ -86,6 +88,62 @@ func TestGithubCmd_InlineCommentsPostReviewComments(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, 1, paths["/repos/samestrin/atcr/check-runs"], "check run still posts")
 	assert.Equal(t, 1, paths["/repos/samestrin/atcr/pulls/5/comments"], "inline comment posts")
+}
+
+func TestGithubCmd_InlineCommentsBeforeCheckRunAndReflectedInOutput(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_order", twoFindings)
+
+	var mu sync.Mutex
+	var order []string
+	var checkBody map[string]any
+	commentCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		order = append(order, r.URL.Path)
+		raw, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/repos/samestrin/atcr/check-runs" {
+			_ = json.Unmarshal(raw, &checkBody)
+		}
+		isComment := strings.Contains(r.URL.Path, "/pulls/5/comments")
+		if isComment {
+			commentCount++
+		}
+		mu.Unlock()
+
+		if isComment && commentCount == 1 {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"Line is not part of the pull request diff"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	code, _ := execCmdCapture(t, "github",
+		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
+		"--api-url", srv.URL, "--inline-comments", "--pr", "5", "2026-06-10_order")
+
+	require.Equal(t, 0, code)
+	mu.Lock()
+	defer mu.Unlock()
+
+	var checkIdx, firstCommentIdx int
+	for i, p := range order {
+		if p == "/repos/samestrin/atcr/check-runs" {
+			checkIdx = i
+		}
+		if strings.Contains(p, "/pulls/5/comments") && firstCommentIdx == 0 {
+			firstCommentIdx = i
+		}
+	}
+	require.Less(t, firstCommentIdx, checkIdx, "inline comments must be posted before the check run")
+
+	text, _ := checkBody["output"].(map[string]any)["text"].(string)
+	assert.Contains(t, text, "1 posted")
+	assert.Contains(t, text, "1 skipped")
 }
 
 func TestGithubCmd_InlineCommentsRequirePR(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,19 @@ func TestCreateCheckRun(t *testing.T) {
 	assert.Equal(t, "completed", gotBody["status"])
 	assert.Equal(t, "failure", gotBody["conclusion"])
 	assert.Equal(t, "deadbeef", gotBody["head_sha"])
+}
+
+func TestClientTimeoutConfigurable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", Timeout: 50 * time.Millisecond}
+	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context deadline exceeded")
 }
 
 func TestCreateCheckRunAPIError(t *testing.T) {

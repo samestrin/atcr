@@ -47,7 +47,7 @@ runs:
     # Build atcr from the action's own checkout (github.action_path), not the
     # consumer repo. The binary then runs against the consumer checkout below.
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
