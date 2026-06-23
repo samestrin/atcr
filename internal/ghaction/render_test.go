@@ -57,6 +57,15 @@ func TestConclusion(t *testing.T) {
 		assert.Equal(t, "success", c)
 		assert.Equal(t, 0, n)
 	})
+	t.Run("refuted verdict with whitespace never blocks", func(t *testing.T) {
+		f := reconcile.JSONFinding{
+			Severity:     "HIGH",
+			Verification: &reconcile.Verification{Verdict: " refuted "},
+		}
+		c, n := Conclusion([]reconcile.JSONFinding{f}, "HIGH")
+		assert.Equal(t, "success", c)
+		assert.Equal(t, 0, n)
+	})
 }
 
 func TestBuildCheckOutput(t *testing.T) {
