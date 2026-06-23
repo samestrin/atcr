@@ -230,6 +230,12 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 				// The batched /reviews endpoint is unavailable — older GitHub
 				// Enterprise versions return 404/405 for it. Fall back to posting
 				// each comment individually so the action still works there.
+				//
+				// Caveat: a 404 can also mean the PR or repo path does not exist
+				// (e.g. a misconfigured --pr). That is indistinguishable here from
+				// an unsupported endpoint, so a bad --pr surfaces as a per-comment
+				// fallback failure (bounded by maxFallbackComments) rather than
+				// failing fast.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: batched review endpoint unavailable (HTTP %d); falling back to per-comment posting\n", apiErr.StatusCode)
 				return postCommentsIndividually(cmd, client, owner, repo, pr, sha, comments, deduped)
 			}
