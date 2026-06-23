@@ -164,8 +164,11 @@ func runGithub(cmd *cobra.Command, args []string) error {
 
 // postInlineComments posts anchorable findings as a single batched PR review.
 // It first lists existing PR review comments to skip any that atcr already
-// posted (dedup across re-runs). It returns the number of new comments posted
-// and the number skipped because they were already present.
+// posted (dedup across re-runs). When the batched /reviews endpoint is
+// unavailable (HTTP 404/405, e.g. older GitHub Enterprise) it falls back to
+// posting each comment individually via postCommentsIndividually. It returns the
+// number of new comments posted and the number skipped because they were already
+// present.
 func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, findings []reconcile.JSONFinding) (int, int, error) {
 	comments := ghaction.BuildInlineComments(findings)
 	if len(comments) == 0 {
