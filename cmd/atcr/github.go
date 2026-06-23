@@ -13,6 +13,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// maxFallbackComments bounds how many individual posts the per-comment fallback
+// makes, so a PR with many findings cannot drive an unbounded number of API
+// calls. Findings past the cap are not commented inline but still appear in the
+// check-run output (mirroring render.go's check-text truncation). It is a var so
+// tests can lower it.
+var maxFallbackComments = 30
+
 // perCommentPostDelay paces successive writes on the per-comment fallback path
 // so a PR with many findings stays under GitHub's secondary rate limit for
 // mutating requests. It is a var (not const) so tests can drop it to zero.
@@ -249,6 +256,12 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 func postCommentsIndividually(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, comments []ghaction.CommentRequest, deduped int) (int, int, error) {
 	posted, skipped := 0, 0
 	for i, c := range comments {
+		if i >= maxFallbackComments {
+			// Cap the number of individual API calls; the remaining findings are
+			// still carried by the check-run output.
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: inline comment fallback capped at %d of %d comment(s); the rest appear in the check output\n", maxFallbackComments, len(comments))
+			break
+		}
 		if i > 0 {
 			// Pace sequential writes (and honor cancellation between them) so a
 			// PR with many findings does not trip GitHub's secondary rate limit.

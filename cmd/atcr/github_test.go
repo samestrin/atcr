@@ -540,6 +540,59 @@ func TestPostInlineComments_FallbackDedupsExistingATCRComments(t *testing.T) {
 	assert.Equal(t, 1, deduped, "a.go:1 should be counted as deduped")
 }
 
+// TestPostInlineComments_FallbackCapsIndividualPosts pins that the per-comment
+// fallback bounds the number of API calls it makes: once maxFallbackComments is
+// reached it stops and emits a truncation notice, with the remaining findings
+// still carried by the check-run output (matching render.go's table-truncation
+// precedent).
+func TestPostInlineComments_FallbackCapsIndividualPosts(t *testing.T) {
+	orig := maxFallbackComments
+	t.Cleanup(func() { maxFallbackComments = orig })
+	maxFallbackComments = 2
+
+	var mu sync.Mutex
+	postCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST
+			mu.Lock()
+			postCount++
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+		{File: "c.go", Line: 3, Problem: "p3", Fix: "f3"},
+		{File: "d.go", Line: 4, Problem: "p4", Fix: "f4"},
+	}
+
+	posted, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err, "capping is not an error — the rest live in the check output")
+	assert.Equal(t, 2, posted, "posts are capped at maxFallbackComments")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 2, postCount, "no more than maxFallbackComments API calls are made")
+	assert.Contains(t, stderr.String(), "capped", "a truncation notice must be emitted")
+}
+
 // TestReadReconciledFindings_MissingPreservesErrNotExist verifies that a missing
 // findings.json preserves os.ErrNotExist through the error chain so callers can
 // distinguish absent data (usage error, exit 2) from present-but-malformed data
