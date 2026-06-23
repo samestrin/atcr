@@ -45,6 +45,24 @@ func TestBuildInlineComments(t *testing.T) {
 	assert.NotContains(t, comments[2].Body, "Suggested by:")
 }
 
+func TestCommentBodyDefangsInjection(t *testing.T) {
+	// @mentions and #issue-refs in untrusted model output must not render as
+	// GitHub notifications or linkified issue references.
+	f := reconcile.JSONFinding{
+		File:     "foo.go",
+		Line:     1,
+		Problem:  "reported by @alice or see #123",
+		Fix:      "ping @bob and close #456; <!-- secret -->",
+		Evidence: "",
+	}
+	body := commentBody(f)
+	assert.Contains(t, body, `\@alice`, "@ in Problem must be backslash-escaped")
+	assert.Contains(t, body, `\@bob`, "@ in Fix must be backslash-escaped")
+	assert.Contains(t, body, `\#123`, "# in Problem must be backslash-escaped")
+	assert.Contains(t, body, `\#456`, "# in Fix must be backslash-escaped")
+	assert.NotContains(t, body, "<!--", "HTML comment open sequence must be neutralized")
+}
+
 func TestCreateReviewComment(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
