@@ -8,11 +8,11 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 1045 | 1 | 0 |
-| MEDIUM | 63 | 22 | 2 |
-| LOW | 77 | 21 | 4 |
+| MEDIUM | 59 | 22 | 6 |
+| LOW | 74 | 21 | 7 |
 
 
-**Last Modified:** 2026-06-22 | **Open Items:** 1185 | **Deferred Items:** 44 | **Resolved Items:** 6 | **Total Items:** 1235
+**Last Modified:** 2026-06-22 | **Open Items:** 1178 | **Deferred Items:** 44 | **Resolved Items:** 13 | **Total Items:** 1235
 
 ## Directory Structure
 
@@ -1260,8 +1260,8 @@ technical-debt/
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | 1 | [ ] | MEDIUM | cmd/atcr/github.go:postInlineComments | Inline comments post one-by-one via the PR comments API: N API calls + N notifications on large PRs and accumulating duplicates across re-runs (each push re-posts on the new head SHA) with no dedup | Switch to the batched reviews API (POST /pulls/{n}/reviews with a comments array) for a single review event, and dedup against existing atcr comments before posting | CROSS_CUTTING | 60 | execute-epic-stage3 |
 | 1 | [ ] | MEDIUM | cmd/atcr/github.go:107 | readReconciledFindings failures (missing/empty/malformed reconciled data) return exit 2 (usage), but inside the action pipeline review+reconcile already ran, so a transient parse/IO error is misreported as misconfiguration | Map a present-but-unreadable reconciled file to exit 1 (operational) and reserve exit 2 for genuinely-absent data; align atcr report's readReconciledFindings the same way for contract consistency | ERROR_PATHS | 30 | execute-epic-independent |
-| 1 | [ ] | MEDIUM | cmd/atcr/github.go:132 | Partial inline-comment failures (some posted, some 422) are surfaced only on stderr/stdout, never in the check run, so the PR check does not reflect missing comments | Post comments before the check run and include the skipped/failed count in the check output text (or update the check after posting), so partial delivery is visible on the PR surface | ERROR_PATHS | 45 | execute-epic-independent |
-| 1 | [ ] | LOW | cmd/atcr/github.go:126 | No machine-readable output (GITHUB_OUTPUT) exposes the conclusion or finding counts, so downstream workflow steps cannot branch on the gate result except via job exit status | Emit conclusion and finding counts to $GITHUB_OUTPUT when running under Actions | OBSERVABILITY | 20 | execute-epic-independent |
+| 1 | [x] | MEDIUM | cmd/atcr/github.go:132 | Partial inline-comment failures (some posted, some 422) are surfaced only on stderr/stdout, never in the check run, so the PR check does not reflect missing comments | Post comments before the check run and include the skipped/failed count in the check output text (or update the check after posting), so partial delivery is visible on the PR surface | ERROR_PATHS | 45 | execute-epic-independent |
+| 1 | [x] | LOW | cmd/atcr/github.go:126 | No machine-readable output (GITHUB_OUTPUT) exposes the conclusion or finding counts, so downstream workflow steps cannot branch on the gate result except via job exit status | Emit conclusion and finding counts to $GITHUB_OUTPUT when running under Actions | OBSERVABILITY | 20 | execute-epic-independent |
 | 2 | [x] | LOW | internal/ghaction/render.go:90 | BuildCheckOutput lists refuted findings at raw severity with no demoted/refuted marker while Conclusion correctly excludes them from the gate, so a reader may see a HIGH row under a passing gate | Render a refuted finding with a struck/annotated severity (e.g. (refuted)) or move it to a separate demoted section in the check table | EDGE_CASES | 30 | execute-epic-stage3 |
 | 2 | [ ] | MEDIUM | internal/ghaction/comments.go:50 | Finding Problem/Fix (untrusted model output) are interpolated verbatim into the PR comment body, so crafted content can inject markdown, @mentions or #issue refs that GitHub renders/notifies on when inline-comments is enabled | Defang @ and # autolinking and strip HTML-comment sequences before posting, preserving AC3's plain sentence format (decision needed: defang vs backtick-wrap vs AC3 fidelity) | SECURITY | 45 | execute-epic-independent |
 | 2 | [x] | LOW | internal/ghaction/render.go:30 | FixAttribution returns the FIRST "; "-segment beginning with "fix by ", but the executor token is always appended last; an earlier prose segment literally starting with "fix by " (rare; reviewer prose is not validated like executor names) would win | Scan segments in reverse / anchor on the last "fix by" segment since appendFixAttribution always appends last | EDGE_CASES | 10 | execute-epic-independent |
