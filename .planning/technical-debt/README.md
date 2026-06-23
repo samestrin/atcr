@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 0 |
-| MEDIUM | 0 | 23 | 0 |
-| LOW | 0 | 22 | 0 |
+| MEDIUM | 8 | 23 | 0 |
+| LOW | 3 | 22 | 0 |
 
-**Last Modified:** 2026-06-23 | **Open Items:** 0 | **Deferred Items:** 46 | **Resolved Items:** 0 | **Total Items:** 46
+**Last Modified:** 2026-06-23 | **Open Items:** 11 | **Deferred Items:** 46 | **Resolved Items:** 0 | **Total Items:** 57
 
 ## Directory Structure
 
@@ -33,6 +33,22 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-23] From: Production-Readiness Review (component audit + adversarial verification)
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|-----------|------------|
+| 1 | [ ] | MEDIUM | internal/verify/skeptic.go:23 | Skeptic prompt-injection sentinel uses math/rand, not crypto/rand like its two sibling paths | Replace math/rand with crypto/rand to match debate.newSentinel and buildExecutorAgentPrompt: read 4 (or 16) random bytes, hex-encode them, and build the sentinel from that. Drop the `math/rand` import. This unifies all three injection gu... | security | 15 | prod-readiness-audit | audit+verify | HIGH |
+| 1 | [ ] | MEDIUM | internal/ghaction/client.go:258 | GitHub token is not redacted from ghaction error messages | Add a redaction step (strip c.Token literal and Bearer <...> tokens) to githubMessage / the error-wrapping sites in get and postDo, mirroring llmclient.redactErrorSnippet. | security | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 1 | [ ] | MEDIUM | internal/ghaction/comments.go:66 | Inline comment bodies defang only @/#/HTML-comments — markdown link/image injection survives | Neutralize markdown link/image syntax in defang (strip the (url) target like mdLinkRe does, or escape leading ! and [), or wrap the interpolated Problem/Fix values in inline code spans as render.go does for table cells. | security | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 1 | [ ] | MEDIUM | internal/doctor/run.go:243 | HTTPStatusError snippet path skips base_url userinfo scrubbing applied to network-error detail | Factor the key + base_url userinfo scrubbing (lines 259-269) into a helper and apply it to se.Snippet before returning at line 243, so both detail paths enforce identical credential exclusion. | security | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 1 | [ ] | MEDIUM | cmd/atcr/leaderboard.go:163 | leaderboard --export --output skips validation.FilePath applied elsewhere | Either apply validation.FilePath() to the resolved export path for parity with report/review, or add a short comment cross-referencing the deliberate divergence so the asymmetry is not mistaken for an oversight. | security | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 2 | [ ] | LOW | internal/ghaction/client.go:171 | ghaction retry backoff uses non-interruptible time.Sleep | Replace time.Sleep(backoff) with a select on ctx.Done()/time.After(backoff) (or reuse a shared sleepCtx helper) so a cancellation interrupts the backoff. | resilience | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 2 | [ ] | MEDIUM | internal/stream/fileindex.go:46 | git ls-files in BuildFileIndex is not cancellable (no context/timeout) | Thread the reconcile context to BuildFileIndex and use exec.CommandContext(ctx, "git", ...). RunReconcile already has ctx in scope; pass it through validateFindingPaths into BuildFileIndex so a cancel/shutdown kills the git child and the... | resilience | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 2 | [ ] | MEDIUM | internal/llmclient/client.go:667 | Server-advertised Retry-After is honored verbatim with no upper bound | Cap the honored Retry-After at a sane ceiling (e.g. a few minutes, or maxBackoff) and reject/clamp values that would overflow time.Duration before multiplying by time.Second. | resilience | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 2 | [ ] | MEDIUM | internal/atomicfs/atomic.go:180 | Successful backup reported as a failure when superseded .bak.old cleanup fails | After a successful renameFn(staged, bak), treat RemoveAll(bakOld) as best-effort: log/swallow the error (or return bak with a nil error) rather than failing the whole backup, since the one-generation contract is already satisfied. | resilience | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 3 | [ ] | LOW | internal/verify/pipeline.go:214 | Verify skeptic worker pool does not honor ctx cancellation before dispatching each job | Add `if ctx.Err() != nil { break }` at the top of the `for i, j := range jobs` loop body (before `wg.Add(1)`), mirroring executor.go:121 and debate.go:196, so a cancelled verify run stops dispatching new skeptic jobs promptly. | concurrency | 20 | prod-readiness-audit | audit+verify | HIGH |
+| 4 | [ ] | LOW | cmd/atcr/github.go:180 | GITHUB_OUTPUT open/write errors silently swallowed | On OpenFile error, emit a warning to cmd.ErrOrStderr() instead of dropping it; capture the Fprintf error and warn on failure so an operator can see the step output was not persisted. | observability | 20 | prod-readiness-audit | audit+verify | HIGH |
 
 ### [2026-06-22] From Sprint: 7.3_github_action_pr_integration
 
