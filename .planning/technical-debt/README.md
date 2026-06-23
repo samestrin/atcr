@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 1 | 1 |
-| MEDIUM | 1 | 23 | 7 |
+| MEDIUM | 0 | 23 | 8 |
 | LOW | 7 | 22 | 8 |
 
-**Last Modified:** 2026-06-23 | **Open Items:** 8 | **Deferred Items:** 46 | **Resolved Items:** 16 | **Total Items:** 70
+**Last Modified:** 2026-06-23 | **Open Items:** 7 | **Deferred Items:** 46 | **Resolved Items:** 17 | **Total Items:** 70
 
 ## Directory Structure
 
@@ -38,7 +38,7 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 1 | [ ] | MEDIUM | cmd/atcr/github.go:205 | Potential for excessive API calls during fallback | Add a limit to the number of individual comments posted in fallback | performance | 15 | code-review | otto | MEDIUM |
+| 1 | [x] | MEDIUM | cmd/atcr/github.go:205 | Potential for excessive API calls during fallback | Add a limit to the number of individual comments posted in fallback | performance | 15 | code-review | otto | MEDIUM |
 | 1 | [x] | HIGH | cmd/atcr/github.go:214 | posted count lost on hard error during fallback | Return posted count in error case is fine but skipped count discarded | correctness | 5 | code-review | bruce | MEDIUM |
 | 1 | [x] | LOW | cmd/atcr/github.go:220 | Dedup-count correctness on the fallback path is unasserted. Every fallback test stubs GET /comments to return [], so deduped is always 0 and the "(N already present)" reporting in postCommentsIndividually is never exercised. A bug dropping or double-counting the passed-through deduped value would go undetected. | Add a fallback test where GET /comments returns one pre-existing "ATCR found:" comment matching one finding; assert returned deduped==1 and only the non-deduped comment is POSTed individually. | correctness | 30 | code-review | claude | MEDIUM |
 | 1 | [x] | MEDIUM | cmd/atcr/github.go:220 | Fallback loop does not check context cancellation between iterations | Add a fallback test where GET /comments returns one pre-existing "ATCR found:" comment matching one finding; assert returned deduped==1 and only the non-deduped comment is POSTed individually. | correctness | 30 | code-review | bruce | MEDIUM |
