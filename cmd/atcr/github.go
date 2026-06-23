@@ -1,15 +1,38 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
 )
+
+// perCommentPostDelay paces successive writes on the per-comment fallback path
+// so a PR with many findings stays under GitHub's secondary rate limit for
+// mutating requests. It is a var (not const) so tests can drop it to zero.
+var perCommentPostDelay = 1 * time.Second
+
+// waitBetweenPosts blocks for perCommentPostDelay or until ctx is canceled,
+// returning ctx.Err() on cancellation so the fallback loop can abort between
+// posts. It is a package var so tests can stub the pause out (or trigger
+// cancellation) deterministically without real waiting.
+var waitBetweenPosts = func(ctx context.Context) error {
+	if perCommentPostDelay <= 0 {
+		return ctx.Err()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(perCommentPostDelay):
+		return nil
+	}
+}
 
 // newGithubCmd builds `atcr github`: render the reconciled findings of a review
 // onto a GitHub pull request as a check run (honoring --fail-on for the merge
@@ -225,7 +248,14 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 // from a partial run do not produce duplicates on retry.
 func postCommentsIndividually(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, comments []ghaction.CommentRequest, deduped int) (int, int, error) {
 	posted, skipped := 0, 0
-	for _, c := range comments {
+	for i, c := range comments {
+		if i > 0 {
+			// Pace sequential writes (and honor cancellation between them) so a
+			// PR with many findings does not trip GitHub's secondary rate limit.
+			if err := waitBetweenPosts(cmd.Context()); err != nil {
+				return posted, deduped, &codedError{code: exitFailure, err: fmt.Errorf("inline comment fallback canceled after %d posted: %w", posted, err)}
+			}
+		}
 		if err := client.CreateReviewComment(cmd.Context(), owner, repo, pr, sha, c); err != nil {
 			var apiErr *ghaction.APIError
 			if errors.As(err, &apiErr) && apiErr.StatusCode == 422 {

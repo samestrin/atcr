@@ -25,6 +25,14 @@ const highFinding = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 const mediumFinding = `[{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
 const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom","fix":"do x","category":"security","est_minutes":10,"evidence":"e; fix by opus","reviewers":["greta"],"confidence":"HIGH"},{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
 
+// TestMain zeroes the per-comment fallback pause so the suite never waits on the
+// real secondary-rate-limit delay; the pacing itself is covered explicitly in
+// TestPostInlineComments_FallbackPacesSequentialPosts.
+func TestMain(m *testing.M) {
+	perCommentPostDelay = 0
+	os.Exit(m.Run())
+}
+
 // captureGitHub starts a fake GitHub REST server that records the body of the
 // check-run POST it receives.
 func captureGitHub(t *testing.T) (url string, body func() map[string]any) {
@@ -542,4 +550,79 @@ func TestReadReconciledFindings_MissingPreservesErrNotExist(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, os.ErrNotExist),
 		"missing findings.json must preserve os.ErrNotExist so callers can exit 2 for absent data")
+}
+
+// TestPostInlineComments_FallbackPacesSequentialPosts pins that the per-comment
+// fallback spaces successive writes through waitBetweenPosts so a PR with many
+// findings does not trip GitHub's secondary rate limit, and that a context
+// canceled during that pause aborts the loop while reporting the count already
+// posted.
+func TestPostInlineComments_FallbackPacesSequentialPosts(t *testing.T) {
+	orig := waitBetweenPosts
+	t.Cleanup(func() { waitBetweenPosts = orig })
+
+	newFallbackServer := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+				w.WriteHeader(http.StatusNotFound) // force fallback
+			default: // per-comment POST
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":1}`))
+			}
+		}))
+	}
+
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+		{File: "c.go", Line: 3, Problem: "p3", Fix: "f3"},
+	}
+
+	t.Run("paces between every post", func(t *testing.T) {
+		srv := newFallbackServer()
+		defer srv.Close()
+
+		paced := 0
+		waitBetweenPosts = func(ctx context.Context) error { paced++; return ctx.Err() }
+
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetContext(context.Background())
+
+		client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+		posted, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+		require.NoError(t, err)
+		assert.Equal(t, 3, posted, "all three comments posted via fallback")
+		assert.Equal(t, 2, paced, "pacing runs between posts: len(comments)-1 times")
+	})
+
+	t.Run("cancellation during pause aborts and reports posted count", func(t *testing.T) {
+		srv := newFallbackServer()
+		defer srv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel during the first inter-post pause: one comment posts, then the
+		// loop must stop instead of posting the rest.
+		waitBetweenPosts = func(c context.Context) error { cancel(); return context.Canceled }
+
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetContext(ctx)
+
+		client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+		posted, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+		require.Error(t, err, "a canceled context must abort the fallback loop")
+		var ce *codedError
+		require.True(t, errors.As(err, &ce), "cancellation aborts with a codedError")
+		assert.Equal(t, exitFailure, ce.code)
+		assert.Equal(t, 1, posted, "only the first comment posted before cancellation")
+	})
 }
