@@ -1,3 +1,13 @@
+## [7.5.0] - 2026-06-22
+
+Refined the local syntax guard so it no longer raises a spurious "invalid syntax" warning on a generated fix that is unfenced JSON/config rather than Go. Fix-quality flagging is unchanged for actual Go.
+
+### Fixed
+
+- The Epic 7.1 syntax guard no longer flags an unfenced multi-line JSON/config object (block braces, quoted keys) as `invalid_syntax`. Detection keys on JSON object-member shape (a quoted key at line start with no Go declaration keyword) and only ever *suppresses* a flag — it can never add one — so the conservative-recall guarantee is preserved and no previously-clean fix becomes newly flagged.
+
+*Shipped via /execute-epic (epic 7.5)*
+
 ## [7.4.0] - 2026-06-22
 
 Added an opt-in agent mode for the executor: instead of generating a fix from a single fixed code snippet, the executor can now explore the codebase with read-only tools before proposing a change — better for cross-file findings whose fix depends on a type, interface, or caller defined elsewhere. Default behavior is unchanged.

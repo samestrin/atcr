@@ -52,6 +52,15 @@ var blockOpenRe = regexp.MustCompile(`(?m)^[ \t]*[^{]*\{[ \t]*$`)
 // "} else {"). Same rationale as blockOpenRe.
 var blockCloseRe = regexp.MustCompile(`(?m)^[ \t]*\}`)
 
+// jsonKeyLineRe matches a line that begins (after optional whitespace) with a
+// double-quoted key immediately followed by a colon — the canonical JSON object
+// member shape ("name": ...). Go source almost never starts a line this way: a
+// quoted string appears at line start only in a map/struct literal with string keys,
+// which, being valid Go, parses cleanly and never reaches this guard (or, being
+// broken Go, is an acceptable false negative under the conservative-recall policy).
+// A `case "x":` label does NOT match — the line starts with `case`, not the quote.
+var jsonKeyLineRe = regexp.MustCompile(`(?m)^\s*"[^"]*"\s*:`)
+
 // packageClauseRe detects a package clause, i.e. the fix is shaped as a full file.
 var packageClauseRe = regexp.MustCompile(`(?m)^\s*package\s+\w`)
 
@@ -154,8 +163,32 @@ func parseGoFix(src string) error {
 // and must pass through unflagged (false positives degrade trust). The cost is
 // conservative recall: a one-line broken expression with no block structure is not
 // flagged, since it is indistinguishable from prose.
+// A Go declaration keyword is a strong, unambiguous Go signal — never suppressed.
+// Otherwise, obviously non-Go brace content (JSON/config, detected by
+// looksLikeNonGoBraces) suppresses the block-brace signal so an unfenced JSON/config
+// fix is not flagged (Epic 7.5). The suppression only ever turns a true into a false
+// — it can reduce flagging but never add it — so it cannot regress the 7.1
+// conservative-recall guarantee (AC2/AC4). It is consulted only after parseGoFix has
+// already failed, so valid Go (including string-keyed map literals) never reaches it.
 func looksLikeGoCode(s string) bool {
-	return declKeywordRe.MatchString(s) || blockOpenRe.MatchString(s) || blockCloseRe.MatchString(s)
+	if declKeywordRe.MatchString(s) {
+		return true
+	}
+	if looksLikeNonGoBraces(s) {
+		return false
+	}
+	return blockOpenRe.MatchString(s) || blockCloseRe.MatchString(s)
+}
+
+// looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go
+// JSON/config object rather than Go source: it carries a JSON object-member line (a
+// quoted key followed by a colon at line start) and no Go declaration keyword. It
+// exists purely to SUPPRESS a false-positive invalid_syntax flag on unfenced
+// JSON/config (Epic 7.5); it only ever reduces flagging. The detection is deliberately
+// narrow (quoted keys only — bare `ident:` is not used, since Go struct literals,
+// labels, cases, and map entries all produce it), keeping it conservative.
+func looksLikeNonGoBraces(s string) bool {
+	return jsonKeyLineRe.MatchString(s) && !declKeywordRe.MatchString(s)
 }
 
 // extractFencedCode returns the inner content of the first markdown code fence in
