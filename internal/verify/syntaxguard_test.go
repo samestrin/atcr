@@ -344,6 +344,8 @@ func TestLooksLikeNonGoBraces(t *testing.T) {
 		{"a Go func is not non-Go braces", "func f() {\n\treturn 1\n}", false},
 		{"a Go type decl is not non-Go braces", "type T struct {\n\tX int\n}", false},
 		{"a quoted case label does not start the line", "switch s {\ncase \"x\":\n}", false},
+		// Go keyword overrides JSON-key match: both must hold for suppression.
+		{"json key AND Go keyword: keyword wins", "func init() {\n  \"k\": 1\n}", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
