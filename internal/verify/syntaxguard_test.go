@@ -8,12 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// validateGoFixSyntax is the local syntax guard (Epic 7.1): it parses a generated
-// fix with go/parser and returns a non-nil error ONLY when the fix is plausibly Go
-// code yet fails to parse. Free-form prose change-instructions and explicitly
-// non-Go fenced blocks pass through with a nil error so a legitimate fix is never
-// falsely flagged (false positives degrade trust, which is exactly what this guard
-// exists to prevent).
+// validateGoFixSyntax is the local syntax guard (Epic 7.1 / Epic 7.5): it parses a
+// generated fix with go/parser and returns a non-nil error ONLY when the fix is
+// plausibly Go code yet fails to parse. Free-form prose change-instructions and
+// explicitly non-Go fenced blocks pass through with a nil error so a legitimate fix
+// is never falsely flagged (false positives degrade trust, which is exactly what this
+// guard exists to prevent). Epic 7.5 adds suppression for unfenced JSON/config
+// brace-content — see the labelled section below.
 
 func TestValidateGoFixSyntax_ValidFullFile(t *testing.T) {
 	src := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
