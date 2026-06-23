@@ -8,6 +8,25 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestCell_MarkdownSanitization(t *testing.T) {
+	// Pipes become / so they cannot break the table column grammar.
+	assert.Equal(t, "`a / b`", cell("a | b"))
+	// Newlines are collapsed to spaces.
+	assert.Equal(t, "`line1 line2`", cell("line1\nline2"))
+	// Markdown links: only the display text is kept.
+	assert.Equal(t, "`click here`", cell("[click here](http://evil.example.com)"))
+	assert.Equal(t, "`see docs`", cell("[see docs](https://internal/docs)"))
+	// Emphasis markers are inert inside the code span.
+	assert.Equal(t, "`*bold*`", cell("*bold*"))
+	assert.Equal(t, "`_italic_`", cell("_italic_"))
+	// Security: cell content is wrapped in a backtick code span so that
+	// headings, HTML tags, and other markdown render as inert literal text.
+	assert.Equal(t, "`# injected heading`", cell("# injected heading"))
+	assert.Equal(t, "`<b>bold via HTML</b>`", cell("<b>bold via HTML</b>"))
+	// Embedded backticks are replaced to prevent premature code span close.
+	assert.Equal(t, "`let x = 'y'`", cell("let x = `y`"))
+}
+
 func TestFixAttribution(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -19,6 +38,7 @@ func TestFixAttribution(t *testing.T) {
 		{"absent", "bruce: c.entries[k] = v // never deleted", ""},
 		{"empty_name", "Found by bruce; fix by ", ""},
 		{"prose_mention", "reviewer suggested a fix by hand", ""},
+		{"last_segment_wins", "fix by hand; Found by bruce; fix by opus", "opus"},
 		{"empty_evidence", "", ""},
 	}
 	for _, tc := range cases {
@@ -56,6 +76,51 @@ func TestConclusion(t *testing.T) {
 		assert.Equal(t, "success", c)
 		assert.Equal(t, 0, n)
 	})
+	t.Run("refuted verdict with whitespace never blocks", func(t *testing.T) {
+		f := reconcile.JSONFinding{
+			Severity:     "HIGH",
+			Verification: &reconcile.Verification{Verdict: " refuted "},
+		}
+		c, n := Conclusion([]reconcile.JSONFinding{f}, "HIGH")
+		assert.Equal(t, "success", c)
+		assert.Equal(t, 0, n)
+	})
+	t.Run("out-of-scope finding never blocks even at CRITICAL", func(t *testing.T) {
+		f := reconcile.JSONFinding{
+			Severity: "CRITICAL",
+			Category: reconcile.CategoryOutOfScope,
+		}
+		c, n := Conclusion([]reconcile.JSONFinding{f}, "CRITICAL")
+		assert.Equal(t, "success", c)
+		assert.Equal(t, 0, n)
+	})
+}
+
+func TestBuildCheckOutputSummaryDistinctFromTitle(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+	}
+	out := BuildCheckOutput(findings, "HIGH")
+	assert.NotEqual(t, out.Title, out.Summary)
+	assert.Contains(t, strings.ToLower(out.Summary), "gate")
+}
+
+func TestBuildCheckOutputNormalizesSeverityCase(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "critical", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+	}
+	out := BuildCheckOutput(findings, "HIGH")
+	assert.Contains(t, out.Text, "CRITICAL")
+	assert.NotContains(t, out.Text, "critical")
+}
+
+func TestBuildCheckOutputInvalidThresholdRendersRaw(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+	}
+	out := BuildCheckOutput(findings, "bogus")
+	assert.Contains(t, out.Title, "bogus")
+	assert.Contains(t, strings.ToLower(out.Text), "gate passed")
 }
 
 func TestBuildCheckOutput(t *testing.T) {
@@ -77,6 +142,17 @@ func TestBuildCheckOutput(t *testing.T) {
 		assert.Contains(t, out.Text, "Unbounded map / grows")
 	})
 
+	t.Run("refuted findings are demoted in table", func(t *testing.T) {
+		refuted := []reconcile.JSONFinding{
+			{Severity: "HIGH", File: "internal/auth/token.go", Line: 42,
+				Problem: "JWT signature not verified", Confidence: "HIGH",
+				Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic-a"}},
+		}
+		out := BuildCheckOutput(refuted, "HIGH")
+		assert.Contains(t, strings.ToLower(out.Text), "gate passed")
+		assert.Contains(t, out.Text, "(refuted)")
+	})
+
 	t.Run("empty findings", func(t *testing.T) {
 		out := BuildCheckOutput(nil, "HIGH")
 		assert.Contains(t, strings.ToLower(out.Title), "no findings")
@@ -93,5 +169,14 @@ func TestBuildCheckOutput(t *testing.T) {
 		out := BuildCheckOutput(many, "HIGH")
 		assert.LessOrEqual(t, len(out.Text), maxCheckTextBytes)
 		assert.Contains(t, out.Text, "truncated")
+	})
+
+	t.Run("truncation count tracks rows actually shown", func(t *testing.T) {
+		oversized := []reconcile.JSONFinding{
+			{Severity: "LOW", File: "a.go", Line: 1,
+				Problem: strings.Repeat("x", 65000), Confidence: "LOW"},
+		}
+		out := BuildCheckOutput(oversized, "HIGH")
+		assert.Contains(t, out.Text, "0 of 1 findings shown")
 	})
 }

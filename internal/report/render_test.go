@@ -407,3 +407,19 @@ func TestRender_MixedCaseSeverityGridBucketing(t *testing.T) {
 	out := b.String()
 	assert.NotContains(t, out, "| OTHER |", "lowercase 'high' must bucket into HIGH, not OTHER")
 }
+
+// TestEscDelegatesToReconcileEsc pins that report.esc is not a separate
+// implementation: for a representative set of inputs it must agree exactly with
+// reconcile.Esc, so the two packages cannot silently drift apart.
+func TestEscDelegatesToReconcileEsc(t *testing.T) {
+	cases := []string{
+		"plain text",
+		"line\none\ntwo",
+		"<script>alert(1)</script>",
+		"back`tick",
+		"mixed\n<script>`code`</script>",
+	}
+	for _, c := range cases {
+		assert.Equal(t, reconcile.Esc(c), esc(c), "input %q must match reconcile.Esc exactly", c)
+	}
+}

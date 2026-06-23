@@ -1,7 +1,9 @@
 package verify
 
 import (
+	"errors"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"regexp"
 	"strings"
@@ -32,11 +34,13 @@ import (
 // truncate valid code. The pre-close newline stays optional (\n?), so a closing ```
 // on the same line as the last code line still matches. Input is CRLF-normalized
 // before matching (see normalizeNewlines), so the LF-only pattern also covers CRLF.
-var fenceRe = regexp.MustCompile("(?sm)`{3,}([A-Za-z0-9_+#-]*)[ \t]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
+var fenceRe = regexp.MustCompile("(?sm)`{3,}[ \t]*([A-Za-z0-9_+#-]*)[^\n]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
 
 // declKeywordRe matches a line that begins (after optional whitespace) with a Go
-// top-level / statement keyword that is a strong signal the text is code rather
-// than prose. Anchored per-line via the multiline flag.
+// declaration keyword. Used in parseGoFix to select the most relevant parse error
+// among the three strategy results, and in looksLikeNonGoBraces to detect Go code
+// presence. Not used as a looksLikeGoCode signal (use packageClauseRe or
+// funcSignatureRe for that — bare keywords are ambiguous with prose).
 var declKeywordRe = regexp.MustCompile(`(?m)^\s*(package|import|func|type|var|const)\b`)
 
 // blockOpenRe matches a line whose last non-whitespace character is a single opening
@@ -59,10 +63,18 @@ var blockCloseRe = regexp.MustCompile(`(?m)^[ \t]*\}`)
 // which, being valid Go, parses cleanly and never reaches this guard (or, being
 // broken Go, is an acceptable false negative under the conservative-recall policy).
 // A `case "x":` label does NOT match — the line starts with `case`, not the quote.
-var jsonKeyLineRe = regexp.MustCompile(`(?m)^\s*"[^"]*"\s*:`)
+var jsonKeyLineRe = regexp.MustCompile(`(?m)^\s*"(?:[^"\\]|\\.)*"\s*:`)
 
 // packageClauseRe detects a package clause, i.e. the fix is shaped as a full file.
 var packageClauseRe = regexp.MustCompile(`(?m)^\s*package\s+\w`)
+
+// funcSignatureRe matches a Go function declaration: the func keyword followed
+// by an identifier name and an opening parenthesis for the parameter list. The
+// paren disambiguates from prose change-instructions such as "func should return
+// an error", which never contain a trailing `(` on the same line. Methods with
+// receivers (func (r *T) Method(...)) are intentionally excluded — they are caught
+// by block structure when present, consistent with the conservative-recall policy.
+var funcSignatureRe = regexp.MustCompile(`(?m)^\s*func\s+\w[^()\n]*\(`)
 
 // nonGoFenceLangs are fenced-block language tags that explicitly denote a language
 // other than Go. A fix fenced as one of these is not the Go guard's concern.
@@ -89,13 +101,16 @@ const maxFixBytes = 256 * 1024
 // validateGoFixSyntax returns a non-nil error when fix is plausibly Go code that
 // fails to parse, and nil otherwise (valid Go, prose, or non-Go content).
 func validateGoFixSyntax(fix string) error {
-	if len(fix) > maxFixBytes {
-		return nil // pathological size: not a genuine fix — skip the triple AST parse
-	}
 	fix = normalizeNewlines(fix)
 	code, lang, hadFence := extractFencedCode(fix)
 	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
 		return nil // explicitly another language — not this guard's concern
+	}
+	// Cap the size of the code actually parsed, not the raw fix. A small fenced
+	// snippet wrapped in a huge prose blob is still a genuine fix and should be
+	// validated; only the extracted code path is expensive.
+	if len(code) > maxFixBytes {
+		return nil // pathological size: not a genuine fix — skip the triple AST parse
 	}
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -146,49 +161,93 @@ func parseGoFix(src string) error {
 
 	switch {
 	case packageClauseRe.MatchString(src):
-		return fileErr
+		return fileErr // file strategy: positions already relative to src
 	case declKeywordRe.MatchString(src):
-		return declErr
+		return stripPosition(declErr) // decl strategy: "package p\n" + src shifts lines by 1
 	default:
-		return stmtErr
+		return stripPosition(stmtErr) // stmt strategy: 2-line header shifts lines by 2
 	}
 }
 
+// stripPosition removes the position prefix (e.g. "3:13: ") from a scanner
+// error returned by go/parser. Wrapped parse strategies produce positions
+// relative to their synthetic header, not to the caller's src — stripping
+// the prefix avoids misleading the caller with a line number that points to
+// the wrong line in their input.
+func stripPosition(err error) error {
+	if err == nil {
+		return nil
+	}
+	if list, ok := err.(scanner.ErrorList); ok && len(list) > 0 {
+		return errors.New(list[0].Msg)
+	}
+	return err
+}
+
 // looksLikeGoCode reports whether unfenced text carries a strong LINE-STRUCTURAL
-// signal of Go source: a line beginning with a declaration keyword, a line ending
-// in an opening brace, or a line beginning with a closing brace. These are forms
-// prose almost never produces. Crucially it does NOT treat an inline brace or `:=`
-// embedded mid-sentence as code — "Pass &Options{Retries: 3} to the constructor"
-// or "replace it with count := len(items)" are legitimate prose change-instructions
-// and must pass through unflagged (false positives degrade trust). The cost is
-// conservative recall: a one-line broken expression with no block structure is not
-// flagged, since it is indistinguishable from prose.
-// A Go declaration keyword is a strong, unambiguous Go signal — never suppressed.
+// signal of Go source: a line beginning with a declaration keyword, or paired
+// open/close braces indicating genuine block structure. These are forms prose almost
+// never produces. Crucially it does NOT treat an inline brace or `:=` embedded
+// mid-sentence as code — "Pass &Options{Retries: 3} to the constructor" or "replace
+// it with count := len(items)" are legitimate prose change-instructions and must pass
+// through unflagged (false positives degrade trust). The cost is conservative recall:
+// a one-line broken expression with no block structure is not flagged, since it is
+// indistinguishable from prose.
+// `package <ident>` and `func <ident>(` are the two keyword patterns that are
+// prose-never: prose change-instructions almost never carry a package clause, and
+// "func should …" prose lacks the `<ident>(` shape. Other declaration keywords
+// (import, var, const, type) alone are ambiguous — "import the sync package" is
+// valid prose. Require block structure as co-signal for those.
+// A trailing opening brace alone is NOT a sufficient signal: prose change-instructions
+// can end in a lone { (e.g. "Wrap the body in the literal that opens with {"), which
+// satisfies blockOpenRe yet fails go/parser — a false positive. blockOpenRe must
+// co-occur with blockCloseRe (a matching close-brace line) to be treated as code.
 // Otherwise, obviously non-Go brace content (JSON/config, detected by
 // looksLikeNonGoBraces) suppresses the block-brace signal so an unfenced JSON/config
 // fix is not flagged (Epic 7.5). The suppression only ever turns a true into a false
 // — it can reduce flagging but never add it — so it cannot regress the 7.1
 // conservative-recall guarantee (AC2/AC4). It is consulted only after parseGoFix has
 // already failed, so valid Go (including string-keyed map literals) never reaches it.
-func looksLikeGoCode(s string) bool {
-	if declKeywordRe.MatchString(s) {
+func looksLikeGoCode(src string) bool {
+	// Two unambiguous code signals that prose almost never produces:
+	//   package <ident>  — prose change-instructions never open with a package clause.
+	//   func <ident>(    — prose starting with "func" (e.g. "func should return an
+	//                     error") never has a parenthesised parameter list immediately
+	//                     after the identifier; the paren is the disambiguation signal.
+	// Other declaration keywords (import, var, const, type) without block structure
+	// are ambiguous — "import the sync package" is valid prose. Require block
+	// structure as co-signal for those cases.
+	if packageClauseRe.MatchString(src) || funcSignatureRe.MatchString(src) {
 		return true
 	}
-	if looksLikeNonGoBraces(s) {
+	if looksLikeNonGoBraces(src) {
 		return false
 	}
-	return blockOpenRe.MatchString(s) || blockCloseRe.MatchString(s)
+	// A trailing opening brace alone is not sufficient (prose can end in {): require a
+	// matching close-brace line to co-occur, which genuine block structure always has.
+	if blockOpenRe.MatchString(src) {
+		return blockCloseRe.MatchString(src)
+	}
+	return blockCloseRe.MatchString(src)
 }
 
-// looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go
-// JSON/config object rather than Go source: it carries a JSON object-member line (a
-// quoted key followed by a colon at line start) and no Go declaration keyword. It
-// exists purely to SUPPRESS a false-positive invalid_syntax flag on unfenced
-// JSON/config (Epic 7.5); it only ever reduces flagging. The detection is deliberately
-// narrow (quoted keys only — bare `ident:` is not used, since Go struct literals,
-// labels, cases, and map entries all produce it), keeping it conservative.
-func looksLikeNonGoBraces(s string) bool {
-	return jsonKeyLineRe.MatchString(s) && !declKeywordRe.MatchString(s)
+// looksLikeNonGoBraces reports whether a parse-failed, unfenced fragment should be
+// suppressed as obviously non-Go content: it matches any fragment that carries a
+// JSON object-member line (a double-quoted key followed by a colon at line start) and
+// no Go declaration keyword on any line — regardless of whether braces are present.
+// The function name reflects its primary use case (JSON/config objects), but the
+// check is intentionally broader per the AC4 false-negative-preferred policy: a
+// quoted-key line with no decl keyword is sufficient to suppress, even without
+// surrounding braces. The keyword check is a coarse whole-input line scan, not a
+// structural key-aware parse, so a JSON value line beginning with a Go keyword
+// defeats suppression and re-arms the block-brace signal. This is benign — it only
+// re-arms pre-existing 7.1 behavior and never adds new flagging beyond 7.1 (AC2
+// intact). It exists purely to SUPPRESS a false-positive invalid_syntax flag on
+// unfenced JSON/config (Epic 7.5); it only ever reduces flagging. The detection is
+// deliberately narrow (quoted keys only — bare `ident:` is not used, since Go struct
+// literals, labels, cases, and map entries all produce it), keeping it conservative.
+func looksLikeNonGoBraces(src string) bool {
+	return jsonKeyLineRe.MatchString(src) && !declKeywordRe.MatchString(src)
 }
 
 // extractFencedCode returns the inner content of the first markdown code fence in

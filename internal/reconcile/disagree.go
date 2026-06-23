@@ -6,6 +6,7 @@ package reconcile
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -416,6 +417,11 @@ func sortedKeys(set map[string]bool) []string {
 // passes a truncating variant (report.escTrunc, 500-rune cap). Fixed-vocabulary
 // fields (kind, severity, file, reviewers, skeptics, disagreement) are never
 // routed through it — they always use esc/codeSpan/joinOrNone directly.
+//
+// Callers MUST supply a renderer that preserves the escaping contract used by
+// esc: newlines flattened to spaces, HTML metacharacters escaped, and backticks
+// escaped. A renderer that only truncates or transforms text without escaping
+// will introduce markdown-injection vulnerabilities in the rendered output.
 type RadarTextRenderer func(string) string
 
 // WriteRadarSection appends the "## Disagreements" section (header + ranked
@@ -440,6 +446,9 @@ func WriteRadarSection(b *bytes.Buffer, df DisagreementsFile, renderText RadarTe
 // renderText; fixed-vocabulary fields route through esc/codeSpan/joinOrNone, the
 // same injection defenses the rest of the report uses.
 func WriteRadarItems(b *bytes.Buffer, items []DisagreementItem, heading string, renderText RadarTextRenderer) {
+	if renderText == nil {
+		renderText = esc
+	}
 	for i, it := range items {
 		fmt.Fprintf(b, "\n%s%d. %s — %s (%s) · score %s\n",
 			heading, i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
@@ -474,6 +483,9 @@ func WriteRadarItems(b *bytes.Buffer, items []DisagreementItem, heading string, 
 // formatScore renders the ranking score compactly: an integer-valued score drops
 // the decimal (6, not 6.0); a fractional score keeps two places.
 func formatScore(s float64) string {
+	if math.IsNaN(s) || math.IsInf(s, 0) {
+		return strconv.FormatFloat(s, 'f', 2, 64)
+	}
 	if s == float64(int64(s)) {
 		return strconv.FormatInt(int64(s), 10)
 	}

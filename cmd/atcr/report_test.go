@@ -139,10 +139,12 @@ func TestReportCmd_SystemDirOutputIsUsageError(t *testing.T) {
 	require.Contains(t, out, "must not reference system directories")
 }
 
-func TestReportCmd_EmptyFindingsFileIsUsageError(t *testing.T) {
+func TestReportCmd_EmptyFindingsFileIsOperationalError(t *testing.T) {
+	// A present-but-empty/malformed findings.json is a parse/IO error (exit 1),
+	// not a usage error (exit 2). Exit 2 is reserved for genuinely absent data.
 	isolate(t)
-	fixtureReconciled(t, "r", "") // 0-byte findings.json → malformed, not "no findings"
-	require.Equal(t, 2, execCmd(t, "report", "r"))
+	fixtureReconciled(t, "r", "") // 0-byte findings.json → present but malformed
+	require.Equal(t, 1, execCmd(t, "report", "r"))
 }
 
 func TestReportCmd_SymlinkOutputToSystemDirIsUsageError(t *testing.T) {

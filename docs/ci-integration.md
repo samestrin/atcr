@@ -24,22 +24,6 @@ Notes:
 - **Empty range is a hard error**, never a silent zero-findings pass.
 - With roadmap stage 3 (adversarial verification), `--fail-on` counts only non-refuted findings, and `--require-verified` restricts the gate to skeptic-confirmed findings.
 
-## GitHub Actions sketch
-
-```yaml
-- uses: actions/checkout@v4
-  with:
-    fetch-depth: 0          # full history: atcr needs merge-base
-- name: atcr gate
-  env:
-    OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-  run: |
-    atcr review --base origin/${{ github.base_ref }}
-    atcr reconcile --fail-on high
-```
-
-Shallow checkouts (`fetch-depth: 1`) break merge-base resolution; atcr detects this and says so rather than producing a wrong range.
-
 ## Maintained PR Action
 
 For a first-class pull-request surface — a PR **check** with a findings table

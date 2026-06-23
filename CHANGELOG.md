@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-22
+
+### Fixed
+
+- Distinguished absent from malformed reconciled findings in `readReconciledFindings` with separate exit codes.
+- Treated GitHub API 422 errors from `CreatePRReview` as non-fatal via a new `APIError` type.
+- Replaced raw conclusion literals in `internal/ghaction` with typed constants.
+- Backtick-wrapped `cell()` output in `internal/ghaction/render.go` to neutralize markdown injection.
+- Removed duplicate `FixAttribution` grammar from `internal/ghaction/render.go`.
+- Added fetch-depth and event-type guard steps to the composite GitHub Action.
+- Pinned the `escTrunc` 500-rune cap boundary and closed related false-positive TD citations.
+- Locked in dispatcher reuse and read_file dispatch assertions in executor tests.
+- Documented `FixWarning` and `ToolBudgetBytes` ownership boundaries.
+- Tightened `looksLikeNonGoBraces` documentation and residual config false-positive notes.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [7.5.0] - 2026-06-22
 
 Refined the local syntax guard so it no longer raises a spurious "invalid syntax" warning on a generated fix that is unfenced JSON/config rather than Go. Fix-quality flagging is unchanged for actual Go.

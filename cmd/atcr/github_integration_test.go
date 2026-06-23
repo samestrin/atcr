@@ -31,20 +31,33 @@ func TestGithubCmd_EndToEndFlow(t *testing.T) {
 
 	var mu sync.Mutex
 	var checkBody map[string]any
-	var comments []map[string]any
+	var reviewBody map[string]any
+	var reviewComments []map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		switch r.URL.Path {
-		case "/repos/samestrin/atcr/check-runs":
+		switch {
+		case r.URL.Path == "/repos/samestrin/atcr/check-runs":
 			_ = json.Unmarshal(raw, &checkBody)
-		case "/repos/samestrin/atcr/pulls/12/comments":
-			var c map[string]any
-			_ = json.Unmarshal(raw, &c)
-			comments = append(comments, c)
+		case r.URL.Path == "/repos/samestrin/atcr/pulls/12/comments" && r.Method == http.MethodGet:
+			// List existing comments for dedup — return empty.
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		case r.URL.Path == "/repos/samestrin/atcr/pulls/12/reviews":
+			// Batch review — capture the full body and extract the comments array.
+			_ = json.Unmarshal(raw, &reviewBody)
+			if cs, ok := reviewBody["comments"].([]any); ok {
+				for _, c := range cs {
+					if cm, ok := c.(map[string]any); ok {
+						reviewComments = append(reviewComments, cm)
+					}
+				}
+			}
 		}
 		mu.Unlock()
-		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":1}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -74,20 +87,22 @@ func TestGithubCmd_EndToEndFlow(t *testing.T) {
 	require.NotNil(t, output)
 	assert.Contains(t, output["text"], "internal/auth/token.go:42")
 
-	// Both findings anchor to changed lines, so two inline comments post.
-	require.Len(t, comments, 2, "one inline comment per anchorable finding")
+	// Both findings anchor to changed lines, so two inline comments post as a
+	// single batched review anchored to the PR head SHA.
+	require.NotNil(t, reviewBody, "a batch review must be posted")
+	assert.Equal(t, "headsha42", reviewBody["commit_id"], "review must be anchored to the head SHA")
+	require.Len(t, reviewComments, 2, "one inline comment per anchorable finding")
 
 	// Locate the HIGH finding's comment: anchored at FILE:LINE, AC3-formatted
 	// body with PROBLEM, FIX, and executor attribution parsed from EVIDENCE.
 	var high map[string]any
-	for _, c := range comments {
+	for _, c := range reviewComments {
 		if c["path"] == "internal/auth/token.go" {
 			high = c
 		}
 	}
 	require.NotNil(t, high, "the HIGH finding must produce an inline comment")
 	assert.Equal(t, float64(42), high["line"])
-	assert.Equal(t, "headsha42", high["commit_id"])
 	body, _ := high["body"].(string)
 	assert.Contains(t, body, "ATCR found: JWT signature not verified before claims are read")
 	assert.Contains(t, body, "Fix: Call jwt.Verify before decoding claims")

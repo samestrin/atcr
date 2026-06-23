@@ -177,8 +177,9 @@ func TestRenderDisagreements_GrayZoneEscapesAndTruncates(t *testing.T) {
 	assert.NotContains(t, out, "skep`tic", "literal backtick must not appear in free text")
 	assert.NotContains(t, out, "a`b", "literal backtick must not appear in free text")
 
-	// escTrunc caps long fields.
-	assert.Contains(t, out, "...", "long problem must be truncated")
+	// escTrunc caps long fields at maxTextLen=500 total runes (497 content + "...").
+	assert.Contains(t, out, strings.Repeat("A", 497)+"...", "escTrunc caps at 500 total runes")
+	assert.NotContains(t, out, strings.Repeat("A", 498), "problem content must not exceed 497 runes before the ellipsis")
 
 	// Structural pairing: each position line pairs reviewer, severity, and problem.
 	assert.Contains(t, out, "gre&#96;ta — HIGH:", "reviewer must be paired with severity on one line")
