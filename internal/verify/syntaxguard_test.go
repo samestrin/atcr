@@ -8,12 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// validateGoFixSyntax is the local syntax guard (Epic 7.1): it parses a generated
-// fix with go/parser and returns a non-nil error ONLY when the fix is plausibly Go
-// code yet fails to parse. Free-form prose change-instructions and explicitly
-// non-Go fenced blocks pass through with a nil error so a legitimate fix is never
-// falsely flagged (false positives degrade trust, which is exactly what this guard
-// exists to prevent).
+// validateGoFixSyntax is the local syntax guard (Epic 7.1 / Epic 7.5): it parses a
+// generated fix with go/parser and returns a non-nil error ONLY when the fix is
+// plausibly Go code yet fails to parse. Free-form prose change-instructions and
+// explicitly non-Go fenced blocks pass through with a nil error so a legitimate fix
+// is never falsely flagged (false positives degrade trust, which is exactly what this
+// guard exists to prevent). Epic 7.5 adds suppression for unfenced JSON/config
+// brace-content — see the labelled section below.
 
 func TestValidateGoFixSyntax_ValidFullFile(t *testing.T) {
 	src := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
@@ -58,13 +59,13 @@ func TestValidateGoFixSyntax_InvalidUnfencedCode(t *testing.T) {
 }
 
 func TestValidateGoFixSyntax_InvalidShortAssign(t *testing.T) {
-	// The flagging signal here is the TRAILING OPEN BRACE (blockOpenRe), NOT `:=`.
-	// looksLikeGoCode keys only on declKeyword/blockOpen/blockClose; `:=` is
-	// deliberately not a code signal because inline `:=` appears in prose change-
-	// instructions (see TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged).
-	// This snippet is malformed and flagged because its line ends in an open brace.
+	// `:=` is deliberately not a code signal (inline `:=` appears in prose; see
+	// TestValidateGoFixSyntax_ProseWithInlineShortAssignNotFlagged). This line ends
+	// in a lone { with no matching close-brace line — blockOpenRe alone is no longer
+	// a sufficient code signal (it fires on prose too). This is a documented
+	// conservative-recall boundary: prefer the false negative over a false positive.
 	src := "x := func( {"
-	require.Error(t, validateGoFixSyntax(src), "broken code whose line ends in an open brace must be flagged")
+	assert.NoError(t, validateGoFixSyntax(src), "a line ending in { with no block-close is the conservative-recall boundary — not flagged")
 }
 
 // Characterization of the guard's deliberate conservative-recall boundary: an
@@ -168,9 +169,30 @@ func TestValidateGoFixSyntax_TrailingWhitespaceAfterOpenFenceValid(t *testing.T)
 	assert.NoError(t, validateGoFixSyntax(src), "whitespace after the opening backticks must be tolerated")
 }
 
+// A fence with a space between the opening backticks and the language tag
+// (CommonMark permits ``` go as well as ```go) must still be recognized so a
+// malformed Go block inside it is flagged rather than silently passing.
+func TestValidateGoFixSyntax_SpacedFenceInvalidGoFlagged(t *testing.T) {
+	// The fenced body is broken Go, but without fence extraction the surrounding
+	// backticks hide the code signal and the unfenced text does not look like Go,
+	// so the bug would silently pass.
+	src := "``` go\nreturn a +\n```"
+	err := validateGoFixSyntax(src)
+	require.Error(t, err, "broken Go in a spaced fence must be flagged")
+}
+
 func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 	src := "```python\ndef add(a, b):\n    return a + b\n```"
 	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")
+}
+
+// A non-Go fence whose info string contains trailing words (CommonMark allows an
+// info string after the language tag) must still be recognized as non-Go, even
+// when the fenced body carries Go-like block structure that would otherwise be
+// flagged as broken Go.
+func TestValidateGoFixSyntax_NonGoFenceWithInfoStringNotFlagged(t *testing.T) {
+	src := "```python extra\nfunc add(a, b int) int {\n\treturn a +\n}\n```"
+	assert.NoError(t, validateGoFixSyntax(src), "a non-Go fence with trailing info string must not be flagged by the Go guard")
 }
 
 // blockOpenRe must only fire on a clean block-open line (non-brace content then a
@@ -180,6 +202,36 @@ func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 func TestValidateGoFixSyntax_InlineDoubleBraceLineNotFlagged(t *testing.T) {
 	src := "replace it with x{y{"
 	assert.NoError(t, validateGoFixSyntax(src), "a line with an inner brace must not be treated as a Go block open")
+}
+
+// A prose change-instruction whose LAST character is a lone opening brace satisfies
+// blockOpenRe but must NOT be flagged: blockOpenRe alone is not a reliable code signal
+// when there is no matching close-brace line in the same snippet. This is the primary
+// false-positive case blockOpenRe-co-occurrence guards against.
+func TestValidateGoFixSyntax_ProseLineEndingInLoneBraceNotFlagged(t *testing.T) {
+	src := "Wrap the body in the literal that opens with {"
+	assert.NoError(t, validateGoFixSyntax(src), "a prose change-instruction ending in a lone { must not be flagged as invalid Go")
+}
+
+// Prose change-instructions that begin with a declaration keyword (import, func,
+// var, const, type) must NOT be flagged — "import the sync package" is a valid
+// instruction, not broken Go. Only `package <ident>` is an unambiguous Go signal.
+func TestValidateGoFixSyntax_ProseDeclKeywordsNotFlagged(t *testing.T) {
+	cases := []struct {
+		desc string
+		src  string
+	}{
+		{"import as prose", "import the sync package"},
+		{"func as prose", "func should always return an error"},
+		{"var as prose", "var names should be shorter and more descriptive"},
+		{"type as prose", "type the value into the buffer before returning"},
+		{"const as prose", "const values should be defined at the package level"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			assert.NoError(t, validateGoFixSyntax(tc.src), "prose instruction starting with %q must not be flagged", tc.src[:6])
+		})
+	}
 }
 
 func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
@@ -218,6 +270,23 @@ func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
 		"the returned error should be a go/parser syntax error, got: %v", err)
 }
 
+// When parseGoFix wraps src in a synthetic prefix ("package p\n" for the decl
+// strategy, two lines for the stmt strategy), parser error positions are relative
+// to that synthetic file, not to src. The error returned to the caller must not
+// carry a position that references a synthetic wrapper line beyond the bounds of src.
+// Specifically: src here has 3 lines; the decl-strategy wrapper adds 1 line prefix
+// ("package p"), making its line 3 correspond to src line 2. A raw wrapped-error
+// message starts with a digit (the line number) — after the fix it must start with
+// the bare diagnostic word (no position prefix).
+func TestValidateGoFixSyntax_ErrorPositionNotWrapperRelative(t *testing.T) {
+	src := "func add(a, b int) int {\n\treturn a +\n}" // broken at src line 2
+	err := validateGoFixSyntax(src)
+	require.Error(t, err, "broken Go must be flagged")
+	// Before fix: err.Error() = "3:13: expected operand, found '}'" (wrapper-relative)
+	// After fix:  err.Error() = "expected operand, found '}'" (message only)
+	assert.NotRegexp(t, `^\d`, err.Error(), "error must not start with a line number from the synthetic wrapper")
+}
+
 // --- Epic 7.5: unfenced non-Go (JSON/config) brace-content suppression ---
 
 // AC1: an unfenced multi-line JSON object with block braces must not be flagged. Its
@@ -225,20 +294,48 @@ func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
 // not code — the residual false positive Epic 7.5 closes.
 func TestValidateGoFixSyntax_UnfencedJSONObjectNotFlagged(t *testing.T) {
 	src := "{\n  \"timeout\": 30,\n  \"retries\": 3\n}"
-	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON object must not be flagged as invalid Go")
+	require.NoError(t, validateGoFixSyntax(src), "an unfenced JSON object must not be flagged as invalid Go")
+}
+
+// AC1 boundary: an empty JSON object has no block-brace lines and is not flagged.
+func TestValidateGoFixSyntax_EmptyJSONObjectNotFlagged(t *testing.T) {
+	src := "{}"
+	require.NoError(t, validateGoFixSyntax(src), "an empty JSON object must not be flagged as invalid Go")
+}
+
+// AC1 boundary: a trailing-comma JSON object is still JSON-shaped (quoted-key line)
+// and is suppressed rather than flagged invalid_syntax.
+func TestValidateGoFixSyntax_TrailingCommaJSONObjectNotFlagged(t *testing.T) {
+	src := "{\n  \"timeout\": 30,\n  \"retries\": 3,\n}"
+	require.NoError(t, validateGoFixSyntax(src), "a trailing-comma JSON object must not be flagged as invalid Go")
 }
 
 // AC1: nested unfenced JSON is likewise suppressed.
 func TestValidateGoFixSyntax_UnfencedNestedJSONNotFlagged(t *testing.T) {
 	src := "{\n  \"server\": {\n    \"host\": \"localhost\",\n    \"port\": 8080\n  }\n}"
-	assert.NoError(t, validateGoFixSyntax(src), "an unfenced nested JSON object must not be flagged")
+	require.NoError(t, validateGoFixSyntax(src), "an unfenced nested JSON object must not be flagged")
 }
 
 // AC1: a JSON array of objects (leading `[`, quoted-key members) is also suppressed.
 func TestValidateGoFixSyntax_UnfencedJSONArrayNotFlagged(t *testing.T) {
 	src := "[\n  {\n    \"name\": \"a\",\n    \"on\": true\n  }\n]"
-	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON array of objects must not be flagged")
+	require.NoError(t, validateGoFixSyntax(src), "an unfenced JSON array of objects must not be flagged")
 }
+
+// AC1 boundary: a single-key JSON object whose only key contains an escaped quote
+// must still be recognized as JSON-shaped and suppressed, not flagged invalid_syntax.
+func TestValidateGoFixSyntax_UnfencedJSONObjectEscapedQuoteKeyNotFlagged(t *testing.T) {
+	src := "{\n  \"a\\\"b\": 1\n}"
+	require.NoError(t, validateGoFixSyntax(src), "a single-key JSON object with an escaped-quote key must not be flagged")
+}
+
+// AC1 residual: unquoted-key config (JSON5/YAML/TOML) with block braces is an
+// accepted residual false positive — jsonKeyLineRe requires a double-quoted key, so
+// bare `key: value` or `key = value` forms are not suppressed and may still be
+// flagged invalid_syntax. This is a known limitation of the quoted-key anchor; it
+// keeps the guard conservative (false-negative-preferred per AC4) without widening
+// suppression to bare identifier patterns that appear in Go struct literals, labels,
+// and map entries. A future reader should not assume all unfenced config is covered.
 
 // AC2 guard: the JSON suppression must only reduce flagging — broken Go with block
 // braces but NO JSON quoted-key shape must STILL be flagged (nothing previously
@@ -246,6 +343,16 @@ func TestValidateGoFixSyntax_UnfencedJSONArrayNotFlagged(t *testing.T) {
 func TestValidateGoFixSyntax_BrokenGoWithBracesStillFlagged_75(t *testing.T) {
 	src := "func add(a, b int) int {\n\treturn a +\n}"
 	require.Error(t, validateGoFixSyntax(src), "JSON suppression must not spare brace-structured broken Go")
+}
+
+// The size cap must apply to the extracted code, not the raw fix, so a small
+// fenced invalid-Go snippet is still validated even when wrapped in a huge prose
+// blob that would otherwise exceed the cap.
+func TestValidateGoFixSyntax_SizeCapAppliesToExtractedCode(t *testing.T) {
+	bigProse := strings.Repeat("This is a sentence. ", 20000) // >256KB
+	src := bigProse + "\n```go\nfunc add(\n```\n" + bigProse
+	err := validateGoFixSyntax(src)
+	require.Error(t, err, "invalid Go inside a small fence must be flagged even when wrapped in huge prose")
 }
 
 // AC2 boundary: the JSON anchor is a quoted key at LINE START. A broken Go switch
@@ -263,17 +370,45 @@ func TestValidateGoFixSyntax_BrokenGoSwitchStringCaseStillFlagged(t *testing.T) 
 // false positive. Do NOT "fix" this by narrowing the suppression; it would risk
 // reintroducing the JSON false positive. (A VALID such literal parses cleanly and
 // never reaches this path.)
-func TestValidateGoFixSyntax_BrokenStringKeyedMapSuppressed_AcceptedFalseNegative(t *testing.T) {
+func TestValidateGoFixSyntax_BrokenGoMapSuppressed(t *testing.T) {
 	src := "{\n  \"a\": 1,\n  \"b\":\n}" // broken (missing value) but JSON-shaped
-	assert.NoError(t, validateGoFixSyntax(src),
+	require.NoError(t, validateGoFixSyntax(src),
 		"a broken JSON-shaped fix is suppressed — the accepted conservative-recall false negative")
 }
 
 // looksLikeNonGoBraces is the suppression predicate: true only for JSON/config object
 // shapes (a line beginning with a quoted key) with no Go declaration keyword.
 func TestLooksLikeNonGoBraces(t *testing.T) {
-	assert.True(t, looksLikeNonGoBraces("{\n  \"k\": 1\n}"), "quoted-key object is non-Go")
-	assert.False(t, looksLikeNonGoBraces("func f() {\n\treturn 1\n}"), "a Go func is not non-Go braces")
-	assert.False(t, looksLikeNonGoBraces("type T struct {\n\tX int\n}"), "a Go type decl is not non-Go braces")
-	assert.False(t, looksLikeNonGoBraces("switch s {\ncase \"x\":\n}"), "a quoted case label does not start the line")
+	tests := []struct {
+		name     string
+		src      string
+		expected bool
+	}{
+		{"quoted-key object is non-Go", "{\n  \"k\": 1\n}", true},
+		{"empty-key object is non-Go", "{\n  \"\": 1\n}", true},
+		{"unicode-key object is non-Go", "{\n  \"café\": 1\n}", true},
+		{"escaped-quote key is non-Go", "{\n  \"a\\\"b\": 1\n}", true},
+		{"a Go func is not non-Go braces", "func f() {\n\treturn 1\n}", false},
+		{"a Go type decl is not non-Go braces", "type T struct {\n\tX int\n}", false},
+		{"a quoted case label does not start the line", "switch s {\ncase \"x\":\n}", false},
+		// Go keyword overrides JSON-key match: both must hold for suppression.
+		{"json key AND Go keyword: keyword wins", "func init() {\n  \"k\": 1\n}", false},
+		// Non-declaration Go keywords (if/return/range) are NOT in declKeywordRe, so
+		// their presence does not override the JSON-key signal. Content with both a
+		// JSON-key line and non-declaration control flow is still suppressed as non-Go.
+		{"mixed: json key + non-declaration Go flow (if/return) is suppressed", "{\n  \"timeout\": 30\n  if x > 0 { return x }\n}", true},
+		// Accepted residual false positive per the 7.5 quoted-key anchoring decision
+		// (syntaxguard.go:62): unfenced YAML/TOML/JSON5 with bare unquoted keys (e.g.
+		// `key: value`) is not suppressed because jsonKeyLineRe requires a double-quoted
+		// key at line start — bare ident: patterns also appear in Go struct literals,
+		// labels, and map entries, so widening suppression to cover them would add false
+		// negatives. validateGoFixSyntax may return a spurious invalid_syntax flag for
+		// this class; that is the accepted narrow limitation per AC4 false-negative policy.
+		{"bare unquoted key is not non-Go braces", "{\n  timeout: 30\n  retries: 3\n}", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, looksLikeNonGoBraces(tt.src))
+		})
+	}
 }

@@ -155,6 +155,10 @@ func (r Result) JSONFindings() []JSONFinding {
 			PathValid:      m.PathValid,
 			PathWarning:    m.PathWarning,
 			PathSuggestion: m.PathSuggestion,
+			// FixWarning intentionally not copied: it is set by the verify fix phase
+			// (executor.go generateFixes) after reconcile, so the reconcile path owns
+			// only the pre-fix Merged state. Copying it here would change behavior for
+			// any future path that round-trips findings through JSONFindings().
 		})
 	}
 	return out
@@ -462,13 +466,19 @@ func codeSpan(file string, line int) string {
 	return fmt.Sprintf("`%s:%d`", file, line)
 }
 
-// esc makes a free-text field safe in markdown: newlines are flattened (so a
+// Esc makes a free-text field safe in markdown: newlines are flattened (so a
 // field cannot inject markdown structure), HTML metacharacters are escaped
 // (so raw HTML never renders), and backticks are escaped so reviewer-controlled
-// fields cannot open an inline code span inside a normal bullet.
-func esc(s string) string {
+// fields cannot open an inline code span inside a normal bullet. It is the
+// single source of truth for this escaping contract; report/render.go's esc
+// delegates here so the two packages cannot drift apart.
+func Esc(s string) string {
 	return strings.ReplaceAll(html.EscapeString(newlineFlattener.Replace(s)), "`", "&#96;")
 }
+
+// esc is the package-local alias for Esc, kept so existing callers in this
+// package continue to compile unchanged.
+func esc(s string) string { return Esc(s) }
 
 // joinOrNone joins names with ", " or returns "(none)" for an empty list.
 func joinOrNone(names []string) string {

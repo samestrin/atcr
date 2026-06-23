@@ -1,0 +1,3 @@
+HIGH|internal/verify/executor.go:462|Predictable prompt-injection sentinel|Use crypto/rand for sentinel generation|security|2|`sentinel := fmt.Sprintf("finding-%08x", rand.Uint32())` uses math/rand|bruce
+MEDIUM|internal/verify/executor.go:376|Tripped budget may be treated as failure|Confirm StatusOK is returned when budget is tripped|correctness|5|Non-OK status on budget trip bypasses fix parser despite AC3|bruce
+LOW|internal/verify/executor.go:129|Agent mode bypasses system_prompt/rules config|Document that agent mode uses dedicated prompt|maintainability|1|buildExecutorAgentPrompt ignores executor SystemPrompt and Rules|bruce

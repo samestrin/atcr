@@ -1,0 +1,1 @@
+LOW|internal/verify/executor.go:364|math/rand used for prompt injection delimiter|Use crypto/rand for unpredictable sentinel values|security|5|rand.Uint32() generates sentinel for untrusted data|greta

@@ -1,0 +1,96 @@
+{
+  "reviewers": [
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 22645,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 91753,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 93410,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 96035,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 135312,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 192156,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 250480,
+      "tdLineCount": 4
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 274545,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 294184,
+      "tdLineCount": 4
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 388354,
+      "tdLineCount": 15
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "timeout",
+      "durationMs": 600003,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded (fallback dax-local also failed: API error (400): litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 0 output tokens and your prompt contains at least 16385 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=16385)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=llm-large\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 0 output tokens and your prompt contains at least 16385 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=16385)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times: API error (400): litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 0 output tokens and your prompt contains at least 16385 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=16385)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}]. Received Model Group=llm-large\nAvailable Model Group Fallbacks=None\nError doing the fallback: litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - This model's maximum context length is 16384 tokens. However, you requested 0 output tokens and your prompt contains at least 16385 input tokens, for a total of at least 16385 tokens. Please reduce the length of the input prompt or the number of requested output tokens. (parameter=input_tokens, value=16385)\nmodel=llm-large. context_window_fallbacks=None. fallbacks=[{'kimi-code': ['kimi-k2.6']}].\n\nSet 'context_window_fallback' - https://docs.litellm.ai/docs/routing#fallbacksNo fallback model group found for original model_group=llm-large. Fallbacks=[{'kimi-code': ['kimi-k2.6']}] LiteLLM Retried: 2 times)"
+    },
+    {
+      "agent": "archer-backup",
+      "model": "mellum2",
+      "status": "ok",
+      "durationMs": 13018,
+      "tdLineCount": 35
+    }
+  ],
+  "totalFindings": 64,
+  "partial": true,
+  "totalDurationMs": 613023,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-22T17:37:22-07:00"
+}

@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-22-a5324a
-question: "For UNDER_ENGINEERING TD items whose fix is purely a test assertion change, is the over-simplification gate's test_only/hard flag a blocker or a structural false positive?"
+id: mem-2026-06-22-c5103b
+question: "Should looksLikeNonGoBraces in syntaxguard.go be extended to detect unquoted-key config (YAML/TOML) as a non-Go signal?"
 created: 2026-06-22
 last_retrieved: ""
 sprints: []
-files: [internal/registry/executor_config_test.go]
-tags: [td-clarification, td-only, UNDER_ENGINEERING, over-simplification-gate, test_only, resolve-td]
+files: [internal/verify/syntaxguard.go, internal/verify/syntaxguard_test.go]
+tags: [td-clarification, td-only, syntaxguard, looksLikeNonGoBraces, epic-7.5, conservative-recall, false-positive]
 retrievals: 0
 status: active
-type: clarifications/td-only/2026-06-22
+type: clarifications skill 2026-06-22
 ---
 
-# For UNDER_ENGINEERING TD items whose fix is purely a test as
+# Should looksLikeNonGoBraces in syntaxguard.go be extended to
 
 ## Decision
 
-It is a structural false positive. UNDER_ENGINEERING items by definition address test quality, not production correctness. When the TD row's Fix description says to add or strengthen an assertion, a test-only commit is the complete and intended resolution. The over-simplification gate fires because it cannot distinguish between a reward-hack (weakened/narrowed test) and a legitimate test-quality fix — the UNDER_ENGINEERING category is the signal that the test-only change is correct. Confirm the fix matches the TD Fix column verbatim and that the test passes; then mark the row [x]. No production change is needed unless the problem statement also cites a missing implementation.
+No production code change needed. Epic 7.5 deliberately anchors looksLikeNonGoBraces on QUOTED keys only (jsonKeyLineRe: `^\s*"(?:[^"\\]|\\.)*"\s:`). Unquoted bare `ident:` is intentionally excluded because Go uses it in struct literals, map entries, labels, and case arms — adding detection for unquoted keys would risk misclassifying valid Go as non-Go. The residual false positive (unfenced YAML/TOML with unquoted keys + block braces flagged invalid_syntax) is the accepted narrow limitation under the 7.5 conservative-recall policy. The correct fix is a comment in syntaxguard_test.go noting this boundary, not a production change. See internal/verify/syntaxguard.go:59-66 (jsonKeyLineRe) and :249-251 (looksLikeNonGoBraces).
 
 ## Rationale
 
@@ -27,4 +27,5 @@ It is a structural false positive. UNDER_ENGINEERING items by definition address
 
 ## Code Reference
 
-- internal/registry/executor_config_test.go
+- internal/verify/syntaxguard.go
+- internal/verify/syntaxguard_test.go

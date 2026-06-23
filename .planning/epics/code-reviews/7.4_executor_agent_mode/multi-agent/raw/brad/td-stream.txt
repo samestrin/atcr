@@ -1,0 +1,1 @@
+LOW|internal/verify/executor.go:383|Global math/rand used for prompt sentinel|Use crypto/rand or explicit rand.Source|maintainability|5|rand.Uint32() relies on global state|bruce

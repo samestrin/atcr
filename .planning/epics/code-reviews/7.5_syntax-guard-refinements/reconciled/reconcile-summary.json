@@ -1,0 +1,13 @@
+{
+  "sources": [
+    "claude",
+    "multi-agent"
+  ],
+  "raw_count": 533,
+  "merged_count": 523,
+  "clusters_collapsed": "533 raw findings clustered into 511 merged clusters; 12 needs-review members split into separate findings \u2192 523 final rows",
+  "severity_disagreements": 5,
+  "intent_annotations": 0,
+  "claude_role": "intent_verifier",
+  "timestamp": "2026-06-23T01:10:40.192296+00:00"
+}

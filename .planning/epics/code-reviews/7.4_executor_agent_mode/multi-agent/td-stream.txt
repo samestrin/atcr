@@ -1,0 +1,67 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|internal/verify/executor.go:344|Potential for predictable sentinel in prompt|Use a cryptographically secure random generator instead of math/rand|security|15|fmt.Sprintf("finding-%08x", rand.Uint32())|otto
+HIGH|internal/verify/executor.go:462|Predictable prompt-injection sentinel|Use crypto/rand for sentinel generation|security|2|`sentinel := fmt.Sprintf("finding-%08x", rand.Uint32())` uses math/rand|bruce
+MEDIUM|internal/verify/executor.go:376|Tripped budget may be treated as failure|Confirm StatusOK is returned when budget is tripped|correctness|5|Non-OK status on budget trip bypasses fix parser despite AC3|bruce
+LOW|internal/verify/executor.go:129|Agent mode bypasses system_prompt/rules config|Document that agent mode uses dedicated prompt|maintainability|1|buildExecutorAgentPrompt ignores executor SystemPrompt and Rules|bruce
+LOW|internal/verify/executor.go:364|math/rand used for prompt injection delimiter|Use crypto/rand for unpredictable sentinel values|security|5|rand.Uint32() generates sentinel for untrusted data|greta
+MEDIUM|internal/verify/executor_agent_test.go:230|Test uses Confidence: "HIGH" without Evidence: "confidence HIGH" — may fail eligibility check|other tests use ConfidenceVerified + Evidence pattern|correctness|5|TestRunVerify_AgentMode_PopulatesFixEndToEnd sets Confidence:"HIGH", no Evidence|bruce
+LOW|internal/verify/executor_agent_test.go:265|Test doesn't verify sentinel tags wrap finding|sentinel is the injection guard; should be asserted|maintainability|5|TestBuildExecutorAgentPrompt_ContainsFindingAndSchema checks content but not sentinel wrapping|bruce
+MEDIUM|internal/verify/executor_agent_test.go:230|Finding uses Confidence: "HIGH" without the Evidence: "...confidence HIGH" pattern other tests rely on|Use ConfidenceVerified plus the "Found by bruce; confidence HIGH" evidence string that other eligible-finding tests use|correctness|5|TestRunVerify_AgentMode_PopulatesFixEndToEnd sets Confidence:"HIGH", no Evidence; eligibleForFix may reject it and the test will silently not exercise the agent path|bruce
+LOW|internal/verify/executor_agent_test.go:265|TestBuildExecutorAgentPrompt_ContainsFindingAndSchema does not assert the sentinel tags actually wrap the finding|Add assertions that the open and close sentinel tags appear and the finding content sits between them|maintainability|5|TestBuildExecutorAgentPrompt_ContainsFindingAndSchema checks content presence but never verifies the <sentinel>...</sentinel> injection guard actually wraps it|bruce
+LOW|internal/verify/executor.go:383|Global math/rand used for prompt sentinel|Use crypto/rand or explicit rand.Source|maintainability|5|rand.Uint32() relies on global state|bruce
+MEDIUM|internal/verify/executor.go:453|Partial Settings struct may miss fields|Pass full registry.Settings or verify EffectiveExecutorTimeoutSecs only uses TimeoutSecs|correctness|10|registry.Settings{TimeoutSecs: sharedTimeoutSecs} omits other settings fields|bruce
+LOW|internal/verify/executor.go:71|Misleading comment about cc availability|Fix comment: cc is non-nil only when skeptic harness built, not when fix eligible|maintainability|5|comment says "at least one skeptic ran or a fix was eligible"|bruce
+LOW|internal/verify/executor.go:133|Fallback log doesn't specify missing component|Log whether cc or disp is nil for better debugging|maintainability|5|"dispatcher/chat unavailable" doesn't distinguish which is missing|bruce
+LOW|internal/verify/executor.go:387|Weak randomness for injection sentinel|Use crypto/rand for sentinel generation|security|5|rand.Uint32() used for prompt injection guard sentinel|bruce
+LOW|internal/verify/executor.go:7|Use of legacy math/rand package|Use math/rand/v2 in Go 1.22+|maintainability|5|imported math/rand, deprecated since Go 1.22 in favor of math/rand/v2|atcr-reviewer
+LOW|internal/verify/executor.go:447|32-bit sentinel for prompt-injection defense uses weak RNG|Use crypto/rand or math/rand/v2 for stronger entropy|security|5|rand.Uint32() only provides 2^32 distinct sentinels; trivial to brute-force over many attempts|atcr-reviewer
+LOW|internal/verify/executor.go:7|Use of legacy math/rand package, prefer math/rand/v2 in Go 1.22+|Replace math/rand import with math/rand/v2 and update rand.Uint32() call|maintainability|5|legacy math/rand is auto-seeded but Go 1.22+ recommends math/rand/v2|atcr-reviewer
+LOW|internal/verify/executor.go:410|32-bit sentinel for prompt-injection defense uses math/rand.Uint32|Use crypto/rand for higher entropy if defense-in-depth is desired|security|5|rand.Uint32() yields 2^32 possible sentinel tags; sufficient but not defense-in-depth|atcr-reviewer
+LOW|internal/verify/executor.go:7|Use of legacy math/rand package, prefer math/rand/v2|Replace math/rand with math/rand/v2.Uint32()|maintainability|5|imported math/rand; Go 1.22+ recommends math/rand/v2|atcr-reviewer
+LOW|internal/verify/executor.go:415|32-bit sentinel for prompt injection uses math/rand|Use crypto/rand or math/rand/v2 for stronger entropy|security|5|sentinel = fmt.Sprintf("finding-%08x", rand.Uint32()) yields 2^32 space|atcr-reviewer
+LOW|internal/verify/executor.go:7|Legacy math/rand with 32-bit sentinel|Use math/rand/v2 or crypto/rand for stronger randomness|maintainability|5|sentinel = rand.Uint32() yields 2^32 space; legacy package in Go 1.22+|atcr-reviewer
+LOW|internal/verify/executor.go:7|Legacy math/rand import|Use math/rand/v2 in Go 1.22+|maintainability|5|imported math/rand; legacy package in modern Go|atcr-reviewer
+LOW|internal/verify/executor.go:421|32-bit sentinel for prompt-injection defense|Use crypto/rand or math/rand/v2 for stronger entropy|security|5|sentinel := fmt.Sprintf("finding-%08x", rand.Uint32()) - 2^32 space|atcr-reviewer
+LOW|internal/verify/executor.go:7|Legacy math/rand import in modern Go code|Replace with math/rand/v2|maintainability|5|"math/rand" added to imports; Go 1.22+ recommends v2|atcr-reviewer
+LOW|internal/verify/executor.go:421|32-bit sentinel for prompt-injection defense|Use crypto/rand or math/rand/v2 for stronger entropy|security|5|sentinel := fmt.Sprintf("finding-%08x", rand.Uint32()) - 2^32 space, low risk in practice|atcr-reviewer
+LOW|internal/verify/executor.go:7|Legacy math/rand import; Go 1.22+ recommends math/rand/v2|Replace with math/rand/v2 and use v2.Uint32()|maintainability|5|"math/rand" import added; v2 is cleaner and preferred|atcr-reviewer
+LOW|internal/verify/executor.go:413|32-bit sentinel for prompt-injection defense|Use crypto/rand or larger space|security|5|fmt.Sprintf("finding-%08x", rand.Uint32()) - 2^32 entropy|atcr-reviewer
+LOW|internal/verify/executor.go:7|Legacy math/rand import; Go 1.22+ recommends math/rand/v2|Replace with math/rand/v2 and call v2.Uint32()|maintainability|5|"math/rand" import added to executor.go; v2 is the cleaner, recommended API|atcr-reviewer
+LOW|internal/verify/executor.go:413|32-bit sentinel for prompt-injection defense uses math/rand.Uint32|Use crypto/rand or math/rand/v2 for stronger entropy|security|5|sentinel := fmt.Sprintf("finding-%08x", rand.Uint32()) yields only 2^32 distinct tags|atcr-reviewer
+MEDIUM|internal/verify/executor.go:129|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+MEDIUM|internal/verify/executor.go:135|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+LOW|internal/verify/log.go:45|Unhandled error case|Log error and return default value|maintainability|2|error from logger not handled|bruce
+MEDIUM|internal/registry/config.go:85|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/registry/config.go:92|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/verify/executor.go:210|Improper error handling|Swallow errors without logging|error-handling|10|errors from callExecutor are ignored|bruce
+HIGH|internal/verify/executor.go:235|Improper error handling|Swallow errors without logging|error-handling|10|errors from invokeExecutor are ignored|bruce
+MEDIUM|internal/verify/pipeline.go:260|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+LOW|internal/verify/pipeline.go:275|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+HIGH|internal/registry/executor_config_test.go:510|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/registry/executor_config_test.go:525|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/verify/executor_test.go:102|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from callExecutor are ignored|bruce
+MEDIUM|internal/verify/executor_test.go:132|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from invokeExecutor are ignored|bruce
+LOW|internal/verify/executor_test.go:182|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from callExecutor are ignored|bruce
+MEDIUM|internal/verify/executor_agent_test.go:129|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+MEDIUM|internal/verify/executor_agent_test.go:163|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+HIGH|internal/verify/executor_agent_test.go:209|Improper error handling|Swallow errors without logging|error-handling|10|errors from invokeExecutor are ignored|bruce
+HIGH|internal/verify/executor_agent_test.go:251|Improper error handling|Swallow errors without logging|error-handling|10|errors from invokeExecutor are ignored|bruce
+MEDIUM|internal/verify/executor_agent_test.go:295|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from invokeExecutor are ignored|bruce
+LOW|internal/verify/pipeline_test.go:105|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+LOW|internal/verify/pipeline_test.go:120|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+HIGH|internal/registry/executor_config_test.go:615|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/registry/executor_config_test.go:630|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/registry/executor_config_test.go:685|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from validateExecutor are ignored|bruce
+MEDIUM|internal/registry/executor_config_test.go:700|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from validateExecutor are ignored|bruce
+LOW|internal/registry/executor_config_test.go:755|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from validateExecutor are ignored|bruce
+MEDIUM|internal/verify/verify_test.go:102|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from generateFixes are ignored|bruce
+MEDIUM|internal/verify/verify_test.go:132|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from generateFixes are ignored|bruce
+LOW|internal/verify/verify_test.go:182|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from generateFixes are ignored|bruce
+MEDIUM|internal/verify/verify_test.go:212|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from generateFixes are ignored|bruce
+LOW|internal/verify/verify_test.go:242|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from generateFixes are ignored|bruce
+HIGH|internal/registry/registry_test.go:55|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/registry/registry_test.go:70|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/registry/registry_test.go:125|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from LoadRegistry are ignored|bruce
+MEDIUM|internal/registry/registry_test.go:140|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from LoadRegistry are ignored|brace

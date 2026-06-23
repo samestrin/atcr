@@ -1,0 +1,35 @@
+MEDIUM|internal/verify/executor.go:129|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+MEDIUM|internal/verify/executor.go:135|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+LOW|internal/verify/log.go:45|Unhandled error case|Log error and return default value|maintainability|2|error from logger not handled|bruce
+MEDIUM|internal/registry/config.go:85|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/registry/config.go:92|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/verify/executor.go:210|Improper error handling|Swallow errors without logging|error-handling|10|errors from callExecutor are ignored|bruce
+HIGH|internal/verify/executor.go:235|Improper error handling|Swallow errors without logging|error-handling|10|errors from invokeExecutor are ignored|bruce
+MEDIUM|internal/verify/pipeline.go:260|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+LOW|internal/verify/pipeline.go:275|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+HIGH|internal/registry/executor_config_test.go:510|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/registry/executor_config_test.go:525|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/verify/executor_test.go:102|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from callExecutor are ignored|bruce
+MEDIUM|internal/verify/executor_test.go:132|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from invokeExecutor are ignored|bruce
+LOW|internal/verify/executor_test.go:182|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from callExecutor are ignored|bruce
+MEDIUM|internal/verify/executor_agent_test.go:129|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+MEDIUM|internal/verify/executor_agent_test.go:163|Missing input validation|Add length check on user input|security|5|user input passed directly to query|bruce
+HIGH|internal/verify/executor_agent_test.go:209|Improper error handling|Swallow errors without logging|error-handling|10|errors from invokeExecutor are ignored|bruce
+HIGH|internal/verify/executor_agent_test.go:251|Improper error handling|Swallow errors without logging|error-handling|10|errors from invokeExecutor are ignored|bruce
+MEDIUM|internal/verify/executor_agent_test.go:295|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from invokeExecutor are ignored|bruce
+LOW|internal/verify/pipeline_test.go:105|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+LOW|internal/verify/pipeline_test.go:120|Resource leak|Unbounded goroutines|performance|15|goroutine not bounded by semaphore|bruce
+HIGH|internal/registry/executor_config_test.go:615|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/registry/executor_config_test.go:630|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/registry/executor_config_test.go:685|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from validateExecutor are ignored|bruce
+MEDIUM|internal/registry/executor_config_test.go:700|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from validateExecutor are ignored|bruce
+LOW|internal/registry/executor_config_test.go:755|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from validateExecutor are ignored|bruce
+MEDIUM|internal/verify/verify_test.go:102|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from generateFixes are ignored|bruce
+MEDIUM|internal/verify/verify_test.go:132|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from generateFixes are ignored|bruce
+LOW|internal/verify/verify_test.go:182|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from generateFixes are ignored|bruce
+MEDIUM|internal/verify/verify_test.go:212|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from generateFixes are ignored|bruce
+LOW|internal/verify/verify_test.go:242|Incorrect error handling|Swallow errors without logging|error-handling|2|errors from generateFixes are ignored|bruce
+HIGH|internal/registry/registry_test.go:55|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+HIGH|internal/registry/registry_test.go:70|Missing input validation|Add bounds check for integer input|security|3|integer input not validated|bruce
+MEDIUM|internal/registry/registry_test.go:125|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from LoadRegistry are ignored|bruce
+MEDIUM|internal/registry/registry_test.go:140|Incorrect error handling|Swallow errors without logging|error-handling|5|errors from LoadRegistry are ignored|brace

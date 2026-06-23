@@ -1,0 +1,1 @@
+LOW|internal/verify/syntaxguard.go:58|Inefficient regex for large inputs|Use a non-greedy match or limit input size|performance|15|`[^"]*` in `jsonKeyLineRe` can cause catastrophic backtracking on long lines without quotes|otto

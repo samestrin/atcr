@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/executor.go:344|Potential for predictable sentinel in prompt|Use a cryptographically secure random generator instead of math/rand|security|15|fmt.Sprintf("finding-%08x", rand.Uint32())|otto

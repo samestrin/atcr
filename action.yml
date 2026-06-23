@@ -37,10 +37,31 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Required consumer workflow permissions. This composite action cannot
+    # declare permissions: itself, so the calling workflow MUST set:
+    #   permissions:
+    #     checks: write                       # required for all runs
+    #     pull-requests: write                # only when inline-comments: true
+    # Missing permissions will surface as a 403 from the `atcr github` step.
+
+    # Guard: fail early on non-PR triggers when no explicit base-ref is provided,
+    # before spending CI time on Go setup and the atcr binary build.
+    - name: Check event type
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF_INPUT: ${{ inputs.base-ref }}
+      run: |
+        if [ "$EVENT_NAME" != "pull_request" ] && [ -z "$BASE_REF_INPUT" ]; then
+          echo "Error: this action is designed for pull_request events." >&2
+          echo "For other event types, supply 'base-ref' explicitly to specify the diff target." >&2
+          exit 1
+        fi
+
     # Build atcr from the action's own checkout (github.action_path), not the
     # consumer repo. The binary then runs against the consumer checkout below.
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
@@ -56,6 +77,23 @@ runs:
         ATCR_BIN: ${{ github.action_path }}/bin/atcr
       run: go build -o "$ATCR_BIN" ./cmd/atcr
 
+    # Guard: verify origin/<base> is present so range resolution works.
+    # A shallow checkout (fetch-depth: 1) lacks the base ref and causes a deep
+    # range-resolution failure inside atcr; surfacing it here gives a clear fix.
+    - name: Check fetch depth
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        BASE_REF_INPUT: ${{ inputs.base-ref }}
+        PR_BASE_REF: ${{ github.base_ref }}
+      run: |
+        BASE_REF="${BASE_REF_INPUT:-origin/${PR_BASE_REF}}"
+        if [ -n "$BASE_REF" ] && ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
+          echo "Error: '$BASE_REF' is not present in the checkout." >&2
+          echo "Add 'fetch-depth: 0' to your actions/checkout step so atcr can resolve the merge-base." >&2
+          exit 1
+        fi
+
     # Run the review against the consumer's checkout (github.workspace). The
     # consumer workflow MUST check out with fetch-depth: 0 so atcr can resolve
     # the merge-base; a shallow checkout breaks range resolution.
@@ -69,7 +107,13 @@ runs:
         PR_BASE_REF: ${{ github.base_ref }}
       run: |
         BASE_REF="$BASE_REF_INPUT"
-        if [ -z "$BASE_REF" ]; then BASE_REF="origin/$PR_BASE_REF"; fi
+        if [ -z "$BASE_REF" ]; then
+          if [ -z "$PR_BASE_REF" ]; then
+            echo "Error: base-ref is required when the triggering event is not pull_request" >&2
+            exit 1
+          fi
+          BASE_REF="origin/$PR_BASE_REF"
+        fi
         "$ATCR_BIN" review --base "$BASE_REF"
 
     - name: atcr reconcile
@@ -90,9 +134,9 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         ATCR_BIN: ${{ github.action_path }}/bin/atcr
         REPO: ${{ github.repository }}
-        # Prefer the PR head SHA; fall back to github.sha so a non-pull_request
-        # trigger fails with atcr's own clear error rather than an empty --sha.
-        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        # Use the merge commit SHA — consistently available and unambiguous for
+        # GitHub's Checks API across push, pull_request, and fork PR events.
+        HEAD_SHA: ${{ github.sha }}
         CHECK_NAME: ${{ inputs.check-name }}
         FAIL_ON: ${{ inputs.fail-on }}
         INLINE: ${{ inputs.inline-comments }}
@@ -103,6 +147,10 @@ runs:
           ARGS+=(--fail-on "$FAIL_ON")
         fi
         if [ "$INLINE" = "true" ]; then
+          if [ -z "$PR_NUMBER" ]; then
+            echo "Error: inline-comments requires a pull_request event" >&2
+            exit 1
+          fi
           ARGS+=(--inline-comments --pr "$PR_NUMBER")
         fi
         "$ATCR_BIN" "${ARGS[@]}"

@@ -1,0 +1,3 @@
+HIGH|internal/verify/syntaxguard.go:60|Regex doesn't handle escaped quotes in JSON keys|Add support for escaped quotes in jsonKeyLineRe|correctness|10|`"[^"]*"` fails on `"key\"with\"escaped":`|bruce
+MEDIUM|internal/verify/syntaxguard.go:175|looksLikeNonGoBraces called before block brace check but after decl keyword|Order is correct per design but could be clearer|maintainability|5|Function order matches comment but logic flow is dense|bruce
+LOW|internal/verify/syntaxguard_test.go:252|Test name references AC4 but doesn't assert conservative-recall policy|Add comment linking to AC4 explicitly|maintainability|2|Test name mentions AC4 but assertion only checks NoError|bruce
