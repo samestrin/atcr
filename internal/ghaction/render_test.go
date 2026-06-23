@@ -68,6 +68,15 @@ func TestConclusion(t *testing.T) {
 	})
 }
 
+func TestBuildCheckOutputInvalidThresholdRendersRaw(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+	}
+	out := BuildCheckOutput(findings, "bogus")
+	assert.Contains(t, out.Title, "bogus")
+	assert.Contains(t, strings.ToLower(out.Text), "gate passed")
+}
+
 func TestBuildCheckOutput(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "internal/auth/token.go", Line: 42,
