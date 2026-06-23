@@ -37,8 +37,10 @@ import (
 var fenceRe = regexp.MustCompile("(?sm)`{3,}[ \t]*([A-Za-z0-9_+#-]*)[^\n]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
 
 // declKeywordRe matches a line that begins (after optional whitespace) with a Go
-// top-level / statement keyword that is a strong signal the text is code rather
-// than prose. Anchored per-line via the multiline flag.
+// declaration keyword. Used in parseGoFix to select the most relevant parse error
+// among the three strategy results, and in looksLikeNonGoBraces to detect Go code
+// presence. Not used as a looksLikeGoCode signal (use packageClauseRe or
+// funcSignatureRe for that — bare keywords are ambiguous with prose).
 var declKeywordRe = regexp.MustCompile(`(?m)^\s*(package|import|func|type|var|const)\b`)
 
 // blockOpenRe matches a line whose last non-whitespace character is a single opening
