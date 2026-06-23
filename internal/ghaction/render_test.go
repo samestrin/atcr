@@ -66,6 +66,15 @@ func TestConclusion(t *testing.T) {
 		assert.Equal(t, "success", c)
 		assert.Equal(t, 0, n)
 	})
+	t.Run("out-of-scope finding never blocks even at CRITICAL", func(t *testing.T) {
+		f := reconcile.JSONFinding{
+			Severity: "CRITICAL",
+			Category: reconcile.CategoryOutOfScope,
+		}
+		c, n := Conclusion([]reconcile.JSONFinding{f}, "CRITICAL")
+		assert.Equal(t, "success", c)
+		assert.Equal(t, 0, n)
+	})
 }
 
 func TestBuildCheckOutputSummaryDistinctFromTitle(t *testing.T) {
