@@ -1022,6 +1022,28 @@ func TestParseRetryAfter_HTTPDate(t *testing.T) {
 	assert.Equal(t, time.Duration(0), parseRetryAfter(past))
 }
 
+func TestParseRetryAfter_CapsExcessiveAndOverflowValues(t *testing.T) {
+	const ceiling = 5 * time.Minute
+
+	// A large but well-formed delta-seconds (1 hour) must be clamped so a hostile
+	// or misconfigured endpoint cannot stall a worker far beyond a sane cooldown.
+	got := parseRetryAfter("3600")
+	assert.Greater(t, got, time.Duration(0))
+	assert.LessOrEqual(t, got, ceiling, "an hour-long Retry-After must be capped")
+
+	// A delta-seconds value that would overflow time.Duration when multiplied by
+	// time.Second must not wrap to a non-positive/garbage delay.
+	got = parseRetryAfter("999999999999999999")
+	assert.Greater(t, got, time.Duration(0), "overflowing Retry-After must not produce a non-positive delay")
+	assert.LessOrEqual(t, got, ceiling, "overflowing Retry-After must be capped")
+
+	// A far-future HTTP-date is likewise capped.
+	future := time.Now().Add(1 * time.Hour).UTC().Format(http.TimeFormat)
+	got = parseRetryAfter(future)
+	assert.Greater(t, got, time.Duration(0))
+	assert.LessOrEqual(t, got, ceiling, "a far-future Retry-After date must be capped")
+}
+
 func TestComplete_HonorsRetryAfterHeader(t *testing.T) {
 	// A 429 advertising Retry-After must override the (tiny) fixed backoff: the
 	// client must wait at least the advertised cooldown before retrying.

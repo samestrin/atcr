@@ -663,7 +663,9 @@ func (c *Client) attempt(ctx context.Context, endpoint, key string, body []byte)
 // parseRetryAfter interprets a Retry-After header value per RFC 7231: either
 // delta-seconds (a non-negative integer) or an HTTP-date. It returns the
 // indicated delay, or 0 when the header is absent, malformed, non-positive, or
-// in the past — in which case the caller falls back to its own backoff.
+// in the past — in which case the caller falls back to its own backoff. The
+// returned delay is capped at maxRetryAfter so an excessive or overflowing
+// advertised cooldown cannot stall a worker.
 func parseRetryAfter(value string) time.Duration {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -673,19 +675,42 @@ func parseRetryAfter(value string) time.Duration {
 		if secs <= 0 {
 			return 0
 		}
+		// Cap before multiplying: a huge delta-seconds would overflow
+		// time.Duration (int64 nanoseconds) and wrap to a negative/garbage delay.
+		// Anything at or above the ceiling is clamped without performing the
+		// overflowing multiplication.
+		if secs >= int(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
 		return time.Duration(secs) * time.Second
 	}
 	if t, err := http.ParseTime(value); err == nil {
 		if d := time.Until(t); d > 0 {
-			return d
+			return clampRetryAfter(d)
 		}
 	}
 	return 0
 }
 
+// maxRetryAfter bounds how long a server-advertised Retry-After cooldown is
+// honored. Without a ceiling a hostile or misconfigured endpoint could stall a
+// worker for hours, or overflow time.Duration via a huge delta-seconds value.
+// The cap is generous enough to respect realistic rate-limit cooldowns while
+// keeping a single stuck call from blocking far longer than a human would wait.
+const maxRetryAfter = 5 * time.Minute
+
+// clampRetryAfter bounds a Retry-After delay at maxRetryAfter.
+func clampRetryAfter(d time.Duration) time.Duration {
+	if d > maxRetryAfter {
+		return maxRetryAfter
+	}
+	return d
+}
+
 // maxBackoff caps the per-retry exponential backoff so a large WithRetry budget
 // cannot produce multi-minute sleeps. Server-advertised Retry-After cooldowns
-// are honored exactly and are not subject to this cap.
+// are honored up to maxRetryAfter (a separate, larger ceiling) and are not
+// subject to this cap.
 const maxBackoff = 30 * time.Second
 
 // clampBackoff bounds an exponential backoff delay at maxBackoff.
