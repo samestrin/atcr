@@ -441,6 +441,9 @@ func WriteRadarSection(b *bytes.Buffer, df DisagreementsFile, renderText RadarTe
 // renderText; fixed-vocabulary fields route through esc/codeSpan/joinOrNone, the
 // same injection defenses the rest of the report uses.
 func WriteRadarItems(b *bytes.Buffer, items []DisagreementItem, heading string, renderText RadarTextRenderer) {
+	if renderText == nil {
+		renderText = esc
+	}
 	for i, it := range items {
 		fmt.Fprintf(b, "\n%s%d. %s — %s (%s) · score %s\n",
 			heading, i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))

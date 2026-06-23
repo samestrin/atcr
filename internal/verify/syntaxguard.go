@@ -182,13 +182,11 @@ func looksLikeGoCode(s string) bool {
 
 // looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go
 // JSON/config object rather than Go source: it carries a JSON object-member line (a
-// quoted key followed by a colon at line start) and contains no Go declaration keyword
-// anywhere in the input (the keyword check is a coarse whole-input line scan, not a
-// key-aware structural check). It exists purely to SUPPRESS a false-positive
-// invalid_syntax flag on unfenced JSON/config (Epic 7.5); it only ever reduces
-// flagging. The detection is deliberately narrow (quoted keys only — bare `ident:`
-// is not used, since Go struct literals, labels, cases, and map entries all produce
-// it), keeping it conservative.
+// quoted key followed by a colon at line start) and no Go declaration keyword. It
+// exists purely to SUPPRESS a false-positive invalid_syntax flag on unfenced
+// JSON/config (Epic 7.5); it only ever reduces flagging. The detection is deliberately
+// narrow (quoted keys only — bare `ident:` is not used, since Go struct literals,
+// labels, cases, and map entries all produce it), keeping it conservative.
 func looksLikeNonGoBraces(s string) bool {
 	return jsonKeyLineRe.MatchString(s) && !declKeywordRe.MatchString(s)
 }
