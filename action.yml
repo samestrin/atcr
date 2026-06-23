@@ -44,6 +44,20 @@ runs:
     #     pull-requests: write                # only when inline-comments: true
     # Missing permissions will surface as a 403 from the `atcr github` step.
 
+    # Guard: fail early on non-PR triggers when no explicit base-ref is provided,
+    # before spending CI time on Go setup and the atcr binary build.
+    - name: Check event type
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF_INPUT: ${{ inputs.base-ref }}
+      run: |
+        if [ "$EVENT_NAME" != "pull_request" ] && [ -z "$BASE_REF_INPUT" ]; then
+          echo "Error: this action is designed for pull_request events." >&2
+          echo "For other event types, supply 'base-ref' explicitly to specify the diff target." >&2
+          exit 1
+        fi
+
     # Build atcr from the action's own checkout (github.action_path), not the
     # consumer repo. The binary then runs against the consumer checkout below.
     - name: Set up Go
