@@ -18,6 +18,13 @@ func TestCell_MarkdownSanitization(t *testing.T) {
 	// Emphasis markers must be escaped
 	assert.Equal(t, `\*bold\*`, cell("*bold*"))
 	assert.Equal(t, `\_italic\_`, cell("_italic_"))
+	// Security: cell content must be wrapped in a backtick code span so that
+	// headings, HTML tags, and other markdown not covered by character escaping
+	// are rendered as inert literal text.
+	assert.Equal(t, "`# injected heading`", cell("# injected heading"))
+	assert.Equal(t, "`<b>bold via HTML</b>`", cell("<b>bold via HTML</b>"))
+	// Embedded backticks must be replaced to prevent premature code span close.
+	assert.Equal(t, "`let x = 'y'`", cell("let x = `y`"))
 }
 
 func TestFixAttribution(t *testing.T) {
