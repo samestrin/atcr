@@ -101,15 +101,17 @@ func toolCallTurn(name string) chatTurn {
 // fakeDispatcher implements verify.Dispatcher with a fixed result/error and an
 // execution counter so tests can assert the tool loop actually dispatched.
 type fakeDispatcher struct {
-	mu     sync.Mutex
-	calls  int
-	result tools.ToolResult
-	err    error
+	mu         sync.Mutex
+	calls      int
+	dispatched []string
+	result     tools.ToolResult
+	err        error
 }
 
-func (d *fakeDispatcher) Execute(_ context.Context, _ string, _ json.RawMessage) (tools.ToolResult, error) {
+func (d *fakeDispatcher) Execute(_ context.Context, name string, _ json.RawMessage) (tools.ToolResult, error) {
 	d.mu.Lock()
 	d.calls++
+	d.dispatched = append(d.dispatched, name)
 	d.mu.Unlock()
 	return d.result, d.err
 }
@@ -123,7 +125,9 @@ func (d *fakeDispatcher) count() int {
 func (d *fakeDispatcher) toolNames() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return nil
+	out := make([]string, len(d.dispatched))
+	copy(out, d.dispatched)
+	return out
 }
 
 // okDispatcher returns a small successful tool result.
