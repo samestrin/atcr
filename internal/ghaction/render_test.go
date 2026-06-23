@@ -19,6 +19,7 @@ func TestFixAttribution(t *testing.T) {
 		{"absent", "bruce: c.entries[k] = v // never deleted", ""},
 		{"empty_name", "Found by bruce; fix by ", ""},
 		{"prose_mention", "reviewer suggested a fix by hand", ""},
+		{"last_segment_wins", "fix by hand; Found by bruce; fix by opus", "opus"},
 		{"empty_evidence", "", ""},
 	}
 	for _, tc := range cases {
