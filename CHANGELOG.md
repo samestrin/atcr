@@ -1,3 +1,17 @@
+## [7.6.0] - 2026-06-22
+
+GitHub Action API efficiency improvements for posting reconciled findings to pull requests.
+
+### Added
+
+- `atcr github --inline-comments` now falls back to posting comments individually when the batched review endpoint is unavailable (HTTP 404/405), so inline comments work on older GitHub Enterprise versions that do not support it. A per-comment off-diff rejection (422) stays a non-fatal skip, matching the batch path.
+
+### Changed
+
+- Removed a redundant gate-conclusion computation in the `github` command: `BuildCheckOutput` now returns the conclusion and blocking-finding count it already computes, so the findings slice is traversed once instead of twice.
+
+*Shipped via /execute-epic (epic 7.6)*
+
 ## [Technical Debt] - 2026-06-22
 
 ### Fixed
