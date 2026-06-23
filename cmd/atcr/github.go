@@ -115,7 +115,7 @@ func runGithub(cmd *cobra.Command, args []string) error {
 
 	// Inline comments are opt-in (AC4): the check + artifacts are the baseline,
 	// comments are the enhancement. Post them before the check run so the check
-	// output can reflect partial delivery (some posted, some 422-skipped).
+	// output can reflect the posted count.
 	if inline {
 		posted, deduped, err := postInlineComments(cmd, client, owner, repo, pr, sha, findings)
 		if err != nil {
