@@ -146,6 +146,16 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted check %q to %s/%s @ %s: %s (%d finding(s))\n",
 		checkName, owner, repo, sha, conclusion, len(findings))
 
+	// When running inside a GitHub Actions workflow, expose the machine-readable
+	// result so downstream steps can branch on the gate verdict.
+	if ghOutput := os.Getenv("GITHUB_OUTPUT"); ghOutput != "" {
+		f, err := os.OpenFile(ghOutput, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, _ = fmt.Fprintf(f, "conclusion=%s\nfindings=%d\n", conclusion, len(findings))
+			_ = f.Close()
+		}
+	}
+
 	// The merge gate also rides the process exit code, so a consumer can gate on
 	// either the check conclusion or the step's exit status.
 	if conclusion == "failure" {
