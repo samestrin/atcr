@@ -306,7 +306,7 @@ From [plan/documentation/](plan/documentation/):
    13. Verify `go test ./reconcile/...` green and `go test ./...` green after each batch; COMMIT per logical batch: `git commit -m "feat(reconcile): move <unit> into library module (green)"`
    **Files:** `reconcile/*.go`, `reconcile/*_test.go`, `internal/reconcile/adapter/adapter.go`, `internal/stream/severity.go` | **Duration:** 1.5-2d
 
-### 2.2.A [ ] **[Core Extraction - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-reference-implementation-preservation.md)**
+### 2.2.A [x] **[Core Extraction - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-reference-implementation-preservation.md)**
    **Changed Files:** [all files modified in 2.2 — absolute paths]
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 2.2 — intentional. Do NOT review inline.
@@ -326,21 +326,26 @@ From [plan/documentation/](plan/documentation/):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent findings (fresh-context review, 2026-06-23):** No CRITICAL/HIGH. Two LOW findings:
+
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | golden_corpus_test.go:78 | Byte-identical golden oracle asserted only findings/ambiguous/disagreements.json, not summary.json (rebound ambiguous_hash), findings.txt, report.md | **Fixed inline** — golden corpus extended to all 6 emitted artifacts; regenerated + green |
+   | LOW | reconcile/merge.go:54 | Library `Merge` does not propagate an input `Finding.Verification` (harmless at the ATCR boundary; latent surprise for direct embedders) | Deferred → TD-005 |
+
+   Verified clean by the subagent: determinism (`sortMerged` total order; Jaccard integer cross-multiply; severity single-sourced via re-export, no copy), boundary (`*Verification` pointer identity preserved through `ToJSONFinding`/`JSONFindings`; library stdlib-only, empty `require`; no on-disk artifact regresses byte-identity beyond the already-fixed ambiguous.json wire shape), edge cases (empty/single/nil-Verification), security (markdown-injection defenses + adjudication hash binding intact). Both modules pass fresh `-count=1`.
+
+   **✅ Adversarial review passed** (no CRITICAL/HIGH) — proceeding.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 2.3 [ ] **[Core Extraction - REFACTOR](plan/user-stories/01-reference-implementation-preservation.md)**
-   1. Fix CRITICAL/HIGH issues from 2.2.A (if any).
-   2. Improve code and tests (T1), validate (T3 both modules).
-   3. COMMIT: `git commit -m "refactor(reconcile): address review + clean up extracted core"`
+### 2.3 [x] **[Core Extraction - REFACTOR](plan/user-stories/01-reference-implementation-preservation.md)**
+   1. Fix CRITICAL/HIGH issues from 2.2.A (if any). → None reported.
+   2. Improve code and tests (T1), validate (T3 both modules). → Extended the byte-identical golden corpus to all 6 emitted artifacts (2.2.A LOW #1); both module corpora green, lint 0 issues, gofmt clean. Code already minimal — no speculative changes.
+   3. COMMIT: `refactor(reconcile): extend byte-identical golden oracle + capture review TD`
    **Duration:** 3-5h
 
 ### 2.4 [ ] **Phase 2 - DoD Validation**

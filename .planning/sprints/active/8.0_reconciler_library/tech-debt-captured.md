@@ -30,3 +30,10 @@ Findings deferred during `/execute-sprint`. Read by `/execute-code-review` (Phas
 **Issue:** Phase-2 task 2.2.7 lists `AmbiguousCluster` under `ambiguous.go`, but the `AmbiguousCluster` type is declared in `dedupe.go` (ambiguous.go holds `AmbiguousID`/`AmbiguousHash`). Task 2.2.9 correctly targets `internal/stream/severity.go` (note: there is no `severity.go` under internal/reconcile; the `SeverityRank` copy lives in merge.go:30, which must also be eliminated per AC 02-05).
 **Why accepted:** Documentation accuracy only; does not affect Phase-1 code.
 **Fix in:** Phase 2 — when moving, follow the real symbol locations (grep before moving): `AmbiguousCluster` in dedupe.go; `SeverityRank` copy in merge.go:30.
+
+## TD-005 — Library `Merge` does not propagate input `Finding.Verification` (LOW)
+**Origin:** Phase 2, task 2.2.A ADVERSARIAL REVIEW (fresh-context subagent), 2026-06-23
+**File:** reconcile/merge.go:54
+**Issue:** The library `Merge(group []Finding) Merged` builds the merged `Finding` without copying any input `Finding.Verification`. Harmless at the real ATCR boundary — reconcile-input findings never carry a verification block (the verify stage stamps verdicts post-reconcile onto the JSONFinding layer, where the adapter preserves *Verification pointer identity) — but a direct external embedder of the public library could be surprised that a populated input Verification is silently dropped on merge.
+**Why accepted:** Out of scope for the byte-identical extraction (changing `Merge`'s contract would alter behavior). Not exercised by any ATCR path; pointer-identity at the layer that matters (JSONFindings/adapter) is verified.
+**Fix in:** follow-on (clean-API epic) — either carry `Verification` through `Merge` with winning-verdict precedence (mirroring the internal `mergeVerification`), or document on `Merge`/`Finding` that core merge intentionally does not propagate input Verification (it is stamped post-reconcile).

@@ -74,7 +74,11 @@ func TestGoldenCorpus_ByteIdentical(t *testing.T) {
 	require.NoError(t, Emit(dir, res))
 
 	goldenDir := filepath.Join("testdata", "golden")
-	for _, name := range []string{FindingsJSON, AmbiguousJSON, DisagreementsJSON} {
+	// Cover every emitted artifact whose bytes the extraction could perturb: the
+	// three JSON sidecars plus findings.txt, report.md, and summary.json (whose
+	// ambiguous_hash is rebound to the ATCR wire shape). reconciled_at is pinned
+	// via the fixed ReconciledAt, so summary.json is deterministic.
+	for _, name := range []string{FindingsTxt, FindingsJSON, ReportMD, SummaryJSON, AmbiguousJSON, DisagreementsJSON} {
 		got, err := os.ReadFile(filepath.Join(dir, name))
 		require.NoError(t, err, "read emitted %s", name)
 
