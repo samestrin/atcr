@@ -107,15 +107,23 @@ func location(f reconcile.JSONFinding) string {
 }
 
 // BuildCheckOutput renders the GitHub check-run output for a set of reconciled
-// findings: a one-line title, a gate summary, and a markdown findings table.
-func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutput {
+// findings: a one-line title, a gate summary, and a markdown findings table. It
+// also returns the gate conclusion and the number of blocking findings — the
+// same values Conclusion would compute — so callers can consume them directly
+// instead of calling Conclusion a second time over the same slice.
+func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) (CheckOutput, string, int) {
 	total := len(findings)
 	if total == 0 {
+		// No findings: the gate trivially passes. Derive the verdict from
+		// Conclusion so this early-return branch reports the same conclusion
+		// (neutral when informational, success under any threshold) as the
+		// non-empty path.
+		conclusion, failCount := Conclusion(findings, failOn)
 		return CheckOutput{
 			Title:   "atcr — no findings",
 			Summary: "atcr review found no findings.",
 			Text:    "ATCR review completed with no findings.",
-		}
+		}, conclusion, failCount
 	}
 
 	conclusion, failCount := Conclusion(findings, failOn)
@@ -173,5 +181,5 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 		shownCount++
 	}
 
-	return CheckOutput{Title: title, Summary: summary, Text: b.String()}
+	return CheckOutput{Title: title, Summary: summary, Text: b.String()}, conclusion, failCount
 }
