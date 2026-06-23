@@ -32,7 +32,7 @@ import (
 // truncate valid code. The pre-close newline stays optional (\n?), so a closing ```
 // on the same line as the last code line still matches. Input is CRLF-normalized
 // before matching (see normalizeNewlines), so the LF-only pattern also covers CRLF.
-var fenceRe = regexp.MustCompile("(?sm)`{3,}([A-Za-z0-9_+#-]*)[ \t]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
+var fenceRe = regexp.MustCompile("(?sm)`{3,}[ \t]*([A-Za-z0-9_+#-]*)[ \t]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
 
 // declKeywordRe matches a line that begins (after optional whitespace) with a Go
 // top-level / statement keyword that is a strong signal the text is code rather
