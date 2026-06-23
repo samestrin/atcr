@@ -32,7 +32,7 @@ import (
 // truncate valid code. The pre-close newline stays optional (\n?), so a closing ```
 // on the same line as the last code line still matches. Input is CRLF-normalized
 // before matching (see normalizeNewlines), so the LF-only pattern also covers CRLF.
-var fenceRe = regexp.MustCompile("(?sm)`{3,}[ \t]*([A-Za-z0-9_+#-]*)[ \t]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
+var fenceRe = regexp.MustCompile("(?sm)`{3,}[ \t]*([A-Za-z0-9_+#-]*)[^\n]*\n(.*?)\n?[ \t]*`{3,}[ \t]*$")
 
 // declKeywordRe matches a line that begins (after optional whitespace) with a Go
 // top-level / statement keyword that is a strong signal the text is code rather
@@ -182,11 +182,13 @@ func looksLikeGoCode(s string) bool {
 
 // looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go
 // JSON/config object rather than Go source: it carries a JSON object-member line (a
-// quoted key followed by a colon at line start) and no Go declaration keyword. It
-// exists purely to SUPPRESS a false-positive invalid_syntax flag on unfenced
-// JSON/config (Epic 7.5); it only ever reduces flagging. The detection is deliberately
-// narrow (quoted keys only — bare `ident:` is not used, since Go struct literals,
-// labels, cases, and map entries all produce it), keeping it conservative.
+// quoted key followed by a colon at line start) and contains no Go declaration keyword
+// anywhere in the input (the keyword check is a coarse whole-input line scan, not a
+// key-aware structural check). It exists purely to SUPPRESS a false-positive
+// invalid_syntax flag on unfenced JSON/config (Epic 7.5); it only ever reduces
+// flagging. The detection is deliberately narrow (quoted keys only — bare `ident:`
+// is not used, since Go struct literals, labels, cases, and map entries all produce
+// it), keeping it conservative.
 func looksLikeNonGoBraces(s string) bool {
 	return jsonKeyLineRe.MatchString(s) && !declKeywordRe.MatchString(s)
 }
