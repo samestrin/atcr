@@ -697,3 +697,13 @@ func TestWriteRadarItems_GoldenMarkerItem(t *testing.T) {
 
 	assert.Equal(t, want, b.String(), "golden output for markerItem() must match exactly; mutations to spacing or separators should fail")
 }
+
+func TestWriteRadarItems_NilRendererDefaultsToEsc(t *testing.T) {
+	var b bytes.Buffer
+	// A nil renderer must not panic; it should fall back to esc so populated
+	// items render safely.
+	require.NotPanics(t, func() {
+		WriteRadarItems(&b, []DisagreementItem{markerItem()}, "### ", nil)
+	}, "WriteRadarItems with nil renderText must not panic")
+	assert.Contains(t, b.String(), "the-problem", "nil renderer fallback should still render the problem")
+}
