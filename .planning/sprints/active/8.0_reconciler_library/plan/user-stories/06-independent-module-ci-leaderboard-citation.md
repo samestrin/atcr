@@ -1,0 +1,68 @@
+# User Story 6: Independent Module CI and Leaderboard Reference Citation
+
+**Plan:** [8.0: Reconciler Library Module Extraction](../plan.md)
+
+## User Story
+
+**As a** leaderboard maintainer and release engineer for ATCR
+**I want** the extracted `./reconcile` module to pass its own CI independently on tag push and on every PR, and the public leaderboard methodology doc to cite the module as the reference implementation
+**So that** the standalone artifact is provably buildable and tested on its own (not just transitively through ATCR), and every scorecard record is traceable to a documented, inspectable reconciler that third parties can run themselves
+
+## Story Context
+
+- **Background:** This is the release-engineering and credibility story for the extraction. It covers AC#7 (independent module CI) and AC#8 (leaderboard methodology citation). The `./reconcile` module is a nested Go module with its own `go.mod`, consumed by the root module via a `replace` directive. That boundary is the core CI problem: the root `go test ./...` in `.github/workflows/ci.yml` does NOT cross the nested module's `go.mod` boundary, so without a dedicated job the library is completely untested between tag pushes. The resolved dual-coverage wiring (ratified by the maintainer on 2026-06-23) closes this gap two ways: (1) a new `.github/workflows/reconcile-module.yml` triggers on tag push as the release gate, running `cd ./reconcile && gofmt check + golangci-lint + go test -race`; (2) a PR/push job (or step) added to `ci.yml` cds into `./reconcile` and runs `go test` so a regression is caught at PR time, not at the next tag. Both reuse the existing self-hosted `[gauntlet]` runner and Go 1.25 setup from `ci.yml`. Separately, `docs/scorecard.md` is the leaderboard/scorecard methodology doc (it feeds the Epic 10.0 Model-Eval Leaderboard); `docs/leaderboard-methodology.md` does NOT exist. AC#8 requires that doc to cite `github.com/samestrin/atcr/reconcile` as the reference implementation so the methodology is reproducible by anyone. The citation edit is deferred to the implementation phase — it must reference the module after the module exists, not during planning.
+- **Assumptions:** The module scaffold at `./reconcile/` with its own `go.mod` lands earlier in the sprint (Stories 1-3); this story wires CI around an already-existing module and edits `docs/scorecard.md` after the module is in place. The existing `.github/workflows/ci.yml` already runs on the self-hosted `[gauntlet]` runner with Go 1.25 set up, so the new workflow and the PR-time job reuse that machinery rather than provisioning new runners. golangci-lint is pinned to `v2.12.2` and a `.golangci.yml` config exists (or is added) at the repository root so the tag-push lint step is reproducible. The `docs/scorecard.md` citation points at the module path `github.com/samestrin/atcr/reconcile` and describes it as the standalone reference implementation backing every scorecard record.
+- **Constraints:** No new runners, no new Go version, no third-party CI services — both workflows reuse the `[gauntlet]` self-hosted runner and Go 1.25 from `ci.yml`. The tag-push workflow is `based_on: .github/workflows/ci.yml`. The PR-time job in `ci.yml` runs `go test` only (not the full gofmt + golangci-lint + race gate) so PR feedback stays fast; the full release gate runs on tag push. The `docs/scorecard.md` edit is additive — a note that the deterministic reconciler backing every scorecard record is the standalone reference implementation `github.com/samestrin/atcr/reconcile` — and does not restructure the existing methodology. The citation cannot land before the module exists, so this story sequences after the module scaffold stories.
+
+## Story Details
+
+| Field | Value |
+|-------|-------|
+| **Priority** | High |
+| **Effort Estimate** | M |
+| **Dependencies** | Module scaffold at `./reconcile/` with its own `go.mod` and the moved pure types/logic (Stories 1-3); existing `.github/workflows/ci.yml` on the `[gauntlet]` runner with Go 1.25; `docs/scorecard.md` present in the repo |
+
+## Success Criteria (SMART Format)
+
+- **Specific:** A new `.github/workflows/reconcile-module.yml` triggers on tag push, cds into `./reconcile`, and runs `gofmt` check + `golangci-lint` (v2.12.2) + `go test -race`; and `ci.yml` gains a PR/push job that cds into `./reconcile` and runs `go test` so the library is tested on every PR, not just on tag push.
+- **Measurable:** Both workflows are present in `.github/workflows/`, both reuse the self-hosted `[gauntlet]` runner and Go 1.25, the tag-push workflow runs the three release-gate checks (`gofmt`, `golangci-lint`, `go test -race`), and a deliberate break inside `./reconcile` is caught by the PR-time `ci.yml` job (proving the nested-module boundary gap is closed). `docs/scorecard.md` contains a citation naming `github.com/samestrin/atcr/reconcile` as the reference implementation backing every scorecard record.
+- **Achievable:** The tag-push workflow is `based_on: .github/workflows/ci.yml` and reuses its runner/Go setup; the PR-time job is a small addition to an existing workflow; the `docs/scorecard.md` edit is a short additive note. No new infrastructure, no new runners, no restructuring of existing methodology.
+- **Relevant:** Directly satisfies AC#7 (independent module CI on tag push) and AC#8 (leaderboard methodology references the extracted reconciler). Without the PR-time job, the nested module is untested between tags — a silent regression risk the maintainer explicitly flagged. Without the citation, the leaderboard's credibility claim (deterministic, inspectable, reproducible) is unsupported by a doc reference.
+- **Time-bound:** Lands within the extraction sprint after the module scaffold stories; the CI wiring is verifiable immediately by pushing a tag and opening a PR with a deliberate `./reconcile` break, and the `docs/scorecard.md` edit lands in the same sprint once the module exists.
+
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-tag-push-release-gate-workflow.md) | Tag-Push Release Gate for Independent Module CI | E2E (CI-driven) |
+| [06-02](../acceptance-criteria/06-02-pr-time-module-test-job-boundary-gap.md) | PR-Time Module Test Job Closes Nested-Module Boundary Gap | E2E (CI-driven) |
+| [06-03](../acceptance-criteria/06-03-scorecard-methodology-reference-citation.md) | Scorecard Methodology Cites Standalone Reference Implementation | Unit (doc verification) |
+
+## Original Criteria Overview
+
+1. `.github/workflows/reconcile-module.yml` exists, triggers on tag push, cds into `./reconcile`, and runs the three release-gate checks (`gofmt` check + `golangci-lint` v2.12.2 + `go test -race`) on the self-hosted `[gauntlet]` runner with Go 1.25 — satisfying the AC#7 tag-push release gate.
+2. `.github/workflows/ci.yml` gains a PR/push job (or step) that cds into `./reconcile` and runs `go test`, reusing the same `[gauntlet]` runner and Go 1.25 setup, so the nested module's `go.mod` boundary no longer leaves the library untested between tags — closing the gap the maintainer flagged because root `go test ./...` does not cross that boundary.
+3. `docs/scorecard.md` is updated with an additive note citing `github.com/samestrin/atcr/reconcile` as the standalone reference implementation backing every scorecard record, so the leaderboard methodology is reproducible by anyone who can run and inspect the module (satisfying AC#8); the edit lands after the module exists and references the real module path.
+
+_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`_
+
+## Technical Considerations
+
+- **Implementation Notes:** The tag-push workflow `.github/workflows/reconcile-module.yml` is `based_on: .github/workflows/ci.yml` — copy the runner (`runs-on` on the self-hosted `[gauntlet]` label), the Go 1.25 setup step, and the checkout step, then replace the test command with `cd ./reconcile && gofmt -l . && golangci-lint run --timeout 5m && go test -race ./...`. Trigger it on `on: push: tags: ['*']` (or the project's existing tag convention) so it fires as the release gate (AC#7). The PR-time coverage is a separate job (or step) added to `ci.yml` that runs `cd ./reconcile && go test ./...` on `on: [pull_request, push]`; it deliberately runs `go test` only — not the full gofmt + golangci-lint + race gate — so PR feedback stays fast and the heavy release gate stays on tag push. golangci-lint is pinned to `v2.12.2` via `golangci/golangci-lint-action@v3` with `version: v2.12.2` and `args: --timeout 5m`, matching the canonical lint workflow in the linting-ci documentation. A `.golangci.yml` at the repository root governs linter selection (vet, ineffassign, staticcheck, errcheck) so the lint step is reproducible across the tag-push and any local runs. The `docs/scorecard.md` edit is a short additive note (not a restructure) stating that the deterministic reconciler backing every scorecard record is the standalone reference implementation `github.com/samestrin/atcr/reconcile`, and that it can be run and inspected independently. The edit lands in the implementation phase after the module exists, per the Phase-0 resolution — it must reference a real module path, not a planned one.
+- **Integration Points:** The new workflow integrates with the existing `.github/workflows/ci.yml` by reusing its `[gauntlet]` runner label and Go 1.25 setup — no new runners or Go versions are provisioned. The PR-time job in `ci.yml` must `cd ./reconcile` (or use a working-directory step) because the nested module's `go.mod` is the boundary root `go test ./...` will not cross. The `docs/scorecard.md` citation integrates with the Epic 10.0 Model-Eval Leaderboard, which `scorecard.md` already feeds; the note makes the reconciler reference explicit rather than implicit. The `.golangci.yml` config is shared between the tag-push lint step and local/pre-commit linting, so the same rules apply everywhere.
+- **Data Requirements:** No schema or runtime data. The only "data" is the module path string `github.com/samestrin/atcr/reconcile` cited in `docs/scorecard.md`, which must match the `go.mod` module path exactly so the citation resolves. The tag-push workflow's trigger filter (which tags fire it) must match the project's existing tagging convention; verify against recent tags before finalizing the `on:` filter.
+
+## Potential Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| The PR-time `ci.yml` job is wired but root `go test ./...` is assumed to cover `./reconcile`, so the nested-module gap silently reopens if a future contributor removes the dedicated job thinking it is redundant | High | Document the boundary reason inline in the workflow (`# root go test ./... does NOT cross ./reconcile's go.mod boundary`) and assert the job exists in this story's AC; a deliberate `./reconcile` break caught only by the PR job (not by root `go test ./...`) is the proof. |
+| The tag-push `reconcile-module.yml` fires on tags that are not module releases (e.g., ATCR app tags), producing noise or false failures on the wrong artifact | Medium | Scope the `on: push: tags:` filter to the module's tag prefix (or the project's release-tag convention) so only module releases trigger the release gate; verify against recent tag history before finalizing. |
+| The `docs/scorecard.md` citation points at `github.com/samestrin/atcr/reconcile` before the module is importable (e.g., the `replace` directive is still in place and the module is not yet published to a separate repo), making the reference resolve only inside the monorepo | Medium | The citation lands in the implementation phase after the module exists at `./reconcile/` with its own `go.mod`; the path `github.com/samestrin/atcr/reconcile` is the intended public import path, and the `replace` directive is the documented development-time bridge. Note in the citation that separate-repo publication follows extraction. |
+| golangci-lint v2.12.2 or the `.golangci.yml` config drifts between the tag-push workflow and local/pre-commit runs, so a tag passes locally but fails in CI (or vice versa) | Medium | Pin golangci-lint to `v2.12.2` in both the `reconcile-module.yml` action and any pre-commit hook; keep a single `.golangci.yml` at the repo root shared by all entry points so the rules cannot drift. |
+| The `[gauntlet]` self-hosted runner is unavailable or its Go 1.25 setup has drifted, causing both the tag-push and PR-time jobs to fail for environment reasons rather than code reasons | Low | Both jobs reuse the existing `ci.yml` runner setup verbatim, so any environment issue surfaces on the root CI first; no new runner dependency is introduced by this story. |
+
+---
+
+**Created:** June 23, 2026 11:48:36AM
+**Status:** Draft - Awaiting Acceptance Criteria
