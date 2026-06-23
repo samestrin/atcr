@@ -675,3 +675,9 @@ func TestWriteRadarItems_TextRendererControlsTruncation(t *testing.T) {
 	assert.NotContains(t, truncated.String(), long, "a truncating renderer shortens the body")
 	assert.Contains(t, truncated.String(), "...", "truncating renderer appends an ellipsis")
 }
+
+func TestFormatScore_SpecialFloatValues(t *testing.T) {
+	assert.Equal(t, "NaN", formatScore(math.NaN()), "NaN renders explicitly without int64 conversion")
+	assert.Equal(t, "+Inf", formatScore(math.Inf(1)), "+Inf renders explicitly without int64 conversion")
+	assert.Equal(t, "-Inf", formatScore(math.Inf(-1)), "-Inf renders explicitly without int64 conversion")
+}
