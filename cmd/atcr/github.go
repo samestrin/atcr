@@ -111,8 +111,9 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	}
 
 	checkName, _ := cmd.Flags().GetString("check-name")
-	conclusion, failCount := ghaction.Conclusion(findings, failOn)
-	output := ghaction.BuildCheckOutput(findings, failOn)
+	// BuildCheckOutput returns the gate conclusion and blocking-finding count it
+	// already computes, so there is no need to call Conclusion separately.
+	output, conclusion, failCount := ghaction.BuildCheckOutput(findings, failOn)
 
 	client := &ghaction.Client{APIURL: apiURL, Token: token}
 

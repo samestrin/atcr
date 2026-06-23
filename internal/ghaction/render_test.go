@@ -96,11 +96,44 @@ func TestConclusion(t *testing.T) {
 	})
 }
 
+// TestBuildCheckOutputReturnsConclusionAndFailCount pins Item 2 of epic 7.6:
+// BuildCheckOutput surfaces the conclusion and failCount it already computes
+// internally, so runGithub can consume them instead of calling Conclusion a
+// second time. The returned values must match a direct Conclusion call for the
+// same inputs, including the empty-findings early-return branch.
+func TestBuildCheckOutputReturnsConclusionAndFailCount(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+		{Severity: "MEDIUM", File: "b.go", Line: 2, Problem: "q", Confidence: "MEDIUM"},
+	}
+	t.Run("with findings matches Conclusion", func(t *testing.T) {
+		_, conclusion, failCount := BuildCheckOutput(findings, "HIGH")
+		wantC, wantN := Conclusion(findings, "HIGH")
+		assert.Equal(t, wantC, conclusion)
+		assert.Equal(t, wantN, failCount)
+		assert.Equal(t, ConclusionFailure, conclusion)
+		assert.Equal(t, 1, failCount)
+	})
+	t.Run("empty findings with threshold reports success and zero", func(t *testing.T) {
+		_, conclusion, failCount := BuildCheckOutput(nil, "HIGH")
+		wantC, wantN := Conclusion(nil, "HIGH")
+		assert.Equal(t, wantC, conclusion)
+		assert.Equal(t, wantN, failCount)
+		assert.Equal(t, ConclusionSuccess, conclusion)
+		assert.Equal(t, 0, failCount)
+	})
+	t.Run("empty findings without threshold is neutral", func(t *testing.T) {
+		_, conclusion, failCount := BuildCheckOutput(nil, "")
+		assert.Equal(t, ConclusionNeutral, conclusion)
+		assert.Equal(t, 0, failCount)
+	})
+}
+
 func TestBuildCheckOutputSummaryDistinctFromTitle(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
 	}
-	out := BuildCheckOutput(findings, "HIGH")
+	out, _, _ := BuildCheckOutput(findings, "HIGH")
 	assert.NotEqual(t, out.Title, out.Summary)
 	assert.Contains(t, strings.ToLower(out.Summary), "gate")
 }
@@ -109,7 +142,7 @@ func TestBuildCheckOutputNormalizesSeverityCase(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "critical", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
 	}
-	out := BuildCheckOutput(findings, "HIGH")
+	out, _, _ := BuildCheckOutput(findings, "HIGH")
 	assert.Contains(t, out.Text, "CRITICAL")
 	assert.NotContains(t, out.Text, "critical")
 }
@@ -118,7 +151,7 @@ func TestBuildCheckOutputInvalidThresholdRendersRaw(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
 	}
-	out := BuildCheckOutput(findings, "bogus")
+	out, _, _ := BuildCheckOutput(findings, "bogus")
 	assert.Contains(t, out.Title, "bogus")
 	assert.Contains(t, strings.ToLower(out.Text), "gate passed")
 }
@@ -132,7 +165,7 @@ func TestBuildCheckOutput(t *testing.T) {
 	}
 
 	t.Run("with threshold", func(t *testing.T) {
-		out := BuildCheckOutput(findings, "HIGH")
+		out, _, _ := BuildCheckOutput(findings, "HIGH")
 		assert.Contains(t, out.Title, "2")
 		assert.Contains(t, out.Title, "HIGH")
 		assert.Contains(t, out.Text, "internal/auth/token.go:42")
@@ -148,13 +181,13 @@ func TestBuildCheckOutput(t *testing.T) {
 				Problem: "JWT signature not verified", Confidence: "HIGH",
 				Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic-a"}},
 		}
-		out := BuildCheckOutput(refuted, "HIGH")
+		out, _, _ := BuildCheckOutput(refuted, "HIGH")
 		assert.Contains(t, strings.ToLower(out.Text), "gate passed")
 		assert.Contains(t, out.Text, "(refuted)")
 	})
 
 	t.Run("empty findings", func(t *testing.T) {
-		out := BuildCheckOutput(nil, "HIGH")
+		out, _, _ := BuildCheckOutput(nil, "HIGH")
 		assert.Contains(t, strings.ToLower(out.Title), "no findings")
 	})
 
@@ -166,7 +199,7 @@ func TestBuildCheckOutput(t *testing.T) {
 				Problem: "a reasonably detailed problem statement that takes up space", Confidence: "LOW",
 			}
 		}
-		out := BuildCheckOutput(many, "HIGH")
+		out, _, _ := BuildCheckOutput(many, "HIGH")
 		assert.LessOrEqual(t, len(out.Text), maxCheckTextBytes)
 		assert.Contains(t, out.Text, "truncated")
 	})
@@ -176,7 +209,7 @@ func TestBuildCheckOutput(t *testing.T) {
 			{Severity: "LOW", File: "a.go", Line: 1,
 				Problem: strings.Repeat("x", 65000), Confidence: "LOW"},
 		}
-		out := BuildCheckOutput(oversized, "HIGH")
+		out, _, _ := BuildCheckOutput(oversized, "HIGH")
 		assert.Contains(t, out.Text, "0 of 1 findings shown")
 	})
 }
