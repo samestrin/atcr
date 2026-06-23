@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,7 +10,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/samestrin/atcr/internal/ghaction"
+	"github.com/samestrin/atcr/internal/reconcile"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -174,4 +180,45 @@ func TestGithubCmd_MissingTokenIsUsageError(t *testing.T) {
 	code, _ := execCmdCapture(t, "github",
 		"--repo", "samestrin/atcr", "--sha", "abc", "2026-06-10_t")
 	require.Equal(t, 2, code)
+}
+
+func TestPostInlineComments_RateLimiting(t *testing.T) {
+	var mu sync.Mutex
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		callCount++
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	originalDelay := inlineCommentDelay
+	inlineCommentDelay = 50 * time.Millisecond
+	defer func() { inlineCommentDelay = originalDelay }()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok"}
+	findings := []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Fix: "f1", Category: "security", EstMinutes: 10},
+		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "p2", Fix: "f2", Category: "security", EstMinutes: 10},
+	}
+
+	start := time.Now()
+	posted, failed, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, posted)
+	require.Equal(t, 0, failed)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 2, callCount)
+	require.GreaterOrEqual(t, elapsed, 50*time.Millisecond, "expected delay between inline comment API calls")
 }
