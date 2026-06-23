@@ -317,6 +317,130 @@ func TestPostInlineComments_422IsNonFatal(t *testing.T) {
 	assert.Contains(t, stderr.String(), "422")
 }
 
+// TestPostInlineComments_FallsBackToPerCommentOnUnsupportedBatch pins the
+// GitHub-Enterprise mitigation: when the batched /reviews endpoint is
+// unavailable (404 Not Found or 405 Method Not Allowed — older GHE versions),
+// postInlineComments falls back to posting each comment individually via
+// CreateReviewComment rather than failing the step. Other batch errors keep
+// propagating as exitFailure, and 422 keeps its non-fatal off-diff behavior
+// (TestPostInlineComments_422IsNonFatal), both unchanged.
+func TestPostInlineComments_FallsBackToPerCommentOnUnsupportedBatch(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var mu sync.Mutex
+			paths := map[string]int{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				paths[r.Method+" "+r.URL.Path]++
+				mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`[]`))
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+					w.WriteHeader(status) // batch endpoint unsupported on this host
+					_, _ = w.Write([]byte(`{"message":"unsupported"}`))
+				default: // per-comment POST /comments
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{"id":1}`))
+				}
+			}))
+			defer srv.Close()
+
+			cmd := &cobra.Command{}
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetContext(context.Background())
+
+			client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+			findings := []reconcile.JSONFinding{
+				{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+				{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+			}
+
+			posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+			require.NoError(t, err, "404/405 from the batch endpoint must trigger fallback, not fail the step")
+			assert.Equal(t, 2, posted, "both comments posted via the per-comment fallback")
+			assert.Equal(t, 0, deduped)
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Equal(t, 1, paths["POST /repos/owner/repo/pulls/1/reviews"], "batch attempted exactly once")
+			assert.Equal(t, 2, paths["POST /repos/owner/repo/pulls/1/comments"], "fell back to one POST per comment")
+		})
+	}
+}
+
+// TestPostInlineComments_FallbackPerComment422IsSkipped pins that, once the
+// fallback path is taken, a per-comment 422 (off-diff for that one line) is a
+// non-fatal skip — mirroring the batch path's 422 handling — so a single
+// off-diff finding does not fail the whole step.
+func TestPostInlineComments_FallbackPerComment422IsSkipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST — every comment off-diff
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"off-diff"}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+	}
+
+	posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err, "per-comment 422 during fallback is a non-fatal off-diff skip")
+	assert.Equal(t, 0, posted, "both off-diff comments skipped")
+	assert.Equal(t, 0, deduped)
+	assert.Contains(t, stderr.String(), "422")
+}
+
+// TestPostInlineComments_FallbackPerCommentHardErrorPropagates pins that a
+// non-422 failure during the per-comment fallback (e.g. 403) aborts with
+// exitFailure rather than being silently swallowed.
+func TestPostInlineComments_FallbackPerCommentHardErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST — hard failure (non-retriable, non-422)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"}}
+
+	_, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.Error(t, err, "a non-422 per-comment failure during fallback must propagate as exitFailure")
+}
+
 // TestReadReconciledFindings_MissingPreservesErrNotExist verifies that a missing
 // findings.json preserves os.ErrNotExist through the error chain so callers can
 // distinguish absent data (usage error, exit 2) from present-but-malformed data
