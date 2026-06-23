@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -180,6 +182,25 @@ func TestGithubCmd_MissingTokenIsUsageError(t *testing.T) {
 	code, _ := execCmdCapture(t, "github",
 		"--repo", "samestrin/atcr", "--sha", "abc", "2026-06-10_t")
 	require.Equal(t, 2, code)
+}
+
+func TestGithubCmd_WritesGithubOutput(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_go", highFinding)
+	url, _ := captureGitHub(t)
+
+	githubOutput := filepath.Join(t.TempDir(), "github-output")
+	t.Setenv("GITHUB_OUTPUT", githubOutput)
+
+	code, _ := execCmdCapture(t, "github",
+		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
+		"--api-url", url, "--fail-on", "high", "2026-06-10_go")
+
+	require.Equal(t, 1, code)
+	content, err := os.ReadFile(githubOutput)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "conclusion=failure")
+	assert.Contains(t, string(content), "findings=1")
 }
 
 func TestPostInlineComments_RateLimiting(t *testing.T) {
