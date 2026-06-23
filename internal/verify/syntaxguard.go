@@ -89,13 +89,16 @@ const maxFixBytes = 256 * 1024
 // validateGoFixSyntax returns a non-nil error when fix is plausibly Go code that
 // fails to parse, and nil otherwise (valid Go, prose, or non-Go content).
 func validateGoFixSyntax(fix string) error {
-	if len(fix) > maxFixBytes {
-		return nil // pathological size: not a genuine fix — skip the triple AST parse
-	}
 	fix = normalizeNewlines(fix)
 	code, lang, hadFence := extractFencedCode(fix)
 	if hadFence && nonGoFenceLangs[strings.ToLower(strings.TrimSpace(lang))] {
 		return nil // explicitly another language — not this guard's concern
+	}
+	// Cap the size of the code actually parsed, not the raw fix. A small fenced
+	// snippet wrapped in a huge prose blob is still a genuine fix and should be
+	// validated; only the extracted code path is expensive.
+	if len(code) > maxFixBytes {
+		return nil // pathological size: not a genuine fix — skip the triple AST parse
 	}
 	code = strings.TrimSpace(code)
 	if code == "" {
