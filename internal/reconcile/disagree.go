@@ -417,6 +417,11 @@ func sortedKeys(set map[string]bool) []string {
 // passes a truncating variant (report.escTrunc, 500-rune cap). Fixed-vocabulary
 // fields (kind, severity, file, reviewers, skeptics, disagreement) are never
 // routed through it — they always use esc/codeSpan/joinOrNone directly.
+//
+// Callers MUST supply a renderer that preserves the escaping contract used by
+// esc: newlines flattened to spaces, HTML metacharacters escaped, and backticks
+// escaped. A renderer that only truncates or transforms text without escaping
+// will introduce markdown-injection vulnerabilities in the rendered output.
 type RadarTextRenderer func(string) string
 
 // WriteRadarSection appends the "## Disagreements" section (header + ranked
