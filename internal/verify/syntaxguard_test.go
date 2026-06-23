@@ -203,6 +203,15 @@ func TestValidateGoFixSyntax_InlineDoubleBraceLineNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(src), "a line with an inner brace must not be treated as a Go block open")
 }
 
+// A prose change-instruction whose LAST character is a lone opening brace satisfies
+// blockOpenRe but must NOT be flagged: blockOpenRe alone is not a reliable code signal
+// when there is no matching close-brace line in the same snippet. This is the primary
+// false-positive case blockOpenRe-co-occurrence guards against.
+func TestValidateGoFixSyntax_ProseLineEndingInLoneBraceNotFlagged(t *testing.T) {
+	src := "Wrap the body in the literal that opens with {"
+	assert.NoError(t, validateGoFixSyntax(src), "a prose change-instruction ending in a lone { must not be flagged as invalid Go")
+}
+
 func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(""), "empty fix must not be flagged")
 	assert.NoError(t, validateGoFixSyntax("   \n\t"), "whitespace-only fix must not be flagged")
