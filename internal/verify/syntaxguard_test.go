@@ -168,6 +168,18 @@ func TestValidateGoFixSyntax_TrailingWhitespaceAfterOpenFenceValid(t *testing.T)
 	assert.NoError(t, validateGoFixSyntax(src), "whitespace after the opening backticks must be tolerated")
 }
 
+// A fence with a space between the opening backticks and the language tag
+// (CommonMark permits ``` go as well as ```go) must still be recognized so a
+// malformed Go block inside it is flagged rather than silently passing.
+func TestValidateGoFixSyntax_SpacedFenceInvalidGoFlagged(t *testing.T) {
+	// The fenced body is broken Go, but without fence extraction the surrounding
+	// backticks hide the code signal and the unfenced text does not look like Go,
+	// so the bug would silently pass.
+	src := "``` go\nreturn a +\n```"
+	err := validateGoFixSyntax(src)
+	require.Error(t, err, "broken Go in a spaced fence must be flagged")
+}
+
 func TestValidateGoFixSyntax_NonGoFenceNotFlagged(t *testing.T) {
 	src := "```python\ndef add(a, b):\n    return a + b\n```"
 	assert.NoError(t, validateGoFixSyntax(src), "an explicitly non-Go fenced block must not be flagged by the Go guard")
