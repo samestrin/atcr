@@ -119,6 +119,16 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 		title = fmt.Sprintf("atcr — %d finding(s), %d at/above %s", total, failCount, threshold)
 	}
 
+	var summary string
+	switch conclusion {
+	case "failure":
+		summary = fmt.Sprintf("Gate failed: %d finding(s) at or above the threshold.", failCount)
+	case "success":
+		summary = "Gate passed: no findings at or above the threshold."
+	default:
+		summary = "Informational review — no merge gate configured."
+	}
+
 	var b strings.Builder
 	switch conclusion {
 	case "failure":
@@ -151,5 +161,5 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 		shownCount++
 	}
 
-	return CheckOutput{Title: title, Summary: title, Text: b.String()}
+	return CheckOutput{Title: title, Summary: summary, Text: b.String()}
 }
