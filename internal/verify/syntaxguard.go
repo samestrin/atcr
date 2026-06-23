@@ -231,17 +231,21 @@ func looksLikeGoCode(src string) bool {
 	return blockCloseRe.MatchString(src)
 }
 
-// looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go
-// JSON/config object rather than Go source: it carries a JSON object-member line (a
-// quoted key followed by a colon at line start) and no Go declaration keyword on any
-// line. The keyword check is a coarse whole-input line scan, not a structural key-
-// aware parse, so a JSON value line beginning with a Go keyword defeats suppression
-// and re-arms the block-brace signal. This is benign — it only re-arms pre-existing
-// 7.1 behavior and never adds new flagging beyond 7.1 (AC2 intact). It exists purely
-// to SUPPRESS a false-positive invalid_syntax flag on unfenced JSON/config (Epic 7.5);
-// it only ever reduces flagging. The detection is deliberately narrow (quoted keys
-// only — bare `ident:` is not used, since Go struct literals, labels, cases, and map
-// entries all produce it), keeping it conservative.
+// looksLikeNonGoBraces reports whether a parse-failed, unfenced fragment should be
+// suppressed as obviously non-Go content: it matches any fragment that carries a
+// JSON object-member line (a double-quoted key followed by a colon at line start) and
+// no Go declaration keyword on any line — regardless of whether braces are present.
+// The function name reflects its primary use case (JSON/config objects), but the
+// check is intentionally broader per the AC4 false-negative-preferred policy: a
+// quoted-key line with no decl keyword is sufficient to suppress, even without
+// surrounding braces. The keyword check is a coarse whole-input line scan, not a
+// structural key-aware parse, so a JSON value line beginning with a Go keyword
+// defeats suppression and re-arms the block-brace signal. This is benign — it only
+// re-arms pre-existing 7.1 behavior and never adds new flagging beyond 7.1 (AC2
+// intact). It exists purely to SUPPRESS a false-positive invalid_syntax flag on
+// unfenced JSON/config (Epic 7.5); it only ever reduces flagging. The detection is
+// deliberately narrow (quoted keys only — bare `ident:` is not used, since Go struct
+// literals, labels, cases, and map entries all produce it), keeping it conservative.
 func looksLikeNonGoBraces(src string) bool {
 	return jsonKeyLineRe.MatchString(src) && !declKeywordRe.MatchString(src)
 }
