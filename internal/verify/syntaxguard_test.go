@@ -246,32 +246,32 @@ func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
 // not code — the residual false positive Epic 7.5 closes.
 func TestValidateGoFixSyntax_UnfencedJSONObjectNotFlagged(t *testing.T) {
 	src := "{\n  \"timeout\": 30,\n  \"retries\": 3\n}"
-	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON object must not be flagged as invalid Go")
+	require.NoError(t, validateGoFixSyntax(src), "an unfenced JSON object must not be flagged as invalid Go")
 }
 
 // AC1 boundary: an empty JSON object has no block-brace lines and is not flagged.
 func TestValidateGoFixSyntax_EmptyJSONObjectNotFlagged(t *testing.T) {
 	src := "{}"
-	assert.NoError(t, validateGoFixSyntax(src), "an empty JSON object must not be flagged as invalid Go")
+	require.NoError(t, validateGoFixSyntax(src), "an empty JSON object must not be flagged as invalid Go")
 }
 
 // AC1 boundary: a trailing-comma JSON object is still JSON-shaped (quoted-key line)
 // and is suppressed rather than flagged invalid_syntax.
 func TestValidateGoFixSyntax_TrailingCommaJSONObjectNotFlagged(t *testing.T) {
 	src := "{\n  \"timeout\": 30,\n  \"retries\": 3,\n}"
-	assert.NoError(t, validateGoFixSyntax(src), "a trailing-comma JSON object must not be flagged as invalid Go")
+	require.NoError(t, validateGoFixSyntax(src), "a trailing-comma JSON object must not be flagged as invalid Go")
 }
 
 // AC1: nested unfenced JSON is likewise suppressed.
 func TestValidateGoFixSyntax_UnfencedNestedJSONNotFlagged(t *testing.T) {
 	src := "{\n  \"server\": {\n    \"host\": \"localhost\",\n    \"port\": 8080\n  }\n}"
-	assert.NoError(t, validateGoFixSyntax(src), "an unfenced nested JSON object must not be flagged")
+	require.NoError(t, validateGoFixSyntax(src), "an unfenced nested JSON object must not be flagged")
 }
 
 // AC1: a JSON array of objects (leading `[`, quoted-key members) is also suppressed.
 func TestValidateGoFixSyntax_UnfencedJSONArrayNotFlagged(t *testing.T) {
 	src := "[\n  {\n    \"name\": \"a\",\n    \"on\": true\n  }\n]"
-	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON array of objects must not be flagged")
+	require.NoError(t, validateGoFixSyntax(src), "an unfenced JSON array of objects must not be flagged")
 }
 
 // AC2 guard: the JSON suppression must only reduce flagging — broken Go with block
@@ -309,7 +309,7 @@ func TestValidateGoFixSyntax_BrokenGoSwitchStringCaseStillFlagged(t *testing.T) 
 // never reaches this path.)
 func TestValidateGoFixSyntax_BrokenStringKeyedMapSuppressed_AcceptedFalseNegative(t *testing.T) {
 	src := "{\n  \"a\": 1,\n  \"b\":\n}" // broken (missing value) but JSON-shaped
-	assert.NoError(t, validateGoFixSyntax(src),
+	require.NoError(t, validateGoFixSyntax(src),
 		"a broken JSON-shaped fix is suppressed — the accepted conservative-recall false negative")
 }
 
