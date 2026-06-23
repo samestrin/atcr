@@ -25,6 +25,14 @@ const highFinding = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom"
 const mediumFinding = `[{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
 const twoFindings = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom","fix":"do x","category":"security","est_minutes":10,"evidence":"e; fix by opus","reviewers":["greta"],"confidence":"HIGH"},{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
 
+// TestMain zeroes the per-comment fallback pause so the suite never waits on the
+// real secondary-rate-limit delay; the pacing itself is covered explicitly in
+// TestPostInlineComments_FallbackPacesSequentialPosts.
+func TestMain(m *testing.M) {
+	perCommentPostDelay = 0
+	os.Exit(m.Run())
+}
+
 // captureGitHub starts a fake GitHub REST server that records the body of the
 // check-run POST it receives.
 func captureGitHub(t *testing.T) (url string, body func() map[string]any) {
@@ -408,6 +416,7 @@ func TestPostInlineComments_FallbackPerComment422IsSkipped(t *testing.T) {
 	assert.Equal(t, 0, posted, "both off-diff comments skipped")
 	assert.Equal(t, 0, deduped)
 	assert.Contains(t, stderr.String(), "422")
+	assert.Empty(t, out.String(), "all-skipped fallback must not print a stdout summary")
 }
 
 // TestPostInlineComments_FallbackPerCommentHardErrorPropagates pins that a
@@ -439,6 +448,149 @@ func TestPostInlineComments_FallbackPerCommentHardErrorPropagates(t *testing.T) 
 
 	_, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
 	require.Error(t, err, "a non-422 per-comment failure during fallback must propagate as exitFailure")
+	var ce *codedError
+	require.True(t, errors.As(err, &ce), "fallback hard error must be a codedError")
+	assert.Equal(t, exitFailure, ce.code)
+}
+
+// TestPostInlineComments_FallbackPartialHardErrorPropagatesCount pins that a
+// non-422 failure part-way through the per-comment fallback reports the number
+// of comments already posted and aborts on the next comment.
+func TestPostInlineComments_FallbackPartialHardErrorPropagatesCount(t *testing.T) {
+	var mu sync.Mutex
+	postCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST — first two succeed, third fails
+			mu.Lock()
+			postCount++
+			count := postCount
+			mu.Unlock()
+			if count <= 2 {
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":1}`))
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+		{File: "c.go", Line: 3, Problem: "p3", Fix: "f3"},
+		{File: "d.go", Line: 4, Problem: "p4", Fix: "f4"},
+	}
+
+	_, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.Error(t, err, "a non-422 per-comment failure after partial success must propagate")
+	assert.Contains(t, err.Error(), "failed after 2 posted", "error must report the number of comments posted before failure")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 3, postCount, "two successful POSTs plus the failing third POST")
+}
+
+// TestPostInlineComments_FallbackDedupsExistingATCRComments pins that the
+// per-comment fallback path correctly deduplicates against existing ATCR
+// comments and reports the deduped count.
+func TestPostInlineComments_FallbackDedupsExistingATCRComments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"path":"a.go","line":1,"body":"ATCR found: p1. Fix: f1."}]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+	}
+
+	posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err, "fallback path must dedupe existing ATCR comments")
+	assert.Equal(t, 1, posted, "only b.go:2 should post via fallback — a.go:1 already exists")
+	assert.Equal(t, 1, deduped, "a.go:1 should be counted as deduped")
+}
+
+// TestPostInlineComments_FallbackCapsIndividualPosts pins that the per-comment
+// fallback bounds the number of API calls it makes: once maxFallbackComments is
+// reached it stops and emits a truncation notice, with the remaining findings
+// still carried by the check-run output (matching render.go's table-truncation
+// precedent).
+func TestPostInlineComments_FallbackCapsIndividualPosts(t *testing.T) {
+	orig := maxFallbackComments
+	t.Cleanup(func() { maxFallbackComments = orig })
+	maxFallbackComments = 2
+
+	var mu sync.Mutex
+	postCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST
+			mu.Lock()
+			postCount++
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+		{File: "c.go", Line: 3, Problem: "p3", Fix: "f3"},
+		{File: "d.go", Line: 4, Problem: "p4", Fix: "f4"},
+	}
+
+	posted, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err, "capping is not an error — the rest live in the check output")
+	assert.Equal(t, 2, posted, "posts are capped at maxFallbackComments")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 2, postCount, "no more than maxFallbackComments API calls are made")
+	assert.Contains(t, stderr.String(), "capped", "a truncation notice must be emitted")
 }
 
 // TestReadReconciledFindings_MissingPreservesErrNotExist verifies that a missing
@@ -451,4 +603,79 @@ func TestReadReconciledFindings_MissingPreservesErrNotExist(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, os.ErrNotExist),
 		"missing findings.json must preserve os.ErrNotExist so callers can exit 2 for absent data")
+}
+
+// TestPostInlineComments_FallbackPacesSequentialPosts pins that the per-comment
+// fallback spaces successive writes through waitBetweenPosts so a PR with many
+// findings does not trip GitHub's secondary rate limit, and that a context
+// canceled during that pause aborts the loop while reporting the count already
+// posted.
+func TestPostInlineComments_FallbackPacesSequentialPosts(t *testing.T) {
+	orig := waitBetweenPosts
+	t.Cleanup(func() { waitBetweenPosts = orig })
+
+	newFallbackServer := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+				w.WriteHeader(http.StatusNotFound) // force fallback
+			default: // per-comment POST
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":1}`))
+			}
+		}))
+	}
+
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+		{File: "c.go", Line: 3, Problem: "p3", Fix: "f3"},
+	}
+
+	t.Run("paces between every post", func(t *testing.T) {
+		srv := newFallbackServer()
+		defer srv.Close()
+
+		paced := 0
+		waitBetweenPosts = func(ctx context.Context) error { paced++; return ctx.Err() }
+
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetContext(context.Background())
+
+		client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+		posted, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+		require.NoError(t, err)
+		assert.Equal(t, 3, posted, "all three comments posted via fallback")
+		assert.Equal(t, 2, paced, "pacing runs between posts: len(comments)-1 times")
+	})
+
+	t.Run("cancellation during pause aborts and reports posted count", func(t *testing.T) {
+		srv := newFallbackServer()
+		defer srv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel during the first inter-post pause: one comment posts, then the
+		// loop must stop instead of posting the rest.
+		waitBetweenPosts = func(c context.Context) error { cancel(); return context.Canceled }
+
+		cmd := &cobra.Command{}
+		var out bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetContext(ctx)
+
+		client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+		posted, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+		require.Error(t, err, "a canceled context must abort the fallback loop")
+		var ce *codedError
+		require.True(t, errors.As(err, &ce), "cancellation aborts with a codedError")
+		assert.Equal(t, exitFailure, ce.code)
+		assert.Equal(t, 1, posted, "only the first comment posted before cancellation")
+	})
 }

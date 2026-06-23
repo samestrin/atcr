@@ -1,3 +1,19 @@
+## [Technical Debt] - 2026-06-23
+
+### Fixed
+
+- Verified deduplication count correctness on the fallback comment path.
+- Suppressed stdout summary when all fallback comments are 422-skipped.
+- Ensured fallback hard errors return a coded `exitFailure`.
+- Verified partial-fallback hard error count remains correct.
+- Confirmed `BuildCheckOutput` returns a neutral conclusion for non-empty findings when the threshold is empty.
+- Documented non-atomicity and dedup-on-retry idempotency in the fallback comment path.
+- Paced fallback comment posts and honored cancellation between them.
+- Capped individual fallback comment posts to bound GitHub API calls.
+- Noted that 404 fallback may mask a bad `--pr` value in `cmd/atcr/github.go`.
+
+*Shipped via /resolve-td + /finalize-td*
+
 ## [7.6.0] - 2026-06-22
 
 GitHub Action API efficiency improvements for posting reconciled findings to pull requests.

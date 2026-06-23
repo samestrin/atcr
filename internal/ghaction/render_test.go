@@ -114,6 +114,11 @@ func TestBuildCheckOutputReturnsConclusionAndFailCount(t *testing.T) {
 		assert.Equal(t, ConclusionFailure, conclusion)
 		assert.Equal(t, 1, failCount)
 	})
+	t.Run("non-empty findings without threshold is neutral", func(t *testing.T) {
+		_, conclusion, failCount := BuildCheckOutput(findings, "")
+		assert.Equal(t, ConclusionNeutral, conclusion)
+		assert.Equal(t, 0, failCount)
+	})
 	t.Run("empty findings with threshold reports success and zero", func(t *testing.T) {
 		_, conclusion, failCount := BuildCheckOutput(nil, "HIGH")
 		wantC, wantN := Conclusion(nil, "HIGH")
