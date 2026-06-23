@@ -1,0 +1,2 @@
+HIGH|cmd/atcr/github.go:8|missing import "path/filepath"|Add import "path/filepath"|correctness|5|See anchorDir and readReconciledFindings using filepath without import|atcr_bot
+MEDIUM|cmd/atcr/github.go:150|postInlineComments treats all errors as failures, including expected 422; should distinguish 422 and only count non-422 errors as failures for systemic problem detection|correctness|30|See loop in postInlineComments where any error increments failed|atcr_bot|bob2

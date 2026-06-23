@@ -1,0 +1,1 @@
+LOW|action.yml:74|Potential shell injection via input interpolation|Use environment variables for all inputs in the `run` block to avoid script injection|security|10|`BASE_REF="$BASE_REF_INPUT"` is used, but `PR_BASE_REF` is interpolated via `${{ github.base_ref }}` in `env:` which is safe, but the pattern is inconsistent|otto

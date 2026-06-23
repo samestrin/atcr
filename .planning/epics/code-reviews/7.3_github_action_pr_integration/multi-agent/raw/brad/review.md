@@ -1,0 +1,2 @@
+MEDIUM|cmd/atcr/github.go:125|No rate-limit handling for bulk comment posts|Add sleep/backoff between API calls|performance|10|for _, c := range comments { client.CreateReviewComment...|bruce
+LOW|action.yml:37|Cache path uses absolute action path|Use relative path like go.sum|maintainability|2|cache-dependency-path: ${{ github.action_path }}/go.sum|bruce

@@ -1,0 +1,3 @@
+MEDIUM|internal/reconcile/disagree.go:436|Missing nil check for renderText|Add nil check or panic|error-handling|2|renderText(it.Problem) called without nil check|bruce
+MEDIUM|internal/reconcile/disagree.go:439|Missing nil check for renderText|Add nil check or panic|error-handling|2|renderText(it.Detail) called without nil check|bruce
+MEDIUM|internal/reconcile/disagree.go:468|Missing nil check for renderText|Add nil check or panic|error-handling|2|renderText(p.Problem) called without nil check|bruce

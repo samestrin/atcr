@@ -1,0 +1,285 @@
+diff --git a/internal/reconcile/disagree.go b/internal/reconcile/disagree.go
+index b18d606..3072c4d 100644
+--- a/internal/reconcile/disagree.go
++++ b/internal/reconcile/disagree.go
+@@ -409,19 +409,40 @@ func sortedKeys(set map[string]bool) []string {
+ 	return out
+ }
+ 
+-// writeRadarSection appends the "Disagreements" section to the reconciled
+-// report.md, above the consensus findings. It writes nothing when there are no
+-// items, so a review with no disagreements yields byte-identical report output.
+-// Free text is routed through esc/codeSpan (emit.go), the same injection defenses
+-// the rest of the report uses.
+-func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
++// RadarTextRenderer escapes a free-text body field (Problem / Detail / a
++// position's problem) for markdown output. It is the single intentional
++// difference between the reconciled and display radar renderers: the reconciled
++// report passes esc (verbatim, archival fidelity); the focused display view
++// passes a truncating variant (report.escTrunc, 500-rune cap). Fixed-vocabulary
++// fields (kind, severity, file, reviewers, skeptics, disagreement) are never
++// routed through it — they always use esc/codeSpan/joinOrNone directly.
++type RadarTextRenderer func(string) string
++
++// WriteRadarSection appends the "## Disagreements" section (header + ranked
++// items) to b. It writes nothing when there are no items, so a review with no
++// disagreements yields byte-identical report output. renderText escapes the
++// free-text body fields (see RadarTextRenderer); items render under the "### "
++// heading prefix. This is the single shared renderer for the reconciled
++// report.md path and (via WriteRadarItems) the internal/report display paths —
++// it lives in reconcile because internal/report already imports reconcile and
++// the reverse would be circular.
++func WriteRadarSection(b *bytes.Buffer, df DisagreementsFile, renderText RadarTextRenderer) {
+ 	if len(df.Items) == 0 {
+ 		return
+ 	}
+ 	fmt.Fprintf(b, "\n## Disagreements\n\nTop %d tension spot(s) — reviewer splits, solo findings, and gray-zone clusters, highest first.\n", len(df.Items))
+-	for i, it := range df.Items {
+-		fmt.Fprintf(b, "\n### %d. %s — %s (%s) · score %s\n",
+-			i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
++	WriteRadarItems(b, df.Items, "### ", renderText)
++}
++
++// WriteRadarItems renders each ranked item under the given heading prefix
++// (e.g. "### " inside a report section, "## " for the standalone radar view).
++// Free-text body fields (Problem, Detail, a position's problem) route through
++// renderText; fixed-vocabulary fields route through esc/codeSpan/joinOrNone, the
++// same injection defenses the rest of the report uses.
++func WriteRadarItems(b *bytes.Buffer, items []DisagreementItem, heading string, renderText RadarTextRenderer) {
++	for i, it := range items {
++		fmt.Fprintf(b, "\n%s%d. %s — %s (%s) · score %s\n",
++			heading, i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
+ 		if it.Disagreement != "" {
+ 			fmt.Fprintf(b, "- Severity disagreement: %s\n", esc(it.Disagreement))
+ 		}
+@@ -432,10 +453,10 @@ func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
+ 			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinOrNone(it.Reviewers)), it.Independence)
+ 		}
+ 		if it.Problem != "" {
+-			fmt.Fprintf(b, "- Problem: %s\n", esc(it.Problem))
++			fmt.Fprintf(b, "- Problem: %s\n", renderText(it.Problem))
+ 		}
+ 		if it.Detail != "" {
+-			fmt.Fprintf(b, "- Detail: %s\n", esc(it.Detail))
++			fmt.Fprintf(b, "- Detail: %s\n", renderText(it.Detail))
+ 		}
+ 		if len(it.Positions) > 0 {
+ 			b.WriteString("- Positions:\n")
+@@ -444,7 +465,7 @@ func writeRadarSection(b *bytes.Buffer, df DisagreementsFile) {
+ 				if name == "" {
+ 					name = "(unknown)"
+ 				}
+-				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(name), esc(p.Severity), esc(p.Problem))
++				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(name), esc(p.Severity), renderText(p.Problem))
+ 			}
+ 		}
+ 	}
+diff --git a/internal/reconcile/disagree_test.go b/internal/reconcile/disagree_test.go
+index 75dfa3e..7b10644 100644
+--- a/internal/reconcile/disagree_test.go
++++ b/internal/reconcile/disagree_test.go
+@@ -596,3 +596,82 @@ func TestSpreadFromDisagreement_MixedCase(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// markerItem builds a one-item radar exercising every renderable field so the
++// shared renderer's routing (fixed-vocabulary via esc vs free-text via the
++// injected renderer) can be asserted.
++func markerItem() DisagreementItem {
++	return DisagreementItem{
++		Kind:         KindSeveritySplit,
++		File:         "x.go",
++		Line:         1,
++		Severity:     "HIGH",
++		Problem:      "the-problem",
++		Detail:       "the-detail",
++		Independence: 1,
++		Reviewers:    []string{"a"},
++		Disagreement: "LOW vs HIGH",
++		Skeptics:     "skep-a, skep-b",
++		Positions:    []Position{{Reviewer: "a", Severity: "HIGH", Problem: "pos-problem"}},
++	}
++}
++
++func TestWriteRadarItems_HonorsHeadingAndTextRenderer(t *testing.T) {
++	var b bytes.Buffer
++	// renderText wraps free text in «» so we can prove body fields route through
++	// the injected renderer while fixed-vocabulary fields stay on esc.
++	WriteRadarItems(&b, []DisagreementItem{markerItem()}, "#### ", func(s string) string { return "«" + s + "»" })
++	out := b.String()
++
++	assert.Contains(t, out, "#### 1.", "heading prefix param must drive the item heading")
++	assert.Contains(t, out, "«the-problem»", "Problem must route through the injected text renderer")
++	assert.Contains(t, out, "«the-detail»", "Detail must route through the injected text renderer")
++	assert.Contains(t, out, "«pos-problem»", "position Problem must route through the injected text renderer")
++	// Fixed-vocabulary fields never go through the injected renderer.
++	assert.NotContains(t, out, "«HIGH»", "severity is fixed-vocabulary, stays on esc")
++	assert.NotContains(t, out, "«LOW vs HIGH»", "disagreement is fixed-vocabulary, stays on esc")
++	assert.Contains(t, out, "Skeptics split: skep-a, skep-b", "skeptics route through esc")
++	assert.Contains(t, out, "Reviewers: a (independence 1)", "reviewers route through esc/joinOrNone")
++}
++
++func TestWriteRadarSection_EmitsHeaderThenItemsVerbatim(t *testing.T) {
++	df := DisagreementsFile{Items: []DisagreementItem{markerItem()}}
++	var b bytes.Buffer
++	WriteRadarSection(&b, df, esc)
++	out := b.String()
++	assert.Contains(t, out, "## Disagreements", "section header emitted")
++	assert.Contains(t, out, "### 1.", "items render under the ### heading prefix")
++	assert.Contains(t, out, "the-problem", "esc renders the problem verbatim")
++}
++
++func TestWriteRadarSection_EmptyWritesNothing(t *testing.T) {
++	var b bytes.Buffer
++	WriteRadarSection(&b, DisagreementsFile{}, esc)
++	assert.Empty(t, b.String(), "no items → no output")
++}
++
++// TestWriteRadarItems_TextRendererControlsTruncation pins AC4: the single
++// intentional difference between the reconciled (verbatim) and display
++// (truncated) radar renderers is the injected text renderer. The reconciled path
++// passes esc (full body); the display path passes report.escTrunc (500-rune cap).
++func TestWriteRadarItems_TextRendererControlsTruncation(t *testing.T) {
++	long := strings.Repeat("A", 600)
++	item := DisagreementItem{
++		Kind: KindSoloFinding, File: "x.go", Line: 1, Severity: "HIGH",
++		Problem: long, Independence: 1, Reviewers: []string{"a"},
++	}
++
++	var verbatim, truncated bytes.Buffer
++	WriteRadarItems(&verbatim, []DisagreementItem{item}, "### ", esc)
++	WriteRadarItems(&truncated, []DisagreementItem{item}, "### ", func(s string) string {
++		r := []rune(s)
++		if len(r) > 80 {
++			return string(r[:80]) + "..."
++		}
++		return s
++	})
++
++	assert.Contains(t, verbatim.String(), long, "esc renderer keeps the full body verbatim")
++	assert.NotContains(t, truncated.String(), long, "a truncating renderer shortens the body")
++	assert.Contains(t, truncated.String(), "...", "truncating renderer appends an ellipsis")
++}
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index b272250..53480f7 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -342,8 +342,10 @@ func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
+ 
+ 	// Disagreement radar above the consensus findings (Epic 3.2). Nothing is
+ 	// written when there is no tension, so report.md is byte-identical to the
+-	// pre-3.2 output for a review with no disagreements.
+-	writeRadarSection(&b, df)
++	// pre-3.2 output for a review with no disagreements. The reconciled report
++	// uses esc (verbatim/archival) for free-text body fields; the display view
++	// in internal/report passes escTrunc through the same shared renderer.
++	WriteRadarSection(&b, df, esc)
+ 
+ 	if len(r.Findings) == 0 {
+ 		b.WriteString("\nNo findings.\n")
+diff --git a/internal/report/disagree.go b/internal/report/disagree.go
+index 10daa0a..57924ab 100644
+--- a/internal/report/disagree.go
++++ b/internal/report/disagree.go
+@@ -5,7 +5,6 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 	"io"
+-	"strconv"
+ 
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ )
+@@ -24,7 +23,10 @@ func RenderDisagreements(w io.Writer, df reconcile.DisagreementsFile) error {
+ 		return err
+ 	}
+ 	fmt.Fprintf(&b, "%d tension spot(s), highest first.\n", len(df.Items))
+-	writeRadarItems(&b, df.Items, "## ")
++	// Standalone radar view uses "## " item headings and escTrunc (500-rune cap)
++	// for display; the shared renderer lives in reconcile (report imports
++	// reconcile; the reverse would be circular).
++	reconcile.WriteRadarItems(&b, df.Items, "## ", escTrunc)
+ 	_, err := w.Write(b.Bytes())
+ 	return err
+ }
+@@ -41,63 +43,3 @@ func RenderDisagreementsJSON(w io.Writer, df reconcile.DisagreementsFile) error
+ 	_, err = w.Write(append(data, '\n'))
+ 	return err
+ }
+-
+-// writeRadarSection appends the collapsible "Disagreements" section used inside
+-// the standard report.md, above the consensus findings. It writes nothing when
+-// there are no items, so a review with no disagreements produces byte-identical
+-// report output.
+-func writeRadarSection(b *bytes.Buffer, df reconcile.DisagreementsFile) {
+-	if len(df.Items) == 0 {
+-		return
+-	}
+-	fmt.Fprintf(b, "\n## Disagreements\n\nTop %d tension spot(s) — reviewer splits, solo findings, and gray-zone clusters, highest first.\n", len(df.Items))
+-	writeRadarItems(b, df.Items, "### ")
+-}
+-
+-// writeRadarItems renders each ranked item under the given heading prefix.
+-func writeRadarItems(b *bytes.Buffer, items []reconcile.DisagreementItem, heading string) {
+-	for i, it := range items {
+-		fmt.Fprintf(b, "\n%s%d. %s — %s (%s) · score %s\n",
+-			heading, i+1, esc(it.Kind), codeSpan(it.File, it.Line), esc(it.Severity), formatScore(it.Score))
+-		if it.Disagreement != "" {
+-			fmt.Fprintf(b, "- Severity disagreement: %s\n", esc(it.Disagreement))
+-		}
+-		if it.Skeptics != "" {
+-			fmt.Fprintf(b, "- Skeptics split: %s\n", esc(it.Skeptics))
+-		}
+-		if len(it.Reviewers) > 0 {
+-			fmt.Fprintf(b, "- Reviewers: %s (independence %d)\n", esc(joinReviewers(it.Reviewers)), it.Independence)
+-		}
+-		// escTrunc (500-rune cap) is intentional for display output; the reconcile
+-		// counterpart (reconcile/disagree.go writeRadarSection) uses esc (no cap) for
+-		// archival fidelity.
+-		if it.Problem != "" {
+-			fmt.Fprintf(b, "- Problem: %s\n", escTrunc(it.Problem))
+-		}
+-		if it.Detail != "" {
+-			fmt.Fprintf(b, "- Detail: %s\n", escTrunc(it.Detail))
+-		}
+-		if len(it.Positions) > 0 {
+-			b.WriteString("- Positions:\n")
+-			for _, p := range it.Positions {
+-				fmt.Fprintf(b, "  - %s — %s: %s\n", esc(reviewerOrUnknown(p.Reviewer)), esc(p.Severity), escTrunc(p.Problem))
+-			}
+-		}
+-	}
+-}
+-
+-// formatScore renders the ranking score compactly: an integer-valued score drops
+-// the decimal (6, not 6.0); a fractional score keeps two places.
+-func formatScore(s float64) string {
+-	if s == float64(int64(s)) {
+-		return strconv.FormatInt(int64(s), 10)
+-	}
+-	return strconv.FormatFloat(s, 'f', 2, 64)
+-}
+-
+-func reviewerOrUnknown(name string) string {
+-	if name == "" {
+-		return "(unknown)"
+-	}
+-	return name
+-}
+diff --git a/internal/report/render.go b/internal/report/render.go
+index 92829ac..71239d3 100644
+--- a/internal/report/render.go
++++ b/internal/report/render.go
+@@ -95,8 +95,10 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
+ 	writeSummaryGrid(&b, findings, verified)
+ 
+ 	// Disagreement radar above the consensus findings (Epic 3.2). Empty df →
+-	// nothing written → output identical to the plain report.
+-	writeRadarSection(&b, df)
++	// nothing written → output identical to the plain report. The display report
++	// passes escTrunc (500-rune cap) to the shared reconcile renderer; the
++	// reconciled report.md passes esc (verbatim) through the same code path.
++	reconcile.WriteRadarSection(&b, df, escTrunc)
+ 
+ 	// Contested-findings section (Epic 6.0): judge rulings over debated disputes.
+ 	// Empty cr → nothing written → output identical to the pre-6.0 report.
