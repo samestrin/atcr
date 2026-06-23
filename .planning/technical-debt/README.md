@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 6 | 1 | 23 |
 | MEDIUM | 19 | 23 | 45 |
-| LOW | 25 | 22 | 55 |
+| LOW | 23 | 22 | 57 |
 
-**Last Modified:** 2026-06-22 | **Open Items:** 50 | **Deferred Items:** 46 | **Resolved Items:** 123 | **Total Items:** 219
+**Last Modified:** 2026-06-22 | **Open Items:** 48 | **Deferred Items:** 46 | **Resolved Items:** 125 | **Total Items:** 219
 
 ## Directory Structure
 
@@ -60,7 +60,7 @@ technical-debt/
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
 | 11 | [x] | HIGH | internal/verify/syntaxguard.go:55 | jsonKeyLineRe (`^\s*"[^"]*"\s*:`) uses a non-escape-aware character class, so a JSON object whose ONLY member key contains an escaped quote (e.g. "a\"b": 1) does not match. looksLikeNonGoBraces then returns false, the block-brace signal fires, and the single-key escaped-quote JSON object is spuriously flagged invalid_syntax — the same false-positive class Epic 7.5 set out to close. Verified empirically: validateGoFixSyntax returns "illegal label declaration". Multi-key objects are unaffected because a sibling clean-key line still matches, so blast radius is narrow. (disagreement: LOW vs HIGH) | Widen jsonKeyLineRe to tolerate backslash-escapes in the key using an escape-aware character class (allow a non-quote/non-backslash char OR a backslash-escaped char between the quotes; RE2-safe, no backtracking). Add a single-key fixture {\n  "a\"b": 1\n} to syntaxguard_test.go asserting NoError. Alternatively accept and document the boundary as a known narrow limitation. | maintainability | 15 | code-review | agent, otto, greta, Residual FP for `{"a\"b":1}`; conservative-recall tolerant, bruce, claude, Regex `[^"]*` cannot match `\"` in keys like `"foo\"bar":` | HIGH |
 | 11 | [x] | LOW | internal/verify/syntaxguard.go:167 | jsonKeyLineRe does not match keys with escaped quotes | Either accept limitation or use `"(?:[^"\\] | \\.)*"` | 5 | code-review | `[^"]*` won't match `"key\"with\"escapes"` which is rare but valid JSON | MEDIUM |
-| 11 | [ ] | LOW | internal/verify/syntaxguard.go:167 | Inefficient regex re-execution | Either accept limitation or use `"(?:[^"\\] | \\.)*"` | 5 | code-review | bruce | MEDIUM |
+| 11 | [x] | LOW | internal/verify/syntaxguard.go:167 | Inefficient regex re-execution | Either accept limitation or use `"(?:[^"\\] | \\.)*"` | 5 | code-review | bruce | MEDIUM |
 | 11 | [x] | HIGH | internal/verify/syntaxguard.go:167 | looksLikeGoCode logic unclear without comments | Either accept limitation or use `"(?:[^"\\] | \\.)*"` | 5 | code-review | agent | MEDIUM |
 | 11 | [x] | HIGH | internal/verify/syntaxguard.go:172 | looksLikeNonGoBraces may suppress valid Go with string keys | Order is correct per design but could be clearer | maintainability | 5 | code-review | agent | MEDIUM |
 | 11 | [x] | MEDIUM | internal/verify/syntaxguard.go:172 | looksLikeNonGoBraces called before block brace check but after decl keyword | Order is correct per design but could be clearer | maintainability | 5 | code-review | bruce | MEDIUM |
