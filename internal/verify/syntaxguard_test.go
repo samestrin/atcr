@@ -217,3 +217,63 @@ func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
 	assert.True(t, strings.Contains(err.Error(), "expected") || strings.Contains(err.Error(), "unexpected"),
 		"the returned error should be a go/parser syntax error, got: %v", err)
 }
+
+// --- Epic 7.5: unfenced non-Go (JSON/config) brace-content suppression ---
+
+// AC1: an unfenced multi-line JSON object with block braces must not be flagged. Its
+// braces satisfy the block-brace signal and it fails to parse as Go, but it is data,
+// not code — the residual false positive Epic 7.5 closes.
+func TestValidateGoFixSyntax_UnfencedJSONObjectNotFlagged(t *testing.T) {
+	src := "{\n  \"timeout\": 30,\n  \"retries\": 3\n}"
+	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON object must not be flagged as invalid Go")
+}
+
+// AC1: nested unfenced JSON is likewise suppressed.
+func TestValidateGoFixSyntax_UnfencedNestedJSONNotFlagged(t *testing.T) {
+	src := "{\n  \"server\": {\n    \"host\": \"localhost\",\n    \"port\": 8080\n  }\n}"
+	assert.NoError(t, validateGoFixSyntax(src), "an unfenced nested JSON object must not be flagged")
+}
+
+// AC1: a JSON array of objects (leading `[`, quoted-key members) is also suppressed.
+func TestValidateGoFixSyntax_UnfencedJSONArrayNotFlagged(t *testing.T) {
+	src := "[\n  {\n    \"name\": \"a\",\n    \"on\": true\n  }\n]"
+	assert.NoError(t, validateGoFixSyntax(src), "an unfenced JSON array of objects must not be flagged")
+}
+
+// AC2 guard: the JSON suppression must only reduce flagging — broken Go with block
+// braces but NO JSON quoted-key shape must STILL be flagged (nothing previously
+// flagged-as-broken-Go becomes spared just because it has braces).
+func TestValidateGoFixSyntax_BrokenGoWithBracesStillFlagged_75(t *testing.T) {
+	src := "func add(a, b int) int {\n\treturn a +\n}"
+	require.Error(t, validateGoFixSyntax(src), "JSON suppression must not spare brace-structured broken Go")
+}
+
+// AC2 boundary: the JSON anchor is a quoted key at LINE START. A broken Go switch
+// whose case label is a quoted string (`case "foo":`) does not start with the quote,
+// so it is not mistaken for JSON and remains flagged.
+func TestValidateGoFixSyntax_BrokenGoSwitchStringCaseStillFlagged(t *testing.T) {
+	src := "switch s {\ncase \"foo\":\n\treturn 1 +\n}"
+	require.Error(t, validateGoFixSyntax(src), "a broken Go switch with a quoted case label must still be flagged")
+}
+
+// AC4 characterization (deliberate trade-off): a BROKEN Go map/struct literal with
+// string keys parses-fail then matches the JSON quoted-key shape, so it is suppressed
+// (a false negative). This is the accepted cost of closing the unfenced-JSON false
+// positive under the conservative-recall policy — a false negative is preferred over a
+// false positive. Do NOT "fix" this by narrowing the suppression; it would risk
+// reintroducing the JSON false positive. (A VALID such literal parses cleanly and
+// never reaches this path.)
+func TestValidateGoFixSyntax_BrokenStringKeyedMapSuppressed_AcceptedFalseNegative(t *testing.T) {
+	src := "{\n  \"a\": 1,\n  \"b\":\n}" // broken (missing value) but JSON-shaped
+	assert.NoError(t, validateGoFixSyntax(src),
+		"a broken JSON-shaped fix is suppressed — the accepted conservative-recall false negative")
+}
+
+// looksLikeNonGoBraces is the suppression predicate: true only for JSON/config object
+// shapes (a line beginning with a quoted key) with no Go declaration keyword.
+func TestLooksLikeNonGoBraces(t *testing.T) {
+	assert.True(t, looksLikeNonGoBraces("{\n  \"k\": 1\n}"), "quoted-key object is non-Go")
+	assert.False(t, looksLikeNonGoBraces("func f() {\n\treturn 1\n}"), "a Go func is not non-Go braces")
+	assert.False(t, looksLikeNonGoBraces("type T struct {\n\tX int\n}"), "a Go type decl is not non-Go braces")
+	assert.False(t, looksLikeNonGoBraces("switch s {\ncase \"x\":\n}"), "a quoted case label does not start the line")
+}
