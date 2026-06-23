@@ -329,6 +329,14 @@ func TestValidateGoFixSyntax_UnfencedJSONObjectEscapedQuoteKeyNotFlagged(t *test
 	require.NoError(t, validateGoFixSyntax(src), "a single-key JSON object with an escaped-quote key must not be flagged")
 }
 
+// AC1 residual: unquoted-key config (JSON5/YAML/TOML) with block braces is an
+// accepted residual false positive — jsonKeyLineRe requires a double-quoted key, so
+// bare `key: value` or `key = value` forms are not suppressed and may still be
+// flagged invalid_syntax. This is a known limitation of the quoted-key anchor; it
+// keeps the guard conservative (false-negative-preferred per AC4) without widening
+// suppression to bare identifier patterns that appear in Go struct literals, labels,
+// and map entries. A future reader should not assume all unfenced config is covered.
+
 // AC2 guard: the JSON suppression must only reduce flagging — broken Go with block
 // braces but NO JSON quoted-key shape must STILL be flagged (nothing previously
 // flagged-as-broken-Go becomes spared just because it has braces).
