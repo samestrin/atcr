@@ -116,6 +116,10 @@ runs:
           ARGS+=(--fail-on "$FAIL_ON")
         fi
         if [ "$INLINE" = "true" ]; then
+          if [ -z "$PR_NUMBER" ]; then
+            echo "Error: inline-comments requires a pull_request event" >&2
+            exit 1
+          fi
           ARGS+=(--inline-comments --pr "$PR_NUMBER")
         fi
         "$ATCR_BIN" "${ARGS[@]}"
