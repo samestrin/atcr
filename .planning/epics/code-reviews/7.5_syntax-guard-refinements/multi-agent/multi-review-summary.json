@@ -1,0 +1,95 @@
+{
+  "reviewers": [
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 8437,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 25731,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "ok",
+      "durationMs": 26672,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 37508,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 56930,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 74004,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 119967,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 149934,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 201878,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "dax-local",
+      "model": "llm-large",
+      "status": "ok",
+      "durationMs": 3791,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 247917,
+      "tdLineCount": 518
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "ok",
+      "durationMs": 346959,
+      "tdLineCount": 1
+    }
+  ],
+  "totalFindings": 530,
+  "partial": true,
+  "totalDurationMs": 346960,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-22T18:02:48-07:00"
+}

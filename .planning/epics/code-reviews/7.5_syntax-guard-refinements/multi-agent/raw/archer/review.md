@@ -1,0 +1,1 @@
+LOW|internal/verify/syntaxguard.go:191|Redundant declKeywordRe.MatchString — already checked at line 174|Pass pre-computed bool or accept as intentional defensive check|performance|5|declKeywordRe checked at looksLikeGoCode:174 then re-checked in looksLikeNonGoBraces:191|base-code-reviewer

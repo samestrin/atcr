@@ -1,0 +1,1 @@
+LOW|internal/verify/syntaxguard.go:167|Inefficient regex re-execution|Cache declKeywordRe result|performance|5|declKeywordRe.MatchString(s) called twice|bruce

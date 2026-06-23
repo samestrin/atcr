@@ -1,0 +1,4 @@
+MEDIUM|internal/verify/executor.go:453|Partial Settings struct may miss fields|Pass full registry.Settings or verify EffectiveExecutorTimeoutSecs only uses TimeoutSecs|correctness|10|registry.Settings{TimeoutSecs: sharedTimeoutSecs} omits other settings fields|bruce
+LOW|internal/verify/executor.go:71|Misleading comment about cc availability|Fix comment: cc is non-nil only when skeptic harness built, not when fix eligible|maintainability|5|comment says "at least one skeptic ran or a fix was eligible"|bruce
+LOW|internal/verify/executor.go:133|Fallback log doesn't specify missing component|Log whether cc or disp is nil for better debugging|maintainability|5|"dispatcher/chat unavailable" doesn't distinguish which is missing|bruce
+LOW|internal/verify/executor.go:387|Weak randomness for injection sentinel|Use crypto/rand for sentinel generation|security|5|rand.Uint32() used for prompt injection guard sentinel|bruce

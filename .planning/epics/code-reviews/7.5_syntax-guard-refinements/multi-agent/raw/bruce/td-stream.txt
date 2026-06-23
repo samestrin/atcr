@@ -1,0 +1,2 @@
+LOW|internal/verify/syntaxguard.go:60|jsonKeyLineRe regex does not handle escaped quotes in JSON keys|Use `"(?:[^"\\]|\\.)*"` to match keys containing escaped chars|correctness|5|Residual FP for `{"a\"b":1}`; conservative-recall tolerant|bruce
+LOW|internal/verify/syntaxguard_test.go:271|looksLikeNonGoBraces not tested with content having both JSON key line and Go decl keyword|Add case like `func f() {\n\t"k": 1\n}` asserting False|maintainability|5|!declKeywordRe guard is only reachable via direct calls; no test exercises it|bruce

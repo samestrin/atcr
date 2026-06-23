@@ -1,0 +1,1 @@
+MEDIUM|internal/verify/syntaxguard.go:62|JSON key regex fails on escaped quotes|Change `[^"]*` to `([^"\\]|\\.)*` to match escaped chars|correctness|5|Regex `[^"]*` cannot match `\"` in keys like `"foo\"bar":`|base-reviewer

@@ -1,0 +1,79 @@
+# Code Review Report: 7.5_syntax-guard-refinements
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 4 / 4
+- **Approval Status:** Approved
+- **Review Date:** June 22, 2026
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial) + Tests
+
+## 2. Checklist Changes Applied
+- **internal/verify/syntaxguard.go** — AC1: Unfenced JSON/config with block braces not flagged
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/verify/syntaxguard.go:177-178`, `:190-192`
+- **internal/verify/syntaxguard.go** — AC2: Detection only suppresses flagging
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/verify/syntaxguard.go:104-110`, `:173-181`
+- **internal/verify/syntaxguard_test.go** — AC3: Existing 7.1 tests pass unchanged
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: full suite green; diff is purely additive
+- **internal/verify/syntaxguard.go** — AC4: Conservative-recall preserved and documented
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `internal/verify/syntaxguard.go:166-172`, `:183-189`; `syntaxguard_test.go:264-276`
+
+## 3. Evidence Map
+- **AC1 — Unfenced JSON/config not flagged**
+  - Evidence: `internal/verify/syntaxguard.go:173-181` (looksLikeGoCode), `:190-192` (looksLikeNonGoBraces), `:62` (jsonKeyLineRe)
+  - Tests: `syntaxguard_test.go:226-242` (flat object, nested object, JSON array)
+  - Summary: A quoted-key JSON object-member line short-circuits the block-brace Go signal to `false`, so the unfenced JSON fix is not flagged.
+- **AC2 — Suppression only reduces flagging**
+  - Evidence: `internal/verify/syntaxguard.go:104-110` (looksLikeGoCode consulted only after parseGoFix fails), `:177-178` (new branch only adds a `return false`)
+  - Tests: `syntaxguard_test.go:248-262` (brace-structured broken Go and quoted `case` labels still flagged)
+  - Summary: The only added control flow is an early `return false`; no new `return true` path exists. Structurally cannot turn a previously-unflagged input into a flagged one. Confirmed structurally and empirically by adversarial review.
+- **AC3 — Existing 7.1 tests pass unchanged**
+  - Evidence: full `go test ./...` green (28 packages); verify package 95.5% coverage; diff appends only (no existing test or branch modified — `:180` preserves the original boolean expression as fallthrough).
+- **AC4 — Conservative-recall preserved and documented**
+  - Evidence: `internal/verify/syntaxguard.go:166-172`, `:183-189`; characterization test `syntaxguard_test.go:264-276` locks the accepted false negative.
+  - Summary: The broken string-keyed Go map suppression (a false negative) is documented and pinned by a test that warns against narrowing the suppression.
+
+## 4. Remaining Unchecked Items
+No remaining unchecked items - all verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** The change is small, additive, and well-documented. The headline safety property (suppression can only reduce flagging, never add it) was independently verified both structurally and empirically. All acceptance criteria are satisfied with code-level evidence and passing tests.
+
+## 6. Coverage Analysis
+- **Coverage:** 95.5% (internal/verify)
+- **Baseline:** 80%
+- **Delta:** ↑15.5%
+- **Status:** PASSING
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Lint | PASSING | golangci-lint run |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | go fmt ./... |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 2
+- **Issues Found:** 3 (Critical: 0, High: 0, Medium: 0, Low: 3)
+
+### Issues by Severity
+**LOW**
+1. `internal/verify/syntaxguard.go:62` (correctness) — `jsonKeyLineRe` is not escape-aware; a single-key JSON object whose only key contains an escaped quote (`"a\"b": 1`) is still spuriously flagged `invalid_syntax`. Independently reproduced (`illegal label declaration`). Narrow blast radius: multi-key objects are unaffected.
+2. `internal/verify/syntaxguard_test.go:274` (testing) — No test covers the regex boundary cases (escaped-quote, empty, unicode keys); the single-escaped-quote regression would go uncaught.
+3. `internal/verify/syntaxguard.go:190` (maintainability) — The `looksLikeNonGoBraces` comment over-promises: the keyword check is a coarse whole-input line scan, not key-aware, so a JSON value line starting with a Go keyword defeats suppression (benign — only re-arms 7.1 behavior, AC2 intact).
+
+### Accepted Trade-offs (not defects)
+- Broken string-keyed Go map suppression — documented AC4 false negative.
+- `parseGoFix` OR-strategies — recorded WONTFIX (conservative recall by design).
+- Multi-fence validation — recorded WONTFIX.
+
+## 9. Follow-ups
+- Route the 3 LOW findings to the TD README via `/reconcile-code-review`.
+- Optional: close the escaped-quote residual false positive (15 min) and add the regex-boundary tests (15 min) — both are LOW and consistent with the epic's own goal of eliminating unfenced-JSON false positives.
+
+---
+*Generated by /execute-code-review on June 22, 2026 05:55:49PM*

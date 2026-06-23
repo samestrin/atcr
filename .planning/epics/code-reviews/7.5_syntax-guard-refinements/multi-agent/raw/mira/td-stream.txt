@@ -1,0 +1,1 @@
+LOW|internal/verify/syntaxguard.go:167|jsonKeyLineRe does not match keys with escaped quotes|Either accept limitation or use `"(?:[^"\\]|\\.)*"`|correctness|5|`[^"]*` won't match `"key\"with\"escapes"` which is rare but valid JSON|claude
