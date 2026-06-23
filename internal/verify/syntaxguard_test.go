@@ -303,8 +303,22 @@ func TestValidateGoFixSyntax_BrokenStringKeyedMapSuppressed_AcceptedFalseNegativ
 // looksLikeNonGoBraces is the suppression predicate: true only for JSON/config object
 // shapes (a line beginning with a quoted key) with no Go declaration keyword.
 func TestLooksLikeNonGoBraces(t *testing.T) {
-	assert.True(t, looksLikeNonGoBraces("{\n  \"k\": 1\n}"), "quoted-key object is non-Go")
-	assert.False(t, looksLikeNonGoBraces("func f() {\n\treturn 1\n}"), "a Go func is not non-Go braces")
-	assert.False(t, looksLikeNonGoBraces("type T struct {\n\tX int\n}"), "a Go type decl is not non-Go braces")
-	assert.False(t, looksLikeNonGoBraces("switch s {\ncase \"x\":\n}"), "a quoted case label does not start the line")
+	tests := []struct {
+		name     string
+		src      string
+		expected bool
+	}{
+		{"quoted-key object is non-Go", "{\n  \"k\": 1\n}", true},
+		{"empty-key object is non-Go", "{\n  \"\": 1\n}", true},
+		{"unicode-key object is non-Go", "{\n  \"café\": 1\n}", true},
+		{"escaped-quote key pins current regex behavior", "{\n  \"a\\\"b\": 1\n}", false},
+		{"a Go func is not non-Go braces", "func f() {\n\treturn 1\n}", false},
+		{"a Go type decl is not non-Go braces", "type T struct {\n\tX int\n}", false},
+		{"a quoted case label does not start the line", "switch s {\ncase \"x\":\n}", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, looksLikeNonGoBraces(tt.src))
+		})
+	}
 }
