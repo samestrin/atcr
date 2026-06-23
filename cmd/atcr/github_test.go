@@ -440,6 +440,9 @@ func TestPostInlineComments_FallbackPerCommentHardErrorPropagates(t *testing.T) 
 
 	_, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
 	require.Error(t, err, "a non-422 per-comment failure during fallback must propagate as exitFailure")
+	var ce *codedError
+	require.True(t, errors.As(err, &ce), "fallback hard error must be a codedError")
+	assert.Equal(t, exitFailure, ce.code)
 }
 
 // TestPostInlineComments_FallbackDedupsExistingATCRComments pins that the
