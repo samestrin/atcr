@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -79,9 +78,14 @@ func TestGithubCmd_InlineCommentsPostReviewComments(t *testing.T) {
 	paths := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		paths[r.URL.Path]++
+		paths[r.Method+" "+r.URL.Path]++
 		mu.Unlock()
-		w.WriteHeader(http.StatusCreated)
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":1}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -90,12 +94,13 @@ func TestGithubCmd_InlineCommentsPostReviewComments(t *testing.T) {
 		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
 		"--api-url", srv.URL, "--inline-comments", "--pr", "5", "2026-06-10_i")
 
-	// HIGH finding with no --fail-on: neutral conclusion → exit 0, but a comment posts.
+	// HIGH finding with no --fail-on: neutral conclusion → exit 0, review posts.
 	require.Equal(t, 0, code)
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, 1, paths["/repos/samestrin/atcr/check-runs"], "check run still posts")
-	assert.Equal(t, 1, paths["/repos/samestrin/atcr/pulls/5/comments"], "inline comment posts")
+	assert.Equal(t, 1, paths["POST /repos/samestrin/atcr/check-runs"], "check run still posts")
+	assert.Equal(t, 1, paths["POST /repos/samestrin/atcr/pulls/5/reviews"], "batched review posts")
+	assert.Equal(t, 0, paths["POST /repos/samestrin/atcr/pulls/5/comments"], "no per-comment POSTs")
 }
 
 func TestGithubCmd_InlineCommentsBeforeCheckRunAndReflectedInOutput(t *testing.T) {
@@ -105,27 +110,21 @@ func TestGithubCmd_InlineCommentsBeforeCheckRunAndReflectedInOutput(t *testing.T
 	var mu sync.Mutex
 	var order []string
 	var checkBody map[string]any
-	commentCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		order = append(order, r.URL.Path)
+		order = append(order, r.Method+" "+r.URL.Path)
 		raw, _ := io.ReadAll(r.Body)
-		if r.URL.Path == "/repos/samestrin/atcr/check-runs" {
+		if strings.Contains(r.URL.Path, "check-runs") {
 			_ = json.Unmarshal(raw, &checkBody)
-		}
-		isComment := strings.Contains(r.URL.Path, "/pulls/5/comments")
-		if isComment {
-			commentCount++
 		}
 		mu.Unlock()
 
-		if isComment && commentCount == 1 {
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			_, _ = w.Write([]byte(`{"message":"Line is not part of the pull request diff"}`))
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
 			return
 		}
-
-		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":1}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -138,20 +137,23 @@ func TestGithubCmd_InlineCommentsBeforeCheckRunAndReflectedInOutput(t *testing.T
 	mu.Lock()
 	defer mu.Unlock()
 
-	var checkIdx, firstCommentIdx int
-	for i, p := range order {
-		if p == "/repos/samestrin/atcr/check-runs" {
+	// Review (list + batch) must arrive before the check run.
+	checkIdx := -1
+	reviewIdx := -1
+	for i, entry := range order {
+		if strings.Contains(entry, "check-runs") {
 			checkIdx = i
 		}
-		if strings.Contains(p, "/pulls/5/comments") && firstCommentIdx == 0 {
-			firstCommentIdx = i
+		if strings.Contains(entry, "/pulls/5/reviews") && reviewIdx < 0 {
+			reviewIdx = i
 		}
 	}
-	require.Less(t, firstCommentIdx, checkIdx, "inline comments must be posted before the check run")
+	require.Greater(t, reviewIdx, -1, "batch review must be requested")
+	require.Less(t, reviewIdx, checkIdx, "inline review must be posted before the check run")
 
 	text, _ := checkBody["output"].(map[string]any)["text"].(string)
-	assert.Contains(t, text, "1 posted")
-	assert.Contains(t, text, "1 skipped")
+	assert.Contains(t, text, "2 posted")
+	assert.Contains(t, text, "0 already present")
 }
 
 func TestGithubCmd_InlineCommentsRequirePR(t *testing.T) {
@@ -203,21 +205,22 @@ func TestGithubCmd_WritesGithubOutput(t *testing.T) {
 	assert.Contains(t, string(content), "findings=1")
 }
 
-func TestPostInlineComments_RateLimiting(t *testing.T) {
+func TestPostInlineComments_UsesBatchedAPI(t *testing.T) {
 	var mu sync.Mutex
-	callCount := 0
+	paths := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		callCount++
+		paths[r.Method+" "+r.URL.Path]++
 		mu.Unlock()
-		w.WriteHeader(http.StatusCreated)
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":1}`))
 	}))
 	defer srv.Close()
-
-	originalDelay := inlineCommentDelay
-	inlineCommentDelay = 50 * time.Millisecond
-	defer func() { inlineCommentDelay = originalDelay }()
 
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
@@ -225,21 +228,59 @@ func TestPostInlineComments_RateLimiting(t *testing.T) {
 	cmd.SetErr(&out)
 	cmd.SetContext(context.Background())
 
-	client := &ghaction.Client{APIURL: srv.URL, Token: "tok"}
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
 	findings := []reconcile.JSONFinding{
-		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Fix: "f1", Category: "security", EstMinutes: 10},
-		{Severity: "HIGH", File: "b.go", Line: 2, Problem: "p2", Fix: "f2", Category: "security", EstMinutes: 10},
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
 	}
 
-	start := time.Now()
-	posted, failed, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
-	elapsed := time.Since(start)
-
+	posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
 	require.NoError(t, err)
-	require.Equal(t, 2, posted)
-	require.Equal(t, 0, failed)
+	assert.Equal(t, 2, posted)
+	assert.Equal(t, 0, deduped)
+
 	mu.Lock()
 	defer mu.Unlock()
-	require.Equal(t, 2, callCount)
-	require.GreaterOrEqual(t, elapsed, 50*time.Millisecond, "expected delay between inline comment API calls")
+	assert.Equal(t, 1, paths["GET /repos/owner/repo/pulls/1/comments"], "expected one list call")
+	assert.Equal(t, 1, paths["POST /repos/owner/repo/pulls/1/reviews"], "expected one batch review")
+	assert.Equal(t, 0, paths["POST /repos/owner/repo/pulls/1/comments"], "expected no per-comment POSTs")
+}
+
+func TestPostInlineComments_DedupsExistingATCRComments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"path":"a.go","line":1,"body":"ATCR found: p1. Fix: f1."}]`))
+			return
+		}
+		// POST /reviews — verify only b.go:2 is in the batch
+		var body map[string]any
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		comments, _ := body["comments"].([]any)
+		if len(comments) != 1 {
+			http.Error(w, "expected exactly 1 comment after dedup", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":2}`))
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+	}
+
+	posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err)
+	assert.Equal(t, 1, posted, "only b.go:2 should post — a.go:1 already exists")
+	assert.Equal(t, 1, deduped, "a.go:1 should be counted as deduped")
 }

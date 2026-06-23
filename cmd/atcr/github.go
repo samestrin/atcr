@@ -5,17 +5,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/samestrin/atcr/internal/ghaction"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/spf13/cobra"
 )
-
-// inlineCommentDelay spaces successive GitHub PR review-comment API calls to
-// avoid tripping rate limits when posting many inline findings. It is a package
-// variable so tests can substitute a short value.
-var inlineCommentDelay = 100 * time.Millisecond
 
 // newGithubCmd builds `atcr github`: render the reconciled findings of a review
 // onto a GitHub pull request as a check run (honoring --fail-on for the merge
@@ -123,12 +117,12 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	// comments are the enhancement. Post them before the check run so the check
 	// output can reflect partial delivery (some posted, some 422-skipped).
 	if inline {
-		posted, skipped, err := postInlineComments(cmd, client, owner, repo, pr, sha, findings)
+		posted, deduped, err := postInlineComments(cmd, client, owner, repo, pr, sha, findings)
 		if err != nil {
 			return err
 		}
-		if posted > 0 || skipped > 0 {
-			output.Text += fmt.Sprintf("\n\n_Inline comments: %d posted, %d skipped (not part of PR diff)._", posted, skipped)
+		if posted > 0 || deduped > 0 {
+			output.Text += fmt.Sprintf("\n\n_Inline comments: %d posted, %d already present._", posted, deduped)
 		}
 	}
 
@@ -164,34 +158,55 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// postInlineComments posts one inline review comment per anchorable finding.
-// It returns the number of comments successfully posted and the number that
-// failed (e.g., GitHub returned 422 because the line is not part of the PR
-// diff). Posting is best-effort: a 422 on a single comment is expected and must
-// not fail the run. But if EVERY comment fails, that signals a systemic problem
-// (bad token, missing pull-requests:write) and is surfaced as an error.
+// postInlineComments posts anchorable findings as a single batched PR review.
+// It first lists existing PR review comments to skip any that atcr already
+// posted (dedup across re-runs). It returns the number of new comments posted
+// and the number skipped because they were already present.
 func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, findings []reconcile.JSONFinding) (int, int, error) {
 	comments := ghaction.BuildInlineComments(findings)
 	if len(comments) == 0 {
 		return 0, 0, nil
 	}
-	posted, failed := 0, 0
-	var lastErr error
-	for i, c := range comments {
-		if err := client.CreateReviewComment(cmd.Context(), owner, repo, pr, sha, c); err != nil {
-			failed++
-			lastErr = err
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not post comment at %s:%d: %v\n", c.Path, c.Line, err)
-		} else {
-			posted++
-		}
-		if i < len(comments)-1 {
-			time.Sleep(inlineCommentDelay)
+
+	existing, err := client.ListReviewComments(cmd.Context(), owner, repo, pr)
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not list existing comments (dedup skipped): %v\n", err)
+	}
+	comments, deduped := deduplicateComments(comments, existing)
+
+	if len(comments) == 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted 0 inline comment(s) to %s/%s#%d (%d already present)\n", owner, repo, pr, deduped)
+		return 0, deduped, nil
+	}
+
+	if err := client.CreatePRReview(cmd.Context(), owner, repo, pr, ghaction.PRReviewRequest{
+		CommitID: sha,
+		Comments: comments,
+	}); err != nil {
+		return 0, deduped, &codedError{code: exitFailure, err: fmt.Errorf("%d inline comment(s) failed to post: %w", len(comments), err)}
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d already present)\n", len(comments), owner, repo, pr, deduped)
+	return len(comments), deduped, nil
+}
+
+// deduplicateComments removes comments whose path:line already has an ATCR
+// comment in the existing list. Returns the filtered slice and the dedup count.
+func deduplicateComments(comments []ghaction.CommentRequest, existing []ghaction.ReviewComment) ([]ghaction.CommentRequest, int) {
+	if len(existing) == 0 {
+		return comments, 0
+	}
+	seen := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		if strings.HasPrefix(e.Body, "ATCR found:") {
+			seen[fmt.Sprintf("%s:%d", e.Path, e.Line)] = true
 		}
 	}
-	if posted == 0 && failed > 0 {
-		return 0, failed, &codedError{code: exitFailure, err: fmt.Errorf("all %d inline comment(s) failed to post: %w", failed, lastErr)}
+	var out []ghaction.CommentRequest
+	for _, c := range comments {
+		if !seen[fmt.Sprintf("%s:%d", c.Path, c.Line)] {
+			out = append(out, c)
+		}
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d skipped)\n", posted, owner, repo, pr, failed)
-	return posted, failed, nil
+	return out, len(comments) - len(out)
 }

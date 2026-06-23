@@ -182,6 +182,69 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 	}
 }
 
+// get performs an authenticated GET to path and JSON-decodes the response into
+// out (when non-nil). Retries on transient 5xx / 429 with exponential back-off.
+func (c *Client) get(ctx context.Context, path string, out any) error {
+	apiBase, err := c.baseURL()
+	if err != nil {
+		return err
+	}
+	url := apiBase + path
+	makeReq := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		return req, nil
+	}
+
+	const maxRetries = 3
+	backoff := 250 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		req, err := makeReq()
+		if err != nil {
+			return fmt.Errorf("building request: %w", err)
+		}
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			if attempt < maxRetries {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return fmt.Errorf("getting %s: %w", path, err)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+			_ = resp.Body.Close()
+			if readErr != nil {
+				return fmt.Errorf("reading response: %w", readErr)
+			}
+			if out != nil {
+				return json.Unmarshal(body, out)
+			}
+			return nil
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		_ = resp.Body.Close()
+		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, githubMessage(respBody))
+	}
+}
+
 // githubMessage extracts the human-readable "message" from a GitHub error
 // response body, falling back to the raw (truncated) body when it is not the
 // expected shape.

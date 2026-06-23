@@ -63,6 +63,55 @@ func TestCommentBodyDefangsInjection(t *testing.T) {
 	assert.NotContains(t, body, "<!--", "HTML comment open sequence must be neutralized")
 }
 
+func TestListReviewComments(t *testing.T) {
+	existing := []ReviewComment{
+		{Path: "a.go", Line: 7, Body: "ATCR found: boom."},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(existing)
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	got, err := c.ListReviewComments(context.Background(), "o", "r", 5)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "a.go", got[0].Path)
+	assert.Equal(t, 7, got[0].Line)
+	assert.Equal(t, "ATCR found: boom.", got[0].Body)
+}
+
+func TestCreatePRReview(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":10}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.CreatePRReview(context.Background(), "o", "r", 5, PRReviewRequest{
+		CommitID: "sha123",
+		Comments: []CommentRequest{
+			{Path: "a.go", Line: 7, Side: "RIGHT", Body: "hello"},
+			{Path: "b.go", Line: 3, Side: "RIGHT", Body: "world"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/repos/o/r/pulls/5/reviews", gotPath)
+	assert.Equal(t, "sha123", gotBody["commit_id"])
+	assert.Equal(t, "COMMENT", gotBody["event"])
+	comments, ok := gotBody["comments"].([]any)
+	require.True(t, ok)
+	require.Len(t, comments, 2)
+}
+
 func TestCreateReviewComment(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
