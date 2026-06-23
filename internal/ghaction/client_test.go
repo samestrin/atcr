@@ -107,6 +107,22 @@ func TestPostRetriesExhausted(t *testing.T) {
 	assert.Contains(t, err.Error(), "503")
 }
 
+func TestCreateCheckRunWithID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":42}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	id, err := c.CreateCheckRunWithID(context.Background(), "o", "r", CheckRunRequest{
+		Name: "atcr", HeadSHA: "sha", Conclusion: "success",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), id)
+}
+
 func TestCreateCheckRunAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

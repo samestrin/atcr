@@ -74,6 +74,13 @@ type CheckRunRequest struct {
 	Output CheckOutput
 }
 
+// CreateCheckRunWithID creates a completed check run and returns the GitHub-assigned
+// check-run id. Use this when the id is needed for update-in-place on subsequent
+// runs. CreateCheckRun is a convenience wrapper that discards the id.
+func (c *Client) CreateCheckRunWithID(ctx context.Context, owner, repo string, req CheckRunRequest) (int64, error) {
+	return 0, nil // stub — RED phase
+}
+
 // CreateCheckRun creates a completed check run on owner/repo. The check run is
 // always submitted with status "completed" and the given conclusion — atcr runs
 // to completion before posting, so there is no in-progress phase to report.
