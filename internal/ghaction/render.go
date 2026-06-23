@@ -112,7 +112,10 @@ func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutp
 	if strings.TrimSpace(failOn) == "" {
 		title = fmt.Sprintf("atcr — %d finding(s)", total)
 	} else {
-		threshold, _ := reconcile.ParseSeverity(failOn)
+		threshold, err := reconcile.ParseSeverity(failOn)
+		if err != nil {
+			threshold = failOn
+		}
 		title = fmt.Sprintf("atcr — %d finding(s), %d at/above %s", total, failCount, threshold)
 	}
 
