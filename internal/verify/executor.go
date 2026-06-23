@@ -420,6 +420,11 @@ func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, pro
 		Tools:      true,
 		SupportsFC: true,
 		MaxTurns:   ex.EffectiveMaxToolCalls(),
+		// ToolBudgetBytes is intentionally 0 (unlimited): max_tool_calls bounds
+		// the number of turns, and the dispatcher caps individual read-file results,
+		// so cumulative bytes are implicitly bounded by MaxTurns × per-result cap.
+		// To add a hard byte ceiling, add tool_budget_bytes to ExecutorConfig and
+		// forward it here via derefInt64(ex.ToolBudgetBytes).
 		// EffectiveExecutorTimeoutSecs only consults Settings.TimeoutSecs, so a partial
 		// Settings literal is sufficient here.
 		TimeoutSecs: ex.EffectiveExecutorTimeoutSecs(registry.Settings{TimeoutSecs: sharedTimeoutSecs}),
