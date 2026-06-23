@@ -94,8 +94,8 @@ technical-debt/
 | 9 | [x] | MEDIUM | internal/registry/executor_config_test.go:685 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
 | 9 | [x] | MEDIUM | internal/registry/executor_config_test.go:700 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
 | 9 | [x] | LOW | internal/registry/executor_config_test.go:755 | Incorrect error handling | Swallow errors without logging | error-handling | 2 | code-review | bruce | MEDIUM |
-| 9 | [ ] | HIGH | internal/registry/registry_test.go:55 | Missing input validation | Add bounds check for integer input | security | 3 | code-review | bruce | MEDIUM |
-| 9 | [ ] | HIGH | internal/registry/registry_test.go:70 | Missing input validation | Add bounds check for integer input | security | 3 | code-review | bruce | MEDIUM |
+| 9 | [x] | HIGH | internal/registry/registry_test.go:55 | Missing input validation | Add bounds check for integer input | security | 3 | code-review | bruce | MEDIUM |
+| 9 | [x] | HIGH | internal/registry/registry_test.go:70 | Missing input validation | Add bounds check for integer input | security | 3 | code-review | bruce | MEDIUM |
 | 9 | [x] | MEDIUM | internal/registry/registry_test.go:125 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | bruce | MEDIUM |
 | 9 | [x] | MEDIUM | internal/registry/registry_test.go:140 | Incorrect error handling | Swallow errors without logging | error-handling | 5 | code-review | brace | MEDIUM |
 | 10 | [x] | LOW | internal/verify/executor.go:7 | Use of legacy math/rand package, prefer math/rand/v2 in Go 1.22+ | Replace math/rand import with math/rand/v2 and update rand.Uint32() call | maintainability | 5 | code-review | atcr-reviewer | MEDIUM |
