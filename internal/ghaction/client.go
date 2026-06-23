@@ -18,18 +18,24 @@ const DefaultAPIURL = "https://api.github.com"
 
 // Client is a minimal GitHub REST client for posting check runs and PR review
 // comments. A zero HTTPClient falls back to a sane default; a zero APIURL falls
-// back to the public GitHub API.
+// back to the public GitHub API. Timeout overrides the default HTTP client
+// timeout when HTTPClient is nil.
 type Client struct {
 	APIURL     string
 	Token      string
 	HTTPClient *http.Client
+	Timeout    time.Duration
 }
 
 func (c *Client) httpClient() *http.Client {
 	if c.HTTPClient != nil {
 		return c.HTTPClient
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 func (c *Client) baseURL() string {
