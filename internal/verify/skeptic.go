@@ -1,8 +1,9 @@
 package verify
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -20,7 +21,11 @@ import (
 // entries slice are omitted gracefully; the prompt always carries the role framing
 // and verdict spec even for a zero-value finding.
 func buildSkepticPrompt(finding reconcile.JSONFinding, entries []payload.FileEntry) string {
-	sentinel := fmt.Sprintf("finding-%08x", rand.Uint32())
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
+	sentinel := fmt.Sprintf("finding-%08x", binary.BigEndian.Uint32(b[:]))
 	return buildSkepticPromptWithSentinel(finding, entries, sentinel)
 }
 
