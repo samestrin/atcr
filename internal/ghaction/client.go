@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -38,11 +39,25 @@ func (c *Client) httpClient() *http.Client {
 	return &http.Client{Timeout: timeout}
 }
 
-func (c *Client) baseURL() string {
-	if strings.TrimSpace(c.APIURL) != "" {
-		return strings.TrimRight(c.APIURL, "/")
+func (c *Client) baseURL() (string, error) {
+	raw := strings.TrimSpace(c.APIURL)
+	if raw == "" {
+		return DefaultAPIURL, nil
 	}
-	return DefaultAPIURL
+	raw = strings.TrimRight(raw, "/")
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return "", fmt.Errorf("invalid API URL %q", raw)
+	}
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return "", fmt.Errorf("insecure API URL %q: must use https", raw)
+	}
+	return raw, nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
 // CheckRunRequest is the payload for creating a GitHub check run.
@@ -86,7 +101,11 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
 	}
-	url := c.baseURL() + path
+	apiBase, err := c.baseURL()
+	if err != nil {
+		return err
+	}
+	url := apiBase + path
 	makeReq := func() (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 		if err != nil {
