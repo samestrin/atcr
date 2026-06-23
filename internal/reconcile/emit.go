@@ -155,6 +155,10 @@ func (r Result) JSONFindings() []JSONFinding {
 			PathValid:      m.PathValid,
 			PathWarning:    m.PathWarning,
 			PathSuggestion: m.PathSuggestion,
+			// FixWarning intentionally not copied: it is set by the verify fix phase
+			// (executor.go generateFixes) after reconcile, so the reconcile path owns
+			// only the pre-fix Merged state. Copying it here would change behavior for
+			// any future path that round-trips findings through JSONFindings().
 		})
 	}
 	return out
