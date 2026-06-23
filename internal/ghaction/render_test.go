@@ -68,6 +68,15 @@ func TestConclusion(t *testing.T) {
 	})
 }
 
+func TestBuildCheckOutputNormalizesSeverityCase(t *testing.T) {
+	findings := []reconcile.JSONFinding{
+		{Severity: "critical", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
+	}
+	out := BuildCheckOutput(findings, "HIGH")
+	assert.Contains(t, out.Text, "CRITICAL")
+	assert.NotContains(t, out.Text, "critical")
+}
+
 func TestBuildCheckOutputInvalidThresholdRendersRaw(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH"},
