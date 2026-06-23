@@ -2,10 +2,15 @@ package ghaction
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 )
+
+// mdLinkRe matches markdown link syntax [text](url) to strip the URL and keep
+// only the display text, preventing clickable links in check-run table cells.
+var mdLinkRe = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 
 // CheckOutput is the rendered GitHub check-run output payload (the `output`
 // object of a check run: a title, a short summary, and a longer markdown text).
@@ -79,6 +84,9 @@ func cell(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
+	s = mdLinkRe.ReplaceAllString(s, "$1")
+	s = strings.ReplaceAll(s, "*", `\*`)
+	s = strings.ReplaceAll(s, "_", `\_`)
 	return strings.TrimSpace(s)
 }
 
