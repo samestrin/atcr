@@ -213,6 +213,27 @@ func TestValidateGoFixSyntax_ProseLineEndingInLoneBraceNotFlagged(t *testing.T) 
 	assert.NoError(t, validateGoFixSyntax(src), "a prose change-instruction ending in a lone { must not be flagged as invalid Go")
 }
 
+// Prose change-instructions that begin with a declaration keyword (import, func,
+// var, const, type) must NOT be flagged — "import the sync package" is a valid
+// instruction, not broken Go. Only `package <ident>` is an unambiguous Go signal.
+func TestValidateGoFixSyntax_ProseDeclKeywordsNotFlagged(t *testing.T) {
+	cases := []struct {
+		desc string
+		src  string
+	}{
+		{"import as prose", "import the sync package"},
+		{"func as prose", "func should always return an error"},
+		{"var as prose", "var names should be shorter and more descriptive"},
+		{"type as prose", "type the value into the buffer before returning"},
+		{"const as prose", "const values should be defined at the package level"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			assert.NoError(t, validateGoFixSyntax(tc.src), "prose instruction starting with %q must not be flagged", tc.src[:6])
+		})
+	}
+}
+
 func TestValidateGoFixSyntax_EmptyNotFlagged(t *testing.T) {
 	assert.NoError(t, validateGoFixSyntax(""), "empty fix must not be flagged")
 	assert.NoError(t, validateGoFixSyntax("   \n\t"), "whitespace-only fix must not be flagged")

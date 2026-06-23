@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,21 @@ func TestCreateCheckRun(t *testing.T) {
 	assert.Equal(t, "completed", gotBody["status"])
 	assert.Equal(t, "failure", gotBody["conclusion"])
 	assert.Equal(t, "deadbeef", gotBody["head_sha"])
+}
+
+func TestPostSetsUserAgent(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(gotUA, "atcr"), "User-Agent must identify the app, got: %q", gotUA)
 }
 
 func TestClientTimeoutConfigurable(t *testing.T) {
