@@ -152,3 +152,21 @@ func TestCreateCheckRunAPIError(t *testing.T) {
 	assert.Contains(t, err.Error(), "403")
 	assert.Contains(t, err.Error(), "not accessible")
 }
+
+// TestPostDo_422ReturnsAPIError pins that postDo wraps non-retriable HTTP errors as
+// *APIError so callers can inspect StatusCode (e.g. to treat 422 off-diff as expected).
+func TestPostDo_422ReturnsAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"Validation Failed"}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.post(context.Background(), "/repos/o/r/test", map[string]string{"k": "v"})
+	require.Error(t, err)
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr, "non-retriable error must be *APIError so callers can inspect the status code")
+	assert.Equal(t, http.StatusUnprocessableEntity, apiErr.StatusCode)
+	assert.Contains(t, apiErr.Message, "Validation Failed")
+}

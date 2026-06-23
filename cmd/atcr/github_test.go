@@ -284,3 +284,34 @@ func TestPostInlineComments_DedupsExistingATCRComments(t *testing.T) {
 	assert.Equal(t, 1, posted, "only b.go:2 should post — a.go:1 already exists")
 	assert.Equal(t, 1, deduped, "a.go:1 should be counted as deduped")
 }
+
+// TestPostInlineComments_422IsNonFatal pins that a 422 from CreatePRReview (all
+// comments off-diff) is treated as a non-fatal warning rather than propagating as
+// exitFailure — a single off-diff finding must not fail the atcr github step.
+func TestPostInlineComments_422IsNonFatal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"Validation Failed"}`))
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"}}
+
+	posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err, "422 from CreatePRReview must not propagate as exitFailure")
+	assert.Equal(t, 0, posted)
+	assert.Equal(t, 0, deduped)
+	assert.Contains(t, stderr.String(), "422")
+}

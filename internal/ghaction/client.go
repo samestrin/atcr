@@ -17,6 +17,18 @@ import (
 // can point the client at an httptest server.
 const DefaultAPIURL = "https://api.github.com"
 
+// APIError is returned by postDo for non-2xx, non-retriable responses.
+// Callers can inspect StatusCode to distinguish expected failures (e.g. 422
+// Unprocessable for off-diff inline comments) from systemic errors (401/403).
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("github API returned %d: %s", e.StatusCode, e.Message)
+}
+
 // Client is a minimal GitHub REST client for posting check runs and PR review
 // comments. A zero HTTPClient falls back to a sane default; a zero APIURL falls
 // back to the public GitHub API. Timeout overrides the default HTTP client
@@ -179,7 +191,7 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 			backoff *= 2
 			continue
 		}
-		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, githubMessage(respBody))
+		return &APIError{StatusCode: resp.StatusCode, Message: githubMessage(respBody)}
 	}
 }
 

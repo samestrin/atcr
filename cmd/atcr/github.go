@@ -183,6 +183,11 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 		CommitID: sha,
 		Comments: comments,
 	}); err != nil {
+		var apiErr *ghaction.APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == 422 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d inline comment(s) could not be posted (HTTP 422 — comments may be off-diff): %v\n", len(comments), apiErr)
+			return 0, deduped, nil
+		}
 		return 0, deduped, &codedError{code: exitFailure, err: fmt.Errorf("%d inline comment(s) failed to post: %w", len(comments), err)}
 	}
 
