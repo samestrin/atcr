@@ -346,6 +346,10 @@ func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
 	assert.Contains(t, warn, "engine returned no result")
 }
 
+func TestBuildExecutorAgentPromptWithSentinel_InjectedCloseTagStaysInsideBlock(t *testing.T) {
+	t.Fatal("RED: no test verifies that a malicious </sentinel> in finding.Problem stays inside the data block")
+}
+
 func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	f := reconcile.JSONFinding{Severity: "HIGH", File: "auth.go", Line: 42, Category: "SECURITY",
 		Problem: "plaintext password", Fix: "use bcrypt", Evidence: "line 42 stores raw input"}
