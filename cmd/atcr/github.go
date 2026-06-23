@@ -104,7 +104,10 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	}
 	findings, err := readReconciledFindings(reviewDir)
 	if err != nil {
-		return usageError(err) // missing/malformed reconciled data → exit 2
+		if errors.Is(err, os.ErrNotExist) {
+			return usageError(err) // absent data → exit 2 (usage: run reconcile first)
+		}
+		return &codedError{code: exitFailure, err: err} // present-but-malformed → exit 1
 	}
 
 	checkName, _ := cmd.Flags().GetString("check-name")

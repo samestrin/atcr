@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -314,4 +315,16 @@ func TestPostInlineComments_422IsNonFatal(t *testing.T) {
 	assert.Equal(t, 0, posted)
 	assert.Equal(t, 0, deduped)
 	assert.Contains(t, stderr.String(), "422")
+}
+
+// TestReadReconciledFindings_MissingPreservesErrNotExist verifies that a missing
+// findings.json preserves os.ErrNotExist through the error chain so callers can
+// distinguish absent data (usage error, exit 2) from present-but-malformed data
+// (operational error, exit 1).
+func TestReadReconciledFindings_MissingPreservesErrNotExist(t *testing.T) {
+	dir := t.TempDir() // no reconciled/findings.json inside
+	_, err := readReconciledFindings(dir)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, os.ErrNotExist),
+		"missing findings.json must preserve os.ErrNotExist so callers can exit 2 for absent data")
 }
