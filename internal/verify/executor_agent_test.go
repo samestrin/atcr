@@ -325,7 +325,7 @@ func TestRunVerify_AgentMode_PopulatesFixEndToEnd(t *testing.T) {
 	assert.Equal(t, "use a parameterized query", got[0].Fix, "agent-mode fix must land in findings.json end-to-end")
 	assert.Contains(t, got[0].Evidence, "fix by opus")
 	assert.Equal(t, 0, snippet.calls, "agent mode must not invoke the single-shot snippet completer")
-	assert.Equal(t, 2, harnessCallCount, "harness must be invoked exactly once — agent mode reuses the dispatcher (AC5)")
+	assert.Equal(t, 1, harnessCallCount, "harness must be invoked exactly once — agent mode reuses the dispatcher (AC5)")
 }
 
 // zeroResultEngine is a fake fanoutRunner that returns an empty slice, exercising
