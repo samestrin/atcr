@@ -30,7 +30,7 @@ type CommentRequest struct {
 func BuildInlineComments(findings []reconcile.JSONFinding) []CommentRequest {
 	var out []CommentRequest
 	for _, f := range findings {
-		if f.File == "" || f.Line <= 0 {
+		if f.File == "" || f.Line <= 0 || strings.TrimSpace(f.Problem) == "" {
 			continue
 		}
 		out = append(out, CommentRequest{
