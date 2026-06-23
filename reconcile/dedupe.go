@@ -140,6 +140,10 @@ func classify(a, b map[string]struct{}) (relation, float64) {
 	}
 	union := len(a) + len(b) - inter
 	sim := float64(inter) / float64(union)
+	// The integer cross-multiply below is the AUTHORITATIVE threshold boundary —
+	// it is exact and deterministic. `sim` is advisory only (display/tests) and
+	// MUST NOT replace the cross-multiply: a `sim >= 0.7` float comparison would
+	// reintroduce rounding nondeterminism the deterministic gate forbids.
 	switch {
 	case inter*10 >= union*7: // >= 0.7
 		return relMerge, sim

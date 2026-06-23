@@ -348,15 +348,21 @@ From [plan/documentation/](plan/documentation/):
    3. COMMIT: `refactor(reconcile): extend byte-identical golden oracle + capture review TD`
    **Duration:** 3-5h
 
-### 2.4 [ ] **Phase 2 - DoD Validation**
-   - [ ] `go test ./reconcile/...` green (library corpus moved + passing)
-   - [ ] `go test ./...` green (ATCR corpus, no behavioral change)
-   - [ ] `go doc github.com/samestrin/atcr/reconcile` shows `Reconcile`, `Source`, `Finding`, `Merged`, `Options{ReconciledAt,Partial,Merges,Root}`, `Result`, `Summary`, `Verification`, `Verdict*`
-   - [ ] `go mod tidy ./reconcile` → empty `require`; golangci-lint clean (both)
-   - [ ] `TestBoundaryAdapter_FindingConversionRoundTrip` green
+### 2.4 [x] **Phase 2 - DoD Validation**
+   - [x] `go test ./reconcile/...` green (library corpus moved + passing) — coverage 96.6%
+   - [x] `go test ./...` green (ATCR corpus, no behavioral change) — 29 pkgs ok; byte-identical golden corpus (6 artifacts) zero-diff
+   - [x] `go doc github.com/samestrin/atcr/reconcile` shows `Reconcile(sources []Source, opts Options) Result`, `Source{Name,Findings}`, `Finding`, `Merged{Finding}`, `Options{ReconciledAt,Partial,Merges,Root}`, `Result`, `Summary`, `Verification`, `Verdict*`
+   - [x] `go mod tidy ./reconcile` → empty `require` (no go.sum); golangci-lint clean (both modules, 0 issues, v2.12.2); gofmt clean
+   - [x] `TestBoundaryAdapter_FindingConversionRoundTrip` green (adapter coverage 100%)
    - Emit DoD report.
 
-### 2.5 [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-1/2 DoD Complete (Phase 2 Core Extraction)
+   Auto: 5/5 | Story-Specific: lifted API + adapter + byte-identical fixtures + severity single-sourced + stdlib-only
+   Manual Review: [x] Adversarial review passed (2.2.A — no CRITICAL/HIGH); internal/reconcile 88.0% cov, library 96.6% cov, adapter 100% cov
+   ```
+
+### 2.5 [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase. Do NOT review inline.
@@ -375,11 +381,21 @@ From [plan/documentation/](plan/documentation/):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   **Subagent gate findings (fresh-context hostile integrator, 2026-06-23):** No CRITICAL/HIGH/MEDIUM. Two LOW:
+
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | LOW | internal/reconcile/adapter/adapter.go | stream↔library conversion duplicated in `lib.go` (`toLibFinding`/`fromLibFinding`) and the adapter; drift risk. (Gate's "unexercised" note is inaccurate — `adapter_test.go` covers the adapter at 100%; the real issue is the duplication.) | TD-006 — collapse to one conversion in Phase 3 when consumers route through the adapter |
+   | LOW | reconcile/dedupe.go:142 | `sim` float is advisory-only but a future refactor could mistake it for the decision path and reintroduce float nondeterminism | **Fixed inline** — added an authoritative-boundary guard comment at the cross-multiply switch |
+
+   **Phase-2 gate verdict (all verified empirically by the subagent):**
+   - CONTRACT EXIT ✓ — library public surface matches the lifted-as-is contract (`Reconcile(sources []Source, opts Options) Result`, `Source`, `Merged{Finding}`, `Options{ReconciledAt,Partial,Merges,Root}`, `Result`, `Summary`, `Verification`/`Verdict*`, `AmbiguousCluster`, severity + merge building blocks).
+   - CONFIG SURFACE ✓ — library `go.mod` empty require, no `go.sum`; severity single-sourced (one map literal in `reconcile/severity.go`; `stream.SeverityRank` + `internal/reconcile.SeverityRank` both re-export it, no copy).
+   - INTEGRATION ✓ — adapter converts both directions over the 9 wire fields; `ToJSONFinding` shares the `*Verification` pointer (identity) while stamping path fields; ATCR compiles + behaves against the split.
+   - PHASE-EXIT CONTRACT ✓ — every consumer-referenced `reconcile.*` symbol resolves to the library OR a legitimately-internal symbol (JSONFinding, BuildDisagreements/radar, MergeJSONFindings, gate, adjudication, path validation); **Phase 3 can flip all 9 consumers with no library edits**.
+   - REGRESSION ✓ — `sortMerged` total order intact; Jaccard integer cross-multiply intact; byte-identical golden corpus (6 artifacts) zero-diff; both modules green.
+
+   **✅ Phase gate passed** (no CRITICAL/HIGH).
 
    **Action Required:**
    - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
