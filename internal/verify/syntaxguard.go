@@ -190,8 +190,8 @@ func looksLikeGoCode(src string) bool {
 // JSON/config (Epic 7.5); it only ever reduces flagging. The detection is deliberately
 // narrow (quoted keys only — bare `ident:` is not used, since Go struct literals,
 // labels, cases, and map entries all produce it), keeping it conservative.
-func looksLikeNonGoBraces(s string) bool {
-	return jsonKeyLineRe.MatchString(s) && !declKeywordRe.MatchString(s)
+func looksLikeNonGoBraces(src string) bool {
+	return jsonKeyLineRe.MatchString(src) && !declKeywordRe.MatchString(src)
 }
 
 // extractFencedCode returns the inner content of the first markdown code fence in
