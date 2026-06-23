@@ -441,6 +441,42 @@ func TestPostInlineComments_FallbackPerCommentHardErrorPropagates(t *testing.T) 
 	require.Error(t, err, "a non-422 per-comment failure during fallback must propagate as exitFailure")
 }
 
+// TestPostInlineComments_FallbackDedupsExistingATCRComments pins that the
+// per-comment fallback path correctly deduplicates against existing ATCR
+// comments and reports the deduped count.
+func TestPostInlineComments_FallbackDedupsExistingATCRComments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"path":"a.go","line":1,"body":"ATCR found: p1. Fix: f1."}]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":1}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+	}
+
+	posted, deduped, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.NoError(t, err, "fallback path must dedupe existing ATCR comments")
+	assert.Equal(t, 1, posted, "only b.go:2 should post via fallback — a.go:1 already exists")
+	assert.Equal(t, 1, deduped, "a.go:1 should be counted as deduped")
+}
+
 // TestReadReconciledFindings_MissingPreservesErrNotExist verifies that a missing
 // findings.json preserves os.ErrNotExist through the error chain so callers can
 // distinguish absent data (usage error, exit 2) from present-but-malformed data
