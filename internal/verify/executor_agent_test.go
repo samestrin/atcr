@@ -331,4 +331,11 @@ func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	assert.Contains(t, p, "use bcrypt", "the reviewer's suggested fix must be carried in")
 	assert.Contains(t, p, `"fix"`, "the JSON response schema must be specified")
 	assert.Contains(t, strings.ToLower(p), "read", "the prompt must instruct the executor to read the code first")
+	openIdx := strings.Index(p, "<finding-")
+	closeIdx := strings.Index(p, "</finding-")
+	require.GreaterOrEqual(t, openIdx, 0, "open sentinel tag must appear")
+	require.GreaterOrEqual(t, closeIdx, openIdx, "close sentinel tag must appear after open tag")
+	block := p[openIdx:closeIdx]
+	assert.Contains(t, block, "plaintext password", "finding problem must sit inside the sentinel block")
+	assert.Contains(t, block, "use bcrypt", "finding fix must sit inside the sentinel block")
 }
