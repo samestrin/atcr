@@ -78,13 +78,6 @@ type CheckRunRequest struct {
 // check-run id. Use this when the id is needed for update-in-place on subsequent
 // runs. CreateCheckRun is a convenience wrapper that discards the id.
 func (c *Client) CreateCheckRunWithID(ctx context.Context, owner, repo string, req CheckRunRequest) (int64, error) {
-	return 0, nil // stub — RED phase
-}
-
-// CreateCheckRun creates a completed check run on owner/repo. The check run is
-// always submitted with status "completed" and the given conclusion — atcr runs
-// to completion before posting, so there is no in-progress phase to report.
-func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req CheckRunRequest) error {
 	body := map[string]any{
 		"name":       req.Name,
 		"head_sha":   req.HeadSHA,
@@ -97,13 +90,37 @@ func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req Che
 		},
 	}
 	path := fmt.Sprintf("/repos/%s/%s/check-runs", owner, repo)
-	return c.post(ctx, path, body)
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	if err := c.postDo(ctx, path, body, &resp); err != nil {
+		return 0, err
+	}
+	return resp.ID, nil
+}
+
+// CreateCheckRun creates a completed check run on owner/repo. The check run is
+// always submitted with status "completed" and the given conclusion — atcr runs
+// to completion before posting, so there is no in-progress phase to report.
+// Each call creates a new check run; re-runs accumulate entries on the PR.
+// Use CreateCheckRunWithID when the id is needed for update-in-place.
+func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req CheckRunRequest) error {
+	_, err := c.CreateCheckRunWithID(ctx, owner, repo, req)
+	return err
 }
 
 // post marshals body as JSON, POSTs it to path under the API base with the
 // standard GitHub headers, and turns any non-2xx response into an error that
-// carries the status code and the GitHub error message.
+// carries the status code and the GitHub error message. The response body is
+// discarded on success; use postDo to decode it.
 func (c *Client) post(ctx context.Context, path string, body any) error {
+	return c.postDo(ctx, path, body, nil)
+}
+
+// postDo is the inner implementation shared by post and CreateCheckRunWithID.
+// If out is non-nil, the 2xx response body is JSON-decoded into it (best-effort;
+// decode errors are silently ignored so callers need not handle partial responses).
+func (c *Client) postDo(ctx context.Context, path string, body any, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("encoding request: %w", err)
@@ -145,6 +162,9 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 			return fmt.Errorf("posting %s: %w", path, err)
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if out != nil {
+				_ = json.NewDecoder(io.LimitReader(resp.Body, 8<<10)).Decode(out)
+			}
 			_ = resp.Body.Close()
 			return nil
 		}
