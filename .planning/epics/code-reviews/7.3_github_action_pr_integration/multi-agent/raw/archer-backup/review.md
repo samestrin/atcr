@@ -1,0 +1,7 @@
+SECURITY|action.yml:1|Exposes OpenRouter API key in logs|Use repository secrets instead of input parameters|security|5|The openrouter-api-key input is passed via environment variable and may be logged in build logs if not handled carefully|REVIEWER
+SECURITY|cmd/atcr/github.go:67|GITHUB_TOKEN may be logged in error messages|Sanitize error output before logging|security|3|Error messages include token values which could leak into logs|REVIEWER
+PERFORMANCE|cmd/atcr/github.go:102|Unbounded comment posting loop|Limit concurrent operations and add rate-limit handling|performance|10|The loop posts comments without backoff; GitHub may rate-limit|REVIEWER
+CORRECTNESS|cmd/atcr/github.go:130|Missing validation for PR number with inline comments|Add explicit check for PR number when inline comments are enabled|correctness|2|The code checks inline but not PR number validity|REVIEWER
+MAINTAINABILITY|internal/ghaction/client.go:100|Hardcoded GitHub API version|Make API version configurable via environment or flag|maintainability|5|The X-GitHub-Api-Version header is hardcoded|REVIEWER
+MAINTAINABILITY|internal/ghaction/comments.go:55|Complex comment body logic in one function|Extract formatting into separate helper functions|maintainability|8|The commentBody function mixes multiple responsibilities|REVIEWER
+LOW|docs/ci-integration.md:23|Out of scope reference to GitHub Action|Remove or update to reflect current implementation|maintainability|1|References an action that is not part of the current scope|REVIEWER

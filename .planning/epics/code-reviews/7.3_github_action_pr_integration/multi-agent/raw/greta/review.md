@@ -1,0 +1,2 @@
+MEDIUM|internal/ghaction/comments.go:50|Unsanitized markdown in PR inline comments|Sanitize or escape f.Problem and f.Fix to prevent malicious markdown/HTML rendering|security|10|fmt.Fprintf(&b, "ATCR found: %s.", strings.TrimSpace(f.Problem))|greta
+LOW|internal/ghaction/render.go:63|Incomplete markdown sanitization for check output table|Escape additional markdown control characters to prevent formatting breaks|security|5|cell() only replaces pipes and newlines|greta

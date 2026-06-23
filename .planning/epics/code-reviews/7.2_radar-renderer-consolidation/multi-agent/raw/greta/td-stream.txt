@@ -1,0 +1,2 @@
+MEDIUM|internal/reconcile/disagree.go:413|RadarTextRenderer func parameter lacks enforced escaping contract|Document requirement or wrap in interface to guarantee escaping and prevent future XSS|security|10|func(string) string allows identity pass-through by caller|greta
+LOW|internal/report/disagree.go:27|escTrunc may truncate raw input before escaping causing malformed output|Ensure truncation occurs after escaping or on safe rune boundaries|security|5|escTrunc(500-rune cap) applied to free-text fields|greta

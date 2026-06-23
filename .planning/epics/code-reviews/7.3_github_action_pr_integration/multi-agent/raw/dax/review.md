@@ -1,0 +1,1 @@
+LOW|internal/ghaction/render.go:40|FixAttribution may parse evidence prose starting with "fix by " as executor name, causing misleading attribution|Require token to be the last semicolon-separated segment or validate against known executor names|correctness|10|segment "fix by hand" would return "hand"|reviewer

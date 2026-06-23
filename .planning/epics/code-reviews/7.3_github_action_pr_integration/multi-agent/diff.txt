@@ -1,0 +1,1316 @@
+diff --git a/action.yml b/action.yml
+new file mode 100644
+index 0000000..843fb09
+--- /dev/null
++++ b/action.yml
+@@ -0,0 +1,108 @@
++name: 'ATCR PR Review'
++description: 'Run atcr multi-model review on a pull request and surface findings as a PR check and optional inline comments.'
++author: 'samestrin'
++branding:
++  icon: 'check-circle'
++  color: 'purple'
++
++inputs:
++  openrouter-api-key:
++    description: 'OpenRouter API key used by `atcr review` (store as a repository secret).'
++    required: true
++  fail-on:
++    description: 'Severity threshold for the merge gate (CRITICAL, HIGH, MEDIUM, LOW). Leave empty for an informational, non-blocking check.'
++    required: false
++    default: 'high'
++  inline-comments:
++    description: 'Post inline PR review comments in addition to the check run (default: check + artifacts only).'
++    required: false
++    default: 'false'
++  base-ref:
++    description: 'Git ref to diff against. Defaults to origin/<the PR base branch>.'
++    required: false
++    default: ''
++  check-name:
++    description: 'Name of the GitHub check run.'
++    required: false
++    default: 'atcr'
++  github-token:
++    description: 'Token used to post the check run and comments. Needs checks:write and, for --inline-comments, pull-requests:write.'
++    required: false
++    default: ${{ github.token }}
++  go-version:
++    description: 'Go toolchain version used to build the atcr binary.'
++    required: false
++    default: '1.25'
++
++runs:
++  using: 'composite'
++  steps:
++    # Build atcr from the action's own checkout (github.action_path), not the
++    # consumer repo. The binary then runs against the consumer checkout below.
++    - name: Set up Go
++      uses: actions/setup-go@v5
++      with:
++        go-version: ${{ inputs.go-version }}
++        cache: true
++        cache-dependency-path: ${{ github.action_path }}/go.sum
++
++    # Context/inputs are passed through `env:` and referenced as quoted shell
++    # variables — never interpolated directly into `run:` — to close the GitHub
++    # Actions script-injection class (e.g. a crafted branch name or input).
++    - name: Build atcr
++      shell: bash
++      working-directory: ${{ github.action_path }}
++      env:
++        ATCR_BIN: ${{ github.action_path }}/bin/atcr
++      run: go build -o "$ATCR_BIN" ./cmd/atcr
++
++    # Run the review against the consumer's checkout (github.workspace). The
++    # consumer workflow MUST check out with fetch-depth: 0 so atcr can resolve
++    # the merge-base; a shallow checkout breaks range resolution.
++    - name: atcr review
++      shell: bash
++      working-directory: ${{ github.workspace }}
++      env:
++        OPENROUTER_API_KEY: ${{ inputs.openrouter-api-key }}
++        ATCR_BIN: ${{ github.action_path }}/bin/atcr
++        BASE_REF_INPUT: ${{ inputs.base-ref }}
++        PR_BASE_REF: ${{ github.base_ref }}
++      run: |
++        BASE_REF="$BASE_REF_INPUT"
++        if [ -z "$BASE_REF" ]; then BASE_REF="origin/$PR_BASE_REF"; fi
++        "$ATCR_BIN" review --base "$BASE_REF"
++
++    - name: atcr reconcile
++      shell: bash
++      working-directory: ${{ github.workspace }}
++      env:
++        ATCR_BIN: ${{ github.action_path }}/bin/atcr
++      run: |
++        "$ATCR_BIN" reconcile
++
++    # Render onto the PR. The gate rides this step's exit code (atcr github
++    # exits 1 when findings at/above --fail-on survive), so a failing gate fails
++    # the job — the merge-blocking check.
++    - name: atcr github
++      shell: bash
++      working-directory: ${{ github.workspace }}
++      env:
++        GITHUB_TOKEN: ${{ inputs.github-token }}
++        ATCR_BIN: ${{ github.action_path }}/bin/atcr
++        REPO: ${{ github.repository }}
++        # Prefer the PR head SHA; fall back to github.sha so a non-pull_request
++        # trigger fails with atcr's own clear error rather than an empty --sha.
++        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
++        CHECK_NAME: ${{ inputs.check-name }}
++        FAIL_ON: ${{ inputs.fail-on }}
++        INLINE: ${{ inputs.inline-comments }}
++        PR_NUMBER: ${{ github.event.pull_request.number }}
++      run: |
++        ARGS=(github --repo "$REPO" --sha "$HEAD_SHA" --check-name "$CHECK_NAME")
++        if [ -n "$FAIL_ON" ]; then
++          ARGS+=(--fail-on "$FAIL_ON")
++        fi
++        if [ "$INLINE" = "true" ]; then
++          ARGS+=(--inline-comments --pr "$PR_NUMBER")
++        fi
++        "$ATCR_BIN" "${ARGS[@]}"
+diff --git a/cmd/atcr/github.go b/cmd/atcr/github.go
+new file mode 100644
+index 0000000..2e82e99
+--- /dev/null
++++ b/cmd/atcr/github.go
+@@ -0,0 +1,171 @@
++package main
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/ghaction"
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/spf13/cobra"
++)
++
++// newGithubCmd builds `atcr github`: render the reconciled findings of a review
++// onto a GitHub pull request as a check run (honoring --fail-on for the merge
++// gate). It is the thin CLI wrapper over internal/ghaction; the composite Action
++// (action.yml) invokes it after `atcr review` + `atcr reconcile`.
++func newGithubCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "github [id-or-path]",
++		Short: "Post reconciled findings to a GitHub pull request as a check run",
++		Args:  usageArgs(cobra.MaximumNArgs(1)),
++		RunE:  runGithub,
++	}
++	cmd.Flags().String("repo", "", "owner/name target repository (default: $GITHUB_REPOSITORY)")
++	cmd.Flags().String("sha", "", "head commit SHA the check is reported against (default: $GITHUB_SHA)")
++	cmd.Flags().String("token", "", "GitHub token with checks:write (default: $GITHUB_TOKEN)")
++	cmd.Flags().String("api-url", "", "GitHub REST API base (default: $GITHUB_API_URL or https://api.github.com)")
++	cmd.Flags().String("fail-on", "", "exit 1 (and mark the check failed) if any finding at/above this severity survives")
++	cmd.Flags().String("check-name", "atcr", "name of the GitHub check run")
++	cmd.Flags().Bool("inline-comments", false, "also post inline PR review comments (default: check + artifacts only)")
++	cmd.Flags().Int("pr", 0, "pull request number (required with --inline-comments)")
++	return cmd
++}
++
++// envOr returns flag when non-empty, else the named environment variable.
++func envOr(flag, env string) string {
++	if strings.TrimSpace(flag) != "" {
++		return flag
++	}
++	return strings.TrimSpace(os.Getenv(env))
++}
++
++// parseRepo splits an "owner/name" slug into its parts, erroring on any other
++// shape so a misconfigured GITHUB_REPOSITORY fails fast (exit 2).
++func parseRepo(slug string) (owner, repo string, err error) {
++	parts := strings.Split(strings.TrimSpace(slug), "/")
++	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
++		return "", "", fmt.Errorf("--repo must be owner/name, got %q", slug)
++	}
++	return parts[0], parts[1], nil
++}
++
++func runGithub(cmd *cobra.Command, args []string) error {
++	failOnFlag, _ := cmd.Flags().GetString("fail-on")
++	failOn := strings.TrimSpace(failOnFlag)
++	// Validate the gate threshold before any I/O so a bad value is a usage error
++	// (exit 2), consistent with `atcr reconcile`.
++	if failOn != "" {
++		canon, err := reconcile.ParseSeverity(failOn)
++		if err != nil {
++			return usageError(err)
++		}
++		failOn = canon
++	}
++
++	repoFlag, _ := cmd.Flags().GetString("repo")
++	owner, repo, err := parseRepo(envOr(repoFlag, "GITHUB_REPOSITORY"))
++	if err != nil {
++		return usageError(err)
++	}
++
++	tokenFlag, _ := cmd.Flags().GetString("token")
++	token := envOr(tokenFlag, "GITHUB_TOKEN")
++	if token == "" {
++		return usageError(errors.New("a GitHub token is required (pass --token or set GITHUB_TOKEN)"))
++	}
++
++	shaFlag, _ := cmd.Flags().GetString("sha")
++	sha := envOr(shaFlag, "GITHUB_SHA")
++	if sha == "" {
++		return usageError(errors.New("a head commit SHA is required (pass --sha or set GITHUB_SHA)"))
++	}
++
++	apiURLFlag, _ := cmd.Flags().GetString("api-url")
++	apiURL := envOr(apiURLFlag, "GITHUB_API_URL")
++
++	// Validate the inline-comments/pr pairing before any network call so a
++	// misconfiguration is a fast usage error (exit 2), not masked by a later
++	// check-post failure.
++	inline, _ := cmd.Flags().GetBool("inline-comments")
++	pr, _ := cmd.Flags().GetInt("pr")
++	if inline && pr <= 0 {
++		return usageError(errors.New("--inline-comments requires --pr <number>"))
++	}
++
++	arg := ""
++	if len(args) == 1 {
++		arg = args[0]
++	}
++	reviewDir, err := anchorDir(arg)
++	if err != nil {
++		return usageError(err)
++	}
++	findings, err := readReconciledFindings(reviewDir)
++	if err != nil {
++		return usageError(err) // missing/malformed reconciled data → exit 2
++	}
++
++	checkName, _ := cmd.Flags().GetString("check-name")
++	conclusion, failCount := ghaction.Conclusion(findings, failOn)
++	output := ghaction.BuildCheckOutput(findings, failOn)
++
++	client := &ghaction.Client{APIURL: apiURL, Token: token}
++	if err := client.CreateCheckRun(cmd.Context(), owner, repo, ghaction.CheckRunRequest{
++		Name:       checkName,
++		HeadSHA:    sha,
++		Conclusion: conclusion,
++		Output:     output,
++	}); err != nil {
++		// A failure to reach GitHub is an operational error, not a gate verdict:
++		// exit 1 so CI surfaces it, distinct from a clean gate pass.
++		return &codedError{code: exitFailure, err: err}
++	}
++
++	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted check %q to %s/%s @ %s: %s (%d finding(s))\n",
++		checkName, owner, repo, sha, conclusion, len(findings))
++
++	// Inline comments are opt-in (AC4): the check + artifacts are the baseline,
++	// comments are the enhancement. When enabled, a PR number is mandatory.
++	if inline {
++		if err := postInlineComments(cmd, client, owner, repo, pr, sha, findings); err != nil {
++			return err
++		}
++	}
++
++	// The merge gate also rides the process exit code, so a consumer can gate on
++	// either the check conclusion or the step's exit status.
++	if conclusion == "failure" {
++		return &codedError{code: exitFailure, err: fmt.Errorf("%d finding(s) at or above %s", failCount, failOn)}
++	}
++	return nil
++}
++
++// postInlineComments posts one inline review comment per anchorable finding.
++// Posting is best-effort: GitHub returns 422 for a comment whose line is not
++// part of the PR diff (a finding on an unchanged line), which is expected and
++// must not fail the run. But if EVERY comment fails, that signals a systemic
++// problem (bad token, missing pull-requests:write) and is surfaced as an error.
++func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, findings []reconcile.JSONFinding) error {
++	comments := ghaction.BuildInlineComments(findings)
++	if len(comments) == 0 {
++		return nil
++	}
++	posted, failed := 0, 0
++	var lastErr error
++	for _, c := range comments {
++		if err := client.CreateReviewComment(cmd.Context(), owner, repo, pr, sha, c); err != nil {
++			failed++
++			lastErr = err
++			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not post comment at %s:%d: %v\n", c.Path, c.Line, err)
++			continue
++		}
++		posted++
++	}
++	if posted == 0 && failed > 0 {
++		return &codedError{code: exitFailure, err: fmt.Errorf("all %d inline comment(s) failed to post: %w", failed, lastErr)}
++	}
++	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d skipped)\n", posted, owner, repo, pr, failed)
++	return nil
++}
+diff --git a/cmd/atcr/github_integration_test.go b/cmd/atcr/github_integration_test.go
+new file mode 100644
+index 0000000..d6144f1
+--- /dev/null
++++ b/cmd/atcr/github_integration_test.go
+@@ -0,0 +1,95 @@
++package main
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"sync"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// TestGithubCmd_EndToEndFlow is the AC5 demonstration: a reconciled review with
++// a fix-bearing HIGH finding is rendered onto a pull request as both a failing
++// check run and an inline comment, in a single `atcr github` invocation, against
++// a fake GitHub REST API (net/http/httptest) — the same shape the composite
++// action.yml drives in CI, with no live network calls.
++func TestGithubCmd_EndToEndFlow(t *testing.T) {
++	isolate(t)
++
++	// A realistic reconciled stream: one blocking HIGH finding carrying an
++	// executor-generated fix and the "fix by <name>" attribution token, plus a
++	// sub-threshold MEDIUM that must not fail the gate.
++	const reconciled = `[
++		{"severity":"HIGH","file":"internal/auth/token.go","line":42,"problem":"JWT signature not verified before claims are read","fix":"Call jwt.Verify before decoding claims","category":"security","est_minutes":20,"evidence":"bruce: token, _ := jwt.Parse(raw); fix by opus","reviewers":["bruce","greta"],"confidence":"HIGH"},
++		{"severity":"MEDIUM","file":"internal/store/cache.go","line":88,"problem":"Unbounded map grows without eviction","fix":"Add an LRU bound","category":"performance","est_minutes":45,"evidence":"otto: c.entries[k] = v","reviewers":["otto"],"confidence":"MEDIUM"}
++	]`
++	fixtureReconciled(t, "2026-06-22_e2e", reconciled)
++
++	var mu sync.Mutex
++	var checkBody map[string]any
++	var comments []map[string]any
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		raw, _ := io.ReadAll(r.Body)
++		mu.Lock()
++		switch r.URL.Path {
++		case "/repos/samestrin/atcr/check-runs":
++			_ = json.Unmarshal(raw, &checkBody)
++		case "/repos/samestrin/atcr/pulls/12/comments":
++			var c map[string]any
++			_ = json.Unmarshal(raw, &c)
++			comments = append(comments, c)
++		}
++		mu.Unlock()
++		w.WriteHeader(http.StatusCreated)
++		_, _ = w.Write([]byte(`{"id":1}`))
++	}))
++	t.Cleanup(srv.Close)
++
++	code, _ := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr",
++		"--sha", "headsha42",
++		"--token", "ghtoken",
++		"--api-url", srv.URL,
++		"--fail-on", "high",
++		"--inline-comments", "--pr", "12",
++		"2026-06-22_e2e")
++
++	// The HIGH finding survives the gate → exit 1, merge blocked.
++	require.Equal(t, 1, code, "a surviving HIGH must fail the merge gate")
++
++	mu.Lock()
++	defer mu.Unlock()
++
++	// Check run: failure conclusion, reported against the PR head SHA, summary
++	// reflects the blocking count.
++	require.NotNil(t, checkBody, "a check run must be posted")
++	assert.Equal(t, "completed", checkBody["status"])
++	assert.Equal(t, "failure", checkBody["conclusion"])
++	assert.Equal(t, "headsha42", checkBody["head_sha"])
++	output, _ := checkBody["output"].(map[string]any)
++	require.NotNil(t, output)
++	assert.Contains(t, output["text"], "internal/auth/token.go:42")
++
++	// Both findings anchor to changed lines, so two inline comments post.
++	require.Len(t, comments, 2, "one inline comment per anchorable finding")
++
++	// Locate the HIGH finding's comment: anchored at FILE:LINE, AC3-formatted
++	// body with PROBLEM, FIX, and executor attribution parsed from EVIDENCE.
++	var high map[string]any
++	for _, c := range comments {
++		if c["path"] == "internal/auth/token.go" {
++			high = c
++		}
++	}
++	require.NotNil(t, high, "the HIGH finding must produce an inline comment")
++	assert.Equal(t, float64(42), high["line"])
++	assert.Equal(t, "headsha42", high["commit_id"])
++	body, _ := high["body"].(string)
++	assert.Contains(t, body, "ATCR found: JWT signature not verified before claims are read")
++	assert.Contains(t, body, "Fix: Call jwt.Verify before decoding claims")
++	assert.Contains(t, body, "Suggested by: opus")
++}
+diff --git a/cmd/atcr/github_test.go b/cmd/atcr/github_test.go
+new file mode 100644
+index 0000000..ec3ddd9
+--- /dev/null
++++ b/cmd/atcr/github_test.go
+@@ -0,0 +1,119 @@
++package main
++
++import (
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"sync"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++const highFinding = `[{"severity":"HIGH","file":"a.go","line":7,"problem":"boom","fix":"do x","category":"security","est_minutes":10,"evidence":"e; fix by opus","reviewers":["greta"],"confidence":"HIGH"}]`
++const mediumFinding = `[{"severity":"MEDIUM","file":"b.go","line":3,"problem":"meh","fix":"f","category":"perf","est_minutes":5,"evidence":"e","reviewers":["greta"],"confidence":"MEDIUM"}]`
++
++// captureGitHub starts a fake GitHub REST server that records the body of the
++// check-run POST it receives.
++func captureGitHub(t *testing.T) (url string, body func() map[string]any) {
++	t.Helper()
++	var mu sync.Mutex
++	var got map[string]any
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		raw, _ := io.ReadAll(r.Body)
++		mu.Lock()
++		_ = json.Unmarshal(raw, &got)
++		mu.Unlock()
++		w.WriteHeader(http.StatusCreated)
++		_, _ = w.Write([]byte(`{"id":1}`))
++	}))
++	t.Cleanup(srv.Close)
++	return srv.URL, func() map[string]any { mu.Lock(); defer mu.Unlock(); return got }
++}
++
++func TestGithubCmd_GateFailurePostsFailedCheck(t *testing.T) {
++	isolate(t)
++	fixtureReconciled(t, "2026-06-10_g", highFinding)
++	url, body := captureGitHub(t)
++
++	code, out := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
++		"--api-url", url, "--fail-on", "high", "2026-06-10_g")
++
++	require.Equal(t, 1, code, "a surviving HIGH finding must fail the gate (exit 1)")
++	assert.Equal(t, "failure", body()["conclusion"])
++	assert.Equal(t, "abc123", body()["head_sha"])
++	_ = out
++}
++
++func TestGithubCmd_BelowThresholdPasses(t *testing.T) {
++	isolate(t)
++	fixtureReconciled(t, "2026-06-10_m", mediumFinding)
++	url, body := captureGitHub(t)
++
++	code, _ := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
++		"--api-url", url, "--fail-on", "high", "2026-06-10_m")
++
++	require.Equal(t, 0, code, "only a MEDIUM finding under --fail-on high passes")
++	assert.Equal(t, "success", body()["conclusion"])
++}
++
++func TestGithubCmd_InlineCommentsPostReviewComments(t *testing.T) {
++	isolate(t)
++	fixtureReconciled(t, "2026-06-10_i", highFinding)
++
++	var mu sync.Mutex
++	paths := map[string]int{}
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		paths[r.URL.Path]++
++		mu.Unlock()
++		w.WriteHeader(http.StatusCreated)
++		_, _ = w.Write([]byte(`{"id":1}`))
++	}))
++	t.Cleanup(srv.Close)
++
++	code, _ := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
++		"--api-url", srv.URL, "--inline-comments", "--pr", "5", "2026-06-10_i")
++
++	// HIGH finding with no --fail-on: neutral conclusion → exit 0, but a comment posts.
++	require.Equal(t, 0, code)
++	mu.Lock()
++	defer mu.Unlock()
++	assert.Equal(t, 1, paths["/repos/samestrin/atcr/check-runs"], "check run still posts")
++	assert.Equal(t, 1, paths["/repos/samestrin/atcr/pulls/5/comments"], "inline comment posts")
++}
++
++func TestGithubCmd_InlineCommentsRequirePR(t *testing.T) {
++	isolate(t)
++	fixtureReconciled(t, "2026-06-10_np", highFinding)
++
++	code, _ := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr", "--sha", "abc", "--token", "t",
++		"--inline-comments", "2026-06-10_np")
++	require.Equal(t, 2, code, "--inline-comments without --pr is a usage error")
++}
++
++func TestGithubCmd_InvalidFailOnIsUsageError(t *testing.T) {
++	isolate(t)
++	fixtureReconciled(t, "2026-06-10_x", highFinding)
++
++	code, _ := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr", "--sha", "abc", "--token", "t",
++		"--fail-on", "bogus", "2026-06-10_x")
++	require.Equal(t, 2, code)
++}
++
++func TestGithubCmd_MissingTokenIsUsageError(t *testing.T) {
++	isolate(t)
++	t.Setenv("GITHUB_TOKEN", "")
++	fixtureReconciled(t, "2026-06-10_t", highFinding)
++
++	code, _ := execCmdCapture(t, "github",
++		"--repo", "samestrin/atcr", "--sha", "abc", "2026-06-10_t")
++	require.Equal(t, 2, code)
++}
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index c01938e..5f6f6b8 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -177,6 +177,7 @@ func newRootCmd() *cobra.Command {
+ 		newVerifyCmd(),
+ 		newDebateCmd(),
+ 		newReportCmd(),
++		newGithubCmd(),
+ 		newRangeCmd(),
+ 		newStatusCmd(),
+ 		newInitCmd(),
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index c75e454..53026e4 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -38,14 +38,14 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
+ 	out, err := execute(t, "--help")
+ 	require.NoError(t, err)
+ 
+-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard"} {
++	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard"} {
+ 		assert.Contains(t, out, sub, "help output must list subcommand %q", sub)
+ 	}
+ }
+ 
+-func TestRootCmd_HasExactlyThirteenSubcommands(t *testing.T) {
+-	// The twelve prior commands plus `debate` (epic 6.0), the cross-examination
+-	// stage that settles disputed findings.
++func TestRootCmd_HasExactlyFourteenSubcommands(t *testing.T) {
++	// The thirteen prior commands plus `github` (epic 7.3), which posts
++	// reconciled findings to a pull request as a check run.
+ 	root := newRootCmd()
+ 	names := map[string]bool{}
+ 	for _, c := range root.Commands() {
+@@ -54,8 +54,8 @@ func TestRootCmd_HasExactlyThirteenSubcommands(t *testing.T) {
+ 		}
+ 		names[c.Name()] = true
+ 	}
+-	assert.Len(t, names, 13)
+-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard"} {
++	assert.Len(t, names, 14)
++	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard"} {
+ 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
+ 	}
+ }
+diff --git a/docs/ci-integration.md b/docs/ci-integration.md
+index 4546a63..30e4eae 100644
+--- a/docs/ci-integration.md
++++ b/docs/ci-integration.md
+@@ -39,3 +39,23 @@ Notes:
+ ```
+ 
+ Shallow checkouts (`fetch-depth: 1`) break merge-base resolution; atcr detects this and says so rather than producing a wrong range.
++
++## Maintained PR Action
++
++For a first-class pull-request surface — a PR **check** with a findings table
++and opt-in **inline comments** rendering the `FIX` column — use the maintained
++composite Action (`action.yml` at the repo root) instead of hand-wiring the
++steps above:
++
++```yaml
++- uses: actions/checkout@v4
++  with: { fetch-depth: 0 }
++- uses: samestrin/atcr@v1
++  with:
++    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
++    fail-on: high
++    inline-comments: true
++```
++
++See [github-action.md](github-action.md) for inputs, required permissions, and a
++manual smoke-test procedure.
+diff --git a/docs/github-action.md b/docs/github-action.md
+new file mode 100644
+index 0000000..f29f361
+--- /dev/null
++++ b/docs/github-action.md
+@@ -0,0 +1,112 @@
++# GitHub Action — PR Review
++
++The `samestrin/atcr` repository ships a composite GitHub Action (`action.yml` at
++the repo root) that runs the full atcr pipeline on a pull request and surfaces
++the result as a **PR check** and, optionally, **inline comments**. It is the
++maintained delivery surface for findings — no glue code required.
++
++What it does, in one job:
++
++1. Builds the `atcr` binary from the pinned action ref (`actions/setup-go` + `go build`).
++2. Runs `atcr review --base origin/<base>` against your checkout.
++3. Runs `atcr reconcile` to merge the per-source streams.
++4. Runs `atcr github` to post a check run honoring `--fail-on` and (opt-in) inline comments.
++
++The merge gate rides the job's exit code: when findings at or above `fail-on`
++survive, the `atcr github` step exits non-zero and the check is marked failed.
++
++## Usage
++
++Add a workflow to the **consumer** repository (the repo whose PRs you want
++reviewed):
++
++```yaml
++# .github/workflows/atcr-pr.yml
++name: ATCR PR Review
++
++on:
++  pull_request:
++
++permissions:
++  contents: read        # read the diff
++  checks: write         # post the check run
++  pull-requests: write  # post inline comments (only needed with inline-comments: true)
++
++jobs:
++  atcr:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0   # REQUIRED: atcr needs full history to resolve the merge-base
++
++      - uses: samestrin/atcr@v1
++        with:
++          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
++          fail-on: high            # merge gate threshold; empty for an informational check
++          inline-comments: true    # opt-in; default false (check + artifacts only)
++```
++
++### Inputs
++
++| Input | Required | Default | Description |
++|-------|----------|---------|-------------|
++| `openrouter-api-key` | yes | — | OpenRouter API key used by `atcr review`. Store as a secret. |
++| `fail-on` | no | `high` | Merge-gate severity (`CRITICAL`/`HIGH`/`MEDIUM`/`LOW`). Empty → informational, non-blocking check. |
++| `inline-comments` | no | `false` | Post inline PR review comments in addition to the check run. |
++| `base-ref` | no | `origin/<PR base>` | Git ref to diff against. |
++| `check-name` | no | `atcr` | Name of the GitHub check run. |
++| `github-token` | no | `${{ github.token }}` | Token to post the check/comments. Needs `checks:write` and, for inline comments, `pull-requests:write`. |
++| `go-version` | no | `1.25` | Go toolchain used to build atcr. |
++
++### Required permissions and checkout
++
++- **`fetch-depth: 0`** on `actions/checkout` — a shallow checkout breaks
++  merge-base resolution and atcr will refuse to guess a range.
++- **`checks: write`** — to post the check run.
++- **`pull-requests: write`** — only when `inline-comments: true`.
++
++### atcr configuration
++
++`atcr review` needs an agent/provider registry (see [registry.md](registry.md)).
++The consumer repository must carry atcr configuration (a committed
++`registry.yaml` / project config) or rely on `atcr init` defaults. The Action
++builds and invokes the binary; it does not provision a registry for you.
++
++## How findings render
++
++- **PR check** — a single check run named `atcr` (configurable) with a summary
++  table of every finding (Severity / Location / Problem / Confidence) and a
++  pass/fail conclusion honoring `fail-on`. A `neutral` conclusion is used when
++  `fail-on` is empty (informational only).
++- **Inline comments** (opt-in) — one comment per finding that anchors to a
++  changed line, formatted as:
++
++  > ATCR found: \<problem\>. Fix: \<fix\>. Suggested by: \<executor\>.
++
++  The `Fix:` clause appears when the `FIX` column is populated (Epic 7.0); the
++  `Suggested by:` clause appears when the finding's `EVIDENCE` carries the
++  executor's `fix by <name>` attribution token. Findings on unchanged lines
++  cannot be anchored in the diff and are surfaced in the check summary instead.
++
++## Manual smoke test
++
++The automated end-to-end coverage runs against a fake GitHub API
++(`net/http/httptest`) — see `cmd/atcr/github_integration_test.go` and the
++`internal/ghaction` tests. To validate against the **real** GitHub API once,
++end-to-end, on a throwaway PR:
++
++1. Push a branch with a deliberate finding (e.g. a hardcoded secret or an
++   unverified token parse) and open a PR.
++2. In the PR's repo, ensure the workflow above is present and the
++   `OPENROUTER_API_KEY` secret is set.
++3. Trigger the workflow (the PR `synchronize`/`opened` event runs it).
++4. Confirm on the PR:
++   - an `atcr` check run appears with the findings table;
++   - the check fails when a finding at/above `fail-on` is present;
++   - with `inline-comments: true`, a comment appears on the offending line in
++     the AC3 format above.
++5. Push a fix that clears the finding; confirm the check flips to passing.
++
++This is a one-time manual verification; CI itself never posts to a live PR
++(the project's own `ci.yml` runs with `contents: read` only).
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index a8a0765..2317d35 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -42,6 +42,7 @@ var allowedInternalImports = map[string][]string{
+ 	"reconcile":      {"stream", "atomicfs"},
+ 	"scorecard":      {"llmclient", "reconcile", "fanout"},
+ 	"report":         {"stream", "reconcile"},
++	"ghaction":       {"reconcile"},                                                                                                    // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+ 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper
+ 	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+ 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
+diff --git a/internal/ghaction/client.go b/internal/ghaction/client.go
+new file mode 100644
+index 0000000..55189ec
+--- /dev/null
++++ b/internal/ghaction/client.go
+@@ -0,0 +1,116 @@
++package ghaction
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++	"time"
++)
++
++// DefaultAPIURL is the public GitHub REST API base. It is overridable via the
++// Client.APIURL field so the action works against GitHub Enterprise and so tests
++// can point the client at an httptest server.
++const DefaultAPIURL = "https://api.github.com"
++
++// Client is a minimal GitHub REST client for posting check runs and PR review
++// comments. A zero HTTPClient falls back to a sane default; a zero APIURL falls
++// back to the public GitHub API.
++type Client struct {
++	APIURL     string
++	Token      string
++	HTTPClient *http.Client
++}
++
++func (c *Client) httpClient() *http.Client {
++	if c.HTTPClient != nil {
++		return c.HTTPClient
++	}
++	return &http.Client{Timeout: 30 * time.Second}
++}
++
++func (c *Client) baseURL() string {
++	if strings.TrimSpace(c.APIURL) != "" {
++		return strings.TrimRight(c.APIURL, "/")
++	}
++	return DefaultAPIURL
++}
++
++// CheckRunRequest is the payload for creating a GitHub check run.
++type CheckRunRequest struct {
++	// Name is the check-run name shown on the PR (e.g. "atcr").
++	Name string
++	// HeadSHA is the commit the check run is reported against. For a
++	// pull_request event this must be the PR head SHA, not the merge SHA.
++	HeadSHA string
++	// Conclusion is one of GitHub's terminal conclusions: success, failure, or
++	// neutral.
++	Conclusion string
++	// Output is the rendered title/summary/text.
++	Output CheckOutput
++}
++
++// CreateCheckRun creates a completed check run on owner/repo. The check run is
++// always submitted with status "completed" and the given conclusion — atcr runs
++// to completion before posting, so there is no in-progress phase to report.
++func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req CheckRunRequest) error {
++	body := map[string]any{
++		"name":       req.Name,
++		"head_sha":   req.HeadSHA,
++		"status":     "completed",
++		"conclusion": req.Conclusion,
++		"output": map[string]string{
++			"title":   req.Output.Title,
++			"summary": req.Output.Summary,
++			"text":    req.Output.Text,
++		},
++	}
++	path := fmt.Sprintf("/repos/%s/%s/check-runs", owner, repo)
++	return c.post(ctx, path, body)
++}
++
++// post marshals body as JSON, POSTs it to path under the API base with the
++// standard GitHub headers, and turns any non-2xx response into an error that
++// carries the status code and the GitHub error message.
++func (c *Client) post(ctx context.Context, path string, body any) error {
++	payload, err := json.Marshal(body)
++	if err != nil {
++		return fmt.Errorf("encoding request: %w", err)
++	}
++	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+path, bytes.NewReader(payload))
++	if err != nil {
++		return fmt.Errorf("building request: %w", err)
++	}
++	req.Header.Set("Authorization", "Bearer "+c.Token)
++	req.Header.Set("Accept", "application/vnd.github+json")
++	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
++	req.Header.Set("Content-Type", "application/json")
++
++	resp, err := c.httpClient().Do(req)
++	if err != nil {
++		return fmt.Errorf("posting %s: %w", path, err)
++	}
++	defer func() { _ = resp.Body.Close() }()
++
++	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
++		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
++		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, githubMessage(respBody))
++	}
++	return nil
++}
++
++// githubMessage extracts the human-readable "message" from a GitHub error
++// response body, falling back to the raw (truncated) body when it is not the
++// expected shape.
++func githubMessage(body []byte) string {
++	var parsed struct {
++		Message string `json:"message"`
++	}
++	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Message != "" {
++		return parsed.Message
++	}
++	return strings.TrimSpace(string(body))
++}
+diff --git a/internal/ghaction/client_test.go b/internal/ghaction/client_test.go
+new file mode 100644
+index 0000000..2105ea7
+--- /dev/null
++++ b/internal/ghaction/client_test.go
+@@ -0,0 +1,56 @@
++package ghaction
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestCreateCheckRun(t *testing.T) {
++	var gotPath, gotAuth string
++	var gotBody map[string]any
++
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		gotPath = r.URL.Path
++		gotAuth = r.Header.Get("Authorization")
++		body, _ := io.ReadAll(r.Body)
++		_ = json.Unmarshal(body, &gotBody)
++		w.WriteHeader(http.StatusCreated)
++		_, _ = w.Write([]byte(`{"id":1}`))
++	}))
++	defer srv.Close()
++
++	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
++	err := c.CreateCheckRun(context.Background(), "samestrin", "atcr", CheckRunRequest{
++		Name:       "atcr",
++		HeadSHA:    "deadbeef",
++		Conclusion: "failure",
++		Output:     CheckOutput{Title: "atcr — 1 finding", Summary: "s", Text: "t"},
++	})
++	require.NoError(t, err)
++	assert.Equal(t, "/repos/samestrin/atcr/check-runs", gotPath)
++	assert.Equal(t, "Bearer tok", gotAuth)
++	assert.Equal(t, "completed", gotBody["status"])
++	assert.Equal(t, "failure", gotBody["conclusion"])
++	assert.Equal(t, "deadbeef", gotBody["head_sha"])
++}
++
++func TestCreateCheckRunAPIError(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusForbidden)
++		_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
++	}))
++	defer srv.Close()
++
++	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
++	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "403")
++	assert.Contains(t, err.Error(), "not accessible")
++}
+diff --git a/internal/ghaction/comments.go b/internal/ghaction/comments.go
+new file mode 100644
+index 0000000..4881461
+--- /dev/null
++++ b/internal/ghaction/comments.go
+@@ -0,0 +1,79 @@
++package ghaction
++
++import (
++	"context"
++	"fmt"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++)
++
++// CommentRequest is a single inline PR review comment anchored at Path:Line on
++// the RIGHT (post-change) side of the diff.
++type CommentRequest struct {
++	Path string
++	Line int
++	Side string
++	Body string
++}
++
++// BuildInlineComments renders one inline comment per anchorable finding. A
++// finding is anchorable only when it carries a file path and a 1-based line; a
++// finding with no line (Line == 0, the findings-format sentinel for "unknown")
++// or no file cannot be placed in the diff and is skipped — it still appears in
++// the check-run summary and the uploaded artifacts.
++//
++// The body follows the epic's contract: "ATCR found: <problem>. Fix: <fix>.
++// Suggested by: <executor>", with the Fix clause omitted when there is no fix
++// and the attribution clause omitted when the EVIDENCE field carries no
++// "fix by <name>" executor token.
++func BuildInlineComments(findings []reconcile.JSONFinding) []CommentRequest {
++	var out []CommentRequest
++	for _, f := range findings {
++		if f.File == "" || f.Line <= 0 {
++			continue
++		}
++		out = append(out, CommentRequest{
++			Path: f.File,
++			Line: f.Line,
++			Side: "RIGHT",
++			Body: commentBody(f),
++		})
++	}
++	return out
++}
++
++// commentBody assembles the inline-comment text for a single finding, following
++// the epic's AC3 contract: "ATCR found: <problem>. Fix: <fix>. Suggested by:
++// <executor>", with the Fix and attribution clauses omitted when their source
++// data is absent.
++func commentBody(f reconcile.JSONFinding) string {
++	var b strings.Builder
++	fmt.Fprintf(&b, "ATCR found: %s.", strings.TrimSpace(f.Problem))
++	if fix := strings.TrimSpace(f.Fix); fix != "" {
++		fmt.Fprintf(&b, " Fix: %s.", fix)
++	}
++	if who := FixAttribution(f.Evidence); who != "" {
++		fmt.Fprintf(&b, " Suggested by: %s.", who)
++	}
++	return b.String()
++}
++
++// CreateReviewComment posts a single inline review comment to a pull request.
++// commitID is the PR head SHA the comment is anchored to (GitHub requires it to
++// match a commit in the PR).
++func (c *Client) CreateReviewComment(ctx context.Context, owner, repo string, pr int, commitID string, comment CommentRequest) error {
++	side := comment.Side
++	if side == "" {
++		side = "RIGHT"
++	}
++	body := map[string]any{
++		"body":      comment.Body,
++		"commit_id": commitID,
++		"path":      comment.Path,
++		"line":      comment.Line,
++		"side":      side,
++	}
++	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, pr)
++	return c.post(ctx, path, body)
++}
+diff --git a/internal/ghaction/comments_test.go b/internal/ghaction/comments_test.go
+new file mode 100644
+index 0000000..1433257
+--- /dev/null
++++ b/internal/ghaction/comments_test.go
+@@ -0,0 +1,69 @@
++package ghaction
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestBuildInlineComments(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 7, Problem: "boom", Fix: "do x", Evidence: "snippet; fix by opus"},
++		{Severity: "LOW", File: "b.go", Line: 3, Problem: "minor", Fix: "", Evidence: "snippet"},
++		{Severity: "MEDIUM", File: "c.go", Line: 9, Problem: "mid", Fix: "patch it", Evidence: "no attribution here"},
++		{Severity: "HIGH", File: "d.go", Line: 0, Problem: "unanchored", Fix: "x", Evidence: "e"},
++		{Severity: "HIGH", File: "", Line: 5, Problem: "nofile", Fix: "x", Evidence: "e"},
++	}
++
++	comments := BuildInlineComments(findings)
++
++	// Only the three anchorable findings (File set, Line > 0) produce comments.
++	require.Len(t, comments, 3)
++
++	assert.Equal(t, "a.go", comments[0].Path)
++	assert.Equal(t, 7, comments[0].Line)
++	assert.Equal(t, "RIGHT", comments[0].Side)
++	assert.Contains(t, comments[0].Body, "ATCR found: boom")
++	assert.Contains(t, comments[0].Body, "Fix: do x")
++	assert.Contains(t, comments[0].Body, "Suggested by: opus")
++
++	// No fix → no Fix clause, no attribution.
++	assert.Contains(t, comments[1].Body, "ATCR found: minor")
++	assert.NotContains(t, comments[1].Body, "Fix:")
++	assert.NotContains(t, comments[1].Body, "Suggested by:")
++
++	// Fix present but no executor token → Fix clause, no attribution.
++	assert.Contains(t, comments[2].Body, "Fix: patch it")
++	assert.NotContains(t, comments[2].Body, "Suggested by:")
++}
++
++func TestCreateReviewComment(t *testing.T) {
++	var gotPath string
++	var gotBody map[string]any
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		gotPath = r.URL.Path
++		raw, _ := io.ReadAll(r.Body)
++		_ = json.Unmarshal(raw, &gotBody)
++		w.WriteHeader(http.StatusCreated)
++		_, _ = w.Write([]byte(`{"id":2}`))
++	}))
++	defer srv.Close()
++
++	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
++	err := c.CreateReviewComment(context.Background(), "o", "r", 5, "sha123", CommentRequest{
++		Path: "a.go", Line: 7, Side: "RIGHT", Body: "hello",
++	})
++	require.NoError(t, err)
++	assert.Equal(t, "/repos/o/r/pulls/5/comments", gotPath)
++	assert.Equal(t, "sha123", gotBody["commit_id"])
++	assert.Equal(t, "a.go", gotBody["path"])
++	assert.Equal(t, float64(7), gotBody["line"])
++	assert.Equal(t, "hello", gotBody["body"])
++}
+diff --git a/internal/ghaction/render.go b/internal/ghaction/render.go
+new file mode 100644
+index 0000000..a659c69
+--- /dev/null
++++ b/internal/ghaction/render.go
+@@ -0,0 +1,142 @@
++package ghaction
++
++import (
++	"fmt"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++)
++
++// CheckOutput is the rendered GitHub check-run output payload (the `output`
++// object of a check run: a title, a short summary, and a longer markdown text).
++type CheckOutput struct {
++	Title   string
++	Summary string
++	Text    string
++}
++
++// maxCheckTextBytes bounds the rendered check-run output text. GitHub rejects a
++// check run whose output.text exceeds 65535 bytes (HTTP 422); a large PR's
++// findings table can cross that line, so the table is truncated with a notice
++// rather than letting the post fail.
++const maxCheckTextBytes = 60000
++
++// fixAttributionPrefix mirrors the token the executor stage appends to a
++// finding's Evidence field (internal/verify/executor.go). Evidence segments are
++// joined with "; ", and the executor segment is exactly "fix by <name>".
++const fixAttributionPrefix = "fix by "
++
++// FixAttribution extracts the executor name from a finding's Evidence field,
++// parsing the "; fix by <name>" token written by the executor stage (Epic 7.0).
++// It returns "" when no attribution token is present (the common case before a
++// fix has been generated, or for a review that never ran the executor).
++func FixAttribution(evidence string) string {
++	for _, seg := range strings.Split(evidence, "; ") {
++		seg = strings.TrimSpace(seg)
++		if rest, ok := strings.CutPrefix(seg, fixAttributionPrefix); ok {
++			if name := strings.TrimSpace(rest); name != "" {
++				return name
++			}
++		}
++	}
++	return ""
++}
++
++// isRefuted reports whether a finding was disproved by the adversarial
++// verification stage (Epic 3.0). A refuted finding is retained in the artifacts
++// for audit but must never block CI, mirroring the reconcile gate's semantics.
++func isRefuted(f reconcile.JSONFinding) bool {
++	return f.Verification != nil && strings.EqualFold(f.Verification.Verdict, reconcile.VerdictRefuted)
++}
++
++// Conclusion computes the GitHub check-run conclusion for the findings under the
++// given fail-on threshold. An empty threshold yields "neutral" — the check is
++// informational and never blocks the merge. Otherwise it returns "failure" when
++// any non-refuted finding sits at or above the threshold, else "success".
++// failCount is the number of blocking findings (0 when the threshold is empty).
++func Conclusion(findings []reconcile.JSONFinding, failOn string) (string, int) {
++	if strings.TrimSpace(failOn) == "" {
++		return "neutral", 0
++	}
++	count := 0
++	for _, f := range findings {
++		if isRefuted(f) {
++			continue
++		}
++		if reconcile.AtOrAbove(f.Severity, failOn) {
++			count++
++		}
++	}
++	if count > 0 {
++		return "failure", count
++	}
++	return "success", 0
++}
++
++// cell neutralizes a value for safe inclusion in a single markdown table cell:
++// a literal pipe would break the column grammar, and an embedded newline would
++// split the row across physical lines.
++func cell(s string) string {
++	s = strings.ReplaceAll(s, "|", "/")
++	s = strings.ReplaceAll(s, "\r\n", " ")
++	s = strings.ReplaceAll(s, "\n", " ")
++	s = strings.ReplaceAll(s, "\r", " ")
++	return strings.TrimSpace(s)
++}
++
++// location renders a finding's FILE:LINE anchor, omitting the line when it is
++// unknown (0), matching the findings-format contract.
++func location(f reconcile.JSONFinding) string {
++	if f.Line <= 0 {
++		return f.File
++	}
++	return fmt.Sprintf("%s:%d", f.File, f.Line)
++}
++
++// BuildCheckOutput renders the GitHub check-run output for a set of reconciled
++// findings: a one-line title, a gate summary, and a markdown findings table.
++func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) CheckOutput {
++	total := len(findings)
++	if total == 0 {
++		return CheckOutput{
++			Title:   "atcr — no findings",
++			Summary: "atcr review found no findings.",
++			Text:    "ATCR review completed with no findings.",
++		}
++	}
++
++	conclusion, failCount := Conclusion(findings, failOn)
++
++	var title string
++	if strings.TrimSpace(failOn) == "" {
++		title = fmt.Sprintf("atcr — %d finding(s)", total)
++	} else {
++		threshold, _ := reconcile.ParseSeverity(failOn)
++		title = fmt.Sprintf("atcr — %d finding(s), %d at/above %s", total, failCount, threshold)
++	}
++
++	var b strings.Builder
++	switch conclusion {
++	case "failure":
++		fmt.Fprintf(&b, "**Gate failed:** %d finding(s) at or above the threshold.\n\n", failCount)
++	case "success":
++		b.WriteString("**Gate passed:** no findings at or above the threshold.\n\n")
++	default:
++		b.WriteString("Informational review — no merge gate configured.\n\n")
++	}
++	b.WriteString("| Severity | Location | Problem | Confidence |\n")
++	b.WriteString("| --- | --- | --- | --- |\n")
++	for i, f := range findings {
++		row := fmt.Sprintf("| %s | %s | %s | %s |\n",
++			cell(f.Severity), cell(location(f)), cell(f.Problem), cell(f.Confidence))
++		// Stop before crossing GitHub's output.text limit, leaving room for the
++		// truncation notice. The remaining findings still live in the artifacts.
++		if b.Len()+len(row)+128 > maxCheckTextBytes {
++			fmt.Fprintf(&b, "\n_…table truncated: %d of %d findings shown. See the uploaded artifacts for the full set._\n", i, total)
++			break
++		}
++		b.WriteString(row)
++	}
++
++	return CheckOutput{Title: title, Summary: title, Text: b.String()}
++}
+diff --git a/internal/ghaction/render_test.go b/internal/ghaction/render_test.go
+new file mode 100644
+index 0000000..dcdb1b8
+--- /dev/null
++++ b/internal/ghaction/render_test.go
+@@ -0,0 +1,97 @@
++package ghaction
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestFixAttribution(t *testing.T) {
++	cases := []struct {
++		name     string
++		evidence string
++		want     string
++	}{
++		{"present", "bruce: token, _ := jwt.Parse(raw); fix by opus", "opus"},
++		{"present_simple", "Found by bruce; fix by greta", "greta"},
++		{"absent", "bruce: c.entries[k] = v // never deleted", ""},
++		{"empty_name", "Found by bruce; fix by ", ""},
++		{"prose_mention", "reviewer suggested a fix by hand", ""},
++		{"empty_evidence", "", ""},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			assert.Equal(t, tc.want, FixAttribution(tc.evidence))
++		})
++	}
++}
++
++func TestConclusion(t *testing.T) {
++	high := reconcile.JSONFinding{Severity: "HIGH"}
++	medium := reconcile.JSONFinding{Severity: "MEDIUM"}
++	refutedHigh := reconcile.JSONFinding{
++		Severity:     "HIGH",
++		Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted},
++	}
++
++	t.Run("no threshold is neutral", func(t *testing.T) {
++		c, n := Conclusion([]reconcile.JSONFinding{high}, "")
++		assert.Equal(t, "neutral", c)
++		assert.Equal(t, 0, n)
++	})
++	t.Run("blocking finding fails", func(t *testing.T) {
++		c, n := Conclusion([]reconcile.JSONFinding{high, medium}, "HIGH")
++		assert.Equal(t, "failure", c)
++		assert.Equal(t, 1, n)
++	})
++	t.Run("below threshold passes", func(t *testing.T) {
++		c, n := Conclusion([]reconcile.JSONFinding{medium}, "HIGH")
++		assert.Equal(t, "success", c)
++		assert.Equal(t, 0, n)
++	})
++	t.Run("refuted finding never blocks", func(t *testing.T) {
++		c, n := Conclusion([]reconcile.JSONFinding{refutedHigh}, "HIGH")
++		assert.Equal(t, "success", c)
++		assert.Equal(t, 0, n)
++	})
++}
++
++func TestBuildCheckOutput(t *testing.T) {
++	findings := []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "internal/auth/token.go", Line: 42,
++			Problem: "JWT signature not verified", Confidence: "HIGH"},
++		{Severity: "MEDIUM", File: "internal/store/cache.go", Line: 88,
++			Problem: "Unbounded map | grows", Confidence: "MEDIUM"},
++	}
++
++	t.Run("with threshold", func(t *testing.T) {
++		out := BuildCheckOutput(findings, "HIGH")
++		assert.Contains(t, out.Title, "2")
++		assert.Contains(t, out.Title, "HIGH")
++		assert.Contains(t, out.Text, "internal/auth/token.go:42")
++		assert.Contains(t, out.Text, "JWT signature not verified")
++		// A literal pipe inside a cell must be neutralized so it can't break the table.
++		assert.NotContains(t, out.Text, "Unbounded map | grows")
++		assert.Contains(t, out.Text, "Unbounded map / grows")
++	})
++
++	t.Run("empty findings", func(t *testing.T) {
++		out := BuildCheckOutput(nil, "HIGH")
++		assert.Contains(t, strings.ToLower(out.Title), "no findings")
++	})
++
++	t.Run("oversized text is truncated below the GitHub limit", func(t *testing.T) {
++		many := make([]reconcile.JSONFinding, 4000)
++		for i := range many {
++			many[i] = reconcile.JSONFinding{
++				Severity: "LOW", File: "internal/some/very/long/path/to/a/file.go", Line: i,
++				Problem: "a reasonably detailed problem statement that takes up space", Confidence: "LOW",
++			}
++		}
++		out := BuildCheckOutput(many, "HIGH")
++		assert.LessOrEqual(t, len(out.Text), maxCheckTextBytes)
++		assert.Contains(t, out.Text, "truncated")
++	})
++}

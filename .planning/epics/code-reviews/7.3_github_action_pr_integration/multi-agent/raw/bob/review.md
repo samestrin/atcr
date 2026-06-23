@@ -1,0 +1,5 @@
+HIGH|action.yml:70|Invalid GitHub Actions expression syntax|Use conditional logic in shell step instead of || in expression|correctness|10|`HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}` uses unsupported || operator|bruce
+MEDIUM|action.yml:53|BASE_REF fallback produces invalid ref when github.base_ref empty|Add check for empty PR_BASE_REF before constructing origin/ ref|correctness|5|`BASE_REF="origin/$PR_BASE_REF"` becomes "origin/" if base_ref empty|bruce
+MEDIUM|internal/ghaction/client.go:70|Missing User-Agent header required by GitHub API|Add User-Agent header to HTTP requests|security|5|GitHub API rejects requests without User-Agent header|bruce
+LOW|internal/ghaction/render.go:33|FixAttribution parsing assumes exact "; fix by " delimiter|Make parsing more robust to whitespace variations in evidence|maintainability|10|Splits on "; " but evidence may have inconsistent spacing|bruce
+LOW|cmd/atcr/github.go:33|usageArgs function not defined in file|Verify usageArgs is imported/defined in package|maintainability|5|Args: usageArgs(cobra.MaximumNArgs(1)) references undefined function|bruce

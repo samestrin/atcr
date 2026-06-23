@@ -1,0 +1,1 @@
+HIGH|action.yml:93|HEAD_SHA prefers PR head commit which does not exist for fork PRs|Use github.sha merge commit SHA for all events|correctness|5|github.event.pull_request.head.sha unavailable on forks; check run posts to base repo|atcr-reviewer

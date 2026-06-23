@@ -1,0 +1,1 @@
+LOW|docs/ci-integration.md:23|Out of scope reference to GitHub Action|Remove or update to reflect current implementation|maintainability|1|References an action that is not part of the current scope|REVIEWER
