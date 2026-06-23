@@ -368,6 +368,13 @@ func TestLooksLikeNonGoBraces(t *testing.T) {
 		{"a quoted case label does not start the line", "switch s {\ncase \"x\":\n}", false},
 		// Go keyword overrides JSON-key match: both must hold for suppression.
 		{"json key AND Go keyword: keyword wins", "func init() {\n  \"k\": 1\n}", false},
+		// Non-declaration Go keywords (if/return/range) are NOT in declKeywordRe, so
+		// their presence does not override the JSON-key signal. Content with both a
+		// JSON-key line and non-declaration control flow is still suppressed as non-Go.
+		{"mixed: json key + non-declaration Go flow (if/return) is suppressed", "{\n  \"timeout\": 30\n  if x > 0 { return x }\n}", true},
+		// Bare/unquoted keys (YAML-style, TOML-style) are not detected as JSON-key
+		// lines: the suppression requires a double-quoted key at line start.
+		{"bare unquoted key is not non-Go braces", "{\n  timeout: 30\n  retries: 3\n}", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
