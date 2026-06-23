@@ -49,14 +49,25 @@ func BuildInlineComments(findings []reconcile.JSONFinding) []CommentRequest {
 // data is absent.
 func commentBody(f reconcile.JSONFinding) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "ATCR found: %s.", strings.TrimSpace(f.Problem))
-	if fix := strings.TrimSpace(f.Fix); fix != "" {
+	fmt.Fprintf(&b, "ATCR found: %s.", defang(strings.TrimSpace(f.Problem)))
+	if fix := defang(strings.TrimSpace(f.Fix)); fix != "" {
 		fmt.Fprintf(&b, " Fix: %s.", fix)
 	}
 	if who := FixAttribution(f.Evidence); who != "" {
 		fmt.Fprintf(&b, " Suggested by: %s.", who)
 	}
 	return b.String()
+}
+
+// defang neutralizes GitHub Markdown injection vectors in untrusted model output.
+// It backslash-escapes @ (mention) and # (issue-ref) characters, and removes the
+// HTML-comment open sequence (<!--) so crafted content cannot inject notifications
+// or hide text when posted to the GitHub API.
+func defang(s string) string {
+	s = strings.ReplaceAll(s, "<!--", "<!-")
+	s = strings.ReplaceAll(s, "@", `\@`)
+	s = strings.ReplaceAll(s, "#", `\#`)
+	return s
 }
 
 // CreateReviewComment posts a single inline review comment to a pull request.
