@@ -8,6 +8,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestCell_MarkdownSanitization(t *testing.T) {
+	// Existing sanitization
+	assert.Equal(t, "a / b", cell("a | b"))
+	assert.Equal(t, "line1 line2", cell("line1\nline2"))
+	// Link injection: [text](url) must be stripped to plain text
+	assert.Equal(t, "click here", cell("[click here](http://evil.example.com)"))
+	assert.Equal(t, "see docs", cell("[see docs](https://internal/docs)"))
+	// Emphasis markers must be escaped
+	assert.Equal(t, `\*bold\*`, cell("*bold*"))
+	assert.Equal(t, `\_italic\_`, cell("_italic_"))
+}
+
 func TestFixAttribution(t *testing.T) {
 	cases := []struct {
 		name     string
