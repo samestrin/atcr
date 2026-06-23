@@ -314,7 +314,7 @@ func TestValidateGoFixSyntax_BrokenGoSwitchStringCaseStillFlagged(t *testing.T) 
 // false positive. Do NOT "fix" this by narrowing the suppression; it would risk
 // reintroducing the JSON false positive. (A VALID such literal parses cleanly and
 // never reaches this path.)
-func TestValidateGoFixSyntax_BrokenStringKeyedMapSuppressed_AcceptedFalseNegative(t *testing.T) {
+func TestValidateGoFixSyntax_BrokenGoMapSuppressed(t *testing.T) {
 	src := "{\n  \"a\": 1,\n  \"b\":\n}" // broken (missing value) but JSON-shaped
 	require.NoError(t, validateGoFixSyntax(src),
 		"a broken JSON-shaped fix is suppressed — the accepted conservative-recall false negative")
