@@ -289,11 +289,14 @@ func TestBuildExecutorAgent_DefaultMaxTurnsWhenUnset(t *testing.T) {
 }
 
 // Integration (Phase 3): a registry with agent_mode=true runs end-to-end through
-// runVerify. The harness ChatCompleter drives the executor tool loop and the parsed
-// fix lands in findings.json — proving runVerify threads cc into generateFixes. No
-// skeptic is eligible (the registry has only a reviewer), so the harness is still
-// built via the anyFixEligible path and cc serves only the executor; the single-shot
-// snippet completer is swapped out and asserted untouched.
+// runVerify — covering cc-threading and fix-artifact landing. The harness
+// ChatCompleter drives the executor tool loop and the parsed fix lands in
+// findings.json — proving runVerify threads cc into generateFixes. No skeptic is
+// eligible (the registry has only a reviewer), so the harness is still built via
+// the anyFixEligible path and cc serves only the executor; the single-shot snippet
+// completer is swapped out and asserted untouched. Dispatcher is supplied via the
+// okDispatcher() seam; the production buildDispatcher → snapshot → read-only jail
+// path is not exercised here.
 func TestRunVerify_AgentMode_PopulatesFixEndToEnd(t *testing.T) {
 	snippet := &recordingExecutor{out: "SNIPPET PATH MUST NOT RUN"}
 	restore := swapExecutorClient(func() executorCompleter { return snippet })
