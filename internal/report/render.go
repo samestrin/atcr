@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"sort"
 	"strconv"
@@ -411,15 +410,9 @@ func skepticName(v *reconcile.Verification) string {
 	return v.Skeptic
 }
 
-// newlineFlattener collapses CR/LF so a field cannot inject markdown structure.
-var newlineFlattener = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
-
-// esc flattens newlines then HTML-escapes free text so it renders inert.
-// Backticks are also escaped so reviewer-controlled fields cannot open an
-// inline code span inside a normal bullet.
-func esc(s string) string {
-	return strings.ReplaceAll(html.EscapeString(newlineFlattener.Replace(s)), "`", "&#96;")
-}
+// esc delegates to reconcile.Esc so the reconciled-report and display-report
+// escaping contracts share a single source of truth and cannot drift apart.
+func esc(s string) string { return reconcile.Esc(s) }
 
 // escTrunc truncates to maxTextLen runes (with an ellipsis) then escapes.
 func escTrunc(s string) string { return esc(truncate(s, maxTextLen)) }
