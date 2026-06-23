@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 29 | 1 | 0 |
-| MEDIUM | 45 | 22 | 20 |
-| LOW | 55 | 21 | 26 |
+| MEDIUM | 40 | 22 | 25 |
+| LOW | 51 | 21 | 30 |
 
-**Last Modified:** 2026-06-22 | **Open Items:** 129 | **Deferred Items:** 44 | **Resolved Items:** 46 | **Total Items:** 219
+**Last Modified:** 2026-06-22 | **Open Items:** 120 | **Deferred Items:** 44 | **Resolved Items:** 55 | **Total Items:** 219
 
 ## Directory Structure
 
@@ -246,9 +246,9 @@ technical-debt/
 | 1 | [x] | MEDIUM | cmd/atcr/github.go:132 | Partial inline-comment failures (some posted, some 422) are surfaced only on stderr/stdout, never in the check run, so the PR check does not reflect missing comments | Post comments before the check run and include the skipped/failed count in the check output text (or update the check after posting), so partial delivery is visible on the PR surface | ERROR_PATHS | 45 | execute-epic-independent |
 | 1 | [x] | LOW | cmd/atcr/github.go:126 | No machine-readable output (GITHUB_OUTPUT) exposes the conclusion or finding counts, so downstream workflow steps cannot branch on the gate result except via job exit status | Emit conclusion and finding counts to $GITHUB_OUTPUT when running under Actions | OBSERVABILITY | 20 | execute-epic-independent |
 | 2 | [x] | LOW | internal/ghaction/render.go:90 | BuildCheckOutput lists refuted findings at raw severity with no demoted/refuted marker while Conclusion correctly excludes them from the gate, so a reader may see a HIGH row under a passing gate | Render a refuted finding with a struck/annotated severity (e.g. (refuted)) or move it to a separate demoted section in the check table | EDGE_CASES | 30 | execute-epic-stage3 |
-| 2 | [ ] | MEDIUM | internal/ghaction/comments.go:50 | Finding Problem/Fix (untrusted model output) are interpolated verbatim into the PR comment body, so crafted content can inject markdown, @mentions or #issue refs that GitHub renders/notifies on when inline-comments is enabled | Defang @ and # autolinking and strip HTML-comment sequences before posting, preserving AC3's plain sentence format (decision needed: defang vs backtick-wrap vs AC3 fidelity) | SECURITY | 45 | execute-epic-independent |
+| 2 | [x] | MEDIUM | internal/ghaction/comments.go:50 | Finding Problem/Fix (untrusted model output) are interpolated verbatim into the PR comment body, so crafted content can inject markdown, @mentions or #issue refs that GitHub renders/notifies on when inline-comments is enabled | Defang @ and # autolinking and strip HTML-comment sequences before posting, preserving AC3's plain sentence format (decision needed: defang vs backtick-wrap vs AC3 fidelity) | SECURITY | 45 | execute-epic-independent |
 | 2 | [x] | LOW | internal/ghaction/render.go:30 | FixAttribution returns the FIRST "; "-segment beginning with "fix by ", but the executor token is always appended last; an earlier prose segment literally starting with "fix by " (rare; reviewer prose is not validated like executor names) would win | Scan segments in reverse / anchor on the last "fix by" segment since appendFixAttribution always appends last | EDGE_CASES | 10 | execute-epic-independent |
-| 2 | [ ] | LOW | internal/ghaction/client.go:60 | CreateCheckRun discards the response body, so the check-run id is unavailable and re-runs create duplicate check runs on the PR rather than updating one | Parse and return the check-run id to enable update-in-place across re-runs (or document the per-run duplicate-check behavior) | EDGE_CASES | 45 | execute-epic-independent |
+| 2 | [x] | LOW | internal/ghaction/client.go:60 | CreateCheckRun discards the response body, so the check-run id is unavailable and re-runs create duplicate check runs on the PR rather than updating one | Parse and return the check-run id to enable update-in-place across re-runs (or document the per-run duplicate-check behavior) | EDGE_CASES | 45 | execute-epic-independent |
 | U | [ ] | LOW | action.yml:atcr github | Composite action assumes a pull_request event (head.sha/base_ref/pull_request.number); a non-PR trigger fails deep inside atcr review with an empty --base rather than a clear up-front guard | Add an early step asserting github.event_name == pull_request (or that head.sha is non-empty) with an actionable error message | INTEGRATION | 15 | execute-epic-stage3 |
 | U | [ ] | LOW | action.yml:60 | The atcr review step assumes origin/<base> was fetched; a consumer who omits fetch-depth:0 gets a deep atcr range-resolution failure instead of an early action-level error | Add a guard step that git rev-parse --verify origin/<base> and emits an explicit fetch-depth:0 error before invoking atcr review | UNDER_ENGINEERING | 15 | execute-epic-independent |
 
