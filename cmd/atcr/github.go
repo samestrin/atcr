@@ -187,15 +187,50 @@ func postInlineComments(cmd *cobra.Command, client *ghaction.Client, owner, repo
 		Comments: comments,
 	}); err != nil {
 		var apiErr *ghaction.APIError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == 422 {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d inline comment(s) could not be posted (HTTP 422 — comments may be off-diff): %v\n", len(comments), apiErr)
-			return 0, deduped, nil
+		if errors.As(err, &apiErr) {
+			switch apiErr.StatusCode {
+			case 422:
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d inline comment(s) could not be posted (HTTP 422 — comments may be off-diff): %v\n", len(comments), apiErr)
+				return 0, deduped, nil
+			case 404, 405:
+				// The batched /reviews endpoint is unavailable — older GitHub
+				// Enterprise versions return 404/405 for it. Fall back to posting
+				// each comment individually so the action still works there.
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: batched review endpoint unavailable (HTTP %d); falling back to per-comment posting\n", apiErr.StatusCode)
+				return postCommentsIndividually(cmd, client, owner, repo, pr, sha, comments, deduped)
+			}
 		}
 		return 0, deduped, &codedError{code: exitFailure, err: fmt.Errorf("%d inline comment(s) failed to post: %w", len(comments), err)}
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d (%d already present)\n", len(comments), owner, repo, pr, deduped)
 	return len(comments), deduped, nil
+}
+
+// postCommentsIndividually posts each comment as a separate PR review comment.
+// It is the fallback path taken when the batched /reviews endpoint is
+// unavailable (HTTP 404/405, e.g. older GitHub Enterprise). A per-comment 422 is
+// treated as a non-fatal off-diff skip — mirroring the batch path's 422 handling
+// — while any other per-comment error aborts with exitFailure. Returns the
+// number posted and the (passed-through) dedup count.
+func postCommentsIndividually(cmd *cobra.Command, client *ghaction.Client, owner, repo string, pr int, sha string, comments []ghaction.CommentRequest, deduped int) (int, int, error) {
+	posted, skipped := 0, 0
+	for _, c := range comments {
+		if err := client.CreateReviewComment(cmd.Context(), owner, repo, pr, sha, c); err != nil {
+			var apiErr *ghaction.APIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == 422 {
+				skipped++
+				continue // off-diff comment — non-fatal, consistent with the batch path
+			}
+			return posted, deduped, &codedError{code: exitFailure, err: fmt.Errorf("inline comment fallback failed after %d posted: %w", posted, err)}
+		}
+		posted++
+	}
+	if skipped > 0 {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d inline comment(s) skipped (HTTP 422 — off-diff)\n", skipped)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "posted %d inline comment(s) to %s/%s#%d via per-comment fallback (%d already present)\n", posted, owner, repo, pr, deduped)
+	return posted, deduped, nil
 }
 
 // deduplicateComments removes comments whose path:line already has an ATCR
