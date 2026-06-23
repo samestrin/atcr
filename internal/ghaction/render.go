@@ -112,21 +112,18 @@ func location(f reconcile.JSONFinding) string {
 // same values Conclusion would compute — so callers can consume them directly
 // instead of calling Conclusion a second time over the same slice.
 func BuildCheckOutput(findings []reconcile.JSONFinding, failOn string) (CheckOutput, string, int) {
+	// Compute the gate verdict once; reuse it for both the empty-findings
+	// early-return and the non-empty rendering path.
+	conclusion, failCount := Conclusion(findings, failOn)
+
 	total := len(findings)
 	if total == 0 {
-		// No findings: the gate trivially passes. Derive the verdict from
-		// Conclusion so this early-return branch reports the same conclusion
-		// (neutral when informational, success under any threshold) as the
-		// non-empty path.
-		conclusion, failCount := Conclusion(findings, failOn)
 		return CheckOutput{
 			Title:   "atcr — no findings",
 			Summary: "atcr review found no findings.",
 			Text:    "ATCR review completed with no findings.",
 		}, conclusion, failCount
 	}
-
-	conclusion, failCount := Conclusion(findings, failOn)
 
 	var title string
 	if strings.TrimSpace(failOn) == "" {
