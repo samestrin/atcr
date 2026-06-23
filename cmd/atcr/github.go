@@ -178,8 +178,12 @@ func runGithub(cmd *cobra.Command, args []string) error {
 	// result so downstream steps can branch on the gate verdict.
 	if ghOutput := os.Getenv("GITHUB_OUTPUT"); ghOutput != "" {
 		f, err := os.OpenFile(ghOutput, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-		if err == nil {
-			_, _ = fmt.Fprintf(f, "conclusion=%s\nfindings=%d\n", conclusion, len(findings))
+		if err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not open GITHUB_OUTPUT %q: %v; step output not persisted\n", ghOutput, err)
+		} else {
+			if _, werr := fmt.Fprintf(f, "conclusion=%s\nfindings=%d\n", conclusion, len(findings)); werr != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not write GITHUB_OUTPUT %q: %v; step output not persisted\n", ghOutput, werr)
+			}
 			_ = f.Close()
 		}
 	}
