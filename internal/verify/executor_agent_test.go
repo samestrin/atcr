@@ -322,6 +322,10 @@ func TestRunVerify_AgentMode_PopulatesFixEndToEnd(t *testing.T) {
 	assert.Equal(t, 0, snippet.calls, "agent mode must not invoke the single-shot snippet completer")
 }
 
+func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
+	t.Fatal("RED: len(results)==0 guard in invokeExecutor is untested — add newFanoutEngine seam")
+}
+
 func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
 	f := reconcile.JSONFinding{Severity: "HIGH", File: "auth.go", Line: 42, Category: "SECURITY",
 		Problem: "plaintext password", Fix: "use bcrypt", Evidence: "line 42 stores raw input"}
