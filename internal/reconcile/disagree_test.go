@@ -681,3 +681,19 @@ func TestFormatScore_SpecialFloatValues(t *testing.T) {
 	assert.Equal(t, "+Inf", formatScore(math.Inf(1)), "+Inf renders explicitly without int64 conversion")
 	assert.Equal(t, "-Inf", formatScore(math.Inf(-1)), "-Inf renders explicitly without int64 conversion")
 }
+
+func TestWriteRadarItems_GoldenMarkerItem(t *testing.T) {
+	var b bytes.Buffer
+	WriteRadarItems(&b, []DisagreementItem{markerItem()}, "### ", esc)
+
+	want := "\n### 1. severity_split — `x.go:1` (HIGH) · score 0\n" +
+		"- Severity disagreement: LOW vs HIGH\n" +
+		"- Skeptics split: skep-a, skep-b\n" +
+		"- Reviewers: a (independence 1)\n" +
+		"- Problem: the-problem\n" +
+		"- Detail: the-detail\n" +
+		"- Positions:\n" +
+		"  - a — HIGH: pos-problem\n"
+
+	assert.Equal(t, want, b.String(), "golden output for markerItem() must match exactly; mutations to spacing or separators should fail")
+}
