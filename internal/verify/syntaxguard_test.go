@@ -270,6 +270,23 @@ func TestValidateGoFixSyntax_ErrorMentionsSyntax(t *testing.T) {
 		"the returned error should be a go/parser syntax error, got: %v", err)
 }
 
+// When parseGoFix wraps src in a synthetic prefix ("package p\n" for the decl
+// strategy, two lines for the stmt strategy), parser error positions are relative
+// to that synthetic file, not to src. The error returned to the caller must not
+// carry a position that references a synthetic wrapper line beyond the bounds of src.
+// Specifically: src here has 3 lines; the decl-strategy wrapper adds 1 line prefix
+// ("package p"), making its line 3 correspond to src line 2. A raw wrapped-error
+// message starts with a digit (the line number) — after the fix it must start with
+// the bare diagnostic word (no position prefix).
+func TestValidateGoFixSyntax_ErrorPositionNotWrapperRelative(t *testing.T) {
+	src := "func add(a, b int) int {\n\treturn a +\n}" // broken at src line 2
+	err := validateGoFixSyntax(src)
+	require.Error(t, err, "broken Go must be flagged")
+	// Before fix: err.Error() = "3:13: expected operand, found '}'" (wrapper-relative)
+	// After fix:  err.Error() = "expected operand, found '}'" (message only)
+	assert.NotRegexp(t, `^\d`, err.Error(), "error must not start with a line number from the synthetic wrapper")
+}
+
 // --- Epic 7.5: unfenced non-Go (JSON/config) brace-content suppression ---
 
 // AC1: an unfenced multi-line JSON object with block braces must not be flagged. Its
