@@ -30,7 +30,16 @@
 - **Relevant:** This is the only artifact an OSS adopter reads before deciding to embed — without it the module is an unlicensed, undocumented internal package and AC#5/AC#6 fail. It is the direct path to OSS adoption and leaderboard credibility (the permissive half of the dual-license strategy).
 - **Time-bound:** Land within the same sprint as Stories 1 and 2 so the module is never published in a state missing docs or a license; the README and example are authored after the API surface is frozen, not before.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-readme-public-api-surface.md) | README Documents Public API Surface (Lifted As-Is) | Unit |
+| [04-02](../acceptance-criteria/04-02-readme-behavior-install-quickstart.md) | README Documents Behavior, Install & Quickstart | Unit |
+| [04-03](../acceptance-criteria/04-03-runnable-godoc-example.md) | Runnable godoc Example (example_test.go) | Unit |
+| [04-04](../acceptance-criteria/04-04-apache-2-license.md) | Apache 2.0 LICENSE at Module Root | Unit |
+
+## Original Criteria Overview
 
 1. `reconcile/README.md` documents the public API (`Reconcile`, `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`, `Verdict*` constants) and the deterministic clustering / Jaccard dedupe / confidence / disagreement-preserving merge behavior, with an install + quickstart snippet using the lifted-as-is signature.
 2. `reconcile/example_test.go` is a runnable godoc `Example` function that constructs two `Source` values, calls `Reconcile`, and asserts on a merged `Result` — it compiles, runs under `go test ./reconcile/...` without external dependencies, and renders in `go doc` output.

@@ -30,13 +30,22 @@
 - **Relevant:** Turns the core architectural moat into a separable, inspectable, embeddable asset; unblocks the licensing path (story 6), the JSON adapter (story 4), and the leaderboard reference-implementation citation (story 8).
 - **Time-bound:** Delivered as the foundational story of epic 8.0; all downstream stories depend on this module + API landing first.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-nested-module-scaffold.md) | Nested Module Scaffold with Root Replace Directive | Integration |
+| [02-02](../acceptance-criteria/02-02-lifted-public-api-surface.md) | Lifted-as-is Public API Surface | Unit |
+| [02-03](../acceptance-criteria/02-03-stdlib-only-boundary-enforcement.md) | Stdlib-Only Boundary Enforcement | Unit/Integration |
+| [02-04](../acceptance-criteria/02-04-type-io-split-boundary-adapter.md) | Type/I/O Split and Boundary Adapter | Integration |
+| [02-05](../acceptance-criteria/02-05-severity-canonical-migration.md) | Severity Canonical Ownership Migration | Unit |
+
+## Original Criteria Overview
 
 1. The nested module `github.com/samestrin/atcr/reconcile` exists at `./reconcile/` with its own `go.mod` (Go 1.25, no third-party requires) and the root `go.mod` wires it via `replace github.com/samestrin/atcr/reconcile => ./reconcile`; `go build` and `go test` for the module pass. (AC#1)
 2. The public API exposes `Reconcile(sources []Source, opts Options) Result` with the lifted-as-is types (`Source`, `Finding`, `Merged`, `Options{ReconciledAt, Partial, Merges, Root}`, `Result`, `Summary`, `Verification` + `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants) as stable, exported library symbols; the proposed clean API is deferred. (AC#2)
 3. The public/private boundary is enforced: library non-test files are stdlib-only (`sort`, `strings`, `encoding/json`); `emit.go`/`discover.go` file I/O, `gate.go`, `validate.go`, and path-validation fields stay ATCR-internal behind the `internal/reconcile/adapter` boundary package. (AC#1, AC#2)
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`_
 
 ## Technical Considerations
 

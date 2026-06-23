@@ -39,7 +39,16 @@
 - **Relevant:** Satisfies AC#4 and is the single piece of evidence that the library is embeddable for tools that emit/consume JSON finding streams without importing the ATCR binary.
 - **Time-bound:** Lands within the plan 8.0 sprint, after Stories 1 and 2, before the README/godoc example (Story 4) which references the adapter.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-decode-single-and-array-sources.md) | Decode Single and Array Source Objects (reconcile-json/v1) | Unit |
+| [03-02](../acceptance-criteria/03-02-encode-result-to-versioned-envelope.md) | Encode Result to Versioned JSON Envelope (reconcile-json/v1) | Unit |
+| [03-03](../acceptance-criteria/03-03-byte-stability-and-omitempty.md) | Byte-Stability and omitempty on Optional Fields | Unit |
+| [03-04](../acceptance-criteria/03-04-path-validation-isolation-and-schema-independence.md) | Path-Validation Isolation and Schema Independence | Unit |
+
+## Original Criteria Overview
 
 1. Decode accepts both a single source object `{"version":"reconcile-json/v1","source":"<name>","findings":[...]}` and an array of such objects, mapping each to one `reconcile.Source` whose `Findings` are `[]reconcile.Finding`; unknown fields are ignored by default.
 2. Encode produces `{"version":"reconcile-json/v1","reconciled_at":<RFC3339>,"findings":[{severity,file,line,problem,fix,category,est_minutes,evidence,reviewers:[],confidence,disagreement?,verification?{verdict,skeptic,notes}}],"summary":{...},"ambiguous":[...]}` from a `reconcile.Result`, with field names sourced from the library `Finding`'s JSON struct tags.

@@ -4,7 +4,7 @@ Extract ATCR's deterministic reconciler from `internal/reconcile` into a standal
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/8.0_reconciler_library/`
-- [ ] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`
+- [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`
 - [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/8.0_reconciler_library/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/8.0_reconciler_library/`
 
@@ -35,7 +35,7 @@ Extract ATCR's deterministic reconciler from `internal/reconcile` into a standal
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
 - [User Stories](user-stories/) (pending)
-- [Acceptance Criteria](acceptance-criteria/) (pending)
+- [Acceptance Criteria](acceptance-criteria/) (25 ACs across 6 stories)
 - [Documentation](documentation/)
 
 ## Documentation References

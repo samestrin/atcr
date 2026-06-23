@@ -30,13 +30,19 @@
 - **Relevant:** Unblocks the proprietary-vendor persona and the white-label/OEM revenue line without requiring SaaS or enforcement infrastructure; completes the dual-licensing path called out in the epic's revenue model.
 - **Time-bound:** Lands within the extraction sprint alongside the Apache 2.0 `LICENSE`; the file is a draft-and-review artifact, not a long-pole legal drafting effort.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-commercial-license-placeholder-dual-license-pairing.md) | Commercial License Placeholder File with Dual-License Pairing | Unit |
+| [05-02](../acceptance-criteria/05-02-contact-path-and-no-enforcement-statement.md) | Contact Path and No-Enforcement Statement | Unit |
+| [05-03](../acceptance-criteria/05-03-readme-licensing-section-and-no-enforcement-code-scan.md) | README Licensing Section and No-Enforcement Code Scan | Unit |
+
+## Original Criteria Overview
 
 1. `reconcile/LICENSE-COMMERCIAL.md` exists and clearly states a commercial license is available for proprietary/closed-source embedding, paired with the Apache 2.0 `LICENSE` so both halves of the dual-license are visible in the module.
 2. The file names a contact path (e.g., a GitHub issue/ Discussions link or a contact line) a vendor can use to initiate commercial licensing, and is explicit that no automated enforcement or payment gating ships with the code.
 3. The module README includes a short licensing section cross-referencing both files so a vendor evaluating the module discovers the commercial path without hunting for it, and the repository contains no license-check or payment-gating code.
-
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`_
 
 ## Technical Considerations
 

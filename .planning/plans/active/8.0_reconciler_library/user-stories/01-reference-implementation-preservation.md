@@ -38,13 +38,23 @@
 - **Relevant:** AC#3 is the central no-regression guarantee. Without byte-identical fixtures and a green corpus, the extraction cannot merge and ATCR loses its standing as the reference implementation.
 - **Time-bound:** Lands within the sprint phase allocated to the boundary adapter + consumer import-flip, ahead of the 13.x dedup-replacement epics (the stable-surface dependency).
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-root-replace-directive-consumption.md) | Root Replace Directive and Library Module Consumption | Integration |
+| [01-02](../acceptance-criteria/01-02-boundary-adapter-finding-conversion.md) | Boundary Adapter Finding Conversion and Path-Validation Stamping | Unit |
+| [01-03](../acceptance-criteria/01-03-public-type-and-io-split.md) | Public Type and File I/O Split (emit.go / discover.go) | Integration |
+| [01-04](../acceptance-criteria/01-04-consumer-package-import-flip.md) | Consumer Package Import Flip (All 9 Packages) | Integration |
+| [01-05](../acceptance-criteria/01-05-byte-identical-fixtures.md) | Byte-Identical Fixtures Against Pre-Extraction Baseline | Integration |
+| [01-06](../acceptance-criteria/01-06-test-corpus-green-dual-ci-jobs.md) | Test Corpus Green with Dual CI Jobs | E2E |
+
+## Original Criteria Overview
 
 1. ATCR consumes `github.com/samestrin/atcr/reconcile` through the root `replace` directive, with the `internal/reconcile/adapter` boundary converting `stream.Finding` ↔ `reconcile.Finding` and retaining path-validation fields (`PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged`) in the ATCR-internal `JSONFinding`.
 2. All consumer packages are flipped to import the library: `cmd/atcr` (github.go, reconcile.go, report.go, resume.go, review.go, verify.go), `internal/debate`, `internal/verify`, `internal/report`, `internal/ghaction`, `internal/mcp`, `internal/fanout` (metrics.go, postprocess.go), `internal/scorecard/reconcile.go`, and `internal/registry/config.go` (severity helpers) — no consumer re-declares verdict/severity constants locally.
 3. The full existing ATCR test corpus passes with zero behavioral change and byte-identical fixtures (AC#3), verified by diff against the pre-extraction baseline.
 
-_Detailed AC: `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`_
 
 ## Technical Considerations
 

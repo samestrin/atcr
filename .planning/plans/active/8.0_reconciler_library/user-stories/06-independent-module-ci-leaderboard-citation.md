@@ -30,7 +30,15 @@
 - **Relevant:** Directly satisfies AC#7 (independent module CI on tag push) and AC#8 (leaderboard methodology references the extracted reconciler). Without the PR-time job, the nested module is untested between tags — a silent regression risk the maintainer explicitly flagged. Without the citation, the leaderboard's credibility claim (deterministic, inspectable, reproducible) is unsupported by a doc reference.
 - **Time-bound:** Lands within the extraction sprint after the module scaffold stories; the CI wiring is verifiable immediately by pushing a tag and opening a PR with a deliberate `./reconcile` break, and the `docs/scorecard.md` edit lands in the same sprint once the module exists.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-tag-push-release-gate-workflow.md) | Tag-Push Release Gate for Independent Module CI | E2E (CI-driven) |
+| [06-02](../acceptance-criteria/06-02-pr-time-module-test-job-boundary-gap.md) | PR-Time Module Test Job Closes Nested-Module Boundary Gap | E2E (CI-driven) |
+| [06-03](../acceptance-criteria/06-03-scorecard-methodology-reference-citation.md) | Scorecard Methodology Cites Standalone Reference Implementation | Unit (doc verification) |
+
+## Original Criteria Overview
 
 1. `.github/workflows/reconcile-module.yml` exists, triggers on tag push, cds into `./reconcile`, and runs the three release-gate checks (`gofmt` check + `golangci-lint` v2.12.2 + `go test -race`) on the self-hosted `[gauntlet]` runner with Go 1.25 — satisfying the AC#7 tag-push release gate.
 2. `.github/workflows/ci.yml` gains a PR/push job (or step) that cds into `./reconcile` and runs `go test`, reusing the same `[gauntlet]` runner and Go 1.25 setup, so the nested module's `go.mod` boundary no longer leaves the library untested between tags — closing the gap the maintainer flagged because root `go test ./...` does not cross that boundary.
