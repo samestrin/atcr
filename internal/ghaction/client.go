@@ -109,6 +109,9 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 		resp, err := c.httpClient().Do(req)
 		if err != nil {
 			if attempt < maxRetries {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				time.Sleep(backoff)
 				backoff *= 2
 				continue
@@ -122,6 +125,9 @@ func (c *Client) post(ctx context.Context, path string, body any) error {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		_ = resp.Body.Close()
 		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			time.Sleep(backoff)
 			backoff *= 2
 			continue
