@@ -212,6 +212,12 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	sem := make(chan struct{}, maxPar)
 	var wg sync.WaitGroup
 	for i, j := range jobs {
+		// Bail promptly on cancellation: without this the pool keeps dispatching
+		// every remaining skeptic job even after ctx is done (mirrors executor.go
+		// and debate.go).
+		if ctx.Err() != nil {
+			break
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(idx int, jb job) {
