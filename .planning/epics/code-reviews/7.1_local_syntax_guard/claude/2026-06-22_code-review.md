@@ -8,36 +8,37 @@
 - **Review Mode:** Epic (Acceptance Criteria + Adversarial) + Tests
 
 ## 2. Checklist Changes Applied
-- **.planning/epics/completed/7.1_local_syntax_guard.md** – Fixes are applied to in-memory/temp files and parsed
-  - Before: `[ ]` → After: `[x]`
-  - Evidence: `internal/verify/syntaxguard.go:94-119`, `internal/verify/executor.go:140-149`
-- **.planning/epics/completed/7.1_local_syntax_guard.md** – Support built-in syntax checking for at least Go
-  - Before: `[ ]` → After: `[x]`
-  - Evidence: `internal/verify/syntaxguard.go:1-151`
-- **.planning/epics/completed/7.1_local_syntax_guard.md** – Invalid fixes are either retried (up to N times) or flagged in the output
-  - Before: `[ ]` → After: `[x]`
-  - Evidence: `internal/verify/executor.go:145-149`, `internal/reconcile/emit.go:126-133`, `internal/report/render.go:164-168`
+All three acceptance criteria were already `[x]` in the archived epic and are confirmed by code evidence (no checkbox changes required):
+- **.planning/epics/completed/7.1_local_syntax_guard.md** – Fixes applied to in-memory/temp files and parsed
+  - State: `[x]` (verified)
+  - Evidence: `internal/verify/syntaxguard.go:82-146`
+- **.planning/epics/completed/7.1_local_syntax_guard.md** – Built-in syntax checking for at least Go
+  - State: `[x]` (verified)
+  - Evidence: `internal/verify/syntaxguard.go:3-8,121-146`
+- **.planning/epics/completed/7.1_local_syntax_guard.md** – Invalid fixes retried or flagged
+  - State: `[x]` (verified)
+  - Evidence: `internal/verify/executor.go:150-155`
 
 ## 3. Evidence Map
-- **In-memory parse of generated fix**
-  - Evidence: `internal/verify/syntaxguard.go:94-119`, `internal/verify/executor.go:140-149`
-  - Summary: `validateGoFixSyntax` parses the fix string in-memory via `go/parser.ParseFile` against a `token.FileSet` using three strategies (whole-file, decl-wrapped, stmt-wrapped). Invoked inside `generateFixes` immediately after the fix is produced, before commit.
-- **Go syntax checking (stdlib)**
-  - Evidence: `internal/verify/syntaxguard.go:1-151`
-  - Summary: Pure stdlib `go/parser` + `go/token`; no shelling to `go build`/`go vet`, no temp module, no new runtime deps. Non-Go fenced blocks explicitly excluded via `nonGoFenceLangs`.
-- **Invalid-fix flagging**
-  - Evidence: `internal/verify/executor.go:145-149`, `internal/reconcile/emit.go:126-133`, `internal/report/render.go:164-168`
-  - Summary: Code-plausible fixes that fail to parse set `FixWarning = "invalid_syntax: <err>"` on the existing field; the markdown report surfaces it as "⚠️ Fix warning" (escaped/truncated); a pipeline warning is logged. Valid/prose fixes clear stale warnings.
+- **Fixes are applied to in-memory/temp files and parsed**
+  - Evidence: `internal/verify/syntaxguard.go:82-146`
+  - Summary: `validateGoFixSyntax` parses the free-form Fix string in-memory via `go/parser.ParseFile` under three OR-ed strategies (whole-file, decl-prefixed, stmt-wrapped). Per the recorded clarification the guard parses the Fix content directly; applying to a working-tree copy is explicitly out of scope. The in-memory branch of the AC is satisfied.
+- **Support built-in syntax checking for at least Go**
+  - Evidence: `internal/verify/syntaxguard.go:3-8,121-146`
+  - Summary: Pure stdlib `go/parser` + `go/token`. No shelling to `go build`/`go vet`, no temp module. Parse-only (no type check); header comment correctly strikes "compile" (refined in #76).
+- **Invalid fixes are either retried (up to N times) or flagged in the output**
+  - Evidence: `internal/verify/executor.go:150-155`, `internal/report/render.go:168-169`, `internal/reconcile/emit.go:135`
+  - Summary: Flag branch chosen (retry deferred per clarification). `FixWarning = "invalid_syntax: <parser error>"` is set when plausibly-Go code fails to parse, cleared on valid/prose fixes (no stale warning), and rendered via the `⚠️ Fix warning:` line. Reuses the existing 7.0 `FixWarning` field — zero new types.
 
 ## 4. Remaining Unchecked Items
-No remaining unchecked items - all verified.
+No remaining unchecked items — all 3 acceptance criteria verified.
 
 ## 5. Manual Review Status
 - **Code Reviewed and Approved:** Checked
-- **Rationale:** All three acceptance criteria implemented with stdlib-only Go parsing and a conservative code-vs-prose heuristic that avoids false-flagging prose change-instructions. New guard functions at 100% coverage; lint/vet/format clean. 11 adversarial findings are non-blocking follow-up TD (0 critical/0 high).
+- **Rationale:** All ACs satisfied with direct code evidence. Implementation is minimal-surface (stdlib-only, one net-new file, reuses existing FixWarning field) and matches every recorded clarification. Adversarial pass found no critical/high defects; concurrency is race-clean and the regexes are RE2 (ReDoS-safe).
 
 ## 6. Coverage Analysis
-- **Coverage:** 89.7%
+- **Coverage:** 89.7% (total); `internal/verify` package 95.3%; `syntaxguard.go` 100% per-function
 - **Baseline:** 80%
 - **Delta:** ↑9.7%
 - **Status:** PASSING
@@ -45,32 +46,34 @@ No remaining unchecked items - all verified.
 ## 7. Quality Checks
 | Check | Status | Command |
 |-------|--------|---------|
-| Lint | PASSING | golangci-lint run |
+| Lint | PASSING | golangci-lint run (0 issues) |
 | Types | PASSING | go vet ./... |
-| Format | PASSING | go fmt ./... |
+| Format | PASSING | gofmt (clean) |
 
 ## 8. Adversarial Analysis
-- **Files Reviewed:** 7
-- **Issues Found:** 11 (Critical: 0, High: 0)
+- **Files Reviewed:** 4 (syntaxguard.go, executor.go, emit.go, render.go) + 2 test files
+- **Issues Found:** 6 (Critical: 0, High: 0, Medium: 2, Low: 4)
+- **Mode:** Discovery-only (no sprint-design.md risk profile for an epic)
 
 ### Issues by Severity
-**Medium (5)**
-- `internal/verify/syntaxguard.go:138` (correctness) — First-fence-only validation: a non-Go fence followed by a broken Go fence passes unflagged (silent false negative on multi-block LLM responses).
-- `internal/verify/syntaxguard.go:30` (correctness) — Non-greedy fence body closed by a triple-backtick inside a Go string literal → valid code false-flagged `invalid_syntax`.
-- `internal/report/render_test.go:23` (testing) — Markdown golden file never exercises FixWarning; the rendered warning line is unpinned against drift.
-- `internal/report/render_test.go:36` (testing) — FixWarning escaping/truncation untested; test passes even if `escTrunc` were removed.
-- `internal/reconcile/emit.go:135` (testing) — `fix_warning` omitempty / JSON byte-compat invariant has no guarding test.
 
-**Low (6)**
-- `internal/verify/syntaxguard.go:30` (correctness) — 4-backtick (N>3) CommonMark fences mis-extract the body.
-- `internal/verify/syntaxguard.go:10` (maintainability) — "syntax/compile guard" comment oversells: parser does no semantic/compile checking.
-- `internal/verify/executor.go:80` (error-handling) — `generateFixes` derefs `reg.Providers` without a nil-`reg` guard (pre-existing Epic 7.0 code).
-- `internal/verify/syntaxguard_test.go:60` (testing) — `InvalidShortAssign` test comment falsely claims `:=` is the signal (actual signal is trailing `{`).
-- `internal/verify/syntaxguard_test.go` (testing) — Conservative-recall false-negative boundary undocumented by any characterization test.
-- `internal/verify/executor.go:144` (performance) — No size cap before 3× `ParseFile` on untrusted fix strings.
+**Medium**
+- `internal/verify/syntaxguard.go:49` — `blockOpenRe` flags a prose change-instruction whose line ends in a lone `{` as `invalid_syntax` (false positive not covered by the documented WONTFIXes). [correctness]
+- `internal/verify/syntaxguard.go:35` — `fenceRe` rejects a CommonMark info string with a trailing word (```` ```go note ````), so the raw backticked block is parsed as Go and a non-Go fence can be flagged. [correctness]
+
+**Low**
+- `internal/verify/syntaxguard.go:83` — size cap measured on raw `fix` before extraction; benign but comment overstates precision. [maintainability]
+- `internal/verify/syntaxguard_test.go:180` — no test for the prose-line-ending-in-`{` false-positive branch. [testing]
+- `internal/verify/syntaxguard_test.go:166` — no test for the fence-with-trailing-word info string. [testing]
+- `internal/verify/executor.go:154` — FixWarning ownership correct on the live path but the "not copied in reconcile" invariant is implicit/unenforced. [maintainability]
+
+### Verified clean (no defect)
+- ReDoS: Go RE2 linear; 200KB adversarial probe worst-case 64ms; 256KiB cap bounds input.
+- Concurrency: worker pool mutates only its own `findings[i]`; shared regexes read-only; `-race` clean.
+- `maxFixBytes` boundary correctly exclusive; empty/whitespace/CRLF handled and tested.
 
 ## 9. Follow-ups
-- Run `/reconcile-code-review @.planning/epics/completed/7.1_local_syntax_guard.md` to merge the 11 findings into the technical-debt README, then `/resolve-td` for the MEDIUM correctness/testing items.
+- Run `/reconcile-code-review @.planning/epics/completed/7.1_local_syntax_guard.md` to merge these 6 findings into the TD README. The two medium correctness items align with the existing `epic 7.5_syntax-guard-refinements` scope and can be routed there.
 
 ---
-*Generated by /execute-code-review on June 22, 2026 11:50:52AM*
+*Generated by /execute-code-review on June 22, 2026 03:43:43PM*

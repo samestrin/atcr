@@ -1,0 +1,1 @@
+LOW|internal/verify/syntaxguard.go:118|Missing test for `:=` code signal in `looksLikeGoCode`|Add test case for unfenced `:=` without block structure|maintainability|5|`looksLikeGoCode` does not check `:=`, but test `TestValidateGoFixSyntax_InvalidShortAssign` expects it flagged|bruce

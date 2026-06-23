@@ -2,5 +2,5 @@
   "agent_name": "otto",
   "model": "gemma-4-31b",
   "status": "ok",
-  "duration_ms": 37094
+  "duration_ms": 26796
 }

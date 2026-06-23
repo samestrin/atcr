@@ -1,1 +1,1 @@
-MEDIUM|internal/verify/syntaxguard.go:83|Missing common language alias in nonGoFenceLangs|Add "golang" and other common aliases to the map|maintainability|5|LLMs often use ```golang which falls through to Go parser|greta
+LOW|internal/verify/syntaxguard.go:71|Unbounded input length for syntax validation|Add max length check before parsing|security|5|validateGoFixSyntax parses arbitrary-length fix string|greta

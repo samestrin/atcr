@@ -2,5 +2,5 @@
   "agent_name": "brad",
   "model": "openai/qwen-3.7-plus",
   "status": "ok",
-  "duration_ms": 185551
+  "duration_ms": 190804
 }

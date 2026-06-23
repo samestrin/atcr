@@ -1,8 +1,7 @@
-SECURITY|internal/reconcile/emit.go:128|Missing input validation|Add length check|security|5|user input passed directly to query|bruce
-SECURITY|internal/report/render.go:164|XSS vulnerability|Escape HTML output|security|10|user-controlled content rendered in markdown|bruce
-PERFORMANCE|internal/verify/syntaxguard.go:100|Unbounded loop|Limit iterations|performance|5|regex FindStringSubmatch in loop|bruce
-CORRECTNESS|internal/verify/syntaxguard.go:145|Off-by-one error|Check bounds|correctness|3|slice access without bounds check|bruce
-MAINTAINABILITY|internal/verify/executor.go:140|Dead code|Remove unused variable|maintainability|2|unused variable 'fileErr'|bruce
-MAINTAINABILITY|internal/verify/syntaxguard.go:55|Unclear naming|Rename variable|maintainability|4|poorly named 'hadFence'|bruce
-MAINTAINABILITY|internal/verify/syntaxguard.go:80|Tight coupling|Extract function|maintainability|6|complex validation logic in one function|bruce
-OUT-OF-SCOPE|internal/report/render_test.go:35|Test case redundancy|Remove duplicate test|maintainability|1|redundant test case for same functionality|bruce
+SECURITY|internal/reconcile/emit.go:128|Missing input validation|Add length check for log message|security|5|user input passed directly to query|bruce
+SECURITY|internal/verify/syntaxguard.go:102|Missing input validation|Sanitize fix string before parsing|security|5|user input passed directly to query|bruce
+ERROR|internal/report/render.go:164|Missing error handling|Add error check for Fprintf|error-handling|5|user input passed directly to query|bruce
+LOW|internal/verify/executor_test.go:92|Dead code|Remove unused variable 'hadFence'|maintainability|2|variable declared but not used|bruce
+LOW|internal/verify/syntaxguard.go:143|Unclear naming|Rename 's' parameter to 'src'|maintainability|3|parameter name is too generic|bruce
+MEDIUM|internal/verify/syntaxguard.go:150|Missing error handling|Check result of extractFencedCode|error-handling|5|function return values ignored|bruce
+MEDIUM|internal/verify/syntaxguard.go:180|Missing error handling|Check result of parseGoFix|error-handling|5|function return values ignored|brice
