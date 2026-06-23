@@ -60,10 +60,14 @@ func commentBody(f reconcile.JSONFinding) string {
 }
 
 // defang neutralizes GitHub Markdown injection vectors in untrusted model output.
-// It backslash-escapes @ (mention) and # (issue-ref) characters, and removes the
+// It strips markdown link/image syntax to its display text (sharing render.go's
+// mdLinkRe so a crafted [text](url) cannot post a clickable link and ![alt](url)
+// cannot embed a tracking/spoofing image — only the inert text survives),
+// backslash-escapes @ (mention) and # (issue-ref) characters, and removes the
 // HTML-comment open sequence (<!--) so crafted content cannot inject notifications
 // or hide text when posted to the GitHub API.
 func defang(s string) string {
+	s = mdLinkRe.ReplaceAllString(s, "$1")
 	s = strings.ReplaceAll(s, "<!--", "<!-")
 	s = strings.ReplaceAll(s, "@", `\@`)
 	s = strings.ReplaceAll(s, "#", `\#`)

@@ -214,6 +214,26 @@ func TestGithubCmd_WritesGithubOutput(t *testing.T) {
 	assert.Contains(t, string(content), "findings=1")
 }
 
+func TestGithubCmd_WarnsWhenGithubOutputUnwritable(t *testing.T) {
+	isolate(t)
+	fixtureReconciled(t, "2026-06-10_go", highFinding)
+	url, _ := captureGitHub(t)
+
+	// A path under a non-existent directory: O_CREATE does not create parent
+	// dirs, so OpenFile fails and the step output cannot be persisted. An
+	// operator must see a warning rather than have the failure silently dropped.
+	badOutput := filepath.Join(t.TempDir(), "missing-dir", "github-output")
+	t.Setenv("GITHUB_OUTPUT", badOutput)
+
+	code, out := execCmdCapture(t, "github",
+		"--repo", "samestrin/atcr", "--sha", "abc123", "--token", "tok",
+		"--api-url", url, "--fail-on", "high", "2026-06-10_go")
+
+	require.Equal(t, 1, code)
+	assert.Contains(t, out, "GITHUB_OUTPUT", "open failure must be surfaced to the operator")
+	assert.Contains(t, out, "not persisted")
+}
+
 func TestPostInlineComments_UsesBatchedAPI(t *testing.T) {
 	var mu sync.Mutex
 	paths := map[string]int{}

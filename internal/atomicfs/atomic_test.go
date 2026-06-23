@@ -630,3 +630,42 @@ func TestCopyPath_NonRegularSourceErrors(t *testing.T) {
 		t.Errorf("error = %v, want 'not a regular file or directory'", err)
 	}
 }
+
+// TestBackupToDotBak_SupersededCleanupFailureIsNotFatal pins that once the swap
+// rename succeeds (bak holds the current generation), a failure to remove the
+// superseded prior generation (bakOld) is best-effort and must NOT turn a
+// completed backup into a reported failure.
+func TestBackupToDotBak_SupersededCleanupFailureIsNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "f.json")
+	bak := src + ".bak"
+	if err := os.WriteFile(src, []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("seed src: %v", err)
+	}
+	if err := os.WriteFile(bak, []byte("prior\n"), 0o644); err != nil {
+		t.Fatalf("seed prior .bak: %v", err)
+	}
+
+	// The swap itself succeeds (default renameFn); only the best-effort cleanup
+	// of the superseded prior generation is forced to fail.
+	origRemove := removeAllFn
+	removeAllFn = func(string) error { return os.ErrPermission }
+	defer func() { removeAllFn = origRemove }()
+
+	got, err := BackupToDotBak(src)
+	if err != nil {
+		t.Fatalf("a failed cleanup of the superseded .bak.old must not fail a backup whose swap already succeeded: %v", err)
+	}
+	if got != bak {
+		t.Errorf("returned backup path = %q, want %q", got, bak)
+	}
+
+	// The current generation must be the new content.
+	data, rerr := os.ReadFile(bak)
+	if rerr != nil {
+		t.Fatalf("read current .bak: %v", rerr)
+	}
+	if string(data) != "new\n" {
+		t.Errorf("current .bak content = %q, want %q", string(data), "new\n")
+	}
+}

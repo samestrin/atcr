@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/scorecard"
+	"github.com/samestrin/atcr/internal/validation"
 	"github.com/spf13/cobra"
 )
 
@@ -56,6 +57,24 @@ func runLeaderboard(cmd *cobra.Command, _ []string) error {
 	// than a silent no-op that leaves the user's expected file unwritten.
 	if output != "" && !export {
 		return usageError(errors.New("--output requires --export"))
+	}
+
+	// Validate --output at the input layer for parity with review: the absolute
+	// path is rejected (exit 2) when it references a system directory or contains
+	// path traversal, before any export work begins. Like review (and unlike
+	// report), symlinks are NOT resolved here — writeExportFile deliberately
+	// follows a symlink at the target as a documented design choice for a local
+	// CLI, so validating filepath.Abs keeps that posture while still blocking a
+	// literal system-dir or traversal path.
+	if output != "" {
+		abs, aerr := filepath.Abs(output)
+		if aerr != nil {
+			return usageError(fmt.Errorf("resolving --output: %w", aerr))
+		}
+		if verr := validation.FilePath(abs); verr != nil {
+			return usageError(verr)
+		}
+		output = abs
 	}
 
 	dir, err := scorecard.DefaultDir()

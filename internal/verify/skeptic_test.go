@@ -65,6 +65,28 @@ func TestBuildSkepticPrompt_Deterministic(t *testing.T) {
 	assert.Equal(t, buildSkepticPromptWithSentinel(f, e, sentinel), buildSkepticPromptWithSentinel(f, e, sentinel))
 }
 
+// TestBuildSkepticPrompt_SentinelUniqueAndWellFormed guards the per-call sentinel:
+// it must be unpredictable (sourced from crypto/rand, not math/rand) and carry the
+// "finding-XXXXXXXX" shape. The sentinel is the early-close injection defense, so a
+// predictable value is brute-forceable. Uniqueness across many calls is the
+// observable proxy for the crypto/rand source.
+func TestBuildSkepticPrompt_SentinelUniqueAndWellFormed(t *testing.T) {
+	t.Parallel()
+	const openPrefix = "<finding-"
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		got := buildSkepticPrompt(reconcile.JSONFinding{}, nil)
+		start := strings.Index(got, openPrefix)
+		require.GreaterOrEqual(t, start, 0, "sentinel open tag must be present")
+		end := strings.Index(got[start:], ">")
+		require.Greater(t, end, 0, "sentinel open tag must close with >")
+		tag := got[start+1 : start+end] // e.g. finding-1a2b3c4d
+		assert.Regexp(t, `^finding-[0-9a-f]{8}$`, tag, "sentinel must be finding-<8 hex>")
+		assert.False(t, seen[tag], "sentinel must be unique across calls (crypto/rand source)")
+		seen[tag] = true
+	}
+}
+
 func TestBuildSkepticPrompt_EmptyEntries(t *testing.T) {
 	t.Parallel()
 	got := buildSkepticPrompt(sampleFinding(), nil)

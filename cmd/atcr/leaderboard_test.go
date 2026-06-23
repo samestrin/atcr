@@ -173,6 +173,18 @@ func TestLeaderboardCmd_OutputToDirectoryExit1(t *testing.T) {
 	require.Contains(t, out, "directory")
 }
 
+// TestLeaderboardCmd_ExportOutputSystemDirRejected pins parity with report/review:
+// an --output path under a system directory must be rejected by validation.FilePath
+// at the input layer (usage error, exit 2) before any write is attempted.
+func TestLeaderboardCmd_ExportOutputSystemDirRejected(t *testing.T) {
+	isolate(t)
+	storeLeaderboardRec(t, 1, "bruce", "claude-sonnet-4-6")
+
+	code, out := execCmdCapture(t, "leaderboard", "--export", "--output", "/etc/atcr-export-test.json")
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "system directories")
+}
+
 func TestLeaderboardCmd_ExportEmptyStoreExit1(t *testing.T) {
 	isolate(t)
 	// Unlike the table view (exit 0 on empty store), --export treats no matching

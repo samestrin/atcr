@@ -63,6 +63,25 @@ func TestCommentBodyDefangsInjection(t *testing.T) {
 	assert.NotContains(t, body, "<!--", "HTML comment open sequence must be neutralized")
 }
 
+// TestCommentBodyDefangsMarkdownLinks pins that markdown link and image syntax in
+// untrusted model output cannot survive into the posted comment as a clickable
+// link or an embedded (tracking/spoofing) image. The URL target must be stripped
+// like render.go's mdLinkRe does for table cells, keeping only the display text.
+func TestCommentBodyDefangsMarkdownLinks(t *testing.T) {
+	f := reconcile.JSONFinding{
+		File:     "foo.go",
+		Line:     1,
+		Problem:  "see [click here](https://evil.test/phish) for details",
+		Fix:      "apply ![pixel](https://evil.test/track.png) now",
+		Evidence: "",
+	}
+	body := commentBody(f)
+	assert.NotContains(t, body, "https://evil.test", "link/image URL target must be stripped")
+	assert.NotContains(t, body, "](", "markdown link/image syntax must not survive")
+	assert.Contains(t, body, "click here", "link display text must be preserved")
+	assert.Contains(t, body, "pixel", "image alt text must be preserved")
+}
+
 func TestListReviewComments(t *testing.T) {
 	existing := []ReviewComment{
 		{Path: "a.go", Line: 7, Body: "ATCR found: boom."},

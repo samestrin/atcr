@@ -177,9 +177,12 @@ func swapStagedBackup(staged, bak, bakOld string) error {
 	}
 
 	if priorStaged {
-		if err := os.RemoveAll(bakOld); err != nil {
-			return fmt.Errorf("removing superseded backup %s: %w", bakOld, err)
-		}
+		// Best-effort: the swap already succeeded and bak holds the current
+		// generation, so a failure to remove the superseded prior generation must
+		// not fail a backup that has otherwise completed. A stale bakOld is
+		// reclaimed by the next entry-time reconcile. Mirrors the best-effort
+		// os.RemoveAll calls elsewhere in this package.
+		_ = removeAllFn(bakOld)
 	}
 	return nil
 }
@@ -196,6 +199,12 @@ func swapStagedBackup(staged, bak, bakOld string) error {
 // that bypasses both seams — so cross-device inner-swap atomicity is not
 // fault-injectable through either var.
 var renameFn = os.Rename
+
+// removeAllFn is the cleanup primitive swapStagedBackup uses to discard a
+// superseded prior backup generation, indirected through a package var so
+// fault-injection tests can drive the best-effort cleanup-failure branch
+// deterministically. In production it is os.RemoveAll.
+var removeAllFn = os.RemoveAll
 
 // CopyPath copies the regular file or directory tree at src to dst, preserving
 // per-entry permissions; non-regular entries (symlinks, devices) are skipped, as
