@@ -29,6 +29,17 @@ type executorCompleter interface {
 // runVerify's many call sites; tests override it via swapExecutorClient.
 var newExecutorClient = func() executorCompleter { return llmclient.New() }
 
+// fanoutRunner is the interface satisfied by *fanout.Engine. The package-level
+// newFanoutEngine seam lets tests inject a fake that returns zero results to
+// verify the defensive len(results)==0 guard in invokeExecutor.
+type fanoutRunner interface {
+	Run(ctx context.Context, slots []fanout.Slot) []fanout.Result
+}
+
+var newFanoutEngine = func(cc fanout.ChatCompleter, opts ...fanout.EngineOption) fanoutRunner {
+	return fanout.NewEngine(cc, opts...)
+}
+
 // fixSnippetRadius is the number of lines read on each side of a finding's line to
 // give the executor real code context (Epic 7.0 snippet tier).
 const fixSnippetRadius = 30
@@ -361,7 +372,7 @@ func appendFixAttribution(evidence, name string) string {
 func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string) {
 	prompt := buildExecutorAgentPrompt(finding)
 	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs)
-	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(log.FromContext(ctx)))
+	engine := newFanoutEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(log.FromContext(ctx)))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// One slot yields one result; guard the index so a zero-length return cannot
 	// panic (a panic would violate the never-fail-the-run contract).

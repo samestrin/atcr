@@ -322,8 +322,28 @@ func TestRunVerify_AgentMode_PopulatesFixEndToEnd(t *testing.T) {
 	assert.Equal(t, 0, snippet.calls, "agent mode must not invoke the single-shot snippet completer")
 }
 
+// zeroResultEngine is a fake fanoutRunner that returns an empty slice, exercising
+// the defensive len(results)==0 guard in invokeExecutor.
+type zeroResultEngine struct{}
+
+func (zeroResultEngine) Run(_ context.Context, _ []fanout.Slot) []fanout.Result { return nil }
+
+// swapFanoutEngine replaces the package engine-construction seam and returns a restore func.
+func swapFanoutEngine(fake fanoutRunner) func() {
+	prev := newFanoutEngine
+	newFanoutEngine = func(_ fanout.ChatCompleter, _ ...fanout.EngineOption) fanoutRunner { return fake }
+	return func() { newFanoutEngine = prev }
+}
+
+// Defensive guard: when the engine returns zero results the run must not panic
+// and must report a warn — never-fail-the-run contract.
 func TestInvokeExecutor_ZeroResults_Warns(t *testing.T) {
-	t.Fatal("RED: len(results)==0 guard in invokeExecutor is untested — add newFanoutEngine seam")
+	restore := swapFanoutEngine(zeroResultEngine{})
+	defer restore()
+	fix, warn := invokeExecutor(context.Background(), agentExecConfig(), testExecProviderVal(),
+		eligibleFinding()[0], finalChat("unused"), okDispatcher(), 0)
+	assert.Equal(t, "", fix)
+	assert.Contains(t, warn, "engine returned no result")
 }
 
 func TestBuildExecutorAgentPrompt_ContainsFindingAndSchema(t *testing.T) {
