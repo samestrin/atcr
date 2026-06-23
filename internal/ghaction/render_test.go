@@ -9,21 +9,21 @@ import (
 )
 
 func TestCell_MarkdownSanitization(t *testing.T) {
-	// Existing sanitization
-	assert.Equal(t, "a / b", cell("a | b"))
-	assert.Equal(t, "line1 line2", cell("line1\nline2"))
-	// Link injection: [text](url) must be stripped to plain text
-	assert.Equal(t, "click here", cell("[click here](http://evil.example.com)"))
-	assert.Equal(t, "see docs", cell("[see docs](https://internal/docs)"))
-	// Emphasis markers must be escaped
-	assert.Equal(t, `\*bold\*`, cell("*bold*"))
-	assert.Equal(t, `\_italic\_`, cell("_italic_"))
-	// Security: cell content must be wrapped in a backtick code span so that
-	// headings, HTML tags, and other markdown not covered by character escaping
-	// are rendered as inert literal text.
+	// Pipes become / so they cannot break the table column grammar.
+	assert.Equal(t, "`a / b`", cell("a | b"))
+	// Newlines are collapsed to spaces.
+	assert.Equal(t, "`line1 line2`", cell("line1\nline2"))
+	// Markdown links: only the display text is kept.
+	assert.Equal(t, "`click here`", cell("[click here](http://evil.example.com)"))
+	assert.Equal(t, "`see docs`", cell("[see docs](https://internal/docs)"))
+	// Emphasis markers are inert inside the code span.
+	assert.Equal(t, "`*bold*`", cell("*bold*"))
+	assert.Equal(t, "`_italic_`", cell("_italic_"))
+	// Security: cell content is wrapped in a backtick code span so that
+	// headings, HTML tags, and other markdown render as inert literal text.
 	assert.Equal(t, "`# injected heading`", cell("# injected heading"))
 	assert.Equal(t, "`<b>bold via HTML</b>`", cell("<b>bold via HTML</b>"))
-	// Embedded backticks must be replaced to prevent premature code span close.
+	// Embedded backticks are replaced to prevent premature code span close.
 	assert.Equal(t, "`let x = 'y'`", cell("let x = `y`"))
 }
 

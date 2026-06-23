@@ -76,18 +76,19 @@ func Conclusion(findings []reconcile.JSONFinding, failOn string) (string, int) {
 	return "success", 0
 }
 
-// cell neutralizes a value for safe inclusion in a single markdown table cell:
-// a literal pipe would break the column grammar, and an embedded newline would
-// split the row across physical lines.
+// cell neutralizes a value for safe inclusion in a single markdown table cell.
+// It collapses whitespace, strips markdown links, replaces pipes (which break
+// the column grammar), replaces embedded backticks (which would close the code
+// span prematurely), then wraps the whole value in a backtick code span so that
+// headings, bold, italic, HTML, and all other markdown render as inert literal text.
 func cell(s string) string {
-	s = strings.ReplaceAll(s, "|", "/")
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = mdLinkRe.ReplaceAllString(s, "$1")
-	s = strings.ReplaceAll(s, "*", `\*`)
-	s = strings.ReplaceAll(s, "_", `\_`)
-	return strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "|", "/")
+	s = strings.ReplaceAll(s, "`", "'")
+	return "`" + strings.TrimSpace(s) + "`"
 }
 
 // location renders a finding's FILE:LINE anchor, omitting the line when it is
