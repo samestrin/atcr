@@ -106,4 +106,13 @@ func TestBuildCheckOutput(t *testing.T) {
 		assert.LessOrEqual(t, len(out.Text), maxCheckTextBytes)
 		assert.Contains(t, out.Text, "truncated")
 	})
+
+	t.Run("truncation count tracks rows actually shown", func(t *testing.T) {
+		oversized := []reconcile.JSONFinding{
+			{Severity: "LOW", File: "a.go", Line: 1,
+				Problem: strings.Repeat("x", 65000), Confidence: "LOW"},
+		}
+		out := BuildCheckOutput(oversized, "HIGH")
+		assert.Contains(t, out.Text, "0 of 1 findings shown")
+	})
 }
