@@ -10,11 +10,14 @@
 | Key Dependencies | `reconcile` package symbols from Story 2 | `Reconcile`, `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`, `Verdict*` constants |
 | API Contract | Lifted as-is — NO deferred clean API | no `(*Result, error)`, no `ReconciledFinding`, no `Options{LineTolerance, SimilarityThreshold}` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/README.md` - create: documents the public API surface (entry point signature + every public type and the `Verdict*` constants), cross-checked against the package's `go doc` output.
-- `reconcile/reconcile.go` (lifted in Story 2) - read: source of truth for the `Reconcile(sources []Source, opts Options) Result` signature and exported symbols; README must not drift from these names.
+- `reconcile/reconcile.go` (lifted in Story 2) - read: source of truth for the `Reconcile(sources []Source, opts Options) Result` signature and exported symbols; README must not drift from these names (`internal/reconcile/reconcile.go:64`).
 - `reconcile/types.go` / `reconcile/finding.go` (lifted in Story 2) - read: source struct definitions for `Source`, `Finding`, `Merged`, `Options{ReconciledAt, Partial, Merges, Root}`, `Result`, `Summary`, `Verification`, `Verdict*` constants.
 - `.planning/product/concepts/reconciler-library.md` - read: conceptual reference; confirms the deferred clean API is out of scope and must NOT appear in the README.
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — the `Verification` type and `Verdict*` constants documented in the README originate from this design concept.
 
 ## Happy Path Scenarios
 **Scenario 1: README lists the entry point with the lifted-as-is signature**

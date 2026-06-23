@@ -9,14 +9,17 @@
 | Test Framework | go test + testify; `go test -race` in library job | Root `go test ./...` does NOT cross nested module boundary |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile`, golangci-lint, gofmt | Both jobs must be green |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `.github/workflows/ci.yml` - modify: root CI; runs `go test ./...` (root module only); must remain green
 - `.github/workflows/reconcile-module.yml` - create: new CI job for the library module; on tag push runs `cd ./reconcile && gofmt -l . && golangci-lint run && go test -race ./...`
-- `internal/reconcile/emit_test.go` - reference: `TestReconcile_TwoReviewersAgreeHighConfidence` (`:20`) stays ATCR-internal; exercises the adapter end-to-end
+- `internal/reconcile/emit_test.go` - reference: `TestReconcile_TwoReviewersAgreeHighConfidence` (`internal/reconcile/emit_test.go:20`) stays ATCR-internal; exercises the adapter end-to-end
 - `internal/reconcile/cluster_merge_test.go` - reference: `MergeJSONFindings_VerificationPrecedence` validates merge ordering through the adapter
 - `internal/reconcile/disagree_test.go` - reference: `BuildDisagreements` validates disagreement output through the adapter
-- `internal/reconcile/gate.go` - reference: `IsFailing`/`CountAtOrAbove` (`:96`) stay ATCR-internal; import library `Verification` + `Verdict` constants
-- `internal/reconcile/validate.go` - reference: `validateFindingPaths` (`:21`) stays ATCR-internal
+- `internal/reconcile/gate.go` - reference: `IsFailing`/`CountAtOrAbove` (`internal/reconcile/gate.go:96`) stay ATCR-internal; import library `Verification` + `Verdict` constants
+- `internal/reconcile/validate.go` - reference: `validateFindingPaths` (`internal/reconcile/validate.go:21`) stays ATCR-internal
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — gate semantics and confidence v2 ordering exercised by the test corpus through `internal/reconcile/gate.go`.
 
 ## Happy Path Scenarios
 **Scenario 1: Root test corpus green with zero behavioral change**

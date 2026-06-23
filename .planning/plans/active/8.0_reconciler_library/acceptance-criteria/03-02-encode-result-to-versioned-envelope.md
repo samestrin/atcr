@@ -10,12 +10,15 @@
 | Key Dependencies | `encoding/json`, `reconcile.Result`, `reconcile.Finding`, `reconcile.Summary`, `reconcile.AmbiguousCluster`, `reconcile.Verification`, `reconcile.Options` | all lifted as-is in Story 2 |
 | Schema Family | `reconcile-json/v1` | versioned independently of `atcr-findings/v1` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/adapter/json/adapter.go` - create: encode entrypoint; marshals `reconcile.Result` into the output envelope `{version, reconciled_at, findings[], summary, ambiguous[]}`, stamping `"version":"reconcile-json/v1"` and `reconciled_at` from `Options.ReconciledAt` (or `time.Now().UTC()`).
 - `reconcile/adapter/json/adapter_test.go` - create: golden-file assertions on encoded output; field-order assertions; version + RFC3339 timestamp assertions.
 - `reconcile/adapter/json/testdata/encode_golden.json` - create: golden fixture capturing the canonical encoded shape.
 - `reconcile/result.go` (lifted in Story 2) - read: source `Result`, `Summary`, `AmbiguousCluster` struct definitions whose JSON tags drive field names.
 - `docs/findings-format.md` - read: conceptual reference for the round-tripped wire format; the adapter's `reconcile-json/v1` schema is its own independently-versioned contract.
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — the `Verification` sub-object rendered inside encoded findings follows the verdict/notes/skeptic shape defined here.
 
 ## Happy Path Scenarios
 **Scenario 1: A populated Result encodes to the canonical envelope**

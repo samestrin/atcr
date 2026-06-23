@@ -11,11 +11,12 @@
 | Test Framework | `go test` + testify | testify allowed only in `*_test.go` |
 | Linting | `golangci-lint`, `gofmt` | Both must be clean for the new module path |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/go.mod` - create: declares `module github.com/samestrin/atcr/reconcile`, `go 1.25`, empty `require` block
 - `go.mod` - modify: add `replace github.com/samestrin/atcr/reconcile => ./reconcile` directive
-- `reconcile/reconcile.go` - create: `Reconcile` entry point moved from `internal/reconcile/reconcile.go`
+- `reconcile/reconcile.go` - create: `Reconcile` entry point moved from `internal/reconcile/reconcile.go` (`internal/reconcile/reconcile.go:64`)
 - `reconcile/merge.go` - create: `Merged` struct and merge logic moved from `internal/reconcile/merge.go`
+- `reconcile/doc.go` - create: package doc string for the library package
 
 ## Happy Path Scenarios
 **Scenario 1: Nested module builds standalone**

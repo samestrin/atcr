@@ -10,11 +10,14 @@
 | Path Validation | ATCR-internal (`gate.go`, `validate.go`) | `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged` stay behind adapter |
 | JSON Wrapping | `encoding/json` | ATCR's `JSONFinding` wraps library `Finding` + path-validation fields |
 
-## Related Files
-- `reconcile/emit.go` - create: `Verification` struct (emit.go:40), `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants (emit.go:61-63), library `Finding` type — file I/O stays ATCR-internal
-- `reconcile/discover.go` - create: `Source` type (discover.go:25) — `Discover()` file reading stays ATCR-internal
+### Related Files (from codebase-discovery.json)
+- `reconcile/emit.go` - create: `Verification` struct (`internal/reconcile/emit.go:40`), `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants (`internal/reconcile/emit.go:61-63`), library `Finding` type — file I/O stays ATCR-internal
+- `reconcile/discover.go` - create: `Source` type (`internal/reconcile/discover.go:25`) — `Discover()` file reading stays ATCR-internal
 - `internal/reconcile/adapter/adapter.go` - create: `stream.Finding` <-> `reconcile.Finding` conversion, path-validation stamping, file I/O delegation
-- `internal/reconcile/gate.go` - modify: imports library's `Verification` + `Verdict` constants unchanged (`IsFailing`/`CountAtOrAbove`, gate.go:96)
+- `internal/reconcile/gate.go` - modify: imports library's `Verification` + `Verdict` constants unchanged (`IsFailing`/`CountAtOrAbove`, `internal/reconcile/gate.go:96`)
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — defines the `Verification` struct and verdict constants that move to the library as public API.
 
 ## Happy Path Scenarios
 **Scenario 1: emit.go types move to library, I/O stays internal**

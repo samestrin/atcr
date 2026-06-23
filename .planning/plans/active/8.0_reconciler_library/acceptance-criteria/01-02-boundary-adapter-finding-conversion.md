@@ -9,12 +9,15 @@
 | Test Framework | go test + testify | New RED tests for the conversion (the only new tests in this story) |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile`, `internal/stream`, `internal/reconcile` (gate.go, validate.go stay) | Adapter bridges library and ATCR internals |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `internal/reconcile/adapter/adapter.go` - create: `stream.Finding` → `reconcile.Finding` conversion, `Result` → `JSONFinding` wrapping, path-validation field stamping, file I/O relocated from `emit.go`/`discover.go`
-- `internal/reconcile/emit.go` - modify: split public types out to library; retain `JSONFinding` ATCR-internal wrapper with `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged` fields; I/O moves to adapter
-- `internal/reconcile/discover.go` - modify: split `Source` type out to library; `findings.txt` discovery I/O moves to adapter
-- `internal/reconcile/validate.go` - modify: stays ATCR-internal, imports library `Verification` + `Verdict` constants unchanged; stamps `PathValid`/`PathWarning`/`PathSuggestion` via the adapter
+- `internal/reconcile/emit.go` - modify: split public types out to library; retain `JSONFinding` ATCR-internal wrapper with `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged` fields; I/O moves to adapter (public types originally at `internal/reconcile/emit.go:40`/`emit.go:74`, verdict constants at `emit.go:61-63`)
+- `internal/reconcile/discover.go` - modify: split `Source` type out to library; `findings.txt` discovery I/O moves to adapter (`Source` originally at `internal/reconcile/discover.go:25`)
+- `internal/reconcile/validate.go` - modify: stays ATCR-internal, imports library `Verification` + `Verdict` constants unchanged; stamps `PathValid`/`PathWarning`/`PathSuggestion` via the adapter (`validateFindingPaths` at `internal/reconcile/validate.go:21`)
 - `internal/reconcile/adapter/adapter_test.go` - create: RED tests for `stream.Finding` ↔ `reconcile.Finding` conversion and path-validation stamping
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — defines the `Verification` struct fields (`Skeptic`, `Verdict`, `Notes`) and verdict enum that must preserve pointer identity across the adapter boundary.
 
 ## Happy Path Scenarios
 **Scenario 1: stream.Finding converts to reconcile.Finding before Reconcile call**

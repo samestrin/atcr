@@ -9,21 +9,24 @@
 | Test Framework | go test + testify | Existing corpus proves the flip is behavior-neutral |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile` | All consumers import library public types/severity helpers |
 
-## Related Files
-- `cmd/atcr/reconcile.go` - modify: import library types (was `internal/reconcile`); `runReconcile` (`:35`) constructs `[]Source` via adapter
-- `cmd/atcr/review.go` - modify: `runReview` (`:89`) imports library types via adapter
-- `cmd/atcr/resume.go` - modify: `runResume` (`:45`) imports library types via adapter
+### Related Files (from codebase-discovery.json)
+- `cmd/atcr/reconcile.go` - modify: import library types (was `internal/reconcile`); `runReconcile` (`cmd/atcr/reconcile.go:35`) constructs `[]Source` via adapter
+- `cmd/atcr/review.go` - modify: `runReview` (`cmd/atcr/review.go:89`) imports library types via adapter
+- `cmd/atcr/resume.go` - modify: `runResume` (`cmd/atcr/resume.go:45`) imports library types via adapter
 - `cmd/atcr/github.go` - modify: imports library `JSONFinding`/`IsFailing` semantics
 - `cmd/atcr/report.go` - modify: imports library types via adapter
 - `cmd/atcr/verify.go` - modify: imports library types via adapter
-- `internal/debate/envelope.go`, `internal/debate/select.go`, `internal/debate/emit.go`, `internal/debate/debate.go` - modify: import library `Verification`/`Verdict` constants; `applyRulings` (`emit.go:107`) and `runDebate` (`debate.go:85`) mutate `*Verification`
-- `internal/verify/votes.go`, `internal/verify/severity.go` - modify: `aggregateVerdicts` (`votes.go:25`) imports library `Verdict`; severity helpers imported from library
+- `internal/debate/envelope.go`, `internal/debate/select.go`, `internal/debate/emit.go`, `internal/debate/debate.go` - modify: import library `Verification`/`Verdict` constants; `applyRulings` (`internal/debate/emit.go:107`) and `runDebate` (`internal/debate/debate.go:85`) mutate `*Verification`
+- `internal/verify/votes.go`, `internal/verify/severity.go` - modify: `aggregateVerdicts` (`internal/verify/votes.go:25`) imports library `Verdict`; severity helpers imported from library
 - `internal/report/disagree.go`, `internal/report/render.go` - modify: import library types; `render.go` severity helpers from library
-- `internal/ghaction/render.go` - modify: `isRefuted`/`Conclusion` (`:60`) key off library `JSONFinding`/`IsFailing`
-- `internal/mcp/handlers.go` - modify: `handleReconcile` (`:278`) shares the adapter boundary + gate semantics
-- `internal/fanout/metrics.go`, `internal/fanout/postprocess.go` - modify: severity helpers from library (`metrics.go:107`, `postprocess.go:19`)
+- `internal/ghaction/render.go` - modify: `isRefuted`/`Conclusion` (`internal/ghaction/render.go:60`) key off library `JSONFinding`/`IsFailing`
+- `internal/mcp/handlers.go` - modify: `handleReconcile` (`internal/mcp/handlers.go:278`) shares the adapter boundary + gate semantics
+- `internal/fanout/metrics.go`, `internal/fanout/postprocess.go` - modify: severity helpers from library (`internal/fanout/metrics.go:107`, `internal/fanout/postprocess.go:19`)
 - `internal/scorecard/reconcile.go` - modify: imports library types (added by 2026-06-23 audit)
 - `internal/registry/config.go` - modify: severity helpers from library (added by 2026-06-23 audit)
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — verification contract consumed by `internal/debate`, `internal/verify`, and `internal/ghaction` after the import flip.
 
 ## Happy Path Scenarios
 **Scenario 1: All 9 consumer packages import the library**

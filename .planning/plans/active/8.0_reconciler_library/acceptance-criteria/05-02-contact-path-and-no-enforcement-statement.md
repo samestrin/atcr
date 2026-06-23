@@ -10,11 +10,11 @@
 | Key Dependencies | GitHub-hosted contact channel (issue template / Discussions) | a path that survives contact with public repos and moves with the repository |
 | Enforcement Model | None — documentation only | no license-check, no payment gating, no telemetry ships with the code |
 
-## Related Files
-- `reconcile/LICENSE-COMMERCIAL.md` - modify (extends AC 05-01): names a contact path a vendor can use to initiate commercial licensing, and explicitly states no automated enforcement or payment gating ships with the code.
-- `reconcile/LICENSE` - read (Story 4): the Apache 2.0 OSS half; the contact path initiates the commercial half distinct from the permissive OSS license.
+### Related Files (from codebase-discovery.json)
+- `reconcile/LICENSE-COMMERCIAL.md` - create (extends AC 05-01): names a contact path a vendor can use to initiate commercial licensing, and explicitly states no automated enforcement or payment gating ships with the code.
+- `reconcile/LICENSE` - create (Story 4): the Apache 2.0 OSS half; the contact path initiates the commercial half distinct from the permissive OSS license.
 - `.github/ISSUE_TEMPLATE/` (or GitHub Discussions) - read: the contact channel the file points to; must be a path Sam controls and can respond to.
-- `reconcile/README.md` - read (Story 4 owns): the README licensing section surfaces the contact path; AC 05-03 verifies the README pointer.
+- `reconcile/README.md` - create (Story 4 owns): the README licensing section surfaces the contact path; AC 05-03 verifies the README pointer.
 
 ## Happy Path Scenarios
 **Scenario 1: File names a reachable contact path**

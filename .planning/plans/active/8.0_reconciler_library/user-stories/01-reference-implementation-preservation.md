@@ -4,7 +4,7 @@
 
 ## User Story
 
-**As a** ATCR maintainer
+**As an** ATCR maintainer
 **I want** ATCR to consume the extracted reconcile library through a boundary adapter that preserves path-validation fields, with every consumer package re-importing the library's public types
 **So that** ATCR stays the reference implementation with zero behavioral change and byte-identical fixtures after the reconciler moves into its own module
 

@@ -20,7 +20,7 @@
 |-------|-------|
 | **Priority** | High |
 | **Effort Estimate** | L |
-| **Dependencies** | None — foundational scaffold; the reconciler surface in `internal/reconcile` is stable per Epic 1.0 completion. Blocks stories 3 (reference-impl no-behavioral-change), 4 (JSON adapter), 5 (docs/example), 6 (licensing), 7 (module CI), 8 (leaderboard citation). |
+| **Dependencies** | None — foundational scaffold; the reconciler surface in `internal/reconcile` is stable per Epic 1.0 completion. Story 1 (reference-impl preservation) depends on this scaffold as a companion story; downstream stories blocked: 3 (JSON adapter), 4 (OSS docs/example), 5 (licensing), 6 (module CI + leaderboard citation). |
 
 ## Success Criteria (SMART Format)
 

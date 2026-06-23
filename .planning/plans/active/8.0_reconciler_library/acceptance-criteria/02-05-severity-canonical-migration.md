@@ -10,10 +10,10 @@
 | Backward Compatibility | ATCR re-exports or imports from library | `internal/stream` sources severity from library or ATCR imports directly |
 | Verification | `go test` fixture diff | Byte-identical severity normalization output |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/severity.go` - create: `NormalizeSeverity`/`SeverityRank` moved from `internal/stream/severity.go:33` as canonical owner
 - `internal/stream/severity.go` - modify: either re-export from library or delegate to `reconcile.NormalizeSeverity`/`reconcile.SeverityRank`
-- `reconcile/merge.go` - create: merge logic that previously had redundant init-copy at `merge.go:30` now imports canonical `NormalizeSeverity`/`SeverityRank` from same package
+- `reconcile/merge.go` - create: merge logic that previously had redundant init-copy at `internal/reconcile/merge.go:30` now imports canonical `NormalizeSeverity`/`SeverityRank` from same package
 - `internal/reconcile/merge.go` - modify: remove redundant severity init-copy at line 30
 
 ## Happy Path Scenarios

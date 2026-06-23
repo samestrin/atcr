@@ -21,7 +21,7 @@
   - Path-validation fields (`PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged`) are ATCR-internal and MUST NOT appear in the external schema.
   - Optional fields (`disagreement`, `verification`) use `omitempty` so their absence is byte-stable, preserving the deterministic total-order output.
   - Evolution within `reconcile-json/v1` is additive-only, mirroring the `atcr-findings` policy — no breaking changes inside the versioned family.
-  - The adapter must round-trip the wire format documented in `docs/findings-format.md` (findings.txt stream plus reconciled/findings.json, ambiguous.json, disagreements.json sidecars).
+  - The adapter must round-trip the finding-stream semantics documented in `docs/findings-format.md` (findings.txt stream plus reconciled/findings.json, ambiguous.json, disagreements.json sidecars) through the independent `reconcile-json/v1` schema; it does not emit the ATCR-internal `atcr-findings/v1` wire format.
 
 ## Story Details
 

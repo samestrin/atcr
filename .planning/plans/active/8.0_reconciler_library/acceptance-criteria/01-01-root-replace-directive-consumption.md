@@ -9,11 +9,14 @@
 | Test Framework | go test + testify | testify confined to `*_test.go` |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile` (stdlib-only) | No third-party deps in non-test library files |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `go.mod` - modify: add `require github.com/samestrin/atcr/reconcile` and `replace github.com/samestrin/atcr/reconcile => ./reconcile`
-- `reconcile/go.mod` - create: nested module declaration `module github.com/samestrin/atcr/reconcile`, `go 1.x`, stdlib-only
+- `reconcile/go.mod` - create: nested module declaration `module github.com/samestrin/atcr/reconcile`, `go 1.25`, stdlib-only
 - `reconcile/doc.go` - create: package doc string for the library package
-- `cmd/atcr/reconcile.go` - modify: import `github.com/samestrin/atcr/reconcile` instead of `internal/reconcile`
+- `cmd/atcr/reconcile.go` - modify: import `github.com/samestrin/atcr/reconcile` instead of `internal/reconcile` (boundary site at `cmd/atcr/reconcile.go:35`)
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — verification contract consumed by the library's public `Verification` type referenced in this AC's public API surface.
 
 ## Happy Path Scenarios
 **Scenario 1: Root module resolves library via replace directive**

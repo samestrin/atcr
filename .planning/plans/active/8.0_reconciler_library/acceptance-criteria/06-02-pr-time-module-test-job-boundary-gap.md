@@ -10,9 +10,9 @@
 | Key Dependencies | `actions/checkout@v4`, `actions/setup-go@v5` (Go 1.25), `[gauntlet]` self-hosted runner | Reuses ci.yml's existing setup |
 | Trigger | `on: [push, pull_request]` (inherited from ci.yml) | Catches a `./reconcile` regression at PR time, not at the next tag |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `.github/workflows/ci.yml` - modify: add a PR/push job (or step) that cds into `./reconcile` and runs `go test ./...`, reusing the `[gauntlet]` runner and Go 1.25 setup; root `go test ./...` does NOT cross the nested module's `go.mod` boundary.
-- `.github/workflows/reconcile-module.yml` - reference: the tag-push companion (AC 06-01) runs the full gofmt + golangci-lint + race gate; the PR-time job runs `go test` only so PR feedback stays fast.
+- `.github/workflows/reconcile-module.yml` - create: the tag-push companion (AC 06-01) runs the full gofmt + golangci-lint + race gate; the PR-time job runs `go test` only so PR feedback stays fast.
 - `reconcile/go.mod` - read: the nested module boundary — the reason root `go test ./...` leaves the library untested; the PR job cds here to close the gap.
 - `.githooks/pre-commit` or `.githooks/pre-push` - reference: the local hook mirror (if present) should also exercise `./reconcile` so the same gap does not reopen locally.
 

@@ -10,10 +10,10 @@
 | Key Dependencies | `reconcile/LICENSE` (Story 4) and `reconcile/LICENSE-COMMERCIAL.md` (AC 05-01) | both files the README cross-references |
 | Enforcement Model | None — scan confirms no license-check/payment-gating code anywhere in `./reconcile/` | documentation + a negative code scan |
 
-## Related Files
-- `reconcile/README.md` - modify (Story 4 owns the README; this AC verifies/extends the licensing section): includes a short licensing section cross-referencing both `LICENSE` and `LICENSE-COMMERCIAL.md` so a vendor discovers the commercial path without hunting.
-- `reconcile/LICENSE` - read (Story 4): the Apache 2.0 OSS half the README points to.
-- `reconcile/LICENSE-COMMERCIAL.md` - read (AC 05-01): the commercial placeholder the README's commercial pointer must resolve to.
+### Related Files (from codebase-discovery.json)
+- `reconcile/README.md` - create (Story 4 owns the README; this AC verifies/extends the licensing section): includes a short licensing section cross-referencing both `LICENSE` and `LICENSE-COMMERCIAL.md` so a vendor discovers the commercial path without hunting.
+- `reconcile/LICENSE` - create (Story 4): the Apache 2.0 OSS half the README points to.
+- `reconcile/LICENSE-COMMERCIAL.md` - create (AC 05-01): the commercial placeholder the README's commercial pointer must resolve to.
 - `reconcile/*.go` - scan: the module source is scanned to confirm no license-check or payment-gating code exists.
 
 ## Happy Path Scenarios

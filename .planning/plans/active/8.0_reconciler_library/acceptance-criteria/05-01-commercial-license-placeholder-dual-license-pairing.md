@@ -10,11 +10,11 @@
 | Key Dependencies | `reconcile/LICENSE` (Apache 2.0, Story 4) | the OSS half of the dual-license this file pairs with |
 | License Scope | Commercial half of the dual-license only | placeholder for evaluation; no final license-grant language (that waits for a licensee) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/LICENSE-COMMERCIAL.md` - create: states a commercial license is available for proprietary/closed-source embedding, paired with the Apache 2.0 `LICENSE`; documentation-only with no enforcement code.
-- `reconcile/LICENSE` - read (delivered by Story 4): the Apache 2.0 OSS half; this AC verifies both files coexist at the module root so the dual-license is visible.
+- `reconcile/LICENSE` - create (delivered by Story 4): the Apache 2.0 OSS half; this AC verifies both files coexist at the module root so the dual-license is visible.
 - `reconcile/go.mod` - read: module root; the license files sit alongside `go.mod` so a vendor cloning the module sees both, and `go list -m`/pkg.go.dev discover them.
-- `reconcile/README.md` - read (Story 4 owns): cross-references both license files; AC 05-03 verifies the pointer resolves to this file.
+- `reconcile/README.md` - create (Story 4 owns): cross-references both license files; AC 05-03 verifies the pointer resolves to this file.
 
 ## Happy Path Scenarios
 **Scenario 1: LICENSE-COMMERCIAL.md exists at the module root**

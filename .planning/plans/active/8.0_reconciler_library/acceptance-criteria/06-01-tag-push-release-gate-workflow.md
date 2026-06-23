@@ -10,7 +10,7 @@
 | Key Dependencies | `actions/checkout@v4`, `actions/setup-go@v5` (Go 1.25), `golangci/golangci-lint-action`, `[gauntlet]` self-hosted runner | `based_on: .github/workflows/ci.yml`; no new runners provisioned |
 | Trigger | `on: push: tags:` scoped to the module's release-tag convention | Fires as the release gate (AC#7), not on every push |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `.github/workflows/reconcile-module.yml` - create: tag-push release gate workflow; triggers on tag push, cds into `./reconcile`, and runs `gofmt` check + `golangci-lint` + `go test -race ./...` on the self-hosted `[gauntlet]` runner with Go 1.25.
 - `.github/workflows/ci.yml` - reference: the workflow is `based_on` ci.yml — reuses its `runs-on: [self-hosted, gauntlet]` label, `actions/setup-go@v5` Go 1.25 setup, and `actions/checkout@v4` checkout step.
 - `.golangci.yml` - read/create: repository-root lint config (vet, ineffassign, staticcheck, errcheck) governing the tag-push lint step so it is reproducible across CI and local runs.

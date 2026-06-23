@@ -10,11 +10,11 @@
 | Key Dependencies | `reconcile` package (lifted as-is in Story 2) | `Reconcile`, `Source`, `Finding`, `Options`, `Result` |
 | Dependency Policy | stdlib-only in example body; testify allowed in `*_test.go` but the example stays dependency-light so `go doc` renders cleanly | no network, no external fixtures |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/example_test.go` - create: a godoc `Example` function (standard `func Example()` or `func ExampleReconcile()`) that constructs two `Source` values with overlapping `Finding` literals, calls `Reconcile(sources, opts)`, and asserts on the merged `Result` via an `// Output:` block or plain `if`/`fmt` checks.
-- `reconcile/reconcile.go` (lifted in Story 2) - read: the `Reconcile` entry point and `sortMerged` total order (severity desc, then file, then line) that makes the example's expected output stable.
+- `reconcile/reconcile.go` (lifted in Story 2) - read: the `Reconcile` entry point and `sortMerged` total order (severity desc, then file, then line) that makes the example's expected output stable (`internal/reconcile/reconcile.go:64`).
 - `reconcile/types.go` / `reconcile/finding.go` (lifted in Story 2) - read: real `Source{Name string; Findings []Finding}` and `Finding` wire fields (Severity, File, Line, Problem, Fix, Category, EstMinutes, Evidence).
-- `reconcile/README.md` - read: the README quickstart (AC 04-02) mirrors this example.
+- `reconcile/README.md` - create: the README quickstart (AC 04-02) mirrors this example.
 
 ## Happy Path Scenarios
 **Scenario 1: Example constructs two reviewers and reconciles them**

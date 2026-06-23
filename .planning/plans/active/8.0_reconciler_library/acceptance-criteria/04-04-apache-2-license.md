@@ -10,11 +10,11 @@
 | Key Dependencies | Apache 2.0 full text (apache.org) | the canonical source for byte-diff verification |
 | License Scope | Apache 2.0 only — the permissive half of the dual-license path | `LICENSE-COMMERCIAL.md` is Story 5; this AC does not touch it |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/LICENSE` - create: verbatim Apache 2.0 full text with the copyright holder line populated (Copyright 2026 Sam Estrin); placed at the module root so `go list -m` and pkg.go.dev surface it automatically.
 - `reconcile/go.mod` - read: module root — the `LICENSE` sits alongside `go.mod` so tooling discovers it.
-- `reconcile/README.md` - read: the README's license pointer targets `LICENSE` (Apache 2.0) and the `LICENSE-COMMERCIAL.md` placeholder (Story 5).
-- `reconcile/LICENSE-COMMERCIAL.md` - read (placeholder, delivered by Story 5): the README one-line pointer references it; this AC only verifies the pointer, not the commercial file.
+- `reconcile/README.md` - create: the README's license pointer targets `LICENSE` (Apache 2.0) and the `LICENSE-COMMERCIAL.md` placeholder (Story 5).
+- `reconcile/LICENSE-COMMERCIAL.md` - create (placeholder, delivered by Story 5): the README one-line pointer references it; this AC only verifies the pointer, not the commercial file.
 
 ## Happy Path Scenarios
 **Scenario 1: LICENSE contains the verbatim Apache 2.0 full text**

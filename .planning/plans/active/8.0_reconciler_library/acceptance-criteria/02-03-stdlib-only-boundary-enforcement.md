@@ -10,11 +10,12 @@
 | Test Isolation | Go build tags / file naming | testify imports confined to `*_test.go` files only |
 | Import Scanner | `go list` / `goimports` | Programmatic verification of import paths |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/go.mod` - create: must have no `require` block (or empty) after `go mod tidy`
-- `reconcile/dedupe.go` - create: token-set Jaccard dedupe using only `sort`, `strings` (no third-party deps)
-- `reconcile/disagree.go` - create: `BuildDisagreements` using only stdlib
-- `reconcile/confidence.go` - create: `ConfidenceForVerdict`/`ConfidenceAtOrAbove` using only stdlib
+- `reconcile/dedupe.go` - create: token-set Jaccard dedupe using only `sort`, `strings` (no third-party deps) (`internal/reconcile/dedupe.go:53`)
+- `reconcile/disagree.go` - create: `BuildDisagreements` using only stdlib (`internal/reconcile/disagree.go:102`)
+- `reconcile/confidence.go` - create: `ConfidenceForVerdict`/`ConfidenceAtOrAbove` using only stdlib (`internal/reconcile/confidence.go:22`)
+- `reconcile/severity.go` - create: `NormalizeSeverity`/`SeverityRank` moved from `internal/stream/severity.go:33`
 
 ## Happy Path Scenarios
 **Scenario 1: Non-test files import only stdlib packages**

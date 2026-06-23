@@ -9,18 +9,21 @@
 | Test Framework | go test + testify + byte-diff against baseline | Diff-based verification, not new RED tests |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile` | `sortMerged` total-order + `Verification` pointer identity must be preserved |
 
-## Related Files
-- `internal/reconcile/merge.go` - modify: moves to `reconcile/merge.go`; `Merged`, `mergeVerification` (`:418`), `verdictRank`, finding-merge rules; `SeverityRank` copy (`:30`) collapses to library canonical `NormalizeSeverity`/`SeverityRank`
+### Related Files (from codebase-discovery.json)
+- `internal/reconcile/merge.go` - modify: moves to `reconcile/merge.go`; `Merged`, `mergeVerification` (`internal/reconcile/merge.go:418`), `verdictRank`, finding-merge rules; `SeverityRank` copy (`internal/reconcile/merge.go:30`) collapses to library canonical `NormalizeSeverity`/`SeverityRank`
 - `reconcile/merge.go` - create: moved merge logic; `sortMerged` total-order (severity desc, then file, then line) preserved exactly
-- `internal/reconcile/dedupe.go` - modify: moves to `reconcile/dedupe.go`; token-set Jaccard dedupe, `AmbiguousCluster`, integer-cross-multiply 0.7/0.4 thresholds
-- `internal/reconcile/disagree.go` - modify: moves to `reconcile/disagree.go`; `BuildDisagreements` radar projection
-- `internal/reconcile/cluster.go` - modify: moves to `reconcile/cluster.go`; deterministic `(FILE, LINE±3)` location clustering
-- `internal/reconcile/ambiguous.go` - modify: moves to `reconcile/ambiguous.go`; `AmbiguousID`/`AmbiguousHash` sidecar
-- `internal/reconcile/confidence.go` - modify: moves to `reconcile/confidence.go`; `ConfidenceForVerdict`/`ConfidenceAtOrAbove`
-- `internal/reconcile/attribution.go` - modify: moves to `reconcile/attribution.go`; `FixAttribution`/`EvidenceSep` constants
+- `internal/reconcile/dedupe.go` - modify: moves to `reconcile/dedupe.go`; token-set Jaccard dedupe, `AmbiguousCluster`, integer-cross-multiply 0.7/0.4 thresholds (`internal/reconcile/dedupe.go:53`)
+- `internal/reconcile/disagree.go` - modify: moves to `reconcile/disagree.go`; `BuildDisagreements` radar projection (`internal/reconcile/disagree.go:102`)
+- `internal/reconcile/cluster.go` - modify: moves to `reconcile/cluster.go`; deterministic `(FILE, LINE±3)` location clustering (`internal/reconcile/cluster.go:29`)
+- `internal/reconcile/ambiguous.go` - modify: moves to `reconcile/ambiguous.go`; `AmbiguousID`/`AmbiguousHash` sidecar (`internal/reconcile/ambiguous.go:60`)
+- `internal/reconcile/confidence.go` - modify: moves to `reconcile/confidence.go`; `ConfidenceForVerdict`/`ConfidenceAtOrAbove` (`internal/reconcile/confidence.go:22`)
+- `internal/reconcile/attribution.go` - modify: moves to `reconcile/attribution.go`; `FixAttribution`/`EvidenceSep` constants (`internal/reconcile/attribution.go:10`)
 - `docs/findings-format.md` - reference: wire format spec (`atcr-findings/v1`); no schema change permitted
 - `internal/reconcile/cluster_merge_test.go` - reference: `MergeJSONFindings_VerificationPrecedence` validates merge ordering
 - `internal/reconcile/disagree_test.go` - reference: `BuildDisagreements` validates disagreement output
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — confidence v2 ordering (`VERIFIED` > `HIGH` > `MEDIUM` > `LOW`) and gate semantics preserved in byte-identical output.
 
 ## Happy Path Scenarios
 **Scenario 1: findings.json byte-identical to pre-extraction baseline**

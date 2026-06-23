@@ -10,7 +10,7 @@
 | Key Dependencies | `reconcile.Finding`, `reconcile.Result` | library `Finding` does NOT carry path-validation fields |
 | Schema Family | `reconcile-json/v1` | versioned INDEPENDENTLY of `atcr-findings/v1` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/adapter/json/adapter.go` - create: encode/decode paths that map ONLY the library `Finding` fields; never reference `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged`.
 - `reconcile/adapter/json/adapter_test.go` - create: leakage test asserting none of the four path-validation field names appear in encoded bytes; version-string assertion test.
 - `internal/reconcile/adapter/adapter.go` - read (ATCR-internal, NOT part of this AC's deliverable): the boundary adapter that DOES handle path-validation fields — confirms the separation of concerns the external adapter relies on.

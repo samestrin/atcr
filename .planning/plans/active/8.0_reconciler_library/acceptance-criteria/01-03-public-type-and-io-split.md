@@ -9,12 +9,15 @@
 | Test Framework | go test + testify | Existing corpus validates behavior is unchanged |
 | Key Dependencies | `github.com/samestrin/atcr/reconcile` (types), `internal/reconcile/adapter` (I/O) | No copy of `Verification` — it becomes library API |
 
-## Related Files
-- `reconcile/emit.go` - create: public types `Verification` (moved from `internal/reconcile/emit.go:40`), `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants (`emit.go:61-63`) move to library
+### Related Files (from codebase-discovery.json)
+- `reconcile/emit.go` - create: public types `Verification` (moved from `internal/reconcile/emit.go:40`), `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants (`internal/reconcile/emit.go:61-63`) move to library
 - `reconcile/discover.go` - create: `Source` type (moved from `internal/reconcile/discover.go:25`) moves to library
-- `internal/reconcile/emit.go` - modify: remove moved public types; retain `JSONFinding` ATCR-internal wrapper; file I/O (read/write `findings.json`) moves to `internal/reconcile/adapter`
+- `internal/reconcile/emit.go` - modify: remove moved public types; retain `JSONFinding` ATCR-internal wrapper (`internal/reconcile/emit.go:74`); file I/O (read/write `findings.json`) moves to `internal/reconcile/adapter`
 - `internal/reconcile/discover.go` - modify: remove moved `Source` type; `findings.txt` discovery I/O moves to `internal/reconcile/adapter`
 - `internal/reconcile/adapter/adapter.go` - modify: receive relocated file I/O (read/write findings, discovery) that previously lived in `emit.go`/`discover.go`
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — source of truth for the `Verification` struct and verdict constants that move to the library as public API.
 
 ## Happy Path Scenarios
 **Scenario 1: Verification type becomes public library API unchanged**

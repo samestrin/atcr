@@ -10,7 +10,7 @@
 | Key Dependencies | `encoding/json`, `reconcile.Finding`, `reconcile.Verification` | `omitempty` applied to `Disagreement` and `*Verification` on the lifted `Finding` type |
 | Schema Family | `reconcile-json/v1` | field order fixed by struct declaration order (`encoding/json` behavior) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/adapter/json/adapter.go` - create: encode path that produces byte-identical output for identical `Result` inputs; depends on the library `Finding` struct tags already applying `omitempty` to `Disagreement` and `*Verification`.
 - `reconcile/adapter/json/adapter_test.go` - create: byte-stability test (encode the same `Result` twice, assert `bytes.Equal`); absent-field test (no `disagreement`/`verification` keys when zero).
 - `reconcile/finding.go` (lifted in Story 2) - read/modify: source of the `Finding` struct tags; verify `json:"disagreement,omitempty"` and `json:"verification,omitempty"` are present (if missing, this AC blocks on Story 2).

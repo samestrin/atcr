@@ -10,11 +10,14 @@
 | Documentation | `go doc` | All exported symbols appear in `go doc github.com/samestrin/atcr/reconcile` |
 | Type Stability | Lift-as-is mandate | Shapes identical to existing `internal/reconcile` package; no signature changes |
 
-## Related Files
-- `reconcile/reconcile.go` - create: `Reconcile(sources []Source, opts Options) Result` entry point + `Options`/`Result`/`Summary` types
-- `reconcile/merge.go` - create: `Merged` struct (embeds `Finding` + `Disagreement` + `*Verification`)
-- `reconcile/emit.go` - create: `Verification` struct, `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants, library `Finding` type
-- `reconcile/discover.go` - create: `Source` type with `Name string` and `Findings []Finding` fields
+### Related Files (from codebase-discovery.json)
+- `reconcile/reconcile.go` - create: `Reconcile(sources []Source, opts Options) Result` entry point + `Options`/`Result`/`Summary` types (`internal/reconcile/reconcile.go:64`)
+- `reconcile/merge.go` - create: `Merged` struct (embeds `Finding` + `Disagreement` + `*Verification`) (`internal/reconcile/merge.go`)
+- `reconcile/emit.go` - create: `Verification` struct (`internal/reconcile/emit.go:40`), `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable` constants (`internal/reconcile/emit.go:61-63`), library `Finding` type
+- `reconcile/discover.go` - create: `Source` type with `Name string` and `Findings []Finding` fields (`internal/reconcile/discover.go:25`)
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — source of truth for the `Verification` struct, verdict enum, and confidence v2 ordering exposed in the public API.
 
 ## Happy Path Scenarios
 **Scenario 1: Reconcile function is exported and callable**

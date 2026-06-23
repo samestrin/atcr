@@ -10,7 +10,7 @@
 | Key Dependencies | `encoding/json`, `reconcile.Source`, `reconcile.Finding` (lifted in Story 2) | no third-party schema library |
 | Schema Family | `reconcile-json/v1` | versioned independently of `atcr-findings/v1` |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/adapter/json/adapter.go` - create: decode entrypoint; sniffs first non-space byte (`[` vs `{`) and unmarshals into either `[]envelope` or a single `envelope` wrapped into a one-element slice, mapping each envelope to one `reconcile.Source`.
 - `reconcile/adapter/json/adapter_test.go` - create: unit tests for single-object, array, empty-findings, unknown-field tolerance, and malformed-input rejection; round-trip fixtures live alongside.
 - `reconcile/finding.go` (or equivalent lifted location from Story 2) - read: source of the `Finding` JSON struct tags that the envelope's `findings[]` map onto.

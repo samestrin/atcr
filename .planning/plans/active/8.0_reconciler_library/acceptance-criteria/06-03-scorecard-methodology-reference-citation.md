@@ -10,11 +10,14 @@
 | Key Dependencies | module path `github.com/samestrin/atcr/reconcile` (must match `reconcile/go.mod` exactly) | `docs/leaderboard-methodology.md` does NOT exist; the citation lands in `docs/scorecard.md` |
 | Sequencing | Citation lands in the implementation phase AFTER the module exists | references a real module path, not a planned one (Phase-0 resolution) |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `docs/scorecard.md` - modify: add an additive note citing `github.com/samestrin/atcr/reconcile` as the standalone reference implementation backing every scorecard record; the note states it can be run and inspected independently.
 - `reconcile/go.mod` - read: the module path cited in the doc must match the `module github.com/samestrin/atcr/reconcile` line in `go.mod` exactly so the citation resolves.
-- `reconcile/README.md` - reference: the module's own documentation of the public API the citation points consumers toward; the scorecard note links or points at the same import path.
+- `reconcile/README.md` - create: the module's own documentation of the public API the citation points consumers toward; the scorecard note links or points at the same import path.
 - `docs/verification.md` - reference: existing cross-linked doc in the scorecard's `## Related` section; the new citation follows the same additive, cross-link style rather than restructuring the methodology.
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — the scorecard methodology references the deterministic reconciler that implements the verification contract defined here.
 
 ## Happy Path Scenarios
 **Scenario 1: Scorecard doc cites the module as the reference implementation**

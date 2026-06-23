@@ -10,11 +10,14 @@
 | Key Dependencies | `reconcile` package, `go get` module path | `github.com/samestrin/atcr/reconcile` |
 | Behavior Spec | Deterministic clustering, Jaccard dedupe, max-severity merge, confidence v2, ambiguity sidecar | thresholds are part of the documented contract |
 
-## Related Files
+### Related Files (from codebase-discovery.json)
 - `reconcile/README.md` - create: behavior section (clustering at `FILE, LINE±3`; token-set Jaccard dedupe with 0.7/0.4 integer-cross-multiply thresholds; max-severity merge with `<lo> vs <hi>` disagreement annotation; confidence v2 `VERIFIED/HIGH/MEDIUM/LOW`; ambiguity sidecar), install snippet, and quickstart mirroring `example_test.go`.
-- `reconcile/example_test.go` - read: the quickstart in the README must mirror this `Example` function so an adopter can copy-paste and run.
+- `reconcile/example_test.go` - create: the quickstart in the README must mirror this `Example` function so an adopter can copy-paste and run.
 - `reconcile/go.mod` - read: module path consumed by the `go get` install snippet.
-- `reconcile/LICENSE` - read: the README's license pointer targets this file (Apache 2.0) and the `LICENSE-COMMERCIAL.md` placeholder (Story 5).
+- `reconcile/LICENSE` - create: the README's license pointer targets this file (Apache 2.0) and the `LICENSE-COMMERCIAL.md` placeholder (Story 5).
+
+## Design References
+- [Adversarial Verification Interface](../../specifications/design-concepts/adversarial-verification-interface.md) — confidence v2 `VERIFIED/HIGH/MEDIUM/LOW` ordering documented in the README behavior section.
 
 ## Happy Path Scenarios
 **Scenario 1: README explains the deterministic clustering behavior**

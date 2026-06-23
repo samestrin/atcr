@@ -5,7 +5,7 @@ Extract ATCR's deterministic reconciler from `internal/reconcile` into a standal
 - [x] **Plan Created**
 - [x] **User Stories** - `/create-user-stories @.planning/plans/active/8.0_reconciler_library/`
 - [x] **Acceptance Criteria** - `/create-acceptance-criteria @.planning/plans/active/8.0_reconciler_library/`
-- [ ] **Design Sprint** - `/design-sprint @.planning/plans/active/8.0_reconciler_library/`
+- [x] **Design Sprint** - `/design-sprint @.planning/plans/active/8.0_reconciler_library/`
 - [ ] **Sprint Plan** - `/create-sprint @.planning/plans/active/8.0_reconciler_library/`
 
 ## Timeline & Milestones
@@ -34,8 +34,9 @@ Extract ATCR's deterministic reconciler from `internal/reconcile` into a standal
 - [Plan](plan.md)
 - [Metadata](metadata.md)
 - [Codebase Discovery](codebase-discovery.json)
-- [User Stories](user-stories/) (pending)
+- [User Stories](user-stories/)
 - [Acceptance Criteria](acceptance-criteria/) (25 ACs across 6 stories)
+- [Sprint Design](sprint-design.md) (9/12 COMPLEX, 5 phases, 10 days)
 - [Documentation](documentation/)
 
 ## Documentation References
