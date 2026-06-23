@@ -37,6 +37,13 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    # Required consumer workflow permissions. This composite action cannot
+    # declare permissions: itself, so the calling workflow MUST set:
+    #   permissions:
+    #     checks: write                       # required for all runs
+    #     pull-requests: write                # only when inline-comments: true
+    # Missing permissions will surface as a 403 from the `atcr github` step.
+
     # Build atcr from the action's own checkout (github.action_path), not the
     # consumer repo. The binary then runs against the consumer checkout below.
     - name: Set up Go
