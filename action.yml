@@ -76,7 +76,13 @@ runs:
         PR_BASE_REF: ${{ github.base_ref }}
       run: |
         BASE_REF="$BASE_REF_INPUT"
-        if [ -z "$BASE_REF" ]; then BASE_REF="origin/$PR_BASE_REF"; fi
+        if [ -z "$BASE_REF" ]; then
+          if [ -z "$PR_BASE_REF" ]; then
+            echo "Error: base-ref is required when the triggering event is not pull_request" >&2
+            exit 1
+          fi
+          BASE_REF="origin/$PR_BASE_REF"
+        fi
         "$ATCR_BIN" review --base "$BASE_REF"
 
     - name: atcr reconcile
