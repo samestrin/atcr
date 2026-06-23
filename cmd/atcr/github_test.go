@@ -445,6 +445,57 @@ func TestPostInlineComments_FallbackPerCommentHardErrorPropagates(t *testing.T) 
 	assert.Equal(t, exitFailure, ce.code)
 }
 
+// TestPostInlineComments_FallbackPartialHardErrorPropagatesCount pins that a
+// non-422 failure part-way through the per-comment fallback reports the number
+// of comments already posted and aborts on the next comment.
+func TestPostInlineComments_FallbackPartialHardErrorPropagatesCount(t *testing.T) {
+	var mu sync.Mutex
+	postCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/reviews"):
+			w.WriteHeader(http.StatusNotFound) // force fallback
+		default: // per-comment POST — first two succeed, third fails
+			mu.Lock()
+			postCount++
+			count := postCount
+			mu.Unlock()
+			if count <= 2 {
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":1}`))
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+		}
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetContext(context.Background())
+
+	client := &ghaction.Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	findings := []reconcile.JSONFinding{
+		{File: "a.go", Line: 1, Problem: "p1", Fix: "f1"},
+		{File: "b.go", Line: 2, Problem: "p2", Fix: "f2"},
+		{File: "c.go", Line: 3, Problem: "p3", Fix: "f3"},
+		{File: "d.go", Line: 4, Problem: "p4", Fix: "f4"},
+	}
+
+	_, _, err := postInlineComments(cmd, client, "owner", "repo", 1, "sha", findings)
+	require.Error(t, err, "a non-422 per-comment failure after partial success must propagate")
+	assert.Contains(t, err.Error(), "failed after 2 posted", "error must report the number of comments posted before failure")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 3, postCount, "two successful POSTs plus the failing third POST")
+}
+
 // TestPostInlineComments_FallbackDedupsExistingATCRComments pins that the
 // per-comment fallback path correctly deduplicates against existing ATCR
 // comments and reports the deduped count.
