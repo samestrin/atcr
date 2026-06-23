@@ -55,6 +55,39 @@ func TestClientTimeoutConfigurable(t *testing.T) {
 	assert.Contains(t, err.Error(), "context deadline exceeded")
 }
 
+func TestPostRetriesTransientFailures(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, attempts, 3)
+}
+
+func TestPostRetriesExhausted(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "503")
+}
+
 func TestCreateCheckRunAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
