@@ -2,9 +2,10 @@ package verify
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -430,7 +431,11 @@ func buildExecutorAgent(ex *registry.ExecutorConfig, prov registry.Provider, pro
 // Problem/Fix/Evidence text cannot close it early (the injection guard
 // buildSkepticPrompt uses).
 func buildExecutorAgentPrompt(finding reconcile.JSONFinding) string {
-	sentinel := fmt.Sprintf("finding-%08x", rand.Uint32())
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
+	sentinel := fmt.Sprintf("finding-%08x", binary.BigEndian.Uint32(b[:]))
 	return buildExecutorAgentPromptWithSentinel(finding, sentinel)
 }
 
