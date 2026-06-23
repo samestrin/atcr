@@ -77,6 +77,17 @@ func TestBuildCheckOutput(t *testing.T) {
 		assert.Contains(t, out.Text, "Unbounded map / grows")
 	})
 
+	t.Run("refuted findings are demoted in table", func(t *testing.T) {
+		refuted := []reconcile.JSONFinding{
+			{Severity: "HIGH", File: "internal/auth/token.go", Line: 42,
+				Problem: "JWT signature not verified", Confidence: "HIGH",
+				Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic-a"}},
+		}
+		out := BuildCheckOutput(refuted, "HIGH")
+		assert.Contains(t, strings.ToLower(out.Text), "gate passed")
+		assert.Contains(t, out.Text, "(refuted)")
+	})
+
 	t.Run("empty findings", func(t *testing.T) {
 		out := BuildCheckOutput(nil, "HIGH")
 		assert.Contains(t, strings.ToLower(out.Title), "no findings")
