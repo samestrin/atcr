@@ -173,14 +173,14 @@ func parseGoFix(src string) error {
 // — it can reduce flagging but never add it — so it cannot regress the 7.1
 // conservative-recall guarantee (AC2/AC4). It is consulted only after parseGoFix has
 // already failed, so valid Go (including string-keyed map literals) never reaches it.
-func looksLikeGoCode(s string) bool {
-	if declKeywordRe.MatchString(s) {
+func looksLikeGoCode(src string) bool {
+	if declKeywordRe.MatchString(src) {
 		return true
 	}
-	if looksLikeNonGoBraces(s) {
+	if looksLikeNonGoBraces(src) {
 		return false
 	}
-	return blockOpenRe.MatchString(s) || blockCloseRe.MatchString(s)
+	return blockOpenRe.MatchString(src) || blockCloseRe.MatchString(src)
 }
 
 // looksLikeNonGoBraces reports whether brace-structured text is an obviously non-Go
