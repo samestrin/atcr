@@ -370,9 +370,11 @@ func appendFixAttribution(evidence, name string) string {
 // failure (AC4: timeout/error → FixWarning); a StatusOK result with a tripped budget
 // flows into the fix parser below. max_tool_calls → the agent's MaxTurns budget.
 func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string) {
+	logger := log.FromContext(ctx)
+	logger.Debug("agent-mode executor entry", "file", finding.File, "line", finding.Line, "max_tool_calls", ex.EffectiveMaxToolCalls())
 	prompt := buildExecutorAgentPrompt(finding)
 	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs)
-	engine := newFanoutEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(log.FromContext(ctx)))
+	engine := newFanoutEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// One slot yields one result; guard the index so a zero-length return cannot
 	// panic (a panic would violate the never-fail-the-run contract).
