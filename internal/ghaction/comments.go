@@ -83,12 +83,28 @@ type PRReviewRequest struct {
 	Comments []CommentRequest
 }
 
-// ListReviewComments fetches all existing inline review comments on pr.
+// listCommentsPageSize is the GitHub REST maximum page size (100). Requesting
+// the maximum minimizes round-trips when paginating.
+const listCommentsPageSize = 100
+
+// ListReviewComments fetches all existing inline review comments on pr,
+// following GitHub REST pagination. The list endpoint returns at most 100
+// comments per page (30 by default), so a single request silently truncates on
+// PRs already carrying more comments — which would make inline-comment dedup
+// miss prior ATCR comments and re-post duplicates on every run. This walks the
+// pages until a short (or empty) page signals the end.
 func (c *Client) ListReviewComments(ctx context.Context, owner, repo string, pr int) ([]ReviewComment, error) {
 	var out []ReviewComment
-	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, pr)
-	if err := c.get(ctx, path, &out); err != nil {
-		return nil, err
+	for page := 1; ; page++ {
+		var pageComments []ReviewComment
+		path := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments?per_page=%d&page=%d", owner, repo, pr, listCommentsPageSize, page)
+		if err := c.get(ctx, path, &pageComments); err != nil {
+			return nil, err
+		}
+		out = append(out, pageComments...)
+		if len(pageComments) < listCommentsPageSize {
+			break
+		}
 	}
 	return out, nil
 }

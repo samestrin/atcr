@@ -83,6 +83,44 @@ func TestListReviewComments(t *testing.T) {
 	assert.Equal(t, "ATCR found: boom.", got[0].Body)
 }
 
+func TestListReviewCommentsPaginates(t *testing.T) {
+	// A PR with more than one page of comments: the endpoint must be walked
+	// until a short page is returned, or dedup silently misses prior comments.
+	const total = listCommentsPageSize + 5 // 105: two pages (100 + 5)
+	var requestedPages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		page := r.URL.Query().Get("page")
+		requestedPages = append(requestedPages, page)
+		require.Equal(t, "100", r.URL.Query().Get("per_page"))
+		var batch []ReviewComment
+		switch page {
+		case "1":
+			for i := 0; i < listCommentsPageSize; i++ {
+				batch = append(batch, ReviewComment{Path: "a.go", Line: i + 1, Body: "x"})
+			}
+		case "2":
+			for i := 0; i < total-listCommentsPageSize; i++ {
+				batch = append(batch, ReviewComment{Path: "b.go", Line: i + 1, Body: "y"})
+			}
+		default:
+			t.Fatalf("unexpected page request %q (should have stopped after the short page)", page)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(batch)
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	got, err := c.ListReviewComments(context.Background(), "o", "r", 5)
+	require.NoError(t, err)
+	require.Len(t, got, total, "all pages must be aggregated")
+	assert.Equal(t, []string{"1", "2"}, requestedPages, "must request page 1 then 2, then stop on the short page")
+	// Spot-check that both pages' contents survived in order.
+	assert.Equal(t, "a.go", got[0].Path)
+	assert.Equal(t, "b.go", got[total-1].Path)
+}
+
 func TestCreatePRReview(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
