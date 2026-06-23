@@ -6,6 +6,7 @@ package reconcile
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -474,6 +475,9 @@ func WriteRadarItems(b *bytes.Buffer, items []DisagreementItem, heading string, 
 // formatScore renders the ranking score compactly: an integer-valued score drops
 // the decimal (6, not 6.0); a fractional score keeps two places.
 func formatScore(s float64) string {
+	if math.IsNaN(s) || math.IsInf(s, 0) {
+		return strconv.FormatFloat(s, 'f', 2, 64)
+	}
 	if s == float64(int64(s)) {
 		return strconv.FormatInt(int64(s), 10)
 	}
