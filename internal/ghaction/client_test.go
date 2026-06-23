@@ -13,6 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCreateCheckRunRejectsPlaintextAPIURL(t *testing.T) {
+	c := &Client{APIURL: "http://example.com/api/v3", Token: "tok"}
+	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "insecure API URL")
+}
+
+func TestCreateCheckRunAllowsLoopbackHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	c := &Client{APIURL: srv.URL, Token: "tok", HTTPClient: srv.Client()}
+	err := c.CreateCheckRun(context.Background(), "o", "r", CheckRunRequest{Name: "atcr", HeadSHA: "x"})
+	require.NoError(t, err)
+}
+
 func TestCreateCheckRun(t *testing.T) {
 	var gotPath, gotAuth string
 	var gotBody map[string]any
