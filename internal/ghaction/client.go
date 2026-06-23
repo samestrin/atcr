@@ -8,9 +8,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// bearerTokenPattern matches an Authorization "Bearer <token>" form so a token
+// echoed back in a GitHub error body is scrubbed even when it is not the exact
+// configured Token literal. Mirrors llmclient.bearerTokenPattern.
+var bearerTokenPattern = regexp.MustCompile(`(?i)Bearer\s+\S+`)
 
 // DefaultAPIURL is the public GitHub REST API base. It is overridable via the
 // Client.APIURL field so the action works against GitHub Enterprise and so tests
@@ -121,6 +127,20 @@ func (c *Client) CreateCheckRun(ctx context.Context, owner, repo string, req Che
 	return err
 }
 
+// sleepCtx waits for d to elapse or for ctx to be cancelled, whichever happens
+// first. It returns ctx.Err() if the context is cancelled during the wait so
+// that retry back-off is interruptible by cancellation or shutdown.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // post marshals body as JSON, POSTs it to path under the API base with the
 // standard GitHub headers, and turns any non-2xx response into an error that
 // carries the status code and the GitHub error message. The response body is
@@ -165,10 +185,9 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 		resp, err := c.httpClient().Do(req)
 		if err != nil {
 			if attempt < maxRetries {
-				if ctx.Err() != nil {
-					return ctx.Err()
+				if err := sleepCtx(ctx, backoff); err != nil {
+					return err
 				}
-				time.Sleep(backoff)
 				backoff *= 2
 				continue
 			}
@@ -184,14 +203,13 @@ func (c *Client) postDo(ctx context.Context, path string, body any, out any) err
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		_ = resp.Body.Close()
 		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
-			if ctx.Err() != nil {
-				return ctx.Err()
+			if err := sleepCtx(ctx, backoff); err != nil {
+				return err
 			}
-			time.Sleep(backoff)
 			backoff *= 2
 			continue
 		}
-		return &APIError{StatusCode: resp.StatusCode, Message: githubMessage(respBody)}
+		return &APIError{StatusCode: resp.StatusCode, Message: c.redactSecrets(githubMessage(respBody))}
 	}
 }
 
@@ -225,10 +243,9 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		resp, err := c.httpClient().Do(req)
 		if err != nil {
 			if attempt < maxRetries {
-				if ctx.Err() != nil {
-					return ctx.Err()
+				if err := sleepCtx(ctx, backoff); err != nil {
+					return err
 				}
-				time.Sleep(backoff)
 				backoff *= 2
 				continue
 			}
@@ -248,15 +265,25 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 		_ = resp.Body.Close()
 		if attempt < maxRetries && (resp.StatusCode >= 500 || resp.StatusCode == 429) {
-			if ctx.Err() != nil {
-				return ctx.Err()
+			if err := sleepCtx(ctx, backoff); err != nil {
+				return err
 			}
-			time.Sleep(backoff)
 			backoff *= 2
 			continue
 		}
-		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, githubMessage(respBody))
+		return fmt.Errorf("github API %s returned %d: %s", path, resp.StatusCode, c.redactSecrets(githubMessage(respBody)))
 	}
+}
+
+// redactSecrets scrubs the client's credential from a string before it is embedded
+// in an error: the configured Token literal (in case GitHub echoes the Authorization
+// header back in an error body) plus any generic "Bearer <token>" form. Mirrors
+// llmclient.redactErrorSnippet so ghaction errors never carry credentials.
+func (c *Client) redactSecrets(s string) string {
+	if c.Token != "" {
+		s = strings.ReplaceAll(s, c.Token, "[redacted]")
+	}
+	return bearerTokenPattern.ReplaceAllString(s, "Bearer [redacted]")
 }
 
 // githubMessage extracts the human-readable "message" from a GitHub error
