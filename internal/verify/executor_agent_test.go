@@ -86,6 +86,7 @@ func TestGenerateFixes_AgentMode_ToolLoopThenFix(t *testing.T) {
 
 	assert.Equal(t, "guard the nil deref", findings[0].Fix)
 	assert.GreaterOrEqual(t, disp.count(), 1, "agent mode should dispatch at least one tool call")
+	assert.Contains(t, disp.toolNames(), "read_file", "executor must dispatch read_file (AC2)")
 }
 
 // AC4: a tool-loop provider error produces a FixWarning on the finding; the run

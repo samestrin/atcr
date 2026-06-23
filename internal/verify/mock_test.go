@@ -120,6 +120,12 @@ func (d *fakeDispatcher) count() int {
 	return d.calls
 }
 
+func (d *fakeDispatcher) toolNames() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return nil
+}
+
 // okDispatcher returns a small successful tool result.
 func okDispatcher() *fakeDispatcher {
 	return &fakeDispatcher{result: tools.ToolResult{Content: "file contents", OriginalBytes: 13}}
