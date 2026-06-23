@@ -1,0 +1,73 @@
+# Code Review Report: 7.6_ghaction-api-improvements
+
+## 1. Executive Summary
+- **Overall Result:** Pass
+- **Items Checked:** 4 / 4
+- **Approval Status:** Approved
+- **Review Date:** June 23, 2026
+- **Review Mode:** Epic (Acceptance Criteria + Adversarial) + Tests
+
+## 2. Checklist Changes Applied
+- **.planning/epics/completed/7.6_ghaction-api-improvements.md** – AC1: postInlineComments posts all comments in a single CreateReview batch call
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `cmd/atcr/github.go:189-192`
+- **.planning/epics/completed/7.6_ghaction-api-improvements.md** – AC2: ghaction.Conclusion is called exactly once per runGithub invocation
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `cmd/atcr/github.go:114-116`
+- **.planning/epics/completed/7.6_ghaction-api-improvements.md** – AC3: All existing internal/ghaction tests pass
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `go test ./internal/ghaction/...` → ok
+- **.planning/epics/completed/7.6_ghaction-api-improvements.md** – AC4: All existing cmd/atcr integration tests pass
+  - Before: `[ ]` → After: `[x]`
+  - Evidence: `go test ./cmd/atcr/...` → ok (8.0s)
+
+## 3. Evidence Map
+- **AC1 — single batched CreateReview call**
+  - Evidence: `cmd/atcr/github.go:189-192`, `cmd/atcr/github_test.go:393`
+  - Summary: `postInlineComments` posts the full deduped `Comments` array in one `client.CreatePRReview` call; the fallback test asserts the batch `/reviews` endpoint is hit exactly once. Batch POST shipped in epic 7.3; epic 7.6 added the 404/405 per-comment fallback (`postCommentsIndividually`, github.go:215-237).
+- **AC2 — single Conclusion computation**
+  - Evidence: `cmd/atcr/github.go:114-116`, `internal/ghaction/render.go:115-127,129`
+  - Summary: `runGithub` consumes `(output, conclusion, failCount)` from a single `BuildCheckOutput` call; the standalone `ghaction.Conclusion` call was removed. `BuildCheckOutput`'s two Conclusion call sites sit in mutually exclusive early-return branches, so exactly one runs per invocation.
+- **AC3 / AC4 — test suites pass**
+  - Evidence: `go test ./internal/ghaction/...` and `go test ./cmd/atcr/...` both `ok`; full suite green at 89.6% coverage.
+  - Summary: New tests `TestBuildCheckOutputReturnsConclusionAndFailCount`, `TestPostInlineComments_FallsBackToPerCommentOnUnsupportedBatch`, `TestPostInlineComments_FallbackPerComment422IsSkipped`, `TestPostInlineComments_FallbackPerCommentHardErrorPropagates` all pass; pre-existing `TestPostInlineComments_422IsNonFatal` untouched and passing.
+
+## 4. Remaining Unchecked Items
+No remaining unchecked items - all verified.
+
+## 5. Manual Review Status
+- **Code Reviewed and Approved:** Checked
+- **Rationale:** Both epic items implemented and tested. Item 1's batch POST was already shipped; the per-comment 404/405 fallback is correctly added with non-fatal 422 handling and hard-error propagation, all test-pinned. Item 2's 3-tuple return is clean and matches a direct Conclusion call across empty/non-empty/no-threshold cases. All quality gates green. Adversarial review surfaced no critical/high issues — only low-severity polish and test-coverage gaps captured as technical debt.
+
+## 6. Coverage Analysis
+- **Coverage:** 89.6%
+- **Baseline:** 80%
+- **Delta:** ↑9.6%
+- **Status:** PASSING
+
+## 7. Quality Checks
+| Check | Status | Command |
+|-------|--------|---------|
+| Lint | PASSING | golangci-lint run |
+| Types | PASSING | go vet ./... |
+| Format | PASSING | go fmt ./... |
+
+## 8. Adversarial Analysis
+- **Files Reviewed:** 4
+- **Issues Found:** 5 (Critical: 0, High: 0)
+
+### Issues by Severity
+**MEDIUM (1)**
+- `cmd/atcr/github_test.go:441` (testing) — `postCommentsIndividually` partial-failure path untested: the hard-error test uses a single finding, so `posted` is always 0 and the "fallback failed after N posted" branch with `posted>0` is never exercised.
+
+**LOW (4)**
+- `cmd/atcr/github.go:220` (testing) — Dedup-count pass-through on the fallback path is unasserted (all fallback tests stub `GET /comments` → `[]`, so `deduped` is always 0).
+- `cmd/atcr/github.go:229` (error-handling) — Fallback partial-failure leaves orphaned inline comments with no check run; non-atomic vs. the batch path (recoverable via dedup on re-run).
+- `cmd/atcr/github.go:236` (maintainability) — Fallback prints a "posted 0 ... via per-comment fallback" stdout summary even when all comments were 422-skipped; inconsistent with the batch path's all-422 reporting.
+- `internal/ghaction/render.go:115` (maintainability) — `BuildCheckOutput` has two textual `Conclusion` call sites (mutually exclusive branches); AC2 holds but the duplication is avoidable by lifting one call to the top.
+
+## 9. Follow-ups
+- Captured 5 items to the code-review TD stream. Run `/reconcile-code-review @.planning/epics/completed/7.6_ghaction-api-improvements.md` to merge into the technical-debt README, then `/resolve-td` for the MEDIUM test-gap item.
+
+---
+*Generated by /execute-code-review on June 23, 2026 03:23:35AM*

@@ -1,0 +1,9 @@
+{
+  "agent_name": "greta-backup",
+  "model": "glm-5.1",
+  "status": "ok",
+  "duration_ms": 80468,
+  "fallback_used": true,
+  "fallback_from": "greta",
+  "original_error": "no content in stream"
+}

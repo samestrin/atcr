@@ -1,0 +1,1 @@
+MEDIUM|cmd/atcr/github.go:205|Potential for excessive API calls during fallback|Add a limit to the number of individual comments posted in fallback|performance|15|looping CreateReviewComment without a cap on comments length|otto

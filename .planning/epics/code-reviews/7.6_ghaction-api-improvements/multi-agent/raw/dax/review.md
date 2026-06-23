@@ -1,0 +1,1 @@
+MEDIUM|internal/ghaction/render.go:115|Conclusion called on empty findings in early-return branch|Compute conclusion/failCount directly (neutral/success, 0) without calling Conclusion|performance|5|Conclusion(findings, failOn) called on empty slice when total==0

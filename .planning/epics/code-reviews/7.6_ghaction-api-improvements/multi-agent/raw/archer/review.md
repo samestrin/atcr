@@ -1,0 +1,1 @@
+HIGH|cmd/atcr/github.go:214|posted count lost on hard error during fallback|Return posted count in error case is fine but skipped count discarded|correctness|5|return posted, deduped, &codedError — skipped count lost but non-fatal|bruce
