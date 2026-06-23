@@ -20,11 +20,12 @@ func TestBuildInlineComments(t *testing.T) {
 		{Severity: "MEDIUM", File: "c.go", Line: 9, Problem: "mid", Fix: "patch it", Evidence: "no attribution here"},
 		{Severity: "HIGH", File: "d.go", Line: 0, Problem: "unanchored", Fix: "x", Evidence: "e"},
 		{Severity: "HIGH", File: "", Line: 5, Problem: "nofile", Fix: "x", Evidence: "e"},
+		{Severity: "HIGH", File: "e.go", Line: 5, Problem: "", Fix: "x", Evidence: "e"},
 	}
 
 	comments := BuildInlineComments(findings)
 
-	// Only the three anchorable findings (File set, Line > 0) produce comments.
+	// Only the three anchorable findings with non-empty Problem produce comments.
 	require.Len(t, comments, 3)
 
 	assert.Equal(t, "a.go", comments[0].Path)
