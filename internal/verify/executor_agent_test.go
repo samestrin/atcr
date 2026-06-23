@@ -73,19 +73,40 @@ func TestGenerateFixes_AgentMode_ProviderErrorWarns(t *testing.T) {
 	assert.Contains(t, findings[0].FixWarning, "rate limit exceeded")
 }
 
-// AC3: max_tool_calls caps the loop. With a budget of 2 and a completer that only
-// ever requests tools (never concludes), the loop trips max_turns and the finding
-// gets a FixWarning rather than a fix.
-func TestGenerateFixes_AgentMode_MaxToolCallsCapTrips(t *testing.T) {
+// AC3: when the max_tool_calls cap is reached, the executor must emit a fix from the
+// context it has already gathered — not discard it. With a budget of 1, turn 1
+// requests a tool and trips the cap; the engine then forces a best-effort final
+// answer (requestFinalAnswer), which carries a valid fix. That fix is emitted with no
+// warning, rather than being thrown away as a failure.
+func TestGenerateFixes_AgentMode_MaxToolCallsCapEmitsPartialFix(t *testing.T) {
 	findings := eligibleFinding()
 	ex := agentExecConfig()
-	ex.MaxToolCalls = intPtr(2)
-	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+	ex.MaxToolCalls = intPtr(1)
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"), // turn 1 → trips max_turns=1
+		{content: `{"fix": "guard the nil deref from what I read so far"}`}, // forced final answer
+	}}
+	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), &recordingExecutor{}, cc, okDispatcher(), 0)
+
+	assert.Equal(t, "guard the nil deref from what I read so far", findings[0].Fix,
+		"cap reached → emit the fix from available context (AC3), not a warning")
+	assert.Equal(t, "", findings[0].FixWarning)
+}
+
+// AC3 companion: if the cap is reached but the engine's forced final answer is not a
+// parseable fix, the finding gets a parse-error warning (no fix), never a crash.
+func TestGenerateFixes_AgentMode_MaxToolCallsCapUnparseableWarns(t *testing.T) {
+	findings := eligibleFinding()
+	ex := agentExecConfig()
+	ex.MaxToolCalls = intPtr(1)
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("read_file"),
+		{content: "I ran out of budget and have no concrete fix"},
+	}}
 	generateFixes(context.Background(), findings, ex, execRegistry("MEDIUM"), &recordingExecutor{}, cc, okDispatcher(), 0)
 
 	assert.Equal(t, "", findings[0].Fix)
-	assert.Contains(t, findings[0].FixWarning, "agent_mode failed")
-	assert.Contains(t, findings[0].FixWarning, "max_turns", "the tool-call budget trip must be surfaced")
+	assert.Contains(t, findings[0].FixWarning, "agent_mode parse error")
 }
 
 // AC6: agent_mode=true but the dispatcher is unavailable (nil) → fall back to the

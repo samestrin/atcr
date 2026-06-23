@@ -338,8 +338,16 @@ func appendFixAttribution(evidence, name string) string {
 //
 // It mirrors invokeSkeptic structurally: a single tool-enabled fanout.Agent run
 // through a throwaway fanout.Engine wired to cc + disp. The difference is the goal —
-// generate a fix, not issue a verdict — and the simpler response schema. The budget
-// cap (max_tool_calls → the agent's MaxTurns) bounds the read/search loop per finding.
+// generate a fix, not issue a verdict — and the simpler response schema.
+//
+// Budget handling differs deliberately from invokeSkeptic. A skeptic that trips its
+// turn budget yields "unverifiable" (a partial investigation must not become a
+// confident verdict). The executor does the opposite: when the max_tool_calls cap is
+// reached the engine forces a best-effort final answer (requestFinalAnswer), and AC3
+// requires the executor to emit THAT fix "from available context" rather than discard
+// it. So only a non-OK status (provider error, or a timeout that halted the loop) is a
+// failure (AC4: timeout/error → FixWarning); a StatusOK result with a tripped budget
+// flows into the fix parser below. max_tool_calls → the agent's MaxTurns budget.
 func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov registry.Provider, finding reconcile.JSONFinding, cc fanout.ChatCompleter, disp Dispatcher, sharedTimeoutSecs int) (string, string) {
 	prompt := buildExecutorAgentPrompt(finding)
 	agent := buildExecutorAgent(ex, prov, prompt, sharedTimeoutSecs)
@@ -351,11 +359,12 @@ func invokeExecutor(ctx context.Context, ex *registry.ExecutorConfig, prov regis
 		return "", "agent_mode failed: engine returned no result"
 	}
 	res := results[0]
-	// A non-OK status (provider error, timeout) or ANY tripped budget means the
-	// executor could not complete a trustworthy exploration — even though the loop
-	// returns StatusOK after a budget trip (partial-success final answer), a trip
-	// must not be read as a real fix. Both collapse to a warn.
-	if res.Status != fanout.StatusOK || len(res.TrippedBudgets) > 0 {
+	// Only a non-OK status is a hard failure (provider error → StatusFailed; a
+	// deadline that halted the loop → StatusTimeout). A StatusOK result that tripped
+	// the max_tool_calls cap is NOT a failure: res.Content carries the engine's forced
+	// final answer, which AC3 requires the executor to emit. The tripped budget is
+	// surfaced in the warn only on the failure path for diagnostics.
+	if res.Status != fanout.StatusOK {
 		var b strings.Builder
 		fmt.Fprintf(&b, "agent_mode failed: tool loop halted (status: %s)", res.Status)
 		if len(res.TrippedBudgets) > 0 {
