@@ -44,6 +44,18 @@ Resolves three boundary forks surfaced by the Phase-2 safety check, where the co
 - IN (library, Phase 2): `Reconcile`/`Options`/`Result`/`Summary`, `Merge`/`Merged` (path-free), `dedupe`/`cluster`/`confidence`/`attribution`, `AmbiguousCluster`/`AmbiguousID`/`AmbiguousHash`, severity (`SeverityRank`/`NormalizeSeverity`), `Verification`/verdicts.
 - OUT (stays ATCR-internal): `disagree.go` (radar + `BuildDisagreements`), the `MergeJSONFindings` family incl. `mergeVerification`/`verdictRank`, `JSONFinding`, path-validation stamping, `gate.go`/`validate.go`/`discover.go`/`emit.go` I/O, adjudication machinery.
 
+### Phase 3 Clarifications (recorded 2026-06-23)
+
+Resolves two scope forks surfaced by the Phase-3 safety check, where the consumer-flip blast radius and the AC 01-04 Scenario-3 "route through adapter" wording were ambiguous. Both confirmed by the maintainer (avg confidence 90%).
+
+**Key Decisions:**
+- **Q1 — minimal literal flip, TD-006 stays deferred (1a):** Phase 3 executes tasks 3.1–3.5 exactly as written — repoint the 9 consumers' **moved-type** references from `internal/reconcile` to `github.com/samestrin/atcr/reconcile`, grep-verify, confirm zero-diff fixtures. The `internal/reconcile` re-export shim (`lib.go` type aliases + the `Reconcile` wrapper + `toLibFinding`/`fromLibFinding`) **stays in place** — it is consumed by `internal/reconcile`'s own `Result`/`emit.go` internals and is single-sourced (aliases the library). **TD-006 is NOT implemented in Phase 3** — it is LOW, a deliberate Phase-2 deferral, requires rewriting the Reconcile call sites' `SkippedSources` stamping + `AmbiguousHash` re-binding inline (byte-identical hot path), and is deferred to a `resolve-td` session after Phase 5 CI is green.
+- **Q2 — lib.go wrapper satisfies AC 01-04 Scenario 3 (2a):** The existing ATCR boundary (`RunReconcile` → internal `Reconcile` wrapper, which converts findings before calling `reclib.Reconcile`) satisfies Scenario 3's intent (CLI/MCP must not call `reclib.Reconcile` directly and bypass path-validation stamping + `SkippedSources` bookkeeping). Literal adapter routing requires an adapter-level Reconcile function or per-call-site inlining — neither is a listed Phase-3 task. Enforce with a grep guard: no consumer calls `reclib.Reconcile`/`reconcile.Reconcile` directly (excluding `lib.go`). The adapter-routing DoD checkbox is marked deferred with a `[TD-006]` annotation.
+
+**Scope Boundaries (Phase 3):**
+- IN: the 9-package moved-type import flip; grep-verify (no residual `internal/reconcile` moved-type imports, no `internal/stream` severity refs, no direct `reclib.Reconcile` consumer calls); zero-diff golden corpus.
+- OUT: TD-006 wrapper deletion / conversion-collapse; any adapter-level Reconcile entry point; any byte-identical hot-path rewrite.
+
 ---
 
 ## Sprint Overview
@@ -411,14 +423,14 @@ From [plan/documentation/](plan/documentation/):
 
 **Stories:** 1 (completion) | **Focus:** Rewire all 9 consumer packages to import `github.com/samestrin/atcr/reconcile`; grep-verify no residual `internal/reconcile` type re-declarations; confirm byte-identical fixtures. **Oracle = existing corpus + zero-diff fixtures; no new RED tests.**
 
-### 3.1 [ ] **[Consumer flip readiness - RED](plan/user-stories/01-reference-implementation-preservation.md)**
+### 3.1 [x] **[Consumer flip readiness - RED](plan/user-stories/01-reference-implementation-preservation.md)**
    **AC:** [01-04](plan/acceptance-criteria/01-04-consumer-package-import-flip.md), [01-05](plan/acceptance-criteria/01-05-byte-identical-fixtures.md)
    1. Confirm the fixture baseline captured in 2.1 is committed and diff-able.
    2. Establish the failing condition: a grep assertion that any package still importing `internal/reconcile` for moved types is a failure; current state (pre-flip) "fails" this assertion → that is the RED signal.
    3. No new unit tests written — the corpus + fixture-diff is the oracle.
    **Files:** (none new; baseline confirmation) | **Duration:** 1h
 
-### 3.2 [ ] **[Flip all 9 consumer packages - GREEN](plan/user-stories/01-reference-implementation-preservation.md)**
+### 3.2 [x] **[Flip all 9 consumer packages - GREEN](plan/user-stories/01-reference-implementation-preservation.md)**
    Flip imports package-by-package; after each, `go build ./...` + targeted T2; COMMIT per package. (AC 01-04)
    1. `cmd/atcr` (github.go, reconcile.go, report.go, resume.go, review.go, verify.go) → import library.
    2. `internal/debate` (debate.go, emit.go, envelope.go, select.go) → import library.
@@ -435,74 +447,65 @@ From [plan/documentation/](plan/documentation/):
    13. COMMIT per package: `git commit -m "refactor(<pkg>): import reconcile library (green)"`
    **Files:** the 9 packages above | **Duration:** 1-1.5d
 
-### 3.2.A [ ] **[Consumer Flip - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-reference-implementation-preservation.md)**
-   **Changed Files:** [all files modified in 3.2 — absolute paths]
+### 3.2.A [x] **[Consumer Flip - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-reference-implementation-preservation.md)**
+   **Changed Files:** cmd/atcr/{reconcile,resume,review}.go + verify_test.go; internal/debate/{cluster,debate,emit,envelope,select}.go + {cluster_resolve_td,cluster,debate,envelope}_test.go; internal/fanout/{metrics,postprocess}.go; internal/ghaction/render.go + render_test.go; internal/mcp/handlers.go; internal/registry/config.go; internal/report/render.go + {disagree,render,render_verification,validate}_test.go; internal/verify/{confidence_v2,emit_findings,emit_verification,executor,invoke,pipeline,select,severity,verdict,votes}.go + {emit,executor,pipeline,verify_e2e,votes}_test.go
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 3.2 — intentional. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Adversarial review: 3.2`
-   - prompt: Self-contained brief including:
-     - Files to review (absolute paths): [LIST FROM 3.2]
-     - Checklist (pass verbatim):
-       - SECURITY: Auth bypass, injection, data exposure?
-       - EDGE CASES: Null, empty, boundaries, concurrent access?
-       - ERROR HANDLING: Missing catches, swallowed errors?
-       - PERFORMANCE: N+1, leaks, blocking ops?
-       - COMPLETENESS: Any consumer missed (re-declares a severity/verdict constant locally)? Any residual `internal/reconcile` import for a moved type? Fixtures truly zero-diff (not "close")?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
+   **Subagent findings (fresh-context review, 2026-06-23):** No findings.
 
-   **Paste the subagent's findings table here (delete rows if none):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings | - |
+
+   Verified by the subagent: build/vet/gofmt + full uncached test suite (incl. the byte-identical golden corpus in `internal/reconcile`) all pass. Every production and test diff reduces to import-line additions/removals + selector renames (`reconcile.X`/`stream.X` → `reclib.X`) + matching comment updates — no logic, value, or fixture changes. No consumer re-declares a severity/verdict constant locally (the pre-existing `verdict*` / `Default*MinSeverity` consts are unchanged). Zero residual `internal/reconcile` moved-type refs and zero residual `internal/stream` severity refs in the 8 consumer packages; the only `stream.*` severity refs left are inside `internal/reconcile/` itself (deliberately-deferred TD-006, out of scope).
+
+   **✅ Adversarial review passed** (no CRITICAL/HIGH) — proceeding.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 3.3 [ ] **[Consumer Flip - REFACTOR](plan/user-stories/01-reference-implementation-preservation.md)**
-   1. Fix CRITICAL/HIGH issues from 3.2.A (if any).
-   2. Improve clarity (T1), validate (T3 both modules).
-   3. COMMIT: `git commit -m "refactor(reconcile): finalize consumer import-flip"`
+### 3.3 [x] **[Consumer Flip - REFACTOR](plan/user-stories/01-reference-implementation-preservation.md)**
+   1. Fix CRITICAL/HIGH issues from 3.2.A (if any). → None reported.
+   2. Improve clarity (T1), validate (T3 both modules). → Flip is a pure import-path + selector rename across 8 packages, committed per-package (green at each step). Both module corpora green, gofmt clean, lint clean, guard clean. Code already minimal — no speculative changes.
+   3. COMMIT: no refactor commit (no code changes — review passed clean).
    **Duration:** 2-4h
 
-### 3.4 [ ] **Phase 3 - DoD Validation**
-   - [ ] All 9 packages compile importing the library; no local re-declarations
-   - [ ] Grep finds zero residual `internal/reconcile` moved-type imports in non-adapter code
-   - [ ] `findings.json`/`ambiguous.json`/`disagreements.json` zero-diff vs baseline
-   - [ ] `go test ./...` green (root); `go test ./reconcile/...` green
-   - [ ] Lint clean (both modules)
+### 3.4 [x] **Phase 3 - DoD Validation**
+   - [x] All consumer packages compile importing the library; no local re-declarations (8 packages flipped; `internal/scorecard` is a no-op — its only `reconcile.*` ref is the ATCR-internal `Result`, which stays internal per Q1)
+   - [x] Grep finds zero residual `internal/reconcile` moved-type imports / `internal/stream` severity refs / direct `reclib.Reconcile` consumer calls (guard.sh CLEAN)
+   - [x] `findings.json`/`ambiguous.json`/`disagreements.json` (+summary.json/findings.txt/report.md) zero-diff vs baseline (byte-identical golden corpus green)
+   - [x] `go test ./...` green (root, 29 pkgs ok / 0 fail); `go test ./reconcile/...` green
+   - [x] Lint clean (both modules — golangci-lint 0 issues each; gofmt clean)
    - Emit DoD report.
 
-### 3.5 [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-1 DoD Complete (Phase 3 Consumer Import-Flip)
+   Auto: 5/5 | Story-Specific: 8 consumers flipped to library (moved types + severity helpers); scorecard no-op (internal Result only); CLI/MCP keep RunReconcile boundary (AC 01-04 Sc.3 via [TD-006] deferred); zero-diff fixtures
+   Manual Review: [x] Adversarial review passed (3.2.A — no findings); guard CLEAN; both modules green + lint 0 issues
+   ```
+
+### 3.5 [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase. Do NOT review inline.
 
-   Use the Agent tool:
-   - subagent_type: `general-purpose`
-   - description: `Phase 3 gate review`
-   - prompt: Self-contained brief including:
-     - Files changed during Phase 3 (absolute paths): [LIST]
-     - Checklist (pass verbatim, hostile integrator perspective):
-       - CONTRACT EXIT: Every consumer uses the library's public types; no shadow copies remain?
-       - CONFIG SURFACE: No leftover `internal/reconcile` type definitions that should be gone?
-       - INTEGRATION: Cross-package calls correct against the new import; `gate.go`/`validate.go` still ATCR-internal and functional?
-       - PHASE-EXIT CONTRACT: Extraction behaviorally complete — Phase 4 only adds adapter/docs/licensing?
-       - REGRESSION: Byte-identical fixtures + full corpus green?
-     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
-     - Required output: ONLY the findings table below (markdown), no prose
+   **Subagent gate findings (fresh-context hostile integrator, 2026-06-23):** No findings.
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
-   |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | Severity | File:Line | Issue | Disposition |
+   |----------|-----------|-------|-------------|
+   | NONE | - | No findings | - |
+
+   **Phase-3 gate verdict (all verified empirically by the subagent):**
+   - CONTRACT EXIT ✓ — all 8 consumer packages import `reclib` for moved symbols; zero residual `reconcile.<MovedType>` refs and zero `stream.NormalizeSeverity`/`SeverityRank` calls outside `internal/reconcile`/`internal/stream` themselves; no local Verdict*/Severity const re-declarations.
+   - CONFIG SURFACE ✓ — the `internal/reconcile` shim is purely alias-based (every re-export is `= reclib.X` in lib.go + emit.go); no duplicate independent type/const definitions that could drift.
+   - INTEGRATION ✓ — `gate.go`/`validate.go` remain ATCR-internal; `*Verification` pointer identity preserved across the alias (`internal/debate` mutates `findings[i].Verification = &reclib.Verification{...}` and reads it back); `internal/scorecard` correctly references only internal `reconcile.Result`.
+   - BOUNDARY ✓ — `reclib.Reconcile(` is called only inside the shim `lib.go`; CLI + MCP route through `reconcile.RunReconcile` (AC 01-04 Sc.3 intent satisfied; literal adapter-routing deferred under [TD-006]).
+   - PHASE-EXIT CONTRACT / REGRESSION ✓ — both modules build + vet clean; full corpus green in both; byte-identical golden corpus PASS; library stdlib-only; `replace` present. Extraction behaviorally complete — Phase 4 needs no further consumer edits.
+
+   **✅ Phase gate passed** (no CRITICAL/HIGH).
 
    **Action Required:**
    - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
