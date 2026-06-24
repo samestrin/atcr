@@ -18,6 +18,9 @@ agents:
     model: claude-sonnet-4-6
     persona: bruce
     role: reviewer
+    # Language scope (Epic 9.0): canonical form is dotless + lowercased.
+    # nil/omitted = no constraint (the agent is eligible for every review).
+    language: ["go"]
   greta:
     provider: openai
     model: gpt-4-turbo
