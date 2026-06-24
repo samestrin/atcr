@@ -48,6 +48,25 @@ Without domain-specific personas, ATCR is a generalist tool teams layer their ow
 
 ---
 
+## Clarifications
+
+### Phase 2 Clarifications (recorded 2026-06-24)
+
+**Key Decisions:**
+- The plan's `SelectEligibleSkeptics(agents []AgentConfig, finding Finding, n int, scores map[string]float64) []string` is shorthand. The real signature is preserved — `reg *registry.Registry`, `finding reconcile.JSONFinding`, returns `[]Skeptic` — and `scores map[string]float64` is added as the 4th argument (matches the recorded epic clarification: caller-supplied, nil-safe).
+- "general-purpose" is conceptual = a skeptic with no `Language` declared (zero literal grep hits in `internal/`). Routing is a two-partition reorder of the already-sorted eligible names: language-matching skeptics first, non-matching after; the existing n-cap then favors matched.
+- Score lookup in Phase 2 uses `scores[name]` (skeptic registry name) per task 2.2 literal spec. The `strings.ToLower` join-key normalization is Phase 5/T6 (a separate gated phase), not Phase 2.
+
+**Scope Boundaries:**
+- IN: `internal/verify/select.go` two-partition reorder + nil-safe score sort; `internal/verify/pipeline.go:162` caller updated to pass `nil`; `internal/verify/select_test.go` (existing 3-arg call sites moved to 4-arg in the same RED/GREEN commits).
+- NOT in scope: T6 scorecard wiring, lowercasing the score-map join key (both Phase 5).
+
+**Technical Approach:**
+- Match = `normalizeExt(filepath.Ext(finding.File))` ∈ skeptic's canonical `Language` entries; reuse the existing `select.go` `normalizeExt` (delegates to `registry.NormalizeLanguageToken`).
+- Within the matched partition, sort by `scores[name]` descending then name ascending; `nil`/absent keys fall through to alphabetical (deterministic). Pre-allocate both partitions with `make([]string, 0, len(names))`. No `scorecard` import added to `verify`.
+
+---
+
 ## TDD Strategy
 
 **Mode:** STRICT 🔒 (RED → GREEN → ADVERSARIAL → REFACTOR) for all elements.
