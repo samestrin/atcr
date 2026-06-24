@@ -38,6 +38,7 @@ func TestConfidenceForVerdict(t *testing.T) {
 		{ConfMedium, "", ConfMedium},                     // no verdict passes prior through
 		{ConfHigh, "CONFIRMED", ConfidenceVerified},      // case-insensitive
 		{ConfMedium, "bogus", ConfMedium},                // unknown verdict passes through
+		{"high", "bogus", "HIGH"},                        // non-canonical prior is normalized on pass-through
 	}
 	for _, c := range cases {
 		if got := ConfidenceForVerdict(c.prior, c.verdict); got != c.want {
