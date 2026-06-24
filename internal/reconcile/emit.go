@@ -56,8 +56,9 @@ const (
 // cross-examination 6.x); all such fields are omitempty for backward
 // byte-compatibility with pre-extension findings.json.
 //
-// Verification is reserved for Epic 3.0 (adversarial verification) — parsed if
-// present, but never populated by any v1 code path and omitted from 1.x output.
+// Verification carries the adversarial-verification block (Epic 3.0). It is
+// populated by the verify stage and omitted from JSON output when nil
+// (omitempty); reconcile-time producers leave it empty.
 type JSONFinding struct {
 	Severity     string        `json:"severity"`
 	File         string        `json:"file"`
@@ -70,7 +71,7 @@ type JSONFinding struct {
 	Reviewers    []string      `json:"reviewers"`
 	Confidence   string        `json:"confidence"`
 	Disagreement string        `json:"disagreement,omitempty"`
-	Verification *Verification `json:"verification,omitempty"` // reserved (Epic 3.0); absent in 1.x
+	Verification *Verification `json:"verification,omitempty"` // populated by verify stage; omitted when nil
 	// PathValid / PathWarning carry file-existence validation (Epic 5.0). Both
 	// are omitempty so a finding that was never validated (or whose path exists)
 	// serializes byte-identically to pre-5.0 findings.json — only a flagged
