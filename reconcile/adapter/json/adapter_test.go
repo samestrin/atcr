@@ -190,6 +190,26 @@ func TestDecode_RejectsMissingFindingFields(t *testing.T) {
 	}
 }
 
+func TestDecode_WhitespaceOnlyInput(t *testing.T) {
+	_, err := Decode([]byte("   \t\n\r"))
+	if err == nil {
+		t.Fatal("Decode accepted whitespace-only input; want error")
+	}
+	if !strings.Contains(err.Error(), "empty input") {
+		t.Errorf("error = %q, want it to contain 'empty input'", err)
+	}
+}
+
+func TestDecode_NULByteNotReportedAsEmpty(t *testing.T) {
+	_, err := Decode([]byte("\x00{\"version\":\"reconcile-json/v1\",\"source\":\"a\",\"findings\":[]}"))
+	if err == nil {
+		t.Fatal("Decode accepted input starting with NUL; want error")
+	}
+	if strings.Contains(err.Error(), "empty input") {
+		t.Errorf("error = %q, should not be reported as 'empty input'", err)
+	}
+}
+
 func TestEncode_VersionedEnvelope(t *testing.T) {
 	out, err := Encode(sampleResult(), reconcile.Options{ReconciledAt: fixedTime})
 	if err != nil {
