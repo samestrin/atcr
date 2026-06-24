@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,20 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// executeSplit runs the root command with separate stdout/stderr buffers so a
+// test can verify the success→stdout / diagnostics→stderr contract that the
+// shared-buffer `execute` helper cannot distinguish.
+func executeSplit(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	root := newRootCmd()
+	var out, errBuf bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errBuf)
+	root.SetArgs(args)
+	err = root.Execute()
+	return out.String(), errBuf.String(), err
+}
 
 const cmdValidPersonaYAML = `provider: anthropic
 model: claude-sonnet-4-6
@@ -94,8 +109,11 @@ func TestPersonasList_Integration(t *testing.T) {
 func TestPersonasList_ScoresFlagAccepted(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
-	_, err := execute(t, "personas", "list", "--scores")
+	stdout, stderr, err := executeSplit(t, "personas", "list", "--scores")
 	require.NoError(t, err)
+	// The table still renders to stdout; the no-op notice goes to stderr.
+	assert.Contains(t, stdout, "NAME")
+	assert.Contains(t, stderr, "--scores")
 }
 
 func TestPersonasSearch_Integration(t *testing.T) {
@@ -185,9 +203,10 @@ func TestPersonasTest_FailExitsNonZero(t *testing.T) {
 	withPersonasEnv(t, srv)
 	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 2, Total: 3}})
 
-	out, err := execute(t, "personas", "test", "sentinel")
+	stdout, _, err := executeSplit(t, "personas", "test", "sentinel")
 	require.Error(t, err)
-	assert.Contains(t, out, "FAIL")
+	assert.Equal(t, exitFailure, exitCode(err)) // exit 1
+	assert.Contains(t, stdout, "FAIL")          // report on stdout
 }
 
 func TestPersonasTest_NoFixture(t *testing.T) {
@@ -198,4 +217,39 @@ func TestPersonasTest_NoFixture(t *testing.T) {
 	out, err := execute(t, "personas", "test", "sentinel")
 	require.NoError(t, err)
 	assert.Contains(t, out, "No fixture")
+}
+
+// TestPersonasTest_DefaultRunnerNoFixture exercises the production default
+// runner (noFixtureRunner) — no stub injected — confirming it reports no fixture
+// and exits 0 without a live LLM call.
+func TestPersonasTest_DefaultRunnerNoFixture(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	out, err := execute(t, "personas", "test", "sentinel")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No fixture")
+}
+
+func TestPersonasUpgrade_ConflictExitsUsage(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "upgrade", "--all", "security/owasp")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err)) // exit 2
+}
+
+func TestPersonasUpgrade_NoArgsExitsUsage(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	_, err := execute(t, "personas", "upgrade")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err)) // exit 2
+}
+
+func TestPersonasUpgrade_AllEmpty(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	out, err := execute(t, "personas", "upgrade", "--all")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No community personas installed")
 }
