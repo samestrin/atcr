@@ -65,6 +65,8 @@ jobs:
   reconcile-module:
     name: Reconcile Module Test
     runs-on: [self-hosted, gauntlet]
+    permissions:
+      contents: read
 
     defaults:
       run:
