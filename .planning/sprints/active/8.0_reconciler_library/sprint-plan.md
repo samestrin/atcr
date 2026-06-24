@@ -521,7 +521,7 @@ From [plan/documentation/](plan/documentation/):
 
 **Stories:** 3, 4, 5 | **Focus:** JSON adapter with `reconcile-json/v1` schema, README + godoc example, Apache 2.0 and commercial license files.
 
-### 4.1 [ ] **[JSON adapter - RED](plan/user-stories/03-json-format-adapter.md)**
+### 4.1 [x] **[JSON adapter - RED](plan/user-stories/03-json-format-adapter.md)**
    **AC:** [03-01](plan/acceptance-criteria/03-01-decode-single-and-array-sources.md), [03-02](plan/acceptance-criteria/03-02-encode-result-to-versioned-envelope.md), [03-03](plan/acceptance-criteria/03-03-byte-stability-and-omitempty.md), [03-04](plan/acceptance-criteria/03-04-path-validation-isolation-and-schema-independence.md)
    1. Write failing tests in `reconcile/adapter/json/adapter_test.go`:
       - `TestDecode_SingleSourceObject` — single `{}` → `[]Source` (len 1).
@@ -532,7 +532,7 @@ From [plan/documentation/](plan/documentation/):
    2. Verify all fail correctly (adapter not implemented).
    **Files:** `reconcile/adapter/json/adapter_test.go` | **Duration:** 4-6h
 
-### 4.2 [ ] **[JSON adapter, README, example, licenses - GREEN](plan/user-stories/03-json-format-adapter.md)**
+### 4.2 [x] **[JSON adapter, README, example, licenses - GREEN](plan/user-stories/03-json-format-adapter.md)**
    Minimal code to pass (T1), verify all pass (T2), COMMIT per deliverable.
    1. `reconcile/adapter/json/adapter.go` decode: sniff first byte (`[` → array, else single-wrap) → `[]reconcile.Source`; ignore unknown fields; validate required `severity`/`file`/`line`. (AC 03-01)
    2. `reconcile/adapter/json/adapter.go` encode: `reconcile.Result` → versioned `reconcile-json/v1` envelope. (AC 03-02)
@@ -547,7 +547,7 @@ From [plan/documentation/](plan/documentation/):
    11. COMMIT per deliverable: `git commit -m "feat(reconcile): json adapter | docs | licensing (green)"`
    **Files:** `reconcile/adapter/json/adapter.go`, `reconcile/README.md`, `reconcile/example_test.go`, `reconcile/LICENSE`, `reconcile/LICENSE-COMMERCIAL.md` | **Duration:** 1-1.5d
 
-### 4.2.A [ ] **[Adapter/Docs/Licensing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-json-format-adapter.md)**
+### 4.2.A [x] **[Adapter/Docs/Licensing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-json-format-adapter.md)**
    **Changed Files:** [all files modified in 4.2 — absolute paths]
 
    **Spawn a fresh subagent** via the Agent tool. No memory of 4.2 — intentional. Do NOT review inline.
@@ -566,32 +566,44 @@ From [plan/documentation/](plan/documentation/):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent findings (fresh-context review, 2026-06-23):** No CRITICAL/HIGH. Three LOW:
+
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | reconcile/adapter/json/adapter.go (Decode) | `Decode` takes a fully-buffered `[]byte`; deep nesting is bounded by encoding/json but total input size is the caller's responsibility and was undocumented | **Fixed inline (4.3)** — added a godoc note that the caller bounds input size |
+   | LOW | reconcile/adapter/json/adapter.go (version loop) | Per-object version error for arrays reported the bad value without the array index, harder to locate in a multi-source array | **Fixed inline (4.3)** — error now includes `source[%d]` index |
+   | LOW | reconcile/README.md (Options block) | The illustrative `Options` struct block uses alignment comments that would not `gofmt`-match if copy-pasted verbatim | **Not a defect** — it is an API-reference excerpt, not runnable copy-paste code; left as-is |
+
+   Verified clean by the subagent: both modules `go test`/`go vet`/`gofmt -l`/`go build` clean; stdlib-only confirmed (empty `require`, no `go.sum`, no `internal/` or ATCR boundary-adapter import); schema correct (`version`=`reconcile-json/v1`, never `atcr-findings/v1`; top-level `findings`/`ambiguous` non-omitempty + nil-normalized to `[]`; `disagreement`/`verification` carry `omitempty`; path-validation fields structurally absent from library `Finding`, cannot leak); errors wrapped+propagated; empty/BOM/whitespace/missing-version/wrong-version/malformed all handled; golden fixture matches; README thresholds (0.7/0.4), confidence tiers, clustering, and lifted signature all match source; `LICENSE-COMMERCIAL.md` clearly disclaimed as a placeholder (no inadvertent grant); no royal-"we" in external docs.
+
+   **✅ Adversarial review passed** (no CRITICAL/HIGH) — proceeding.
 
    **Action Required:**
    - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
    - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
    - None found → Note "Adversarial review passed" and proceed
 
-### 4.3 [ ] **[Adapter/Docs/Licensing - REFACTOR](plan/user-stories/03-json-format-adapter.md)**
-   1. Fix CRITICAL/HIGH issues from 4.2.A (if any).
-   2. Improve adapter + docs quality (T1), validate (T3).
-   3. COMMIT: `git commit -m "refactor(reconcile): address review + polish adapter/docs/licensing"`
+### 4.3 [x] **[Adapter/Docs/Licensing - REFACTOR](plan/user-stories/03-json-format-adapter.md)**
+   1. Fix CRITICAL/HIGH issues from 4.2.A (if any). → None reported (no CRITICAL/HIGH).
+   2. Improve adapter + docs quality (T1), validate (T3). → Applied the two cheap LOW fixes from 4.2.A inline: `Decode` godoc input-size note + `source[%d]` array index in the version error. Third LOW (README illustrative block) is not a defect. Both modules green, gofmt/vet/lint clean.
+   3. COMMIT: `refactor(reconcile): address review + polish adapter/docs/licensing` (f6eee62)
    **Duration:** 2-4h
 
-### 4.4 [ ] **Phase 4 - DoD Validation**
-   - [ ] All 5 RED tests from 4.1 green
-   - [ ] `ExampleReconcile()` runs green; `go doc` renders it
-   - [ ] README documents full public surface (cross-checked vs `go doc`), install, quickstart, licensing
-   - [ ] `reconcile/LICENSE` (Apache 2.0) + `reconcile/LICENSE-COMMERCIAL.md` present; no enforcement code
-   - [ ] `go test ./reconcile/...` green; lint clean
+### 4.4 [x] **Phase 4 - DoD Validation**
+   - [x] All 5 RED tests from 4.1 green (12 adapter tests total — single/array decode, empty-non-nil, missing/wrong/malformed version rejection, versioned envelope, now-fallback, empty-arrays-present, byte-stability, golden fixture, no-path-leak)
+   - [x] `ExampleReconcile()` runs green (executes under `go test`); `go doc` renders the lifted `Reconcile(sources []Source, opts Options) Result` and the example surfaces on pkg.go.dev by convention
+   - [x] README documents full public surface (all 11 symbols cross-checked present), install (`go get`), quickstart (mirrors example), licensing section
+   - [x] `reconcile/LICENSE` (Apache 2.0, `Copyright 2026 Sam Estrin`, no `[yyyy]`/`[name]` tokens) + `reconcile/LICENSE-COMMERCIAL.md` present; no enforcement code (grep scan clean)
+   - [x] `go test ./reconcile/...` green; lint clean (golangci-lint 0 issues; gofmt clean); coverage library 97.0%, adapter 86.1% (both ≥80%)
    - Emit DoD report.
 
-### 4.5 [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   ```
+   Story-3/4/5 DoD Complete (Phase 4 Adapter, Docs & Licensing)
+   Auto: 5/5 | Story-Specific: reconcile-json/v1 decode+encode (single/array, byte-stable, no path leak, version-strict) + README (full surface/install/quickstart/licensing) + runnable ExampleReconcile + Apache 2.0 LICENSE + commercial placeholder (GitHub contact path, no-enforcement statement)
+   Manual Review: [x] Adversarial review passed (4.2.A — no CRITICAL/HIGH; 3 LOW, 2 fixed inline, 1 non-defect); library 97.0% cov, adapter 86.1% cov; stdlib-only (empty require, no go.sum)
+   ```
+
+### 4.5 [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase. Do NOT review inline.
@@ -610,11 +622,21 @@ From [plan/documentation/](plan/documentation/):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
-   | Severity | File:Line | Issue | Fix |
+   **Subagent gate findings (fresh-context hostile integrator, 2026-06-23):** No findings.
+
+   | Severity | File:Line | Issue | Disposition |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | No findings | - |
+
+   **Phase-4 gate verdict (all verified empirically by the subagent):**
+   - CONTRACT EXIT ✓ — `adapter/json/adapter.go` is a thin stdlib wrapper; decode strictly rejects `atcr-findings/v1` and requires `version`; `reconcile-json/v1` versioned independently; an embedder could replace it trivially.
+   - CONFIG SURFACE ✓ — `LICENSE` is verbatim Apache 2.0 with `Copyright 2026 Sam Estrin` (no `[yyyy]`/`[name]` tokens); `LICENSE-COMMERCIAL.md` is a disclaimed placeholder with reachable GitHub contact paths + explicit no-enforcement statement; README licensing links all resolve.
+   - INTEGRATION ✓ — adapter imports only `bytes`/`encoding/json`/`errors`/`fmt`/`time` + the library public API; no `internal/` or ATCR boundary coupling.
+   - PHASE-EXIT CONTRACT ✓ — `reconcile/go.mod` clean (no `require`, no `go.sum`); the exact Phase 5 CI command `cd ./reconcile && gofmt -l . && golangci-lint run && go test -race ./...` passes locally (0 lint issues).
+   - REGRESSION ✓ — both corpora green (root ATCR no FAIL; library `-race` green); Phase 4 is purely additive (new sub-package + docs + licenses), no existing reconciler behavior touched.
+   - Non-blocking note (not a finding): the golden `testdata/encode_golden.json` carries lowercase `"disagreement":"medium vs high"` because `sampleResult()` is a hand-built encoder fixture, not `Reconcile()` output — the live pipeline emits `MEDIUM vs HIGH` (README/example), no contract divergence.
+
+   **✅ Phase gate passed** (no CRITICAL/HIGH).
 
    **Action Required:**
    - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
