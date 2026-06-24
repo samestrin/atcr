@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestRenderDisagreements_RanksHighestTensionFirst(t *testing.T) {
 }
 
 func TestRenderDisagreements_GrayZoneShowsPositionsSideBySide(t *testing.T) {
-	clusters := []reconcile.AmbiguousCluster{{
+	clusters := []reclib.AmbiguousCluster{{
 		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
 		Findings: []reconcile.Finding{
 			{Severity: "HIGH", File: "g.go", Line: 7, Problem: "buffer overrun risk", Reviewer: "greta"},
@@ -111,8 +112,8 @@ func TestRenderDisagreements_ShowsVerificationSkepticSplit(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "v.go", Line: 3, Problem: "contested",
 			Reviewers: []string{"greta"}, Confidence: "MEDIUM",
-			Verification: &reconcile.Verification{
-				Verdict: reconcile.VerdictUnverifiable, Skeptic: "skeptic-a, skeptic-b", Notes: "disagreed"}},
+			Verification: &reclib.Verification{
+				Verdict: reclib.VerdictUnverifiable, Skeptic: "skeptic-a, skeptic-b", Notes: "disagreed"}},
 	}
 	df := reconcile.BuildDisagreements(findings, nil)
 	var buf bytes.Buffer
@@ -150,7 +151,7 @@ func TestRenderDisagreements_EscapesBackticksInFreeText(t *testing.T) {
 
 func TestRenderDisagreements_GrayZoneEscapesAndTruncates(t *testing.T) {
 	longProblem := strings.Repeat("A", 600)
-	clusters := []reconcile.AmbiguousCluster{{
+	clusters := []reclib.AmbiguousCluster{{
 		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
 		Findings: []reconcile.Finding{
 			{Severity: "HIGH", File: "g.go", Line: 7, Problem: "<script>alert(1)</script>buffer overrun risk", Reviewer: "gre`ta"},
@@ -160,8 +161,8 @@ func TestRenderDisagreements_GrayZoneEscapesAndTruncates(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "s.go", Line: 2, Problem: longProblem,
 			Reviewers: []string{"a"}, Confidence: "MEDIUM", Disagreement: "a`b",
-			Verification: &reconcile.Verification{
-				Verdict: reconcile.VerdictUnverifiable, Skeptic: "skep`tic", Notes: "disagreed"}},
+			Verification: &reclib.Verification{
+				Verdict: reclib.VerdictUnverifiable, Skeptic: "skep`tic", Notes: "disagreed"}},
 	}
 	df := reconcile.BuildDisagreements(findings, clusters)
 
