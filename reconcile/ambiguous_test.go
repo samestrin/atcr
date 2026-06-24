@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestAmbiguousID_StableAndOrderIndependent(t *testing.T) {
 	a := AmbiguousID("a.go", 10, "problem one", "problem two")
@@ -51,6 +54,19 @@ func TestHashBytes_StablePrefixedDigest(t *testing.T) {
 	hasPrefix(t, h, "sha256:", "prefixed")
 	eq(t, h, HashBytes([]byte("hello")), "deterministic")
 	notEq(t, h, HashBytes([]byte("world")), "different input differs")
+}
+
+// TestFinding_JSONMarshalable is a CI guard: AmbiguousHash returns "" (not panics)
+// on json.Marshal failure, but that path is only safe because all Finding and
+// AmbiguousCluster fields are JSON-serializable today.  If a chan/func/cyclic
+// field is ever added, this test fails in CI before a live panic can occur.
+func TestFinding_JSONMarshalable(t *testing.T) {
+	if _, err := json.Marshal(Finding{}); err != nil {
+		t.Fatalf("Finding must be JSON-marshalable (AmbiguousHash returns \"\" otherwise): %v", err)
+	}
+	if _, err := json.Marshal(AmbiguousCluster{}); err != nil {
+		t.Fatalf("AmbiguousCluster must be JSON-marshalable: %v", err)
+	}
 }
 
 // TestAmbiguousHash_Golden guards byte-stability of the canonical sidecar
