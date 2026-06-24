@@ -53,8 +53,12 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.12.2
-          working-directory: reconcile
-          args: --timeout 5m
+          working-directory: ./reconcile
+          # Pin the shared repo-root config explicitly (../.golangci.yml) instead
+          # of relying on golangci-lint's implicit upward-directory config walk, so
+          # the ruleset cannot be silently swapped by a stray reconcile/.golangci.yml
+          # or a future change to the action's config-resolution scope.
+          args: --timeout 5m --config ../.golangci.yml
 
       - name: Run Tests (race)
         run: go test -race ./...
