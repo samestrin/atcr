@@ -149,6 +149,9 @@ func (r Result) JSONFindings() []JSONFinding {
 			Reviewers:    m.Reviewers,
 			Confidence:   m.Confidence,
 			Disagreement: m.Disagreement,
+			// Verification pointer identity is intentionally preserved (not deep-copied)
+			// because gate.go IsFailing and debate cross-examination mutate the same
+			// block referenced by the merged finding.
 			Verification: m.Verification,
 			// FixWarning intentionally not copied: it is set by the verify fix phase
 			// (executor.go generateFixes) after reconcile, so the reconcile path owns
