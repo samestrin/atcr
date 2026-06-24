@@ -67,6 +67,9 @@ func Decode(data []byte) ([]reconcile.Source, error) {
 	if first == 0 {
 		return nil, errors.New("reconcile-json: empty input")
 	}
+	if first != '[' && first != '{' {
+		return nil, fmt.Errorf("reconcile-json: expected object or array, got %q", first)
+	}
 
 	var envelopes []decodeEnvelope
 	if first == '[' {
