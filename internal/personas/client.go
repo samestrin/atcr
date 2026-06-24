@@ -6,6 +6,7 @@
 package personas
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // RegistryBaseURL is the default community persona repository, raw content root.
@@ -46,10 +48,22 @@ func BaseURL() string {
 	return RegistryBaseURL
 }
 
+// fetchTimeout is the per-request deadline applied inside fetch. It is a
+// package-level variable so tests can lower it without affecting callers.
+var fetchTimeout = 30 * time.Second
+
+// fetchBodyLimit caps the response body size to guard against DoS via an
+// oversized community-repo response. 5 MB is well above any realistic persona
+// or index.json size.
+const fetchBodyLimit int64 = 5 * 1024 * 1024
+
 // fetch performs a GET against url and returns the body for a 2xx, notFound for
 // a 404, or a descriptive error otherwise. The body is always closed.
+// A context timeout of fetchTimeout is applied to guard against server hangs.
 func fetch(client HTTPClient, url string, notFound error) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +78,16 @@ func fetch(client HTTPClient, url string, notFound error) ([]byte, error) {
 	case resp.StatusCode < 200 || resp.StatusCode >= 300:
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	// Read at most fetchBodyLimit+1 bytes; if we get more the response is
+	// oversized and we reject it to prevent DoS via a multi-GB community body.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, fetchBodyLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > fetchBodyLimit {
+		return nil, fmt.Errorf("response body exceeds %d-byte limit", fetchBodyLimit)
+	}
+	return body, nil
 }
 
 // FetchPersonaYAML fetches <baseURL>/<name>.yaml from the community repo.

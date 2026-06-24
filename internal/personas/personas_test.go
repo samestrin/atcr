@@ -1,11 +1,13 @@
 package personas
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -349,4 +351,36 @@ func TestTestPersona_BuiltinResolves(t *testing.T) {
 func TestTestPersona_UnknownPersona(t *testing.T) {
 	_, err := TestPersona(t.TempDir(), "security/nope", stubRunner{})
 	require.Error(t, err)
+}
+
+// --- fetch timeout ----------------------------------------------------------
+
+func TestFetch_TimesOutOnSlowServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block until the client context is cancelled (e.g. due to timeout) so
+		// srv.Close() can complete without a 5-second hang.
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	old := fetchTimeout
+	fetchTimeout = 50 * time.Millisecond
+	defer func() { fetchTimeout = old }()
+
+	_, err := fetch(srv.Client(), srv.URL+"/test.yaml", errors.New("not found"))
+	require.Error(t, err, "fetch must return an error when the server does not respond")
+}
+
+// --- fetch body size limit --------------------------------------------------
+
+func TestFetch_RejectsOversizedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := make([]byte, fetchBodyLimit+2)
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	_, err := fetch(srv.Client(), srv.URL+"/big.yaml", errors.New("not found"))
+	require.Error(t, err, "fetch must reject a body larger than fetchBodyLimit")
+	assert.Contains(t, err.Error(), "limit")
 }
