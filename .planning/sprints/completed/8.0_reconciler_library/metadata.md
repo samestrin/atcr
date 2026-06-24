@@ -85,3 +85,5 @@
 ### Changes
 - **Files Changed:** 131 (branch vs main; 104 non-`.planning` code/CI/docs files)
 - **Commits:** 22 on `feature/8.0_reconciler_library` (4 this session) — branch not yet pushed; `/finalize-sprint` will push + open the PR
+
+**Merge Commit:** 559edab461665adc890a28d11788edf2274f4387
