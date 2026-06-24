@@ -20,10 +20,16 @@ func AmbiguousID(file string, line int, problemA, problemB string) string {
 	if hi < lo {
 		lo, hi = hi, lo
 	}
-	h := sha256.Sum256([]byte(file + "\x00" + strconv.Itoa(line) + "\x00" + lo + "\x00" + hi))
+	// Length-prefix each field so a NUL byte inside a PROBLEM text cannot alias
+	// the field separator.  Format: "<len>:<value>|" repeated for each field.
+	var buf bytes.Buffer
+	for _, f := range []string{file, strconv.Itoa(line), lo, hi} {
+		fmt.Fprintf(&buf, "%d:%s|", len(f), f)
+	}
+	h := sha256.Sum256(buf.Bytes())
 	// 128 bits: a collision would alias two distinct gray pairs to one id and let
 	// one merge decision collapse the wrong pair — the one outcome the design
-	// forbids — so spend the bytes.
+	// forbids.
 	return "amb-" + hex.EncodeToString(h[:16])
 }
 
