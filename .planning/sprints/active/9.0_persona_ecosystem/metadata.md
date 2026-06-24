@@ -52,9 +52,9 @@
 
 _Updated by `/execute-sprint` during execution._
 
-**Current Phase:** Phase 2 complete — gated stop before Phase 3
-**Phases Complete:** 2 / 6
-**Last Checkpoint:** 2026-06-24 — Phase 2 (T8 language-aware SelectEligibleSkeptics two-partition routing) green; gate passed (PASS on all 5 checklist items). Commit: 28aadd4 (green; refactor folded — no delta). TD-003/004/005 captured. Coverage verify 95.6%.
+**Current Phase:** Phase 3 complete — gated stop before Phase 4 (— END SPRINT A —)
+**Phases Complete:** 3 / 6
+**Last Checkpoint:** 2026-06-24 — Phase 3 (T1 bonus personas sentinel/tracer/idiomatic + fixtures) green; gate passed (PASS on all 5 checklist items, zero findings). `Names()` returns 9; personas coverage 88.2%; render path network-free. Adversarial 3.2.A: HIGH (Get registry gate) + MEDIUM (fixture test tautology) fixed inline; TD-006 (LOW) captured. Commits: 73a… RED, GREEN, refactor (gate Get + sound fixtures).
 
 ---
 

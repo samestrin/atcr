@@ -370,7 +370,7 @@ From [documentation/README.md](plan/documentation/README.md):
 
 > **Atomic-commit rule:** Rename `TestNames_ReturnsAllSix` → `TestNames_ReturnsAllNine` (count 6 → 9) as a standalone RED commit; then add the 3 `.md` files + 3 fixtures + `names` slice update **all in one GREEN commit** to avoid a CI failure window. **Fixture content rules:** synthetic values only (`FAKE_API_KEY_00000000`), mode 0644, no live network in rendering path.
 
-### 3.1 [ ] **[Bonus Personas - RED](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+### 3.1 [x] **[Bonus Personas - RED](plan/user-stories/01-bonus-built-in-domain-personas.md)**
    Write comprehensive failing tests, verify they fail correctly (commit RED standalone):
    - Rename `TestNames_ReturnsAllSix` → `TestNames_ReturnsAllNine` (expect 9)
    - `TestGet_BonusPersonasNonEmpty`, `TestBonusPersonas_TemplateRenders`
@@ -378,7 +378,7 @@ From [documentation/README.md](plan/documentation/README.md):
    COMMIT (RED): `git commit -m "test(personas): expect 9 personas + bonus fixtures (red)"`
    **Files:** `personas/personas_test.go` | **Duration:** 0.5 day
 
-### 3.2 [ ] **[Bonus Personas - GREEN](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+### 3.2 [x] **[Bonus Personas - GREEN](plan/user-stories/01-bonus-built-in-domain-personas.md)**
    Minimal code (T1), verify all (T2), single atomic COMMIT:
    - `personas/personas.go` — append `"sentinel"`, `"tracer"`, `"idiomatic"` to `names` (after `"dax"`, before `"otto"`)
    - `personas/sentinel.md` — security: OWASP Top 10, SQL/command injection, secrets leakage, insecure defaults (follow `bruce.md` template structure exactly)
@@ -390,7 +390,7 @@ From [documentation/README.md](plan/documentation/README.md):
    COMMIT (GREEN, atomic): `git commit -m "feat(personas): add sentinel/tracer/idiomatic bonus personas (green)"`
    **Files:** `personas/personas.go`, `personas/*.md`, `personas/testdata/*.patch` | **Duration:** 1.5 days
 
-### 3.2.A [ ] **[Bonus Personas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+### 3.2.A [x] **[Bonus Personas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-bonus-built-in-domain-personas.md)**
    **Changed Files:** `personas/personas.go`, `personas/sentinel.md`, `personas/tracer.md`, `personas/idiomatic.md`, `personas/testdata/*.patch`, `personas/personas_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. No memory of the implementation in 3.2. Do NOT review inline.
@@ -408,24 +408,23 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review — verified independently):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | personas/personas.go:27-33 | `Get(name)` reads `files.ReadFile(name+".md")` directly without gating on the `names` registry — serves `_base` or any embedded `.md`, bypassing the registry-as-source-of-truth invariant. (Reviewer's `../x` traversal premise is false — embed.FS is sandboxed and `agentName` is path-validated upstream at `registry/persona.go:49`.) | Gate `Get` on `names` membership before reading; `_base` stays served by `Base()`. → fixed in 3.3 |
+   | MEDIUM | personas/personas_test.go:88-101 | `fixtureTest` asserts the category keyword anywhere in the rendered output, but `{{.Payload}}` injects the whole fixture diff — `idiomatic_fixture.patch` already contains "error", so `TestIdiomaticFixture` passed from the payload, not the template (tautological). | Assert the category against the raw persona template (`Get(name)`), not the payload-injected render; keep fixture load + clean-render checks. → fixed in 3.3 |
+   | LOW | personas/personas.go:1-2,19 | Doc comments hardcode the persona count ("nine") in prose; can drift silently. Matches pre-existing convention (prior comment said "six"). | Documentation nit; count is asserted by `TestNames_ReturnsAllNine`. → TD-006 |
 
    **Action Required:**
-   - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   - HIGH (Get registry gate) → fixed inline in 3.3. MEDIUM (test tautology) → fixed inline in 3.3 (test-soundness refactor). LOW deferred → `tech-debt-captured.md` (TD-006).
 
-### 3.3 [ ] **[Bonus Personas - REFACTOR](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+### 3.3 [x] **[Bonus Personas - REFACTOR](plan/user-stories/01-bonus-built-in-domain-personas.md)**
    1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
    2. Review persona template quality; ensure all variable slots match `bruce.md` exactly; maintain green (T1), validate (T3)
    3. COMMIT: `git commit -m "refactor(personas): address review + template polish"`
    **Duration:** 0.5 day
 
-### 3.4 [ ] **Phase 3 — DoD Validation**
+### 3.4 [x] **Phase 3 — DoD Validation**
    - `go test ./personas/...` green including all 3 fixture tests
    - Confirm no outbound connections in test run
    - DoD report (Story-01 complete):
@@ -435,7 +434,7 @@ From [documentation/README.md](plan/documentation/README.md):
      Manual Review: [ ] Code reviewed
      ```
 
-### 3.LAST [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+### 3.LAST [x] **Phase 3 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 3
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase's implementation. Do NOT review inline.
@@ -454,16 +453,12 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent gate findings (fresh-context hostile integrator):** PASS on all 5 checklist items (CONTRACT EXIT — `Names()` returns 9 in canonical order; CONFIG SURFACE — fixtures synthetic `FAKE_API_KEY_00000000`, mode 0644, intent documented; INTEGRATION — bonus personas usable by Phase 4 `list` via `Names()`/`Get()`, `init` roster derives from `personas.Names()` so all 9 install; PHASE-EXIT CONTRACT — `TestNames_ReturnsAllNine` stable; REGRESSION — original 6 render, `go test ./...`/`go build`/`go vet`/`golangci-lint` all clean).
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | NONE | - | Phase gate passed | - |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action:** No CRITICAL/HIGH/MEDIUM/LOW findings. **Phase gate passed.**
    **Duration:** 15-30 min
    **— END SPRINT A (Phases 1-3) —**
 
