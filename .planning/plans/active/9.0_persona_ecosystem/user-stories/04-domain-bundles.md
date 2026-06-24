@@ -30,15 +30,23 @@
 - **Relevant:** Reduces first-time setup from four commands (and knowledge of which four to run) to one command, directly lowering the adoption barrier for framework-focused teams and making ATCR immediately deployable as a stack-level tool.
 - **Time-bound:** Delivered within Sprint B alongside T2 completion; both bundles are functional before Sprint B's cumulative adversarial review.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [04-01](../acceptance-criteria/04-01-clean-bundle-install.md) | Clean Bundle Installation | Integration |
+| [04-02](../acceptance-criteria/04-02-partial-install-skip.md) | Partial Bundle Install Skip Behavior | Integration |
+| [04-03](../acceptance-criteria/04-03-unknown-bundle-error.md) | Unknown Bundle Error Handling | Unit |
+| [04-04](../acceptance-criteria/04-04-manifest-parse-validation.md) | Bundle Manifest Parse Validation | Unit |
+| [04-05](../acceptance-criteria/04-05-bundle-test-coverage.md) | Bundle Test Coverage in bundles_test.go | Unit |
+
+## Original Criteria Overview
 
 1. Running `atcr personas install bundle/django` on a clean config directory installs all four declared personas (`django-orm`, `python-types`, `security/owasp`, `security/secrets`) with a success message listing each installed persona by name.
 2. Running `atcr personas install bundle/django` when some bundle members are already installed skips already-present entries, installs the remainder, and reports the per-persona outcome (installed vs. already present) without error.
 3. Running `atcr personas install bundle/unknown` exits non-zero with a clear error message (`unknown bundle: "unknown"`) and installs nothing.
 4. The bundle manifest YAML format (`name`, `description`, `personas` list) is validated at parse time; a manifest missing required fields causes `bundles.go` to return a descriptive parse error rather than a nil-pointer panic.
 5. `internal/personas/bundles_test.go` covers: successful expansion of both bundles, unknown bundle error, partial-install skip behavior, and manifest parse validation — all passing under `go test ./internal/personas/...`.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/9.0_persona_ecosystem/`_
 
 ## Technical Considerations
 

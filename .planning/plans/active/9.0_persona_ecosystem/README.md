@@ -6,7 +6,7 @@ Expand ATCR's reviewer panel beyond the 6 generalist built-in personas by shippi
 ## Workflow Status
 - [x] **Plan Created**
 - [x] **User Stories** — `/create-user-stories @.planning/plans/active/9.0_persona_ecosystem/`
-- [ ] **Acceptance Criteria** — `/create-acceptance-criteria @.planning/plans/active/9.0_persona_ecosystem/`
+- [x] **Acceptance Criteria** — `/create-acceptance-criteria @.planning/plans/active/9.0_persona_ecosystem/`
 - [ ] **Design Sprint** — `/design-sprint @.planning/plans/active/9.0_persona_ecosystem/`
 - [ ] **Sprint Plan** — `/create-sprint @.planning/plans/active/9.0_persona_ecosystem/`
 

@@ -30,13 +30,19 @@
 - **Relevant:** Domain-specific personas are the primary lever for vertical market adoption identified in the Plan 9.0 goal; shipping them with the binary means zero-friction access for the target user segments (security, performance, Go).
 - **Time-bound:** Delivered within Sprint A alongside T8, before Sprint B begins.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [01-01](../acceptance-criteria/01-01-names-registry-returns-nine.md) | Names Registry Returns Nine | Unit |
+| [01-02](../acceptance-criteria/01-02-bonus-persona-prompt-content.md) | Bonus Persona Prompt Content | Unit |
+| [01-03](../acceptance-criteria/01-03-fixture-ci-tests-no-network.md) | Fixture-Based CI Tests (No Network) | Integration |
+
+## Original Criteria Overview
 
 1. `personas.Names()` returns a slice of exactly 9 strings including `sentinel`, `tracer`, and `idiomatic` in the canonical order (`bruce`, `greta`, `kai`, `mira`, `dax`, `sentinel`, `tracer`, `idiomatic`, `otto`).
 2. Each bonus persona's prompt content covers its declared domain: `sentinel` addresses OWASP Top 10 / injection / secrets leakage; `tracer` addresses N+1 queries / memory leaks / allocation hot paths; `idiomatic` addresses Go error handling / goroutine leaks / stdlib misuse.
 3. A CI-passing test in `personas/personas_test.go` verifies each persona produces at least one finding in its expected category when applied to its fixture file in `personas/testdata/` — no live network calls, no external services.
-
-_Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/9.0_persona_ecosystem/`_
 
 ## Technical Considerations
 

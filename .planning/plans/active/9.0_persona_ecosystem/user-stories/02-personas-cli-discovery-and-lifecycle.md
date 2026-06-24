@@ -30,7 +30,18 @@
 - **Relevant:** Removes the primary adoption barrier for vertical-market teams — teams gain domain review coverage without reading internal source code or crafting raw YAML.
 - **Time-bound:** Delivered within Sprint B (after Sprint A lands T8 and T1); all subcommands functional and tested before Sprint B PR is opened.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [02-01](../acceptance-criteria/02-01-install-persona-from-community-repo.md) | Install Persona from Community Repo | Unit + Integration |
+| [02-02](../acceptance-criteria/02-02-list-installed-personas.md) | List Installed Personas | Unit + Integration |
+| [02-03](../acceptance-criteria/02-03-search-community-repo-index.md) | Search Community Repo Index | Unit + Integration |
+| [02-04](../acceptance-criteria/02-04-remove-installed-persona.md) | Remove Installed Persona | Unit + Integration |
+| [02-05](../acceptance-criteria/02-05-test-persona-fixture.md) | Test Persona via Fixture Runner | Unit + Integration |
+| [02-06](../acceptance-criteria/02-06-upgrade-installed-personas.md) | Upgrade Installed Personas | Unit + Integration |
+
+## Original Criteria Overview
 
 1. `atcr personas install <name>` fetches the named persona from the configured repo URL, writes the YAML to `~/.config/atcr/personas/<name>.yaml`, and exits 0 on success; exits non-zero with a descriptive error if the persona is not found or the fetch fails.
 2. `atcr personas list` prints all installed personas (built-in + community) with name, version, and source columns; `--scores` flag deferred to Story 5 (T6).

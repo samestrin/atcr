@@ -30,7 +30,17 @@
 - **Relevant:** Language-matched skeptic routing directly improves verification quality for Go (and future language-scoped) personas, which is a primary value driver for vertical market adoption in this plan.
 - **Time-bound:** Completed and verified green within Sprint A, before T1 bonus personas land on top of the new `Language` field.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [03-01](../acceptance-criteria/03-01-agentconfig-language-field.md) | AgentConfig Language Field | Unit |
+| [03-02](../acceptance-criteria/03-02-select-eligible-skeptics-routing.md) | SelectEligibleSkeptics Language Routing | Unit |
+| [03-03](../acceptance-criteria/03-03-pipeline-caller-update.md) | Pipeline Caller Signature Update | Integration |
+| [03-04](../acceptance-criteria/03-04-silent-fallback-no-match.md) | Silent Fallback When No Language Match | Unit |
+| [03-05](../acceptance-criteria/03-05-registry-yaml-backward-compatibility.md) | Registry YAML Backward Compatibility | Unit + Integration |
+
+## Original Criteria Overview
 
 1. `AgentConfig` has a `Language []string \`yaml:"language,omitempty"\`` field; `validateAgent` rejects entries containing empty strings or control characters; `applyDefaults` canonicalizes entries by trimming whitespace, stripping a single leading dot, and lowercasing — matching the existing `MinSeverity`/`Role` canonicalization pattern.
 2. `SelectEligibleSkeptics` accepts a 4th `scores map[string]float64` parameter; after `sort.Strings(names)`, it partitions names into language-matched and unmatched using `normalizeExt(filepath.Ext(finding.File))`, rebuilds names as `append(matched, unmatched...)`, and applies the existing `n`-cap — tie-breaking within the matched partition by score descending then alphabetical; a nil or absent score entry falls back to alphabetical only.
