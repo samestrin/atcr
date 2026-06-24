@@ -64,6 +64,27 @@ func TestReconcile_SkippedSourcesEmptyFromLibrary(t *testing.T) {
 	isTrue(t, res.Summary.SkippedSources != nil, "always serializes [] not null")
 }
 
+// TestSortMerged_StrictTotalOrderOnColocatedDistinctFindings asserts that two
+// distinct findings sharing the same severity+file+line produce identical
+// sort output regardless of input order.  Without a Problem tiebreak, SliceStable
+// depends on input order for equal elements — a future dedupeCluster refactor
+// could silently reorder output.
+func TestSortMerged_StrictTotalOrderOnColocatedDistinctFindings(t *testing.T) {
+	a := Merged{Finding: Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "alpha problem"}}
+	b := Merged{Finding: Finding{Severity: "HIGH", File: "a.go", Line: 1, Problem: "beta problem"}}
+
+	order1 := []Merged{a, b}
+	sortMerged(order1)
+
+	order2 := []Merged{b, a}
+	sortMerged(order2)
+
+	if order1[0].Problem != order2[0].Problem || order1[1].Problem != order2[1].Problem {
+		t.Errorf("sortMerged is not a strict total order: same findings in different input order yield different output\n  order1[0]=%q, order2[0]=%q",
+			order1[0].Problem, order2[0].Problem)
+	}
+}
+
 func TestSortMerged_NormalizesMixedCaseSeverity(t *testing.T) {
 	m := []Merged{
 		{Finding: Finding{Severity: "low", File: "a.go", Line: 1}},
