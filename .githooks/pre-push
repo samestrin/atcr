@@ -2,7 +2,9 @@
 # Pre-push: the slower CI gates, run once per push (too slow for every commit).
 #   1. golangci-lint run
 #   2. go test -race ./...
-# Mirrors the GitHub "Go Lint & Test" workflow so failures surface locally first.
+#   3. (cd reconcile && go test ./...)  — mirrors ci.yml reconcile-module job
+# Mirrors the GitHub "Go Lint & Test" and reconcile-module workflows so failures
+# surface locally first.
 
 fail=0
 
@@ -19,6 +21,12 @@ fi
 echo "pre-push: go test -race ./..."
 if ! go test -race ./...; then
   echo "pre-push FAILED: go test -race"
+  fail=1
+fi
+
+echo "pre-push: (cd reconcile && go test ./...)"
+if ! (cd reconcile && go test ./...); then
+  echo "pre-push FAILED: reconcile go test"
   fail=1
 fi
 
