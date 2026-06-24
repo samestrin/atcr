@@ -1,6 +1,28 @@
 # Sprint Knowledge Manifest
 # Tracks knowledge entries created during and referenced by this sprint
 
-created: []
+created:
+  - mem-2026-06-23-379a91  # clarifications Q1: levenshtein stays in internal/stream
+  - mem-2026-06-23-564c96  # clarifications Q2: path-validation stamps on JSONFinding, not &Merged.Finding
+  - mem-2026-06-23-3f8fcf  # clarifications Q3: BuildDisagreements/mergeVerification stay ATCR-internal; mergeVerification correction
+  - mem-2026-06-23-dbcdff  # clarifications Q4: library Reconcile produces empty SkippedSources; ATCR stamps post-call
+  - mem-2026-06-23-e40cef  # clarifications Q5: Phase 3 executes literal task list only; TD-006 deferred
+  - mem-2026-06-23-26073c  # clarifications Q6: lib.go wrapper satisfies AC 01-04 Scenario 3 adapter-routing intent; grep guard as DoD proxy
+  - mem-2026-06-23-8c1180  # clarifications (resolve-td): db.go:100 is a golden-corpus synthetic false positive; how to identify TD entries from test harness output
+  - mem-2026-06-23-cc3d10  # clarifications (resolve-td Q3): confidence.go verdict switch already case-insensitive; resolved-in-place
+  - mem-2026-06-23-39ac8c  # clarifications (resolve-td Q5): AmbiguousCluster.Similarity is advisory-only; schema change deferred (golden fixture contract)
+  - mem-2026-06-23-4200cb  # clarifications (resolve-td Q6): delete jaccard(), rewrite TestJaccard_* through classify()
+  - mem-2026-06-23-0c6030  # clarifications (resolve-td Q2): ambiguous-bytes cache holds []byte on ATCR-internal Result; 3 synchronized sites
+  - mem-2026-06-23-c481b4  # clarifications (resolve-td Q3): TD-006 rollout order + import-cycle constraint; inside-out deletion sequence
+  - mem-2026-06-23-8b369a  # clarifications (resolve-td): diff-smell test-only flag is false positive when assertion corrects wrong strings; structural exclusion sufficient
+  - mem-2026-06-23-68514f  # clarifications (resolve-td): auth.go:42 is synthetic test-fixture data, not a real finding; delete from TD README (same pattern as db.go:100)
+  - mem-2026-06-23-bbb9d2  # clarifications (resolve-td Q1): adapter.go:62 JSONFinding collapse already done via inline; three maps are NOT equivalent; TD-006 is single-session close, not epic deferral
+  - mem-2026-06-23-29882b  # clarifications (resolve-td Q2): discover.Source→reconcile.Source conversion at lib.go:133-160 correct in place; defer cleanup with TD-006, not independently
+  - mem-2026-06-23-31472b  # clarifications (resolve-td Q1): reconcile/adapter/json Decode unbounded-input risk — close as-is; godoc contract sufficient; option (a) incoherent on []byte; option (b) violates lift-as-is
+  - mem-2026-06-23-f09706  # clarifications (resolve-td Q2): diff_smell test_only is false positive for testing-category TD items where FIX says "Add tests"; TestDecode_EdgeCases passes green with no production changes
+  - mem-2026-06-23-211017  # clarifications (resolve-td Q1): diff_smell test_only false positive when fix is comment-only godoc change; TD-005 Merge/Verification non-propagation is resolved
+  - mem-2026-06-23-a7db73  # clarifications (resolve-td Q2): SeverityRank exported map vs accessor — existing doc-block + lib.go defensive copy already close mutation concern; WONT_FIX
+  - mem-2026-06-23-1a2edd  # clarifications (resolve-td Q2): conflated TD row (AmbiguousCluster Problem vs branch-protection Fix mis-assigned); [x] for Problem side — code correct at reconcile/dedupe.go:27; sprint-plan.md:312 task 2.2.7 is the only stale doc artifact
+  - mem-2026-06-23-6d8756  # clarifications (resolve-td Q3): branch-protection [/] deferred; dod-completion-summary.md:17-30 is authoritative tracking artifact; no CI YAML comment or additional source-tree note needed
 
 referenced: []

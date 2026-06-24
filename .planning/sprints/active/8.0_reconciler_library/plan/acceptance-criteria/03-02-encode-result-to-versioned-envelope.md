@@ -40,7 +40,7 @@
 **Edge Case 1: Empty findings array**
 - **Given** a `Result` with `Findings: []Finding{}` (or nil per lift contract)
 - **When** encoded
-- **Then** `"findings":[]` (or absent per the agreed `omitempty` policy on the slice — assert the agreed shape)
+- **Then** `"findings":[]` is present — the top-level `findings` array is NOT `omitempty`; `omitempty` applies only to the per-finding `disagreement`/`verification` sub-fields. This guarantees byte-stability per AC 03-03
 
 **Edge Case 2: Finding with nil Verification**
 - **Given** a `Finding` whose `*Verification` is `nil`
@@ -55,15 +55,15 @@
 **Edge Case 4: Empty ambiguous list**
 - **Given** a `Result` with `Ambiguous: nil` or `[]AmbiguousCluster{}`
 - **When** encoded
-- **Then** `"ambiguous":[]` or absent per the agreed `omitempty` policy on the slice
+- **Then** `"ambiguous":[]` is present — the top-level `ambiguous` array is NOT `omitempty`, matching the `findings` array policy in Edge Case 1
 
 ## Error Conditions
 **Error Scenario 1: Marshal failure on non-serializable Finding**
 - Error message: `json: error calling MarshalJSON for type reconcile.Finding: ...`
 - HTTP status / error code: N/A (library call returns `error`); the adapter surfaces the underlying `json.Marshal` error unchanged
 
-**Error Scenario 2: Nil Result**
-- Given a `nil *reconcile.Result` (or zero-value `Result` if the API takes a value), when encoded, then the adapter either returns an error or emits the canonical empty envelope — assert the agreed contract explicitly
+**Error Scenario 2: Zero-value Result**
+- Encode takes `reconcile.Result` by value (the lifted `Reconcile` returns `Result`, not `*Result`), so there is no nil-pointer case. A zero-value `Result{}` encodes to the canonical empty envelope — `{"version":"reconcile-json/v1","reconciled_at":<RFC3339>,"findings":[],"summary":{...zero...},"ambiguous":[]}` — and never returns an error
 
 ## Performance Requirements
 - **Response Time:** Encoding 1,000 findings completes in < 50ms on commodity hardware (stdlib `encoding/json` baseline).
@@ -81,17 +81,18 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/adapter/json/...`)
-- [ ] No linting errors (`go vet`, `golangci-lint`)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/adapter/json/...`)
+- [x] No linting errors (`go vet`, `golangci-lint`)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] Output envelope carries `"version":"reconcile-json/v1"`
-- [ ] `reconciled_at` is RFC3339 and sourced from `Options.ReconciledAt` when set
-- [ ] `findings[]` field names match the library `Finding` JSON struct tags exactly
-- [ ] `summary` and `ambiguous[]` are present in the output
-- [ ] Golden fixture matches byte-for-byte (after `reconciled_at` substitution)
+- [x] Output envelope carries `"version":"reconcile-json/v1"`
+- [x] `reconciled_at` is RFC3339 and sourced from `Options.ReconciledAt` when set
+- [x] `findings[]` field names match the library `Finding` JSON struct tags exactly
+- [x] `summary` and `ambiguous[]` are present in the output
+- [x] Golden fixture matches byte-for-byte (after `reconciled_at` substitution)
+- [x] Zero-value `Result{}` encodes to the canonical empty envelope (`findings:[]`, `ambiguous:[]`), never an error
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Package doc states the output envelope shape and the `Options.ReconciledAt` precedence rule
+- [x] Code reviewed and approved
+- [x] Package doc states the output envelope shape and the `Options.ReconciledAt` precedence rule

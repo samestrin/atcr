@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-23-07e864
-question: "Should the reconciler library absorb internal/stream, or define its own Finding type and have ATCR adapt at the boundary?"
+id: mem-2026-06-23-39ac8c
+question: "Is AmbiguousCluster.Similarity on the dedup decision path, and is changing it from float64 to an integer ratio acceptable?"
 created: 2026-06-23
 last_retrieved: ""
-sprints: []
-files: [internal/stream/fileindex.go, internal/stream/validate.go, internal/stream/severity.go, internal/stream/levenshtein.go, internal/reconcile/merge.go, internal/reconcile/cluster.go]
-tags: [clarifications, epic-8.0_reconciler_library, architecture, stream-dependency, finding-type]
+sprints: [8.0_reconciler_library]
+files: [reconcile/dedupe.go, reconcile/ambiguous.go]
+tags: [clarifications, sprint-8.0_reconciler_library, architecture, reconcile/dedupe.go, determinism]
 retrievals: 0
 status: active
-type: clarifications
+type: clarifications /resolve-td 2026-06-23
 ---
 
-# Should the reconciler library absorb internal/stream, or def
+# Is AmbiguousCluster.Similarity on the dedup decision path, a
 
 ## Decision
 
-Define a clean Finding type in the library; adapt at the boundary (option a). stream is not pure: fileindex.go and validate.go import internal/metrics (ATCR observability), so absorbing stream wholesale drags that dependency into the public library. The two genuinely portable pieces — severity.go (NormalizeSeverity + SeverityRank, stdlib-only) and levenshtein.go (pure algorithm) — should move INTO the library. The library's Finding type needs all 9 wire-format fields: Severity, File, Line, Problem, Fix, Category, EstMinutes, Evidence, Reviewer/Reviewers, Confidence. Path-validation fields (PathValid, PathWarning, PathSuggestion) stay in the ATCR adapter. merge.go:30-36 already defensively copies stream.SeverityRank into its own reconcile.SeverityRank, suggesting the package was designed to tolerate some separation.
+AmbiguousCluster.Similarity (float64, dedupe.go:31) is ADVISORY ONLY — for display and tests. The merge decision uses exclusively integer cross-multiply at dedupe.go:148–153 (inter*10 >= union*7, inter*10 >= union*4) and never reads sim. The guard comment at dedupe.go:143–146 documents this boundary explicitly. Changing the field type to an integer ratio would change the public API and break the ambiguous.json wire format, invalidating TestGoldenCorpus_ByteIdentical (a binding sprint contract). The schema change is deferred until a planned breaking version that retires golden fixtures. Correct resolution: extend the comment and close the TD item as comment-only.
 
 ## Rationale
 
@@ -27,9 +27,5 @@ Define a clean Finding type in the library; adapt at the boundary (option a). st
 
 ## Code Reference
 
-- internal/stream/fileindex.go
-- internal/stream/validate.go
-- internal/stream/severity.go
-- internal/stream/levenshtein.go
-- internal/reconcile/merge.go
-- internal/reconcile/cluster.go
+- reconcile/dedupe.go
+- reconcile/ambiguous.go

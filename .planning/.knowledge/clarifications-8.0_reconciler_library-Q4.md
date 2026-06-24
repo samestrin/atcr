@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-23-5a092e
-question: "For the reconciler library extraction, which pieces are public API vs ATCR-internal? Is the Verification type cleanly ATCR-internal?"
+id: mem-2026-06-23-dbcdff
+question: "How does library Reconcile populate Summary.SkippedSources/SkippedSourceCount when library Source has no SkippedFiles (Sprint 8.0)?"
 created: 2026-06-23
 last_retrieved: ""
-sprints: []
-files: [internal/reconcile/emit.go, internal/reconcile/merge.go, internal/reconcile/disagree.go, internal/reconcile/gate.go, internal/reconcile/cluster.go, internal/reconcile/validate.go]
-tags: [clarifications, epic-8.0_reconciler_library, architecture, scope, api-boundary, verification]
+sprints: [8.0_reconciler_library]
+files: [reconcile/source.go, internal/reconcile/discover.go, internal/reconcile/reconcile.go]
+tags: [clarifications, sprint-8.0_reconciler_library, architecture, SkippedSources, boundary-adapter, Summary, Source]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# For the reconciler library extraction, which pieces are publ
+# How does library Reconcile populate Summary.SkippedSources/S
 
 ## Decision
 
-gate.go, validate.go, and emit.go's I/O layer (Emit, RunReconcile, ReadReconciledFindings, renderers) correctly stay ATCR-internal. However, Verification / VerdictConfirmed/Refuted/Unverifiable / JSONFinding are NOT cleanly ATCR-internal: Verification is embedded in Merged (the output of Merge() at merge.go:63), mergeVerification() implements verdict-precedence logic inside the cluster-merge algorithm (merge.go:409-443), and BuildDisagreements reads f.Verification to classify radar items (disagree.go:132,211,225). These must either travel with the library (become public API surface) or be decoupled via an interface/opaque type before extraction. stream.Finding is also a forced dependency for Cluster(), Merge(), and DedupeCluster() — both entanglements must be resolved in Phase 0 before extraction can compile.
+It doesn't — the library always produces SkippedSources=[] and SkippedSourceCount=0. This is already implemented: reconcile/source.go (Phase 1) has no SkippedFiles field and an explicit comment confirming this is by design. ATCR's adapter or RunReconcile stamps the real skipped-source values onto Result.Summary after Reconcile returns. The library Summary type carries SkippedSources/SkippedSourceCount fields (lifted as-is from internal/reconcile), so ATCR can write to them post-call. summary.json is preserved byte-for-byte because the fields still exist in output — they are populated one layer up by ATCR. Phase 2 must implement the post-Reconcile stamp in the ATCR adapter, reading from ATCR-internal Source.SkippedFiles.
 
 ## Rationale
 
@@ -27,9 +27,6 @@ gate.go, validate.go, and emit.go's I/O layer (Emit, RunReconcile, ReadReconcile
 
 ## Code Reference
 
-- internal/reconcile/emit.go
-- internal/reconcile/merge.go
-- internal/reconcile/disagree.go
-- internal/reconcile/gate.go
-- internal/reconcile/cluster.go
-- internal/reconcile/validate.go
+- reconcile/source.go
+- internal/reconcile/discover.go
+- internal/reconcile/reconcile.go

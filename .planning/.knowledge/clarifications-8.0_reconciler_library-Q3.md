@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-23-d7f042
-question: "When extracting the reconciler into a standalone library, should the existing internal API be lifted as-is or reshaped to the epic's proposed clean API?"
+id: mem-2026-06-23-6d8756
+question: "Branch-protection required status checks deferred as external action — should source-tree files (CI YAML, dod-completion-summary) be modified when marking [/]?"
 created: 2026-06-23
 last_retrieved: ""
-sprints: []
-files: [internal/reconcile/reconcile.go, internal/reconcile/merge.go, internal/reconcile/gate.go, internal/reconcile/emit_test.go, internal/reconcile/gate_test.go]
-tags: [clarifications, epic-8.0_reconciler_library, architecture, scope, api-design]
+sprints: [8.0_reconciler_library]
+files: [.planning/sprints/active/8.0_reconciler_library/dod-completion-summary.md, .github/workflows/ci.yml, .github/workflows/reconcile-module.yml]
+tags: [clarifications, sprint-8.0_reconciler_library, process, CI-CD, branch-protection, resolve-td, dod-completion-summary]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# When extracting the reconciler into a standalone library, sh
+# Branch-protection required status checks deferred as externa
 
 ## Decision
 
-Lift the existing API as-is (option a). The epic's proposed clean API (Reconcile returning *Result, error; Options{LineTolerance, SimilarityThreshold}; ReconciledFinding) is incompatible with the working code: the real signature is Reconcile(sources, opts) Result (value return, no error), Options carries {ReconciledAt, Partial, Merges, Root}, and output type is Merged (embeds stream.Finding + *Verification). There are 14+ test call sites using Options.ReconciledAt and asserting on Merged/Verification — all would break under the clean API. Lift as-is first (AC#3 satisfied on day one); do the clean-API reshaping as a follow-on epic once the extraction boundary is stable. The epic's own reconciliation note acknowledged: "The current plan assumes Result can be lifted as-is; it cannot without untangling these first."
+Mark the TD row [/] (deferred). No source-tree change is needed beyond the TD table marking when dod-completion-summary.md already contains the complete manual step. In this sprint, dod-completion-summary.md:17-30 names both incomplete DoD items (AC 01-06, AC 06-02), explains they are GitHub UI repo-admin actions (not source changes), confirms CI deliverables are complete and verified, and gives the exact branch-protection step (add "Go Lint & Test / Go Lint & Test", "Go Lint & Test / Reconcile Module Test", and "Reconcile Module CI" as required status checks on the main protection rule). Do NOT add pending-action TODO comments to the CI YAML files — they create a second tracking location that must be updated when the action is done. dod-completion-summary.md is the designated tracking artifact; the TD row cites it. The two DoD items (AC 01-06 and AC 06-02) are the same single GitHub UI action; one [/] marking closes both.
 
 ## Rationale
 
@@ -27,8 +27,6 @@ Lift the existing API as-is (option a). The epic's proposed clean API (Reconcile
 
 ## Code Reference
 
-- internal/reconcile/reconcile.go
-- internal/reconcile/merge.go
-- internal/reconcile/gate.go
-- internal/reconcile/emit_test.go
-- internal/reconcile/gate_test.go
+- .planning/sprints/active/8.0_reconciler_library/dod-completion-summary.md
+- .github/workflows/ci.yml
+- .github/workflows/reconcile-module.yml

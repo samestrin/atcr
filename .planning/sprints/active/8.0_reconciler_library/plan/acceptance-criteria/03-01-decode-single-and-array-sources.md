@@ -36,7 +36,7 @@
 **Edge Case 1: Source with empty findings array**
 - **Given** `{"version":"reconcile-json/v1","source":"empty","findings":[]}`
 - **When** decoded
-- **Then** returns `[]Source` of length 1 with `Findings` being a non-nil empty slice (or nil per the library lift contract — assert the agreed shape)
+- **Then** returns `[]Source` of length 1 with `Findings` being a non-nil empty slice (`[]Finding{}`, never nil), consistent with the always-present `findings` array in the encode envelope (AC 03-02 Edge Case 1)
 
 **Edge Case 2: Leading whitespace before first byte**
 - **Given** input prefixed with spaces, newlines, or a UTF-8 BOM
@@ -75,17 +75,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/adapter/json/...`)
-- [ ] No linting errors (`go vet`, `golangci-lint`)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/adapter/json/...`)
+- [x] No linting errors (`go vet`, `golangci-lint`)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] Single-object input yields `[]Source` of length 1 with correct field mapping
-- [ ] Array input yields `[]Source` of length N preserving order
-- [ ] Unknown fields are ignored (no `DisallowUnknownFields`)
-- [ ] Wrong or missing `version` returns an error
-- [ ] Malformed JSON returns an error without panic
+- [x] Single-object input yields `[]Source` of length 1 with correct field mapping
+- [x] Array input yields `[]Source` of length N preserving order
+- [x] Unknown fields are ignored (no `DisallowUnknownFields`)
+- [x] Wrong or missing `version` returns an error
+- [x] Malformed JSON returns an error without panic
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Package doc states the `reconcile-json/v1` schema and its independence from `atcr-findings/v1`
+- [x] Code reviewed and approved
+- [x] Package doc states the `reconcile-json/v1` schema and its independence from `atcr-findings/v1`

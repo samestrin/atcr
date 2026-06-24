@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-23-da16ce
-question: "When extracting an internal Go package into a standalone module, should it be a nested module inside the same repo or a genuinely separate repository?"
+id: mem-2026-06-23-211017
+question: "diff_smell test_only gate fires on a comment-only production change — should the item be re-attempted or treated as resolved?"
 created: 2026-06-23
 last_retrieved: ""
-sprints: []
-files: [go.mod, internal/reconcile/reconcile.go, internal/reconcile/merge.go, internal/reconcile/emit.go]
-tags: [clarifications, epic-8.0_reconciler_library, architecture, process, module-extraction]
+sprints: [8.0_reconciler_library]
+files: [reconcile/merge.go, reconcile/merge_test.go, reconcile/finding.go, reconcile/reconcile_test.go]
+tags: [clarifications, sprint-8.0_reconciler_library, testing, process, diff_smell, TD-005, resolve-td]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# When extracting an internal Go package into a standalone mod
+# diff_smell test_only gate fires on a comment-only production
 
 ## Decision
 
-Use a nested module (subdirectory with its own go.mod + a replace directive in the root go.mod) for the extraction phase. Creating a separate repo is a hard-to-reverse action that should follow the extraction work, not precede it. A replace directive is trivially dropped once the module is ready to publish externally. In the reconciler case: internal/reconcile has deep entanglements with internal/stream, internal/atomicfs, and the Verification struct — those can only be resolved while working in the same codebase. A nested reconcile/go.mod ships under a single PR and CI run.
+The diff_smell `test_only` verdict can be a false positive when the only production-code artifact is a comment/godoc change. In the TD-005 case (reconcile/merge.go:48-49), the `Merge` godoc was updated with "Input Verification blocks are intentionally NOT propagated: Verification is stamped post-reconcile by the caller after the verify stage resolves verdicts." — satisfying the TD-005 "document the intent" resolution path. The gate fires because it classifies comment-only edits as non-functional. Resolution: ensure the production-doc change is committed in the same diff window as any accompanying contract-guard test; the gate should then see both a production-source change and a test change and classify the fix correctly. The behavior itself (Verification not propagated through Merge) is intentional at the ATCR boundary — verify stage stamps verdicts post-reconcile onto JSONFinding, where *Verification pointer identity is preserved by the adapter.
 
 ## Rationale
 
@@ -27,7 +27,7 @@ Use a nested module (subdirectory with its own go.mod + a replace directive in t
 
 ## Code Reference
 
-- go.mod
-- internal/reconcile/reconcile.go
-- internal/reconcile/merge.go
-- internal/reconcile/emit.go
+- reconcile/merge.go
+- reconcile/merge_test.go
+- reconcile/finding.go
+- reconcile/reconcile_test.go
