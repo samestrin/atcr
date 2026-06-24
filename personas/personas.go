@@ -1,4 +1,4 @@
-// Package personas ships the nine embedded default reviewer personas (six
+// Package personas ships the embedded default reviewer personas (six
 // generalists plus three domain bonus personas) and the shared base template.
 // `atcr init` installs editable copies; the prompt resolution chain falls back
 // to these embedded versions when no file overrides them.
@@ -16,7 +16,7 @@ var files embed.FS
 // (security, performance, Go idioms), with the style reviewer last.
 var names = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
 
-// Names returns the nine embedded persona names in canonical order.
+// Names returns the embedded persona names in canonical order.
 func Names() []string {
 	out := make([]string, len(names))
 	copy(out, names)
