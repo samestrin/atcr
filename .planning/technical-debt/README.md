@@ -7,11 +7,11 @@ This file is a staging area for small technical debt items discovered during dev
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
-| HIGH | 5 | 2 | 2 |
-| MEDIUM | 38 | 24 | 26 |
-| LOW | 36 | 22 | 48 |
+| HIGH | 2 | 2 | 5 |
+| MEDIUM | 35 | 24 | 29 |
+| LOW | 32 | 22 | 52 |
 
-**Last Modified:** 2026-06-24 | **Open Items:** 79 | **Deferred Items:** 48 | **Resolved Items:** 76 | **Total Items:** 203
+**Last Modified:** 2026-06-24 | **Open Items:** 69 | **Deferred Items:** 48 | **Resolved Items:** 86 | **Total Items:** 203
 
 ## Directory Structure
 
