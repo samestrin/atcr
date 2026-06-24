@@ -4,6 +4,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -55,7 +56,11 @@ func Resolve(name string) ([]string, error) {
 	if !isValidBundleName(name) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownBundle, name)
 	}
-	data, err := bundleFS.ReadFile("bundles/" + name + ".yaml")
+	// isValidBundleName above is the traversal guard for this path; the
+	// path.Join below cleans any residual separator ambiguity, but the guard
+	// must run before any ReadFile call — do not add ReadFile callers that
+	// bypass isValidBundleName.
+	data, err := bundleFS.ReadFile(path.Join("bundles", name) + ".yaml")
 	if err != nil {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownBundle, name)
 	}
@@ -107,10 +112,14 @@ type BundleOutcome struct {
 }
 
 // InstallBundle resolves bundleName and installs each member into destDir,
-// skipping members already present (idempotent) and continuing past a member
-// that fails so one bad download never aborts the rest. It returns one
-// BundleOutcome per member in manifest order. An unknown bundle returns
-// (nil, ErrUnknownBundle) before any filesystem access.
+// skipping members already present (idempotent for non-concurrent callers)
+// and continuing past a member that fails so one bad download never aborts
+// the rest. It returns one BundleOutcome per member in manifest order.
+// An unknown bundle returns (nil, ErrUnknownBundle) before any filesystem access.
+//
+// Concurrent calls targeting the same destDir are not supported: the
+// AlreadyPresent check and the subsequent Install write are not atomic, so
+// two concurrent callers may both proceed to install the same member.
 func InstallBundle(client HTTPClient, baseURL, bundleName, destDir string) ([]BundleOutcome, error) {
 	members, err := Resolve(bundleName)
 	if err != nil {
@@ -135,6 +144,9 @@ func InstallBundle(client HTTPClient, baseURL, bundleName, destDir string) ([]Bu
 			outcomes = append(outcomes, out)
 			continue
 		}
+		// Install recomputes personaPath internally; the double traversal
+		// check is intentional — Install does not accept a pre-resolved path,
+		// and the first personaPath call above is needed for AlreadyPresent.
 		if ierr := Install(client, baseURL, member, destDir); ierr != nil {
 			out.Err = ierr
 		}
