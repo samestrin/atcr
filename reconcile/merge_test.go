@@ -167,3 +167,19 @@ func TestMaxEstMinutes_NegativeEstimates(t *testing.T) {
 func TestMaxEstMinutes_EmptyGroup(t *testing.T) {
 	eq(t, MaxEstMinutes(nil), 0, "empty group returns 0")
 }
+
+// TestMerge_VerificationNotPropagated documents the TD-005 disposition: input
+// Verification blocks are intentionally dropped by Merge; the caller stamps
+// Verification post-reconcile after the verify stage resolves verdicts.  This
+// test guards against accidentally propagating Verification in a future refactor.
+func TestMerge_VerificationNotPropagated(t *testing.T) {
+	v := &Verification{Verdict: "CONFIRMED", Skeptic: "greta"}
+	group := []Finding{
+		{File: "a.go", Line: 1, Problem: "p", Fix: "f", Reviewer: "greta", Verification: v},
+		{File: "a.go", Line: 1, Problem: "p", Fix: "f", Reviewer: "kai"},
+	}
+	merged := Merge(group)
+	if merged.Verification != nil {
+		t.Errorf("Merge must not propagate Verification (TD-005: stamped post-reconcile by caller), got %+v", merged.Verification)
+	}
+}

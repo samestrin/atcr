@@ -73,6 +73,27 @@ func TestSortMerged_NormalizesMixedCaseSeverity(t *testing.T) {
 	eq(t, NormalizeSeverity(m[0].Severity), "HIGH", "high sorts first despite lowercase")
 }
 
+// TestReconcile_VerificationDroppedByMerge feeds a Finding with a populated
+// Verification through the full Reconcile pipeline and asserts the output
+// finding's Verification is nil (TD-005: Verification is stamped post-reconcile
+// by the caller; the library must not propagate it through Merge).
+func TestReconcile_VerificationDroppedByMerge(t *testing.T) {
+	v := &Verification{Verdict: "CONFIRMED", Skeptic: "greta"}
+	sources := []Source{{
+		Name: "s1",
+		Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "p", Fix: "f", Category: "sec", Reviewer: "greta", Verification: v},
+		},
+	}}
+	result := Reconcile(sources, Options{})
+	if len(result.Findings) != 1 {
+		t.Fatalf("expected 1 merged finding, got %d", len(result.Findings))
+	}
+	if result.Findings[0].Verification != nil {
+		t.Errorf("Reconcile must not carry Verification through merge (TD-005), got %+v", result.Findings[0].Verification)
+	}
+}
+
 func TestAllFindings_FlattensInSourceOrder(t *testing.T) {
 	sources := []Source{
 		{Name: "a", Findings: []Finding{mf("LOW", "a.go", 1, "p", "f", "s", 1, "e", "r")}},
