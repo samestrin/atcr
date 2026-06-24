@@ -9,6 +9,12 @@ package reconcile
 // ATCR-internal extensions are deliberately NOT part of this type: they stay in
 // ATCR's boundary adapter so the public library schema is independent of
 // ATCR-specific concerns.
+//
+// Serialization policy: the nine core wire fields (Severity..Evidence) are
+// always emitted so a bare input finding has a stable shape. Reconciled-only
+// fields (Reviewer, Reviewers, Confidence, Disagreement, Verification) use
+// omitempty so a fully populated reconciled finding omits zero-value sidecar
+// fields, while a bare input finding still emits its zero-value core fields.
 type Finding struct {
 	Severity     string        `json:"severity"`
 	File         string        `json:"file"`
