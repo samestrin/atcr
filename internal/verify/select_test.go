@@ -320,3 +320,26 @@ func TestSelectEligibleSkeptics_CarriesConfig(t *testing.T) {
 	assert.Equal(t, "openai", got[0].Config.Provider)
 	assert.Equal(t, "gpt-4o", got[0].Config.Model)
 }
+
+// AC 03-01: normalizeExt canonicalizes a file extension to the same dotless,
+// lowercase form AgentConfig.Language entries are canonicalized to, so both
+// sides of the language-routing match compare identically. It strips a single
+// leading dot and lowercases; a dotless input is already canonical; an empty
+// input stays empty.
+func TestNormalizeExt_WithAndWithoutDot(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{".go", "go"},
+		{"go", "go"},
+		{".GO", "go"},
+		{"GO", "go"},
+		{".TS", "ts"},
+		{"", ""},
+		{".tar.gz", "tar.gz"}, // only the single leading dot is stripped
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, normalizeExt(tt.in), "normalizeExt(%q)", tt.in)
+	}
+}

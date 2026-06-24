@@ -33,6 +33,16 @@ type Skeptic struct {
 	Provider registry.Provider
 }
 
+// normalizeExt canonicalizes a finding's file extension (e.g. ".go", ".GO") to
+// the same dotless, lowercase token AgentConfig.Language entries are
+// canonicalized to at load. It delegates to registry.NormalizeLanguageToken —
+// the single shared canonicalizer — so the two sides of a language-routing match
+// (a finding's extension and a skeptic's declared languages) can never drift out
+// of the same form. Phase 2 consumes this when partitioning skeptics by language.
+func normalizeExt(ext string) string {
+	return registry.NormalizeLanguageToken(ext)
+}
+
 // SelectEligibleSkeptics returns up to n skeptic agents eligible to verify
 // finding, deterministically ordered by agent name.
 //

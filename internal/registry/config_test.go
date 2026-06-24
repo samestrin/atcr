@@ -654,3 +654,65 @@ func TestValidate_AgentPayloadErrorPreservesRawValue(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "' bogus '")
 }
+
+// AC 03-01 (Edge Cases 1-3, Error Scenarios 1-2): validateAgent rejects empty
+// Language entries (including whitespace-only, which the guard trims before
+// comparing — mirroring the Scope guard) and entries containing control
+// characters. Clean entries, a nil slice, and an empty slice all pass. The
+// agent supplies a valid provider/model so the only possible error source is the
+// Language field.
+func TestAgentConfig_LanguageField_Validation(t *testing.T) {
+	tests := []struct {
+		name     string
+		language []string
+		wantErr  bool
+	}{
+		{"clean dotless lowercase", []string{"go", "ts"}, false},
+		{"nil slice", nil, false},
+		{"empty slice", []string{}, false},
+		{"empty string entry", []string{"go", ""}, true},
+		{"whitespace-only entry", []string{"  "}, true},
+		{"NUL control char", []string{"go\x00"}, true},
+		{"line separator U+2028", []string{"go\u2028"}, true},
+		{"paragraph separator U+2029", []string{"go\u2029"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &Registry{
+				Providers: map[string]Provider{"p": {APIKeyEnv: "KEY"}},
+				Agents:    map[string]AgentConfig{"a": {Provider: "p", Model: "m", Language: tt.language}},
+			}
+			errs := r.validateAgent("a", r.Agents["a"])
+			if tt.wantErr {
+				assert.NotEmpty(t, errs, "expected a validation error for language=%v", tt.language)
+			} else {
+				assert.Empty(t, errs, "expected no validation error for language=%v", tt.language)
+			}
+		})
+	}
+}
+
+// AC 03-01 (Scenarios 1-2): applyDefaults canonicalizes each Language entry —
+// trim whitespace, strip a single leading dot, lowercase — so ".Go", " .TS ",
+// and "GO" all collapse to their dotless lowercase form. Canonicalization is
+// idempotent: running applyDefaults again yields the same result.
+func TestAgentConfig_LanguageField_Canonicalization(t *testing.T) {
+	r := &Registry{Agents: map[string]AgentConfig{
+		"a": {Provider: "p", Model: "m", Language: []string{".Go", " .TS ", "GO"}},
+	}}
+	r.applyDefaults()
+	assert.Equal(t, []string{"go", "ts", "go"}, r.Agents["a"].Language)
+
+	r.applyDefaults()
+	assert.Equal(t, []string{"go", "ts", "go"}, r.Agents["a"].Language, "canonicalization must be idempotent")
+}
+
+// AC 03-05 (partial, Scenario 1): a registry whose agents have no `language` key
+// loads cleanly and leaves AgentConfig.Language nil — the field addition is
+// backward-compatible.
+func TestRegistryExamples_BackwardCompat(t *testing.T) {
+	reg, err := LoadRegistry(writeRegistry(t, validRegistry))
+	require.NoError(t, err)
+	assert.Nil(t, reg.Agents["bruce"].Language, "agent without a language key loads with nil Language")
+	assert.Nil(t, reg.Agents["greta"].Language, "agent without a language key loads with nil Language")
+}

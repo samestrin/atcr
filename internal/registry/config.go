@@ -304,6 +304,19 @@ type AgentConfig struct {
 	MinSeverity string   `yaml:"min_severity,omitempty"` // drop findings below this floor (CRITICAL|HIGH|MEDIUM|LOW)
 	MaxFindings *int     `yaml:"max_findings,omitempty"` // cap on findings (severity-sorted truncate); nil = unlimited
 
+	// Language declares the file extensions this agent specializes in, enabling
+	// language-aware skeptic routing (Epic 9.0): when a finding's file extension
+	// matches one of these, the agent is preferred over an unscoped skeptic in
+	// SelectEligibleSkeptics. Optional and backward-compatible — nil/empty means
+	// no constraint, so a pre-9.0 registry loads unchanged. Entries are
+	// canonicalized at load (trim → strip a single leading dot → lowercase) via
+	// NormalizeLanguageToken so "go"/".go"/" .GO " all store as "go" and compare
+	// against a finding's normalized extension in one form. validateAgent rejects
+	// empty entries and control characters (mirroring the Scope guard); it does
+	// NOT enforce a known-language allow-list, so third-party persona authors stay
+	// free to declare any extension.
+	Language []string `yaml:"language,omitempty"` // file extensions this agent specializes in (routing)
+
 	// Retry/backoff tunables (Epic 4.6) — the per-agent tier, overriding the
 	// resolved global settings via EffectiveMaxRetries/EffectiveInitialBackoffMs.
 	// Pointers so an explicit 0 max_retries survives and an unset field inherits
@@ -677,6 +690,18 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 			errs = append(errs, agentErrf(name, "agent '%s': scope entries must not contain control characters", name))
 		}
 	}
+	// Language entries (Epic 9.0) follow the Scope guard: reject blank entries (a
+	// YAML typo, not "no constraint" \u2014 that is an absent field) and entries with
+	// control characters. TrimSpace before the empty check so a whitespace-only
+	// entry is rejected even though validate() runs before applyDefaults trims it.
+	// No known-language allow-list \u2014 third-party authors may declare any ext.
+	for i, s := range a.Language {
+		if strings.TrimSpace(s) == "" {
+			errs = append(errs, agentErrf(name, "agent '%s': language entry at index %d must not be empty", name, i))
+		} else if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+			errs = append(errs, agentErrf(name, "agent '%s': language entry '%s' contains invalid characters", name, s))
+		}
+	}
 	return errs
 }
 
@@ -690,6 +715,20 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// NormalizeLanguageToken canonicalizes a language/extension token to the form
+// used for language-aware skeptic routing (Epic 9.0): surrounding whitespace
+// trimmed, a single leading dot stripped, and lowercased. It is the single
+// shared canonicalizer — applyDefaults runs every AgentConfig.Language entry
+// through it at load, and the verify package's normalizeExt delegates to it for
+// a finding's file extension — so both sides of a routing match can never drift
+// out of the same canonical form. Mirrors the load-time canonicalization of
+// MinSeverity and Role.
+func NormalizeLanguageToken(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, ".")
+	return strings.ToLower(s)
 }
 
 // applyDefaults fills optional agent fields: persona defaults to the agent
@@ -721,6 +760,13 @@ func (r *Registry) applyDefaults() {
 		// comparisons (ScopeFocus rendering, prompt injection) use stable tokens.
 		for i, s := range a.Scope {
 			a.Scope[i] = strings.TrimSpace(s)
+		}
+		// Canonicalize language entries (Epic 9.0): trim → strip a single leading
+		// dot → lowercase, so a declared "go"/".go"/" .GO " all store as "go" and
+		// match a finding's normalized file extension in one form. nil/empty stays
+		// unchanged (no constraint).
+		for i, s := range a.Language {
+			a.Language[i] = NormalizeLanguageToken(s)
 		}
 		// Canonicalize role to lowercase so downstream exact-match comparisons
 		// (AgentsByRole, the Stage 3/4 routing) see a stable token regardless of
