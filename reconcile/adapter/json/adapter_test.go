@@ -215,6 +215,57 @@ func TestDecode_NULByteNotReportedAsEmpty(t *testing.T) {
 	}
 }
 
+func TestDecode_EdgeCases(t *testing.T) {
+	okSingle := `{"version":"reconcile-json/v1","source":"a","findings":[{"severity":"high","file":"a.go","problem":"p"}]}`
+	okArray := `[{"version":"reconcile-json/v1","source":"a","findings":[{"severity":"high","file":"a.go","problem":"p"}]}]`
+
+	tests := []struct {
+		name      string
+		in        []byte
+		wantErr   bool
+		wantInErr string
+	}{
+		{
+			name: "BOM-prefixed object",
+			in:   append([]byte{0xEF, 0xBB, 0xBF}, []byte(okSingle)...),
+		},
+		{
+			name: "BOM-prefixed array",
+			in:   append([]byte{0xEF, 0xBB, 0xBF}, []byte(okArray)...),
+		},
+		{
+			name: "leading whitespace before array",
+			in:   append([]byte("  \n  "), []byte(okArray)...),
+		},
+		{
+			name:      "array wrong version at index 1",
+			in:        []byte(`[{"version":"reconcile-json/v1","source":"a","findings":[]},{"version":"wrong/v99","source":"b","findings":[]},{"version":"reconcile-json/v1","source":"c","findings":[]}]`),
+			wantErr:   true,
+			wantInErr: "source[1]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Decode(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Decode returned nil error; want error")
+				}
+				if tt.wantInErr != "" && !strings.Contains(err.Error(), tt.wantInErr) {
+					t.Errorf("error = %q, want it to contain %q", err, tt.wantInErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Decode returned unexpected error: %v", err)
+			}
+			if len(got) == 0 {
+				t.Errorf("Decode returned empty sources")
+			}
+		})
+	}
+}
+
 func TestEncode_VersionedEnvelope(t *testing.T) {
 	out, err := Encode(sampleResult(), reconcile.Options{ReconciledAt: fixedTime})
 	if err != nil {
