@@ -44,6 +44,9 @@ type Merged struct {
 // reviewer-prefixed concatenation; CONFIDENCE from the distinct-reviewer count.
 // The location is the first finding's file/line (the group is co-located within
 // the cluster window).
+//
+// Input Verification blocks are intentionally NOT propagated: Verification is
+// stamped post-reconcile by the caller after the verify stage resolves verdicts.
 func Merge(group []Finding) Merged {
 	if len(group) == 0 {
 		return Merged{} // defensive: callers never pass an empty group
