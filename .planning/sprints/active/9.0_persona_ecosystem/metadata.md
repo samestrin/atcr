@@ -52,9 +52,9 @@
 
 _Updated by `/execute-sprint` during execution._
 
-**Current Phase:** Phase 4 complete — gated stop before Phase 5 (Sprint B, Story 02 done)
-**Phases Complete:** 4 / 6
-**Last Checkpoint:** 2026-06-24 — Phase 4 (T2 `atcr personas` CLI) green; gate passed (PASS on all 5 checklist items, no CRITICAL/HIGH/MEDIUM). New `internal/personas` package (install/list/search/remove/test/upgrade) + `cmd/atcr/personas.go` 6 subcommands; root now 15 subcommands; `registry.ValidateAgentYAML` validates fetched YAML before write; path-traversal guarded; zero live network (httptest). Coverage: internal/personas 84.4%, cmd/atcr 84.1%. Adversarial 4.2.A/4.4.A: no CRITICAL/HIGH; TD-007…TD-012 captured (2 MEDIUM, 4 LOW). Commits: 82e808c GREEN(core), d5d31c9 GREEN(cmd, atomic 14→15), e623c39 refactor(test gaps). golang.org/x/mod added for semver.
+**Current Phase:** Phase 5 complete — gated stop before Phase 6 (Sprint B, Stories 04 + 05 done)
+**Phases Complete:** 5 / 6
+**Last Checkpoint:** 2026-06-24 — Phase 5 (T5 domain bundles + T6 corroboration scores) green; gate passed (no CRITICAL/HIGH; regression suite clean). T5: `internal/personas/bundles.go` resolver over `go:embed bundles/*.yaml` (django + go-production manifests), typed `ErrUnknownBundle`, `InstallBundle` partial-skip/idempotent loop, `personas install bundle/<name>` CLI delegation. T6: `personas list --scores` joins per-reviewer corroboration rates (lowercase key) to a CORROBORATION column, sort numeric-desc then n/a-alphabetical, "no data" footer; per-reviewer aggregation collapses (reviewer,model) rows. Adversarial 5.2.A: no CRITICAL/HIGH (dedup fixed inline per AC 04-04 EC3). Adversarial 5.4.A: 1 HIGH (multi-model score last-wins) fixed inline with regression test + 2 MEDIUM/1 LOW fixed inline. Gate 5.LAST: TD-013 (MEDIUM key-convention divergence), TD-014/TD-015 (LOW) captured. Coverage: internal/personas 86.9%, cmd/atcr 84.0% (both ≥80%). Commits: (T5 green) domain bundles, (T6 green) list --scores, (refactor) per-reviewer aggregation + dedup.
 
 ---
 

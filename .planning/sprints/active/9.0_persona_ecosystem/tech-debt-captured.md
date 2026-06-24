@@ -85,3 +85,24 @@
 **Issue:** The `test` subcommand's default runner (`noFixtureRunner`) always reports `HasFixture: false`, so in production `atcr personas test <name>` prints "No fixture defined" for every persona. AC 02-05 Scenarios 1-3 (actually executing a persona's fixture and mirroring pass/fail in the exit code) require an LLM-backed fixture runner that is not implemented in this phase. Delivered and tested here: the CLI surface, the exit-code-mirroring contract, and the injectable `FixtureRunner` seam (exercised via a stub in `cmd/atcr/personas_test.go`).
 **Why accepted:** A real fixture runner needs the review/LLM invocation path (out of Phase 4's file scope — internal/personas + cmd only) and must stay network-free in CI. The injectable seam means wiring the real runner later is additive, no API change. AC 02-05's DoD items that are mechanically verifiable (exit-code mirroring, no-fixture message, injectable/no-live-LLM) pass via the stub.
 **Fix in:** A follow-up that reuses Story 1's fixture mechanism (or the verify/fanout invocation path) to build a production `FixtureRunner`, then set it as the `personasFixtureRunner` default. No CLI signature change required.
+
+## TD-013 — Score-map key convention diverges between T6 (list --scores) and T8 (skeptic routing) (MEDIUM)
+**Origin:** Phase 5, task 5.LAST gate review, 2026-06-24
+**File:** cmd/atcr/personas.go (reviewerCorroborationRates) / internal/verify/select.go (SelectEligibleSkeptics score lookup)
+**Issue:** Both T6 and T8 carry a per-reviewer corroboration rate in a `map[string]float64`, but key it differently: T6 lowercases the reviewer name (`strings.ToLower(row.Reviewer)`), while T8 looks up by the raw registry agent name (case-sensitive). The epic clarification intended the two to share one carrier shape; a future wiring of `reviewerCorroborationRates` into `SelectEligibleSkeptics` would silently miss any mixed-case agent name.
+**Why accepted:** No live bug today — the Phase 2 clarification deliberately deferred T8 lowercasing to Phase 5/T6, and `SelectEligibleSkeptics` is still called with `nil` scores (`internal/verify/pipeline.go`); scores are wired only into `personas list`, not into verify routing. The divergence becomes relevant only if/when corroboration scores are wired into skeptic routing.
+**Fix in:** Whatever work wires scorecard scores into `SelectEligibleSkeptics` — pick one canonical key form (lowercase on both sides, or registry-name on both sides) and document it at both carrier sites.
+
+## TD-014 — sortScoredPersonas correctness couples to an upstream no-NaN invariant (LOW)
+**Origin:** Phase 5, task 5.LAST gate review, 2026-06-24
+**File:** internal/personas/list.go (sortScoredPersonas / ListWithScores)
+**Issue:** The comparator assumes finite rates; a NaN rate would violate strict-weak ordering. The guarantee lives in `scorecard.ratio` (div-by-zero → 0), a package `internal/personas` does not import — rates arrive via an injected `map[string]float64`. A non-CLI caller could pass NaN and break the sort.
+**Why accepted:** The only production caller (the CLI) sources finite rates from the scorecard, which guards div-by-zero; the precondition is documented at the function. Sprint policy defers LOW.
+**Fix in:** Future — guard NaN at the `ScoredPersona` boundary in `ListWithScores` (treat NaN as nil/"n/a") so the package is self-protecting regardless of caller.
+
+## TD-015 — InstallBundle recomputes personaPath redundantly with Install (LOW)
+**Origin:** Phase 5, task 5.LAST gate review, 2026-06-24
+**File:** internal/personas/bundles.go (InstallBundle) / internal/personas/install.go (Install)
+**Issue:** `InstallBundle` computes `personaPath(destDir, member)` for its pre-existence check, then `Install` recomputes `personaPath` for the same member — the traversal guard runs twice per bundle member.
+**Why accepted:** Harmless and correct (both call sites use the identical guard); the double-compute is effectively defense-in-depth on a non-hot path (bundle install is network-bound per member). Sprint policy defers LOW.
+**Fix in:** Optional future cleanup — pass the resolved path into a lower-level install helper, or accept the double-compute and document it as intentional.

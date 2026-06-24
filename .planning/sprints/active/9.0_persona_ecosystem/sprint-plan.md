@@ -653,12 +653,12 @@ From [documentation/README.md](plan/documentation/README.md):
 
 ### Element A — T5 Domain Bundles
 
-### 5.1 [ ] **[Domain Bundles - RED](plan/user-stories/04-domain-bundles.md)**
+### 5.1 [x] **[Domain Bundles - RED](plan/user-stories/04-domain-bundles.md)**
    Write failing tests, verify they fail correctly:
    - `bundles_test.go` — `TestBundleResolve_Django`, `_GoProduction`, `_Unknown` (typed `ErrUnknownBundle`), `_PartialInstallSkip`, `_ManifestParseMissingFields`
    **Files:** `internal/personas/bundles_test.go` | **Duration:** 0.5 day
 
-### 5.2 [ ] **[Domain Bundles - GREEN](plan/user-stories/04-domain-bundles.md)**
+### 5.2 [x] **[Domain Bundles - GREEN](plan/user-stories/04-domain-bundles.md)**
    Minimal code (T1), verify all (T2), COMMIT:
    - `internal/personas/bundles.go` — `Resolve(name string) ([]string, error)`; `go:embed bundles/*.yaml`; typed `ErrUnknownBundle`; parse-time validation (missing `name`/`personas` → error)
    - `internal/personas/bundles/django.yaml` — members: `django-orm`, `python-types`, `security/owasp`, `security/secrets`
@@ -667,7 +667,7 @@ From [documentation/README.md](plan/documentation/README.md):
    COMMIT: `git commit -m "feat(personas): domain bundles + bundle/ install delegation (green)"`
    **Files:** `internal/personas/bundles.go`, `internal/personas/bundles/*.yaml`, `internal/personas/install.go` | **Duration:** 0.75 day
 
-### 5.2.A [ ] **[Domain Bundles - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-domain-bundles.md)**
+### 5.2.A [x] **[Domain Bundles - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-domain-bundles.md)**
    **Changed Files:** `internal/personas/bundles.go`, `internal/personas/bundles/*.yaml`, `internal/personas/install.go`, `internal/personas/bundles_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 5.2. Do NOT review inline.
@@ -685,32 +685,33 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | internal/personas/bundles.go InstallBundle | Duplicate members in a manifest are not deduplicated → a dup is installed once then reported `AlreadyPresent`, a misleading outcome. | AC 04-04 EC3 makes dedup the install loop's responsibility → fixed inline in 5.5 (order-preserving dedup + test). |
+   | MEDIUM | internal/personas/client.go:67 | Unbounded `io.ReadAll` on the community response. | Already captured Phase 4 → TD-007 (not a Phase 5 file; no re-capture). |
+   | LOW | internal/personas/bundles.go Resolve | `isValidBundleName` pre-check is redundant with the embed `ReadFile` gate; the comment claiming the lookup is "the only gate" contradicts the pre-check. | Comment corrected in 5.5; pre-check kept as defense in depth. |
+   | LOW | internal/personas/install.go:21-23 | Defensive `bundle/` reject is not a typed sentinel (test asserts only "not ErrPersonaNotFound"). | By design — unreachable in practice (members come from trusted embedded manifests). No action. |
 
    **Action Required:**
-   - CRITICAL/HIGH found → List issues for 5.5, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   - No CRITICAL/HIGH found → **Adversarial review passed; proceed.**
+   - One MEDIUM is AC-mandated (04-04 EC3 dedup) → fixed inline in 5.5; one MEDIUM is prior TD-007; LOWs are doc-fix/by-design.
 
 ### Element B — T6 Corroboration Scores
 
-### 5.3 [ ] **[Corroboration Scores - RED](plan/user-stories/05-corroboration-feedback.md)**
+### 5.3 [x] **[Corroboration Scores - RED](plan/user-stories/05-corroboration-feedback.md)**
    Write failing tests, verify they fail correctly:
    - `list_test.go` — `TestPersonasList_WithScores_HasRate`, `_NaForMissing`, `_SortOrder` (numeric desc, then n/a alphabetical), `_BaselineNoRegression`
    **Files:** `internal/personas/list_test.go` | **Duration:** 0.5 day
 
-### 5.4 [ ] **[Corroboration Scores - GREEN](plan/user-stories/05-corroboration-feedback.md)**
+### 5.4 [x] **[Corroboration Scores - GREEN](plan/user-stories/05-corroboration-feedback.md)**
    Minimal code (T1), verify all (T2), COMMIT:
    - `internal/personas/list.go` — extend `List()` or add `ListWithScores(map[string]float64)`; join on `strings.ToLower` of reviewer name; format rate `"XX.X%"` or `"n/a"`; sort numeric desc then n/a alphabetical
    - `cmd/atcr/personas.go` — wire `--scores` boolean flag to `list`; call `scorecard.Aggregate()` when set; pass map to list logic; `--scores` shows `n/a` for all + footer note when scorecard file absent
    COMMIT: `git commit -m "feat(personas): list --scores corroboration display (green)"`
    **Files:** `internal/personas/list.go`, `cmd/atcr/personas.go` | **Duration:** 0.75 day
 
-### 5.4.A [ ] **[Corroboration Scores - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-corroboration-feedback.md)**
+### 5.4.A [x] **[Corroboration Scores - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-corroboration-feedback.md)**
    **Changed Files:** `internal/personas/list.go`, `cmd/atcr/personas.go`, `internal/personas/list_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 5.4. Do NOT review inline.
@@ -728,34 +729,37 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | HIGH | cmd/atcr/personas.go loadPersonasScores | `scorecard.Aggregate` groups by (reviewer, model); a reviewer that ran under multiple models yields multiple rows sharing one Reviewer name, and the loop let the last row overwrite → arbitrary/misleading rate. | **Fixed inline in 5.5:** extracted `reviewerCorroborationRates` that sums corroborated/raised across models per lowercase reviewer and recomputes the ratio. Regression test `TestReviewerCorroborationRates_CollapsesModels`. |
+   | MEDIUM | cmd/atcr/personas.go footer | Footer keyed on raw record count (`hasData`) → "records present but no reviewer scores" showed an all-n/a table with no footer. | **Fixed inline in 5.5:** dropped `hasData`; footer now fires on `len(rates) == 0`, covering absent/empty/no-reviewer-rows uniformly. |
+   | MEDIUM | internal/personas/list.go FormatRate | Clamp branches (<0, >1) untested. | **Fixed inline in 5.5:** added clamp tests (`-0.5`→`0.0%`, `1.5`→`100.0%`). |
+   | LOW | internal/personas/list.go sortScoredPersonas | NaN rate would break strict-weak ordering; guarantee lived only upstream. | **Fixed inline in 5.5:** documented the finite-rate precondition (scorecard guards div-by-zero, so no NaN reaches the comparator). |
+   | LOW | cmd/atcr/personas.go:GetBool | `GetBool("scores")` error ignored. | By design — flag registered two lines below; no action. |
 
    **Action Required:**
-   - CRITICAL/HIGH found → List issues for 5.5, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   - One HIGH (multi-model score collapse) → fixed inline in 5.5 with regression test. Two MEDIUM + one LOW also fixed inline in 5.5 (cheap, code already open). One LOW by-design.
 
-### 5.5 [ ] **[Bundles + Scores - REFACTOR](plan/user-stories/05-corroboration-feedback.md)**
+### 5.5 [x] **[Bundles + Scores - REFACTOR](plan/user-stories/05-corroboration-feedback.md)**
    1. Fix CRITICAL/HIGH issues from 5.2.A and 5.4.A (if any)
    2. Confirm join-key normalization consistent both sides; `verify` still decoupled from `scorecard`; maintain green (T1), validate (T3)
    3. COMMIT: `git commit -m "refactor(personas): address review + score-key consistency"`
    **Duration:** 0.5 day
 
-### 5.6 [ ] **Phase 5 — DoD Validation**
-   - `go test ./internal/personas/...` green for all bundle + score tests
-   - `atcr personas install bundle/django` integration test passes against `httptest` server
+### 5.6 [x] **Phase 5 — DoD Validation**
+   - `go test ./...` green (EXIT=0); `go test ./internal/personas/...` green for all bundle + score tests ✓
+   - `atcr personas install bundle/django` integration test (`TestPersonasInstall_BundleClean`) passes against `httptest` server ✓; zero live network
+   - `go build ./...` clean ✓; `go vet ./...` clean ✓; `golangci-lint run ./internal/personas/... ./cmd/atcr/...` 0 issues ✓
+   - Coverage: internal/personas 86.9%, cmd/atcr 84.0% (both ≥80%)
    - DoD report (Stories 04 + 05 complete):
      ```
      Story-04 + Story-05 DoD Complete
-     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Auto: 5/5 (tests, coverage, lint, vet, build) | Story-Specific: 8/8 (AC 04-01 clean install, 04-02 partial skip, 04-03 unknown-bundle error, 04-04 manifest parse validation, 04-05 bundle test coverage; 05-01 baseline no-regression, 05-02 scores column, 05-03 sort ordering, 05-04 help docs)
      Manual Review: [ ] Code reviewed
      ```
 
-### 5.LAST [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+### 5.LAST [x] **Phase 5 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 5
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase's implementation. Do NOT review inline.
@@ -774,16 +778,14 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent gate findings (fresh-context hostile integrator):** No CRITICAL/HIGH. REGRESSION clean — `go test ./...`, `go build ./...`, `go vet ./...`, `golangci-lint run` all pass; baseline `personas list` provably never loads the scorecard (asserted); bundle manifests well-formed with exact member lists; `bundle/` install reuses `Install` (same traversal guard + validate-before-write); unknown/malformed bundle writes nothing; `--scores` help text accurate (AC 05-04).
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | personas.go reviewerCorroborationRates vs verify/select.go | Score-map key convention diverges: T6 lowercases reviewer name, T8 routing keys by raw registry name. No live bug (T8 passes nil; not wired to scores). | Deferred → TD-013 (reconcile when scores wire into routing; per Phase 2 clarification this lowercasing was a deliberate Phase 5/T6 deferral). |
+   | LOW | internal/personas/list.go sortScoredPersonas | Comparator couples to upstream no-NaN invariant; a non-CLI caller could pass NaN. | Deferred → TD-014 (CLI caller sources finite rates; precondition documented). |
+   | LOW | internal/personas/bundles.go InstallBundle | `personaPath` recomputed redundantly with `Install`. | Deferred → TD-015 (harmless defense-in-depth on a network-bound path). |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action:** No CRITICAL/HIGH. One MEDIUM + two LOW integration notes deferred to `tech-debt-captured.md` (TD-013, TD-014, TD-015). **Phase gate passed.**
    **Duration:** 15-30 min
 
 ---
