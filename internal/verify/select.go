@@ -121,7 +121,16 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 	// findingLang is "" for an extensionless file — an empty token matches no
 	// Language entry (validateAgent rejects canonical-empty entries), so such a
 	// finding falls through entirely to the unmatched partition.
-	findingLang := normalizeExt(filepath.Ext(finding.File))
+	//
+	// Dotfile guard: filepath.Ext(".gitignore") returns ".gitignore" (the whole
+	// basename), so normalizeExt would produce "gitignore" — a spurious language
+	// match. When base == ext the file IS the extension (dotfile); treat as
+	// extensionless so it falls through to the unmatched partition.
+	rawExt := filepath.Ext(finding.File)
+	if filepath.Base(finding.File) == rawExt {
+		rawExt = ""
+	}
+	findingLang := normalizeExt(rawExt)
 	matched := make([]string, 0, len(names))
 	unmatched := make([]string, 0, len(names))
 	for _, name := range names {
