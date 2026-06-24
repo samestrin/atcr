@@ -30,3 +30,14 @@ const (
 	VerdictRefuted      = "refuted"
 	VerdictUnverifiable = "unverifiable"
 )
+
+// Valid reports whether v carries an in-enum Verdict and a non-empty Skeptic.
+// Writing stages must call this before persisting; the contract was prose-only
+// before this method existed.
+func (v Verification) Valid() bool {
+	switch v.Verdict {
+	case VerdictConfirmed, VerdictRefuted, VerdictUnverifiable:
+		return v.Skeptic != ""
+	}
+	return false
+}
