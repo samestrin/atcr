@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -158,7 +159,7 @@ func TestVerifyCmd_SkipAlreadyVerified(t *testing.T) {
 	writeVerifyRegistry(t)
 	verifyFixture(t, "r", []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "VERIFIED",
-		Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "prior"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
 	}})
 	code, _ := execCmdCapture(t, "verify", "r")
 	require.Equal(t, 0, code)
@@ -187,7 +188,7 @@ func TestVerifyCmd_FreshReverifies(t *testing.T) {
 	writeVerifyRegistry(t)
 	verifyFixture(t, "r", []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "x", Confidence: "VERIFIED",
-		Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "prior"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
 	}})
 	code, _ := execCmdCapture(t, "verify", "--fresh", "r")
 	require.Equal(t, 0, code)

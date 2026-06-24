@@ -78,4 +78,4 @@ The base repo's test pattern, carried over:
 - Table-driven tests with subtests (`t.Run`) for the range decision tree, stream parsing, and reconciler merge rules; `t.TempDir()` for review-directory fixtures; fixture git repos built with `os/exec` in test helpers (base-system pattern).
 
 ---
-**Note:** Standard-library packages need no installation or version pinning beyond the Go toolchain version in go.mod (`go 1.24`).
+**Note:** Standard-library packages need no installation or version pinning beyond the Go toolchain version in go.mod (`go 1.25`).

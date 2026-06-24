@@ -2,6 +2,7 @@ package fanout
 
 import (
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"sort"
 
@@ -24,8 +25,8 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 	var dropped, truncated int
 
 	// 1. Severity floor.
-	if floor := stream.NormalizeSeverity(minSeverity); floor != "" {
-		floorRank, known := stream.SeverityRank[floor]
+	if floor := reclib.NormalizeSeverity(minSeverity); floor != "" {
+		floorRank, known := reclib.SeverityRank[floor]
 		if !known {
 			// Unknown min_severity: fail open (no findings dropped) but warn, so a
 			// misconfigured level does not silently pass through unobserved. The
@@ -35,7 +36,7 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 		} else {
 			kept := make([]stream.Finding, 0, len(findings))
 			for _, f := range findings {
-				if stream.SeverityRank[stream.NormalizeSeverity(f.Severity)] >= floorRank {
+				if reclib.SeverityRank[reclib.NormalizeSeverity(f.Severity)] >= floorRank {
 					kept = append(kept, f)
 				} else {
 					dropped++
@@ -55,7 +56,7 @@ func enforceConstraints(findings []stream.Finding, agent, minSeverity string, ma
 	// finding while the log claims a legitimate truncation.
 	if maxFindings != nil && *maxFindings > 0 && len(findings) > *maxFindings {
 		sort.SliceStable(findings, func(i, j int) bool {
-			return stream.SeverityRank[stream.NormalizeSeverity(findings[i].Severity)] > stream.SeverityRank[stream.NormalizeSeverity(findings[j].Severity)]
+			return reclib.SeverityRank[reclib.NormalizeSeverity(findings[i].Severity)] > reclib.SeverityRank[reclib.NormalizeSeverity(findings[j].Severity)]
 		})
 		truncated = len(findings) - *maxFindings
 		findings = findings[:*maxFindings]

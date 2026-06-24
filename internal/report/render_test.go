@@ -4,13 +4,13 @@ package report
 import (
 	"encoding/json"
 	"flag"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -360,7 +360,7 @@ func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
 	without := sample()
 	with := sample()
 	with[0].Confidence = "VERIFIED"
-	with[0].Verification = &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
+	with[0].Verification = &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "reproduced"}
 
 	t.Run("markdown-differs-and-shows-skeptic", func(t *testing.T) {
 		var a, b strings.Builder
@@ -379,11 +379,11 @@ func TestRender_VerificationBlockAddsSkepticSection(t *testing.T) {
 }
 
 // TestSeverityRankOf_MatchesCanonical — the report view and the reconcile radar
-// must agree on severity ordering. After unifying on stream.SeverityRank (the
+// must agree on severity ordering. After unifying on reclib.SeverityRank (the
 // single source of truth), a finding ranks identically whether it is sorted by
 // BuildDisagreements or grouped by Render.
 func TestSeverityRankOf_MatchesCanonical(t *testing.T) {
-	for sev, rank := range stream.SeverityRank {
+	for sev, rank := range reclib.SeverityRank {
 		assert.Equal(t, rank, severityRankOf(sev), "severity %s must rank identically in report and reconcile", sev)
 	}
 	assert.Equal(t, 0, severityRankOf("unknown"), "unknown severity must rank 0 in report view")

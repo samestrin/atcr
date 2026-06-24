@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -132,7 +133,7 @@ func TestGenerateFixes_ClearsStaleInvalidSyntaxOnValidFix(t *testing.T) {
 
 func TestGenerateFixes_SkipsBelowConfidence(t *testing.T) {
 	findings := []reconcile.JSONFinding{
-		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfMedium, Fix: "orig"},
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reclib.ConfMedium, Fix: "orig"},
 	}
 	rec := &recordingExecutor{out: "new fix"}
 	generateFixes(context.Background(), findings, execConfig("MEDIUM"), execRegistry("MEDIUM"), rec, nil, okDispatcher(), 0)
@@ -589,7 +590,7 @@ func TestRunVerify_ExecutorOutputSchema(t *testing.T) {
 func TestRunVerify_ExecutorClientNotBuiltWhenNoFindingEligible(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{
 		// LOW confidence is below the HIGH fix floor → not fix-eligible.
-		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reconcile.ConfLow, Reviewers: []string{"rev"}},
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: reclib.ConfLow, Reviewers: []string{"rev"}},
 	})
 	built := 0
 	restore := swapExecutorClient(func() executorCompleter { built++; return &recordingExecutor{} })

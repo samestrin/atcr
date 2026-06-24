@@ -18,7 +18,7 @@ const reconciledSubdir = "reconciled"
 
 // VerificationResult is one skeptic verdict record in verification.json (AC
 // 03-02) — the verify stage's rich, per-finding audit record. It is distinct
-// from reconcile.Verification{Verdict,Skeptic,Notes}, the compact block embedded
+// from reclib.Verification{Verdict,Skeptic,Notes}, the compact block embedded
 // back into findings.json: this record additionally carries the skeptic's model
 // (the different-model rule's evidence), the full reasoning, and the cost/outcome
 // metadata (duration, tripped budgets) a human needs to judge a verdict.

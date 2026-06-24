@@ -2,13 +2,10 @@ package reconcile
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
 )
@@ -50,23 +47,6 @@ type Decision struct {
 type Adjudication struct {
 	BaselineHash string     `json:"baseline_hash"`
 	Decisions    []Decision `json:"decisions"`
-}
-
-// AmbiguousID is the stable content-addressed id for a gray-zone pair. It is
-// derived from the location and the two PROBLEM texts (order-independent), so
-// the id is byte-identical on the initial reconcile and on the adjudicated
-// re-invocation of the same sources — the property that lets the Skill reference
-// a cluster across runs without atcr persisting a counter.
-func AmbiguousID(file string, line int, problemA, problemB string) string {
-	lo, hi := problemA, problemB
-	if hi < lo {
-		lo, hi = hi, lo
-	}
-	h := sha256.Sum256([]byte(file + "\x00" + strconv.Itoa(line) + "\x00" + lo + "\x00" + hi))
-	// 128 bits: a collision would alias two distinct gray pairs to one id and let
-	// one merge decision collapse the wrong pair — the one outcome the design
-	// forbids — so spend the bytes.
-	return "amb-" + hex.EncodeToString(h[:16])
 }
 
 // LoadAdjudication reads and validates an adjudication.json document. A
@@ -148,25 +128,6 @@ func AmbiguousIDsFromBytes(data []byte) (map[string]bool, error) {
 		ids[c.ID] = true
 	}
 	return ids, nil
-}
-
-// HashBytes returns the "sha256:<hex>" digest used for the adjudication
-// baseline binding.
-func HashBytes(data []byte) string {
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-// AmbiguousHash returns the digest of the exact bytes Emit writes for
-// ambiguous.json, recorded in summary.json as ambiguous_hash so the Skill can
-// copy it verbatim into adjudication.json (atcr computes the hash; the host
-// model never does).
-func AmbiguousHash(clusters []AmbiguousCluster) string {
-	var buf bytes.Buffer
-	if err := renderIndentedJSON(&buf, clusters); err != nil {
-		panic(fmt.Sprintf("atcr: AmbiguousHash: unreachable JSON render error: %v", err))
-	}
-	return HashBytes(buf.Bytes())
 }
 
 // preserveOriginalAmbiguous copies reconDir/ambiguous.json to

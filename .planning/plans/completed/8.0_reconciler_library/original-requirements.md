@@ -1,0 +1,232 @@
+# Original Requirements
+
+**Date:** June 23, 2026 09:26:44AM
+**Arguments:** @.planning/epics/active/8.0_reconciler_library.md
+**Target:** .planning/epics/active/8.0_reconciler_library.md
+
+## Purpose
+
+This document captures the original request verbatim. It is the source of truth for scope,
+objectives, and acceptance criteria. Downstream skill phases (analysis, plan.md, user stories,
+acceptance criteria, sprint design) derive from this content.
+
+## Content
+
+# Epic Plan 8.0: Reconciler Library
+
+**Estimated Durations**: 3 weeks
+**Tasks/Components:** 8/3
+**Execution:** execute-epic --strong
+**Status:** Draft (queued; depends on Epic 1.0 reconciler — complete)
+
+> **Reconciliation (2026-06-19 review).** The reconciler exists and is complete in
+> `internal/reconcile` (`Reconcile(sources, opts) Result` at `reconcile.go`), so the premise
+> holds. One scoping caveat surfaced: the public types this epic exports (`Source`, `Finding`,
+> `Result`, `Options`) are entangled with internal verification machinery — `Merged.Verification`
+> references an internal `*Verification` struct carrying skeptic verdicts from Epic 3.0, and
+> `Finding` lives in `internal/stream`. **Phase 0 must decide the public-API boundary:** does the
+> extracted library expose verification verdicts, or do those stay ATCR-internal? The current
+> plan assumes `Result` can be lifted as-is; it cannot without untangling these first.
+
+## Objective
+
+Extract ATCR's deterministic reconciler from `internal/reconcile` into a standalone Go module (`github.com/atcr/reconcile`) with a clean public API, one format adapter, and a clear licensing path. This turns the core architectural moat into a separable asset that other tools can embed and that can generate licensing revenue without running SaaS.
+
+## Context
+
+ATCR's reconciler is genuinely unique: deterministic clustering, text-similarity dedupe, confidence scoring, ambiguity sidecar, and disagreement annotation preserved inline. Other multi-reviewer tools either do not merge at all, use prompt-based dedupe, or simply concatenate. The reconciler is the hardest part of multi-reviewer merge, and it is already built.
+
+Currently it is buried inside the ATCR CLI. That means:
+- Other tools cannot embed it without importing the whole binary.
+- There is no standards gravity around ATCR's finding format.
+- The leaderboard's methodology cannot point to a separable, reference implementation.
+
+Extracting the reconciler does not weaken ATCR; it makes ATCR the reference implementation and creates a revenue path that does not require running infrastructure.
+
+## Problem Statement
+
+1. The reconciler is inaccessible to other tools because it lives under `internal/reconcile` inside the ATCR module.
+2. There is no public API, so there is no way to license the reconciler for proprietary embedding.
+3. The public leaderboard's credibility depends on the reconciler being a documented, standalone artifact that anyone can run and inspect.
+
+## Proposed Solution
+
+### Standalone module
+
+Create `github.com/atcr/reconcile` as a separate Go module. Move the core reconcile logic from `internal/reconcile` into this module. ATCR imports the module and keeps the same behavior.
+
+### Public API
+
+```go
+package reconcile
+
+type Source struct {
+    Name     string
+    Findings []Finding
+}
+
+type Finding struct {
+    Severity   string
+    File       string
+    Line       int
+    Problem    string
+    Fix        string
+    Category   string
+    EstMinutes int
+    Evidence   string
+}
+
+type ReconciledFinding struct {
+    Finding
+    Reviewers  []string
+    Confidence string // HIGH, MEDIUM, LOW
+}
+
+type Result struct {
+    Findings  []ReconciledFinding
+    Ambiguous []AmbiguousCluster
+    Summary   Summary
+}
+
+type Options struct {
+    LineTolerance       int
+    SimilarityThreshold float64
+}
+
+func Reconcile(sources []Source, opts Options) (*Result, error)
+```
+
+### Format adapter
+
+Ship one adapter that converts a simple JSON finding stream into `[]Source` and `Result` into a JSON finding stream. This proves embeddability without committing to a full format matrix. SARIF and other adapters can follow later based on demand.
+
+### Licensing path
+
+- Apache 2.0 for open-source use.
+- Commercial license note for proprietary embedding, with a `LICENSE-COMMERCIAL.md` placeholder and a contact path.
+- No enforcement code; the licensing layer is documentation and a future legal wrapper.
+
+### Out-of-scope for now
+
+HTTP/gRPC service, Python/TypeScript SDKs, and cloud-hosted reconciliation are deferred until the module has a design partner or paying licensee.
+
+## Acceptance Criteria
+
+- [ ] `github.com/atcr/reconcile` module exists with its own `go.mod` and passes its own CI.
+- [ ] Public API exposes `Reconcile(sources []Source, opts Options) (*Result, error)` with stable types.
+- [ ] ATCR imports `github.com/atcr/reconcile` and all existing ATCR tests pass without behavioral changes.
+- [ ] JSON adapter converts an external finding stream into `Source` input and a `Result` into an external finding stream.
+- [ ] Go docs and a runnable example are published in the module README.
+- [ ] License files are present: Apache 2.0 `LICENSE` and a `LICENSE-COMMERCIAL.md` placeholder.
+- [ ] CI runs module tests independently on tag push.
+- [ ] Public leaderboard methodology doc references the extracted reconciler as the reference implementation.
+
+## Task Breakdown
+
+1. **Module scaffold**: create `github.com/atcr/reconcile` repo, `go.mod`, package layout.
+2. **Extract core logic**: move deterministic clustering, dedupe, confidence scoring, ambiguity output from `internal/reconcile` into the new module.
+3. **Define public API**: settle `Source`, `Finding`, `ReconciledFinding`, `AmbiguousCluster`, `Summary`, `Options`, `Result` shapes.
+4. **Update ATCR imports**: replace `internal/reconcile` usage with the module import; verify no behavior changes.
+5. **JSON adapter**: implement `adapter/json` for external finding streams.
+6. **Docs and examples**: README, godoc, runnable example.
+7. **Licensing files**: Apache 2.0 + commercial placeholder.
+8. **CI setup**: independent test workflow for the module.
+
+## Out of Scope
+
+- HTTP/gRPC service.
+- Python, TypeScript, or other language SDKs.
+- SARIF adapter (v2 candidate).
+- Cloud-hosted reconciliation API.
+- Automated license enforcement or payment gating.
+
+## Dependencies
+
+- Epic 1.0 ATCR core reconciler — complete.
+- Module extraction must happen while the reconciler surface is stable; avoid starting during a refactor of clustering/dedup logic.
+
+## Revenue Model
+
+- **Dual licensing**: Apache 2.0 for open-source projects; commercial license for proprietary embedding.
+- **White-label/OEM**: devtools vendors embed the reconciler as their merge layer.
+- **Consulting**: custom reconciler strategies or integration assistance.
+
+## Moat / Differentiation
+
+- Nobody else ships a deterministic, disagreement-preserving reconciler.
+- If the reconciler becomes a reference implementation, ATCR's finding format gains standards gravity.
+- Network effects: more embeddings -> more feedback -> better reconciler -> more adoption.
+
+## Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Extraction breaks ATCR behavior | Low | High | Keep ATCR tests passing; run the full fixture corpus before merge |
+| API surface is too narrow for real adopters | Medium | Medium | Start minimal; extend based on design-partner feedback |
+| No competitors adopt the library | High | Medium | Prioritize OSS adoption and leaderboard credibility; commercial licensing is secondary |
+| Module extraction couples ATCR release velocity to module releases | Medium | Medium | Use semver; ATCR can pin a version while the module evolves |
+
+## References
+
+- `.planning/product/concepts/reconciler-library.md`
+- Epic 1.0 ATCR core reconciler
+- Epic 10.0 Model-Eval Leaderboard (methodology references this module)
+
+## Clarifications
+
+### Recorded 2026-06-23 (rubber duck — /execute-epic)
+
+**Key Decisions:**
+- Extract as a **nested module inside this repo** at `./reconcile/` with its own `go.mod`,
+  consumed by ATCR via a root-level `replace github.com/samestrin/atcr/reconcile => ./reconcile`
+  directive. Separate-repo publication follows extraction; it does not precede it.
+- New module path is `github.com/samestrin/atcr/reconcile` (the `github.com/atcr` org in the
+  epic body does not exist; it was aspirational planning text).
+- **Lift the existing API as-is** — keep `Reconcile(sources []Source, opts Options) Result`,
+  `Source`, `Merged`, and `Options{ReconciledAt, Partial, Merges, Root}` exactly. Satisfies
+  AC#3 (no behavioral change). The epic's proposed clean API (`(*Result, error)`,
+  `ReconciledFinding`, `Options{LineTolerance, SimilarityThreshold}`) is deferred to a
+  follow-on epic once the extraction boundary is stable.
+
+**Scope Boundaries:**
+- IN scope (public library `reconcile/`): clustering, dedupe, confidence, ambiguity,
+  disagreement, `Merge`/`Merged`, `Reconcile`/`Options`/`Result`/`Summary`, the `Verification`
+  struct + verdict enum + `mergeVerification` (travels with the library because it is embedded
+  in `Merged` and used inside the merge algorithm), and a library-owned `Finding` type. Moved
+  in from `internal/stream`: `NormalizeSeverity` + `SeverityRank` (severity.go) and the
+  levenshtein algorithm (levenshtein.go) — both stdlib-only/pure.
+- OUT of scope (stays ATCR-internal): `gate.go` (CI pass/fail), `validate.go` (Epic 5.0 path
+  validation), `emit.go`'s file I/O layer, and the path-validation fields
+  (`PathValid`/`PathWarning`/`PathSuggestion`) which live in the ATCR adapter.
+
+**Technical Approach:**
+- Library defines its own `Finding` type carrying the 9 wire-format fields (Severity, File,
+  Line, Problem, Fix, Category, EstMinutes, Evidence, Reviewer/Reviewers, Confidence). ATCR
+  adapts `stream.Finding` <-> `reconcile.Finding` at the boundary; path-validation fields stay
+  in the adapter.
+- `Verification` becomes public library API (chosen over interface-decoupling) to keep
+  `Merged`, `mergeVerification`, and `BuildDisagreements` behaviorally identical under the
+  lift-as-is mandate. The ATCR `gate.go` consumes the now-public `Verification`.
+- Extraction is mechanical-move-dominant: most tasks have no behavioral change and are
+  verified by the existing test corpus passing, not by new RED tests. New RED tests apply to
+  genuinely new behavior (library `Finding` type + ATCR adapter conversion, JSON adapter).
+
+**Original Questions and Answers:**
+1. Q: Module location — nested module inside this repo, or a separate GitHub repository?
+   A: (a) Nested module inside this repo (`./reconcile/` + own `go.mod` + root `replace`
+      directive). Separate-repo creation follows extraction. Confidence 92%.
+2. Q: Module path / namespace?
+   A: `github.com/samestrin/atcr/reconcile` (physical location `./reconcile/`). The
+      `github.com/atcr` org does not exist. Confidence 95%.
+3. Q: API shape — lift existing as-is, or reshape to the epic's proposed clean API?
+   A: (a) Lift existing API as-is to satisfy AC#3; clean-API reshape is a follow-on epic.
+      Confidence 97%.
+4. Q: Public-API boundary — which pieces are public vs ATCR-internal?
+   A: Public = core + `Verification`/verdict enum/`mergeVerification` (travels with library,
+      embedded in `Merged`) + library `Finding`. ATCR-internal = `gate.go`, `validate.go`,
+      `emit.go` I/O. Both the `Verification` and `stream.Finding` entanglements resolved in
+      Phase 0. Confidence 92%.
+5. Q: `internal/stream` dependency — library-owned `Finding` type, or absorb stream wholesale?
+   A: (a) Library-owned `Finding`; move only severity.go (`NormalizeSeverity`/`SeverityRank`)
+      and levishtein.go into the library (both pure). `stream` is not pure (imports
+      `internal/metrics`), so it is NOT absorbed wholesale. Confidence 85%.

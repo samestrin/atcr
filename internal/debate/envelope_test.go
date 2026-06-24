@@ -1,11 +1,10 @@
 package debate
 
 import (
+	reclib "github.com/samestrin/atcr/reconcile"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 func TestParseRuling(t *testing.T) {
@@ -21,27 +20,27 @@ func TestParseRuling(t *testing.T) {
 		{
 			name:        "uphold",
 			raw:         `{"outcome":"uphold","settled_severity":"HIGH","reasoning":"evidence holds"}`,
-			wantOutcome: OutcomeUphold, wantSev: "HIGH", wantSurvive: true, wantVerdict: reconcile.VerdictConfirmed,
+			wantOutcome: OutcomeUphold, wantSev: "HIGH", wantSurvive: true, wantVerdict: reclib.VerdictConfirmed,
 		},
 		{
 			name:        "overturn",
 			raw:         `{"outcome":"overturn","reasoning":"false positive"}`,
-			wantOutcome: OutcomeOverturn, wantSurvive: false, wantVerdict: reconcile.VerdictRefuted,
+			wantOutcome: OutcomeOverturn, wantSurvive: false, wantVerdict: reclib.VerdictRefuted,
 		},
 		{
 			name:        "split lowers severity",
 			raw:         `{"outcome":"split","settled_severity":"low","reasoning":"real but minor"}`,
-			wantOutcome: OutcomeSplit, wantSev: "LOW", wantSurvive: true, wantVerdict: reconcile.VerdictConfirmed,
+			wantOutcome: OutcomeSplit, wantSev: "LOW", wantSurvive: true, wantVerdict: reclib.VerdictConfirmed,
 		},
 		{
 			name:        "gray-zone merge decision",
 			raw:         `{"outcome":"uphold","settled_severity":"MEDIUM","cluster_decision":"merge"}`,
-			wantOutcome: OutcomeUphold, wantSev: "MEDIUM", wantCluster: ClusterMerge, wantSurvive: true, wantVerdict: reconcile.VerdictConfirmed,
+			wantOutcome: OutcomeUphold, wantSev: "MEDIUM", wantCluster: ClusterMerge, wantSurvive: true, wantVerdict: reclib.VerdictConfirmed,
 		},
 		{
 			name:        "fenced json",
 			raw:         "Here is my ruling:\n```json\n{\"outcome\": \"uphold\", \"settled_severity\": \"CRITICAL\"}\n```\n",
-			wantOutcome: OutcomeUphold, wantSev: "CRITICAL", wantSurvive: true, wantVerdict: reconcile.VerdictConfirmed,
+			wantOutcome: OutcomeUphold, wantSev: "CRITICAL", wantSurvive: true, wantVerdict: reclib.VerdictConfirmed,
 		},
 		{
 			name:        "invalid outcome degrades to unresolved",
@@ -61,7 +60,7 @@ func TestParseRuling(t *testing.T) {
 		{
 			name:        "invalid severity dropped, outcome kept",
 			raw:         `{"outcome":"uphold","settled_severity":"BLOCKER"}`,
-			wantOutcome: OutcomeUphold, wantSev: "", wantSurvive: true, wantVerdict: reconcile.VerdictConfirmed,
+			wantOutcome: OutcomeUphold, wantSev: "", wantSurvive: true, wantVerdict: reclib.VerdictConfirmed,
 		},
 	}
 	for _, tc := range cases {

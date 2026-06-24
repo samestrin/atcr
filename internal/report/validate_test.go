@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"testing"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -42,7 +43,7 @@ func TestRender_Checklist_ShowsPathWarning(t *testing.T) {
 // own collapsed section; the path warning must still appear there.
 func TestRender_Markdown_RefutedShowsPathWarning(t *testing.T) {
 	f := flagged()
-	f[0].Verification = &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "kai"}
+	f[0].Verification = &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "kai"}
 
 	var b bytes.Buffer
 	require.NoError(t, Render(&b, f, FormatMarkdown))
@@ -103,7 +104,7 @@ func TestRender_Checklist_ShowsPathSuggestion(t *testing.T) {
 // also renders the suggestion.
 func TestRender_Markdown_RefutedShowsPathSuggestion(t *testing.T) {
 	f := flaggedWithSuggestion()
-	f[0].Verification = &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "kai"}
+	f[0].Verification = &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "kai"}
 
 	var b bytes.Buffer
 	require.NoError(t, Render(&b, f, FormatMarkdown))

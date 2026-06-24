@@ -1,9 +1,8 @@
 package verify
 
 import (
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
-
-	"github.com/samestrin/atcr/internal/reconcile"
 )
 
 // aggregateVerdicts collapses the per-skeptic verdicts for one finding into a
@@ -22,8 +21,8 @@ import (
 // nil entries and entries whose Verdict is not a known enum value are ignored
 // (defensive: a malformed per-skeptic verdict should already be "unverifiable",
 // but a stray nil must not panic the fold).
-func aggregateVerdicts(perSkeptic []*reconcile.Verification) *reconcile.Verification {
-	valid := make([]*reconcile.Verification, 0, len(perSkeptic))
+func aggregateVerdicts(perSkeptic []*reclib.Verification) *reclib.Verification {
+	valid := make([]*reclib.Verification, 0, len(perSkeptic))
 	for _, v := range perSkeptic {
 		if v == nil {
 			continue
@@ -35,7 +34,7 @@ func aggregateVerdicts(perSkeptic []*reconcile.Verification) *reconcile.Verifica
 	}
 
 	if len(valid) == 0 {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "no_skeptic_verdicts"}
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "no_skeptic_verdicts"}
 	}
 	if len(valid) == 1 {
 		// Pass-through: copy so callers never alias a per-skeptic struct.
@@ -58,22 +57,22 @@ func aggregateVerdicts(perSkeptic []*reconcile.Verification) *reconcile.Verifica
 	}
 
 	if tie {
-		return &reconcile.Verification{
+		return &reclib.Verification{
 			Verdict: verdictUnverifiable,
 			Skeptic: joinSkeptics(valid),
 			Notes:   combineReasonings(valid),
 		}
 	}
 	winners := filterByVerdict(valid, winner)
-	return &reconcile.Verification{
+	return &reclib.Verification{
 		Verdict: winner,
 		Skeptic: joinSkeptics(winners),
 		Notes:   combineReasonings(winners),
 	}
 }
 
-func filterByVerdict(vs []*reconcile.Verification, verdict string) []*reconcile.Verification {
-	out := make([]*reconcile.Verification, 0, len(vs))
+func filterByVerdict(vs []*reclib.Verification, verdict string) []*reclib.Verification {
+	out := make([]*reclib.Verification, 0, len(vs))
 	for _, v := range vs {
 		if v.Verdict == verdict {
 			out = append(out, v)
@@ -85,7 +84,7 @@ func filterByVerdict(vs []*reconcile.Verification, verdict string) []*reconcile.
 // combineReasonings joins each verdict's "skeptic: notes" line so a human can read
 // every reasoning behind the aggregate. Entries with empty Notes still contribute
 // their verdict so silence is visible.
-func combineReasonings(vs []*reconcile.Verification) string {
+func combineReasonings(vs []*reclib.Verification) string {
 	parts := make([]string, 0, len(vs))
 	for _, v := range vs {
 		label := v.Skeptic
@@ -97,7 +96,7 @@ func combineReasonings(vs []*reconcile.Verification) string {
 	return strings.Join(parts, " | ")
 }
 
-func joinSkeptics(vs []*reconcile.Verification) string {
+func joinSkeptics(vs []*reclib.Verification) string {
 	names := make([]string, 0, len(vs))
 	for _, v := range vs {
 		if v.Skeptic != "" {

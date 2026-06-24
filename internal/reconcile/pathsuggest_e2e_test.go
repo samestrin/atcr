@@ -60,7 +60,9 @@ func TestRunReconcile_SuggestsHallucinatedPathEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Findings, 1)
 
-	hall := res.Findings[0]
+	// Path-validation fields ride on the JSONFinding records (Epic 8.0 Q1), read
+	// from res.JSONFindings() (the cached, path-stamped records), not res.Findings.
+	hall := res.JSONFindings()[0]
 	assert.Equal(t, "internal/auth/validator.go", hall.File, "original cited path preserved (AC7)")
 	assert.False(t, hall.PathValid)
 	assert.Equal(t, stream.PathNotFoundWarning, hall.PathWarning)

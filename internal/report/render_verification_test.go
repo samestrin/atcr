@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,7 +105,7 @@ func TestRenderReport_UnverifiableAnnotation(t *testing.T) {
 func TestRenderReport_NoRefutedSectionOmitted(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "CRITICAL", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED",
-			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "ok"}},
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "ok"}},
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
@@ -118,7 +119,7 @@ func TestRenderReport_NoRefutedSectionOmitted(t *testing.T) {
 func TestRenderReport_EmptyNotes(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED",
-			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: ""}},
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: ""}},
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
@@ -133,7 +134,7 @@ func TestRenderReport_EmptyNotes(t *testing.T) {
 func TestRenderReport_MixedVerifiedAndUnverified(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "verified.go", Line: 1, Problem: "p1", Confidence: "VERIFIED",
-			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "confirmed it"}},
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "confirmed it"}},
 		{Severity: "HIGH", File: "plain.go", Line: 2, Problem: "p2", Confidence: "MEDIUM"},
 	}
 	var b strings.Builder
@@ -153,7 +154,7 @@ func TestRenderReport_MixedVerifiedAndUnverified(t *testing.T) {
 func TestRenderReport_SkepticTextEscaped(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "LOW",
-			Verification: &reconcile.Verification{
+			Verification: &reclib.Verification{
 				Verdict: "refuted", Skeptic: "otto",
 				Notes: "<script>alert(1)</script>\n</details>\n## Forged Heading"}},
 	}
@@ -174,9 +175,9 @@ func TestRenderReport_SkepticTextEscaped(t *testing.T) {
 func TestRenderReport_AllRefuted(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "LOW",
-			Verification: &reconcile.Verification{Verdict: "refuted", Skeptic: "otto", Notes: "n1"}},
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "otto", Notes: "n1"}},
 		{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW",
-			Verification: &reconcile.Verification{Verdict: "refuted", Skeptic: "greta", Notes: "n2"}},
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "greta", Notes: "n2"}},
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
@@ -208,9 +209,9 @@ func TestRenderReport_VerifiedConfidenceWithoutBlock(t *testing.T) {
 func TestRenderReport_TotalAnnotatesRefutedCount(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p1", Confidence: "VERIFIED",
-			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "ok"}},
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "otto", Notes: "ok"}},
 		{Severity: "LOW", File: "b.go", Line: 2, Problem: "p2", Confidence: "LOW",
-			Verification: &reconcile.Verification{Verdict: "refuted", Skeptic: "greta", Notes: "n"}},
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "greta", Notes: "n"}},
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
@@ -223,7 +224,7 @@ func TestRenderReport_TotalAnnotatesRefutedCount(t *testing.T) {
 func TestRenderReport_RefutedEmptySkeptic(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "LOW",
-			Verification: &reconcile.Verification{Verdict: "refuted", Skeptic: "", Notes: "n"}},
+			Verification: &reclib.Verification{Verdict: "refuted", Skeptic: "", Notes: "n"}},
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
@@ -236,7 +237,7 @@ func TestRenderReport_RefutedEmptySkeptic(t *testing.T) {
 func TestRenderReport_DebatedFindingRendersJudge(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED",
-			Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "carol", Notes: "upheld after challenge", ChallengeSurvived: true}},
+			Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "carol", Notes: "upheld after challenge", ChallengeSurvived: true}},
 	}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))

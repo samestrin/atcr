@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,10 +26,10 @@ func TestParseSeverity_CaseInsensitiveAndInvalid(t *testing.T) {
 
 func TestCountAtOrAbove_ThresholdInclusive(t *testing.T) {
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "CRITICAL"}},
-		{Finding: stream.Finding{Severity: "HIGH"}},
-		{Finding: stream.Finding{Severity: "MEDIUM"}},
-		{Finding: stream.Finding{Severity: "LOW"}},
+		{Finding: Finding{Severity: "CRITICAL"}},
+		{Finding: Finding{Severity: "HIGH"}},
+		{Finding: Finding{Severity: "MEDIUM"}},
+		{Finding: Finding{Severity: "LOW"}},
 	}
 	assert.Equal(t, 1, CountAtOrAbove(findings, SevCritical, false))
 	assert.Equal(t, 2, CountAtOrAbove(findings, SevHigh, false), "HIGH counts HIGH+CRITICAL")
@@ -42,8 +41,8 @@ func TestCountAtOrAbove_ExcludesOutOfScope(t *testing.T) {
 	// AC 06-04 Scenario 4: a pre-existing CRITICAL annotated out-of-scope must
 	// not trip --fail-on HIGH — the gate counts only in-scope findings.
 	findings := []Merged{
-		{Finding: stream.Finding{Severity: "CRITICAL", Category: CategoryOutOfScope}},
-		{Finding: stream.Finding{Severity: "HIGH", Category: "security"}},
+		{Finding: Finding{Severity: "CRITICAL", Category: CategoryOutOfScope}},
+		{Finding: Finding{Severity: "HIGH", Category: "security"}},
 	}
 	assert.Equal(t, 1, CountAtOrAbove(findings, SevHigh, false), "only the in-scope HIGH counts")
 	assert.Equal(t, 0, CountAtOrAbove(findings[:1], SevHigh, false), "a lone out-of-scope CRITICAL never gates")

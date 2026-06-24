@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/stream"
 )
 
 // grayFinding builds a findings.json record for a gray-zone cluster member.
@@ -27,7 +27,7 @@ func grayFinding(file string, line int, problem, sev, reviewer string) reconcile
 
 // reviewDirWithGray seeds reconciled/findings.json + ambiguous.json + manifest so
 // the radar surfaces the given gray-zone cluster as a debate item.
-func reviewDirWithGray(t *testing.T, findings []reconcile.JSONFinding, clusters ...reconcile.AmbiguousCluster) string {
+func reviewDirWithGray(t *testing.T, findings []reconcile.JSONFinding, clusters ...reclib.AmbiguousCluster) string {
 	t.Helper()
 	dir := t.TempDir()
 	recon := filepath.Join(dir, reconciledSubdir)
@@ -44,10 +44,10 @@ func reviewDirWithGray(t *testing.T, findings []reconcile.JSONFinding, clusters 
 }
 
 // grayCluster builds a two-member ambiguous cluster co-located at file/line.
-func grayCluster(id, file string, line int, probA, sevA, revA, probB, sevB, revB string) reconcile.AmbiguousCluster {
-	return reconcile.AmbiguousCluster{
+func grayCluster(id, file string, line int, probA, sevA, revA, probB, sevB, revB string) reclib.AmbiguousCluster {
+	return reclib.AmbiguousCluster{
 		ID: id, File: file, Line: line, Similarity: 0.5,
-		Findings: []stream.Finding{
+		Findings: []reconcile.Finding{
 			{Severity: sevA, File: file, Line: line, Problem: probA, Reviewer: revA},
 			{Severity: sevB, File: file, Line: line, Problem: probB, Reviewer: revB},
 		},
@@ -305,9 +305,9 @@ func TestRunDebate_GrayZoneSingleMemberMergeDoesNotWarn(t *testing.T) {
 	findings := []reconcile.JSONFinding{
 		grayFinding("a.go", 10, "only member", "MEDIUM", "alice"),
 	}
-	cluster := reconcile.AmbiguousCluster{
+	cluster := reclib.AmbiguousCluster{
 		ID: "amb-1", File: "a.go", Line: 10, Similarity: 0.5,
-		Findings: []stream.Finding{
+		Findings: []reconcile.Finding{
 			{Severity: "MEDIUM", File: "a.go", Line: 10, Problem: "only member", Reviewer: "alice"},
 		},
 	}
@@ -382,7 +382,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 				tc.probB, "HIGH", "bob")
 
 			// The radar item's Problem comes from reconcile.ClusterDisplayProblem.
-			df := reconcile.BuildDisagreements(nil, []reconcile.AmbiguousCluster{cluster})
+			df := reconcile.BuildDisagreements(nil, []reclib.AmbiguousCluster{cluster})
 			var item reconcile.DisagreementItem
 			found := false
 			for _, it := range df.Items {
@@ -395,7 +395,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 
 			// indexClusters keys on reconcile.ClusterDisplayProblem; the debated item resolves
 			// back by its Problem only if the two representatives agree.
-			idx := indexClusters([]reconcile.AmbiguousCluster{cluster})
+			idx := indexClusters([]reclib.AmbiguousCluster{cluster})
 			got, ok := idx[FindingKey{File: item.File, Line: item.Line, Problem: item.Problem}]
 			require.True(t, ok, "the radar item's Problem must resolve back to its cluster via indexClusters")
 			assert.Equal(t, cluster.ID, got.ID)
@@ -411,7 +411,7 @@ func TestIndexClusters_RoundTripsBuildDisagreementsProblem(t *testing.T) {
 // radar change that let a gray member also surface as a solo/split tier item — and
 // "" when it holds (TD cluster.go:applyClusterMerges).
 func TestFirstClusterRulingCollision_GuardsRulingsKeyspace(t *testing.T) {
-	clusters := []reconcile.AmbiguousCluster{
+	clusters := []reclib.AmbiguousCluster{
 		grayCluster("c1", "a.go", 10, "p1", "HIGH", "alice", "p2", "MEDIUM", "bob"),
 	}
 
@@ -438,7 +438,7 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 	// radar item resolves back to its cluster via indexClusters.
 	c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
 	c2 := grayCluster("amb-2", "a.go", 10, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")
-	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+	clusterIdx := indexClusters([]reclib.AmbiguousCluster{c1, c2})
 
 	// Two DISTINCT gray-zone radar items sharing one canonical File+Line, each
 	// carrying its cluster's representative (longest-member) problem.
@@ -472,7 +472,7 @@ func TestFilterMergedClusters_CoLocatedDistinctClustersKeyedByID(t *testing.T) {
 func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) {
 	t.Run("single cluster legacy survivor", func(t *testing.T) {
 		c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
-		clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1})
+		clusterIdx := indexClusters([]reclib.AmbiguousCluster{c1})
 		items := []reconcile.DisagreementItem{
 			{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
 		}
@@ -488,7 +488,7 @@ func TestFilterMergedClusters_LegacyEmptyClusterIDDoesNotSuppress(t *testing.T) 
 	t.Run("mixed legacy and new-ID survivors", func(t *testing.T) {
 		c1 := grayCluster("amb-1", "a.go", 10, "c1a", "MEDIUM", "alice", "cluster one longer problem", "HIGH", "bob")
 		c2 := grayCluster("amb-2", "b.go", 20, "c2a", "MEDIUM", "carol", "cluster two longer problem", "HIGH", "dave")
-		clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+		clusterIdx := indexClusters([]reclib.AmbiguousCluster{c1, c2})
 		items := []reconcile.DisagreementItem{
 			{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "cluster one longer problem"},
 			{Kind: reconcile.KindGrayZone, File: "b.go", Line: 20, Problem: "cluster two longer problem"},

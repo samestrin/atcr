@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -179,7 +180,7 @@ func TestRunVerify_RefutedDemotesToLow(t *testing.T) {
 	assert.Equal(t, VerdictCounts{Refuted: 1}, res.VerdictCounts)
 	got := readFindings(t, dir)
 	assert.Equal(t, "refuted", got[0].Verification.Verdict)
-	assert.Equal(t, reconcile.ConfLow, got[0].Confidence)
+	assert.Equal(t, reclib.ConfLow, got[0].Confidence)
 }
 
 // TestRunVerify_BelowFloorSkipped: a finding below the min-severity floor keeps
@@ -257,7 +258,7 @@ func TestRunVerify_SkipsAlreadyVerified(t *testing.T) {
 	mk := func() string {
 		return pipelineReview(t, []reconcile.JSONFinding{{
 			Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
-			Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "prior"},
+			Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "prior"},
 		}})
 	}
 
@@ -427,7 +428,7 @@ func TestRunVerify_ThreeWayTieRecordsAllParticipantModels(t *testing.T) {
 func TestRunVerify_SkipDropsMismatchedPriorMetadata(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
-		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "s1"},
 	}})
 	// Prior verdict is "refuted" — a stale/hand-edited mismatch against the current
 	// "confirmed" block; its rich metadata must be dropped, not carried.
@@ -460,7 +461,7 @@ func TestRunVerify_SkipDropsMismatchedPriorMetadata(t *testing.T) {
 func TestRunVerify_SkipPreservesPriorMetadata(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
-		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "s1"},
 	}})
 	// Seed a prior verification.json carrying rich metadata for that finding.
 	require.NoError(t, WriteVerification(dir, []VerificationResult{{
@@ -499,7 +500,7 @@ func TestRunVerify_SkipPreservesPriorMetadata(t *testing.T) {
 func TestRunVerify_StandaloneReVerifyBacksUpVerificationJSONOnly(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
-		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "s1"},
 	}})
 	// Seed a prior verification.json so the re-verify has something to snapshot.
 	// A first-ever write has no prior file, so it leaves no .bak.
@@ -596,7 +597,7 @@ func TestReadManifestHead(t *testing.T) {
 func TestRunVerify_EmptyVerdictReverified(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM",
-		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: ""},
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: ""},
 	}})
 	res, err := runVerify(context.Background(), dir, skepticRegistry(), Options{},
 		scriptedHarness(`{"verdict":"confirmed","reasoning":"ok"}`))
@@ -805,12 +806,12 @@ func TestWinningAttribution_MismatchedSlicesNoPanic(t *testing.T) {
 			t.Fatalf("winningAttribution panicked with mismatched slices: %v", r)
 		}
 	}()
-	confirmed := &reconcile.Verification{Verdict: "confirmed"}
+	confirmed := &reclib.Verification{Verdict: "confirmed"}
 	// perSkeptic has 2 entries; skeptics has only 1.
 	// Without the bounds guard, skeptics[1] causes an index-out-of-range panic.
 	_, _ = winningAttribution(
 		[]Skeptic{testSkeptic()},
-		[]*reconcile.Verification{confirmed, confirmed},
+		[]*reclib.Verification{confirmed, confirmed},
 		[][]string{nil, nil},
 		"confirmed",
 	)
@@ -1012,7 +1013,7 @@ func TestRunVerify_ConfirmedWinnerDropsLoserTrippedBudget(t *testing.T) {
 func TestRunVerify_SkipWithCorruptPriorDropsMetadataAndWarns(t *testing.T) {
 	dir := pipelineReview(t, []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "VERIFIED",
-		Reviewers: []string{"rev"}, Verification: &reconcile.Verification{Verdict: "confirmed", Skeptic: "s1"},
+		Reviewers: []string{"rev"}, Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "s1"},
 	}})
 	// Corrupt prior verification.json: the finding is skipped, so loadPrior fires and
 	// fails — exercising the priorLoadFailed guard rather than a verdict mismatch.
