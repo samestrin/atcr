@@ -6,12 +6,12 @@ This file is a staging area for small technical debt items discovered during dev
 
 | Severity | Open | Deferred | Resolved |
 |----------|------|----------|----------|
-| CRITICAL | 1 | 0 | 0 |
+| CRITICAL | 0 | 0 | 0 |
 | HIGH | 4 | 1 | 0 |
 | MEDIUM | 14 | 23 | 1 |
 | LOW | 20 | 22 | 12 |
 
-**Last Modified:** 2026-06-23 | **Open Items:** 39 | **Deferred Items:** 46 | **Resolved Items:** 13 | **Total Items:** 98
+**Last Modified:** 2026-06-23 | **Open Items:** 38 | **Deferred Items:** 46 | **Resolved Items:** 13 | **Total Items:** 97
 
 ## Directory Structure
 
@@ -38,7 +38,6 @@ technical-debt/
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
-| 1 | [ ] | CRITICAL | db.go:100 | sql injection in query builder | parametrize input | security | 30 | code-review | greta, host | MEDIUM |
 | 2 | [ ] | HIGH | internal/reconcile/adapter/adapter.go:19 | The internal/reconcile/adapter package (ToFinding/FromFinding/ToJSONFinding) has ZERO non-test callers — the live path (RunReconcile in gate.go:220) uses lib.go toLibFinding/fromLibFinding, not the adapter. The documented permanent public boundary is unused scaffolding today and its conversion logic duplicates lib.go (TD-006) while exercised only by a self-asserting test. A dead exported boundary that drifts from the live one is worse than no boundary. (intent_note: deferred per sprint-plan Phase 3 Clarification Q1/Q2 (TD-006)) | Phase 3 deferral (TD-006): wire RunReconcile/emit.go JSONFindings() to consume the adapter (collapsing duplication), OR mark the package explicitly as a transitional Phase-3 staging artifact so it is not mistaken for live boundary code. Extends pre-seeded TD-006. | maintainability | 60 | code-review | claude | MEDIUM |
 | 2 | [ ] | MEDIUM | internal/reconcile/adapter/adapter.go:62 | THREE independent JSONFinding field maps must agree but are maintained separately: lib.go toLibFinding/fromLibFinding, emit.go JSONFindings() (emit.go:140-156), and adapter ToJSONFinding (adapter.go:63-79). TD-006 names only the lib.go<->adapter pair; the emit.go<->adapter pair is a third undocumented copy. Adding a ClusterID-class field to the merged record would silently diverge the builders with no compiler or test catch. (intent_note: deferred per sprint-plan Phase 3 Clarification Q1/Q2 (TD-006)) | Collapse to one conversion helper (have JSONFindings() call adapter.ToJSONFinding or vice versa) so there is a single field map; at minimum add a reflection-based table test that fails when a field exists in one builder but not the other. Extends TD-006. | maintainability | 120 | code-review | claude | MEDIUM |
 | 2 | [ ] | MEDIUM | internal/reconcile/adapter/adapter_test.go:99 | The require.Same *Verification pointer-identity assertion only covers the DEAD adapter path. The LIVE path debate/gate depend on is Merged.Verification -> JSONFindings() (emit.go:152) -> cache -> IsFailing(f.Verification) (gate.go:77,123) plus findings[i].Verification mutation in debate. Identity is in fact preserved (struct copy of pointer), but untested on the path that matters — a future refactor of JSONFindings() to deep-copy would pass the adapter test and silently break gate.go. (intent_note: deferred per sprint-plan Phase 3 Clarification Q1/Q2 (TD-006)) | Add a test on Result.JSONFindings() (emit.go) asserting require.Same(merged.Verification, jsonFindings[i].Verification) — cover the live path, not only the unused boundary helper. | testing | 30 | code-review | claude | MEDIUM |
