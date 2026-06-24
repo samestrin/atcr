@@ -73,20 +73,24 @@ func TestBonusPersonas_TemplateRenders(t *testing.T) {
 	}
 }
 
-// fixtureTest renders personaName against its committed .patch fixture and
-// asserts the rendered prompt names the expected finding category. Rendering is
-// pure template execution: no LLM, no network — the category keyword is authored
-// into the persona template itself (AC 01-03).
+// fixtureTest verifies a bonus persona's contract without an LLM or network.
+// It (1) loads the committed .patch fixture (a missing/uncommitted fixture fails
+// here), (2) asserts the expected finding category is authored into the persona
+// TEMPLATE itself — checked against the raw template, not the rendered prompt, so
+// a category word that merely appears in the injected diff cannot satisfy it —
+// and (3) confirms the template renders cleanly with the fixture as the diff
+// payload, leaving no unrendered template actions (AC 01-03).
 func fixtureTest(t *testing.T, personaName, fixturePath, wantCategory string) {
 	t.Helper()
 	diff, err := os.ReadFile(fixturePath)
 	require.NoErrorf(t, err, "read fixture %s", fixturePath)
 	text, err := Get(personaName)
 	require.NoErrorf(t, err, "Get(%q)", personaName)
+	require.Containsf(t, strings.ToLower(text), wantCategory,
+		"persona %q template does not name category %q", personaName, wantCategory)
 	out, err := payload.RenderPrompt(text, renderContext(string(diff)))
 	require.NoErrorf(t, err, "RenderPrompt(%q)", personaName)
-	require.Containsf(t, strings.ToLower(out), wantCategory,
-		"persona %q output does not name category %q", personaName, wantCategory)
+	require.NotContainsf(t, out, "{{", "persona %q left an unrendered action", personaName)
 }
 
 func TestSentinelFixture(t *testing.T) {

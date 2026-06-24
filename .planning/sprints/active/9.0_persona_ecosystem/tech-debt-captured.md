@@ -36,3 +36,10 @@
 **Issue:** `SelectEligibleSkeptics`'s `scores` map is keyed by skeptic registry name (`reg.Agents` key), but T6's source `scorecard.Aggregate()` is described as "reviewer-name → rate". These coincide only when a skeptic is also a credited reviewer; a key-space mismatch (skeptic registry name vs reviewer display name) would surface not as a compile error but as silent alphabetical fallback. The call site passes `nil` today, so nothing is wrong yet.
 **Why accepted:** Not active — `scores` is `nil` until T6 (Phase 5) wires the scorecard. Routing-only; worst case is loss of score-based tie-break, never a crash or wrong-skeptic security issue.
 **Fix in:** Phase 5 (T6) — when wiring `scorecard.Aggregate()` into `pipeline.go:162`, add a one-line comment/assertion that the map is keyed by skeptic registry name (canonicalized per the Phase 5 `strings.ToLower` join convention) so a keyspace mismatch surfaces in review.
+
+## TD-006 — Persona count hardcoded in doc-comment prose (LOW)
+**Origin:** Phase 3, task 3.2.A adversarial review, 2026-06-24
+**File:** personas/personas.go (package + `Names` doc comments)
+**Issue:** The package doc comment and `Names`' doc comment state the literal count ("nine embedded ... personas"). If the registry grows or shrinks, the prose drifts silently — no test asserts the comment text. Matches the pre-existing convention (the prior comment said "six").
+**Why accepted:** Cosmetic; the authoritative count is asserted by `TestNames_ReturnsAllNine` (length 9 + exact canonical order), so the contract is locked even if the prose drifts. Sprint policy defers LOW.
+**Fix in:** Future doc-tidy pass — replace the hardcoded count with a count-agnostic phrasing ("the embedded default reviewer personas") so the comment cannot go stale.

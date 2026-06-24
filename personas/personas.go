@@ -23,8 +23,23 @@ func Names() []string {
 	return out
 }
 
-// Get returns the embedded persona template for name.
+// isRegistered reports whether name is one of the canonical persona names.
+func isRegistered(name string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Get returns the embedded persona template for name. Only the canonical
+// registered personas resolve; the shared base template is served by Base, not
+// Get, so the registry stays the single source of truth for persona identity.
 func Get(name string) (string, error) {
+	if !isRegistered(name) {
+		return "", fmt.Errorf("unknown persona %q: not a registered persona", name)
+	}
 	data, err := files.ReadFile(name + ".md")
 	if err != nil {
 		return "", fmt.Errorf("internal error: embedded persona %s not found: %w", name, err)
