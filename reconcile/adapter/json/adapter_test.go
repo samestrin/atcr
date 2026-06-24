@@ -274,6 +274,9 @@ func TestEncode_EmptyArraysPresent(t *testing.T) {
 
 func TestByteStability_IdenticalOutput(t *testing.T) {
 	r := sampleResult()
+	if len(r.Summary.PerSourceCounts) < 3 {
+		t.Fatalf("sampleResult must populate Summary.PerSourceCounts with 3+ keys to exercise map ordering; got %v", r.Summary.PerSourceCounts)
+	}
 	opts := reconcile.Options{ReconciledAt: fixedTime}
 	a, err := Encode(r, opts)
 	if err != nil {
