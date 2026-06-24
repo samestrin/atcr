@@ -6,7 +6,7 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Bundle resolver | Go package (`internal/personas/bundles.go`) | Parses embedded YAML manifests |
-| CLI subcommand | Cobra (`cmd/atcr/personas_install.go`) | Detects `bundle/` prefix, delegates to resolver |
+| CLI subcommand | Cobra (`cmd/atcr/personas.go`) | Detects `bundle/` prefix, delegates to resolver |
 | Manifest embedding | `go:embed bundles/*.yaml` | No global init; parsed at call time |
 | YAML parsing | `gopkg.in/yaml.v3` | Struct-based decode |
 | Test framework | `go test` / `testify` | Unit + integration |
@@ -14,8 +14,9 @@
 ## Related Files
 - `internal/personas/bundles.go` - create: bundle resolver with `go:embed`, `Resolve(name string) ([]string, error)`, typed `ErrUnknownBundle`
 - `internal/personas/bundles/django.yaml` - create: manifest declaring `django-orm`, `python-types`, `security/owasp`, `security/secrets`
-- `internal/personas/bundles/go-production.yaml` - create: manifest declaring go-production persona set
-- `cmd/atcr/personas_install.go` - modify: add `strings.HasPrefix(arg, "bundle/")` guard to delegate to `bundles.Resolve`
+- `internal/personas/bundles/go-production.yaml` - create: manifest declaring `security/owasp`, `security/secrets`, `performance/memory`
+- `cmd/atcr/personas.go` - modify: add `strings.HasPrefix(arg, "bundle/")` guard in the install subcommand to delegate to `bundles.Resolve`
+- `internal/personas/install.go` - modify: bundle-aware install path calls `bundles.Resolve` then loops over single-persona install
 
 ### Related Files (from codebase-discovery.json)
 
@@ -23,7 +24,7 @@
 - `internal/personas/bundles/django.yaml` — create: django bundle manifest
 - `internal/personas/bundles/go-production.yaml` — create: go-production bundle manifest
 - `cmd/atcr/personas.go` — modify: detect `bundle/` prefix in install subcommand
-- `internal/personas/install.go` — related: single-persona install path used by bundle expansion
+- `internal/personas/install.go` — modify: bundle-aware install path calls `bundles.Resolve` then loops single-persona install
 - `internal/personas/paths.go` — create: `PersonasDir()` path helpers
 
 ## Happy Path Scenarios
@@ -36,7 +37,7 @@
 **Scenario 2: Install bundle/go-production on a clean config directory**
 - **Given** `~/.config/atcr/personas/` is empty
 - **When** the user runs `atcr personas install bundle/go-production`
-- **Then** the command exits 0, installs all declared go-production personas, and prints each name installed
+- **Then** the command exits 0, installs `security/owasp`, `security/secrets`, and `performance/memory`, and prints each name installed
 
 ## Edge Cases
 

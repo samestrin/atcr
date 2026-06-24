@@ -6,12 +6,13 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Bundle resolver | Go package (`internal/personas/bundles.go`) | Returns full persona list; install loop skips present entries |
-| Install loop | `cmd/atcr/personas_install.go` | Checks existence before fetch for each persona in the resolved list |
+| Install loop | `cmd/atcr/personas.go` + `internal/personas/install.go` | Checks existence before fetch for each persona in the resolved list |
 | Existence check | `os.Stat` on `~/.config/atcr/personas/<namespace>/<name>` | Returns `(installed, already-present)` per-persona outcome |
 | Test framework | `go test` / `testify` | Table-driven unit tests |
 
 ## Related Files
-- `cmd/atcr/personas_install.go` - modify: per-persona outcome reporting (installed vs. already present) in bundle install loop
+- `cmd/atcr/personas.go` - modify: per-persona outcome reporting (installed vs. already present) in bundle install loop
+- `internal/personas/install.go` - modify: bundle-aware install path calls `bundles.Resolve` then loops single-persona install
 - `internal/personas/bundles.go` - create: `Resolve` returns full list; caller loop handles skip logic
 - `internal/personas/bundles_test.go` - create: partial-install skip test with pre-populated temp config dir
 

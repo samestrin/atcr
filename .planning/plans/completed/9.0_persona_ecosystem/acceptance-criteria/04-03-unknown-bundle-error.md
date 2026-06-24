@@ -6,13 +6,13 @@
 | Component | Technology | Notes |
 |-----------|------------|-------|
 | Bundle resolver | Go package (`internal/personas/bundles.go`) | Returns typed `ErrUnknownBundle` for unrecognized names |
-| CLI error handling | `cmd/atcr/personas_install.go` | `errors.Is(err, bundles.ErrUnknownBundle)` produces user-facing message |
+| CLI error handling | `cmd/atcr/personas.go` | `errors.Is(err, bundles.ErrUnknownBundle)` produces user-facing message |
 | Error type | `var ErrUnknownBundle = errors.New("unknown bundle")` | Typed sentinel so callers do not string-match |
 | Test framework | `go test` / `testify` | `require.ErrorIs` assertions |
 
 ## Related Files
 - `internal/personas/bundles.go` - create: `ErrUnknownBundle` sentinel; `Resolve` returns it when name not found in embedded manifests
-- `cmd/atcr/personas_install.go` - modify: `errors.Is` check for `ErrUnknownBundle`, print clear user-facing message and `os.Exit(1)`
+- `cmd/atcr/personas.go` - modify: `errors.Is` check for `ErrUnknownBundle`, print clear user-facing message and `os.Exit(1)`
 - `internal/personas/bundles_test.go` - create: unknown bundle test case asserting `errors.Is(err, ErrUnknownBundle)` and zero persona list returned
 
 ### Related Files (from codebase-discovery.json)

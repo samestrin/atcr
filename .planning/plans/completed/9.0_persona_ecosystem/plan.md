@@ -26,7 +26,7 @@
 
 ### Acceptance Criteria
 - **Location:** [`acceptance-criteria/`](acceptance-criteria/)
-- **Status:** Pending — generate with `/create-acceptance-criteria @.planning/plans/active/9.0_persona_ecosystem/`
+- **Status:** Generated — 26 criteria covering all 6 user stories
 
 ## Feature Analysis Summary
 The plan is pre-divided into two sprints by the epic clarifications. **Sprint A** (registry + verify internals): T8 (`Language []string` field on `AgentConfig` + `SelectEligibleSkeptics` two-partition reorder) lands first because `AgentConfig` is imported by nearly every internal package; the schema change must be verified-green before T1 builds on it. T1 (bonus personas `sentinel`/`tracer`/`idiomatic` + test fixtures + CI step) follows immediately within the same sprint. **Sprint B** (surface layer): T2 (`atcr personas` CLI — 6 cobra sub-subcommands, greenfield `internal/personas` package), T5 (domain bundle YAML manifest + `install bundle/` resolution + `django` and `go-production` bundles), T6 (per-persona corroboration wiring — `--scores` flag reading from scorecard JSONL), and T7-in-repo (installation guide + persona authoring template).
@@ -102,7 +102,5 @@ A contributor follows the installation guide (`docs/personas-install.md`) to ins
 ## Next Steps
 1. `/find-documentation @.planning/plans/active/9.0_persona_ecosystem/`
 2. `/create-documentation @.planning/plans/active/9.0_persona_ecosystem/`
-3. `/create-user-stories @.planning/plans/active/9.0_persona_ecosystem/`
-4. `/create-acceptance-criteria @.planning/plans/active/9.0_persona_ecosystem/`
-5. `/design-sprint @.planning/plans/active/9.0_persona_ecosystem/`
-6. `/create-sprint @.planning/plans/active/9.0_persona_ecosystem/`
+3. `/design-sprint @.planning/plans/active/9.0_persona_ecosystem/`
+4. `/create-sprint @.planning/plans/active/9.0_persona_ecosystem/`

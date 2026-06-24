@@ -139,9 +139,9 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3 ✓; gate
 **New files:**
 - `internal/personas/client.go` — `RegistryBaseURL = "https://raw.githubusercontent.com/atcr/personas/main"`; injectable `http.Client` interface; env var `ATCR_PERSONAS_URL` override
 - `internal/personas/paths.go` — `PersonasDir() string`; uses `os.UserConfigDir()`; overridable in tests
-- `internal/personas/install.go` — `Install(client HTTPClient, baseURL, name, destDir string) error`; fetch → `validateAgent` → write; path traversal guard on `name` (`[a-zA-Z0-9_/-]+`, reject `..`)
-- `internal/personas/list.go` — `List(personasDir string) ([]PersonaEntry, error)`; merges built-in (from `personas.Names()`) + community (from `os.ReadDir`); graceful on missing dir
-- `internal/personas/search.go` — `Search(client, baseURL, keyword string) ([]PersonaEntry, error)`; fetches `index.json` from community repo
+- `internal/personas/install.go` — `Install(client HTTPClient, baseURL, name, destDir string) error`; fetch → `validateAgent` → write; path traversal guard on `name` (`[a-zA-Z0-9_/-]+`, reject `..`); bundle-aware path detects `bundle/` prefix and delegates to `bundles.Resolve`
+- `internal/personas/list.go` — `List(personasDir string) ([]PersonaMeta, error)`; merges built-in (from `personas.Names()`) + community (from `os.ReadDir`); graceful on missing dir
+- `internal/personas/search.go` — `Search(client, baseURL, keyword string) ([]PersonaMeta, error)`; fetches `index.json` from community repo
 - `internal/personas/remove.go` — `Remove(name, personasDir string) error`
 - `internal/personas/upgrade.go` — `Upgrade(client, baseURL, name, personasDir string, dryRun bool) error`; version comparison via `golang.org/x/mod/semver` (transitive dep)
 - `internal/personas/bundles/` — deferred to Phase 5
@@ -168,7 +168,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3 ✓; gate
 **T5 files:**
 - `internal/personas/bundles.go` — `Resolve(name string) ([]string, error)`; embedded `go:embed bundles/*.yaml`; typed `ErrUnknownBundle`; validates manifest at parse time (missing `name`/`personas` fields → error)
 - `internal/personas/bundles/django.yaml` — members: `django-orm`, `python-types`, `security/owasp`, `security/secrets`
-- `internal/personas/bundles/go-production.yaml` — members: TBD from plan context (idiomatic + sentinel + tracer coverage)
+- `internal/personas/bundles/go-production.yaml` — members: `security/owasp`, `security/secrets`, `performance/memory` (complements built-in `sentinel`, `tracer`, and `idiomatic` personas)
 - `internal/personas/install.go` — detect `bundle/` prefix via `strings.HasPrefix`; delegate to `bundles.Resolve` then loop single-persona install
 - `internal/personas/bundles_test.go` — `TestBundleResolve_Django`, `_GoProduction`, `_Unknown`, `_PartialInstallSkip`, `_ManifestParseMissingFields`
 
@@ -261,7 +261,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3 ✓; gate
 
 **Primitives:**
 - `AgentConfig` — core persona config; gains `Language []string \`yaml:"language,omitempty"\``
-- `PersonaEntry` — list output row: name, source (built-in/community), version, corroborationRate
+- `PersonaMeta` — list output row: name, source (built-in/community), version, language, corroborationRate
 - `BundleManifest` — `{Name string; Description string; Personas []string}` parsed from embedded YAML
 - `map[string]float64` — corroboration score carrier; nil = no data; keyed by lowercase reviewer name; shared between `SelectEligibleSkeptics` (4th param) and `atcr personas list --scores`
 
@@ -331,7 +331,7 @@ Thresholds: adversarial triggered by complexity >= 6/12 or phases >= 3 ✓; gate
 - `normalizeExt` used in both `applyDefaults` and routing → extract as shared package-level helper; covered by dedicated unit test with dot-prefixed and dotless inputs
 - `go:embed bundles/*.yaml` picks up unexpected files → enumerate bundle names explicitly in `Resolve`; unknown names return `ErrUnknownBundle`
 - Example YAML files become invalid after `language` field additions → run `go test ./...` after editing; `TestRegistryExamples_Valid` catches parse failures
-- Corroboration join key casing drift → use `strings.ToLower` on both `PersonaEntry.Name` and `LeaderboardRow.ReviewerName` in the join; unit test covers mixed-case fixture
+- Corroboration join key casing drift → use `strings.ToLower` on both `PersonaMeta.Name` and `LeaderboardRow.ReviewerName` in the join; unit test covers mixed-case fixture
 
 **TDD-Specific:**
 - `TestNames_ReturnsAllSix` breaks CI before persona `.md` files exist if name-slice and test changes land in separate commits → rename test + update count + add `.md` files + update names slice all in the same GREEN commit (local RED verified first)

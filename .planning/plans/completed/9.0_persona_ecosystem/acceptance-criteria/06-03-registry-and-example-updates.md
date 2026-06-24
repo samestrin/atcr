@@ -95,7 +95,7 @@
 **Test Data Requirements:** The two example YAML files with at least one `language` field each; `go test ./...` must be run after editing them
 **Mock/Stub Requirements:** None — registry loader tests use the real example files
 **Verification Method:**
-1. Run `go test ./...` after editing both example files — must pass.
+1. Run `go test ./...` after editing both example files — must pass. This exercises `TestRegistryExamples_Valid` (or equivalent registry loader coverage) that loads both example files through `internal/registry`.
 2. Grep both example files and `docs/registry.md` for `docs/examples/registry.yaml` — must return no matches.
 3. Review `docs/registry.md` language field section against `SelectEligibleSkeptics` implementation to confirm routing behavior description is accurate.
 

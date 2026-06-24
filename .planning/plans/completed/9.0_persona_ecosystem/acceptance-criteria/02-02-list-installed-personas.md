@@ -8,12 +8,12 @@
 | CLI subcommand | Go / Cobra | `list` sub-subcommand under `newPersonasCmd()` |
 | Built-in persona enumeration | `internal/registry` | Enumerate the 6 generalist + 3 bonus built-ins |
 | Community persona enumeration | `os.ReadDir` on `~/.config/atcr/personas/` | Walk directory; treat missing dir as empty set |
-| Output formatting | `text/tabwriter` | Aligned columns: Name, Version, Source |
+| Output formatting | `text/tabwriter` | Aligned columns: Name, Version, Source, Language |
 | Test Framework | `go test` / `testify` | Temp directory with fixture YAML files |
 | Key Dependencies | `github.com/spf13/cobra`, `internal/personas/list.go` | |
 
 ## Related Files
-- `internal/personas/list.go` - create: `ListPersonas(personasDir string) ([]PersonaEntry, error)` enumerating built-ins + installed community personas
+- `internal/personas/list.go` - create: `List(personasDir string) ([]PersonaMeta, error)` enumerating built-ins + installed community personas
 - `cmd/atcr/personas.go` - modify: add `list` sub-subcommand with `--scores` flag (deferred/no-op for Story 2; wired in Story 5)
 - `cmd/atcr/personas_test.go` - modify: add `TestPersonasList_*` test cases using temp directories
 
@@ -30,7 +30,7 @@
 **Scenario 1: List with both built-in and community personas installed**
 - **Given** the registry has 9 built-in personas (6 generalist + 3 bonus) and 2 community personas installed in `~/.config/atcr/personas/`
 - **When** the user runs `atcr personas list`
-- **Then** stdout prints a table with Name, Version, and Source columns; all 11 personas appear; built-ins show source `built-in` and community personas show source `community`; command exits 0
+- **Then** stdout prints a table with Name, Version, Source, and Language columns; all 11 personas appear; built-ins show source `built-in` and community personas show source `community`; personas with a non-empty `language` field display the canonical language list (e.g., `go`); personas with no `language` field display `-`; command exits 0
 
 **Scenario 2: List with no community personas installed**
 - **Given** `~/.config/atcr/personas/` is empty or does not exist
@@ -59,6 +59,16 @@
 - **When** `atcr personas list` is run
 - **Then** non-YAML files are silently skipped; only `.yaml` and `.yml` files appear in the output
 
+**Edge Case 4: Persona with multiple language scopes**
+- **Given** an installed community persona YAML contains `language: ["go", "ts"]`
+- **When** `atcr personas list` is run
+- **Then** the Language column shows `go, ts` (canonical, comma-separated) for that persona
+
+**Edge Case 5: Persona with no language field**
+- **Given** a built-in persona or an installed YAML omits the `language` field
+- **When** `atcr personas list` is run
+- **Then** the Language column shows `-` for that persona
+
 ## Error Conditions
 
 **Error Scenario 1: Community personas directory is unreadable (permission denied)**
@@ -86,8 +96,9 @@
 - [ ] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas list` prints Name, Version, Source columns and exits 0 regardless of whether `~/.config/atcr/personas/` exists
+- [ ] `atcr personas list` prints Name, Version, Source, and Language columns and exits 0 regardless of whether `~/.config/atcr/personas/` exists
 - [ ] Built-in personas appear with source `built-in`; community personas appear with source `community`
+- [ ] Personas with a `language` field display the canonical language list; personas without one display `-`
 - [ ] `--scores` flag is accepted without error (no-op output acceptable for Story 2)
 
 **Manual Review:**

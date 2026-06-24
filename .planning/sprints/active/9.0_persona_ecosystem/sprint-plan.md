@@ -1,0 +1,897 @@
+# Sprint 9.0: Persona Ecosystem
+
+---
+executor: /execute-sprint
+execution_mode: gated
+context_recovery: On context compaction, read .planning/.temp/execute-sprint/context.env for phase state. Resume at first unchecked phase below.
+---
+
+**Directions:** Work through Sprint 9.0 step-by-step. Complete each step, check off work immediately. After completing a phase, proceed to the next without waiting — EXCEPT this sprint runs in **gated mode**: stop at each phase-boundary GATE (`N.LAST`) for review before continuing.
+
+Before each phase, review `/CLAUDE.md` (or AGENTS.md).
+
+---
+
+## Sprint Overview
+
+**Metadata:** See [metadata.md](metadata.md) for complete plan and sprint tracking details.
+
+**Original Request:** [Full details in plan/original-requirements.md](plan/original-requirements.md)
+
+### What We're Building
+
+Expand ATCR's reviewer panel beyond the 6 generalist built-in personas by (a) shipping 3 curated domain-specific bonus personas (`sentinel`, `tracer`, `idiomatic`) bundled with the binary, and (b) adding an `atcr personas` CLI that installs, lists, searches, removes, tests, and upgrades community-contributed personas from a configurable repository URL. Personas gain a `language` scope field that drives language-aware skeptic routing in the verify stage, and per-persona corroboration scores surface which personas earn their keep.
+
+### Why This Matters
+
+Without domain-specific personas, ATCR is a generalist tool teams layer their own expertise onto. Domain personas (security, performance, Go idioms, framework-specific bundles) make ATCR immediately valuable to vertical teams and become the primary lever for vertical market adoption.
+
+### Key Deliverables
+
+- 3 bonus built-in personas with CI-tested, network-free fixtures (Story 01)
+- `atcr personas` CLI with 6 subcommands: install, list, search, remove, test, upgrade (Story 02)
+- `AgentConfig.Language` field + language-aware `SelectEligibleSkeptics` two-partition routing (Story 03)
+- Domain bundles (`bundle/django`, `bundle/go-production`) via embedded YAML manifests (Story 04)
+- `atcr personas list --scores` wired to the scorecard corroboration data (Story 05)
+- In-repo install guide, authoring template, registry/example updates (Story 06)
+
+### Success Criteria
+
+- `go test ./...` green across all packages including all fixture and integration tests
+- Zero live network calls in CI — all HTTP fetch logic tested via `httptest.NewServer`
+- `Names()` returns 9 personas; `atcr` root exposes 15 subcommands
+- Path-traversal guard on persona install; community YAML validated via `validateAgent` before any disk write
+- Coverage ≥80% for new `internal/personas/` package
+- Backward compatibility: registries without the `language` field load unchanged
+
+**CRITICAL REMINDER:** Every task in this sprint must contribute to fulfilling the original request. If a task seems unrelated to what the user actually asked for, STOP and validate before proceeding. Do not add scope beyond the original request.
+
+---
+
+## TDD Strategy
+
+**Mode:** STRICT 🔒 (RED → GREEN → ADVERSARIAL → REFACTOR) for all elements.
+
+**Rationale:** Complexity 10/12 (VERY COMPLEX) maps to STRICT TDD. Each element gets comprehensive failing tests first, minimal implementation to green, a fresh-subagent adversarial review, then a refactor that incorporates CRITICAL/HIGH findings inline.
+
+**Adversarial Review:** ENABLED 🎯 — Inline-fix severities: **CRITICAL/HIGH**. Deferred to tech debt: **MEDIUM/LOW**.
+
+**Execution Mode:** GATED 🚧 — `/execute-sprint` stops at each phase-boundary GATE (`N.LAST`) after the phase DoD.
+
+---
+
+## About This Document
+
+| Document | Purpose |
+|----------|---------|
+| [sprint-design.md](plan/sprint-design.md) | Architecture, decomposition, test strategy |
+| [original-requirements.md](plan/original-requirements.md) | User's actual request (source of truth) |
+| [user-stories/](plan/user-stories/) | Feature requirements |
+| [acceptance-criteria/](plan/acceptance-criteria/) | Validation requirements with DoD |
+| [documentation/README.md](plan/documentation/README.md) | Grounded package & design documentation |
+
+---
+
+## Sprint Conventions
+
+### Testing Tiers
+
+| Tier | When | Command Pattern |
+|------|------|-----------------|
+| T1: Focused | After each small change | `go test ./internal/<pkg>/ -run <TestName>` |
+| T2: Module | After completing element | `go test ./internal/<pkg>/...` |
+| T3: Full | DoD validation, pre-commit | `go test ./...` |
+
+### DoD Verification Checklist
+1. Tests (T3): `go test ./...` all passing
+2. Coverage: ≥80% (`go test -coverprofile=coverage.out ./...`)
+3. Lint: `golangci-lint run` no errors; `go vet ./...` clean
+4. Build: `go build ./...` succeeds
+5. Docs: Updated where applicable
+
+### DoD Report Template
+```
+Story-{N} DoD Complete
+Auto: {X}/5 | Story-Specific: {Y}/{Z}
+Manual Review: [ ] Code reviewed
+```
+
+### Commit Process
+Stage only files changed by this phase — do NOT use `git add .` or `git add -A` (other sessions may have uncommitted work).
+`git add [specific files] && git commit -m "<type>(<scope>): <message>"`
+
+---
+
+## Development Standards
+
+Follow the project standards (read before coding):
+
+- [implementation-standards.md](../../../specifications/implementation-standards.md) — implementation conventions
+- [coding-standards.md](../../../specifications/coding-standards.md) — Go style, naming, error handling
+- [git-strategy.md](../../../specifications/git-strategy.md) — branch + commit conventions
+
+**Branch:** `feature/9.0_persona_ecosystem` (push deferred to `/finalize-sprint`).
+
+**Key conventions for this sprint:**
+- Go test (stdlib) + `github.com/stretchr/testify/assert`; table-driven tests for validation/canonicalization.
+- All HTTP fetch logic tested via `httptest.NewServer` — zero live network calls in CI.
+- Filesystem-state-modifying tests use `t.TempDir()` substituted for `PersonasDir()`; tag with `//go:build integration` where appropriate.
+- Typed errors (`ErrUnknownBundle`, `ErrPersonaNotFound`) — no string-matching by callers.
+
+---
+
+## External Resources
+
+From [documentation/README.md](plan/documentation/README.md):
+
+**[CRITICAL] Must read before coding:**
+- [Bonus Built-In Personas](plan/documentation/bonus-personas.md) — persona registration + fixture expectations (T1)
+- [Cobra CLI Patterns](plan/documentation/cobra-cli-patterns.md) — subcommand architecture (T2)
+- [YAML Bundle Manifests](plan/documentation/yaml-bundle-manifests.md) — manifest parsing + `AgentConfig.Language` (T5/T8)
+- [Skeptic Routing & Verification](plan/documentation/skeptic-routing-verification.md) — `SelectEligibleSkeptics` extension (T8)
+
+**[IMPORTANT] Review during development:**
+- [HTTP & Standard Library Testing](plan/documentation/http-stdlib-testing.md) — `httptest.NewServer` patterns (T2)
+- [Per-Persona Corroboration Scores](plan/documentation/scorecard-corroboration.md) — scorecard wiring (T6)
+
+---
+
+## Sprint Phases
+
+> **Pre-implementation grep (Phase 2 dependency):** Before Phase 2, run `grep -r "SelectEligibleSkeptics" ./internal/` to confirm the single production caller (`internal/verify/pipeline.go:162`). Update any additional callers in the same commit.
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 1: T8 — AgentConfig Language Field (Sprint A, Days 1-2)
+
+**Focus:** Schema change — `Language []string` on `AgentConfig`, validation, canonicalization, shared `normalizeExt` helper.
+**Story:** [03 — Language-Aware Skeptic Routing](plan/user-stories/03-language-aware-skeptic-routing.md) | **ACs:** [03-01](plan/acceptance-criteria/03-01-agentconfig-language-field.md), [03-05 (partial)](plan/acceptance-criteria/03-05-registry-yaml-backward-compatibility.md)
+
+### 1.1 [ ] **[Language Field + normalizeExt - RED](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   Write comprehensive failing tests, verify they fail correctly:
+   - `TestAgentConfig_LanguageField_Validation` (reject empty entries + control chars)
+   - `TestAgentConfig_LanguageField_Canonicalization` (`.go`/`GO`/` go ` → `go`; idempotent)
+   - `TestNormalizeExt_WithAndWithoutDot` (`.go` → `go`, `go` → `go`)
+   - `TestRegistryExamples_BackwardCompat` (registry with no `language` field loads cleanly — AC 03-05 partial)
+   **Files:** `internal/registry/config_test.go`, `internal/verify/select_test.go` | **Duration:** 0.5 day
+
+### 1.2 [ ] **[Language Field + normalizeExt - GREEN](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   Minimal code, one test at a time (T1), verify all (T2), COMMIT:
+   - `internal/registry/config.go` — add `Language []string \`yaml:"language,omitempty"\``; extend `validateAgent` (reject empty entries + control chars, mirror `Scope` guard, NO known-language allow-list); extend `applyDefaults` (trim space, strip single leading dot, lowercase)
+   - `internal/verify/select.go` — add `normalizeExt(ext string) string` helper (strips dot, lowercases)
+   COMMIT: `git commit -m "feat(registry): add AgentConfig.Language field + normalizeExt (green)"`
+   **Files:** `internal/registry/config.go`, `internal/verify/select.go` | **Duration:** 0.5 day
+
+### 1.2.A [ ] **[Language Field - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   **Changed Files:** `internal/registry/config.go`, `internal/verify/select.go`, `internal/registry/config_test.go`, `internal/verify/select_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 1.2 — this is intentional, to avoid "I wrote it, it's good" bias. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 1.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 1.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Control-char / injection via language entries? Validation bypass?
+       - EDGE CASES: Empty slice, nil, mixed-case, multi-dot ext (`.tar.gz`), unicode, idempotency of canonicalization?
+       - ERROR HANDLING: Validation error messages clear? Swallowed errors?
+       - PERFORMANCE: Allocation in canonicalization hot path?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 1.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 1.3 [ ] **[Language Field + normalizeExt - REFACTOR](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   1. Fix CRITICAL/HIGH issues from 1.2.A (if any)
+   2. Confirm `normalizeExt` is the single shared helper used by both `applyDefaults` and the routing path (no duplication); maintain green (T1), validate (T3)
+   3. COMMIT: `git commit -m "refactor(registry): address review + share normalizeExt"`
+   **Duration:** 0.5 day
+
+### 1.4 [ ] **Phase 1 — DoD Validation**
+   - Run `go test ./internal/registry/... ./internal/verify/...` (T3 scoped) — green
+   - `go build ./...` clean; `go vet ./...` clean
+   - DoD report:
+     ```
+     Story-03 (partial) DoD Complete
+     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Manual Review: [ ] Code reviewed
+     ```
+
+### 1.LAST [ ] **Phase 1 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 1 (integration-level, not TDD cadence)
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. The subagent has no memory of the phase's implementation — this is intentional. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 1 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 1 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `Language` field shape + canonical form (`["go","ts"]`, no dot, lowercased) honored?
+       - CONFIG SURFACE: `language` YAML key documented intent, defaulted (nil = no constraint), back-compat?
+       - INTEGRATION: `normalizeExt` ready for Phase 2 routing consumption without rework?
+       - PHASE-EXIT CONTRACT: Phase 2 can build the two-partition reorder on this?
+       - REGRESSION: Existing `AgentConfig` load/validate behavior intact?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 2: T8 — SelectEligibleSkeptics Routing (Sprint A, Days 3-4)
+
+**Focus:** Two-partition reorder in `select.go`; nil-safe score sort; pipeline caller signature update.
+**Story:** [03 — Language-Aware Skeptic Routing](plan/user-stories/03-language-aware-skeptic-routing.md) | **ACs:** [03-02](plan/acceptance-criteria/03-02-select-eligible-skeptics-routing.md), [03-03](plan/acceptance-criteria/03-03-pipeline-caller-update.md), [03-04](plan/acceptance-criteria/03-04-silent-fallback-no-match.md), [03-05 (remainder)](plan/acceptance-criteria/03-05-registry-yaml-backward-compatibility.md)
+
+> **Pre-implementation check:** `grep -r "SelectEligibleSkeptics" ./internal/` — confirm single caller; update any additional callers in the same commit if found.
+
+### 2.1 [ ] **[Skeptic Routing - RED](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   Write comprehensive failing tests, verify they fail correctly:
+   - `TestSelectEligibleSkeptics_LanguageMatch`, `_NoMatchFallback`, `_TieBreakByScore`, `_TieBreakAlphabeticalWhenNoScores`, `_NilScoresMap`, `_BackwardCompatNoLanguageField`
+   **Files:** `internal/verify/select_test.go` | **Duration:** 0.5 day
+
+### 2.2 [ ] **[Skeptic Routing - GREEN](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   Minimal code, one test at a time (T1), verify all (T2), COMMIT:
+   - `internal/verify/select.go:55` — change signature to `SelectEligibleSkeptics(agents []AgentConfig, finding Finding, n int, scores map[string]float64) []string`; after `sort.Strings(names)`, partition into matched (finding file ext ∈ skeptic's `Language` via `normalizeExt`) and unmatched; rebuild `append(matched, unmatched...)`; within matched, sort by `scores[name]` descending then name ascending; nil map → alphabetical-only
+   - `internal/verify/pipeline.go:162` — update sole production caller to pass scores map (nil acceptable until T6 wires it)
+   COMMIT: `git commit -m "feat(verify): language-aware two-partition skeptic routing (green)"`
+   **Files:** `internal/verify/select.go`, `internal/verify/pipeline.go` | **Duration:** 0.75 day
+
+### 2.2.A [ ] **[Skeptic Routing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   **Changed Files:** `internal/verify/select.go`, `internal/verify/pipeline.go`, `internal/verify/select_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 2.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 2.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Any data exposure via reordering? Score-map injection?
+       - EDGE CASES: Nil scores map, empty names, all-match, no-match, duplicate scores, n-cap boundary, finding with no extension?
+       - ERROR HANDLING: Panics on nil map? Determinism of tie-break?
+       - PERFORMANCE: Slice growth copies? Pre-allocated `make([]string, 0, len(names))`? No scorecard import leaked into verify?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 2.3 [ ] **[Skeptic Routing - REFACTOR](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
+   2. Pre-allocate `matched`/`unmatched` with `make([]string, 0, len(names))`; confirm no `scorecard` import in `verify`; maintain green (T1), validate (T3)
+   3. COMMIT: `git commit -m "refactor(verify): address review + pre-allocate partitions"`
+   **Duration:** 0.5 day
+
+### 2.4 [ ] **Phase 2 — DoD Validation**
+   - `go test ./internal/verify/...` green; `go build ./...` clean
+   - Confirm no API leakage from `verify` into `scorecard` (score map built by caller)
+   - DoD report (Story-03 complete):
+     ```
+     Story-03 DoD Complete
+     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Manual Review: [ ] Code reviewed
+     ```
+
+### 2.LAST [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 2
+
+   **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 2 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 2 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: 4-arg signature stable; `map[string]float64` carrier shape matches what T6 will build from `scorecard.Aggregate()`?
+       - CONFIG SURFACE: Routing fallback silent + automatic (AC 03-04)?
+       - INTEGRATION: Sole caller updated; grep confirmed no stragglers?
+       - PHASE-EXIT CONTRACT: T6 (Phase 5) can supply the scores map without verify changes?
+       - REGRESSION: Backward-compat — registries without `language` still route correctly?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 3: T1 — Bonus Built-In Personas (Sprint A, Days 5-7)
+
+**Focus:** 3 persona `.md` files + 3 fixtures + registry update + CI-passing, network-free tests.
+**Story:** [01 — Bonus Built-In Domain Personas](plan/user-stories/01-bonus-built-in-domain-personas.md) | **ACs:** [01-01](plan/acceptance-criteria/01-01-names-registry-returns-nine.md), [01-02](plan/acceptance-criteria/01-02-bonus-persona-prompt-content.md), [01-03](plan/acceptance-criteria/01-03-fixture-ci-tests-no-network.md)
+
+> **Atomic-commit rule:** Rename `TestNames_ReturnsAllSix` → `TestNames_ReturnsAllNine` (count 6 → 9) as a standalone RED commit; then add the 3 `.md` files + 3 fixtures + `names` slice update **all in one GREEN commit** to avoid a CI failure window. **Fixture content rules:** synthetic values only (`FAKE_API_KEY_00000000`), mode 0644, no live network in rendering path.
+
+### 3.1 [ ] **[Bonus Personas - RED](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+   Write comprehensive failing tests, verify they fail correctly (commit RED standalone):
+   - Rename `TestNames_ReturnsAllSix` → `TestNames_ReturnsAllNine` (expect 9)
+   - `TestGet_BonusPersonasNonEmpty`, `TestBonusPersonas_TemplateRenders`
+   - `TestSentinelFixture`, `TestTracerFixture`, `TestIdiomaticFixture` (assert on finding category string: `"injection"`, `"n+1"`, `"error"` — not just non-empty); reuse existing `Payload` struct
+   COMMIT (RED): `git commit -m "test(personas): expect 9 personas + bonus fixtures (red)"`
+   **Files:** `personas/personas_test.go` | **Duration:** 0.5 day
+
+### 3.2 [ ] **[Bonus Personas - GREEN](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+   Minimal code (T1), verify all (T2), single atomic COMMIT:
+   - `personas/personas.go` — append `"sentinel"`, `"tracer"`, `"idiomatic"` to `names` (after `"dax"`, before `"otto"`)
+   - `personas/sentinel.md` — security: OWASP Top 10, SQL/command injection, secrets leakage, insecure defaults (follow `bruce.md` template structure exactly)
+   - `personas/tracer.md` — performance: N+1 queries, memory leaks, allocation hot paths, escape analysis
+   - `personas/idiomatic.md` — Go idioms: error handling, goroutine leaks, sync misuse, stdlib misuse
+   - `personas/testdata/sentinel_fixture.patch` — synthetic SQL string concat
+   - `personas/testdata/tracer_fixture.patch` — ORM call inside a `for` loop
+   - `personas/testdata/idiomatic_fixture.patch` — ignored error return (`val, _ := strconv.Atoi(s)`)
+   COMMIT (GREEN, atomic): `git commit -m "feat(personas): add sentinel/tracer/idiomatic bonus personas (green)"`
+   **Files:** `personas/personas.go`, `personas/*.md`, `personas/testdata/*.patch` | **Duration:** 1.5 days
+
+### 3.2.A [ ] **[Bonus Personas - ADVERSARIAL REVIEW (subagent)](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+   **Changed Files:** `personas/personas.go`, `personas/sentinel.md`, `personas/tracer.md`, `personas/idiomatic.md`, `personas/testdata/*.patch`, `personas/personas_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool to perform this review. No memory of the implementation in 3.2. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 3.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 3.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Any real (non-synthetic) credential in fixtures? Network call in render path?
+       - EDGE CASES: Persona template variable slots match `bruce.md` exactly? `go:embed` picks up only declared names?
+       - ERROR HANDLING: `Get(name)` rejects names not in `names` slice regardless of embedded files?
+       - PERFORMANCE: Fixture rendering does no I/O beyond embedded read?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 3.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 3.3 [ ] **[Bonus Personas - REFACTOR](plan/user-stories/01-bonus-built-in-domain-personas.md)**
+   1. Fix CRITICAL/HIGH issues from 3.2.A (if any)
+   2. Review persona template quality; ensure all variable slots match `bruce.md` exactly; maintain green (T1), validate (T3)
+   3. COMMIT: `git commit -m "refactor(personas): address review + template polish"`
+   **Duration:** 0.5 day
+
+### 3.4 [ ] **Phase 3 — DoD Validation**
+   - `go test ./personas/...` green including all 3 fixture tests
+   - Confirm no outbound connections in test run
+   - DoD report (Story-01 complete):
+     ```
+     Story-01 DoD Complete
+     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Manual Review: [ ] Code reviewed
+     ```
+
+### 3.LAST [ ] **Phase 3 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 3
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the phase's implementation. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 3 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 3 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `Names()` returns exactly 9; canonical ordering preserved?
+       - CONFIG SURFACE: Fixtures synthetic-only, 0644, documented intent?
+       - INTEGRATION: Bonus personas usable by Phase 4 `list` (built-in source) without rework?
+       - PHASE-EXIT CONTRACT: `TestNames_ReturnsAllNine` stable for downstream count assertions?
+       - REGRESSION: Original 6 personas still render?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+   **— END SPRINT A (Phases 1-3) —**
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 4: T2 — atcr personas CLI (Sprint B, Days 8-11)
+
+**Focus:** New `internal/personas` package + 6 Cobra sub-subcommands + atomic root-count test update.
+**Story:** [02 — Personas CLI Discovery & Lifecycle](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md) | **ACs:** [02-01](plan/acceptance-criteria/02-01-install-persona-from-community-repo.md), [02-02](plan/acceptance-criteria/02-02-list-installed-personas.md), [02-03](plan/acceptance-criteria/02-03-search-community-repo-index.md), [02-04](plan/acceptance-criteria/02-04-remove-installed-persona.md), [02-05](plan/acceptance-criteria/02-05-test-persona-fixture.md), [02-06](plan/acceptance-criteria/02-06-upgrade-installed-personas.md)
+
+> **Atomic-commit rule:** `root.AddCommand(newPersonasCmd())` in `main.go` + `TestRootCmd_HasExactlyFifteenSubcommands` count bump must land in the **same commit** to avoid a CI failure window. All HTTP tested via `httptest.NewServer`; all `PersonasDir()` substituted with `t.TempDir()`.
+
+### Element A — `internal/personas` package core
+
+### 4.1 [ ] **[internal/personas core - RED](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   Write comprehensive failing tests, verify they fail correctly:
+   - `install_test.go` — install fetch → `validateAgent` → write; path-traversal guard (`..` rejected); HTTP via `httptest.NewServer`
+   - `list_test.go` — merge built-in (`personas.Names()`) + community (`os.ReadDir`); graceful on missing dir
+   - `search_test.go` — fetch `index.json`; keyword filter
+   - `remove_test.go` — remove by name
+   - `upgrade_test.go` — version compare via `golang.org/x/mod/semver`; `--dry-run` prints, no write
+   **Files:** `internal/personas/*_test.go` | **Duration:** 1 day
+
+### 4.2 [ ] **[internal/personas core - GREEN](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   Minimal code (T1), verify all (T2), COMMIT:
+   - `client.go` — `RegistryBaseURL = "https://raw.githubusercontent.com/atcr/personas/main"`; injectable `HTTPClient` interface; `ATCR_PERSONAS_URL` env override
+   - `paths.go` — `PersonasDir() string` via `os.UserConfigDir()`; overridable in tests
+   - `install.go` — `Install(client HTTPClient, baseURL, name, destDir string) error`; fetch → `validateAgent` → write; path-traversal guard (`[a-zA-Z0-9_/-]+`, reject `..`/absolute); `bundle/` prefix detection deferred to Phase 5
+   - `list.go` — `List(personasDir string) ([]PersonaMeta, error)`; graceful on missing dir
+   - `search.go` — `Search(client, baseURL, keyword string) ([]PersonaMeta, error)`
+   - `remove.go` — `Remove(name, personasDir string) error`
+   - `upgrade.go` — `Upgrade(client, baseURL, name, personasDir string, dryRun bool) error`
+   COMMIT: `git commit -m "feat(personas): internal/personas lifecycle package (green)"`
+   **Files:** `internal/personas/{client,paths,install,list,search,remove,upgrade}.go` | **Duration:** 1.5 days
+
+### 4.2.A [ ] **[internal/personas core - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   **Changed Files:** `internal/personas/{client,paths,install,list,search,remove,upgrade}.go` + `*_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 4.2. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 4.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 4.2]
+     - Checklist (pass verbatim):
+       - SECURITY: **Path traversal** in `install`/`remove`/`upgrade` name → destination (`../../etc/...`)? Absolute path segments rejected? Malicious community YAML reaches disk before `validateAgent`?
+       - EDGE CASES: Missing personas dir, empty `index.json`, HTTP non-200, partial write on error, env-var override empty string?
+       - ERROR HANDLING: Typed errors (`ErrPersonaNotFound`)? No string-matching by callers? Write-then-validate ordering correct (validate BEFORE write)?
+       - PERFORMANCE: Any live network call possible in CI path?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### Element B — Cobra subcommands + registration
+
+### 4.3 [ ] **[personas subcommands - RED](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   Write failing tests, verify they fail correctly:
+   - `cmd/atcr/personas_test.go` — integration tests via `httptest.NewServer` for each of `install`, `list`, `search`, `remove`, `test`, `upgrade`
+   - `cmd/atcr/main_test.go` — rename `TestRootCmd_HasExactlyFourteenSubcommands` → `...FifteenSubcommands` (count 14 → 15)
+   **Files:** `cmd/atcr/personas_test.go`, `cmd/atcr/main_test.go` | **Duration:** 0.75 day
+
+### 4.4 [ ] **[personas subcommands - GREEN](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   Minimal code (T1), verify all (T2), atomic COMMIT:
+   - `cmd/atcr/personas.go` — `newPersonasCmd()` + 6 sub-subcommands wired to `internal/personas`
+   - `cmd/atcr/main.go` — `root.AddCommand(newPersonasCmd())` (SAME commit as count test bump)
+   COMMIT (atomic): `git commit -m "feat(cmd): atcr personas command + 6 subcommands (green)"`
+   **Files:** `cmd/atcr/personas.go`, `cmd/atcr/main.go` | **Duration:** 0.75 day
+
+### 4.4.A [ ] **[personas subcommands - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   **Changed Files:** `cmd/atcr/personas.go`, `cmd/atcr/main.go`, `cmd/atcr/personas_test.go`, `cmd/atcr/main_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 4.4. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 4.4`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 4.4]
+     - Checklist (pass verbatim):
+       - SECURITY: User-supplied persona name flows to filesystem safely? Error messages leak paths?
+       - EDGE CASES: Subcommand with no args, unknown subcommand, conflicting flags, count test exactly 15?
+       - ERROR HANDLING: Errors → stderr, success → stdout? Non-zero exit on failure?
+       - PERFORMANCE: Any live network in CI? All tests use temp dirs?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 4.5, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 4.5 [ ] **[personas CLI - REFACTOR](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+   1. Fix CRITICAL/HIGH issues from 4.2.A and 4.4.A (if any)
+   2. Consolidate HTTP client injection pattern; ensure all tests use temp dirs for `PersonasDir`; maintain green (T1), validate (T3)
+   3. COMMIT: `git commit -m "refactor(personas): address review + consolidate HTTP injection"`
+   **Duration:** 0.5 day
+
+### 4.6 [ ] **Phase 4 — DoD Validation**
+   - `go test ./cmd/atcr/... ./internal/personas/...` green; zero live network calls in CI; `go build ./...` clean
+   - Coverage check for `internal/personas/` ≥80%
+   - DoD report (Story-02 complete):
+     ```
+     Story-02 DoD Complete
+     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Manual Review: [ ] Code reviewed
+     ```
+
+### 4.LAST [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 4
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the phase's implementation. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 4 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 4 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `Install` signature ready for Phase 5 `bundle/` delegation? `List` ready for `--scores` extension?
+       - CONFIG SURFACE: `ATCR_PERSONAS_URL` override documented; default URL not hardcoded unconditionally?
+       - INTEGRATION: `install.go` `bundle/` hook point present for Phase 5? Root has exactly 15 subcommands?
+       - PHASE-EXIT CONTRACT: Phase 5 can add `bundles.Resolve` + `--scores` without restructuring?
+       - REGRESSION: Existing subcommands unaffected; `go test ./...` clean?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 5: T5 Domain Bundles + T6 Corroboration Scores (Sprint B, Days 12-14)
+
+**Focus:** Bundle resolver + embedded YAML manifests + `--scores` flag wired to scorecard.
+**Stories:** [04 — Domain Bundles](plan/user-stories/04-domain-bundles.md), [05 — Corroboration Feedback](plan/user-stories/05-corroboration-feedback.md)
+**ACs:** [04-01](plan/acceptance-criteria/04-01-clean-bundle-install.md), [04-02](plan/acceptance-criteria/04-02-partial-install-skip.md), [04-03](plan/acceptance-criteria/04-03-unknown-bundle-error.md), [04-04](plan/acceptance-criteria/04-04-manifest-parse-validation.md), [04-05](plan/acceptance-criteria/04-05-bundle-test-coverage.md), [05-01](plan/acceptance-criteria/05-01-baseline-list-no-regression.md), [05-02](plan/acceptance-criteria/05-02-scores-column-display.md), [05-03](plan/acceptance-criteria/05-03-sort-ordering.md), [05-04](plan/acceptance-criteria/05-04-help-documentation.md)
+
+> **Score-map key convention:** `strings.ToLower(reviewerName)` — same normalization on both sides of the join (persona list + scorecard aggregate).
+
+### Element A — T5 Domain Bundles
+
+### 5.1 [ ] **[Domain Bundles - RED](plan/user-stories/04-domain-bundles.md)**
+   Write failing tests, verify they fail correctly:
+   - `bundles_test.go` — `TestBundleResolve_Django`, `_GoProduction`, `_Unknown` (typed `ErrUnknownBundle`), `_PartialInstallSkip`, `_ManifestParseMissingFields`
+   **Files:** `internal/personas/bundles_test.go` | **Duration:** 0.5 day
+
+### 5.2 [ ] **[Domain Bundles - GREEN](plan/user-stories/04-domain-bundles.md)**
+   Minimal code (T1), verify all (T2), COMMIT:
+   - `internal/personas/bundles.go` — `Resolve(name string) ([]string, error)`; `go:embed bundles/*.yaml`; typed `ErrUnknownBundle`; parse-time validation (missing `name`/`personas` → error)
+   - `internal/personas/bundles/django.yaml` — members: `django-orm`, `python-types`, `security/owasp`, `security/secrets`
+   - `internal/personas/bundles/go-production.yaml` — members: `security/owasp`, `security/secrets`, `performance/memory`
+   - `internal/personas/install.go` — detect `bundle/` prefix via `strings.HasPrefix`; delegate to `bundles.Resolve`, loop single-persona install; per-persona outcome report (idempotent recovery / partial skip)
+   COMMIT: `git commit -m "feat(personas): domain bundles + bundle/ install delegation (green)"`
+   **Files:** `internal/personas/bundles.go`, `internal/personas/bundles/*.yaml`, `internal/personas/install.go` | **Duration:** 0.75 day
+
+### 5.2.A [ ] **[Domain Bundles - ADVERSARIAL REVIEW (subagent)](plan/user-stories/04-domain-bundles.md)**
+   **Changed Files:** `internal/personas/bundles.go`, `internal/personas/bundles/*.yaml`, `internal/personas/install.go`, `internal/personas/bundles_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 5.2. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 5.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 5.2]
+     - Checklist (pass verbatim):
+       - SECURITY: `go:embed bundles/*.yaml` picks up only intended files? Bundle member names path-traversal-safe through install loop?
+       - EDGE CASES: Unknown bundle, empty manifest, missing `name`/`personas`, partial install (one member fails — others still attempted)?
+       - ERROR HANDLING: `ErrUnknownBundle` typed; per-persona outcome reported; install idempotent on re-run?
+       - PERFORMANCE: Manifest parsed once / embedded, not re-read per install?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 5.5, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### Element B — T6 Corroboration Scores
+
+### 5.3 [ ] **[Corroboration Scores - RED](plan/user-stories/05-corroboration-feedback.md)**
+   Write failing tests, verify they fail correctly:
+   - `list_test.go` — `TestPersonasList_WithScores_HasRate`, `_NaForMissing`, `_SortOrder` (numeric desc, then n/a alphabetical), `_BaselineNoRegression`
+   **Files:** `internal/personas/list_test.go` | **Duration:** 0.5 day
+
+### 5.4 [ ] **[Corroboration Scores - GREEN](plan/user-stories/05-corroboration-feedback.md)**
+   Minimal code (T1), verify all (T2), COMMIT:
+   - `internal/personas/list.go` — extend `List()` or add `ListWithScores(map[string]float64)`; join on `strings.ToLower` of reviewer name; format rate `"XX.X%"` or `"n/a"`; sort numeric desc then n/a alphabetical
+   - `cmd/atcr/personas.go` — wire `--scores` boolean flag to `list`; call `scorecard.Aggregate()` when set; pass map to list logic; `--scores` shows `n/a` for all + footer note when scorecard file absent
+   COMMIT: `git commit -m "feat(personas): list --scores corroboration display (green)"`
+   **Files:** `internal/personas/list.go`, `cmd/atcr/personas.go` | **Duration:** 0.75 day
+
+### 5.4.A [ ] **[Corroboration Scores - ADVERSARIAL REVIEW (subagent)](plan/user-stories/05-corroboration-feedback.md)**
+   **Changed Files:** `internal/personas/list.go`, `cmd/atcr/personas.go`, `internal/personas/list_test.go`
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 5.4. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 5.4`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 5.4]
+     - Checklist (pass verbatim):
+       - SECURITY: No sensitive scorecard data leaked beyond rate?
+       - EDGE CASES: Missing scorecard file → all `n/a` + footer; mixed-case reviewer name join; empty list; ties in sort?
+       - ERROR HANDLING: Baseline `list` (no `--scores`) unchanged (no regression)? Graceful when `scorecard.Aggregate()` errors?
+       - PERFORMANCE: `scorecard.Aggregate()` called once per invocation only when flag set?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 5.5, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 5.5 [ ] **[Bundles + Scores - REFACTOR](plan/user-stories/05-corroboration-feedback.md)**
+   1. Fix CRITICAL/HIGH issues from 5.2.A and 5.4.A (if any)
+   2. Confirm join-key normalization consistent both sides; `verify` still decoupled from `scorecard`; maintain green (T1), validate (T3)
+   3. COMMIT: `git commit -m "refactor(personas): address review + score-key consistency"`
+   **Duration:** 0.5 day
+
+### 5.6 [ ] **Phase 5 — DoD Validation**
+   - `go test ./internal/personas/...` green for all bundle + score tests
+   - `atcr personas install bundle/django` integration test passes against `httptest` server
+   - DoD report (Stories 04 + 05 complete):
+     ```
+     Story-04 + Story-05 DoD Complete
+     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Manual Review: [ ] Code reviewed
+     ```
+
+### 5.LAST [ ] **Phase 5 - GATE: Integration & Exit Review (subagent)**
+   **Scope:** All files changed during Phase 5
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the phase's implementation. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 5 gate review`
+   - prompt: Self-contained brief including:
+     - Files changed during Phase 5 (absolute paths): [LIST]
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: `--scores` map shape matches the T8 routing carrier (`map[string]float64`, lowercase key)?
+       - CONFIG SURFACE: Bundle manifests documented; `--scores` help text present (AC 05-04)?
+       - INTEGRATION: `bundle/` install reuses Phase 4 single-install path correctly?
+       - PHASE-EXIT CONTRACT: Phase 6 docs can describe stable CLI/bundle surface?
+       - REGRESSION: Baseline `list` + earlier phases intact; `go test ./...` clean?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Duration:** 15-30 min
+
+---
+
+**AGENT INSTRUCTIONS:** You MUST update this file (`sprint-plan.md`) and the corresponding task files in `plan/acceptance-criteria/` immediately upon completing each item. Mark tasks as `[x]`. Do NOT wait for user confirmation to proceed to the next phase. Continue autonomously until human intervention is strictly required.
+
+---
+
+## Phase 6: T7-in-repo — Docs + Validation (Sprint B, Days 15-17)
+
+**Focus:** Installation guide, authoring template, registry.md update, example YAML updates, cumulative adversarial review.
+**Story:** [06 — In-Repo Documentation](plan/user-stories/06-in-repo-documentation.md) | **ACs:** [06-01](plan/acceptance-criteria/06-01-personas-install-guide.md), [06-02](plan/acceptance-criteria/06-02-personas-authoring-guide.md), [06-03](plan/acceptance-criteria/06-03-registry-and-example-updates.md)
+
+> AC 06-01 and 06-02 are **manual review** — verified by reading and following the docs without source-code lookups. AC 06-03 has an automated gate (`TestRegistryExamples_Valid`).
+
+### 6.1 [ ] **[Docs + Example Validation - RED](plan/user-stories/06-in-repo-documentation.md)**
+   Write failing test, verify it fails correctly:
+   - `TestRegistryExamples_Valid` — loads both example YAML files through `internal/registry` to confirm clean parse after `language` additions
+   **Files:** `internal/registry/<examples>_test.go` | **Duration:** 0.25 day
+
+### 6.2 [ ] **[Docs + Example Validation - GREEN](plan/user-stories/06-in-repo-documentation.md)**
+   Minimal code (T1), verify all (T2), COMMIT:
+   - `docs/personas-install.md` — all 6 `atcr personas` subcommands, bundle syntax, `~/.config/atcr/personas/` path, `ATCR_PERSONAS_URL` override
+   - `docs/personas-authoring.md` — persona template (prompt/severity rubric/output format/payload slots), canonical `language` format (`["go","ts"]` — no dot, lowercased), fixture requirements (`.patch`/`.diff` in `personas/testdata/`, synthetic values), contribution checklist
+   - `docs/registry.md` — add `language` field entry: type (`[]string`), canonical form, nil semantics, routing behavior (two-partition reorder, silent fallback)
+   - `examples/registry-without-executor.yaml` — add ≥1 agent with `language: ["go"]`
+   - `examples/registry-with-executor.yaml` — same; remain valid YAML
+   COMMIT: `git commit -m "docs(personas): install + authoring guides, registry + examples (green)"`
+   **Files:** `docs/personas-install.md`, `docs/personas-authoring.md`, `docs/registry.md`, `examples/*.yaml` | **Duration:** 1.5 days
+
+### 6.2.A [ ] **[Docs + Validation - ADVERSARIAL REVIEW (subagent)](plan/user-stories/06-in-repo-documentation.md)**
+   **Changed Files:** `docs/personas-install.md`, `docs/personas-authoring.md`, `docs/registry.md`, `examples/registry-with-executor.yaml`, `examples/registry-without-executor.yaml`
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 6.2. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Adversarial review: 6.2`
+   - prompt: Self-contained brief including:
+     - Files to review (absolute paths): [LIST FROM 6.2]
+     - Checklist (pass verbatim):
+       - SECURITY: Docs advise synthetic-only fixture secrets? No real credentials in examples?
+       - EDGE CASES: Install guide covers all 6 subcommands + bundle syntax + env override? Authoring fixture field list matches `TestPersonaFixture` logic?
+       - ERROR HANDLING: Any reference to deprecated `docs/examples/registry.yaml` path? Example YAML still valid?
+       - PERFORMANCE: N/A — doc accuracy: canonical `language` form consistent across all docs?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → List issues for 6.3, do NOT proceed until fixed
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Adversarial review passed" and proceed
+
+### 6.3 [ ] **[Docs + Validation - REFACTOR](plan/user-stories/06-in-repo-documentation.md)**
+   1. Fix CRITICAL/HIGH issues from 6.2.A (if any)
+   2. Cross-reference authoring guide fixture field list against `TestPersonaFixture`; confirm no deprecated path references; maintain green (T3)
+   3. Manual review: follow `docs/personas-install.md` and `docs/personas-authoring.md` without source lookups (AC 06-01, 06-02)
+   4. COMMIT: `git commit -m "docs(personas): address review + cross-reference fixtures"`
+   **Duration:** 0.5 day
+
+### 6.4 [ ] **Phase 6 — DoD Validation**
+   - `go test ./...` clean (all packages) including `TestRegistryExamples_Valid`
+   - DoD report (Story-06 complete):
+     ```
+     Story-06 DoD Complete
+     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Manual Review: [ ] Install guide walkthrough  [ ] Authoring guide validation
+     ```
+
+### 6.LAST [ ] **Phase 6 - GATE: Cumulative Integration & Exit Review (subagent)**
+   **Scope:** Cumulative — full sprint diff (integration-level)
+
+   **Spawn a fresh subagent** via the Agent tool. No memory of the implementation. Do NOT review inline.
+
+   Use the Agent tool:
+   - subagent_type: `general-purpose`
+   - description: `Phase 6 cumulative gate review`
+   - prompt: Self-contained brief including:
+     - Full sprint diff scope (absolute paths of all changed files)
+     - Checklist (pass verbatim, hostile integrator perspective):
+       - CONTRACT EXIT: All acceptance criteria across Stories 01-06 satisfied?
+       - CONFIG SURFACE: `language` field, `ATCR_PERSONAS_URL`, bundle manifests all documented + back-compat?
+       - INTEGRATION: install → list → test fixture roundtrip via `httptest` works end-to-end?
+       - PHASE-EXIT CONTRACT: Binary ships 9 personas, 15 subcommands, 2 bundles; community fetch path isolated?
+       - REGRESSION: `go test ./...` clean, `golangci-lint run` clean, `go vet ./...` clean, `go build ./...` clean?
+     - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
+     - Required output: ONLY the findings table below (markdown), no prose
+
+   **Paste the subagent's findings table here (delete rows if none):**
+   | Severity | File:Line | Issue | Fix |
+   |----------|-----------|-------|-----|
+   | CRITICAL | | | |
+   | HIGH | | | |
+
+   **Action Required:**
+   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
+   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
+   - None found → Note "Phase gate passed" and proceed to Final Phase
+   **Duration:** 15-30 min
+   **— END SPRINT B (Phases 4-6) —**
+
+---
+
+## Final Phase: Validation
+
+### Validation Checklist
+- [ ] All tests passing (T3): `go test ./...`
+- [ ] Coverage meets threshold (≥80%); `internal/personas/` ≥80%
+- [ ] Lint/format clean: `golangci-lint run`, `gofmt`/`go vet ./...`
+- [ ] Build succeeds: `go build ./...`
+- [ ] Zero live network calls in CI (all HTTP via `httptest.NewServer`)
+- [ ] `Names()` returns 9; root exposes 15 subcommands
+- [ ] Path-traversal guard verified; community YAML validated before write
+
+### Optional: Targeted Mutation Testing
+MUTATION_TOOL: **UNAVAILABLE** — no mutation tool detected (`stryker-mutator` / `mutmut` / `cargo-mutants` absent). Skip mutation testing.
+**WARNING:** Do NOT run full codebase mutation — it can take hours. Target specific files only if a tool becomes available.
+
+### Drift Analysis
+Compare delivered work against [plan/original-requirements.md](plan/original-requirements.md):
+- 3 bonus built-in personas with CI fixtures ✓ (Phase 3)
+- `atcr personas` install/list/search/remove/test/upgrade ✓ (Phase 4)
+- `bundle/` install + `bundle/django`, `bundle/go-production` ✓ (Phase 5)
+- `language` scope field + language-aware `SelectEligibleSkeptics` routing + silent fallback ✓ (Phases 1-2)
+- `atcr personas list --scores` corroboration ✓ (Phase 5)
+- In-repo install + authoring docs ✓ (Phase 6)
+- **Descoped (out of scope, confirmed):** T3/T4 community repo scaffold + seed personas, community-repo half of T7 (contribution guide + community CI) — external repo does not exist in this workspace.
+
+If any task drifted from the original request, STOP and validate before marking the sprint complete.
+
+---
+
+**Next:** `/execute-sprint @.planning/sprints/active/9.0_persona_ecosystem/`
