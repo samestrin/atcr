@@ -1,0 +1,7 @@
+# atcr-findings/v1
+CRITICAL|db.go:100|sql injection in query builder|parametrize input|security|30|[greta] pool repro / [host] host low (disagreement: LOW vs CRITICAL)|greta,host|HIGH
+HIGH|auth.go:42|token never expires here|guard it|security|15|[greta] pool saw it / [host] host also|greta,host|HIGH
+HIGH|legacy.go:7|preexisting smell outside the diff|n/a|out-of-scope|0|pool oos|greta|MEDIUM
+MEDIUM|pay.go:10|session token expires without refresh check|add refresh|security|20|pool note|greta|MEDIUM
+MEDIUM|pay.go:12|session token expires without bound|cap it|security|20|host note|host|MEDIUM
+LOW|util.go:5|unused import lingers in file|remove it|style|2|pool lint|greta|MEDIUM

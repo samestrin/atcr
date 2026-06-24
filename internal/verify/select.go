@@ -19,7 +19,7 @@ import (
 // Skeptic pairs a registry agent name with its config and resolved provider.
 // Selection returns these rather than bare registry.AgentConfig because:
 //   - the agent name — the registry map key, not a field on AgentConfig — is
-//     required downstream to populate reconcile.Verification.Skeptic;
+//     required downstream to populate reclib.Verification.Skeptic;
 //   - the config is required to invoke the skeptic; and
 //   - the provider (resolved here, where the registry is in hand) carries the
 //     BaseURL/APIKeyEnv that llmclient.Chat needs on the Invocation — without it

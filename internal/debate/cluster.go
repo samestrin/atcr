@@ -2,6 +2,7 @@ package debate
 
 import (
 	"context"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strconv"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -26,15 +27,15 @@ func locationKey(file string, line int) string {
 // carries — File + Line + longest-member-problem — so a debated gray-zone
 // DisagreementItem (it.File, it.Line, it.Problem) resolves to the AmbiguousCluster
 // whose members must be unioned.
-func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconcile.AmbiguousCluster {
-	out := make(map[FindingKey]reconcile.AmbiguousCluster, len(clusters))
+func indexClusters(clusters []reclib.AmbiguousCluster) map[FindingKey]reclib.AmbiguousCluster {
+	out := make(map[FindingKey]reclib.AmbiguousCluster, len(clusters))
 	for _, c := range clusters {
 		key := FindingKey{File: c.File, Line: c.Line, Problem: reconcile.ClusterDisplayProblem(c.Findings)}
 		if _, exists := out[key]; exists {
 			// Two distinct clusters share the same display key. Trust neither ID for
 			// identity-keyed suppression or merge application; let both items pass
 			// through and re-debate (an idempotent no-op for the merged one).
-			out[key] = reconcile.AmbiguousCluster{ID: collisionSentinelID}
+			out[key] = reclib.AmbiguousCluster{ID: collisionSentinelID}
 			continue
 		}
 		out[key] = c
@@ -60,7 +61,7 @@ func indexClusters(clusters []reconcile.AmbiguousCluster) map[FindingKey]reconci
 // guard) and self-heals as soon as it is re-stamped. An item whose cluster is not in
 // clusterIdx (e.g. its representative problem drifted) likewise passes through and is
 // re-debated rather than silently dropped.
-func filterMergedClusters(ctx context.Context, items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reconcile.AmbiguousCluster) []reconcile.DisagreementItem {
+func filterMergedClusters(ctx context.Context, items []reconcile.DisagreementItem, findings []reconcile.JSONFinding, clusterIdx map[FindingKey]reclib.AmbiguousCluster) []reconcile.DisagreementItem {
 	mergedIDs := map[string]bool{}
 	mergedAtLoc := map[string]bool{}
 	for _, f := range findings {
@@ -128,7 +129,7 @@ func filterMergedClusters(ctx context.Context, items []reconcile.DisagreementIte
 // caller uses the skipped count to keep the "could not be applied" warning
 // truthful: a one-member cluster is a no-op by definition, not a failed ruling.
 // Each multi-member cluster is handled independently by applyOneClusterMerge.
-func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, int, int) {
+func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reclib.AmbiguousCluster) ([]reconcile.JSONFinding, int, int) {
 	applied := 0
 	skipped := 0
 	for _, c := range clusters {
@@ -155,7 +156,7 @@ func applyClusterMerges(findings []reconcile.JSONFinding, clusters []reconcile.A
 // otherwise let applyRulings and applyClusterMerges both mutate the same finding
 // silently. Keyed on locationKey (File+Line), matching how the two apply paths
 // would actually collide.
-func firstClusterRulingCollision(rulings map[FindingKey]ruleApply, clusters []reconcile.AmbiguousCluster) string {
+func firstClusterRulingCollision(rulings map[FindingKey]ruleApply, clusters []reclib.AmbiguousCluster) string {
 	if len(rulings) == 0 {
 		return ""
 	}
@@ -188,7 +189,7 @@ func firstClusterRulingCollision(rulings map[FindingKey]ruleApply, clusters []re
 // record at the cluster's canonical location, flagged ClusterMerged. Fewer than
 // two matched records, or any matched record already flagged ClusterMerged (a
 // re-run past the radar filter), is a strict no-op rather than a corruption.
-func applyOneClusterMerge(findings []reconcile.JSONFinding, c reconcile.AmbiguousCluster) ([]reconcile.JSONFinding, bool) {
+func applyOneClusterMerge(findings []reconcile.JSONFinding, c reclib.AmbiguousCluster) ([]reconcile.JSONFinding, bool) {
 	// Invariant: a gray-zone cluster always carries a stable, content-addressed
 	// AmbiguousCluster.ID (a non-empty sha256 hex) by construction. A blank ID can
 	// only come from a hand-edited or corrupt ambiguous.json. Refuse to stamp a

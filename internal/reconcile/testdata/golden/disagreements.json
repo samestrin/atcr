@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "1.0",
+  "independenceModel": "distinct-reviewer-count",
+  "items": [
+    {
+      "kind": "verification_disagreement",
+      "file": "db.go",
+      "line": 100,
+      "severity": "CRITICAL",
+      "problem": "sql injection in query builder",
+      "score": 6,
+      "spread": 3,
+      "independence": 2,
+      "reviewers": [
+        "greta",
+        "host"
+      ],
+      "disagreement": "LOW vs CRITICAL",
+      "skeptics": "skeptic-a, skeptic-b",
+      "detail": "skeptics split on exploitability"
+    },
+    {
+      "kind": "gray_zone",
+      "file": "pay.go",
+      "line": 10,
+      "severity": "MEDIUM",
+      "problem": "session token expires without refresh check",
+      "score": 2,
+      "spread": 0,
+      "independence": 2,
+      "reviewers": [
+        "greta",
+        "host"
+      ],
+      "detail": "similarity 0.57",
+      "positions": [
+        {
+          "reviewer": "greta",
+          "severity": "MEDIUM",
+          "problem": "session token expires without refresh check"
+        },
+        {
+          "reviewer": "host",
+          "severity": "MEDIUM",
+          "problem": "session token expires without bound"
+        }
+      ]
+    },
+    {
+      "kind": "solo_finding",
+      "file": "util.go",
+      "line": 5,
+      "severity": "LOW",
+      "problem": "unused import lingers in file",
+      "score": 1,
+      "spread": 0,
+      "independence": 1,
+      "reviewers": [
+        "greta"
+      ]
+    }
+  ]
+}

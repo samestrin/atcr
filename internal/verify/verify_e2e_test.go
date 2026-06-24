@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,7 +54,7 @@ func TestVerifyE2E_PlantedFindings(t *testing.T) {
 			fixture:      "false-finding.json",
 			skepticReply: `{"verdict":"refuted","reasoning":"store.go:71 and :88 are both called under s.mu.Lock(); the access is already synchronized"}`,
 			wantVerdict:  verdictRefuted,
-			wantConf:     reconcile.ConfLow,
+			wantConf:     reclib.ConfLow,
 		},
 	}
 
@@ -74,7 +75,7 @@ func TestVerifyE2E_PlantedFindings(t *testing.T) {
 			require.NotNil(t, v)
 
 			// Phase 2: single-skeptic vote passes through.
-			agg := aggregateVerdicts([]*reconcile.Verification{v})
+			agg := aggregateVerdicts([]*reclib.Verification{v})
 			require.NotNil(t, agg)
 			assert.Equal(t, tc.wantVerdict, agg.Verdict)
 

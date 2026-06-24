@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
 	"log/slog"
 	"os"
@@ -319,7 +320,7 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, ReconcileResult{}, fmt.Errorf("no agent results found in review %s; run atcr_review first", id)
 	}
 
-	res, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
+	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)

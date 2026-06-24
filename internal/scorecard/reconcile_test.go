@@ -7,7 +7,6 @@ import (
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/stream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,8 +33,8 @@ func TestEmitForReconcile_BridgesPoolSummaryAndFindings(t *testing.T) {
 
 	res := reconcile.Result{
 		Findings: []reconcile.Merged{
-			{Finding: stream.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce", "greta"}}},
-			{Finding: stream.Finding{File: "b.go", Line: 2, Problem: "p2", Reviewers: []string{"bruce"}}},
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce", "greta"}}},
+			{Finding: reconcile.Finding{File: "b.go", Line: 2, Problem: "p2", Reviewers: []string{"bruce"}}},
 		},
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}
@@ -69,7 +68,7 @@ func TestEmitForReconcile_NoPoolSummaryDegrades(t *testing.T) {
 
 	res := reconcile.Result{
 		Findings: []reconcile.Merged{
-			{Finding: stream.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}}},
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}}},
 		},
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}
@@ -98,7 +97,7 @@ func TestEmitForReconcile_NoScorecardSuppresses(t *testing.T) {
 
 	res := reconcile.Result{
 		Findings: []reconcile.Merged{
-			{Finding: stream.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}}},
+			{Finding: reconcile.Finding{File: "a.go", Line: 1, Problem: "p1", Reviewers: []string{"bruce"}}},
 		},
 		Summary: reconcile.Summary{ReconciledAt: "2026-06-14T10:00:00Z"},
 	}

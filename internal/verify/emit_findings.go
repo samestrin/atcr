@@ -3,6 +3,7 @@ package verify
 import (
 	"encoding/json"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"path/filepath"
 
 	"github.com/samestrin/atcr/internal/atomicfs"
@@ -25,7 +26,7 @@ type FindingKey struct {
 // A --fresh re-run always supplies a proper block (hasTrustedVerdict=true), so
 // the guard is skipped for legitimate re-verification. Callers invoke this before
 // mutating findings so the error surfaces before any state change.
-func checkVERIFIEDGuard(findings []reconcile.JSONFinding, verdicts map[FindingKey]*reconcile.Verification) error {
+func checkVERIFIEDGuard(findings []reconcile.JSONFinding, verdicts map[FindingKey]*reclib.Verification) error {
 	for i := range findings {
 		key := FindingKey{File: findings[i].File, Line: findings[i].Line, Problem: findings[i].Problem}
 		if _, ok := verdicts[key]; ok &&
@@ -55,7 +56,7 @@ func computeFindingsBytes(findings []reconcile.JSONFinding, reviewDir string) (s
 // updated findings slice, canonical path, and serialized bytes. The pipeline
 // uses the returned findings slice to avoid a disk round-trip; ReEmitFindings
 // uses it for the standalone write path.
-func computeReEmitFindingsBytes(reviewDir string, verdicts map[FindingKey]*reconcile.Verification) ([]reconcile.JSONFinding, string, []byte, error) {
+func computeReEmitFindingsBytes(reviewDir string, verdicts map[FindingKey]*reclib.Verification) ([]reconcile.JSONFinding, string, []byte, error) {
 	findings, err := reconcile.ReadReconciledFindings(reviewDir)
 	if err != nil {
 		return nil, "", nil, err
@@ -88,7 +89,7 @@ func computeReEmitFindingsBytes(reviewDir string, verdicts map[FindingKey]*recon
 // empty verdict map re-writes the file unchanged. A missing or malformed
 // findings.json is propagated from reconcile.ReadReconciledFindings (os.ErrNotExist
 // for a missing file).
-func ReEmitFindings(reviewDir string, verdicts map[FindingKey]*reconcile.Verification) error {
+func ReEmitFindings(reviewDir string, verdicts map[FindingKey]*reclib.Verification) error {
 	_, path, data, err := computeReEmitFindingsBytes(reviewDir, verdicts)
 	if err != nil {
 		return err

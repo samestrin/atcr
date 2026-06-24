@@ -11,11 +11,11 @@
 package debate
 
 import (
+	reclib "github.com/samestrin/atcr/reconcile"
 	"sort"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
-	"github.com/samestrin/atcr/internal/stream"
 )
 
 // Config is the resolved (defaults-applied) debate configuration the stage acts
@@ -96,8 +96,8 @@ func SelectItems(df reconcile.DisagreementsFile, cfg Config) Selection {
 func sortByPriority(items []reconcile.DisagreementItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i], items[j]
-		ra := reconcile.SeverityRank[stream.NormalizeSeverity(a.Severity)]
-		rb := reconcile.SeverityRank[stream.NormalizeSeverity(b.Severity)]
+		ra := reclib.SeverityRank[reclib.NormalizeSeverity(a.Severity)]
+		rb := reclib.SeverityRank[reclib.NormalizeSeverity(b.Severity)]
 		if ra != rb {
 			return ra > rb
 		}

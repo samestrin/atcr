@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -200,7 +201,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 
 	type jobResult struct {
-		ver *reconcile.Verification
+		ver *reclib.Verification
 		vr  VerificationResult
 	}
 	jobResults := make([]jobResult, len(jobs))
@@ -229,7 +230,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 	wg.Wait()
 
-	verdicts := make(map[FindingKey]*reconcile.Verification, len(jobs))
+	verdicts := make(map[FindingKey]*reclib.Verification, len(jobs))
 	rich := make(map[FindingKey]VerificationResult, len(jobs))
 	for i, j := range jobs {
 		verdicts[j.key] = jobResults[i].ver
@@ -420,25 +421,25 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 // unavailable it records unverifiable/tool_harness_unavailable; otherwise it
 // drives every selected skeptic through invokeSkeptic and aggregates the votes.
 // It never returns an error — failure isolation is the stage's contract.
-func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, VerificationResult) {
+func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher) (*reclib.Verification, VerificationResult) {
 	base := VerificationResult{File: f.File, Line: f.Line, Problem: f.Problem}
 	// Initialize TrippedBudgets to empty slice to avoid null in JSON output.
 	base.TrippedBudgets = []string{}
 
 	if len(skeptics) == 0 {
-		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
+		v := &reclib.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
 		return v, base
 	}
 	if disp == nil {
-		v := &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "tool_harness_unavailable"}
+		v := &reclib.Verification{Verdict: verdictUnverifiable, Notes: "tool_harness_unavailable"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
 		return v, base
 	}
 
 	prompt := buildSkepticPrompt(f, nil) // nil entries: the skeptic reads code via the tool loop
 	start := time.Now()
-	perSkeptic := make([]*reconcile.Verification, 0, len(skeptics))
+	perSkeptic := make([]*reclib.Verification, 0, len(skeptics))
 	perTripped := make([][]string, 0, len(skeptics))
 	for _, sk := range skeptics {
 		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
@@ -448,7 +449,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 			// ever fires, then synthesize an unverifiable verdict rather than dropping
 			// the finding.
 			logSkepticFailure(log.FromContext(ctx), sk.Name, "programming_fault", ierr.Error())
-			v = &reconcile.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
+			v = &reclib.Verification{Verdict: verdictUnverifiable, Notes: ierr.Error(), Skeptic: sk.Name}
 			tripped = []string{}
 		}
 		perSkeptic = append(perSkeptic, v)
@@ -488,7 +489,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 //     e.g. 1 confirmed + 1 refuted, or 1+1+1): no skeptic "won", so record every
 //     participant's model so Model stays consistent with Skeptic rather than
 //     misattributing the outcome to the lone unverifiable voter.
-func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification, perTripped [][]string, winner string) (string, []string) {
+func winningAttribution(skeptics []Skeptic, perSkeptic []*reclib.Verification, perTripped [][]string, winner string) (string, []string) {
 	// A verdict is decisive when no other verdict matches or exceeds its count;
 	// equality anywhere means aggregateVerdicts resolved a tie to unverifiable.
 	// Precondition: every perSkeptic verdict is already canonical — parseVerdict
@@ -544,7 +545,7 @@ func winningAttribution(skeptics []Skeptic, perSkeptic []*reconcile.Verification
 // cached result safe to skip (AC 04-05). Only the three canonical verdicts are
 // trusted; nil, empty, or an unknown verdict is treated as unverified so the
 // finding is re-processed rather than trusting a corrupt block.
-func hasTrustedVerdict(v *reconcile.Verification) bool {
+func hasTrustedVerdict(v *reclib.Verification) bool {
 	if v == nil {
 		return false
 	}

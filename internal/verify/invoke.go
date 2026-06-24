@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
-	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -25,7 +25,7 @@ type Dispatcher interface {
 }
 
 // invokeSkeptic drives one skeptic through the Epic 2.0 tool loop against a single
-// finding's prompt and converts the engine result into a reconcile.Verification.
+// finding's prompt and converts the engine result into a reclib.Verification.
 //
 // Failure isolation is the core contract: a runtime failure — provider error,
 // timeout, tripped budget, loop-hygiene halt, or malformed output — is NEVER
@@ -47,7 +47,7 @@ type Dispatcher interface {
 // Read-only contract: callers must not mutate the returned tripped-budget slice.
 // It aliases the fanout.Result's backing memory; mutating it corrupts the engine
 // result for any subsequent inspection.
-func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reconcile.Verification, []string, error) {
+func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reclib.Verification, []string, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("invokeSkeptic: nil context")
 	}
@@ -66,7 +66,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	// exactly one result. Guard the index anyway: a zero-length return must not
 	// panic (a panic would violate the never-propagate-runtime-error contract).
 	if len(results) == 0 {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil, nil
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "engine_returned_no_result", Skeptic: skeptic.Name}, nil, nil
 	}
 	res := results[0]
 
@@ -78,7 +78,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	if res.Status != fanout.StatusOK || len(res.TrippedBudgets) > 0 {
 		notes := failureNotes(res)
 		logSkepticFailure(logger, skeptic.Name, failureClass(res), notes)
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: notes, Skeptic: skeptic.Name}, res.TrippedBudgets, nil
 	}
 
 	v, _ := parseVerdict(res.Content)

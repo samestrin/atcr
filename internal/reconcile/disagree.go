@@ -182,7 +182,7 @@ func categoryIsOutOfScope(c string) bool {
 
 // allOutOfScope reports whether every finding in the group is tagged
 // out-of-scope (an empty group is not).
-func allOutOfScope(findings []stream.Finding) bool {
+func allOutOfScope(findings []Finding) bool {
 	if len(findings) == 0 {
 		return false
 	}
@@ -391,7 +391,7 @@ func grayZoneItem(c AmbiguousCluster) DisagreementItem {
 // radar item's Problem with it and debate.indexClusters keys clusters by it, so the
 // two never drift (the coupling formerly split across reconcile.longestProblem and
 // debate.clusterDisplayProblem).
-func ClusterDisplayProblem(findings []stream.Finding) string {
+func ClusterDisplayProblem(findings []Finding) string {
 	best := ""
 	for _, f := range findings {
 		if len(f.Problem) > len(best) {

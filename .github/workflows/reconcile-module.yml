@@ -1,0 +1,64 @@
+name: Reconcile Module CI
+
+# Independent release gate for the standalone ./reconcile module
+# (github.com/samestrin/atcr/reconcile). The root "Go CI" workflow's
+# `go test ./...` does NOT cross the nested ./reconcile go.mod boundary, so the
+# module is only fully gated here, on a module-release tag push.
+#
+# based_on: .github/workflows/ci.yml — reuses the [self-hosted, gauntlet] runner
+# and the Go 1.25 setup verbatim; no new runners or Go versions are provisioned.
+
+on:
+  push:
+    tags:
+      # Scoped to the module's release-tag convention so ATCR app tags (e.g.
+      # v1.2.3) do NOT trigger this release gate. Only reconcile/vX.Y.Z fires it.
+      - 'reconcile/v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reconcile-module-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reconcile-module:
+    name: Reconcile Module Release Gate
+    runs-on: [self-hosted, gauntlet]
+
+    defaults:
+      run:
+        working-directory: ./reconcile
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Verify Formatted
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go files must be formatted with gofmt. Run: go fmt ./..."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+          working-directory: ./reconcile
+          # Pin the shared repo-root config explicitly (../.golangci.yml) instead
+          # of relying on golangci-lint's implicit upward-directory config walk, so
+          # the ruleset cannot be silently swapped by a stray reconcile/.golangci.yml
+          # or a future change to the action's config-resolution scope.
+          args: --timeout 5m --config ../.golangci.yml
+
+      - name: Run Tests (race)
+        run: go test -race ./...

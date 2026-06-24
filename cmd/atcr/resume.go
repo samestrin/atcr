@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"time"
 
@@ -195,7 +196,7 @@ func runResume(cmd *cobra.Command, anchor string) error {
 // with the on-disk review preserved for inspection. The partial flag is read from
 // the just-finalized review so reconcile records the run's partial provenance.
 func resumeReconcile(ctx context.Context, cmd *cobra.Command, dir string) error {
-	rec, err := reconcile.RunReconcile(ctx, dir, nil, reconcile.Options{
+	rec, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)

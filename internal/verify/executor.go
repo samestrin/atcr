@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"sync"
 	"time"
@@ -56,7 +57,7 @@ const fixAttributionPrefix = "fix by "
 func anyFixEligible(findings []reconcile.JSONFinding, ex *registry.ExecutorConfig) bool {
 	fixMinSev := ex.EffectiveFixMinSeverity()
 	for i := range findings {
-		if reconcile.ConfidenceAtOrAbove(findings[i].Confidence, reconcile.ConfHigh) && meetsSeverityFloor(findings[i].Severity, fixMinSev) {
+		if reclib.ConfidenceAtOrAbove(findings[i].Confidence, reclib.ConfHigh) && meetsSeverityFloor(findings[i].Severity, fixMinSev) {
 			return true
 		}
 	}
@@ -122,7 +123,7 @@ func generateFixes(ctx context.Context, findings []reconcile.JSONFinding, ex *re
 			break
 		}
 		f := &findings[i]
-		if !reconcile.ConfidenceAtOrAbove(f.Confidence, reconcile.ConfHigh) {
+		if !reclib.ConfidenceAtOrAbove(f.Confidence, reclib.ConfHigh) {
 			continue
 		}
 		if !meetsSeverityFloor(f.Severity, minSev) {

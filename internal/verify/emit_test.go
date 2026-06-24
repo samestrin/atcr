@@ -2,6 +2,7 @@ package verify
 
 import (
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"testing"
@@ -158,7 +159,7 @@ func TestReEmitFindings_VerificationBlocks(t *testing.T) {
 		{Severity: "HIGH", File: "main.go", Line: 10, Problem: "nil deref", Confidence: "HIGH", Reviewers: []string{"agent-a"}},
 		{Severity: "MEDIUM", File: "util.go", Line: 5, Problem: "leak", Confidence: "MEDIUM", Reviewers: []string{"agent-a"}},
 	})
-	verdicts := map[FindingKey]*reconcile.Verification{
+	verdicts := map[FindingKey]*reclib.Verification{
 		{File: "main.go", Line: 10, Problem: "nil deref"}: {Verdict: "confirmed", Skeptic: "agent-b", Notes: "path valid"},
 		{File: "util.go", Line: 5, Problem: "leak"}:       {Verdict: "confirmed", Skeptic: "agent-b", Notes: "leak real"},
 	}
@@ -180,7 +181,7 @@ func TestReEmitFindings_RefutedDemoted(t *testing.T) {
 	writeReconciledFindings(t, dir, []reconcile.JSONFinding{
 		{Severity: "HIGH", File: "main.go", Line: 10, Problem: "nil deref", Confidence: "HIGH", Reviewers: []string{"agent-a"}},
 	})
-	verdicts := map[FindingKey]*reconcile.Verification{
+	verdicts := map[FindingKey]*reclib.Verification{
 		{File: "main.go", Line: 10, Problem: "nil deref"}: {Verdict: "refuted", Skeptic: "agent-b", Notes: "false positive"},
 	}
 	require.NoError(t, ReEmitFindings(dir, verdicts))
@@ -199,7 +200,7 @@ func TestReEmitFindings_UnmatchedUnchanged(t *testing.T) {
 		{Severity: "HIGH", File: "main.go", Line: 10, Problem: "verified one", Confidence: "HIGH", Reviewers: []string{"agent-a"}},
 		{Severity: "LOW", File: "x.go", Line: 1, Problem: "untouched", Confidence: "MEDIUM", Reviewers: []string{"agent-a"}},
 	})
-	verdicts := map[FindingKey]*reconcile.Verification{
+	verdicts := map[FindingKey]*reclib.Verification{
 		{File: "main.go", Line: 10, Problem: "verified one"}: {Verdict: "confirmed", Skeptic: "agent-b"},
 	}
 	require.NoError(t, ReEmitFindings(dir, verdicts))
@@ -222,7 +223,7 @@ func TestReEmitFindings_EmptyVerdictMap(t *testing.T) {
 		{Severity: "HIGH", File: "main.go", Line: 10, Problem: "nil deref", Confidence: "HIGH", Reviewers: []string{"agent-a"}},
 	}
 	writeReconciledFindings(t, dir, orig)
-	require.NoError(t, ReEmitFindings(dir, map[FindingKey]*reconcile.Verification{}))
+	require.NoError(t, ReEmitFindings(dir, map[FindingKey]*reclib.Verification{}))
 
 	updated, err := reconcile.ReadReconciledFindings(dir)
 	require.NoError(t, err)
@@ -244,7 +245,7 @@ func TestReEmitFindings_AlreadyVERIFIEDGuard(t *testing.T) {
 			// did not skip it, yet the finding already claims VERIFIED confidence).
 		},
 	})
-	verdicts := map[FindingKey]*reconcile.Verification{
+	verdicts := map[FindingKey]*reclib.Verification{
 		{File: "main.go", Line: 10, Problem: "nil deref"}: {Verdict: "confirmed", Skeptic: "agent-c"},
 	}
 	err := ReEmitFindings(dir, verdicts)
@@ -255,7 +256,7 @@ func TestReEmitFindings_AlreadyVERIFIEDGuard(t *testing.T) {
 
 func TestReEmitFindings_MissingFile(t *testing.T) {
 	dir := t.TempDir()
-	err := ReEmitFindings(dir, map[FindingKey]*reconcile.Verification{})
+	err := ReEmitFindings(dir, map[FindingKey]*reclib.Verification{})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }

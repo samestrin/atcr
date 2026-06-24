@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"path/filepath"
 	"strings"
 	"time"
@@ -75,7 +76,7 @@ func runReconcile(cmd *cobra.Command, args []string) error {
 	}
 
 	sources, _ := cmd.Flags().GetStringSlice("sources")
-	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reconcile.Options{
+	res, err := reconcile.RunReconcile(cmd.Context(), reviewDir, sources, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(reviewDir),
 		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)

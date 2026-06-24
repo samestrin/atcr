@@ -3,6 +3,7 @@ package fanout
 import (
 	"context"
 	"errors"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strconv"
 
 	"github.com/samestrin/atcr/internal/llmclient"
@@ -110,8 +111,8 @@ func recordFindingMetrics(findings []stream.Finding) {
 	}
 	metrics.Counter(metrics.NameFindingsTotal).Add(int64(len(findings)))
 	for _, f := range findings {
-		sev := stream.NormalizeSeverity(f.Severity)
-		if _, ok := stream.SeverityRank[sev]; !ok {
+		sev := reclib.NormalizeSeverity(f.Severity)
+		if _, ok := reclib.SeverityRank[sev]; !ok {
 			sev = "UNKNOWN"
 		}
 		metrics.Counter(metrics.Key(metrics.NameFindingsBySeverity, metrics.LabelSeverity, sev)).Inc()

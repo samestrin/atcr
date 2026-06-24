@@ -1,0 +1,94 @@
+[
+  {
+    "severity": "CRITICAL",
+    "file": "db.go",
+    "line": 100,
+    "problem": "sql injection in query builder",
+    "fix": "parametrize input",
+    "category": "security",
+    "est_minutes": 30,
+    "evidence": "[greta] pool repro / [host] host low",
+    "reviewers": [
+      "greta",
+      "host"
+    ],
+    "confidence": "HIGH",
+    "disagreement": "LOW vs CRITICAL",
+    "verification": {
+      "verdict": "unverifiable",
+      "skeptic": "skeptic-a, skeptic-b",
+      "notes": "skeptics split on exploitability"
+    }
+  },
+  {
+    "severity": "HIGH",
+    "file": "auth.go",
+    "line": 42,
+    "problem": "token never expires here",
+    "fix": "guard it",
+    "category": "security",
+    "est_minutes": 15,
+    "evidence": "[greta] pool saw it / [host] host also",
+    "reviewers": [
+      "greta",
+      "host"
+    ],
+    "confidence": "HIGH"
+  },
+  {
+    "severity": "HIGH",
+    "file": "legacy.go",
+    "line": 7,
+    "problem": "preexisting smell outside the diff",
+    "fix": "n/a",
+    "category": "out-of-scope",
+    "est_minutes": 0,
+    "evidence": "pool oos",
+    "reviewers": [
+      "greta"
+    ],
+    "confidence": "MEDIUM"
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "pay.go",
+    "line": 10,
+    "problem": "session token expires without refresh check",
+    "fix": "add refresh",
+    "category": "security",
+    "est_minutes": 20,
+    "evidence": "pool note",
+    "reviewers": [
+      "greta"
+    ],
+    "confidence": "MEDIUM"
+  },
+  {
+    "severity": "MEDIUM",
+    "file": "pay.go",
+    "line": 12,
+    "problem": "session token expires without bound",
+    "fix": "cap it",
+    "category": "security",
+    "est_minutes": 20,
+    "evidence": "host note",
+    "reviewers": [
+      "host"
+    ],
+    "confidence": "MEDIUM"
+  },
+  {
+    "severity": "LOW",
+    "file": "util.go",
+    "line": 5,
+    "problem": "unused import lingers in file",
+    "fix": "remove it",
+    "category": "style",
+    "est_minutes": 2,
+    "evidence": "pool lint",
+    "reviewers": [
+      "greta"
+    ],
+    "confidence": "MEDIUM"
+  }
+]

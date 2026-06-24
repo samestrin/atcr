@@ -1,6 +1,7 @@
 package ghaction
 
 import (
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"testing"
 
@@ -53,7 +54,7 @@ func TestConclusion(t *testing.T) {
 	medium := reconcile.JSONFinding{Severity: "MEDIUM"}
 	refutedHigh := reconcile.JSONFinding{
 		Severity:     "HIGH",
-		Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted},
+		Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted},
 	}
 
 	t.Run("no threshold is neutral", func(t *testing.T) {
@@ -79,7 +80,7 @@ func TestConclusion(t *testing.T) {
 	t.Run("refuted verdict with whitespace never blocks", func(t *testing.T) {
 		f := reconcile.JSONFinding{
 			Severity:     "HIGH",
-			Verification: &reconcile.Verification{Verdict: " refuted "},
+			Verification: &reclib.Verification{Verdict: " refuted "},
 		}
 		c, n := Conclusion([]reconcile.JSONFinding{f}, "HIGH")
 		assert.Equal(t, "success", c)
@@ -88,7 +89,7 @@ func TestConclusion(t *testing.T) {
 	t.Run("out-of-scope finding never blocks even at CRITICAL", func(t *testing.T) {
 		f := reconcile.JSONFinding{
 			Severity: "CRITICAL",
-			Category: reconcile.CategoryOutOfScope,
+			Category: reclib.CategoryOutOfScope,
 		}
 		c, n := Conclusion([]reconcile.JSONFinding{f}, "CRITICAL")
 		assert.Equal(t, "success", c)
@@ -184,7 +185,7 @@ func TestBuildCheckOutput(t *testing.T) {
 		refuted := []reconcile.JSONFinding{
 			{Severity: "HIGH", File: "internal/auth/token.go", Line: 42,
 				Problem: "JWT signature not verified", Confidence: "HIGH",
-				Verification: &reconcile.Verification{Verdict: reconcile.VerdictRefuted, Skeptic: "skeptic-a"}},
+				Verification: &reclib.Verification{Verdict: reclib.VerdictRefuted, Skeptic: "skeptic-a"}},
 		}
 		out, _, _ := BuildCheckOutput(refuted, "HIGH")
 		assert.Contains(t, strings.ToLower(out.Text), "gate passed")

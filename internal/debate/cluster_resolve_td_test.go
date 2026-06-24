@@ -3,6 +3,7 @@ package debate
 import (
 	"bytes"
 	"context"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"log/slog"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestIndexClusters_CollisionUsesSentinel(t *testing.T) {
 		"short two", "MEDIUM", "carol",
 		"shared longest problem text", "HIGH", "dave")
 
-	idx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+	idx := indexClusters([]reclib.AmbiguousCluster{c1, c2})
 
 	got, ok := idx[FindingKey{File: "a.go", Line: 10, Problem: "shared longest problem text"}]
 	require.True(t, ok, "the shared display key must still be present")
@@ -48,7 +49,7 @@ func TestFilterMergedClusters_CollisionDoesNotOverSuppress(t *testing.T) {
 	c2 := grayCluster("amb-2", "a.go", 10,
 		"short two", "MEDIUM", "carol",
 		"shared longest problem text", "HIGH", "dave")
-	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c1, c2})
+	clusterIdx := indexClusters([]reclib.AmbiguousCluster{c1, c2})
 
 	items := []reconcile.DisagreementItem{
 		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "shared longest problem text"},
@@ -74,7 +75,7 @@ func TestFilterMergedClusters_LocationFallbackSuppressesDriftedProblem(t *testin
 	c := grayCluster("amb-1", "a.go", 10,
 		"alpha problem text", "MEDIUM", "alice",
 		"beta problem text", "HIGH", "bob")
-	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c})
+	clusterIdx := indexClusters([]reclib.AmbiguousCluster{c})
 
 	items := []reconcile.DisagreementItem{
 		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "drifted representative problem"},
@@ -123,7 +124,7 @@ func TestFilterMergedClusters_LogsSuppressedCount(t *testing.T) {
 	c := grayCluster("amb-1", "a.go", 10,
 		"alpha problem text", "MEDIUM", "alice",
 		"beta problem text", "HIGH", "bob")
-	clusterIdx := indexClusters([]reconcile.AmbiguousCluster{c})
+	clusterIdx := indexClusters([]reclib.AmbiguousCluster{c})
 	items := []reconcile.DisagreementItem{
 		{Kind: reconcile.KindGrayZone, File: "a.go", Line: 10, Problem: "drifted representative problem"},
 	}

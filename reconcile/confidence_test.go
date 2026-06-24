@@ -25,3 +25,24 @@ func TestConfidenceAtOrAbove(t *testing.T) {
 		}
 	}
 }
+
+func TestConfidenceForVerdict(t *testing.T) {
+	cases := []struct {
+		prior   string
+		verdict string
+		want    string
+	}{
+		{ConfHigh, VerdictConfirmed, ConfidenceVerified}, // confirmed promotes to VERIFIED
+		{ConfHigh, VerdictRefuted, ConfLow},              // refuted demotes to LOW
+		{ConfHigh, VerdictUnverifiable, ConfHigh},        // unverifiable passes prior through
+		{ConfMedium, "", ConfMedium},                     // no verdict passes prior through
+		{ConfHigh, "CONFIRMED", ConfidenceVerified},      // case-insensitive
+		{ConfMedium, "bogus", ConfMedium},                // unknown verdict passes through
+		{"high", "bogus", "HIGH"},                        // non-canonical prior is normalized on pass-through
+	}
+	for _, c := range cases {
+		if got := ConfidenceForVerdict(c.prior, c.verdict); got != c.want {
+			t.Errorf("ConfidenceForVerdict(%q,%q)=%q want %q", c.prior, c.verdict, got, c.want)
+		}
+	}
+}

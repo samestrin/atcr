@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"io"
 	"sort"
 	"strconv"
@@ -216,7 +217,7 @@ func renderChecklist(w io.Writer, findings []reconcile.JSONFinding) error {
 // finding has VERIFIED confidence in that case, so the count would be zero anyway.
 func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verified bool) {
 	type cell struct{ verified, high, medium, low, other int }
-	order := []string{reconcile.SevCritical, reconcile.SevHigh, reconcile.SevMedium, reconcile.SevLow}
+	order := []string{reclib.SevCritical, reclib.SevHigh, reclib.SevMedium, reclib.SevLow}
 	counts := map[string]*cell{}
 	for _, s := range order {
 		counts[s] = &cell{}
@@ -234,11 +235,11 @@ func writeSummaryGrid(b *bytes.Buffer, findings []reconcile.JSONFinding, verifie
 		switch canonicalize(f.Confidence) {
 		case confVerified:
 			c.verified++
-		case reconcile.ConfHigh:
+		case reclib.ConfHigh:
 			c.high++
-		case reconcile.ConfMedium:
+		case reclib.ConfMedium:
 			c.medium++
-		case reconcile.ConfLow:
+		case reclib.ConfLow:
 			c.low++
 		default:
 			c.other++
@@ -325,7 +326,7 @@ func anyVerification(findings []reconcile.JSONFinding) bool {
 // same normalization the gate and confidence-v2 mapping use).
 func isRefuted(f reconcile.JSONFinding) bool {
 	return f.Verification != nil &&
-		canonicalize(f.Verification.Verdict) == canonicalize(reconcile.VerdictRefuted)
+		canonicalize(f.Verification.Verdict) == canonicalize(reclib.VerdictRefuted)
 }
 
 // writePathWarning emits the hallucinated-path warning line for a finding whose
@@ -361,9 +362,9 @@ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
 // labelled "Judge" so it is not mistaken for a skeptic-produced verdict.
 // All free text is HTML-escaped and newline-flattened so reviewer-controlled
 // fields cannot inject markup or escape the section.
-func writeSkepticBlock(b *bytes.Buffer, v *reconcile.Verification) {
+func writeSkepticBlock(b *bytes.Buffer, v *reclib.Verification) {
 	annotation := ""
-	if canonicalize(v.Verdict) == canonicalize(reconcile.VerdictUnverifiable) {
+	if canonicalize(v.Verdict) == canonicalize(reclib.VerdictUnverifiable) {
 		annotation = " (skeptic could not verify)"
 	}
 	label := "Skeptic"
@@ -403,7 +404,7 @@ func writeRefutedSection(b *bytes.Buffer, refuted []reconcile.JSONFinding) {
 }
 
 // skepticName returns the skeptic that produced a verdict, or "(unknown)".
-func skepticName(v *reconcile.Verification) string {
+func skepticName(v *reclib.Verification) string {
 	if v == nil || strings.TrimSpace(v.Skeptic) == "" {
 		return "(unknown)"
 	}
@@ -470,7 +471,7 @@ func canonicalize(s string) string {
 // canonical rank owned by internal/stream (NormalizeSeverity-keyed) so the
 // report view and the radar sort never drift, even on mixed-case input.
 func severityRankOf(s string) int {
-	if r, ok := stream.SeverityRank[stream.NormalizeSeverity(s)]; ok {
+	if r, ok := reclib.SeverityRank[reclib.NormalizeSeverity(s)]; ok {
 		return r
 	}
 	return 0

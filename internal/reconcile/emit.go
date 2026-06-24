@@ -12,6 +12,7 @@ import (
 
 	"github.com/samestrin/atcr/internal/atomicfs"
 	"github.com/samestrin/atcr/internal/stream"
+	reclib "github.com/samestrin/atcr/reconcile"
 )
 
 // Reconciled artifact filenames.
@@ -26,41 +27,27 @@ const (
 	DisagreementsJSON = "disagreements.json"
 )
 
-// Verification is the reserved per-finding adversarial-verification block for a
-// future stage (Epic 3.0). It is absent from every 1.x findings.json (the
-// omitempty pointer marshals to nothing when nil); readers and renderers must
-// tolerate both its absence and its presence.
+// Verification is ATCR's compatibility alias for the library Verification type.
+// The canonical definition was extracted to github.com/samestrin/atcr/reconcile
+// (Epic 8.0); this alias keeps internal/reconcile and every existing consumer
+// compiling unchanged until they flip to the library import in Phase 3. Because
+// it is a type alias, the type is identical — JSON serialization and the
+// *Verification pointer carried on Merged are byte-for-byte unchanged.
 //
-// Epic 3.0 contract: when populating this block, the writing stage MUST
-// validate Verdict against the allowed enum values (confirmed, refuted,
-// unverifiable) before persisting. ReadReconciledFindings (emit.go:145) does NOT
-// validate the enum so bad values are silently accepted on read — validation
-// is the writer's responsibility. An empty Verdict (verdict:"") is a contract
-// violation and will confuse downstream consumers.
-type Verification struct {
-	Verdict string `json:"verdict"` // confirmed | refuted | unverifiable
-	Skeptic string `json:"skeptic"` // agent that produced the verdict
-	// Notes is populated only from the winning verdict during a cluster-merge;
-	// minority-verdict reasoning is intentionally not preserved.
-	Notes string `json:"notes,omitempty"`
-	// ChallengeSurvived marks a finding upheld by the cross-examination stage
-	// (Epic 6.0): the judge ruled uphold or split, so the finding survived hostile
-	// challenge. omitempty keeps every pre-6.0 and non-debated findings.json block
-	// byte-identical — the marker appears only on a debated, surviving finding. It
-	// rides alongside Verdict (uphold→confirmed, split→confirmed at a settled
-	// severity, overturn→refuted), so the gate keys on Verdict as before and this
-	// is a display/audit marker, never a separate confidence tier.
-	ChallengeSurvived bool `json:"challenge_survived,omitempty"`
-}
+// Epic 3.0 contract (unchanged): when populating this block, the writing stage
+// MUST validate Verdict against the allowed enum values before persisting; an
+// empty Verdict is a contract violation. Readers do not re-validate the enum.
+type Verification = reclib.Verification
 
-// Verdict enum values for Verification.Verdict (Epic 3.0). The verify stage
-// validates skeptic output against this set before persisting; the gate reads
-// these constants to exclude refuted findings and, under requireVerified, to
-// count only confirmed ones.
+// Verdict enum values for Verification.Verdict (Epic 3.0), re-exported from the
+// extracted library so internal lookups and external callers keep a stable
+// symbol. The verify stage validates skeptic output against this set before
+// persisting; the gate reads these to exclude refuted findings and, under
+// requireVerified, to count only confirmed ones.
 const (
-	VerdictConfirmed    = "confirmed"
-	VerdictRefuted      = "refuted"
-	VerdictUnverifiable = "unverifiable"
+	VerdictConfirmed    = reclib.VerdictConfirmed
+	VerdictRefuted      = reclib.VerdictRefuted
+	VerdictUnverifiable = reclib.VerdictUnverifiable
 )
 
 // JSONFinding is the findings.json record schema (AC 01-06). It is the stable,
@@ -69,8 +56,9 @@ const (
 // cross-examination 6.x); all such fields are omitempty for backward
 // byte-compatibility with pre-extension findings.json.
 //
-// Verification is reserved for Epic 3.0 (adversarial verification) — parsed if
-// present, but never populated by any v1 code path and omitted from 1.x output.
+// Verification carries the adversarial-verification block (Epic 3.0). It is
+// populated by the verify stage and omitted from JSON output when nil
+// (omitempty); reconcile-time producers leave it empty.
 type JSONFinding struct {
 	Severity     string        `json:"severity"`
 	File         string        `json:"file"`
@@ -83,7 +71,7 @@ type JSONFinding struct {
 	Reviewers    []string      `json:"reviewers"`
 	Confidence   string        `json:"confidence"`
 	Disagreement string        `json:"disagreement,omitempty"`
-	Verification *Verification `json:"verification,omitempty"` // reserved (Epic 3.0); absent in 1.x
+	Verification *Verification `json:"verification,omitempty"` // populated by verify stage; omitted when nil
 	// PathValid / PathWarning carry file-existence validation (Epic 5.0). Both
 	// are omitempty so a finding that was never validated (or whose path exists)
 	// serializes byte-identically to pre-5.0 findings.json — only a flagged
@@ -136,32 +124,104 @@ type JSONFinding struct {
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.
+//
+// Path-validation fields (PathValid/PathWarning/PathSuggestion) are NOT carried
+// here: the extracted library Merged no longer holds them (Epic 8.0 Phase 2
+// Clarification Q1). When this Result was produced by RunReconcile, the
+// path-stamped records were cached on it (after validateFindingPaths ran over the
+// JSONFinding layer), so this returns those — every consumer sees identical,
+// path-validated records. A Result built directly (no path validation) derives
+// fresh path-less records from the merged findings.
 func (r Result) JSONFindings() []JSONFinding {
+	// Return cached path-stamped records when available; otherwise derive fresh
+	// path-less records from the merged findings. The cache-vs-derivation split
+	// is intentional: RunReconcile validates paths once and reuses the result.
+	if r.jsonFindings != nil {
+		return r.jsonFindings
+	}
 	out := make([]JSONFinding, 0, len(r.Findings))
 	for _, m := range r.Findings {
 		out = append(out, JSONFinding{
-			Severity:       m.Severity,
-			File:           m.File,
-			Line:           m.Line,
-			Problem:        m.Problem,
-			Fix:            m.Fix,
-			Category:       m.Category,
-			EstMinutes:     m.EstMinutes,
-			Evidence:       m.Evidence,
-			Reviewers:      m.Reviewers,
-			Confidence:     m.Confidence,
-			Disagreement:   m.Disagreement,
-			Verification:   m.Verification,
-			PathValid:      m.PathValid,
-			PathWarning:    m.PathWarning,
-			PathSuggestion: m.PathSuggestion,
+			Severity:     m.Severity,
+			File:         m.File,
+			Line:         m.Line,
+			Problem:      m.Problem,
+			Fix:          m.Fix,
+			Category:     m.Category,
+			EstMinutes:   m.EstMinutes,
+			Evidence:     m.Evidence,
+			Reviewers:    m.Reviewers,
+			Confidence:   m.Confidence,
+			Disagreement: m.Disagreement,
+			// Verification pointer identity is intentionally preserved (not deep-copied)
+			// because gate.go IsFailing and debate cross-examination mutate the same
+			// block referenced by the merged finding.
+			Verification: m.Verification,
 			// FixWarning intentionally not copied: it is set by the verify fix phase
 			// (executor.go generateFixes) after reconcile, so the reconcile path owns
-			// only the pre-fix Merged state. Copying it here would change behavior for
-			// any future path that round-trips findings through JSONFindings().
+			// only the pre-fix merged state.
 		})
 	}
 	return out
+}
+
+// ambiguousWire is the on-disk shape of an ambiguous.json cluster. Its Findings
+// are ATCR stream.Finding values (no json tags → PascalCase keys, every field
+// present including the zero-valued path-validation fields), reproducing the
+// pre-extraction byte layout exactly. The extracted library AmbiguousCluster
+// carries the stdlib-only reconcile.Finding (lowercase tags, omitempty, no path
+// fields), which serializes differently; ATCR converts to this wire type so
+// ambiguous.json stays byte-identical across the Epic 8.0 extraction (AC 01-05).
+type ambiguousWire struct {
+	ID         string           `json:"id"`
+	File       string           `json:"file"`
+	Line       int              `json:"line"`
+	Similarity float64          `json:"similarity"`
+	Findings   []stream.Finding `json:"findings"`
+}
+
+// toAmbiguousWire converts library AmbiguousClusters to the ATCR on-disk wire
+// shape, mapping each library finding back to a stream.Finding (path fields zero,
+// as they were at reconcile time — the ambiguous sidecar predates path validation).
+func toAmbiguousWire(clusters []AmbiguousCluster) []ambiguousWire {
+	out := make([]ambiguousWire, len(clusters))
+	for i, c := range clusters {
+		fs := make([]stream.Finding, len(c.Findings))
+		for j, f := range c.Findings {
+			// Inline the library Finding -> stream.Finding field map (TD-006 inlined).
+			fs[j] = stream.Finding{
+				Severity:   f.Severity,
+				File:       f.File,
+				Line:       f.Line,
+				Problem:    f.Problem,
+				Fix:        f.Fix,
+				Category:   f.Category,
+				EstMinutes: f.EstMinutes,
+				Evidence:   f.Evidence,
+				Reviewer:   f.Reviewer,
+				Reviewers:  f.Reviewers,
+				Confidence: f.Confidence,
+			}
+		}
+		out[i] = ambiguousWire{ID: c.ID, File: c.File, Line: c.Line, Similarity: c.Similarity, Findings: fs}
+	}
+	return out
+}
+
+// ambiguousHash digests the exact bytes Emit writes for ambiguous.json (the wire
+// shape), recorded in summary.json as ambiguous_hash so a host copies it verbatim
+// into adjudication.json. It must hash the SAME bytes ambiguous.json carries, so
+// it serializes the wire type — not the library AmbiguousCluster (whose stdlib-only
+// serialization differs).
+func ambiguousHash(r Result) string {
+	if len(r.ambiguousBytes) > 0 {
+		return HashBytes(r.ambiguousBytes)
+	}
+	var buf bytes.Buffer
+	if err := renderIndentedJSON(&buf, toAmbiguousWire(r.Ambiguous)); err != nil {
+		panic(fmt.Sprintf("atcr: ambiguousHash: unreachable JSON render error: %v", err))
+	}
+	return HashBytes(buf.Bytes())
 }
 
 // Emit writes the four reconciled artifacts plus the ambiguous.json sidecar into
@@ -170,16 +230,23 @@ func Emit(reconciledDir string, r Result) error {
 	if err := os.MkdirAll(reconciledDir, 0o755); err != nil {
 		return fmt.Errorf("creating reconciled dir: %w", err)
 	}
-	df := BuildDisagreements(r.JSONFindings(), r.Ambiguous)
+	jf := r.JSONFindings()
+	df := BuildDisagreements(jf, r.Ambiguous)
 	writers := []struct {
 		name   string
 		render func(io.Writer) error
 	}{
 		{FindingsTxt, func(w io.Writer) error { return RenderText(w, r) }},
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
-		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r, df) }},
+		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
-		{AmbiguousJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Ambiguous) }},
+		{AmbiguousJSON, func(w io.Writer) error {
+			if len(r.ambiguousBytes) > 0 {
+				_, err := w.Write(r.ambiguousBytes)
+				return err
+			}
+			return renderIndentedJSON(w, toAmbiguousWire(r.Ambiguous))
+		}},
 		{DisagreementsJSON, func(w io.Writer) error { return renderIndentedJSON(w, df) }},
 	}
 	// Render every artifact first so a render error aborts before any file is
@@ -212,14 +279,26 @@ func Emit(reconciledDir string, r Result) error {
 // findings.json (path_warning) or report.md (the rendered "File not found"
 // line), which are the authoritative carriers.
 func RenderText(w io.Writer, r Result) error {
-	findings := make([]stream.Finding, 0, len(r.Findings))
-	for _, m := range r.Findings {
-		f := m.Finding
-		if m.Disagreement != "" {
+	records := r.JSONFindings()
+	findings := make([]stream.Finding, 0, len(records))
+	for _, rec := range records {
+		f := stream.Finding{
+			Severity:   rec.Severity,
+			File:       rec.File,
+			Line:       rec.Line,
+			Problem:    rec.Problem,
+			Fix:        rec.Fix,
+			Category:   rec.Category,
+			EstMinutes: rec.EstMinutes,
+			Evidence:   rec.Evidence,
+			Reviewers:  rec.Reviewers,
+			Confidence: rec.Confidence,
+		}
+		if rec.Disagreement != "" {
 			if f.Evidence != "" {
 				f.Evidence += " "
 			}
-			f.Evidence += "(disagreement: " + m.Disagreement + ")"
+			f.Evidence += "(disagreement: " + rec.Disagreement + ")"
 		}
 		findings = append(findings, f)
 	}
@@ -310,16 +389,19 @@ func ReadDisagreements(reviewDir string) (DisagreementsFile, error) {
 // and delegates to renderMarkdown; Emit passes a pre-built radar to avoid the
 // redundant BuildDisagreements call on the reconcile path.
 func RenderMarkdown(w io.Writer, r Result) error {
-	return renderMarkdown(w, r, BuildDisagreements(r.JSONFindings(), r.Ambiguous))
+	jf := r.JSONFindings()
+	return renderMarkdown(w, r.Summary, jf, BuildDisagreements(jf, r.Ambiguous))
 }
 
-// renderMarkdown is the internal implementation. It accepts a pre-built
-// DisagreementsFile so Emit can build the radar once and share it between
-// report.md and disagreements.json without a second O(n log n) sort pass.
-func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
-	inScope := make([]Merged, 0, len(r.Findings))
-	var outOfScope []Merged
-	for _, m := range r.Findings {
+// renderMarkdown is the internal implementation. It renders from the path-stamped
+// JSONFinding records (the library Merged no longer carries path-validation
+// fields, Phase 2 Clarification Q1) and accepts a pre-built DisagreementsFile so
+// Emit can build the radar once and share it between report.md and
+// disagreements.json without a second O(n log n) sort pass.
+func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df DisagreementsFile) error {
+	inScope := make([]JSONFinding, 0, len(findings))
+	var outOfScope []JSONFinding
+	for _, m := range findings {
 		if m.Category == CategoryOutOfScope {
 			outOfScope = append(outOfScope, m)
 		} else {
@@ -331,14 +413,14 @@ func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
 	b.WriteString("# atcr Reconciled Review\n\n")
 
 	b.WriteString("## Summary\n\n")
-	fmt.Fprintf(&b, "- Total findings: %d\n", r.Summary.TotalFindings)
-	fmt.Fprintf(&b, "- Sources: %s\n", joinOrNone(r.Summary.SourcesScanned))
-	fmt.Fprintf(&b, "- Clusters collapsed: %d\n", r.Summary.ClustersCollapsed)
-	fmt.Fprintf(&b, "- Severity disagreements: %d\n", r.Summary.SeverityDisagreements)
+	fmt.Fprintf(&b, "- Total findings: %d\n", summary.TotalFindings)
+	fmt.Fprintf(&b, "- Sources: %s\n", esc(joinOrNone(summary.SourcesScanned)))
+	fmt.Fprintf(&b, "- Clusters collapsed: %d\n", summary.ClustersCollapsed)
+	fmt.Fprintf(&b, "- Severity disagreements: %d\n", summary.SeverityDisagreements)
 	if len(outOfScope) > 0 {
 		fmt.Fprintf(&b, "- Out-of-scope findings: %d (annotated, excluded from the gate)\n", len(outOfScope))
 	}
-	if r.Summary.Partial {
+	if summary.Partial {
 		b.WriteString("- Partial: yes (a source was missing or unreadable)\n")
 	}
 	b.WriteString("\n")
@@ -351,7 +433,7 @@ func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
 	// in internal/report passes escTrunc through the same shared renderer.
 	WriteRadarSection(&b, df, esc)
 
-	if len(r.Findings) == 0 {
+	if len(findings) == 0 {
 		b.WriteString("\nNo findings.\n")
 		_, err := w.Write(b.Bytes())
 		return err
@@ -370,8 +452,11 @@ func renderMarkdown(w io.Writer, r Result, df DisagreementsFile) error {
 }
 
 // writeFindingsList renders findings grouped by severity heading, in the order
-// given (the caller passes sortMerged-ordered slices).
-func writeFindingsList(b *bytes.Buffer, findings []Merged) {
+// given (the caller passes sortMerged-ordered slices). It renders from the
+// path-stamped JSONFinding records so the hallucinated-path warning (Epic 5.0)
+// survives the library Merged dropping its path-validation fields (Phase 2
+// Clarification Q1).
+func writeFindingsList(b *bytes.Buffer, findings []JSONFinding) {
 	lastSev := ""
 	for _, m := range findings {
 		if m.Severity != lastSev {
@@ -410,7 +495,7 @@ func writeFindingsList(b *bytes.Buffer, findings []Merged) {
 }
 
 // writeSeverityConfidenceTable writes the counts-by-severity x confidence grid.
-func writeSeverityConfidenceTable(b *bytes.Buffer, findings []Merged) {
+func writeSeverityConfidenceTable(b *bytes.Buffer, findings []JSONFinding) {
 	type cell struct{ high, medium, low int }
 	order := []string{SevCritical, SevHigh, SevMedium, SevLow}
 	counts := map[string]*cell{}

@@ -1,3 +1,34 @@
+## [8.0.0] - 2026-06-23
+
+Extracted `internal/reconcile` into a standalone nested Go module with its own `go.mod`, independent CI scorecard, and JSON adapter. All consumer packages now import types, severity helpers, and core reconcile logic from the library rather than from the top-level module.
+
+### Added
+
+- `internal/reconcile` nested Go module with `replace` directive, full type/IO split, and independent CI scorecard job
+- JSON adapter for the reconcile library with input routing, validation, and edge-case handling (non-object/non-array rejection, required-field validation)
+- `Verification.Valid()` method to enforce the verdict enum contract
+- Length-prefix encoding for `AmbiguousID` fields to prevent NUL byte field-boundary aliasing
+
+### Changed
+
+- All consumer packages (`cmd/atcr`, `mcp`, `ghaction`, `report`, `debate`, `verify`, `registry`, `fanout`) now import types and severity helpers from `internal/reconcile`
+- `AmbiguousHash` returns a sentinel error instead of panicking on marshal failure
+- `sortMerged` uses a `Problem` tiebreak for a strict total order
+
+### Fixed
+
+- Source JSON wire names normalized to `lower_snake` via JSON struct tags
+- `MaxEstMinutes` calculation corrected for empty and negative estimate groups
+- `PerSourceCounts` populated in `sampleResult` for byte-stable golden fixture output
+- `ConfidenceForVerdict` normalizes non-canonical prior confidence pass-through
+- `Decode` validates required finding fields before accepting input
+- Escaped source names in the markdown Summary section in `emit.go`
+- `firstNonSpace` replaced with `bytes.TrimLeft` to correctly handle empty input
+- Pre-push hook extended to include the reconcile module test suite
+- CI reconcile module job granted `permissions: contents: read`
+
+*Shipped via /execute-sprint (sprint 8.0_reconciler_library)*
+
 ## [Technical Debt] - 2026-06-23
 
 ### Fixed

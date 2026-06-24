@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"math"
 	"net/url"
 	"os"
@@ -11,8 +12,6 @@ import (
 	"sort"
 	"strings"
 	"unicode"
-
-	"github.com/samestrin/atcr/internal/stream"
 )
 
 // DefaultTemperature fills an agent's temperature when unset (applied at
@@ -326,7 +325,7 @@ var reviewSeverities = map[string]bool{"CRITICAL": true, "HIGH": true, "MEDIUM":
 // from "inherited default" (option-a decision, recorded in epic-3 planning).
 //
 // Role names are matched case-insensitively (mirroring the severity rubric,
-// which normalizes case via stream.NormalizeSeverity): the value is lower-cased
+// which normalizes case via reclib.NormalizeSeverity): the value is lower-cased
 // and trimmed before comparison, and applyDefaults stores the canonical
 // lowercase form so downstream exact-match comparisons stay valid.
 func roleValid(r string) bool {
@@ -468,7 +467,7 @@ func (r *Registry) validate() error {
 	// verify.min_severity (Epic 3.0): an empty value defaults to MEDIUM at load;
 	// any non-empty value must be a canonical review severity. Error wording lists
 	// the levels low→high so a typo (e.g. "BLOCKER") is corrected quickly.
-	if normalized := stream.NormalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+	if normalized := reclib.NormalizeSeverity(r.Verify.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		errs = append(errs, fmt.Errorf("invalid verify.min_severity %q: must be LOW, MEDIUM, HIGH, or CRITICAL", r.Verify.MinSeverity))
 	}
 	if r.Verify.Votes < 0 {
@@ -527,7 +526,7 @@ func (r *Registry) validateExecutor() []error {
 	if normalized := strings.ToLower(strings.TrimSpace(e.Role)); normalized != "" && normalized != RoleExecutor {
 		errs = append(errs, fmt.Errorf("executor: role must be 'executor', got '%s'", e.Role))
 	}
-	if normalized := stream.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+	if normalized := reclib.NormalizeSeverity(e.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		errs = append(errs, fmt.Errorf("executor: min_severity_for_fix must be one of CRITICAL, HIGH, MEDIUM, LOW, got %q", e.MinSeverity))
 	}
 	// The persona is interpolated verbatim into the fix-generation prompt
@@ -660,7 +659,7 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	// not validated. min_severity is checked case-insensitively against the
 	// rubric, max_findings must be a positive cap, and every scope entry must
 	// be a non-empty category (a blank entry is a YAML typo, not "all").
-	if normalized := stream.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
+	if normalized := reclib.NormalizeSeverity(a.MinSeverity); normalized != "" && !reviewSeverities[normalized] {
 		errs = append(errs, agentErrf(name, "agent '%s': min_severity must be one of CRITICAL, HIGH, MEDIUM, LOW", name))
 	}
 	if a.MaxFindings != nil && (*a.MaxFindings <= 0 || *a.MaxFindings > MaxFindingsCap) {
@@ -716,7 +715,7 @@ func (r *Registry) applyDefaults() {
 		// Canonicalize min_severity (Epic 2.2) so downstream enforcement compares
 		// against a stable upper-case token regardless of how it was written.
 		if a.MinSeverity != "" {
-			a.MinSeverity = stream.NormalizeSeverity(a.MinSeverity)
+			a.MinSeverity = reclib.NormalizeSeverity(a.MinSeverity)
 		}
 		// Canonicalize scope entries (Epic 2.2): trim whitespace so downstream
 		// comparisons (ScopeFocus rendering, prompt injection) use stable tokens.
@@ -734,11 +733,11 @@ func (r *Registry) applyDefaults() {
 	// Verification defaults (Epic 3.0): an unset min_severity resolves to MEDIUM,
 	// an unset (or zero) votes to 1; a set min_severity is canonicalized so the
 	// verify stage compares a stable upper-case token. Validation already rejected
-	// any non-canonical value, so stream.NormalizeSeverity here only fixes casing.
+	// any non-canonical value, so reclib.NormalizeSeverity here only fixes casing.
 	if r.Verify.MinSeverity == "" {
 		r.Verify.MinSeverity = DefaultVerifyMinSeverity
 	} else {
-		r.Verify.MinSeverity = stream.NormalizeSeverity(r.Verify.MinSeverity)
+		r.Verify.MinSeverity = reclib.NormalizeSeverity(r.Verify.MinSeverity)
 	}
 	if r.Verify.Votes == 0 {
 		r.Verify.Votes = DefaultVerifyVotes
@@ -773,7 +772,7 @@ func (r *Registry) applyDefaults() {
 		if r.Executor.MinSeverity == "" {
 			r.Executor.MinSeverity = DefaultFixMinSeverity
 		} else {
-			r.Executor.MinSeverity = stream.NormalizeSeverity(r.Executor.MinSeverity)
+			r.Executor.MinSeverity = reclib.NormalizeSeverity(r.Executor.MinSeverity)
 		}
 	}
 }

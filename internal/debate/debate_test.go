@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,9 +158,9 @@ func TestRunDebate_UpholdWritesConfirmedVerdict(t *testing.T) {
 	f := readFindings(t, dir)
 	require.Len(t, f, 1)
 	require.NotNil(t, f[0].Verification)
-	assert.Equal(t, reconcile.VerdictConfirmed, f[0].Verification.Verdict)
+	assert.Equal(t, reclib.VerdictConfirmed, f[0].Verification.Verdict)
 	assert.True(t, f[0].Verification.ChallengeSurvived)
-	assert.Equal(t, reconcile.ConfidenceVerified, f[0].Confidence)
+	assert.Equal(t, reclib.ConfidenceVerified, f[0].Confidence)
 	assert.Equal(t, "carol", f[0].Verification.Skeptic) // judge attributed
 }
 
@@ -176,9 +177,9 @@ func TestRunDebate_OverturnRefutesAndDemotes(t *testing.T) {
 	assert.Equal(t, 1, res.Overturned)
 
 	f := readFindings(t, dir)
-	assert.Equal(t, reconcile.VerdictRefuted, f[0].Verification.Verdict)
+	assert.Equal(t, reclib.VerdictRefuted, f[0].Verification.Verdict)
 	assert.False(t, f[0].Verification.ChallengeSurvived)
-	assert.Equal(t, reconcile.ConfLow, f[0].Confidence)
+	assert.Equal(t, reclib.ConfLow, f[0].Confidence)
 }
 
 func TestRunDebate_SplitOverwritesSeverity(t *testing.T) {
@@ -195,7 +196,7 @@ func TestRunDebate_SplitOverwritesSeverity(t *testing.T) {
 
 	f := readFindings(t, dir)
 	assert.Equal(t, "MEDIUM", f[0].Severity) // severity-max replaced by the judge ruling
-	assert.Equal(t, reconcile.VerdictConfirmed, f[0].Verification.Verdict)
+	assert.Equal(t, reclib.VerdictConfirmed, f[0].Verification.Verdict)
 	assert.True(t, f[0].Verification.ChallengeSurvived)
 }
 
@@ -441,8 +442,8 @@ func errContext() error { return context.DeadlineExceeded }
 // settled findings.
 func TestRunDebate_IdempotentReRun(t *testing.T) {
 	f := splitFinding()
-	f.Verification = &reconcile.Verification{Verdict: reconcile.VerdictConfirmed, Skeptic: "carol", ChallengeSurvived: true}
-	f.Confidence = reconcile.ConfidenceVerified
+	f.Verification = &reclib.Verification{Verdict: reclib.VerdictConfirmed, Skeptic: "carol", ChallengeSurvived: true}
+	f.Confidence = reclib.ConfidenceVerified
 	dir := reviewDirWith(t, []reconcile.JSONFinding{f})
 	cc := &fakeChatCompleter{turns: []chatTurn{
 		{content: "p"}, {content: "c"}, {content: `{"outcome":"uphold","settled_severity":"HIGH"}`},
@@ -558,7 +559,7 @@ func TestDeduplicateFindings_KeepsFirstOccurrence(t *testing.T) {
 	assert.Equal(t, "b.go", got[1].File)
 }
 
-// TestApplyRulings_SkipsInvalidVerdict: the reconcile.Verification contract requires
+// TestApplyRulings_SkipsInvalidVerdict: the reclib.Verification contract requires
 // the writing stage to validate Verdict against the enum before persisting; an empty
 // or out-of-enum verdict is a contract violation downstream consumers choke on.
 // applyRulings must refuse to persist such a ruling rather than writing a bad block.
@@ -581,10 +582,10 @@ func TestApplyRulings_SkipsInvalidVerdict(t *testing.T) {
 
 	// A valid verdict still applies.
 	applyRulings(findings, map[FindingKey]ruleApply{
-		key: {verdict: reconcile.VerdictConfirmed, survived: true, judge: "carol", reasoning: "holds"},
+		key: {verdict: reclib.VerdictConfirmed, survived: true, judge: "carol", reasoning: "holds"},
 	})
 	require.NotNil(t, findings[0].Verification)
-	assert.Equal(t, reconcile.VerdictConfirmed, findings[0].Verification.Verdict)
+	assert.Equal(t, reclib.VerdictConfirmed, findings[0].Verification.Verdict)
 }
 
 // TestApplyRulings_PreservesVerifyProvenance: a finding already verified (Epic 3.0)
@@ -596,8 +597,8 @@ func TestApplyRulings_SkipsInvalidVerdict(t *testing.T) {
 func TestApplyRulings_PreservesVerifyProvenance(t *testing.T) {
 	findings := []reconcile.JSONFinding{{
 		File: "a.go", Line: 1, Problem: "nil deref", Severity: "HIGH",
-		Verification: &reconcile.Verification{
-			Verdict: reconcile.VerdictUnverifiable,
+		Verification: &reclib.Verification{
+			Verdict: reclib.VerdictUnverifiable,
 			Skeptic: "alice, bob",
 			Notes:   "voters split on reproduction",
 		},
@@ -605,12 +606,12 @@ func TestApplyRulings_PreservesVerifyProvenance(t *testing.T) {
 	key := FindingKey{File: "a.go", Line: 1, Problem: "nil deref"}
 
 	applyRulings(findings, map[FindingKey]ruleApply{
-		key: {verdict: reconcile.VerdictConfirmed, survived: true, judge: "carol", reasoning: "judge upheld"},
+		key: {verdict: reclib.VerdictConfirmed, survived: true, judge: "carol", reasoning: "judge upheld"},
 	})
 
 	v := findings[0].Verification
 	require.NotNil(t, v)
-	assert.Equal(t, reconcile.VerdictConfirmed, v.Verdict, "debate verdict must be recorded")
+	assert.Equal(t, reclib.VerdictConfirmed, v.Verdict, "debate verdict must be recorded")
 	assert.True(t, v.ChallengeSurvived, "challenge-survived marker must be set")
 	assert.Equal(t, "alice, bob", v.Skeptic, "original multi-voter skeptic list must survive the debate")
 	assert.Equal(t, "voters split on reproduction", v.Notes, "original verify notes must survive the debate")
@@ -624,12 +625,12 @@ func TestApplyRulings_NoPriorVerificationRecordsJudge(t *testing.T) {
 	key := FindingKey{File: "a.go", Line: 1, Problem: "nil deref"}
 
 	applyRulings(findings, map[FindingKey]ruleApply{
-		key: {verdict: reconcile.VerdictConfirmed, survived: true, judge: "carol", reasoning: "judge upheld"},
+		key: {verdict: reclib.VerdictConfirmed, survived: true, judge: "carol", reasoning: "judge upheld"},
 	})
 
 	v := findings[0].Verification
 	require.NotNil(t, v)
-	assert.Equal(t, reconcile.VerdictConfirmed, v.Verdict)
+	assert.Equal(t, reclib.VerdictConfirmed, v.Verdict)
 	assert.Equal(t, "carol", v.Skeptic, "judge recorded as skeptic when no prior verification exists")
 	assert.Equal(t, "judge upheld", v.Notes, "judge reasoning recorded as notes when no prior verification exists")
 }
@@ -679,6 +680,6 @@ func TestRunDebate_DuplicateFindingKeyMutatesOnlyOne(t *testing.T) {
 	f := readFindings(t, dir)
 	require.Len(t, f, 1, "findings.json should be deduplicated on the triple")
 	require.NotNil(t, f[0].Verification)
-	assert.Equal(t, reconcile.VerdictConfirmed, f[0].Verification.Verdict)
+	assert.Equal(t, reclib.VerdictConfirmed, f[0].Verification.Verdict)
 	assert.True(t, f[0].Verification.ChallengeSurvived)
 }

@@ -220,9 +220,15 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 	res := Reconcile(sources, opts)
 
 	// Flag findings whose file paths do not exist under the reviewed repo root
-	// (Epic 5.0). Stamped after merge, before Emit, so the warning rides into
-	// findings.json and the reports. No-op when opts.Root is empty.
-	validateFindingPaths(ctx, res.Findings, opts.Root)
+	// (Epic 5.0). The extracted library Merged no longer carries path-validation
+	// fields, so stamping runs over the JSONFinding records, which are then cached
+	// on the result so every downstream consumer (Emit, the gate's inline failing
+	// list) sees the same path-stamped records (Epic 8.0 Phase 2 Clarification Q1).
+	// Stamped after merge, before Emit, so the warning rides into findings.json and
+	// the reports. No-op when opts.Root is empty.
+	jf := res.JSONFindings()
+	validateFindingPaths(ctx, jf, opts.Root)
+	res.jsonFindings = jf
 
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
