@@ -8,6 +8,6 @@ package reconcile
 // skipped files) in its own internal type and converts to []Source at the
 // boundary; that bookkeeping is not part of the public library surface.
 type Source struct {
-	Name     string
-	Findings []Finding
+	Name     string    `json:"name"`
+	Findings []Finding `json:"findings"`
 }
