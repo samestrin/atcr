@@ -1,6 +1,8 @@
 package reconcile
 
 import (
+	"bytes"
+	"fmt"
 	"sort"
 
 	"github.com/samestrin/atcr/internal/stream"
@@ -118,6 +120,10 @@ type Result struct {
 	// path-stamped records. When unset (a Result built directly, e.g. a test with
 	// no path validation), JSONFindings derives path-less records from Findings.
 	jsonFindings []JSONFinding
+	// ambiguousBytes caches the rendered ambiguous.json bytes (emit.go wire shape)
+	// so Reconcile, ambiguousHash, and Emit share one marshal instead of two.
+	// When unset, Emit and ambiguousHash fall back to rendering from Ambiguous.
+	ambiguousBytes []byte
 }
 
 // Reconcile is the ATCR entry point. It bridges ATCR's discovery Source (which
@@ -143,9 +149,16 @@ func Reconcile(sources []Source, opts Options) Result {
 	// The library hashes its own stdlib-only AmbiguousCluster serialization; ATCR
 	// emits ambiguous.json via a wire shape that reproduces the pre-extraction
 	// bytes (emit.go toAmbiguousWire), so re-bind ambiguous_hash to those exact
-	// bytes to keep summary.json byte-identical (Epic 8.0 AC 01-05).
-	lr.Summary.AmbiguousHash = ambiguousHash(lr.Ambiguous)
-	return Result{Findings: lr.Findings, Ambiguous: lr.Ambiguous, Summary: lr.Summary}
+	// bytes to keep summary.json byte-identical (Epic 8.0 AC 01-05). Render once
+	// and cache the bytes so Emit can reuse them without a second marshal.
+	res := Result{Findings: lr.Findings, Ambiguous: lr.Ambiguous, Summary: lr.Summary}
+	var ambBuf bytes.Buffer
+	if err := renderIndentedJSON(&ambBuf, toAmbiguousWire(res.Ambiguous)); err != nil {
+		panic(fmt.Sprintf("atcr: Reconcile: unreachable ambiguous JSON render error: %v", err))
+	}
+	res.ambiguousBytes = ambBuf.Bytes()
+	res.Summary.AmbiguousHash = HashBytes(res.ambiguousBytes)
+	return res
 }
 
 // toLibFinding converts an ATCR stream.Finding (per-source input) into the

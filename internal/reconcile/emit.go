@@ -200,9 +200,12 @@ func toAmbiguousWire(clusters []AmbiguousCluster) []ambiguousWire {
 // into adjudication.json. It must hash the SAME bytes ambiguous.json carries, so
 // it serializes the wire type — not the library AmbiguousCluster (whose stdlib-only
 // serialization differs).
-func ambiguousHash(clusters []AmbiguousCluster) string {
+func ambiguousHash(r Result) string {
+	if len(r.ambiguousBytes) > 0 {
+		return HashBytes(r.ambiguousBytes)
+	}
 	var buf bytes.Buffer
-	if err := renderIndentedJSON(&buf, toAmbiguousWire(clusters)); err != nil {
+	if err := renderIndentedJSON(&buf, toAmbiguousWire(r.Ambiguous)); err != nil {
 		panic(fmt.Sprintf("atcr: ambiguousHash: unreachable JSON render error: %v", err))
 	}
 	return HashBytes(buf.Bytes())
@@ -224,7 +227,13 @@ func Emit(reconciledDir string, r Result) error {
 		{FindingsJSON, func(w io.Writer) error { return RenderJSON(w, r) }},
 		{ReportMD, func(w io.Writer) error { return renderMarkdown(w, r.Summary, jf, df) }},
 		{SummaryJSON, func(w io.Writer) error { return renderIndentedJSON(w, r.Summary) }},
-		{AmbiguousJSON, func(w io.Writer) error { return renderIndentedJSON(w, toAmbiguousWire(r.Ambiguous)) }},
+		{AmbiguousJSON, func(w io.Writer) error {
+			if len(r.ambiguousBytes) > 0 {
+				_, err := w.Write(r.ambiguousBytes)
+				return err
+			}
+			return renderIndentedJSON(w, toAmbiguousWire(r.Ambiguous))
+		}},
 		{DisagreementsJSON, func(w io.Writer) error { return renderIndentedJSON(w, df) }},
 	}
 	// Render every artifact first so a render error aborts before any file is
