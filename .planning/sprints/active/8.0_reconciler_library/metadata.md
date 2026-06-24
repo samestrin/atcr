@@ -54,11 +54,11 @@
 
 | Phase | Name | Stories | Status |
 |-------|------|---------|--------|
-| 1 | Foundation & Scaffold | 2 (partial) | [ ] Pending |
-| 2 | Core Extraction | 1, 2 (completion) | [ ] Pending |
-| 3 | Consumer Import-Flip | 1 (completion) | [ ] Pending |
-| 4 | Adapter, Docs & Licensing | 3, 4, 5 | [ ] Pending |
-| 5 | CI, Leaderboard & Validation | 6 + final | [ ] Pending |
+| 1 | Foundation & Scaffold | 2 (partial) | [x] Complete |
+| 2 | Core Extraction | 1, 2 (completion) | [x] Complete |
+| 3 | Consumer Import-Flip | 1 (completion) | [x] Complete |
+| 4 | Adapter, Docs & Licensing | 3, 4, 5 | [x] Complete |
+| 5 | CI, Leaderboard & Validation | 6 + final | [x] Complete |
 
 ---
 
@@ -68,21 +68,18 @@
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
-
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Status:** Ready for Review
+**Executed:** 2026-06-23
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 5/5
+- **Tasks:** 65/65 (sprint-plan); DoD items 236/238 (99.2%, 2 external branch-protection settings deferred)
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** root `go test ./...` 29 pkg ok / 0 fail; `go test -race ./reconcile/...` green; `TestGoldenCorpus_ByteIdentical` PASS (byte-identical fixtures)
+- **Coverage:** internal/reconcile 88.0% | adapter 100% | library reconcile 97.0% | json adapter 86.1% (all ≥80%)
+- **Lint:** Clean — `golangci-lint run` 0 issues (both modules, v2.12.2 shared config); `go vet` clean; `gofmt -l` empty
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 131 (branch vs main; 104 non-`.planning` code/CI/docs files)
+- **Commits:** 22 on `feature/8.0_reconciler_library` (4 this session) — branch not yet pushed; `/finalize-sprint` will push + open the PR
