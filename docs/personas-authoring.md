@@ -16,7 +16,7 @@ Copy this fill-in-the-blank template and fill in every **REQUIRED** field:
 ```yaml
 # ── Persona-file metadata (catalog only; ignored by the registry schema) ──
 name: security/owasp            # OPTIONAL — informational slug/title
-version: 1.0.0                  # OPTIONAL — shown by `atcr personas list`; enables `upgrade`
+version: 1.0.0                  # OPTIONAL — shown by `atcr personas list`; drives `upgrade` version comparison
 description: OWASP Top 10 review # OPTIONAL — shown by `atcr personas search`
 
 # ── Agent binding (validated against the registry schema) ──
@@ -106,15 +106,15 @@ Reviewing {{.FileCount}} changed file(s), {{.BaseRef}}..{{.HeadRef}}, payload mo
 
 A fixture proves the persona works without an LLM or a network call. It is a small diff containing a **known, synthetic** instance of the persona's target class.
 
-**Requirements (these match the fixture test exactly):**
+**Requirements** (the location, naming, and rendering rules are what the fixture test exercises; mode and content are project conventions):
 
 | Requirement | Rule |
 |-------------|------|
-| **Location** | `personas/testdata/` |
+| **Location** | `personas/testdata/` (test-enforced — the test reads from here) |
 | **Format** | a unified-diff `.patch` (or `.diff`) file |
 | **Naming** | `<slug>_fixture.patch` — e.g. `sentinel_fixture.patch`, `tracer_fixture.patch` |
-| **File mode** | `0644` |
-| **Content** | **synthetic values only** — never a real credential. Use placeholders like `FAKE_API_KEY_00000000` |
+| **File mode** | `0644` (convention; not asserted by the test) |
+| **Content** | **synthetic values only** — never a real credential. Use placeholders like `FAKE_API_KEY_00000000` (convention; not asserted by the test) |
 | **Network** | none — the fixture is read from disk and rendered locally; no live call is permitted in the test path |
 
 **What the test does** (for each persona, with no LLM and no network):

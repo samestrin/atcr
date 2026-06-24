@@ -71,22 +71,22 @@ Lists installed personas — both built-in and community — as a table:
 
 ```bash
 atcr personas list
-# NAME             VERSION  SOURCE      LANGUAGE
-# bruce            -        built-in    -
-# sentinel         -        built-in    -
-# security/owasp   1.2.0    community   -
-# language/go-fmt  0.3.0    community   go
+# NAME             VERSION    SOURCE      LANGUAGE
+# bruce            built-in   built-in    -
+# sentinel         built-in   built-in    -
+# security/owasp   1.2.0      community   -
+# language/go-fmt  0.3.0      community   go
 ```
 
-Columns: `NAME`, `VERSION` (community personas only; built-ins show `-`), `SOURCE` (`built-in` or `community`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
+Columns: `NAME`, `VERSION` (`built-in` for the built-in personas; the installed manifest version for community personas), `SOURCE` (`built-in` or `community`), and `LANGUAGE` (the persona's declared `language` scope, comma-joined, or `-` when unscoped). If the personas directory is unreadable, `list` prints a warning to stderr and still renders the built-ins (exit 0).
 
 **With corroboration scores.** Add `--scores` to append a `CORROBORATION` column showing each persona's historical corroboration rate from past review runs:
 
 ```bash
 atcr personas list --scores
-# NAME             VERSION  SOURCE      LANGUAGE  CORROBORATION
-# security/owasp   1.2.0    community   -         72.4%
-# sentinel         -        built-in    -         n/a
+# NAME             VERSION    SOURCE      LANGUAGE  CORROBORATION
+# security/owasp   1.2.0      community   -         72.4%
+# sentinel         built-in   built-in    -         n/a
 ```
 
 The rate is the fraction of a persona's findings that other reviewers or the verify stage corroborated, formatted as `XX.X%`, or `n/a` when there is no run history for that persona. When no scorecard data exists at all, every row shows `n/a` and a footer names the path that was checked:
@@ -121,14 +121,18 @@ The same name-validation guard applies, so `remove` can only delete files inside
 
 ### `atcr personas test <name>`
 
-Runs an installed persona against its fixture and reports pass/fail:
+Runs an installed persona against its fixture and reports pass/fail.
+
+> **Current behavior:** the shipped CLI does not yet wire a fixture runner, so `atcr personas test <name>` reports `No fixture defined for persona "<name>"` and exits 0 for every persona today. The pass/fail contract below is what the command produces once a runner is wired (the runner is an injectable seam; fixture execution against the persona's `.patch` is tracked as follow-up work).
 
 ```bash
 atcr personas test security/owasp
-# PASS: security/owasp (1/1 cases)
+# No fixture defined for persona "security/owasp"
 ```
 
-- A persona with no fixture wired reports `No fixture defined for persona "<name>"` and exits 0.
+The full output contract:
+
+- A persona with no runnable fixture reports `No fixture defined for persona "<name>"` and exits 0 (the current shipped behavior).
 - All cases passing reports `PASS: <name> (N/N cases)` (exit 0).
 - Any case failing reports `FAIL: <name> (P/N cases)` to stdout and exits non-zero.
 
