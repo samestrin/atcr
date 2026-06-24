@@ -47,7 +47,10 @@ func HashBytes(data []byte) string {
 func AmbiguousHash(clusters []AmbiguousCluster) string {
 	var buf bytes.Buffer
 	if err := renderIndentedJSON(&buf, clusters); err != nil {
-		panic(fmt.Sprintf("reconcile: AmbiguousHash: unreachable JSON render error: %v", err))
+		// Return "" rather than panicking so callers can detect the error.
+		// This path is unreachable with current types (all fields are JSON-safe),
+		// but a future non-serializable field would cause a live panic otherwise.
+		return ""
 	}
 	return HashBytes(buf.Bytes())
 }
