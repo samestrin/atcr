@@ -155,3 +155,11 @@ func TestMerge_AllUnknownSeverityFallbackIsNormalized(t *testing.T) {
 	}
 	eq(t, Merge(group).Severity, NormalizeSeverity(group[0].Severity), "all-unknown fallback normalized")
 }
+
+func TestMaxEstMinutes_NegativeEstimates(t *testing.T) {
+	group := []Finding{
+		mf("HIGH", "a.go", 1, "p", "f", "sec", -20, "e", "a"),
+		mf("HIGH", "a.go", 1, "p", "f", "sec", -10, "e", "b"),
+	}
+	eq(t, MaxEstMinutes(group), -10, "max of negative estimates is the least negative")
+}
