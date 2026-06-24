@@ -9,9 +9,10 @@ import (
 )
 
 // personaNameRe constrains persona names to a safe character class. The dot is
-// deliberately excluded, which alone defeats `..` traversal; the segment and
-// absolute-path checks below are defense in depth.
-var personaNameRe = regexp.MustCompile(`^[a-zA-Z0-9_/-]+$`)
+// deliberately excluded, which alone defeats `..` traversal. Requiring an
+// alphanumeric first character prevents separator-only names like "-", "_", or
+// "//". The segment and absolute-path checks below are defense in depth.
+var personaNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_/-]*$`)
 
 // PersonasDir returns the per-user community personas directory
 // (os.UserConfigDir()/atcr/personas). The directory is not created here.

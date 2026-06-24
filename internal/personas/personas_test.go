@@ -68,6 +68,16 @@ func TestBaseURL_EnvOverride(t *testing.T) {
 
 // --- validatePersonaName ----------------------------------------------------
 
+func TestValidatePersonaName_RejectsSeparatorOnlyOrLeadingNames(t *testing.T) {
+	// personaNameRe must require an alphanumeric first character so names that
+	// begin with a separator ('-', '_') are rejected by the regex alone, not by
+	// the segment-emptiness loop. The loop only catches empty or dot segments.
+	for _, name := range []string{"-separator", "_separator", "-", "_"} {
+		err := validatePersonaName(name)
+		assert.Errorf(t, err, "name %q should be rejected (starts with separator char)", name)
+	}
+}
+
 func TestValidatePersonaName(t *testing.T) {
 	cases := []struct {
 		name    string
