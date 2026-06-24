@@ -183,6 +183,9 @@ func ModalCategory(group []Finding) string {
 // MaxEstMinutes returns the most pessimistic estimate in the group. Shared
 // building block.
 func MaxEstMinutes(group []Finding) int {
+	if len(group) == 0 {
+		return 0
+	}
 	max := group[0].EstMinutes
 	for _, f := range group {
 		if f.EstMinutes > max {

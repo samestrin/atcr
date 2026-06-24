@@ -163,3 +163,7 @@ func TestMaxEstMinutes_NegativeEstimates(t *testing.T) {
 	}
 	eq(t, MaxEstMinutes(group), -10, "max of negative estimates is the least negative")
 }
+
+func TestMaxEstMinutes_EmptyGroup(t *testing.T) {
+	eq(t, MaxEstMinutes(nil), 0, "empty group returns 0")
+}
