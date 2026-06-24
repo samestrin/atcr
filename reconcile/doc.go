@@ -13,4 +13,10 @@
 // dedupe/confidence/attribution building blocks; and the severity rubric
 // (SeverityRank, NormalizeSeverity). Path-validation fields, the findings.json
 // schema, the disagreement radar, and adjudication stay ATCR-internal by design.
+//
+// Casing conventions: severity tiers (Severity*, Sev*) and confidence tiers
+// (Conf*, ConfidenceVerified) are canonical UPPER-CASE strings. Verdict enum
+// values (VerdictConfirmed, VerdictRefuted, VerdictUnverifiable) are lower-case
+// strings. Consumers normalize via strings.ToUpper/ToLower where case-insensitive
+// comparison is required.
 package reconcile
