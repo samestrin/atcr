@@ -51,12 +51,14 @@ func TestValidateFindingPaths_StampsWhenRootSet(t *testing.T) {
 // TestValidateFindingPaths_FlowsIntoJSONRecord: a stamped warning rides on the
 // findings.json record the report command reads.
 func TestValidateFindingPaths_FlowsIntoJSONRecord(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "real.go"), []byte("package x\n"), 0o644))
+
 	js := []JSONFinding{
 		{Severity: "HIGH", File: "missing.go", Line: 7},
 		{Severity: "LOW", File: "real.go", Line: 1},
 	}
-	js[0].PathWarning = stream.PathNotFoundWarning
-	js[1].PathValid = true
+	validateFindingPaths(context.Background(), js, root)
 
 	require.Len(t, js, 2)
 	assert.False(t, js[0].PathValid)
