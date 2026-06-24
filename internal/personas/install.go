@@ -35,6 +35,11 @@ func Install(client HTTPClient, baseURL, name, destDir string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return fmt.Errorf("failed to create personas directory: %w", err)
 	}
+	// Guard against TOCTOU symlink attacks: if dest is a symlink, os.WriteFile
+	// would follow it and write outside the personas directory.
+	if fi, lerr := os.Lstat(dest); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write persona to symlink at %s", dest)
+	}
 	if err := os.WriteFile(dest, data, 0o644); err != nil {
 		return fmt.Errorf("failed to write persona to %s: %w", dest, err)
 	}

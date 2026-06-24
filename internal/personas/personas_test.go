@@ -371,6 +371,29 @@ func TestFetch_TimesOutOnSlowServer(t *testing.T) {
 	require.Error(t, err, "fetch must return an error when the server does not respond")
 }
 
+// --- Install TOCTOU symlink guard -------------------------------------------
+
+func TestInstall_RejectsSymlinkAtDest(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "security"), 0o755))
+
+	// Pre-plant a symlink at the destination; the target is an empty file outside
+	// the personas dir that must not be overwritten.
+	externalDir := t.TempDir()
+	target := filepath.Join(externalDir, "symlink-target.yaml")
+	require.NoError(t, os.WriteFile(target, []byte(""), 0o644))
+	dest := filepath.Join(dir, "security", "owasp.yaml")
+	require.NoError(t, os.Symlink(target, dest))
+
+	srv := testServer(t, map[string]string{"/security/owasp.yaml": validPersonaYAML})
+	err := Install(srv.Client(), srv.URL, "security/owasp", dir)
+	require.Error(t, err, "Install must reject a symlink at the destination path")
+
+	// The symlink target must remain untouched.
+	got, _ := os.ReadFile(target)
+	assert.Empty(t, got, "symlink target must not be overwritten")
+}
+
 // --- FetchPersonaYAML self-guard --------------------------------------------
 
 func TestFetchPersonaYAML_RejectsInvalidNameBeforeFetch(t *testing.T) {
