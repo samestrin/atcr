@@ -22,7 +22,7 @@ func ConfidenceForVerdict(prior, verdict string) string {
 	case VerdictRefuted:
 		return ConfLow
 	default:
-		return prior
+		return strings.ToUpper(strings.TrimSpace(prior))
 	}
 }
 
