@@ -692,11 +692,16 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 	}
 	// Language entries (Epic 9.0) follow the Scope guard: reject blank entries (a
 	// YAML typo, not "no constraint" \u2014 that is an absent field) and entries with
-	// control characters. TrimSpace before the empty check so a whitespace-only
-	// entry is rejected even though validate() runs before applyDefaults trims it.
-	// No known-language allow-list \u2014 third-party authors may declare any ext.
+	// control characters. The empty check runs on the CANONICAL form
+	// (NormalizeLanguageToken), not the raw value, because validate() runs before
+	// applyDefaults: an entry like "." or " . " is non-empty raw but canonicalizes
+	// to "" (the leading dot is stripped), which would otherwise leak a blank token
+	// that routing-matches every extensionless finding. Checking the canonical form
+	// rejects "", whitespace-only, ".", and " . " in one guard. The control-char
+	// check stays on the raw value (canonicalization never adds/removes control
+	// runes). No known-language allow-list \u2014 third-party authors may declare any ext.
 	for i, s := range a.Language {
-		if strings.TrimSpace(s) == "" {
+		if NormalizeLanguageToken(s) == "" {
 			errs = append(errs, agentErrf(name, "agent '%s': language entry at index %d must not be empty", name, i))
 		} else if strings.IndexFunc(s, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
 			errs = append(errs, agentErrf(name, "agent '%s': language entry '%s' contains invalid characters", name, s))

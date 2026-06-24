@@ -672,6 +672,8 @@ func TestAgentConfig_LanguageField_Validation(t *testing.T) {
 		{"empty slice", []string{}, false},
 		{"empty string entry", []string{"go", ""}, true},
 		{"whitespace-only entry", []string{"  "}, true},
+		{"single dot reduces to empty", []string{"."}, true},
+		{"dot with spaces reduces to empty", []string{" . "}, true},
 		{"NUL control char", []string{"go\x00"}, true},
 		{"line separator U+2028", []string{"go\u2028"}, true},
 		{"paragraph separator U+2029", []string{"go\u2029"}, true},
