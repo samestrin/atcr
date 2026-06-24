@@ -1,22 +1,21 @@
 package verify
 
 import (
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/samestrin/atcr/internal/reconcile"
 )
 
-func v(verdict, skeptic, notes string) *reconcile.Verification {
-	return &reconcile.Verification{Verdict: verdict, Skeptic: skeptic, Notes: notes}
+func v(verdict, skeptic, notes string) *reclib.Verification {
+	return &reclib.Verification{Verdict: verdict, Skeptic: skeptic, Notes: notes}
 }
 
 func TestAggregateVerdicts_Unanimous(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictConfirmed, "s1", "a"),
 		v(verdictConfirmed, "s2", "b"),
 		v(verdictConfirmed, "s3", "c"),
@@ -27,7 +26,7 @@ func TestAggregateVerdicts_Unanimous(t *testing.T) {
 
 func TestAggregateVerdicts_Majority(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictConfirmed, "s1", "holds"),
 		v(verdictConfirmed, "s2", "also holds"),
 		v(verdictRefuted, "s3", "nope"),
@@ -38,7 +37,7 @@ func TestAggregateVerdicts_Majority(t *testing.T) {
 
 func TestAggregateVerdicts_MajorityRefuted(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictRefuted, "s1", "wrong"),
 		v(verdictRefuted, "s2", "also wrong"),
 		v(verdictConfirmed, "s3", "right"),
@@ -49,7 +48,7 @@ func TestAggregateVerdicts_MajorityRefuted(t *testing.T) {
 
 func TestAggregateVerdicts_DisagreementTie(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictConfirmed, "s1", "reason-confirm"),
 		v(verdictRefuted, "s2", "reason-refute"),
 	})
@@ -62,7 +61,7 @@ func TestAggregateVerdicts_DisagreementTie(t *testing.T) {
 
 func TestAggregateVerdicts_SingleSkeptic(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{v(verdictRefuted, "s1", "single reason")})
+	got := aggregateVerdicts([]*reclib.Verification{v(verdictRefuted, "s1", "single reason")})
 	require.NotNil(t, got)
 	assert.Equal(t, verdictRefuted, got.Verdict)
 	assert.Equal(t, "single reason", got.Notes)
@@ -80,7 +79,7 @@ func TestAggregateVerdicts_EmptySlice(t *testing.T) {
 // the label and the aggregate Skeptic field is empty (no names to join).
 func TestAggregateVerdicts_TieNoSkepticNames(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictConfirmed, "", "yes reason"),
 		v(verdictRefuted, "", "no reason"),
 	})
@@ -94,7 +93,7 @@ func TestAggregateVerdicts_TieNoSkepticNames(t *testing.T) {
 
 func TestAggregateVerdicts_ThreeWaySplit(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictConfirmed, "s1", "c"),
 		v(verdictRefuted, "s2", "r"),
 		v(verdictUnverifiable, "s3", "u"),
@@ -109,7 +108,7 @@ func TestAggregateVerdicts_ThreeWaySplit(t *testing.T) {
 // but omits their reasoning, making it look like they agreed.
 func TestAggregateVerdicts_MajorityRefuterAbsentFromSkeptic(t *testing.T) {
 	t.Parallel()
-	got := aggregateVerdicts([]*reconcile.Verification{
+	got := aggregateVerdicts([]*reclib.Verification{
 		v(verdictConfirmed, "alice", "evidence holds"),
 		v(verdictConfirmed, "bob", "also holds"),
 		v(verdictRefuted, "carol", "disagrees"),

@@ -2,15 +2,14 @@ package verify
 
 import (
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/samestrin/atcr/internal/reconcile"
 )
 
-// Verdict enum values — the only values reconcile.Verification.Verdict may hold.
+// Verdict enum values — the only values reclib.Verification.Verdict may hold.
 // parseVerdict validates every skeptic response against this set before it is
-// persisted (the writer-validates contract documented on reconcile.Verification).
+// persisted (the writer-validates contract documented on reclib.Verification).
 const (
 	verdictConfirmed    = "confirmed"
 	verdictRefuted      = "refuted"
@@ -18,7 +17,7 @@ const (
 )
 
 // parseVerdict extracts a verdict + reasoning from a raw skeptic response into a
-// reconcile.Verification. It never fails on bad input: any unparseable, empty, or
+// reclib.Verification. It never fails on bad input: any unparseable, empty, or
 // out-of-enum response degrades to an "unverifiable" verdict with a diagnostic
 // Notes field that preserves the raw text, so a finding is never dropped because a
 // skeptic produced garbage. The error return is reserved for a future signature
@@ -28,9 +27,9 @@ const (
 // in markdown fences, or one embedded in prose are all handled by scanning for the
 // first balanced {...} object. Extra JSON fields are ignored (default unmarshal
 // behavior).
-func parseVerdict(response string) (*reconcile.Verification, error) {
+func parseVerdict(response string) (*reclib.Verification, error) {
 	if strings.TrimSpace(response) == "" {
-		return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, nil
+		return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "empty_response"}, nil
 	}
 
 	// Iterate candidate balanced JSON objects. Skip candidates that fail to
@@ -59,9 +58,9 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 			normVerdict := strings.ToLower(strings.TrimSpace(*candidate.Verdict))
 			switch normVerdict {
 			case verdictConfirmed, verdictRefuted, verdictUnverifiable:
-				return &reconcile.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}, nil
+				return &reclib.Verification{Verdict: normVerdict, Notes: candidate.Reasoning}, nil
 			default:
-				return &reconcile.Verification{
+				return &reclib.Verification{
 					Verdict: verdictUnverifiable,
 					Notes:   "invalid_verdict: " + truncateForNotes(*candidate.Verdict) + " (raw: " + truncateForNotes(response) + ")",
 				}, nil
@@ -71,7 +70,7 @@ func parseVerdict(response string) (*reconcile.Verification, error) {
 		rest = rest[idx+len(obj):]
 	}
 
-	return &reconcile.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
+	return &reclib.Verification{Verdict: verdictUnverifiable, Notes: "malformed_output: " + truncateForNotes(response)}, nil
 }
 
 // notesRawCap bounds how much raw skeptic text is embedded in a Verification.Notes
