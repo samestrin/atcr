@@ -144,6 +144,13 @@ func classify(a, b map[string]struct{}) (relation, float64) {
 	// it is exact and deterministic. `sim` is advisory only (display/tests) and
 	// MUST NOT replace the cross-multiply: a `sim >= 0.7` float comparison would
 	// reintroduce rounding nondeterminism the deterministic gate forbids.
+	//
+	// `sim` is serialized into AmbiguousCluster.Similarity and hashed via
+	// AmbiguousHash. That byte-identity holds because IEEE-754 division of the
+	// same two integers produces the same bits on every supported Go platform,
+	// and encoding/json emits those bits deterministically. A future schema
+	// version may replace the float with an integer ratio, but that is a
+	// breaking change that retires the current golden fixtures.
 	switch {
 	case inter*10 >= union*7: // >= 0.7
 		return relMerge, sim
