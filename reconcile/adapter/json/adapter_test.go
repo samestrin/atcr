@@ -3,6 +3,7 @@ package json
 import (
 	"bytes"
 	stdjson "encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,6 +161,30 @@ func TestDecode_RejectsLiteralInput(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "expected object or array") {
 				t.Errorf("error = %q, want it to contain 'expected object or array'", err)
+			}
+		})
+	}
+}
+
+func TestDecode_RejectsMissingFindingFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		finding   string
+		wantField string
+	}{
+		{name: "empty severity", finding: `{"severity":"","file":"main.go","line":1,"problem":"p"}`, wantField: "severity"},
+		{name: "empty file", finding: `{"severity":"high","file":"","line":1,"problem":"p"}`, wantField: "file"},
+		{name: "empty problem", finding: `{"severity":"high","file":"main.go","line":1,"problem":""}`, wantField: "problem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := []byte(fmt.Sprintf(`{"version":"reconcile-json/v1","source":"a","findings":[%s]}`, tt.finding))
+			_, err := Decode(in)
+			if err == nil {
+				t.Fatalf("Decode accepted finding missing %s; want error", tt.wantField)
+			}
+			if !strings.Contains(err.Error(), tt.wantField) {
+				t.Errorf("error = %q, want it to mention %q", err, tt.wantField)
 			}
 		})
 	}
