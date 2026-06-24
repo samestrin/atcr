@@ -1,0 +1,226 @@
+# Original Requirements: Persona Ecosystem
+
+**Date:** June 24, 2026
+**Arguments:** @.planning/epics/active/9.0_persona_ecosystem.md
+**Target:** .planning/epics/active/9.0_persona_ecosystem.md
+
+---
+
+> **Purpose:** Verbatim capture of the source epic as input to this plan. Do not edit.
+> Downstream artifacts (plan.md, user-stories/, acceptance-criteria/) are derived from this content.
+
+---
+
+# Epic Plan 9.0: Persona Ecosystem
+
+**Estimated Durations**: 4.5 weeks initial; ongoing community curation
+**Tasks/Components:** 8/2
+**Execution:** execute-epic --strong
+**Status:** Re-scoped 2026-06-23 — community-repo tasks (T3/T4 + community half of T7) descoped to a separate work item; remaining in-repo work (T1, T2, T5, T6, T8 + in-repo docs) to ship via `/init-plan` as two sprints (A: T8+T1; B: T2+T5+T6+T7-in-repo). See ## Clarifications.
+
+## Objective
+
+Expand ATCR's reviewer panel beyond the 6 generalist built-in personas by (a) shipping a curated set of domain-specific bonus personas with the binary, and (b) establishing a community-contributed persona repo with a quality bar, CLI integration, and fixture-based CI testing. Personas become the primary lever for vertical market adoption.
+
+## Context
+
+ATCR ships with 6 personas covering general review dimensions (correctness, algorithmic correctness, design fit, production feasibility, test coverage, style). These are strong generalists but miss domain-specific concerns that matter most to specific teams: a Django team cares about ORM anti-patterns; a security team cares about OWASP Top 10; a Go team cares about idiomatic usage. Without domain-specific personas, ATCR is a generalist tool that teams layer their own expertise on top of, instead of a tool that speaks their language.
+
+Epic 3.3 (per-run scorecard) adds corroboration tracking per persona, making persona quality measurable. This epic builds on that: community personas can earn leaderboard scores, making quality visible and gamified.
+
+## Problem Statement
+
+1. The 6 built-in personas cover general code quality but not the domain-specific concerns that make ATCR immediately valuable to a security, performance, or framework-focused team.
+2. Teams write their own persona prompts inconsistently; there is no shared library, no quality bar, and no way to discover community contributions.
+3. The barrier to adding a persona is currently reading source code and writing a raw YAML config — there is no install flow, no test fixture, no documentation template.
+
+## Proposed Solution
+
+### Phase 1 — Bonus built-in personas (1 week)
+
+Ship 3 high-impact domain personas alongside the 6 generalists. These are curated, fixture-tested, and bundled with the binary — no install step required:
+
+| Persona | Focus |
+|---------|-------|
+| `sentinel` | Security — OWASP Top 10, injection, auth bypass, secrets leakage, insecure defaults |
+| `tracer` | Performance — N+1 queries, memory leaks, algorithmic complexity, unnecessary allocations |
+| `idiomatic` | Go idioms — error handling conventions, goroutine leaks, interface abuse, stdlib misuse |
+
+Each ships with a test fixture: a small Go diff containing a known instance of the persona's target class, and an expected finding category. CI verifies the persona produces a matching finding on the fixture.
+
+### Phase 2 — Community persona repo + CLI (2 weeks)
+
+A curated community repo at `github.com/atcr/personas` with:
+
+```
+personas/
+  security/
+    owasp.md          # full OWASP Top 10 coverage
+    secrets.md        # secrets leakage detector
+  performance/
+    sql.md            # SQL/ORM query performance
+    memory.md         # memory leak patterns
+  accessibility/
+    wcag.md           # WCAG 2.1 compliance
+  compliance/
+    hipaa.md
+    gdpr.md
+  language/
+    python-types.md   # Python type hint coverage
+    rust-ownership.md # Rust borrow checker patterns
+  framework/
+    django-orm.md
+    react-hooks.md
+  bundles/
+    django.yaml       # installs django-orm + python-types + security/owasp
+    go-production.yaml
+```
+
+**Quality bar** for each persona:
+- Prompt template (markdown)
+- Test fixture: a sample diff the persona should flag
+- Expected findings: minimum finding categories the persona must produce on the fixture
+- Documentation: what it reviews, when to use it, example output
+- `language` scope field (optional): `language: ["go"]` — declares which file extensions this persona specializes in; enables skeptic routing in Phase 4
+
+**CLI integration:**
+
+```bash
+atcr personas install security/owasp      # install from community repo
+atcr personas install bundle/django        # install a domain bundle
+atcr personas list                         # list installed personas
+atcr personas remove security/owasp
+atcr personas search performance           # search by keyword
+atcr personas test security/owasp         # run against its fixture and report
+```
+
+Installed personas land in `~/.config/atcr/personas/` and are immediately available in the registry.
+
+### Phase 4 — Language-aware skeptic routing (0.5 week)
+
+Personas currently participate only in the reviewer panel. Phase 4 extends them into the verify stage: when an installed persona declares a `language` scope and a finding's file extension matches, that persona is preferred over `general-purpose` in skeptic selection.
+
+**How it works:**
+- Persona YAML gains an optional `language: ["go"]` field (seeded in Phase 2's quality bar)
+- `SelectEligibleSkeptics` checks installed personas for a language match before falling back to the generic pool
+- The matched persona's model and system prompt drive the skeptic invocation — no new subagent type; the routing is prompt-level, not agent-type-level
+- Falls back to `general-purpose` silently if no language-scoped persona is installed or eligible
+
+**Why this is Phase 4, not earlier:** depends on Phase 2's install registry (personas must be installable before they can be routed to) and Phase 3's schema work (language scope field lives in the persona config format).
+
+### Phase 3 — Per-persona corroboration tracking (1 week)
+
+Integrate with Epic 3.3's scorecard: each installed persona accumulates a corroboration score over time. `atcr personas list --scores` shows which personas are finding the most corroborated issues on the user's actual codebase.
+
+This closes the loop: teams can measure whether a domain persona is earning its keep, not just install it and hope.
+
+### Domain bundles
+
+Bundles are YAML manifests that install multiple personas at once:
+
+```yaml
+# bundles/django.yaml
+name: django
+description: Django application review panel
+personas:
+  - framework/django-orm
+  - language/python-types
+  - security/owasp
+  - security/secrets
+```
+
+`atcr personas install bundle/django` installs all 4. Teams think in stacks, not individual personas.
+
+## Acceptance Criteria
+
+- [ ] 3 bonus built-in personas (`sentinel`, `tracer`, `idiomatic`) ship with the binary; each has a CI-tested fixture that verifies the persona produces its expected finding category.
+- [ ] `atcr personas install <namespace/name>` fetches from `github.com/atcr/personas` and writes to `~/.config/atcr/personas/`.
+- [ ] `atcr personas install bundle/<name>` installs all personas in the bundle manifest.
+- [ ] `atcr personas list` shows installed personas with name, namespace, version, and (if 3.3 data available) corroboration rate.
+- [ ] `atcr personas search <keyword>` searches the community repo by keyword.
+- [ ] `atcr personas test <namespace/name>` runs the persona against its fixture and reports pass/fail.
+- [ ] Community repo CI: every persona PR runs the persona against its fixture; failures block merge.
+- [ ] Contribution guide documents the quality bar (prompt + fixture + expected findings + docs).
+- [ ] Domain bundles: at least `bundle/django` and `bundle/go-production` ship at launch.
+- [ ] Installed community personas are versioned; `atcr personas list` shows installed version; `atcr personas upgrade` upgrades all.
+- [ ] Persona YAML supports optional `language: [<ext>, ...]` scope field; `atcr personas list` displays it.
+- [ ] When a finding's file extension matches an installed persona's `language` scope, that persona is preferred in skeptic selection over `general-purpose`.
+- [ ] Fallback to `general-purpose` is silent and automatic when no language-scoped persona matches.
+- [ ] `SelectEligibleSkeptics` extension covered by tests: match, no-match fallback, multiple-match tie-breaking.
+
+## Task Breakdown
+
+1. **Bonus personas** (`sentinel`, `tracer`, `idiomatic`): prompt writing, fixture authoring, CI integration.
+2. **`atcr personas` CLI**: `install`, `remove`, `list`, `search`, `test`, `upgrade` subcommands.
+3. **Community repo scaffold**: `github.com/atcr/personas` repo, directory structure, contribution guide, CI testing workflow.
+4. **Initial community persona set**: seed with 8–10 personas across security, performance, accessibility, compliance, language, framework categories.
+5. **Domain bundles**: bundle manifest format, `install bundle/` resolution, initial bundles (django, go-production).
+6. **Per-persona corroboration integration**: wire 3.3 scorecard into `atcr personas list --scores`.
+7. **Docs**: installation guide, contribution guide, persona authoring template.
+8. **Language-aware skeptic routing**: add `language` field to persona schema; extend `SelectEligibleSkeptics` (`internal/verify/select.go`) to prefer language-scoped personas; pass persona system prompt through skeptic invocation path; add tests for match/fallback/tie-break.
+
+## Out of Scope
+
+- Paid persona marketplace (v2 — start with free community repo).
+- Auto-generated personas from codebase analysis.
+- Per-persona fine-tuning or model specialization.
+- Persona inheritance / composition (v2).
+- Language-specific subagent types (e.g. `go-skeptic`): routing is prompt-level via the persona system prompt, not a new subagent type. Adding dedicated agent types is not justified until there is evidence that prompt-level routing is insufficient.
+
+## Dependencies
+
+- Epic 1.1 (registry schema and persona config format) — complete.
+- Epic 3.0 (`SelectEligibleSkeptics` in `internal/verify/select.go`) — built in Sprint 3.0; Phase 4 extends it.
+- Epic 3.3 (per-persona scorecard) — optional enrichment for Phase 3; personas work without it.
+
+## Revenue Model
+
+- **No direct revenue** from the community persona repo — this is ecosystem building and adoption driver.
+- **Indirect levers**: domain personas make ATCR immediately valuable to vertical teams (security, compliance, framework-specific); contributors become advocates; word-of-mouth.
+- **Enterprise path**: teams that rely on community personas want Team Edition (shared registry, pinned persona versions, audit trail of which persona flagged what).
+- **Consulting**: custom persona development for enterprise clients with proprietary domain knowledge.
+
+## Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| Low community participation | High | Medium | Seed with 10 high-quality personas at launch; document contribution process clearly; personas are small scope (one domain, one prompt) |
+| Persona quality is inconsistent | Medium | High | Strict CI: every persona must pass its fixture test before merge; maintainer review |
+| Personas become stale as models improve | Medium | Medium | Version personas; fixture tests catch regressions; deprecation process |
+| Bonus built-in personas cannibalize community submissions | Low | Low | Built-ins are generalist-plus (breadth); community personas are domain-deep (depth) — complementary, not competing |
+| Language routing picks wrong persona when multiple match a file extension | Low | Low | Tie-break rule: prefer highest corroboration score (3.3 data), then alphabetical by name; documented and tested |
+
+## Clarifications
+
+### Recorded 2026-06-23 (rubber duck — /execute-epic, then routed to /init-plan)
+
+**Key Decisions:**
+- This epic does NOT ship as a single `/execute-epic` one-shot PR. It is split via `/init-plan` into two sprints:
+  - **Sprint A** (registry + verify internals): **T8** (language field + skeptic routing) then **T1** (bonus personas `sentinel`/`tracer`/`idiomatic` + fixtures + CI). T8's `AgentConfig` schema change lands verified-green first because nearly every internal package imports `AgentConfig` (`internal/registry/config.go:267`).
+  - **Sprint B** (surface layer): **T2** (`atcr personas` CLI — 6 cobra subcommands, greenfield), **T5** (domain bundles), **T6** (per-persona corroboration wiring, `--scores`), and the **in-repo** portion of **T7** (installation guide + authoring template).
+- The working-tree leftover (sprint 8.0 archive active→completed move) was committed to `main` as a standalone chore before any further work.
+
+**Scope Boundaries:**
+- IN scope (this epic, in-repo): T1, T2, T5, T6, T8, and the in-repo docs portion of T7.
+- OUT of scope / DESCOPED to a separate work item: **T3** (scaffold `github.com/atcr/personas`), **T4** (seed 8–10 personas in that repo), and the **community-repo** portion of **T7** (contribution guide + community CI workflow that live in that external repo). Reason: that repository does not exist in this workspace and cannot be created, CI-gated, or merged from this repo's branch.
+
+**Technical Approach:**
+- **Persona fetch source (T2):** `install`/`search`/`upgrade` fetch from a **configurable URL** with a hardcoded default (e.g. `https://raw.githubusercontent.com/atcr/personas/main`). No real published source exists yet, so the fetch path is tested in isolation via `httptest.NewServer` pointed at the configurable field — matching existing codebase test patterns. Do NOT hardcode the URL unconditionally.
+- **`language` field (T8):** add a new `Language []string` field to `AgentConfig` (`internal/registry/config.go:267`), following the precedent of every prior optional field (nil = no constraint, backward-compatible, validated at load). Do NOT reuse the existing `Scope []string` field — `Scope` means "soft prompt-injection focus categories" injected via `payload.ScopeFocus()` (`config.go:294-303`); repurposing it is a semantic collision. Do NOT add a new YAML-frontmatter parser to the markdown persona templates. **Canonical form (DECIDED 2026-06-24): without leading dot, lowercased** (e.g. `["go", "ts"]`). Accept either `go` or `.go` in YAML and canonicalize at load in `applyDefaults` — trim space, strip a single leading dot, lowercase — mirroring the existing `MinSeverity`/`Role` load-time canonicalization. `validateAgent` rejects empty entries and control characters (mirror the `Scope` guard); it does NOT enforce a known-language allow-list (forgiving for third-party persona authors). Matching strips the dot + lowercases `filepath.Ext(finding.File)` via a small `normalizeExt(ext string) string` helper so both sides compare in the same canonical form.
+- **Skeptic routing (T8):** extend `SelectEligibleSkeptics` (`internal/verify/select.go:55`) via a **two-partition reorder** on the already-collected eligible names slice — language-matching skeptic names first, non-matching after — so the existing `n`-cap (`select.go:84-86`) naturally favors language-matched skeptics. "general-purpose" in the epic is conceptual (= a skeptic with no `Language` declared), not a literal field (zero grep hits in `internal/`). Tie-break = highest corroboration score (3.3 data) then alphabetical (`9.0_persona_ecosystem.md` Risks table). **Score carrier (DECIDED 2026-06-24): caller-supplied `map[string]float64` parameter** (reviewer name → corroboration rate) added as a 4th argument to `SelectEligibleSkeptics`. A `nil` map is a valid "no score data" signal — the matched partition then falls back to alphabetical-only ordering. Chosen over a functional option (avoids Option-type machinery for a single optional input) and over a new overload (avoids keeping a scoreless path first-class when language routing is the point). Only one production caller exists (`internal/verify/pipeline.go:162`), so the signature change is contained; the same map shape is what T6 builds from `scorecard.Aggregate()` (`LeaderboardRow.CorroborationRate` keyed by reviewer), so T6 and T8 share one carrier. Keeps `verify` decoupled from `scorecard` (the map is built by the caller and passed in; `verify` gains no new import). Within the matched partition, sort by `scores[name]` descending then name ascending; ties and absent keys (zero value) fall through to alphabetical, preserving determinism.
+
+**Original Questions and Answers:**
+1. Q: Dirty working tree (sprint 8.0 archive deletions) — how to handle before branching?
+   A: (b) Commit them as a standalone "finish archiving sprint 8.0" chore on `main`. (Done.)
+2. Q: T3/T4 target a separate, nonexistent GitHub repo — descope, treat as existing, or route to /init-plan?
+   A: (a) Descope T3, T4, and the community-repo half of T7 from this run; implement only in-repo tasks.
+3. Q: Fetch source for the personas CLI — configurable URL or real published source?
+   A: Configurable URL with a hardcoded default; test in isolation via `httptest.NewServer`.
+4. Q: Where does the `language` field live?
+   A: (a) New `Language []string` on `AgentConfig`; do not reuse `Scope`, do not add a frontmatter parser.
+5. Q: How does language routing hook into `SelectEligibleSkeptics`?
+   A: (a) Two-partition reorder/boost of eligible names; tie-break = corroboration then alphabetical. Score carrier (decided 2026-06-24): caller-supplied `map[string]float64` 4th parameter (nil-safe); shared with T6's `scorecard.Aggregate()` output.
+7. Q: Canonical normalization for `AgentConfig.Language` entries — with or without leading dot?
+   A: (decided 2026-06-24) Without leading dot, lowercased (`["go","ts"]`). Accept both `go` and `.go` in YAML; canonicalize at load in `applyDefaults`; match via `normalizeExt(filepath.Ext(...))` that strips the dot + lowercases both sides.
+6. Q: Single one-shot PR vs split via /init-plan?
+   A: Split via `/init-plan` into two sprints (A: T8+T1; B: T2+T5+T6+T7-in-repo). Do not run as a single PR.
