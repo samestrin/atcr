@@ -93,6 +93,18 @@ func Decode(data []byte) ([]reconcile.Source, error) {
 		if findings == nil {
 			findings = []reconcile.Finding{}
 		}
+		for j := range findings {
+			f := &findings[j]
+			if f.Severity == "" {
+				return nil, fmt.Errorf("reconcile-json: source[%d].findings[%d].severity is required", i, j)
+			}
+			if f.File == "" {
+				return nil, fmt.Errorf("reconcile-json: source[%d].findings[%d].file is required", i, j)
+			}
+			if f.Problem == "" {
+				return nil, fmt.Errorf("reconcile-json: source[%d].findings[%d].problem is required", i, j)
+			}
+		}
 		sources = append(sources, reconcile.Source{Name: envelopes[i].Source, Findings: findings})
 	}
 	return sources, nil
