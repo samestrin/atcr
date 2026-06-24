@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/samestrin/atcr/internal/stream"
 	reclib "github.com/samestrin/atcr/reconcile"
 )
 
@@ -136,8 +135,25 @@ func Reconcile(sources []Source, opts Options) Result {
 	skipped := []string{}
 	for i, s := range sources {
 		fs := make([]Finding, len(s.Findings))
-		for j := range s.Findings {
-			fs[j] = toLibFinding(s.Findings[j])
+		for j, f := range s.Findings {
+			// Inline the stream.Finding -> reconcile.Finding field map. The canonical
+			// implementation lives in the boundary adapter (internal/reconcile/adapter),
+			// but this package cannot import adapter without an import cycle (adapter
+			// imports this package). TD-006 tracks collapsing to one implementation
+			// once Phase 3 flips consumers to the library.
+			fs[j] = Finding{
+				Severity:   f.Severity,
+				File:       f.File,
+				Line:       f.Line,
+				Problem:    f.Problem,
+				Fix:        f.Fix,
+				Category:   f.Category,
+				EstMinutes: f.EstMinutes,
+				Evidence:   f.Evidence,
+				Reviewer:   f.Reviewer,
+				Reviewers:  f.Reviewers,
+				Confidence: f.Confidence,
+			}
 		}
 		lib[i] = reclib.Source{Name: s.Name, Findings: fs}
 		skipped = append(skipped, s.SkippedFiles...)
@@ -159,45 +175,4 @@ func Reconcile(sources []Source, opts Options) Result {
 	res.ambiguousBytes = ambBuf.Bytes()
 	res.Summary.AmbiguousHash = HashBytes(res.ambiguousBytes)
 	return res
-}
-
-// toLibFinding converts an ATCR stream.Finding (per-source input) into the
-// library Finding: the 9 wire fields plus the reviewer columns. Path-validation
-// fields are ATCR-internal and are deliberately not carried (they are re-stamped
-// onto the JSONFinding after reconcile, per Phase 2 Clarification Q1).
-func toLibFinding(f stream.Finding) Finding {
-	return Finding{
-		Severity:   f.Severity,
-		File:       f.File,
-		Line:       f.Line,
-		Problem:    f.Problem,
-		Fix:        f.Fix,
-		Category:   f.Category,
-		EstMinutes: f.EstMinutes,
-		Evidence:   f.Evidence,
-		Reviewer:   f.Reviewer,
-		Reviewers:  f.Reviewers,
-		Confidence: f.Confidence,
-	}
-}
-
-// fromLibFinding converts a reconciled library Finding back into an ATCR
-// stream.Finding so the ATCR I/O layer can stamp path-validation fields onto it.
-// The library finding's Disagreement and Verification have no stream.Finding home
-// (they ride on the Merged/JSONFinding records); path fields come back zeroed and
-// are stamped by validateFindingPaths.
-func fromLibFinding(f Finding) stream.Finding {
-	return stream.Finding{
-		Severity:   f.Severity,
-		File:       f.File,
-		Line:       f.Line,
-		Problem:    f.Problem,
-		Fix:        f.Fix,
-		Category:   f.Category,
-		EstMinutes: f.EstMinutes,
-		Evidence:   f.Evidence,
-		Reviewer:   f.Reviewer,
-		Reviewers:  f.Reviewers,
-		Confidence: f.Confidence,
-	}
 }
