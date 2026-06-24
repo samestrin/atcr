@@ -9,8 +9,43 @@ import (
 	"text/tabwriter"
 
 	"github.com/samestrin/atcr/internal/personas"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
 )
+
+// personasScoreData carries the per-reviewer corroboration rates (keyed by
+// lowercase reviewer name) for `personas list --scores`, plus the scorecard
+// path and whether any records were found (drives the "no data" footer).
+type personasScoreData struct {
+	rates   map[string]float64
+	path    string
+	hasData bool
+}
+
+// personasScores loads corroboration rates from the scorecard store. A package
+// var so tests inject a fake without filesystem access — and so the baseline
+// `list` path can be verified never to call it.
+var personasScores = loadPersonasScores
+
+// loadPersonasScores reads the scorecard records, aggregates them, and keys the
+// corroboration rate by lowercase reviewer name. A missing store yields zero
+// records (no error) so `--scores` degrades to an all-n/a table with a footer.
+func loadPersonasScores(errW io.Writer) (personasScoreData, error) {
+	dir, err := scorecard.DefaultDir()
+	if err != nil {
+		return personasScoreData{}, err
+	}
+	records, err := scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: errW})
+	if err != nil {
+		return personasScoreData{path: dir}, err
+	}
+	rows := scorecard.Aggregate(records)
+	rates := make(map[string]float64, len(rows))
+	for _, r := range rows {
+		rates[strings.ToLower(r.Reviewer)] = r.CorroborationRate
+	}
+	return personasScoreData{rates: rates, path: dir, hasData: len(records) > 0}, nil
+}
 
 // personasDir resolves the community personas directory. A package var so tests
 // can point it at a temp directory.
@@ -120,9 +155,7 @@ func newPersonasListCmd() *cobra.Command {
 				return err
 			}
 			if scores, _ := cmd.Flags().GetBool("scores"); scores {
-				// Scores are wired to the scorecard in a later phase; accepted as a
-				// no-op here so scripts can opt in early without erroring.
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "(--scores available in a future release)")
+				return listPersonasWithScores(cmd, dir)
 			}
 			metas, listErr := personas.List(dir)
 			if listErr != nil {
@@ -132,8 +165,29 @@ func newPersonasListCmd() *cobra.Command {
 			return renderPersonaList(cmd.OutOrStdout(), metas)
 		},
 	}
-	cmd.Flags().Bool("scores", false, "show per-persona corroboration scores (future release)")
+	cmd.Flags().Bool("scores", false, "show each persona's corroboration rate from past review runs (n/a when no run history)")
 	return cmd
+}
+
+// listPersonasWithScores renders the persona table with a CORROBORATION column,
+// joining each persona to its scorecard rate. When the scorecard store has no
+// data, every row shows n/a and a footer names the path that was checked.
+func listPersonasWithScores(cmd *cobra.Command, dir string) error {
+	data, err := personasScores(cmd.ErrOrStderr())
+	if err != nil {
+		return fmt.Errorf("failed to load scorecard data: %w", err)
+	}
+	scored, listErr := personas.ListWithScores(dir, data.rates)
+	if listErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
+	}
+	if err := renderScoredList(cmd.OutOrStdout(), scored); err != nil {
+		return err
+	}
+	if !data.hasData {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
+	}
+	return nil
 }
 
 func newPersonasSearchCmd() *cobra.Command {
@@ -296,6 +350,26 @@ func renderPersonaList(w io.Writer, metas []personas.PersonaMeta) error {
 			lang = strings.Join(m.Language, ", ")
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.Name, m.Version, m.Source, lang)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err := w.Write(buf.Bytes())
+	return err
+}
+
+// renderScoredList writes the Name/Version/Source/Language/Corroboration table,
+// rendering each persona's rate as "XX.X%" or "n/a".
+func renderScoredList(w io.Writer, scored []personas.ScoredPersona) error {
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION")
+	for _, s := range scored {
+		lang := "-"
+		if len(s.Language) > 0 {
+			lang = strings.Join(s.Language, ", ")
+		}
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Version, s.Source, lang, personas.FormatRate(s.Rate))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

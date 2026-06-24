@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/registry"
@@ -41,6 +42,71 @@ func List(personasDir string) ([]PersonaMeta, error) {
 	community, err := listCommunity(personasDir)
 	metas = append(metas, community...)
 	return metas, err
+}
+
+// ScoredPersona is one row of `personas list --scores`: a persona joined with
+// its corroboration rate. Rate is nil when the persona has no scorecard data,
+// which renders as "n/a" (distinct from a real 0.0 rate).
+type ScoredPersona struct {
+	PersonaMeta
+	Rate *float64
+}
+
+// ListWithScores returns the personas from List joined with corroboration rates
+// from scores (keyed by lowercase persona name, as built by the caller from
+// scorecard.Aggregate). The result is sorted by rate descending, then n/a rows
+// alphabetically after all numeric rows. A directory walk error is returned
+// alongside the rows gathered so far, mirroring List.
+func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPersona, error) {
+	metas, err := List(personasDir)
+	scored := make([]ScoredPersona, 0, len(metas))
+	for _, m := range metas {
+		sp := ScoredPersona{PersonaMeta: m}
+		if rate, ok := scores[strings.ToLower(m.Name)]; ok {
+			r := rate
+			sp.Rate = &r
+		}
+		scored = append(scored, sp)
+	}
+	sortScoredPersonas(scored)
+	return scored, err
+}
+
+// sortScoredPersonas orders rows by corroboration rate descending, breaking ties
+// alphabetically by name; rows with no data (nil rate, "n/a") sort after all
+// numeric rows, alphabetically among themselves. Deterministic for any input.
+func sortScoredPersonas(ps []ScoredPersona) {
+	sort.SliceStable(ps, func(i, j int) bool {
+		a, b := ps[i], ps[j]
+		switch {
+		case a.Rate != nil && b.Rate != nil:
+			if *a.Rate != *b.Rate {
+				return *a.Rate > *b.Rate
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		case a.Rate != nil: // numeric sorts before n/a
+			return true
+		case b.Rate != nil:
+			return false
+		default: // both n/a → alphabetical
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		}
+	})
+}
+
+// FormatRate renders a corroboration rate as "XX.X%" (clamped to [0,100]) or
+// "n/a" when nil (no scorecard data).
+func FormatRate(rate *float64) string {
+	if rate == nil {
+		return "n/a"
+	}
+	pct := *rate * 100
+	if pct < 0 {
+		pct = 0
+	} else if pct > 100 {
+		pct = 100
+	}
+	return fmt.Sprintf("%.1f%%", pct)
 }
 
 func listCommunity(personasDir string) ([]PersonaMeta, error) {

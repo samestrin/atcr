@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -169,14 +170,68 @@ func TestPersonasList_Integration(t *testing.T) {
 	assert.Contains(t, out, "community")
 }
 
-func TestPersonasList_ScoresFlagAccepted(t *testing.T) {
+// withPersonasScores swaps the scorecard loader for a fake so list --scores
+// tests never touch the real scorecard store. When called is non-nil it is set
+// true if the loader runs (used to assert the baseline path never loads scores).
+func withPersonasScores(t *testing.T, data personasScoreData, loadErr error, called *bool) {
+	t.Helper()
+	old := personasScores
+	personasScores = func(io.Writer) (personasScoreData, error) {
+		if called != nil {
+			*called = true
+		}
+		return data, loadErr
+	}
+	t.Cleanup(func() { personasScores = old })
+}
+
+func TestPersonasList_ScoresColumn(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
-	stdout, stderr, err := executeSplit(t, "personas", "list", "--scores")
+	withPersonasScores(t, personasScoreData{
+		rates:   map[string]float64{"sentinel": 0.72},
+		path:    "/tmp/sc",
+		hasData: true,
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
 	require.NoError(t, err)
-	// The table still renders to stdout; the no-op notice goes to stderr.
-	assert.Contains(t, stdout, "NAME")
-	assert.Contains(t, stderr, "--scores")
+	assert.Contains(t, stdout, "CORROBORATION")
+	assert.Regexp(t, `sentinel\s.*72\.0%`, stdout)
+}
+
+func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates:   map[string]float64{},
+		path:    "/home/u/.config/atcr/scorecard",
+		hasData: false,
+	}, nil, nil)
+
+	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "n/a")
+	assert.Contains(t, stdout, "No scorecard data found at /home/u/.config/atcr/scorecard")
+}
+
+func TestPersonasList_BaselineDoesNotLoadScores(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	called := false
+	withPersonasScores(t, personasScoreData{}, nil, &called)
+
+	_, err := execute(t, "personas", "list")
+	require.NoError(t, err)
+	assert.False(t, called, "scorecard must not be loaded without --scores")
+}
+
+func TestPersonasListHelpContainsScoresFlag(t *testing.T) {
+	out, err := execute(t, "personas", "list", "--help")
+	require.NoError(t, err)
+	assert.Contains(t, out, "--scores")
+	assert.Contains(t, out, "corroboration")
+	assert.Contains(t, out, "n/a")
 }
 
 func TestPersonasSearch_Integration(t *testing.T) {
