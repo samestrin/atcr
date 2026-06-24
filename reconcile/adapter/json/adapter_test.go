@@ -142,6 +142,29 @@ func TestDecode_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestDecode_RejectsLiteralInput(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{name: "null", in: "null"},
+		{name: "boolean", in: "true"},
+		{name: "number", in: "42"},
+		{name: "string", in: `"hello"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Decode([]byte(tt.in))
+			if err == nil {
+				t.Fatalf("Decode accepted literal input %q; want error", tt.in)
+			}
+			if !strings.Contains(err.Error(), "expected object or array") {
+				t.Errorf("error = %q, want it to contain 'expected object or array'", err)
+			}
+		})
+	}
+}
+
 func TestEncode_VersionedEnvelope(t *testing.T) {
 	out, err := Encode(sampleResult(), reconcile.Options{ReconciledAt: fixedTime})
 	if err != nil {
