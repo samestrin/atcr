@@ -107,7 +107,7 @@ func Reconcile(sources []Source, opts Options) Result {
 }
 
 // sortMerged orders findings by severity (most severe first), then file, then
-// line — a total order for deterministic emission.
+// line, then Problem — a strict total order independent of input permutation.
 func sortMerged(m []Merged) {
 	sort.SliceStable(m, func(i, j int) bool {
 		ri, rj := SeverityRank[NormalizeSeverity(m[i].Severity)], SeverityRank[NormalizeSeverity(m[j].Severity)]
@@ -117,7 +117,10 @@ func sortMerged(m []Merged) {
 		if m[i].File != m[j].File {
 			return m[i].File < m[j].File
 		}
-		return m[i].Line < m[j].Line
+		if m[i].Line != m[j].Line {
+			return m[i].Line < m[j].Line
+		}
+		return m[i].Problem < m[j].Problem
 	})
 }
 
