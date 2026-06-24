@@ -700,13 +700,13 @@ func TestAgentConfig_LanguageField_Validation(t *testing.T) {
 // idempotent: running applyDefaults again yields the same result.
 func TestAgentConfig_LanguageField_Canonicalization(t *testing.T) {
 	r := &Registry{Agents: map[string]AgentConfig{
-		"a": {Provider: "p", Model: "m", Language: []string{".Go", " .TS ", "GO"}},
+		"a": {Provider: "p", Model: "m", Language: []string{".Go", " .TS ", "GO", " .Ü "}},
 	}}
 	r.applyDefaults()
-	assert.Equal(t, []string{"go", "ts", "go"}, r.Agents["a"].Language)
+	assert.Equal(t, []string{"go", "ts", "go", "ü"}, r.Agents["a"].Language)
 
 	r.applyDefaults()
-	assert.Equal(t, []string{"go", "ts", "go"}, r.Agents["a"].Language, "canonicalization must be idempotent")
+	assert.Equal(t, []string{"go", "ts", "go", "ü"}, r.Agents["a"].Language, "canonicalization must be idempotent")
 }
 
 // AC 03-05 (partial, Scenario 1): a registry whose agents have no `language` key
