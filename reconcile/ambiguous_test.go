@@ -10,6 +10,18 @@ func TestAmbiguousID_StableAndOrderIndependent(t *testing.T) {
 	eq(t, len(a), len("amb-")+32, "128-bit hex digest")
 }
 
+// TestAmbiguousID_NulByteFieldBoundary asserts that a NUL byte embedded in a
+// PROBLEM text cannot alias the \x00 field separator — two distinct inputs must
+// never hash to the same ID.
+func TestAmbiguousID_NulByteFieldBoundary(t *testing.T) {
+	// "x\x00y" in problemA with "z" in problemB must differ from
+	// "x" in problemA with "y\x00z" in problemB: the NUL in the text must not
+	// collapse to the same separator byte that delimits fields.
+	a := AmbiguousID("a.go", 10, "x\x00y", "z")
+	b := AmbiguousID("a.go", 10, "x", "y\x00z")
+	notEq(t, a, b, "NUL byte in problem text must not alias field delimiter")
+}
+
 func TestAmbiguousID_DistinctInputsDistinctIDs(t *testing.T) {
 	base := AmbiguousID("a.go", 10, "p1", "p2")
 	notEq(t, base, AmbiguousID("b.go", 10, "p1", "p2"), "file changes the id")
