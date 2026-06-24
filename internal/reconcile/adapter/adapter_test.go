@@ -3,6 +3,7 @@ package adapter
 import (
 	"testing"
 
+	recon "github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/stream"
 	reconcile "github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/assert"
@@ -94,4 +95,34 @@ func TestBoundaryAdapter_FindingConversionRoundTrip(t *testing.T) {
 
 	// *Verification pointer identity preserved across the boundary.
 	require.Same(t, verif, jf.Verification)
+}
+
+// TestJSONFindings_LivePathPreservesVerificationIdentity covers the live path
+// debate/gate depend on: Merged.Verification -> Result.JSONFindings() keeps the
+// same *Verification pointer, not just an equal value. A deep-copy refactor of
+// JSONFindings() would otherwise pass the adapter boundary test but silently
+// break gate.go's IsFailing checks.
+func TestJSONFindings_LivePathPreservesVerificationIdentity(t *testing.T) {
+	verif := &reconcile.Verification{Verdict: reconcile.VerdictConfirmed, Skeptic: "skeptic-a"}
+	res := recon.Result{
+		Findings: []reconcile.Merged{
+			{Finding: reconcile.Finding{
+				Severity:     "HIGH",
+				File:         "auth.go",
+				Line:         42,
+				Problem:      "token never expires",
+				Fix:          "set a TTL",
+				Category:     "security",
+				EstMinutes:   15,
+				Evidence:     "saw it",
+				Reviewers:    []string{"greta"},
+				Confidence:   "HIGH",
+				Verification: verif,
+			}},
+		},
+	}
+
+	jsonFindings := res.JSONFindings()
+	require.Len(t, jsonFindings, 1)
+	require.Same(t, verif, jsonFindings[0].Verification)
 }
