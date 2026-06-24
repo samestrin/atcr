@@ -39,7 +39,9 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.6.2
+          # Single pinned version shared with reconcile-module.yml and the root
+          # .golangci.yml so a tag cannot pass locally but fail in CI (or vice versa).
+          version: v2.12.2
 
       - name: Run Tests
         run: go test -v -race -coverprofile=coverage.out ./...
@@ -53,3 +55,31 @@ jobs:
           path: coverage.out
           if-no-files-found: warn
           retention-days: 7
+
+  # PR-time coverage for the nested ./reconcile module. The `ci` job above runs
+  # `go test ./...` from the repo root, which does NOT cross ./reconcile's go.mod
+  # boundary — so without this dedicated job a library regression is invisible
+  # until the next module-release tag. This job runs `go test` only (no -race, no
+  # lint) so PR feedback stays fast; the full gofmt + golangci-lint + race gate
+  # runs on tag push in reconcile-module.yml.
+  reconcile-module:
+    name: Reconcile Module Test
+    runs-on: [self-hosted, gauntlet]
+
+    defaults:
+      run:
+        working-directory: ./reconcile
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run Module Tests
+        # root `go test ./...` does NOT cross ./reconcile's go.mod boundary
+        run: go test ./...
