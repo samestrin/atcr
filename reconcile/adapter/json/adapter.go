@@ -63,16 +63,16 @@ type encodeEnvelope struct {
 // (for example, with an io.LimitReader before reading untrusted input).
 func Decode(data []byte) ([]reconcile.Source, error) {
 	data = bytes.TrimPrefix(data, utf8BOM)
-	first := firstNonSpace(data)
-	if first == 0 {
+	trimmed := bytes.TrimLeft(data, " \t\n\r")
+	if len(trimmed) == 0 {
 		return nil, errors.New("reconcile-json: empty input")
 	}
-	if first != '[' && first != '{' {
-		return nil, fmt.Errorf("reconcile-json: expected object or array, got %q", first)
+	if trimmed[0] != '[' && trimmed[0] != '{' {
+		return nil, fmt.Errorf("reconcile-json: expected object or array, got %q", trimmed[0])
 	}
 
 	var envelopes []decodeEnvelope
-	if first == '[' {
+	if trimmed[0] == '[' {
 		if err := stdjson.Unmarshal(data, &envelopes); err != nil {
 			return nil, fmt.Errorf("reconcile-json: %w", err)
 		}
@@ -137,18 +137,4 @@ func Encode(result reconcile.Result, opts reconcile.Options) ([]byte, error) {
 		Summary:      result.Summary,
 		Ambiguous:    ambiguous,
 	})
-}
-
-// firstNonSpace returns the first byte of data that is not JSON insignificant
-// whitespace, or 0 if there is none.
-func firstNonSpace(data []byte) byte {
-	for _, c := range data {
-		switch c {
-		case ' ', '\t', '\n', '\r':
-			continue
-		default:
-			return c
-		}
-	}
-	return 0
 }
