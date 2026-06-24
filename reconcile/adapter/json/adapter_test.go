@@ -333,7 +333,10 @@ func TestNoPathValidationFieldsInOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode returned error: %v", err)
 	}
-	for _, name := range []string{"PathValid", "PathWarning", "PathSuggestion", "ClusterMerged"} {
+	// Path-validation fields are ATCR-internal and structurally excluded from the
+	// reconcile-json/v1 envelope. On the wire they would appear as snake_case JSON
+	// tags, not as Go field names.
+	for _, name := range []string{"path_valid", "path_warning", "path_suggestion", "cluster_merged"} {
 		if bytes.Contains(out, []byte(name)) {
 			t.Errorf("path-validation field leaked into external schema: %s", name)
 		}
