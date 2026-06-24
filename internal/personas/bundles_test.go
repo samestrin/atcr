@@ -119,6 +119,11 @@ func TestParseManifest_MalformedYAML(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse bundle manifest")
 }
 
+func TestDedupePreserveOrder(t *testing.T) {
+	got := dedupePreserveOrder([]string{"security/owasp", "security/owasp", "language/python-types", "security/owasp"})
+	assert.Equal(t, []string{"security/owasp", "language/python-types"}, got)
+}
+
 func TestParseManifest_MissingDescriptionValid(t *testing.T) {
 	data := []byte("name: x\npersonas: [security/owasp]\n")
 	m, err := parseManifest(data)

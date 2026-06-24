@@ -47,8 +47,10 @@ func parseManifest(data []byte) (*BundleManifest, error) {
 
 // Resolve expands a bundle name (without the "bundle/" prefix) into its member
 // persona identifiers. An unregistered, empty, mixed-case, or traversal name
-// returns ErrUnknownBundle with no filesystem access — the embedded-manifest
-// lookup is the only gate. Names are case-sensitive; no normalization.
+// returns ErrUnknownBundle with no filesystem access. A flat-name pre-check
+// short-circuits obviously-invalid names; the embedded-manifest lookup is the
+// authoritative gate (it alone returns ErrUnknownBundle for unknown registered
+// shapes). Names are case-sensitive; no normalization.
 func Resolve(name string) ([]string, error) {
 	if !isValidBundleName(name) {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownBundle, name)
@@ -81,6 +83,22 @@ func isValidBundleName(name string) bool {
 	return matched
 }
 
+// dedupePreserveOrder returns names with duplicates removed, keeping first-seen
+// order. A manifest may legally repeat a member (AC 04-04 EC3); installing it
+// once and reporting it once is the install loop's responsibility.
+func dedupePreserveOrder(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out
+}
+
 // BundleOutcome reports the result of one bundle member during InstallBundle.
 type BundleOutcome struct {
 	Name           string
@@ -98,6 +116,7 @@ func InstallBundle(client HTTPClient, baseURL, bundleName, destDir string) ([]Bu
 	if err != nil {
 		return nil, err
 	}
+	members = dedupePreserveOrder(members) // AC 04-04 EC3: dedup is the loop's job
 	outcomes := make([]BundleOutcome, 0, len(members))
 	for _, member := range members {
 		out := BundleOutcome{Name: member}

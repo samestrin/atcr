@@ -19,6 +19,9 @@ func TestFormatRate(t *testing.T) {
 	assert.Equal(t, "50.0%", FormatRate(ratePtr(0.5)))
 	assert.Equal(t, "72.5%", FormatRate(ratePtr(0.725)))
 	assert.Equal(t, "100.0%", FormatRate(ratePtr(1.0)))
+	// Out-of-range rates clamp to [0,100]% rather than render a nonsense value.
+	assert.Equal(t, "0.0%", FormatRate(ratePtr(-0.5)))
+	assert.Equal(t, "100.0%", FormatRate(ratePtr(1.5)))
 }
 
 // --- ListWithScores join ----------------------------------------------------

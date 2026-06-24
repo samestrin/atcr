@@ -10,9 +10,24 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/personas"
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestReviewerCorroborationRates_CollapsesModels(t *testing.T) {
+	// One reviewer, two models → one collapsed rate of (3+1)/(4+6) = 0.4, not a
+	// last-wins single-model rate (3/4 or 1/6).
+	rows := []scorecard.LeaderboardRow{
+		{Reviewer: "Sentinel", Model: "opus", FindingsCorroborated: 3, FindingsRaised: 4},
+		{Reviewer: "sentinel", Model: "sonnet", FindingsCorroborated: 1, FindingsRaised: 6},
+		{Reviewer: "tracer", Model: "opus", FindingsCorroborated: 0, FindingsRaised: 0},
+	}
+	rates := reviewerCorroborationRates(rows)
+	assert.InDelta(t, 0.4, rates["sentinel"], 1e-9)
+	assert.InDelta(t, 0.0, rates["tracer"], 1e-9) // raised==0 → 0, still present
+	assert.Len(t, rates, 2)
+}
 
 // executeSplit runs the root command with separate stdout/stderr buffers so a
 // test can verify the success→stdout / diagnostics→stderr contract that the
@@ -189,9 +204,8 @@ func TestPersonasList_ScoresColumn(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
 	withPersonasScores(t, personasScoreData{
-		rates:   map[string]float64{"sentinel": 0.72},
-		path:    "/tmp/sc",
-		hasData: true,
+		rates: map[string]float64{"sentinel": 0.72},
+		path:  "/tmp/sc",
 	}, nil, nil)
 
 	stdout, _, err := executeSplit(t, "personas", "list", "--scores")
@@ -204,9 +218,8 @@ func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
 	withPersonasScores(t, personasScoreData{
-		rates:   map[string]float64{},
-		path:    "/home/u/.config/atcr/scorecard",
-		hasData: false,
+		rates: map[string]float64{},
+		path:  "/home/u/.config/atcr/scorecard",
 	}, nil, nil)
 
 	stdout, _, err := executeSplit(t, "personas", "list", "--scores")

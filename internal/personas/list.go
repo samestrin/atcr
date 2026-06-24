@@ -75,6 +75,9 @@ func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPers
 // sortScoredPersonas orders rows by corroboration rate descending, breaking ties
 // alphabetically by name; rows with no data (nil rate, "n/a") sort after all
 // numeric rows, alphabetically among themselves. Deterministic for any input.
+// Precondition: rates are finite (scorecard ratios in [0,1]); a NaN rate would
+// violate the comparator's strict-weak ordering. The scorecard producer guards
+// division-by-zero, so a NaN never reaches here.
 func sortScoredPersonas(ps []ScoredPersona) {
 	sort.SliceStable(ps, func(i, j int) bool {
 		a, b := ps[i], ps[j]

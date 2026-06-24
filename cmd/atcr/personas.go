@@ -15,11 +15,10 @@ import (
 
 // personasScoreData carries the per-reviewer corroboration rates (keyed by
 // lowercase reviewer name) for `personas list --scores`, plus the scorecard
-// path and whether any records were found (drives the "no data" footer).
+// path checked. An empty rates map drives the "no data" footer.
 type personasScoreData struct {
-	rates   map[string]float64
-	path    string
-	hasData bool
+	rates map[string]float64
+	path  string
 }
 
 // personasScores loads corroboration rates from the scorecard store. A package
@@ -39,12 +38,37 @@ func loadPersonasScores(errW io.Writer) (personasScoreData, error) {
 	if err != nil {
 		return personasScoreData{path: dir}, err
 	}
-	rows := scorecard.Aggregate(records)
-	rates := make(map[string]float64, len(rows))
-	for _, r := range rows {
-		rates[strings.ToLower(r.Reviewer)] = r.CorroborationRate
+	return personasScoreData{rates: reviewerCorroborationRates(scorecard.Aggregate(records)), path: dir}, nil
+}
+
+// reviewerCorroborationRates collapses leaderboard rows into one corroboration
+// rate per reviewer, keyed by lowercase reviewer name. Aggregate groups by
+// (reviewer, model), so a reviewer that ran under several models yields multiple
+// rows sharing one Reviewer name; this sums corroborated/raised across those
+// rows and recomputes the ratio (matching scorecard's own formula) so the rate
+// is a true per-reviewer aggregate rather than whichever model's row sorted last.
+func reviewerCorroborationRates(rows []scorecard.LeaderboardRow) map[string]float64 {
+	type tally struct{ corroborated, raised int }
+	byReviewer := map[string]*tally{}
+	for _, row := range rows {
+		key := strings.ToLower(row.Reviewer)
+		t := byReviewer[key]
+		if t == nil {
+			t = &tally{}
+			byReviewer[key] = t
+		}
+		t.corroborated += row.FindingsCorroborated
+		t.raised += row.FindingsRaised
 	}
-	return personasScoreData{rates: rates, path: dir, hasData: len(records) > 0}, nil
+	rates := make(map[string]float64, len(byReviewer))
+	for name, t := range byReviewer {
+		if t.raised > 0 {
+			rates[name] = float64(t.corroborated) / float64(t.raised)
+		} else {
+			rates[name] = 0
+		}
+	}
+	return rates
 }
 
 // personasDir resolves the community personas directory. A package var so tests
@@ -184,7 +208,7 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	if err := renderScoredList(cmd.OutOrStdout(), scored); err != nil {
 		return err
 	}
-	if !data.hasData {
+	if len(data.rates) == 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
 	}
 	return nil
