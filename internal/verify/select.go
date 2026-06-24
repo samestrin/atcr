@@ -13,6 +13,7 @@ import (
 	"math"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -144,7 +145,7 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 	// alphabetical. A nil/empty scores map or an absent key yields the zero
 	// score, so equal scores fall through to alphabetical — fully deterministic.
 	sort.SliceStable(matched, func(i, j int) bool {
-		si, sj := scores[matched[i]], scores[matched[j]]
+		si, sj := scores[strings.ToLower(matched[i])], scores[strings.ToLower(matched[j])]
 		// NaN corroboration scores must not break strict-weak ordering; treat
 		// them as the lowest rank so finite scores always sort above them and
 		// ties between NaN values fall back to alphabetical order.
