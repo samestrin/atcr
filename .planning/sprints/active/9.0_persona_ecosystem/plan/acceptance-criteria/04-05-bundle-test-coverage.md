@@ -87,15 +87,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test -race ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test -race ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `bundles_test.go` covers successful expansion of both `bundle/django` and `bundle/go-production`
-- [ ] `bundles_test.go` covers unknown bundle error (`errors.Is(err, ErrUnknownBundle)`)
-- [ ] `bundles_test.go` covers partial-install skip behavior with a pre-populated temp config dir
-- [ ] `bundles_test.go` covers manifest parse validation (missing required field returns descriptive error, not panic)
+- [x] `bundles_test.go` covers successful expansion of both `bundle/django` and `bundle/go-production`
+- [x] `bundles_test.go` covers unknown bundle error (`errors.Is(err, ErrUnknownBundle)`)
+- [x] `bundles_test.go` covers partial-install skip behavior with a pre-populated temp config dir
+- [x] `bundles_test.go` covers manifest parse validation (missing required field returns descriptive error, not panic)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

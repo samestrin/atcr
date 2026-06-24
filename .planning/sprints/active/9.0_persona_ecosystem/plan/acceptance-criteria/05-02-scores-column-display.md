@@ -91,15 +91,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `TestPersonasListWithScores` passes: persona with data shows `XX.X%`, persona without data shows `n/a`
-- [ ] Mixed-case join fixture test passes (case-insensitive lookup confirmed)
-- [ ] Rate `0.0` renders as `0.0%`, not `n/a` (zero-rate assertion in test)
-- [ ] Absent scorecard file produces footer note `No scorecard data found at <path>` and all-`n/a` table
+- [x] `TestPersonasListWithScores` passes: persona with data shows `XX.X%`, persona without data shows `n/a`
+- [x] Mixed-case join fixture test passes (case-insensitive lookup confirmed)
+- [x] Rate `0.0` renders as `0.0%`, not `n/a` (zero-rate assertion in test)
+- [x] Absent scorecard file produces footer note `No scorecard data found at <path>` and all-`n/a` table
 
 **Manual Review:**
 - [ ] Code reviewed and approved

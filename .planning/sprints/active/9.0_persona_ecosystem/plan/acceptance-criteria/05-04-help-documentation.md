@@ -66,13 +66,13 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `TestPersonasListHelpContainsScoresFlag` passes: `--help` output contains `--scores` and a non-empty description string
-- [ ] Description string references `n/a` behavior for personas without run history
+- [x] `TestPersonasListHelpContainsScoresFlag` passes: `--help` output contains `--scores` and a non-empty description string
+- [x] Description string references `n/a` behavior for personas without run history
 
 **Manual Review:**
 - [ ] Code reviewed and approved

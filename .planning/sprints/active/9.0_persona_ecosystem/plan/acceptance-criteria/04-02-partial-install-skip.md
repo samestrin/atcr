@@ -73,15 +73,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `internal/personas/bundles_test.go` covers partial-install skip: some members pre-installed, remainder fetched, all outcomes reported
-- [ ] CLI output distinguishes "installed" from "already present" for each bundle member
-- [ ] Full re-run on a fully-installed bundle exits 0 and makes no filesystem writes
-- [ ] Per-persona outcome is reported even when all members are skipped
+- [x] `internal/personas/bundles_test.go` covers partial-install skip: some members pre-installed, remainder fetched, all outcomes reported
+- [x] CLI output distinguishes "installed" from "already present" for each bundle member
+- [x] Full re-run on a fully-installed bundle exits 0 and makes no filesystem writes
+- [x] Per-persona outcome is reported even when all members are skipped
 
 **Manual Review:**
 - [ ] Code reviewed and approved

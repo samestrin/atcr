@@ -102,15 +102,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./...`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./...`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/personas-authoring.md` exists and includes a complete fill-in-the-blank persona YAML template with all required fields marked
-- [ ] Canonical `language` format rules are documented (no leading dot, lowercased, e.g. `["go", "ts"]`) and nil semantics are explained
-- [ ] Fixture file requirements (format, location `personas/testdata/`, naming convention) are documented and match `TestPersonaFixture` expectations
-- [ ] A step-by-step contribution checklist is present at the end of the guide
+- [x] `docs/personas-authoring.md` exists and includes a complete fill-in-the-blank persona YAML template with all required fields marked
+- [x] Canonical `language` format rules are documented (no leading dot, lowercased, e.g. `["go", "ts"]`) and nil semantics are explained
+- [x] Fixture file requirements (format, location `personas/testdata/`, naming convention) are documented and match `TestPersonaFixture` expectations
+- [x] A step-by-step contribution checklist is present at the end of the guide
 
 **Manual Review:**
 - [ ] Code reviewed and approved

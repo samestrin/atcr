@@ -128,15 +128,15 @@ func TestIdiomaticFixture(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./personas/...`)
-- [ ] No linting errors (`golangci-lint run ./personas/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./personas/...`)
+- [x] No linting errors (`golangci-lint run ./personas/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Three fixture files exist in `personas/testdata/` and are committed to the repo with mode `0644`
-- [ ] `TestSentinelFixture`, `TestTracerFixture`, and `TestIdiomaticFixture` each assert on a category-specific string in the rendered output
-- [ ] The full `go test ./personas/...` suite passes in a network-restricted environment (verified in CI without outbound access)
-- [ ] No test in `personas/` makes live HTTP or DNS calls (verified by CI network policy or test audit)
+- [x] Three fixture files exist in `personas/testdata/` and are committed to the repo with mode `0644`
+- [x] `TestSentinelFixture`, `TestTracerFixture`, and `TestIdiomaticFixture` each assert on a category-specific string in the rendered output
+- [x] The full `go test ./personas/...` suite passes in a network-restricted environment (verified in CI without outbound access)
+- [x] No test in `personas/` makes live HTTP or DNS calls (verified by CI network policy or test audit)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

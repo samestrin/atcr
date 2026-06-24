@@ -76,15 +76,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas install bundle/django` on a clean config dir installs exactly the four declared personas and exits 0
-- [ ] `atcr personas install bundle/go-production` on a clean config dir installs all declared personas and exits 0
-- [ ] Bundle install is idempotent: re-running on a fully-installed bundle exits 0 and installs nothing new
-- [ ] `internal/personas/bundles_test.go` unit test verifies resolver expands `bundle/django` to the exact four-persona list
+- [x] `atcr personas install bundle/django` on a clean config dir installs exactly the four declared personas and exits 0
+- [x] `atcr personas install bundle/go-production` on a clean config dir installs all declared personas and exits 0
+- [x] Bundle install is idempotent: re-running on a fully-installed bundle exits 0 and installs nothing new
+- [x] `internal/personas/bundles_test.go` unit test verifies resolver expands `bundle/django` to the exact four-persona list
 
 **Manual Review:**
 - [ ] Code reviewed and approved

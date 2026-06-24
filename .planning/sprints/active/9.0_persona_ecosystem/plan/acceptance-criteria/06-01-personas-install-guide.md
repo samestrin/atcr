@@ -101,16 +101,16 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./...` — exercises registry loading; example files referenced in docs must remain valid)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./...` — exercises registry loading; example files referenced in docs must remain valid)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/personas-install.md` exists and covers all six subcommands: `install`, `remove`, `list`, `search`, `test`, `upgrade`
-- [ ] Bundle installation syntax (`atcr personas install bundle/<name>`) is documented with a working example
-- [ ] `~/.config/atcr/personas/` install path is explicitly documented
-- [ ] Configurable registry base URL is documented
-- [ ] No reference to the deprecated `docs/examples/registry.yaml` path appears in the file
+- [x] `docs/personas-install.md` exists and covers all six subcommands: `install`, `remove`, `list`, `search`, `test`, `upgrade`
+- [x] Bundle installation syntax (`atcr personas install bundle/<name>`) is documented with a working example
+- [x] `~/.config/atcr/personas/` install path is explicitly documented
+- [x] Configurable registry base URL is documented
+- [x] No reference to the deprecated `docs/examples/registry.yaml` path appears in the file
 
 **Manual Review:**
 - [ ] Code reviewed and approved

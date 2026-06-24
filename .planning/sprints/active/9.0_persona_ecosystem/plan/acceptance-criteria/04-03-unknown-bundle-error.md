@@ -75,15 +75,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `bundles.Resolve("unknown")` returns `errors.Is(err, ErrUnknownBundle) == true` and `nil` persona list
-- [ ] CLI prints `unknown bundle: "unknown"` and exits 1 when an unrecognized bundle name is given
-- [ ] No files are written to `~/.config/atcr/personas/` on unknown bundle error
-- [ ] Path traversal inputs (e.g. `../etc/passwd`) are rejected as unknown bundles without any filesystem access
+- [x] `bundles.Resolve("unknown")` returns `errors.Is(err, ErrUnknownBundle) == true` and `nil` persona list
+- [x] CLI prints `unknown bundle: "unknown"` and exits 1 when an unrecognized bundle name is given
+- [x] No files are written to `~/.config/atcr/personas/` on unknown bundle error
+- [x] Path traversal inputs (e.g. `../etc/passwd`) are rejected as unknown bundles without any filesystem access
 
 **Manual Review:**
 - [ ] Code reviewed and approved

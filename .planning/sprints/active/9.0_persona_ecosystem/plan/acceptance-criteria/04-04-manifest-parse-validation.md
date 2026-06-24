@@ -93,15 +93,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `parseManifest` returns a descriptive error (not a panic) for missing `name`
-- [ ] `parseManifest` returns a descriptive error for an empty `personas` list
-- [ ] `parseManifest` wraps and returns yaml.v3 errors for malformed YAML without panicking
-- [ ] Both embedded manifests (`django.yaml`, `go-production.yaml`) parse successfully in a round-trip test
+- [x] `parseManifest` returns a descriptive error (not a panic) for missing `name`
+- [x] `parseManifest` returns a descriptive error for an empty `personas` list
+- [x] `parseManifest` wraps and returns yaml.v3 errors for malformed YAML without panicking
+- [x] Both embedded manifests (`django.yaml`, `go-production.yaml`) parse successfully in a round-trip test
 
 **Manual Review:**
 - [ ] Code reviewed and approved

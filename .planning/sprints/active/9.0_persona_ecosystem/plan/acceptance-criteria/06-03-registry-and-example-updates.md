@@ -102,15 +102,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./...` — registry loader exercises both example files)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (`go test ./...` — registry loader exercises both example files)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `docs/registry.md` contains a `language` field reference entry covering type, canonical format, nil semantics, and two-partition routing behavior
-- [ ] `examples/registry-without-executor.yaml` includes at least one agent definition with a valid `language` field
-- [ ] `examples/registry-with-executor.yaml` includes at least one agent definition with a valid `language` field (skeptic agent preferred)
-- [ ] No file in `docs/` or `examples/` references the deprecated `docs/examples/registry.yaml` path
+- [x] `docs/registry.md` contains a `language` field reference entry covering type, canonical format, nil semantics, and two-partition routing behavior
+- [x] `examples/registry-without-executor.yaml` includes at least one agent definition with a valid `language` field
+- [x] `examples/registry-with-executor.yaml` includes at least one agent definition with a valid `language` field (skeptic agent preferred)
+- [x] No file in `docs/` or `examples/` references the deprecated `docs/examples/registry.yaml` path
 
 **Manual Review:**
 - [ ] Code reviewed and approved

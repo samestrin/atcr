@@ -72,14 +72,14 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Unit tests confirm output is byte-for-byte identical to pre-routing alphabetical selection when no language match exists
-- [ ] No `log.*` calls appear in the fallback code path (verified by test capturing log output)
-- [ ] Pool with all-empty `Language` fields produces same result as pool with all-nil `Language` fields
+- [x] Unit tests confirm output is byte-for-byte identical to pre-routing alphabetical selection when no language match exists
+- [x] No `log.*` calls appear in the fallback code path (verified by test capturing log output)
+- [x] Pool with all-empty `Language` fields produces same result as pool with all-nil `Language` fields
 
 **Manual Review:**
 - [ ] Code reviewed and approved

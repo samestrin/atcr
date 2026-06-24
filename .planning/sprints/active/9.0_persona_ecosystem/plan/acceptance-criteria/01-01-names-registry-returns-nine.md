@@ -99,15 +99,15 @@ func TestGet_BonusPersonasNonEmpty(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./personas/...`)
-- [ ] No linting errors (`golangci-lint run ./personas/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./personas/...`)
+- [x] No linting errors (`golangci-lint run ./personas/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `personas.Names()` returns a slice of length 9 matching the canonical order
-- [ ] `personas.Get()` resolves all three bonus names without error and returns non-empty content
-- [ ] `TestNames_ReturnsAllNine` exists in `personas_test.go` (old name `TestNames_ReturnsAllSix` is removed)
-- [ ] No duplicate names in the `names` slice
+- [x] `personas.Names()` returns a slice of length 9 matching the canonical order
+- [x] `personas.Get()` resolves all three bonus names without error and returns non-empty content
+- [x] `TestNames_ReturnsAllNine` exists in `personas_test.go` (old name `TestNames_ReturnsAllSix` is removed)
+- [x] No duplicate names in the `names` slice
 
 **Manual Review:**
 - [ ] Code reviewed and approved

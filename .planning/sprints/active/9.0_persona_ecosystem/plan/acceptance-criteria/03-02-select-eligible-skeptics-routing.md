@@ -94,15 +94,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `SelectEligibleSkeptics` signature updated to include 4th `scores map[string]float64` parameter
-- [ ] Two-partition reorder implemented: matched skeptics precede unmatched in the slice before the n-cap is applied
-- [ ] `normalizeExt` helper exists and is shared between `applyDefaults` and `SelectEligibleSkeptics`
-- [ ] Unit tests cover language-match, no-match fallback, tie-break by score, tie-break by alphabet, and nil-scores cases
+- [x] `SelectEligibleSkeptics` signature updated to include 4th `scores map[string]float64` parameter
+- [x] Two-partition reorder implemented: matched skeptics precede unmatched in the slice before the n-cap is applied
+- [x] `normalizeExt` helper exists and is shared between `applyDefaults` and `SelectEligibleSkeptics`
+- [x] Unit tests cover language-match, no-match fallback, tie-break by score, tie-break by alphabet, and nil-scores cases
 
 **Manual Review:**
 - [ ] Code reviewed and approved

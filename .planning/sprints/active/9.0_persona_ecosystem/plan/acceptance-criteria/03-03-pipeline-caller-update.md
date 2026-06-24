@@ -78,13 +78,13 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/verify/...`)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./...`) — zero compiler errors
+- [x] All tests passing (`go test ./internal/verify/...`)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./...`) — zero compiler errors
 
 **Story-Specific:**
-- [ ] `internal/verify/pipeline.go:162` passes a scores map (or `nil`) as the 4th argument to `SelectEligibleSkeptics`
-- [ ] No other callers of `SelectEligibleSkeptics` exist with the old 3-argument signature (verified by grep before and after)
+- [x] `internal/verify/pipeline.go:162` passes a scores map (or `nil`) as the 4th argument to `SelectEligibleSkeptics`
+- [x] No other callers of `SelectEligibleSkeptics` exist with the old 3-argument signature (verified by grep before and after)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

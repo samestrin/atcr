@@ -78,14 +78,14 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `TestPersonasListScoresSortOrder` passes: numeric rows descending, `n/a` rows alphabetical tail
-- [ ] Tie-breaking test passes: identical rates produce alphabetical ordering
-- [ ] All-`n/a` fixture sorts alphabetically (no panic or empty output)
+- [x] `TestPersonasListScoresSortOrder` passes: numeric rows descending, `n/a` rows alphabetical tail
+- [x] Tie-breaking test passes: identical rates produce alphabetical ordering
+- [x] All-`n/a` fixture sorts alphabetically (no panic or empty output)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

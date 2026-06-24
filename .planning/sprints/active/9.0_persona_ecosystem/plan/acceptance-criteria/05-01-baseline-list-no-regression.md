@@ -68,14 +68,14 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/personas/... ./cmd/atcr/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas list` output is byte-for-byte identical to its pre-story baseline (verified by snapshot test or golden file)
-- [ ] `scorecard.Aggregate()` call count is zero when `--scores` flag is absent (verified by mock assertion)
-- [ ] `TestPersonasListBaseline` passes in CI
+- [x] `atcr personas list` output is byte-for-byte identical to its pre-story baseline (verified by snapshot test or golden file)
+- [x] `scorecard.Aggregate()` call count is zero when `--scores` flag is absent (verified by mock assertion)
+- [x] `TestPersonasListBaseline` passes in CI
 
 **Manual Review:**
 - [ ] Code reviewed and approved

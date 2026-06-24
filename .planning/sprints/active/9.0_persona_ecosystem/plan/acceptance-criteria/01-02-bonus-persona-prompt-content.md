@@ -111,14 +111,14 @@ func TestBonusPersonas_TemplateRenders(t *testing.T) {
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./personas/...`)
-- [ ] No linting errors (`golangci-lint run ./personas/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./personas/...`)
+- [x] No linting errors (`golangci-lint run ./personas/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `sentinel.md`, `tracer.md`, and `idiomatic.md` each contain a system prompt section, severity rubric, output format block, and all required template variable slots matching `bruce.md` structure
-- [ ] Each persona's system prompt explicitly names its target domain patterns (as specified in Scenario 1–3 above)
-- [ ] All three templates render without error when given a valid payload
+- [x] `sentinel.md`, `tracer.md`, and `idiomatic.md` each contain a system prompt section, severity rubric, output format block, and all required template variable slots matching `bruce.md` structure
+- [x] Each persona's system prompt explicitly names its target domain patterns (as specified in Scenario 1–3 above)
+- [x] All three templates render without error when given a valid payload
 
 **Manual Review:**
 - [ ] Code reviewed and approved
