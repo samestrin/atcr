@@ -39,7 +39,7 @@
 **Sprint Reference:** .planning/sprints/active/9.0_persona_ecosystem/
 **Sprint Number:** 9.0
 **Sprint Created:** 2026-06-24
-**Sprint Status:** Active — Not Yet Executed
+**Sprint Status:** Executed — Ready for Review
 **Branch:** feature/9.0_persona_ecosystem
 
 ---
@@ -52,29 +52,25 @@
 
 _Updated by `/execute-sprint` during execution._
 
-**Current Phase:** Phase 5 complete — gated stop before Phase 6 (Sprint B, Stories 04 + 05 done)
-**Phases Complete:** 5 / 6
-**Last Checkpoint:** 2026-06-24 — Phase 5 (T5 domain bundles + T6 corroboration scores) green; gate passed (no CRITICAL/HIGH; regression suite clean). T5: `internal/personas/bundles.go` resolver over `go:embed bundles/*.yaml` (django + go-production manifests), typed `ErrUnknownBundle`, `InstallBundle` partial-skip/idempotent loop, `personas install bundle/<name>` CLI delegation. T6: `personas list --scores` joins per-reviewer corroboration rates (lowercase key) to a CORROBORATION column, sort numeric-desc then n/a-alphabetical, "no data" footer; per-reviewer aggregation collapses (reviewer,model) rows. Adversarial 5.2.A: no CRITICAL/HIGH (dedup fixed inline per AC 04-04 EC3). Adversarial 5.4.A: 1 HIGH (multi-model score last-wins) fixed inline with regression test + 2 MEDIUM/1 LOW fixed inline. Gate 5.LAST: TD-013 (MEDIUM key-convention divergence), TD-014/TD-015 (LOW) captured. Coverage: internal/personas 86.9%, cmd/atcr 84.0% (both ≥80%). Commits: (T5 green) domain bundles, (T6 green) list --scores, (refactor) per-reviewer aggregation + dedup.
+**Current Phase:** Phase 6 complete — all 6 phases done (final numbered phase; no gated stop before Final Phase validation). Sprint executed end-to-end.
+**Phases Complete:** 6 / 6
+**Last Checkpoint:** 2026-06-24 — Phase 6 (T7-in-repo docs + validation) green; cumulative exit-review gate passed with NO findings at any severity. Delivered: `docs/personas-install.md` (all 6 subcommands + `bundle/` syntax + `~/.config/atcr/personas/` + `ATCR_PERSONAS_URL`), `docs/personas-authoring.md` (fill-in-the-blank persona YAML template + canonical `language` rules/nil semantics + fixture requirements + contribution checklist), `docs/registry.md` "Language scope and skeptic routing" section (type/canonical/nil/two-partition routing + silent fallback), `language: ["go"]` added to both example registries, new `TestRegistryExamples_Valid` gate. Adversarial 6.2.A: 5 doc-accuracy findings (1 HIGH built-in VERSION column = `built-in` not `-`, 1 MEDIUM, 3 LOW) all fixed inline. Gate 6.LAST: clean. Final validation: `go test ./...` 30 pkgs / 0 fail; coverage internal/personas 86.9%, cmd/atcr 84.0%; lint/vet/build clean; Names()=9, root=15 subcommands, 2 bundles; no `docs/examples/registry.yaml` refs. DoD: 173/200 AC items ticked (remaining 26 Manual-Review sign-off + 1 TD-012 deferred). **Next:** /execute-code-review.
 
 ---
 
 ## Execution Metrics
 
-_Populated by `/execute-sprint` upon completion_
-
-**Executed:** _Not yet executed_
-**Runtime:** _TBD_
-**Status:** _TBD_
+**Status:** Ready for Review
 
 ### Progress
-- **Phases:** _TBD_
-- **Work Items:** _TBD_
+- **Phases:** 6/6
+- **User Stories:** 6/6
 
 ### Quality
-- **Tests:** _TBD_
-- **Coverage:** _TBD_
-- **Lint:** _TBD_
+- **Tests:** `go test ./...` 30 packages, 0 failures (all fixture + integration tests)
+- **Coverage:** internal/personas 86.9%, cmd/atcr 84.0%, internal/registry/verify ≥80% (all ≥80%)
+- **Lint:** Clean (`golangci-lint run` 0 issues; `go vet` + `go build` clean)
 
 ### Changes
-- **Files Changed:** _TBD_
-- **Commits:** _TBD_
+- **Files Changed:** 42 (code + docs; 109 incl. .planning tracking)
+- **Commits:** 21 (vs main)
