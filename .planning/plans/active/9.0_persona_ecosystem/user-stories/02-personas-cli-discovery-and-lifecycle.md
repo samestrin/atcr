@@ -4,15 +4,15 @@
 
 ## User Story
 
-**As a** Go developer integrating ATCR into a new domain (e.g., security, Django)
-**I want** to install, list, search, test, and upgrade community personas from the command line
-**So that** I can extend ATCR's reviewer panel without editing YAML manually or reading source code
+**As a** Go developer or platform lead managing team review configuration
+**I want** a first-class CLI (`atcr personas`) with `install`, `remove`, `list`, `search`, `test`, and `upgrade` subcommands that fetch from a community repo
+**So that** my team can discover, install, validate, and keep current domain-specific personas without reading source code or manually managing YAML files
 
 ## Story Context
 
-- **Background:** ATCR ships with 6 generalist built-in personas and (after Sprint A) 3 bonus domain personas. Vertical adoption requires a long tail of community-contributed personas. The `atcr personas` CLI is the primary interface for discovering and managing those community personas. It fetches from a configurable registry URL backed by the community repo, installs persona `.md` files to `~/.config/atcr/personas/`, and exposes install/remove/list/search/test/upgrade subcommands. All network I/O in tests uses `httptest.NewServer` — no live external calls in CI.
-- **Assumptions:** The community persona registry serves raw YAML index and individual `.md` files over HTTPS. The default registry URL (`https://raw.githubusercontent.com/atcr/personas/main`) is a compile-time constant in `internal/personas`. Users have write access to `~/.config/atcr/personas/`. The `atcr personas test` subcommand reuses the fixture-based test harness introduced in Sprint A (T1).
-- **Constraints:** The implementation must not introduce external dependencies beyond what already exists (`cobra`, `yaml.v3`, `net/http` stdlib). The subcommand count assertion in `cmd/atcr/main_test.go` (`TestRootCmd_HasExactlyFourteenSubcommands`) must be updated to 15 atomically with the registration of `newPersonasCmd()` to avoid a CI failure window. Registry URL must be overridable via an environment variable or flag for testability and enterprise use.
+- **Background:** ATCR ships with 6 generalist built-in personas and (after Story 1) 3 domain bonus personas. Beyond those 9, vertical-market teams need security, framework, or language personas that do not ship with the binary. Today the only path is writing raw YAML config, which requires reading internal source code and creates a high adoption barrier. The `atcr personas` CLI provides a discoverable, lifecycle-managed alternative backed by a community repo fetched over HTTP.
+- **Assumptions:** A community repo raw endpoint exists at `https://raw.githubusercontent.com/atcr/personas/main` (configurable). Installed personas land in `~/.config/atcr/personas/` and are loaded by the existing registry at startup. The registry already supports loading from that directory. HTTP tests use `httptest.NewServer` — no live network calls reach CI.
+- **Constraints:** All HTTP fetch logic must be testable via `httptest.NewServer`. The `atcr personas` subcommand must be registered atomically with the `TestRootCmd_HasExactlyFourteenSubcommands` test update (bumped to 15) to avoid a CI failure window. No new external dependencies — `github.com/spf13/cobra` and `net/http` (stdlib) are sufficient.
 
 ## Story Details
 
@@ -20,41 +20,42 @@
 |-------|-------|
 | **Priority** | High |
 | **Effort Estimate** | L |
-| **Dependencies** | Story 1 (bonus personas + fixture harness — `atcr personas test` reuses that infrastructure); Story 3 (Language field on `AgentConfig` — installed personas may declare `language`) |
+| **Dependencies** | Story 1 (bonus personas + binary embed foundation); existing Cobra CLI scaffold in `cmd/atcr/`; existing registry loading from `~/.config/atcr/personas/` |
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** `atcr personas install security/owasp` fetches the persona `.md` from the configured registry URL, writes it to `~/.config/atcr/personas/security/owasp.md`, and prints a confirmation. `atcr personas list` shows all built-in and installed personas with name, source (built-in vs. installed), and version. `atcr personas search <keyword>` queries the registry index and returns matching persona names and short descriptions. `atcr personas test <name>` runs the persona's fixture and reports pass/fail. `atcr personas upgrade <name>` checks the registry for a newer version and replaces the local file if one exists. `atcr personas remove <name>` deletes the installed file and confirms removal.
-- **Measurable:** All 6 subcommands (`install`, `remove`, `list`, `search`, `test`, `upgrade`) exist as registered cobra sub-subcommands under `atcr personas`. Unit tests for each subcommand use `httptest.NewServer` and achieve pass on `go test ./...`. `TestRootCmd_HasExactlyFourteenSubcommands` is updated to 15 and passes. No live network calls occur in CI.
-- **Achievable:** The new `internal/personas` package contains the HTTP client and file I/O logic, keeping `cmd/atcr/personas.go` as a thin cobra wiring layer. The HTTP fetch path mirrors the established pattern in `internal/verify/invoke_test.go`. No novel external dependencies are needed.
-- **Relevant:** This CLI is the primary adoption lever for vertical markets. Without it, community personas require manual file placement and registry knowledge, blocking non-Go teams from extending ATCR.
-- **Time-bound:** Delivered within Sprint B (9.0), which follows Sprint A's completion of the bonus personas and language routing foundation.
+- **Specific:** `atcr personas install security/owasp` fetches the persona YAML from the community repo, writes it to `~/.config/atcr/personas/security/owasp.yaml`, and makes it immediately available in the registry without restarting the tool.
+- **Measurable:** All 6 subcommands (`install`, `remove`, `list`, `search`, `test`, `upgrade`) pass their unit tests using `httptest.NewServer`; `TestRootCmd_HasExactlyFourteenSubcommands` updated to 15 and green; zero live HTTP calls in CI.
+- **Achievable:** Greenfield `internal/personas` package with a configurable `RegistryBaseURL` constant; Cobra subcommands follow the patterns already established in `cmd/atcr/`; no new external dependencies required.
+- **Relevant:** Removes the primary adoption barrier for vertical-market teams — teams gain domain review coverage without reading internal source code or crafting raw YAML.
+- **Time-bound:** Delivered within Sprint B (after Sprint A lands T8 and T1); all subcommands functional and tested before Sprint B PR is opened.
 
 ## Acceptance Criteria Overview
 
-1. `atcr personas install <name>` fetches from the configured registry, writes to `~/.config/atcr/personas/`, and exits 0 on success; exits non-zero with a descriptive error when the persona is not found or the network is unavailable.
-2. `atcr personas list` displays built-in and installed personas, distinguishing source and version; `atcr personas list --scores` additionally shows corroboration rate from existing scorecard data (wired in T6 but the flag must be defined here).
-3. `atcr personas search <keyword>` queries the registry index endpoint and returns matching results; `atcr personas test <name>` runs the fixture for the named persona and reports pass/fail; `atcr personas upgrade <name>` checks for and applies updates; `atcr personas remove <name>` deletes the installed persona and confirms.
-4. All HTTP fetch logic lives in `internal/personas` and is fully exercised by `httptest.NewServer`-backed unit tests — no live external calls in any test.
-5. `TestRootCmd_HasExactlyFourteenSubcommands` is updated to 15 in the same commit that registers `newPersonasCmd()`, and the full test suite passes without modification to any unrelated test.
+1. `atcr personas install <name>` fetches the named persona from the configured repo URL, writes the YAML to `~/.config/atcr/personas/<name>.yaml`, and exits 0 on success; exits non-zero with a descriptive error if the persona is not found or the fetch fails.
+2. `atcr personas list` prints all installed personas (built-in + community) with name, version, and source columns; `--scores` flag deferred to Story 5 (T6).
+3. `atcr personas search <keyword>` queries the community repo index and prints matching persona names and descriptions; results are deterministic in tests via `httptest.NewServer`.
+4. `atcr personas remove <name>` deletes `~/.config/atcr/personas/<name>.yaml` and exits 0; exits non-zero with a descriptive error if the persona is not installed.
+5. `atcr personas test <name>` runs the persona's fixture and reports pass/fail to stdout; exit code mirrors test outcome.
+6. `atcr personas upgrade <name>` (or `--all`) re-fetches the persona(s) and overwrites the local file only when the remote version is newer; a `--dry-run` flag prints what would change without writing.
 
 _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/9.0_persona_ecosystem/`_
 
 ## Technical Considerations
 
-- **Implementation Notes:** New file `cmd/atcr/personas.go` with `newPersonasCmd()` returning a `*cobra.Command` with 6 sub-subcommands registered via `personasCmd.AddCommand(...)`. New package `internal/personas/` with `client.go` (HTTP fetch, configurable `RegistryBaseURL`), `store.go` (read/write `~/.config/atcr/personas/`), and `index.go` (registry index parsing). The `--registry` flag on the parent `personas` command overrides `RegistryBaseURL` and is inherited by all sub-subcommands via `PersistentFlags()`. Output goes through `cmd.OutOrStdout()` for testability. The `atcr personas list --scores` flag must be declared in this story even if the score-reading logic is wired in T6 — the flag declaration and a no-op/zero-value fallback belong here.
-- **Integration Points:** `cmd/atcr/main.go:174-189` — `root.AddCommand(newPersonasCmd())`; `cmd/atcr/main_test.go` — subcommand count assertion update (14 → 15); `internal/personas/client_test.go` — `httptest.NewServer` pattern matching `internal/verify/invoke_test.go`; `personas/` package — `Get(name)` used by `atcr personas test` to resolve built-in persona fixtures; `internal/scorecard` — queried by `--scores` flag path (T6 integration point).
-- **Data Requirements:** Registry index format: a YAML or JSON file listing persona names, versions, short descriptions, and raw file URLs. Installed persona format: a `.md` file at `~/.config/atcr/personas/<category>/<name>.md` with a YAML frontmatter block containing at minimum `name`, `version`, and optionally `language`. The `internal/personas` package must define these structs with `yaml.v3` tags.
+- **Implementation Notes:** New `internal/personas` package owns all install/list/search/upgrade logic. A `RegistryBaseURL` constant (default: `https://raw.githubusercontent.com/atcr/personas/main`) is the single configuration point; override via env var `ATCR_PERSONAS_URL` or a flag. `newPersonasCmd()` in `cmd/atcr/personas.go` registers all 6 sub-subcommands and is added to root in the same commit that bumps `TestRootCmd_HasExactlyFourteenSubcommands` to 15. All HTTP interaction is gated behind an injectable `http.Client` so tests can substitute `httptest.NewServer` without touching production paths.
+- **Integration Points:** Registry startup scan of `~/.config/atcr/personas/` (already implemented); Cobra root command in `cmd/atcr/main.go`; `TestRootCmd_HasExactlyFourteenSubcommands` in `cmd/atcr/main_test.go`; `atcr personas test` delegates to the same fixture runner used by `sentinel`/`tracer`/`idiomatic` in Story 1.
+- **Data Requirements:** Community repo exposes a JSON index at `<RegistryBaseURL>/index.json` listing available personas (name, version, description, path). Each persona is a single YAML file at `<RegistryBaseURL>/<name>.yaml`. The local store uses the same YAML schema as built-in personas; no new schema fields are required for the CLI itself.
 
 ## Potential Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Subcommand count test CI failure window if registration and test update land in separate commits | High | Update `TestRootCmd` count and register `newPersonasCmd()` in the same atomic commit; enforced by the TDD RED step requiring the count test to be updated before the command is wired |
-| Registry URL shape changes between index design and T5 bundle resolution | Medium | Pin the registry URL shape to the `internal/personas.RegistryBaseURL` constant; T5 bundle resolver imports the same constant and the same `client.go` — a single change point |
-| `~/.config/atcr/personas/` path not writable in restricted environments (CI, containers) | Medium | Accept an `--install-dir` flag (or `ATCR_PERSONAS_DIR` env var) that overrides the default install path; tests always use `t.TempDir()` as the install root |
-| `atcr personas list --scores` flag declared here but wired in T6 creates a blank-output risk if T6 slips | Low | Return zero/empty score values with a `(no score data)` annotation when the scorecard map is nil; avoids a broken UX while T6 is pending |
-| `go:embed` or file naming collision between built-in and installed persona names | Low | Built-in personas are resolved via `personas.Get(name)`; installed personas are resolved via `internal/personas.Store.Get(name)` — separate lookup paths with explicit precedence (built-in wins on name collision) |
+| Subcommand count test CI failure window (registering `newPersonasCmd` and bumping the count in separate commits) | High | Register `newPersonasCmd()` and update `TestRootCmd_HasExactlyFourteenSubcommands` to 15 in the same atomic commit |
+| Community repo endpoint unavailable in CI causing flaky tests | High | All HTTP interaction uses an injected `http.Client`; CI tests exclusively use `httptest.NewServer` — no live network calls |
+| `~/.config/atcr/personas/` directory missing on fresh install | Medium | `install` creates the directory (and any `<name>/` subdirectory) with `os.MkdirAll` before writing; `list` treats a missing directory as an empty set (no error) |
+| Version comparison logic brittle across semver vs. date-stamped releases | Medium | Use `golang.org/x/mod/semver` (already a transitive dependency) for structured comparison; fall back to string equality if the version field is non-semver |
+| Persona YAML from community repo fails existing registry validation | Low | `install` runs `validateAgent` against the fetched YAML before writing to disk; returns a descriptive error without writing if validation fails |
 
 ---
 

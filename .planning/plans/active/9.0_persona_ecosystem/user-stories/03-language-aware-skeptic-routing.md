@@ -5,14 +5,14 @@
 ## User Story
 
 **As a** Go developer using ATCR with a language-scoped persona installed
-**I want** the verification step to automatically prefer skeptics that understand Go idioms
-**So that** domain-specific findings are challenged by the most contextually relevant reviewers, improving verification accuracy without any manual configuration
+**I want** skeptic selection to automatically prefer skeptics whose `Language` field matches the file extension of the finding under review
+**So that** my findings are verified by skeptics that understand Go idioms, giving me higher-quality corroboration than a generalist skeptic can provide
 
 ## Story Context
 
-- **Background:** `SelectEligibleSkeptics` (`internal/verify/select.go:55`) currently sorts all candidates alphabetically before applying the n-cap, producing a deterministic but language-blind selection. When a Go-specific persona such as `idiomatic` is installed alongside generalist personas, the skeptic pool contains language-matched candidates that are never preferentially selected. T8 extends the function with a two-partition reorder — language-matched skeptics move to the front so the existing n-cap naturally prefers them. A nil `Language` field on a skeptic config means no constraint, preserving backward compatibility for all existing registry configurations. Corroboration scores from the scorecard are passed as a `map[string]float64` fourth parameter for tie-breaking within the matched partition, reusing the same map shape that T6's `scorecard.Aggregate()` produces.
-- **Assumptions:** `AgentConfig` in `internal/registry/config.go` does not yet have a `Language` field. The sole production caller of `SelectEligibleSkeptics` is `internal/verify/pipeline.go:162`. Existing registry YAML files that lack a `language:` key must parse cleanly (nil slice = no constraint). The `idiomatic` persona introduced by T1 declares `language: [go]` and serves as the first real consumer of this routing.
-- **Constraints:** The change must not alter behavior when no language-matched skeptic exists — silent fallback to the existing general pool is required. Determinism within each partition must be preserved (scores desc, then alphabetical). No new external imports are permitted; the implementation uses only stdlib (`strings`, `filepath`, `sort`). The `Language` field canonical form is without a leading dot and lowercased (e.g., `["go", "ts"]`), normalized at load time by `applyDefaults`.
+- **Background:** `SelectEligibleSkeptics` in `internal/verify/select.go:55` currently selects skeptics from an alphabetically sorted pool with an `n`-cap, with no awareness of the language of the file being reviewed. A Go-scoped persona such as `idiomatic` (shipped in T1) declares `language: [go]` in its registry entry. Without routing, that persona competes equally with generalist skeptics regardless of whether the finding is in a `.go` file, wasting its domain specificity. The routing change introduces a two-partition reorder — language-matched skeptics first, unmatched after — so the existing `n`-cap naturally favors matched skeptics. No behavioral change occurs when no persona declares `language`, preserving full backward compatibility.
+- **Assumptions:** `AgentConfig` gains a new `Language []string` field (canonical form: without leading dot, lowercased, e.g. `["go", "ts"]`) before this routing logic is implemented, making T8 a prerequisite of T1 in Sprint A. The corroboration score tie-break map (`map[string]float64`) passed as a 4th parameter to `SelectEligibleSkeptics` is nil-safe; a nil map degrades to alphabetical ordering within the matched partition. Only one production caller exists (`internal/verify/pipeline.go:162`), so the signature change is fully contained.
+- **Constraints:** Fallback to the general pool when no language-matched skeptic exists must be silent — no log output, no error, no behavioral difference from today's unscoped run. The `Language` field must be backward-compatible: existing `registry.yaml` files that omit the field continue to load and function without modification. The `n`-cap in `select.go:84-86` must not be altered; routing works by reordering the slice the cap acts on, not by changing the cap itself.
 
 ## Story Details
 
@@ -20,38 +20,40 @@
 |-------|-------|
 | **Priority** | High |
 | **Effort Estimate** | M |
-| **Dependencies** | None — T8 is the first task in Sprint A; T1 depends on T8 |
+| **Dependencies** | `AgentConfig.Language []string` field must be merged and green before `SelectEligibleSkeptics` routing is implemented (intra-sprint ordering within Sprint A) |
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** `SelectEligibleSkeptics` returns language-matched skeptics first when the finding's file extension matches at least one skeptic's `Language` entries; when no match exists the output is identical to current alphabetical behavior.
-- **Measurable:** Three new test cases in `internal/verify/select_test.go` pass: (1) language-match prioritization, (2) no-match fallback (output unchanged), (3) tie-break by corroboration score within the matched partition. All existing tests in `./...` continue to pass.
-- **Achievable:** The change is a contained two-partition reorder after `sort.Strings(names)` at `select.go:81`, a nil-safe fourth parameter on one function, and one updated production caller — estimated at under 80 lines of production code and 60 lines of test code.
-- **Relevant:** Language-aware routing is the prerequisite for the `idiomatic` persona (T1) to deliver meaningful skeptic selection for Go files, directly enabling the vertical-market positioning of the persona ecosystem.
-- **Time-bound:** Implemented, passing `go test ./...`, and verified-green before any T1 work begins, within Sprint A.
+- **Specific:** When a finding's file extension matches one or more installed skeptics' `Language` field, those skeptics appear before unmatched skeptics in the selection slice passed to the `n`-cap, causing the cap to preferentially select them.
+- **Measurable:** Unit tests in `internal/verify/select_test.go` cover three scenarios — language match (matched skeptic selected), no-match fallback (general pool used, no error), and multiple-match tie-break (corroboration score desc, then alphabetical) — and all pass under `go test ./internal/verify/...`.
+- **Achievable:** The change is a contained two-partition reorder on a single already-sorted `[]string` in `select.go`; no new packages, no external dependencies, and one production caller to update.
+- **Relevant:** Language-matched skeptic routing directly improves verification quality for Go (and future language-scoped) personas, which is a primary value driver for vertical market adoption in this plan.
+- **Time-bound:** Completed and verified green within Sprint A, before T1 bonus personas land on top of the new `Language` field.
 
 ## Acceptance Criteria Overview
 
-1. `AgentConfig` gains a backward-compatible `Language []string` field with `yaml:"language,omitempty"` tag; `applyDefaults` normalizes entries (trim space, strip one leading dot, lowercase); `validateAgent` rejects empty entries and control characters.
-2. `SelectEligibleSkeptics` accepts a nil-safe `scores map[string]float64` fourth parameter and applies the two-partition reorder: matched skeptics (`Config.Language` overlaps `normalizeExt(filepath.Ext(finding.File))`) sorted by score descending then name ascending; unmatched sorted alphabetically; `append(matched, unmatched...)` fed to the existing n-cap.
-3. The sole production caller at `internal/verify/pipeline.go:162` is updated to the four-parameter signature; all tests pass with `go test ./...`; existing registry YAML files without `language:` load without error.
+1. `AgentConfig` has a `Language []string \`yaml:"language,omitempty"\`` field; `validateAgent` rejects entries containing empty strings or control characters; `applyDefaults` canonicalizes entries by trimming whitespace, stripping a single leading dot, and lowercasing — matching the existing `MinSeverity`/`Role` canonicalization pattern.
+2. `SelectEligibleSkeptics` accepts a 4th `scores map[string]float64` parameter; after `sort.Strings(names)`, it partitions names into language-matched and unmatched using `normalizeExt(filepath.Ext(finding.File))`, rebuilds names as `append(matched, unmatched...)`, and applies the existing `n`-cap — tie-breaking within the matched partition by score descending then alphabetical; a nil or absent score entry falls back to alphabetical only.
+3. The single production caller at `internal/verify/pipeline.go:162` is updated to pass the corroboration score map (or nil when unavailable); `go build ./...` is clean after the update.
+4. Fallback is silent: when no skeptic has a matching `Language` entry (or all skeptics have `Language: []`), `SelectEligibleSkeptics` behaves identically to its pre-routing behavior with no log output and no error.
+5. Existing `registry.yaml` files that omit the `language` key load without error and produce identical skeptic selection behavior to the pre-routing baseline.
 
 _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/9.0_persona_ecosystem/`_
 
 ## Technical Considerations
 
-- **Implementation Notes:** Insert the two-partition reorder immediately after `sort.Strings(names)` at `select.go:81`. The `normalizeExt` helper (`strings.ToLower(strings.TrimPrefix(ext, "."))`) is a package-private function in `internal/verify`. The scores map key is the reviewer name as stored in the registry. An absent key evaluates to `0.0` (Go zero value for `float64`) and falls through to alphabetical ordering. The matched partition is stable: sorted by `-scores[name]` (descending float, negated for `sort.Slice`), then by name ascending for equal scores.
-- **Integration Points:** `internal/registry/config.go:AgentConfig` (field addition, `applyDefaults`, `validateAgent`); `internal/verify/select.go` (function signature + partition logic + `normalizeExt`); `internal/verify/pipeline.go:162` (updated call site, passes nil until T6 wires the scorecard map). Test fixtures reuse `testSkeptic` from `internal/verify/invoke_test.go:22`.
-- **Data Requirements:** `AgentConfig.Language []string` with `yaml:"language,omitempty"` — follows the exact pattern of `Scope []string` at `internal/registry/config.go:267`. The `normalizeExt` function is the only new data transformation; no schema migration is required for existing YAML files.
+- **Implementation Notes:** The two-partition reorder operates on the `names []string` slice after `sort.Strings(names)` at approximately `select.go:68`. A `normalizeExt` helper strips the leading dot and lowercases the result of `filepath.Ext(finding.File)` — the same normalization applied to each entry in `skeptic.Language` at load time via `applyDefaults`. The matched partition is built in a single pass over `names`; a second pass collects unmatched; `names = append(matched, unmatched...)` reconstructs the slice. The existing `n`-cap slice expression at lines 84–86 remains untouched.
+- **Integration Points:** `internal/verify/select.go` (core routing logic), `internal/config/agent.go` (new `Language` field, `validateAgent`, `applyDefaults`), `internal/verify/pipeline.go:162` (sole production caller — signature update only), `personas/testdata/` (fixtures for `idiomatic`/`sentinel`/`tracer` that will exercise the `language` field added here).
+- **Data Requirements:** `AgentConfig.Language` is `[]string` with YAML tag `language,omitempty`; nil and empty slice are semantically equivalent (no language constraint). The caller-supplied `scores map[string]float64` maps persona name to corroboration rate (0.0–1.0); nil map is safe and degrades to alphabetical tie-breaking within the matched partition.
 
 ## Potential Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Sorting instability between matched and unmatched partitions breaks determinism in tests | Medium | Sort each partition explicitly before concatenating; cover with a determinism test that calls `SelectEligibleSkeptics` twice with the same input and asserts identical output |
-| `applyDefaults` normalization strips a leading dot from a legitimate directory-separator character in a language tag | Low | Normalization strips only a single leading dot using `strings.TrimPrefix`; a language value of `".go"` becomes `"go"`, which is the intended canonical form; values with embedded dots (e.g., `".tar.gz"`) are not valid language identifiers and are caught by `validateAgent` |
-| T1 (`idiomatic` persona) commits before T8 is merged, causing a CI failure window | Medium | Sprint A ordering strictly requires T8 to reach a green `go test ./...` baseline before any T1 persona `.md` file or fixture is added; enforced in the sprint plan task order |
-| The fourth `scores` parameter shape diverges from T6's `scorecard.Aggregate()` output, requiring caller churn | Low | Shape is pre-decided (2026-06-24): `map[string]float64` keyed by reviewer name, matching `LeaderboardRow.CorroborationRate`; T6 passes the map directly with no conversion |
+| `SelectEligibleSkeptics` signature change breaks callers outside `pipeline.go` that were added after the plan was written | Medium | Run `grep -r "SelectEligibleSkeptics" ./internal` before implementing to confirm the single-caller assumption; update any additional callers in the same commit |
+| `normalizeExt` normalization mismatch between load-time (`applyDefaults`) and match-time (`SelectEligibleSkeptics`) produces false no-matches | High | Extract `normalizeExt` into a shared internal helper used by both paths; covered by a dedicated unit test with dot-prefixed and dotless inputs |
+| Partition reorder introduces an allocation-per-call regression in hot paths | Low | Pre-allocate `matched` and `unmatched` slices with `make([]string, 0, len(names))` to avoid growth copies; benchmark with `go test -bench` if the verify pipeline shows measurable regression |
+| Backward-compatibility break: existing registry files with no `language` key silently select the wrong skeptic set | Medium | Add a regression test loading a fixture registry without `language` fields and asserting that `SelectEligibleSkeptics` output matches the pre-routing alphabetical baseline |
 
 ---
 

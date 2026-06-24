@@ -1,18 +1,18 @@
-# User Story 5: Per-Persona Corroboration Feedback
+# User Story 5: Corroboration Feedback via Persona Scores
 
 **Plan:** [9.0: Persona Ecosystem](../plan.md)
 
 ## User Story
 
-**As a** platform lead managing team code-review configuration
-**I want** to run `atcr personas list --scores` and see each persona's corroboration rate alongside its name and version
-**So that** I can make data-driven decisions about which personas are delivering ROI on my team's actual codebase and retire or replace underperforming ones
+**As a** platform lead managing a team's ATCR review configuration
+**I want** to run `atcr personas list --scores` and see each installed persona's corroboration rate on my team's actual codebase
+**So that** I can make data-driven decisions about which domain personas are earning their keep and which to retire or replace
 
 ## Story Context
 
-- **Background:** Sprint 8.0 introduced per-run scorecard tracking in `internal/scorecard/`. Every reconciled finding records which reviewers credited it and whether a skeptic confirmed it, producing monthly JSONL records under `~/.config/atcr/scorecard/`. `scorecard.Aggregate()` (`internal/scorecard/aggregate.go:122`) groups those records by `(reviewer, model)` and surfaces a `CorroborationRate` per `LeaderboardRow`. The `atcr leaderboard` command already renders this data in a ranked table. T6 re-uses the same aggregation pipeline to annotate `atcr personas list` output with per-persona corroboration rates, making persona quality visible without requiring teams to cross-reference the leaderboard separately.
-- **Assumptions:** The `atcr personas list` command (delivered by T2, Story 2) exists and can list installed personas from `~/.config/atcr/personas/`. Scorecard data may be absent for a given persona (new install, no runs yet), in which case the score column renders as `n/a`. The scorecard directory is always resolved via `scorecard.DefaultDir()` (`internal/scorecard/paths.go:23`).
-- **Constraints:** No new external dependencies — `scorecard.ReadAll` and `scorecard.Aggregate` are the only data sources. The `--scores` flag is additive; omitting it preserves the existing `list` output format unchanged. The implementation lives in `internal/personas/list.go` and follows the `cmd/atcr/leaderboard.go` pattern exactly (same read → filter → aggregate pipeline). The `map[string]float64` built by T6 (reviewer name → corroboration rate) is the same shape passed to `SelectEligibleSkeptics` as its fourth parameter (T8), so the two tasks share one map construction site.
+- **Background:** Teams install domain personas (bonus built-ins like `sentinel`, `tracer`, `idiomatic`, or community personas) hoping they will surface more relevant issues than the generalist reviewers. Today there is no feedback loop — a persona either stays installed indefinitely or gets removed by gut feel. Epic 3.3 introduced a scorecard that accumulates corroboration data per reviewer across runs; this story wires that existing data into a visible `--scores` flag on `atcr personas list`, closing the ROI loop without adding new data collection.
+- **Assumptions:** The scorecard JSONL file (`~/.config/atcr/scorecard.jsonl` or equivalent) is already being written by the corroboration pipeline. `scorecard.Aggregate()` returns a `[]LeaderboardRow` where each row has a `ReviewerName string` and `CorroborationRate float64`. The `internal/personas` package (T2) exposes a `List()` function that returns installed persona metadata. At least one review run with corroboration enabled has occurred before `--scores` is meaningful; zero-data personas show `n/a`.
+- **Constraints:** No new data collection — only existing `scorecard.Aggregate()` output is used. The `--scores` flag is additive to the existing `atcr personas list` output; baseline behavior without the flag must not change. The corroboration rate map shape (`map[string]float64`, keyed by reviewer name) is already decided by T8's `SelectEligibleSkeptics` 4th parameter — this story reuses that same map to avoid caller churn.
 
 ## Story Details
 
@@ -20,38 +20,41 @@
 |-------|-------|
 | **Priority** | High |
 | **Effort Estimate** | M |
-| **Dependencies** | Story 2 (T2 — `atcr personas list` base command); Story 3 (T8 — `SelectEligibleSkeptics` fourth-parameter shape agreed); `internal/scorecard` package (Sprint 8.0, already shipped) |
+| **Dependencies** | T2 (`atcr personas` CLI + `internal/personas` package), T6 scorecard wiring, Epic 3.3 scorecard (`scorecard.Aggregate()` + `LeaderboardRow.CorroborationRate`) |
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** `atcr personas list --scores` prints a corroboration-rate column (as a percentage, e.g. `72%`, or `n/a` when no data) for every persona returned by `list`, sourced exclusively from `scorecard.Aggregate()` output keyed by reviewer name.
-- **Measurable:** Unit tests in `internal/personas/list_test.go` cover: (a) `--scores` renders the rate column with correct values for personas that have scorecard data, (b) personas with no scorecard data render `n/a`, (c) omitting `--scores` produces output identical to the pre-flag baseline (no regression). All three cases pass `go test ./internal/personas/...`.
-- **Achievable:** The data pipeline (`scorecard.ReadAll` → `scorecard.Aggregate` → `map[string]float64`) is already proven in `cmd/atcr/leaderboard.go`; T6 adds only a flag and a table column, not new aggregation logic.
-- **Relevant:** Persona ROI is currently invisible — teams must manually correlate `atcr leaderboard` output against installed persona names. Surfacing the rate in `personas list` closes that gap and provides the primary adoption signal for vertical-market persona bundles (T5).
-- **Time-bound:** Delivered within Sprint B (9.0) before the sprint's cumulative adversarial review.
+- **Specific:** `atcr personas list --scores` outputs a table with one row per installed persona showing name, source, and corroboration rate (as a percentage to one decimal place, or `n/a` when no runs exist for that reviewer).
+- **Measurable:** Running `atcr personas list --scores` against a scorecard JSONL containing at least one corroborated finding for `sentinel` produces a row with a non-zero rate for `sentinel`; personas absent from the scorecard show `n/a`. A unit test covering both cases passes in CI.
+- **Achievable:** Implementation requires joining the `List()` output from `internal/personas` with the `map[string]float64` built by `scorecard.Aggregate()` — no new data structures or external dependencies.
+- **Relevant:** Visible corroboration rates give platform leads a concrete, evidence-based metric to justify persona retention or removal, reducing configuration noise on teams that have accumulated unused personas.
+- **Time-bound:** Delivered within Sprint B alongside T2, T5, and T7-in-repo; the score display is the last consumer of the corroboration map already established by T8, so it completes the data pipeline in the same sprint.
 
 ## Acceptance Criteria Overview
 
-1. `atcr personas list --scores` displays a corroboration-rate column; personas with scorecard data show a percentage and personas without show `n/a`.
-2. Omitting `--scores` produces unchanged output — no regression to the base `list` format.
-3. The `map[string]float64` built from `scorecard.Aggregate()` output is the same structure passed to `SelectEligibleSkeptics` (nil-safe; shared with T8).
+1. `atcr personas list` without `--scores` produces the same output as before this change — no regression to baseline behavior.
+2. `atcr personas list --scores` adds a `CORROBORATION` column to the list table; each row shows the reviewer's rate as `XX.X%` when scorecard data exists, or `n/a` when the reviewer has no recorded runs.
+3. The corroboration rate is sourced exclusively from `scorecard.Aggregate()` output — no new JSONL parsing code is introduced; the existing aggregation path is reused.
+4. The scores table is sorted by corroboration rate descending (highest-value personas first), with `n/a` rows at the bottom sorted alphabetically by name.
+5. A unit test in `internal/personas` covers the join logic: a persona present in the scorecard map shows the correct formatted rate; a persona absent from the map shows `n/a`.
+6. The `--scores` flag is documented in `atcr personas list --help` output.
 
 _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/9.0_persona_ecosystem/`_
 
 ## Technical Considerations
 
-- **Implementation Notes:** Add a `--scores` boolean flag to `newPersonasListCmd()` in `cmd/atcr/personas.go`. When set, call `scorecard.DefaultDir()`, then `scorecard.ReadAll(dir, scorecard.ReadOpts{Writer: cmd.ErrOrStderr()})`, then `scorecard.Aggregate(records)` (no filter — all-time rates give the most signal), then build `map[string]float64{row.Reviewer: row.CorroborationRate}`. Pass the map into `internal/personas/list.go`'s render function to annotate output. Format the rate via `formatPercent` (already in `cmd/atcr/leaderboard.go`) or an equivalent helper; `n/a` when the reviewer key is absent from the map.
-- **Integration Points:** `internal/scorecard` (`aggregate.go`, `paths.go`, `store.go`) — read-only consumers; `internal/personas/list.go` — new `scores map[string]float64` parameter on the render function; `cmd/atcr/personas.go` — flag registration and map construction; `SelectEligibleSkeptics` fourth parameter (T8, `internal/verify/select.go`) — same `map[string]float64` shape, no new import needed in the verify package.
-- **Data Requirements:** Monthly JSONL scorecard records at `~/.config/atcr/scorecard/YYYY-MM.jsonl`. Records must have `RecordType == RecordTypeReviewer` to be included by `Aggregate`. An empty or missing scorecard directory is a graceful no-data state (all personas render `n/a`); it is not an error.
+- **Implementation Notes:** Add a `--scores` boolean flag to the `list` subcommand in `internal/personas`. When set, call `scorecard.Aggregate()` to build the `map[string]float64`, then join against the `[]PersonaMeta` slice returned by `List()`. Format rates with `fmt.Sprintf("%.1f%%", rate*100)`; missing keys render as `n/a`. Sort the joined slice by rate descending, placing `n/a` entries after numeric entries. The `tabwriter` package (stdlib) handles column alignment.
+- **Integration Points:** `internal/personas` (List, list subcommand) → `internal/scorecard` (Aggregate, LeaderboardRow) → `cmd/atcr` (personas list cobra binding). The corroboration map shape (`map[string]float64`) is shared with `SelectEligibleSkeptics`' 4th parameter (T8) — same key convention (reviewer name, lowercase) must be enforced on both sides.
+- **Data Requirements:** `scorecard.Aggregate()` must return a type with a `ReviewerName string` and `CorroborationRate float64` per row. No schema changes needed — this is an existing Epic 3.3 output. The join key is `PersonaMeta.Name == LeaderboardRow.ReviewerName` (case-insensitive comparison to tolerate minor casing drift).
 
 ## Potential Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| `scorecard.Aggregate` groups by `(reviewer, model)` — a persona used with two models produces two rows, making the key lookup by reviewer name ambiguous when rates differ | Medium | Average the rates across models for the same reviewer name when building the display map, or show the highest rate; document the choice in a code comment. The T8 tie-break map can use the same averaged value. |
-| Scorecard directory unreadable (permissions error) | Low | Mirror `leaderboard.go` error handling: return a descriptive `fmt.Errorf` wrapping the OS error; do not fall back silently to `n/a` for all personas (that would hide the permission problem). |
-| `--scores` flag name collides with a future sub-subcommand flag on `list` | Low | Register the flag only on the `list` subcommand (not on the parent `personas` command); scoping prevents collision. |
-| Render output width grows with a new column and breaks existing snapshot tests | Low | Snapshot tests (if any) are updated in the same commit as the flag addition; the TDD RED step identifies breakage before GREEN. |
+| Scorecard JSONL path differs across platforms or install modes, causing `Aggregate()` to return empty results silently | Medium | `--scores` shows `n/a` for all personas with a footer note "No scorecard data found at `<path>`" when the file is absent, so the user gets an actionable message rather than a misleading all-zero table. |
+| Reviewer name casing mismatch between scorecard and persona metadata causes false `n/a` for personas that do have data | Medium | Join uses `strings.ToLower` on both sides; unit test covers a mixed-case fixture. |
+| `scorecard.Aggregate()` is slow on large JSONL files, blocking the CLI | Low | Aggregate is an in-memory scan already used by the existing leaderboard display; no additional I/O is introduced. If it becomes a bottleneck, a cached summary file is the upgrade path, but that is out of scope here. |
+| Adding `--scores` flag breaks the existing `list` subcommand's cobra arg parsing | Low | Flag is additive (boolean, default false); no positional args are changed. Test `TestPersonasListCmd` covers both with and without the flag. |
 
 ---
 

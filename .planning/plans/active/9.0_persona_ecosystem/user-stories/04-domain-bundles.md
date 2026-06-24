@@ -1,18 +1,18 @@
-# User Story 4: Domain Bundles
+# User Story 4: Domain Bundle Installation
 
 **Plan:** [9.0: Persona Ecosystem](../plan.md)
 
 ## User Story
 
-**As a** Django team lead
-**I want** to install a named domain bundle (`atcr personas install bundle/django`) and receive all relevant domain personas in a single command
-**So that** my team gets a curated, cohesive review panel without having to discover, evaluate, and install each persona individually
+**As a** Django team lead configuring ATCR for my team's review workflow
+**I want** to install all framework-relevant personas in a single command (`atcr personas install bundle/django`)
+**So that** my team gets comprehensive ORM, typing, and security coverage immediately without researching and installing each persona individually
 
 ## Story Context
 
-- **Background:** Framework-specific teams need multiple complementary personas to get meaningful review coverage — a Django project benefits from ORM query analysis, Python type checking, OWASP security scanning, and secrets detection simultaneously. Installing each persona individually requires knowing they exist, finding the right name, and running multiple commands. Bundle manifests solve the discovery and installation friction by grouping curated persona sets under a single named handle. Two initial bundles ship: `bundle/django` (4 personas) and `bundle/go-production` (Go-specific set). Manifests are YAML files parsed in strict mode (`KnownFields(true)`) to catch typos at load time rather than producing silent partial installs.
-- **Assumptions:** The `atcr personas install` command from Story 2 (Theme 2 — Personas CLI) is implemented and functional before this story's work begins. The `internal/personas` package exists. Individual personas referenced in a bundle manifest are fetchable from the configured registry URL. The `gopkg.in/yaml.v3` dependency is already present in the module.
-- **Constraints:** Bundle manifests must use `gopkg.in/yaml.v3` with `KnownFields(true)` strict mode — no unknown keys are permitted. The `bundle/` prefix in the install argument is the routing discriminator; the resolver lives in `internal/personas/bundles.go`. No external dependency additions are allowed. The manifest format must remain hand-editable and minimal. Backward compatibility with existing `registry.yaml` files must not be broken.
+- **Background:** Teams adopting ATCR for a specific framework need multiple complementary personas to get meaningful coverage. A Django team needs `django-orm` (query pattern checks), `python-types` (type annotation enforcement), `security/owasp` (web security), and `security/secrets` (credential leakage). Installing these one-by-one requires knowing which personas exist, which are relevant, and running four separate commands — creating friction that blocks adoption. Domain bundles package these complementary personas under a single stack-focused name, letting teams reason at the level they already think in: "I'm running Django" rather than "I need personas X, Y, Z, and W."
+- **Assumptions:** The `atcr personas` CLI (T2) is in place before bundle resolution is layered on top. YAML v3 and `embed.FS` are already established patterns in the codebase (used for the bonus personas in T1). Bundle manifests are versioned YAML files checked into the repository under `internal/personas/bundles/`. The resolver handles partial installs (some personas in a bundle already installed) gracefully by skipping already-present entries.
+- **Constraints:** Only two initial bundles ship: `bundle/django` and `bundle/go-production`. The bundle resolver lives exclusively in `internal/personas/bundles.go` — no bundle logic bleeds into the CLI layer or `AgentConfig`. Bundle manifest format is intentionally minimal (name, description, personas list) to keep authoring friction low. The `install bundle/` prefix is the only bundle-aware path; `install <persona>` for individual personas is unchanged.
 
 ## Story Details
 
@@ -20,40 +20,40 @@
 |-------|-------|
 | **Priority** | High |
 | **Effort Estimate** | M |
-| **Dependencies** | Story 2 (atcr personas CLI — install subcommand), Story 3 (Language-Aware Skeptic Routing — AgentConfig.Language field) |
+| **Dependencies** | User Story 2 (atcr personas CLI — T2), User Story 1 (bonus personas — T1 provides some bundle members) |
 
 ## Success Criteria (SMART Format)
 
-- **Specific:** `atcr personas install bundle/django` installs exactly 4 personas (`framework/django-orm`, `language/python-types`, `security/owasp`, `security/secrets`) in a single command; `atcr personas install bundle/go-production` installs the go-production set; an unknown bundle name returns a clear error within one command invocation.
-- **Measurable:** `internal/personas/bundles_test.go` passes with 100% coverage of round-trip YAML parsing, `bundle/` prefix routing, unknown-key rejection (`KnownFields(true)`), and unknown-bundle-name error path; `go test ./internal/personas/...` exits 0.
-- **Achievable:** Implementation scope is contained to `internal/personas/bundles.go`, `internal/personas/bundles_test.go`, and two manifest files (`bundles/django.yaml`, `bundles/go-production.yaml`); the install dispatch in the existing `install` subcommand requires only a `bundle/` prefix check before delegating to the bundle resolver.
-- **Relevant:** Reduces multi-step persona setup for framework teams to a single command, directly lowering the adoption barrier for vertical markets and making ATCR immediately useful for domain-specific workloads without manual curation.
-- **Time-bound:** Delivered within Sprint B (after Sprint A's T8 and T1 land and are verified green); implementation completes before T6 (corroboration scores) begins.
+- **Specific:** `atcr personas install bundle/django` installs exactly `django-orm`, `python-types`, `security/owasp`, and `security/secrets` into `~/.config/atcr/personas/` and exits 0; `atcr personas install bundle/go-production` installs its declared persona set and exits 0.
+- **Measurable:** A unit test in `internal/personas/bundles_test.go` verifies the bundle resolver expands each named bundle to its exact persona list; an integration test confirms all four personas are present on disk after `install bundle/django` on a clean config directory.
+- **Achievable:** Implementation requires one new Go file (`internal/personas/bundles.go`), two YAML manifest files, and wiring the `install` subcommand to detect the `bundle/` prefix — all within existing patterns already established by T2.
+- **Relevant:** Reduces first-time setup from four commands (and knowledge of which four to run) to one command, directly lowering the adoption barrier for framework-focused teams and making ATCR immediately deployable as a stack-level tool.
+- **Time-bound:** Delivered within Sprint B alongside T2 completion; both bundles are functional before Sprint B's cumulative adversarial review.
 
 ## Acceptance Criteria Overview
 
-1. `atcr personas install bundle/django` installs all four bundle members (`framework/django-orm`, `language/python-types`, `security/owasp`, `security/secrets`) and reports each installed persona by name.
-2. Bundle manifest YAML is decoded in strict mode (`KnownFields(true)`); a manifest with an unrecognized key (e.g., `personnas:`) fails with a descriptive parse error rather than silently ignoring the field.
-3. Requesting an unknown bundle name (e.g., `atcr personas install bundle/nonexistent`) returns a non-zero exit code and a clear human-readable error message identifying the bundle as not found.
-4. `bundles/django.yaml` and `bundles/go-production.yaml` exist in the repository with valid manifests; both parse without error under `KnownFields(true)`.
-5. All existing tests continue to pass; `internal/personas/bundles_test.go` covers round-trip parse, `bundle/` prefix routing, strict-mode rejection, and unknown-bundle error.
+1. Running `atcr personas install bundle/django` on a clean config directory installs all four declared personas (`django-orm`, `python-types`, `security/owasp`, `security/secrets`) with a success message listing each installed persona by name.
+2. Running `atcr personas install bundle/django` when some bundle members are already installed skips already-present entries, installs the remainder, and reports the per-persona outcome (installed vs. already present) without error.
+3. Running `atcr personas install bundle/unknown` exits non-zero with a clear error message (`unknown bundle: "unknown"`) and installs nothing.
+4. The bundle manifest YAML format (`name`, `description`, `personas` list) is validated at parse time; a manifest missing required fields causes `bundles.go` to return a descriptive parse error rather than a nil-pointer panic.
+5. `internal/personas/bundles_test.go` covers: successful expansion of both bundles, unknown bundle error, partial-install skip behavior, and manifest parse validation — all passing under `go test ./internal/personas/...`.
 
 _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/atcr/.planning/plans/active/9.0_persona_ecosystem/`_
 
 ## Technical Considerations
 
-- **Implementation Notes:** The `bundle/` prefix in the install argument is the routing discriminator. The install command's dispatch checks for this prefix first and calls `bundles.Resolve(name)` in `internal/personas/bundles.go`. `Resolve` reads the manifest from the embedded or fetched `bundles/<name>.yaml`, decodes it with `yaml.NewDecoder` + `KnownFields(true)`, and returns the list of persona references. The install command then calls the single-persona install path for each member in order. The `BundleManifest` struct has four fields: `Name string`, `Description string`, `Personas []string`, all tagged with `yaml:"...,omitempty"` where optional. Strict-mode rejection of unknown keys (`personnas:`, `serial_agnets:`) surfaces typos at load time.
-- **Integration Points:** `internal/personas/install.go` (existing install dispatch from Story 2) — add `strings.HasPrefix(name, "bundle/")` branch before the single-persona fetch path. `internal/personas/bundles.go` — new file, owns `BundleManifest` struct and `Resolve(name string) ([]string, error)`. `bundles/django.yaml` and `bundles/go-production.yaml` — new manifest files embedded or fetched from the registry. `internal/registry/config.go` — no changes needed for T5 itself; `AgentConfig.Language` is a T8 dependency already resolved by Sprint A.
-- **Data Requirements:** `BundleManifest` struct: `Name string \`yaml:"name"\``, `Description string \`yaml:"description,omitempty"\``, `Personas []string \`yaml:"personas"\``. `bundles/django.yaml` manifest declares 4 personas; `bundles/go-production.yaml` declares the go-production set. All persona references in manifests use slash-namespaced identifiers matching the community registry format.
+- **Implementation Notes:** The `install` subcommand in `cmd/atcr/personas_install.go` detects the `bundle/` prefix with a simple `strings.HasPrefix(arg, "bundle/")` check, then delegates to `bundles.Resolve(name)` which returns `[]string` of individual persona names. The existing single-persona install loop then runs unchanged for each returned name. Bundle manifests are embedded via `go:embed bundles/*.yaml` in `internal/personas/bundles.go` and parsed with `yaml.v3` at call time (no global init). The resolver returns `([]string, error)` — unknown bundle yields a typed `ErrUnknownBundle` so callers can produce user-facing messages without string matching.
+- **Integration Points:** Depends on `internal/personas` package (T2) for the single-persona install path that bundle resolution delegates to. The `atcr personas list` command should indicate when an installed persona came from a bundle (optional enhancement, not required for this story). No changes to `AgentConfig`, `select.go`, or any verify-pipeline code — bundle resolution is purely an install-time concern.
+- **Data Requirements:** Two YAML bundle manifest files at `internal/personas/bundles/django.yaml` and `internal/personas/bundles/go-production.yaml`. Each manifest contains: `name` (string, matches directory key), `description` (string), `personas` (list of strings matching community-repo persona identifiers). The `go:embed` directive in `bundles.go` picks up both files automatically; adding a third bundle later requires only a new YAML file with no Go code changes.
 
 ## Potential Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Partial bundle install on mid-list fetch failure leaves the user with an incomplete panel | Medium | Collect all errors before writing any state; report which personas failed with actionable messages; do not treat a partial install as success |
-| Strict-mode YAML rejection (`KnownFields(true)`) breaks existing bundle manifests if the format evolves | Low | Treat `BundleManifest` as a stable, minimal schema; all optional fields use `omitempty`; schema changes require a version field or migration |
-| `bundle/` prefix routing collision with a legitimate persona namespace named `bundle` | Low | Reserve `bundle/` as a routing prefix in the CLI dispatch; document that community persona namespaces must not begin with `bundle/` |
-| Story 2 install subcommand not complete before T5 begins | Medium | T5 has an explicit dependency on Story 2; sprint ordering enforces this; T5 does not start until Story 2's install path is verified green |
+| Bundle persona names drift from actual published persona identifiers in the community repo | Medium | Pin persona identifiers in manifests to the exact names used by `internal/personas` fetch logic; add a CI check that validates all bundle members resolve against the known persona registry snapshot |
+| Partial bundle install leaves config in an inconsistent state if a network error occurs mid-install | Medium | Install personas sequentially and report per-persona outcomes; a subsequent `install bundle/django` run skips already-installed entries and retries the failed ones — idempotency is the recovery path |
+| `bundle/` prefix detection is too broad and collides with a future community persona scoped under a `bundle` namespace | Low | Reserve the `bundle/` prefix in the persona namespace spec (documented in `docs/personas-authoring.md`); community personas must not use `bundle` as a scope name |
+| Manifest format ambiguity leads to inconsistent YAML across the two initial bundles | Low | Define the canonical struct in `bundles.go` first, generate both YAML files from that struct in tests, and validate both files parse cleanly in CI |
 
 ---
 
