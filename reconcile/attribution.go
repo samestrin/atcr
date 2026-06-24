@@ -19,6 +19,9 @@ const FixAttributionPrefix = "fix by "
 // vs "opus"), or unrelated prose containing "fix by <name>" mid-sentence, from
 // being falsely treated as already attributed.
 func HasFixAttribution(evidence, name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
 	attr := FixAttributionPrefix + name
 	for _, seg := range strings.Split(evidence, EvidenceSep) {
 		if strings.TrimSpace(seg) == attr {
@@ -32,6 +35,9 @@ func HasFixAttribution(evidence, name string) bool {
 // with EvidenceSep. It is idempotent: an Evidence already carrying the
 // attribution as a delimited token is returned unchanged.
 func AppendFixAttribution(evidence, name string) string {
+	if strings.TrimSpace(name) == "" {
+		return evidence
+	}
 	if HasFixAttribution(evidence, name) {
 		return evidence
 	}
