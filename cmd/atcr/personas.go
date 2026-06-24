@@ -363,60 +363,58 @@ func installedCommunityNames(dir string) ([]string, error) {
 	return names, nil
 }
 
-// renderPersonaList writes the Name/Version/Source/Language table.
-func renderPersonaList(w io.Writer, metas []personas.PersonaMeta) error {
+// writeTable renders a tab-separated table to w using a tabwriter. header is a
+// tab-delimited column heading; rows are tab-delimited data lines.
+func writeTable(w io.Writer, header string, rows []string) error {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tSOURCE\tLANGUAGE")
-	for _, m := range metas {
-		lang := "-"
-		if len(m.Language) > 0 {
-			lang = strings.Join(m.Language, ", ")
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", m.Name, m.Version, m.Source, lang)
+	_, _ = fmt.Fprintln(tw, header)
+	for _, row := range rows {
+		_, _ = fmt.Fprintln(tw, row)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+// formatLanguages returns a comma-joined language list, or "-" when empty.
+func formatLanguages(langs []string) string {
+	if len(langs) == 0 {
+		return "-"
+	}
+	return strings.Join(langs, ", ")
+}
+
+// renderPersonaList writes the Name/Version/Source/Language table.
+func renderPersonaList(w io.Writer, metas []personas.PersonaMeta) error {
+	rows := make([]string, len(metas))
+	for i, m := range metas {
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s", m.Name, m.Version, m.Source, formatLanguages(m.Language))
+	}
+	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE", rows)
 }
 
 // renderScoredList writes the Name/Version/Source/Language/Corroboration table,
 // rendering each persona's rate as "XX.X%" or "n/a".
 func renderScoredList(w io.Writer, scored []personas.ScoredPersona) error {
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION")
-	for _, s := range scored {
-		lang := "-"
-		if len(s.Language) > 0 {
-			lang = strings.Join(s.Language, ", ")
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", s.Name, s.Version, s.Source, lang, personas.FormatRate(s.Rate))
+	rows := make([]string, len(scored))
+	for i, s := range scored {
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s", s.Name, s.Version, s.Source, formatLanguages(s.Language), personas.FormatRate(s.Rate))
 	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	_, err := w.Write(buf.Bytes())
-	return err
+	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
 }
 
 // renderPersonaSearch writes the Name/Version/Description table of index hits.
 func renderPersonaSearch(w io.Writer, entries []personas.PersonaIndexEntry) error {
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tDESCRIPTION")
-	for _, e := range entries {
+	rows := make([]string, len(entries))
+	for i, e := range entries {
 		version := e.Version
 		if version == "" {
 			version = "-"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", e.Name, version, e.Description)
+		rows[i] = fmt.Sprintf("%s\t%s\t%s", e.Name, version, e.Description)
 	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	_, err := w.Write(buf.Bytes())
-	return err
+	return writeTable(w, "NAME\tVERSION\tDESCRIPTION", rows)
 }
