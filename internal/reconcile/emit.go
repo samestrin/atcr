@@ -188,8 +188,7 @@ func toAmbiguousWire(clusters []AmbiguousCluster) []ambiguousWire {
 	for i, c := range clusters {
 		fs := make([]stream.Finding, len(c.Findings))
 		for j, f := range c.Findings {
-			// Inline the library Finding -> stream.Finding field map so lib.go's
-			// fromLibFinding helper can be removed (TD-006).
+			// Inline the library Finding -> stream.Finding field map (TD-006 inlined).
 			fs[j] = stream.Finding{
 				Severity:   f.Severity,
 				File:       f.File,

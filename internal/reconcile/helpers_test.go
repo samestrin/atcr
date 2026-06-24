@@ -16,8 +16,7 @@ func mf(sev, file string, line int, problem, fix, category string, est int, evid
 // mfL builds the same finding as the library Finding type, for constructing
 // AmbiguousCluster.Findings (which the extracted library types as []reconcile.Finding).
 func mfL(sev, file string, line int, problem, fix, category string, est int, evidence, reviewer string) Finding {
-	// Inline the stream.Finding -> reconcile.Finding field map so lib.go's
-	// toLibFinding helper can be removed (TD-006).
+	// Inline the stream.Finding -> reconcile.Finding field map (TD-006 inlined).
 	src := mf(sev, file, line, problem, fix, category, est, evidence, reviewer)
 	return Finding{
 		Severity:   src.Severity,
