@@ -46,9 +46,11 @@ language: ["go"]                # canonical: dotless, lowercased; omit for a gen
 | `[" .GO "]` | `["go"]` |
 | `["go", "ts"]` | `["go", "ts"]` (multi-language) |
 
-The loader canonicalizes every entry (trim → strip a single leading dot → lowercase), so `go`, `.go`, and ` .GO ` all store and match identically. Prefer writing the canonical form (`["go"]`) directly.
+The loader canonicalizes every entry (trim whitespace → strip **all** leading dots → lowercase), so `go`, `.go`, `..go`, and ` .GO ` all store and match identically. Prefer writing the canonical form (`["go"]`) directly.
 
-**Validation:** an entry that is empty, whitespace-only, or just a dot (`"."`) is rejected — those would canonicalize to a blank token that matches every extensionless finding. Control characters are rejected. There is **no** allow-list of known languages: you may declare any extension your persona targets.
+**Validation:** an entry that is empty, whitespace-only, or just dots (`"."`, `".."`) is rejected — those would canonicalize to a blank token that matches every extensionless finding. Control characters are rejected. There is **no** allow-list of known languages: you may declare any extension your persona targets.
+
+**Single trailing extensions only:** `language` entries must be single trailing extensions such as `go` or `ts`. Compound forms like `tar.gz` or `d.ts` are stored verbatim, but the router canonicalizes a finding's extension to its last segment (e.g. `gz` or `ts`), so compound entries silently never match. Use the last segment (`gz`, `ts`) instead.
 
 **Nil semantics:** omit `language` entirely (or leave it empty) and the persona carries no constraint — it participates in every review regardless of the repository's detected language, with no routing preference. Use a `language` scope only when the persona is genuinely language-specific.
 
