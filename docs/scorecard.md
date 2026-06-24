@@ -314,8 +314,35 @@ change until then.
 
 ---
 
+## Reference Implementation
+
+Every scorecard record is derived from a reconcile run, and the deterministic
+reconciler that produces those runs is published as a standalone, inspectable Go
+module: **`github.com/samestrin/atcr/reconcile`**. This is the reference
+implementation backing every scorecard and leaderboard record — the clustering,
+text-similarity dedupe, confidence scoring, and disagreement-preserving merge that
+turn multiple reviewers' findings into one reconciled result. Anyone can `go get`
+the module, read its source, and run its tests to reproduce and verify the merge
+behavior independently of the full ATCR pipeline.
+
+The module is intentionally narrow: it is the deterministic reconciler only
+(clustering, dedupe, merge, confidence, ambiguity), not ATCR's path-validation,
+file I/O, or review-orchestration machinery — those stay ATCR-internal. The
+library is stdlib-only with no third-party dependencies, which is what makes it
+embeddable and independently auditable.
+
+During extraction the module lives at `./reconcile/` inside this repository and is
+consumed by ATCR through a root `go.mod` `replace` directive — the documented
+development-time bridge. `github.com/samestrin/atcr/reconcile` is the intended
+public import path; separate-repository publication follows the extraction.
+
+---
+
 ## Related
 
+- [`github.com/samestrin/atcr/reconcile`](../reconcile/README.md) — the standalone
+  deterministic reconciler module that is the reference implementation backing
+  every scorecard record (run and inspect it independently).
 - [`docs/verification.md`](verification.md) — the skeptic stage that produces the
   conditional `findings_verified` / `findings_refuted` / `survived_skeptic_rate`
   fields.

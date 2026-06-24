@@ -2,10 +2,8 @@ package debate
 
 import (
 	"encoding/json"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"strings"
-
-	"github.com/samestrin/atcr/internal/reconcile"
-	"github.com/samestrin/atcr/internal/stream"
 )
 
 // Judge ruling outcomes. uphold/overturn/split are the judge's verdicts; unresolved
@@ -44,9 +42,9 @@ type Ruling struct {
 func (r Ruling) Verdict() string {
 	switch r.Outcome {
 	case OutcomeUphold, OutcomeSplit:
-		return reconcile.VerdictConfirmed
+		return reclib.VerdictConfirmed
 	case OutcomeOverturn:
-		return reconcile.VerdictRefuted
+		return reclib.VerdictRefuted
 	default:
 		return ""
 	}
@@ -113,7 +111,7 @@ func ruleFromCandidate(outcome, settled, cluster, reasoning, raw string) Ruling 
 		return Ruling{Outcome: OutcomeUnresolved, Reasoning: "invalid_outcome: " + truncate(outcome) + " (raw: " + truncate(raw) + ")"}
 	}
 
-	sev := stream.NormalizeSeverity(settled)
+	sev := reclib.NormalizeSeverity(settled)
 	if !reviewSeverity(sev) {
 		sev = ""
 	}
@@ -127,7 +125,7 @@ func ruleFromCandidate(outcome, settled, cluster, reasoning, raw string) Ruling 
 // reviewSeverity reports whether s is a canonical review severity.
 func reviewSeverity(s string) bool {
 	switch s {
-	case reconcile.SevCritical, reconcile.SevHigh, reconcile.SevMedium, reconcile.SevLow:
+	case reclib.SevCritical, reclib.SevHigh, reclib.SevMedium, reclib.SevLow:
 		return true
 	default:
 		return false

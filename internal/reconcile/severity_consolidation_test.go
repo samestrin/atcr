@@ -1,33 +1,20 @@
 package reconcile
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/samestrin/atcr/internal/stream"
-)
+// The Merge / sortMerged severity-normalization tests moved into the reconcile
+// library with their code (Epic 8.0). The tests remaining here exercise the
+// ATCR-internal disagreement radar (grayZoneItem / soloItem) and gate (AtOrAbove),
+// which still live in internal/reconcile.
 
-// TestMerge_NormalizesMixedCaseSeverity proves the merge.go:104 boundary lookup
-// normalizes casing: a lower-cased "critical" from raw reviewer output still
-// outranks a canonical "LOW" instead of being silently dropped as unknown.
-func TestMerge_NormalizesMixedCaseSeverity(t *testing.T) {
-	group := []stream.Finding{
-		{Severity: "critical", File: "a.go", Line: 1, Reviewer: "r1"},
-		{Severity: "LOW", File: "a.go", Line: 1, Reviewer: "r2"},
-	}
-	got := Merge(group)
-	if rank := SeverityRank[stream.NormalizeSeverity(got.Severity)]; rank != 4 {
-		t.Fatalf("Merge severity = %q (rank %d), want a CRITICAL-rank (4) winner", got.Severity, rank)
-	}
-}
-
-// TestGrayZoneItem_NormalizesMixedCaseSeverity proves the disagree.go:338/360
-// boundary lookups normalize casing: a gray-zone cluster of mixed-case CRITICAL
-// findings scores by rank 4 (scoreFor with spread 0 returns the severity rank),
-// not collapsed to the unknown-severity floor of 1.
+// TestGrayZoneItem_NormalizesMixedCaseSeverity proves the disagree.go boundary
+// lookups normalize casing: a gray-zone cluster of mixed-case CRITICAL findings
+// scores by rank 4 (scoreFor with spread 0 returns the severity rank), not
+// collapsed to the unknown-severity floor of 1.
 func TestGrayZoneItem_NormalizesMixedCaseSeverity(t *testing.T) {
 	c := AmbiguousCluster{
 		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
-		Findings: []stream.Finding{
+		Findings: []Finding{
 			{Severity: "critical", File: "g.go", Line: 7, Reviewer: "r1"},
 			{Severity: "Critical", File: "g.go", Line: 7, Reviewer: "r2"},
 		},
@@ -62,7 +49,7 @@ func TestSoloItem_LowercaseSeverityScoresCorrectly(t *testing.T) {
 func TestGrayZoneItem_NormalizesSeverityField(t *testing.T) {
 	c := AmbiguousCluster{
 		ID: "amb-1", File: "g.go", Line: 7, Similarity: 0.55,
-		Findings: []stream.Finding{
+		Findings: []Finding{
 			{Severity: "critical", File: "g.go", Line: 7, Reviewer: "r1"},
 		},
 	}
@@ -72,27 +59,8 @@ func TestGrayZoneItem_NormalizesSeverityField(t *testing.T) {
 	}
 }
 
-// TestMerge_MixedCaseDuplicateIsNotADisagreement guards the adversarial fix: a
-// group whose only severities are casing variants of one level must merge to a
-// single canonical severity with no disagreement annotation. Before the seen-set
-// was keyed by the normalized form, "critical" + "CRITICAL" produced a spurious
-// "critical vs CRITICAL" disagreement.
-func TestMerge_MixedCaseDuplicateIsNotADisagreement(t *testing.T) {
-	group := []stream.Finding{
-		{Severity: "critical", File: "a.go", Line: 1, Reviewer: "r1"},
-		{Severity: "CRITICAL", File: "a.go", Line: 1, Reviewer: "r2"},
-	}
-	got := Merge(group)
-	if got.Disagreement != "" {
-		t.Fatalf("Disagreement = %q, want empty (mixed-case duplicate is one severity)", got.Disagreement)
-	}
-	if got.Severity != "CRITICAL" {
-		t.Fatalf("Severity = %q, want canonical CRITICAL", got.Severity)
-	}
-}
-
-// TestAtOrAbove_NormalizesMixedCaseSeverity guards the gate.go:45/49 lookups:
-// AtOrAbove must canonicalize a non-canonical severity or threshold itself, so a
+// TestAtOrAbove_NormalizesMixedCaseSeverity guards the gate.go lookups: AtOrAbove
+// must canonicalize a non-canonical severity or threshold itself, so a
 // lower-cased input does not silently miss SeverityRank and flip a gate decision.
 func TestAtOrAbove_NormalizesMixedCaseSeverity(t *testing.T) {
 	if !AtOrAbove("high", "HIGH") {
@@ -100,20 +68,5 @@ func TestAtOrAbove_NormalizesMixedCaseSeverity(t *testing.T) {
 	}
 	if !AtOrAbove("HIGH", "high") {
 		t.Fatalf("AtOrAbove(\"HIGH\", \"high\") = false, want true; a raw lookup misses the lowercase threshold key")
-	}
-}
-
-// TestSortMerged_NormalizesMixedCaseSeverity guards the reconcile.go:108 sort
-// lookup: sortMerged must rank by normalized severity so a lower-cased "high"
-// outranks a "low" instead of both collapsing to the unknown-key floor (rank 0)
-// and falling through to the file tiebreak.
-func TestSortMerged_NormalizesMixedCaseSeverity(t *testing.T) {
-	m := []Merged{
-		{Finding: stream.Finding{Severity: "low", File: "a.go", Line: 1}},
-		{Finding: stream.Finding{Severity: "high", File: "b.go", Line: 1}},
-	}
-	sortMerged(m)
-	if stream.NormalizeSeverity(m[0].Severity) != "HIGH" {
-		t.Fatalf("sortMerged first = %q, want a HIGH winner; raw lookup collapses both to rank 0 and sorts by file", m[0].Severity)
 	}
 }

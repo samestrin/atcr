@@ -3,26 +3,21 @@ package reconcile
 import (
 	"sort"
 	"time"
-
-	"github.com/samestrin/atcr/internal/stream"
 )
 
-// Options parameterizes a reconcile run. ReconciledAt stamps summary.json;
-// Partial is true when at least one expected source was missing/unreadable while
-// others succeeded (threaded from the caller, e.g. the fan-out manifest). Merges
-// is the set of ambiguous cluster ids the Skill adjudicated as duplicates (from
-// adjudication.json on a re-invocation); each is force-merged instead of left in
+// Options parameterizes a reconcile run. ReconciledAt stamps the summary; Partial
+// is true when at least one expected source was missing/unreadable while others
+// succeeded (threaded from the caller). Merges is the set of ambiguous cluster
+// ids a host adjudicated as duplicates; each is force-merged instead of left in
 // the gray zone. Nil means no adjudication (the conservative default).
 type Options struct {
 	ReconciledAt time.Time
 	Partial      bool
 	Merges       map[string]bool
-	// Root is the base directory file-existence validation resolves finding
-	// paths against (Epic 5.0). It is the reviewed repo root — "." for every
-	// production entry point, since atcr runs from inside the repo under review.
-	// Empty disables validation (no base dir configured): unit tests that build
-	// synthetic findings against paths not on disk leave it empty so they are
-	// never falsely flagged.
+	// Root is the base directory file-existence validation resolves finding paths
+	// against. It is carried for embedders that layer their own path validation on
+	// the result; the core reconcile pipeline does not read it. Empty disables that
+	// downstream concern.
 	Root string
 }
 
@@ -34,31 +29,33 @@ type Result struct {
 	Summary   Summary
 }
 
-// Summary is the run-stats record written to summary.json (AC 01-05 Scenario 6).
+// Summary is the run-stats record.
 type Summary struct {
 	SourcesScanned        []string       `json:"sources_scanned"`
 	PerSourceCounts       map[string]int `json:"per_source_counts"`
 	ClustersCollapsed     int            `json:"clusters_collapsed"`
 	SeverityDisagreements int            `json:"severity_disagreements"`
 	Partial               bool           `json:"partial"`
-	// SkippedSources lists findings.txt paths Discover dropped on a read error
-	// or bad header (TD-020): warn-and-continue degradation is recorded here
-	// rather than exit-coded, mirroring the partial flag's contract.
+	// SkippedSources lists source paths an embedder dropped on a read error or bad
+	// header: warn-and-continue degradation is recorded here rather than
+	// exit-coded, mirroring the Partial flag's contract. The core library leaves
+	// this empty (it reconciles in-memory findings, not files); an embedding I/O
+	// layer that discovers sources stamps it after Reconcile returns.
 	SkippedSources     []string `json:"skipped_sources"`
 	SkippedSourceCount int      `json:"skipped_source_count"`
-	// AmbiguousHash digests the emitted ambiguous.json bytes (TD-024); the
-	// Skill copies it verbatim into adjudication.json as baseline_hash.
+	// AmbiguousHash digests the emitted ambiguous sidecar bytes; a host copies it
+	// verbatim into an adjudication file as the baseline hash.
 	AmbiguousHash string `json:"ambiguous_hash"`
-	// OutOfScope counts findings annotated out-of-scope (AC 06-04): kept in
-	// the artifacts but excluded from the severity gate.
+	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
+	// excluded from a severity gate.
 	OutOfScope    int    `json:"out_of_scope"`
 	TotalFindings int    `json:"total_findings"`
 	ReconciledAt  string `json:"reconciled_at"`
 }
 
 // Reconcile runs the deterministic pipeline: cluster all findings by location,
-// dedupe each cluster, merge duplicate groups, assign confidence, and collect
-// the ambiguous sidecar and run summary. Output findings are sorted by severity
+// dedupe each cluster, merge duplicate groups, assign confidence, and collect the
+// ambiguous sidecar and run summary. Output findings are sorted by severity
 // (desc), then file, then line, so the same input always yields byte-identical
 // artifacts.
 func Reconcile(sources []Source, opts Options) Result {
@@ -83,7 +80,6 @@ func Reconcile(sources []Source, opts Options) Result {
 		}
 	}
 	sortMerged(merged)
-	skipped := skippedSourceFiles(sources)
 	outOfScope := 0
 	for _, m := range merged {
 		if m.Category == CategoryOutOfScope {
@@ -100,8 +96,8 @@ func Reconcile(sources []Source, opts Options) Result {
 			ClustersCollapsed:     clustersCollapsed,
 			SeverityDisagreements: disagreements,
 			Partial:               opts.Partial,
-			SkippedSources:        skipped,
-			SkippedSourceCount:    len(skipped),
+			SkippedSources:        []string{},
+			SkippedSourceCount:    0,
 			AmbiguousHash:         AmbiguousHash(ambiguous),
 			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
@@ -111,21 +107,33 @@ func Reconcile(sources []Source, opts Options) Result {
 }
 
 // sortMerged orders findings by severity (most severe first), then file, then
-// line — a total order for deterministic emission.
+// line, then Problem — a strict total order independent of input permutation.
 func sortMerged(m []Merged) {
 	sort.SliceStable(m, func(i, j int) bool {
-		ri, rj := SeverityRank[stream.NormalizeSeverity(m[i].Severity)], SeverityRank[stream.NormalizeSeverity(m[j].Severity)]
+		ri, rj := SeverityRank[NormalizeSeverity(m[i].Severity)], SeverityRank[NormalizeSeverity(m[j].Severity)]
 		if ri != rj {
 			return ri > rj
 		}
 		if m[i].File != m[j].File {
 			return m[i].File < m[j].File
 		}
-		return m[i].Line < m[j].Line
+		if m[i].Line != m[j].Line {
+			return m[i].Line < m[j].Line
+		}
+		return m[i].Problem < m[j].Problem
 	})
 }
 
-// sourceNames returns the discovered source names in sorted order.
+// AllFindings flattens the findings across sources in source order.
+func AllFindings(sources []Source) []Finding {
+	var out []Finding
+	for _, s := range sources {
+		out = append(out, s.Findings...)
+	}
+	return out
+}
+
+// sourceNames returns the source names in sorted order.
 func sourceNames(sources []Source) []string {
 	names := make([]string, 0, len(sources))
 	for _, s := range sources {
@@ -133,17 +141,6 @@ func sourceNames(sources []Source) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// skippedSourceFiles flattens the per-source skipped findings.txt paths into a
-// sorted list (always non-nil so summary.json serializes [] rather than null).
-func skippedSourceFiles(sources []Source) []string {
-	out := []string{}
-	for _, s := range sources {
-		out = append(out, s.SkippedFiles...)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // perSourceCounts maps each source name to its input finding count.

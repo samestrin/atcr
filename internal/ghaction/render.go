@@ -2,6 +2,7 @@ package ghaction
 
 import (
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"regexp"
 	"strings"
 
@@ -37,15 +38,15 @@ const (
 
 // FixAttribution extracts the executor name from a finding's Evidence field,
 // parsing the "fix by <name>" token written by the executor stage (Epic 7.0).
-// Evidence segments are joined with reconcile.EvidenceSep and the token prefix
-// is reconcile.FixAttributionPrefix — both defined in the reconcile package so
+// Evidence segments are joined with reclib.EvidenceSep and the token prefix
+// is reclib.FixAttributionPrefix — both defined in the reconcile package so
 // the producer (internal/verify) and this consumer share one source of truth.
 // Returns "" when no attribution token is present.
 func FixAttribution(evidence string) string {
-	segs := strings.Split(evidence, reconcile.EvidenceSep)
+	segs := strings.Split(evidence, reclib.EvidenceSep)
 	for i := len(segs) - 1; i >= 0; i-- {
 		seg := strings.TrimSpace(segs[i])
-		if rest, ok := strings.CutPrefix(seg, reconcile.FixAttributionPrefix); ok {
+		if rest, ok := strings.CutPrefix(seg, reclib.FixAttributionPrefix); ok {
 			if name := strings.TrimSpace(rest); name != "" {
 				return name
 			}
@@ -58,7 +59,7 @@ func FixAttribution(evidence string) string {
 // verification stage (Epic 3.0). A refuted finding is retained in the artifacts
 // for audit but must never block CI, mirroring the reconcile gate's semantics.
 func isRefuted(f reconcile.JSONFinding) bool {
-	return f.Verification != nil && strings.EqualFold(strings.TrimSpace(f.Verification.Verdict), reconcile.VerdictRefuted)
+	return f.Verification != nil && strings.EqualFold(strings.TrimSpace(f.Verification.Verdict), reclib.VerdictRefuted)
 }
 
 // Conclusion computes the GitHub check-run conclusion for the findings under the

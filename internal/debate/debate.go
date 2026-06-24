@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"sync"
@@ -119,7 +120,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 	// Avoid allocating an empty cluster index when there are no gray-zone clusters;
 	// filterMergedClusters safely handles a nil map as "no clusters to match".
-	var clusterIdx map[FindingKey]reconcile.AmbiguousCluster
+	var clusterIdx map[FindingKey]reclib.AmbiguousCluster
 	if len(grayClusters) > 0 {
 		clusterIdx = indexClusters(grayClusters)
 	}
@@ -178,7 +179,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		key          FindingKey
 		rule         ruleApply
 		clusterMerge bool
-		cluster      reconcile.AmbiguousCluster
+		cluster      reclib.AmbiguousCluster
 	}
 	outcomes := make([]itemOutcome, len(sel.Selected))
 	sem := make(chan struct{}, maxPar)
@@ -238,7 +239,7 @@ func runDebate(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	}
 	wg.Wait()
 
-	var mergeClusters []reconcile.AmbiguousCluster
+	var mergeClusters []reclib.AmbiguousCluster
 	for _, oc := range outcomes {
 		items = append(items, oc.ir)
 		tally(&res, oc.ir)
