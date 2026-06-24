@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	reclib "github.com/samestrin/atcr/reconcile"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -111,7 +112,7 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 		if !ok {
 			continue
 		}
-		// reconcile.Verification contract: the writing stage MUST validate Verdict
+		// reclib.Verification contract: the writing stage MUST validate Verdict
 		// against the enum before persisting — an empty or out-of-enum verdict is a
 		// contract violation downstream consumers choke on. Skip the whole ruling
 		// (severity included) rather than persisting a malformed verification block.
@@ -134,23 +135,23 @@ func applyRulings(findings []reconcile.JSONFinding, rulings map[FindingKey]ruleA
 			// No prior verification (debate ran standalone): the judge is the only
 			// agent that produced this verdict, so record it as the skeptic with its
 			// reasoning as notes — the only audit trail available on this path.
-			findings[i].Verification = &reconcile.Verification{
+			findings[i].Verification = &reclib.Verification{
 				Verdict:           ra.verdict,
 				Skeptic:           ra.judge,
 				Notes:             ra.reasoning,
 				ChallengeSurvived: ra.survived,
 			}
 		}
-		findings[i].Confidence = reconcile.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
+		findings[i].Confidence = reclib.ConfidenceForVerdict(findings[i].Confidence, ra.verdict)
 	}
 }
 
 // validVerdict reports whether v is a canonical reconcile verdict. applyRulings
 // gates on this before persisting so a malformed verdict (empty or out-of-enum) is
-// never written into a Verification block (reconcile.Verification's writer contract).
+// never written into a Verification block (reclib.Verification's writer contract).
 func validVerdict(v string) bool {
 	switch v {
-	case reconcile.VerdictConfirmed, reconcile.VerdictRefuted, reconcile.VerdictUnverifiable:
+	case reclib.VerdictConfirmed, reclib.VerdictRefuted, reclib.VerdictUnverifiable:
 		return true
 	default:
 		return false
