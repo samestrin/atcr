@@ -1,0 +1,7 @@
+name: django
+description: Django application review panel
+personas:
+  - framework/django-orm
+  - language/python-types
+  - security/owasp
+  - security/secrets

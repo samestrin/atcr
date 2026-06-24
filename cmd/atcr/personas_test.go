@@ -93,6 +93,69 @@ func TestPersonasInstall_NotFoundExitsNonZero(t *testing.T) {
 	require.Error(t, err)
 }
 
+func bundleDjangoRoutes() map[string]string {
+	return map[string]string{
+		"/framework/django-orm.yaml":  cmdValidPersonaYAML,
+		"/language/python-types.yaml": cmdValidPersonaYAML,
+		"/security/owasp.yaml":        cmdValidPersonaYAML,
+		"/security/secrets.yaml":      cmdValidPersonaYAML,
+	}
+}
+
+func TestPersonasInstall_BundleClean(t *testing.T) {
+	srv := personasTestServer(t, bundleDjangoRoutes())
+	dir := withPersonasEnv(t, srv)
+
+	out, err := execute(t, "personas", "install", "bundle/django")
+	require.NoError(t, err)
+	for _, m := range []string{"framework/django-orm", "language/python-types", "security/owasp", "security/secrets"} {
+		assert.Contains(t, out, m)
+	}
+	assert.FileExists(t, filepath.Join(dir, "framework", "django-orm.yaml"))
+	assert.FileExists(t, filepath.Join(dir, "security", "secrets.yaml"))
+}
+
+func TestPersonasInstall_BundlePartialSkip(t *testing.T) {
+	srv := personasTestServer(t, bundleDjangoRoutes())
+	dir := withPersonasEnv(t, srv)
+	// Pre-install two members.
+	for _, m := range []string{"framework/django-orm", "language/python-types"} {
+		p := filepath.Join(dir, filepath.FromSlash(m)+".yaml")
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(cmdValidPersonaYAML), 0o644))
+	}
+
+	out, err := execute(t, "personas", "install", "bundle/django")
+	require.NoError(t, err)
+	assert.Contains(t, out, "already present")
+	assert.Contains(t, out, "security/owasp")
+}
+
+func TestPersonasInstall_BundleUnknownExitsNonZero(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+
+	_, _, err := executeSplit(t, "personas", "install", "bundle/nope")
+	require.Error(t, err)
+	assert.Equal(t, exitFailure, exitCode(err))
+	// SilenceErrors is set on the root, so main prints the message; the test
+	// asserts on the returned error, which main renders verbatim to stderr.
+	assert.Contains(t, err.Error(), `unknown bundle: "nope"`)
+}
+
+func TestPersonasInstall_BundleMemberFailureExitsNonZero(t *testing.T) {
+	routes := bundleDjangoRoutes()
+	delete(routes, "/security/owasp.yaml") // one member 404s
+	srv := personasTestServer(t, routes)
+	dir := withPersonasEnv(t, srv)
+
+	_, stderr, err := executeSplit(t, "personas", "install", "bundle/django")
+	require.Error(t, err)
+	assert.Contains(t, stderr, "failed to install security/owasp")
+	// The other members still landed despite the mid-bundle failure.
+	assert.FileExists(t, filepath.Join(dir, "security", "secrets.yaml"))
+}
+
 func TestPersonasList_Integration(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{"/security/owasp.yaml": cmdValidPersonaYAML})
 	dir := withPersonasEnv(t, srv)

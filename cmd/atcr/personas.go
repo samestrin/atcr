@@ -70,6 +70,9 @@ func newPersonasInstallCmd() *cobra.Command {
 				return err
 			}
 			name := args[0]
+			if bundleName, ok := strings.CutPrefix(name, "bundle/"); ok {
+				return installBundle(cmd, dir, bundleName)
+			}
 			if err := personas.Install(personasClient, personas.BaseURL(), name, dir); err != nil {
 				return err
 			}
@@ -77,6 +80,33 @@ func newPersonasInstallCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// installBundle expands a bundle into its member personas and installs each,
+// reporting per-member outcome. An unknown bundle exits non-zero with a clear
+// message; a member fetch/write failure is reported but does not abort the
+// remaining members, and the command exits non-zero if any member failed.
+func installBundle(cmd *cobra.Command, dir, bundleName string) error {
+	outcomes, err := personas.InstallBundle(personasClient, personas.BaseURL(), bundleName, dir)
+	if err != nil {
+		return err // includes ErrUnknownBundle ("unknown bundle: \"<name>\"")
+	}
+	var failed bool
+	for _, o := range outcomes {
+		switch {
+		case o.Err != nil:
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed to install %s: %v\n", o.Name, o.Err)
+			failed = true
+		case o.AlreadyPresent:
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s already present\n", o.Name)
+		default:
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed %s\n", o.Name)
+		}
+	}
+	if failed {
+		return fmt.Errorf("one or more bundle personas failed to install")
+	}
+	return nil
 }
 
 func newPersonasListCmd() *cobra.Command {
