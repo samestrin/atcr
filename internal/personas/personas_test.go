@@ -371,6 +371,31 @@ func TestFetch_TimesOutOnSlowServer(t *testing.T) {
 	require.Error(t, err, "fetch must return an error when the server does not respond")
 }
 
+// --- listCommunity symlink skip ---------------------------------------------
+
+func TestListCommunity_SkipsSymlinkedYAML(t *testing.T) {
+	dir := t.TempDir()
+	// Real persona inside the personas dir.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "security"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "security", "owasp.yaml"), []byte(validPersonaYAML), 0o644))
+
+	// Symlink pointing at a YAML file outside the personas dir.
+	externalDir := t.TempDir()
+	external := filepath.Join(externalDir, "external.yaml")
+	require.NoError(t, os.WriteFile(external, []byte(validPersonaYAML), 0o644))
+	require.NoError(t, os.Symlink(external, filepath.Join(dir, "symlinked.yaml")))
+
+	metas, err := listCommunity(dir)
+	require.NoError(t, err)
+
+	var names []string
+	for _, m := range metas {
+		names = append(names, m.Name)
+	}
+	assert.Contains(t, names, "security/owasp", "real personas must be listed")
+	assert.NotContains(t, names, "symlinked", "symlinked YAML files must not be listed")
+}
+
 // --- Install TOCTOU symlink guard -------------------------------------------
 
 func TestInstall_RejectsSymlinkAtDest(t *testing.T) {

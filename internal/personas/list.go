@@ -124,8 +124,8 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil // skip directories and symlinks (symlinks may point outside the personas dir)
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".yaml" && ext != ".yml" {
