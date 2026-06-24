@@ -61,9 +61,9 @@ type Options struct {
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
 // the tally written to verification.json/summary.json; FindingsProcessed is the
-// number of findings sent through a live skeptic this run — jobs with at least one
-// eligible skeptic AND a live dispatcher (skipped/below-floor/no-eligible-skeptic/
-// harness-failed findings are excluded); DurationMs is the wall-clock cost.
+// number of findings selected for live skeptic review this run — jobs with at least
+// one eligible skeptic AND a live dispatcher at plan time (skipped/below-floor/
+// no-eligible-skeptic findings are excluded); DurationMs is the wall-clock cost.
 type Result struct {
 	VerdictCounts     VerdictCounts
 	FindingsProcessed int
