@@ -162,6 +162,8 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// scores is nil until T6 (Epic 9.0 Phase 5) wires scorecard.Aggregate()
 		// here; nil is the documented "no score data" signal — language routing
 		// still applies, with the matched partition ordered alphabetically.
+		// Key convention when wired: keyed by skeptic registry name (reg.Agents key),
+		// not reviewer name — a mismatch silently reverts every skeptic to zero score.
 		sk := SelectEligibleSkeptics(reg, f, votes, nil)
 		if len(sk) > 0 {
 			needTool = true
