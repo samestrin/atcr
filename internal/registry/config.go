@@ -724,15 +724,15 @@ func sortedKeys[V any](m map[string]V) []string {
 
 // NormalizeLanguageToken canonicalizes a language/extension token to the form
 // used for language-aware skeptic routing (Epic 9.0): surrounding whitespace
-// trimmed, a single leading dot stripped, and lowercased. It is the single
-// shared canonicalizer — applyDefaults runs every AgentConfig.Language entry
-// through it at load, and the verify package's normalizeExt delegates to it for
-// a finding's file extension — so both sides of a routing match can never drift
+// trimmed, all leading dots stripped, and lowercased. It is the single shared
+// canonicalizer — applyDefaults runs every AgentConfig.Language entry through
+// it at load, and the verify package's normalizeExt delegates to it for a
+// finding's file extension — so both sides of a routing match can never drift
 // out of the same canonical form. Mirrors the load-time canonicalization of
 // MinSeverity and Role.
 func NormalizeLanguageToken(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, ".")
+	s = strings.TrimLeft(s, ".")
 	return strings.ToLower(s)
 }
 
