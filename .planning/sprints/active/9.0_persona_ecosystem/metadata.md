@@ -52,9 +52,9 @@
 
 _Updated by `/execute-sprint` during execution._
 
-**Current Phase:** Phase 1 complete — gated stop before Phase 2
-**Phases Complete:** 1 / 6
-**Last Checkpoint:** 2026-06-24 — Phase 1 (T8 AgentConfig.Language field + normalizeExt) green; gate passed. Commits: 734fce2 (green), 2555330 (refactor).
+**Current Phase:** Phase 2 complete — gated stop before Phase 3
+**Phases Complete:** 2 / 6
+**Last Checkpoint:** 2026-06-24 — Phase 2 (T8 language-aware SelectEligibleSkeptics two-partition routing) green; gate passed (PASS on all 5 checklist items). Commit: 28aadd4 (green; refactor folded — no delta). TD-003/004/005 captured. Coverage verify 95.6%.
 
 ---
 

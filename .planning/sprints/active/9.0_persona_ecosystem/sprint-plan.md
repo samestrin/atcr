@@ -270,19 +270,19 @@ From [documentation/README.md](plan/documentation/README.md):
 
 > **Pre-implementation check:** `grep -r "SelectEligibleSkeptics" ./internal/` — confirm single caller; update any additional callers in the same commit if found.
 
-### 2.1 [ ] **[Skeptic Routing - RED](plan/user-stories/03-language-aware-skeptic-routing.md)**
+### 2.1 [x] **[Skeptic Routing - RED](plan/user-stories/03-language-aware-skeptic-routing.md)**
    Write comprehensive failing tests, verify they fail correctly:
    - `TestSelectEligibleSkeptics_LanguageMatch`, `_NoMatchFallback`, `_TieBreakByScore`, `_TieBreakAlphabeticalWhenNoScores`, `_NilScoresMap`, `_BackwardCompatNoLanguageField`
    **Files:** `internal/verify/select_test.go` | **Duration:** 0.5 day
 
-### 2.2 [ ] **[Skeptic Routing - GREEN](plan/user-stories/03-language-aware-skeptic-routing.md)**
+### 2.2 [x] **[Skeptic Routing - GREEN](plan/user-stories/03-language-aware-skeptic-routing.md)**
    Minimal code, one test at a time (T1), verify all (T2), COMMIT:
    - `internal/verify/select.go:55` — change signature to `SelectEligibleSkeptics(agents []AgentConfig, finding Finding, n int, scores map[string]float64) []string`; after `sort.Strings(names)`, partition into matched (finding file ext ∈ skeptic's `Language` via `normalizeExt`) and unmatched; rebuild `append(matched, unmatched...)`; within matched, sort by `scores[name]` descending then name ascending; nil map → alphabetical-only
    - `internal/verify/pipeline.go:162` — update sole production caller to pass scores map (nil acceptable until T6 wires it)
    COMMIT: `git commit -m "feat(verify): language-aware two-partition skeptic routing (green)"`
    **Files:** `internal/verify/select.go`, `internal/verify/pipeline.go` | **Duration:** 0.75 day
 
-### 2.2.A [ ] **[Skeptic Routing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-language-aware-skeptic-routing.md)**
+### 2.2.A [x] **[Skeptic Routing - ADVERSARIAL REVIEW (subagent)](plan/user-stories/03-language-aware-skeptic-routing.md)**
    **Changed Files:** `internal/verify/select.go`, `internal/verify/pipeline.go`, `internal/verify/select_test.go`
 
    **Spawn a fresh subagent** via the Agent tool to perform this review. The subagent has no memory of the implementation in 2.2 — this is intentional. Do NOT review inline.
@@ -300,34 +300,36 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | internal/verify/select.go (matched sort) | NaN corroboration score breaks the matched-partition total order → silently non-deterministic routing. | Deferred → TD-003 (not active; caller passes nil scores until T6). |
+   | MEDIUM/LOW | internal/verify/select_test.go | No independence test for the returned `Skeptic.Config.Language` alias slice (Scope has one). | Deferred → TD-004 (no live bug; `languageMatches` only reads). |
+   | LOW | internal/verify/pipeline.go:165 | Score tie-break path has zero production coverage until T6 wires `scores`. | By design (Phase 5 handoff seam) — no action. |
+   | LOW | internal/verify/select.go (partition pre-alloc) | `unmatched` pre-allocated to `len(names)` may be unused in all-matched case. | Per task 2.3 spec (`make([]string, 0, len(names))`) — accepted. |
 
    **Action Required:**
-   - CRITICAL/HIGH found → List issues for 2.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   - No CRITICAL/HIGH found → Adversarial review passed; proceed.
+   - 2 MEDIUM/LOW actionable → deferred to `tech-debt-captured.md` (TD-003, TD-004). 2 LOW are by-design/per-spec → no capture.
 
-### 2.3 [ ] **[Skeptic Routing - REFACTOR](plan/user-stories/03-language-aware-skeptic-routing.md)**
-   1. Fix CRITICAL/HIGH issues from 2.2.A (if any)
-   2. Pre-allocate `matched`/`unmatched` with `make([]string, 0, len(names))`; confirm no `scorecard` import in `verify`; maintain green (T1), validate (T3)
-   3. COMMIT: `git commit -m "refactor(verify): address review + pre-allocate partitions"`
+### 2.3 [x] **[Skeptic Routing - REFACTOR](plan/user-stories/03-language-aware-skeptic-routing.md)**
+   1. No CRITICAL/HIGH from 2.2.A → nothing to fix inline (2 MEDIUM/LOW deferred to TD-003/TD-004).
+   2. Pre-allocation (`make([]string, 0, len(names))`, select.go:124-125) and the no-`scorecard`-import invariant (only a comment reference at pipeline.go:162) were both satisfied in the GREEN commit (28aadd4). T3 green.
+   3. COMMIT: folded — no code delta over GREEN, so no separate refactor commit (avoids an empty commit).
    **Duration:** 0.5 day
 
-### 2.4 [ ] **Phase 2 — DoD Validation**
-   - `go test ./internal/verify/...` green; `go build ./...` clean
-   - Confirm no API leakage from `verify` into `scorecard` (score map built by caller)
+### 2.4 [x] **Phase 2 — DoD Validation**
+   - `go test ./...` green (EXIT=0); `go build ./...` clean; `go vet ./internal/verify/...` clean; `golangci-lint run ./internal/verify/...` 0 issues
+   - Coverage: verify 95.6% (≥80%)
+   - No API leakage from `verify` into `scorecard` — score map is caller-built; only a comment references scorecard (no import)
    - DoD report (Story-03 complete):
      ```
      Story-03 DoD Complete
-     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Auto: 5/5 (tests, coverage, lint, vet, build) | Story-Specific: 4/4 (AC 03-02 routing, 03-03 pipeline caller, 03-04 silent fallback, 03-05 backward-compat) + AC 03-01 from Phase 1
      Manual Review: [ ] Code reviewed
      ```
 
-### 2.LAST [ ] **Phase 2 - GATE: Integration & Exit Review (subagent)**
+### 2.LAST [x] **Phase 2 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 2
 
    **Spawn a fresh subagent** via the Agent tool to perform this integration review. No memory of the phase's implementation. Do NOT review inline.
@@ -346,16 +348,13 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent gate findings:** PASS on all 5 checklist items (CONTRACT EXIT, DECOUPLING, CONFIG SURFACE/fallback, INTEGRATION sole-caller, REGRESSION back-compat). Fresh `go test ./internal/verify/...` green, `go build ./...` clean, grep confirms only production caller is `pipeline.go:162` passing `nil`.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | internal/verify/pipeline.go:162 | Score-map keyspace (skeptic registry name) vs T6's `scorecard.Aggregate()` "reviewer-name" source could silently mismatch when wired. | Deferred → TD-005 (nil today; document keyspace at call site when T6 wires it). |
+   | LOW | internal/verify/select.go (matched sort) | NaN score → non-deterministic comparator. | Already deferred → TD-003. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Action:** No CRITICAL/HIGH. Two LOW integration notes deferred to `tech-debt-captured.md` (TD-005 new, TD-003 prior). **Phase gate passed.**
    **Duration:** 15-30 min
 
 ---
