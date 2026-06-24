@@ -409,8 +409,6 @@ func TestSelectEligibleSkeptics_TieBreakByScore(t *testing.T) {
 	assert.Equal(t, []string{"zebra", "alpha"}, got, "higher score sorts first")
 }
 
-// TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores (AC 03-02): equal
-// (or absent) scores fall through to alphabetical within the matched partition.
 // TestSelectEligibleSkeptics_NaNScoreLowestRank (AC 03-02): a NaN corroboration
 // score must not break strict-weak ordering; it is treated as the lowest rank so
 // finite scores always sort above it.
@@ -447,6 +445,8 @@ func TestSelectEligibleSkeptics_AllNaNScoresAlphabetical(t *testing.T) {
 	assert.Equal(t, []string{"alpha", "zebra"}, got, "all NaN scores fall back to alphabetical")
 }
 
+// TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores (AC 03-02): equal
+// (or absent) scores fall through to alphabetical within the matched partition.
 func TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores(t *testing.T) {
 	reg := buildRegistry(
 		map[string]registry.AgentConfig{
