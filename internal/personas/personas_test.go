@@ -371,6 +371,18 @@ func TestFetch_TimesOutOnSlowServer(t *testing.T) {
 	require.Error(t, err, "fetch must return an error when the server does not respond")
 }
 
+// --- FetchPersonaYAML self-guard --------------------------------------------
+
+func TestFetchPersonaYAML_RejectsInvalidNameBeforeFetch(t *testing.T) {
+	// Before fix: FetchPersonaYAML makes an HTTP request with the raw name and
+	// returns ErrPersonaNotFound (from a 404). After fix: the function validates
+	// the name first and returns a validation error — not ErrPersonaNotFound.
+	srv := testServer(t, map[string]string{})
+	_, err := FetchPersonaYAML(srv.Client(), srv.URL, "../etc/passwd")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrPersonaNotFound, "invalid name must fail at validation, not as a 404")
+}
+
 // --- fetch body size limit --------------------------------------------------
 
 func TestFetch_RejectsOversizedBody(t *testing.T) {

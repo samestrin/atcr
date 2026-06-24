@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -91,8 +92,21 @@ func fetch(client HTTPClient, url string, notFound error) ([]byte, error) {
 }
 
 // FetchPersonaYAML fetches <baseURL>/<name>.yaml from the community repo.
+// The name is validated before any network access so the fetch boundary is
+// self-guarding regardless of caller discipline.
 func FetchPersonaYAML(client HTTPClient, baseURL, name string) ([]byte, error) {
-	data, err := fetch(client, strings.TrimRight(baseURL, "/")+"/"+name+".yaml", ErrPersonaNotFound)
+	if err := validatePersonaName(name); err != nil {
+		return nil, fmt.Errorf("invalid persona name: %w", err)
+	}
+	// PathEscape each path segment so the URL is safe even if future callers
+	// bypass validatePersonaName (defense in depth; no-op for valid names).
+	segments := strings.Split(name, "/")
+	escaped := make([]string, len(segments))
+	for i, seg := range segments {
+		escaped[i] = url.PathEscape(seg)
+	}
+	safeName := strings.Join(escaped, "/")
+	data, err := fetch(client, strings.TrimRight(baseURL, "/")+"/"+safeName+".yaml", ErrPersonaNotFound)
 	if err != nil {
 		if errors.Is(err, ErrPersonaNotFound) {
 			return nil, fmt.Errorf("persona %q %w", name, ErrPersonaNotFound)
