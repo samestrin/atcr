@@ -91,15 +91,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas list` prints Name, Version, Source, and Language columns and exits 0 regardless of whether `~/.config/atcr/personas/` exists
-- [ ] Built-in personas appear with source `built-in`; community personas appear with source `community`
-- [ ] Personas with a `language` field display the canonical language list; personas without one display `-`
-- [ ] `--scores` flag is accepted without error (no-op output acceptable for Story 2)
+- [x] `atcr personas list` prints Name, Version, Source, and Language columns and exits 0 regardless of whether `~/.config/atcr/personas/` exists
+- [x] Built-in personas appear with source `built-in`; community personas appear with source `community`
+- [x] Personas with a `language` field display the canonical language list; personas without one display `-`
+- [x] `--scores` flag is accepted without error (no-op output acceptable for Story 2)
 
 **Manual Review:**
 - [ ] Code reviewed and approved

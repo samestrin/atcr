@@ -83,15 +83,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas remove <name>` deletes the file and exits 0 when the persona is installed
-- [ ] `atcr personas remove <name>` exits non-zero with a descriptive error when the persona is not installed
-- [ ] Path traversal names are rejected before any filesystem operation
-- [ ] Built-in persona names are rejected with a clear error message
+- [x] `atcr personas remove <name>` deletes the file and exits 0 when the persona is installed
+- [x] `atcr personas remove <name>` exits non-zero with a descriptive error when the persona is not installed
+- [x] Path traversal names are rejected before any filesystem operation
+- [x] Built-in persona names are rejected with a clear error message
 
 **Manual Review:**
 - [ ] Code reviewed and approved

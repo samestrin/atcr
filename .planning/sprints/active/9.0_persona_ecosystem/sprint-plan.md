@@ -65,6 +65,22 @@ Without domain-specific personas, ATCR is a generalist tool teams layer their ow
 - Match = `normalizeExt(filepath.Ext(finding.File))` ∈ skeptic's canonical `Language` entries; reuse the existing `select.go` `normalizeExt` (delegates to `registry.NormalizeLanguageToken`).
 - Within the matched partition, sort by `scores[name]` descending then name ascending; `nil`/absent keys fall through to alphabetical (deterministic). Pre-allocate both partitions with `make([]string, 0, len(names))`. No `scorecard` import added to `verify`.
 
+### Phase 4 Clarifications (recorded 2026-06-24)
+
+**Key Decisions:**
+- **Validation seam (AC 02-01 "run `validateAgent` before write"):** `validateAgent` is unexported and its provider-reference check (`config.go:645`) is registry-contextual, so a standalone fetched persona naming a provider would fail it. Resolution: **add one exported helper** `ValidateAgentYAML(name string, data []byte) error` in a **new file `internal/registry/validate.go`** (not appended to the large `config.go`). It strict-unmarshals the fetched bytes via the existing package-private `decodeStrictYAML`, builds a throwaway `Registry` with a single synthesized providers entry keyed by the fetched agent's `Provider` (so the existing `validateAgent` runs UNCHANGED, provider-ref satisfied), and returns its joined errors. Registry stays the single validation authority — chosen over duplicating field-level checks inside `internal/personas` because `validateAgent` was extended this sprint with the `Language` guard and a local duplicate would silently drift (sprint-design.md:272).
+- `internal/personas/install.go` calls `registry.ValidateAgentYAML` before any disk write; on validation error it writes nothing and returns the error.
+
+**Scope Boundaries:**
+- IN (Phase 4): `internal/personas/{client,paths,install,list,search,remove,upgrade}.go` (+ `*_test.go`); `cmd/atcr/personas.go` + `personas_test.go`; `cmd/atcr/main.go` registration + `main_test.go` count bump (14 → 15); new `internal/registry/validate.go` (+ test) for the exported validation helper.
+- NOT in Phase 4 scope: wiring installed personas into the running registry's resolution chain. `internal/fanout/review.go:143` already sets `PersonaDirs.Registry = <dir(regPath)>/personas` (resolves to `~/.config/atcr/personas/`) and `registry/persona.go` reads that dir on the next review — so writing to `PersonasDir()` is sufficient; `persona.go`/`review.go` are NOT touched. `bundle/` install delegation and `list --scores` real wiring stay deferred to Phase 5.
+
+**Technical Approach:**
+- `PersonasDir()` = `os.UserConfigDir()/atcr/personas`, overridable in tests (mirrors `scorecard.DefaultDir`, `internal/scorecard/paths.go:23`).
+- Injectable HTTP client: a small `Doer`-style interface local to `internal/personas` (no reusable `Doer` exists in `internal/` today); `httptest.NewServer` swaps it. `RegistryBaseURL` const default `https://raw.githubusercontent.com/atcr/personas/main`, overridable via `ATCR_PERSONAS_URL`.
+- `upgrade` adds `golang.org/x/mod/semver` (not currently in `go.mod`; plan-specified) with string-equality fallback for non-semver versions.
+- Path-traversal guard: name matches `[a-zA-Z0-9_/-]+`, reject `..`/absolute, and verify the resolved path stays under `PersonasDir()` before any filesystem operation.
+
 ---
 
 ## TDD Strategy
@@ -477,7 +493,7 @@ From [documentation/README.md](plan/documentation/README.md):
 
 ### Element A — `internal/personas` package core
 
-### 4.1 [ ] **[internal/personas core - RED](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.1 [x] **[internal/personas core - RED](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    Write comprehensive failing tests, verify they fail correctly:
    - `install_test.go` — install fetch → `validateAgent` → write; path-traversal guard (`..` rejected); HTTP via `httptest.NewServer`
    - `list_test.go` — merge built-in (`personas.Names()`) + community (`os.ReadDir`); graceful on missing dir
@@ -486,7 +502,7 @@ From [documentation/README.md](plan/documentation/README.md):
    - `upgrade_test.go` — version compare via `golang.org/x/mod/semver`; `--dry-run` prints, no write
    **Files:** `internal/personas/*_test.go` | **Duration:** 1 day
 
-### 4.2 [ ] **[internal/personas core - GREEN](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.2 [x] **[internal/personas core - GREEN](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    Minimal code (T1), verify all (T2), COMMIT:
    - `client.go` — `RegistryBaseURL = "https://raw.githubusercontent.com/atcr/personas/main"`; injectable `HTTPClient` interface; `ATCR_PERSONAS_URL` env override
    - `paths.go` — `PersonasDir() string` via `os.UserConfigDir()`; overridable in tests
@@ -498,7 +514,7 @@ From [documentation/README.md](plan/documentation/README.md):
    COMMIT: `git commit -m "feat(personas): internal/personas lifecycle package (green)"`
    **Files:** `internal/personas/{client,paths,install,list,search,remove,upgrade}.go` | **Duration:** 1.5 days
 
-### 4.2.A [ ] **[internal/personas core - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.2.A [x] **[internal/personas core - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    **Changed Files:** `internal/personas/{client,paths,install,list,search,remove,upgrade}.go` + `*_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 4.2. Do NOT review inline.
@@ -516,33 +532,35 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | internal/personas/client.go:67 | Unbounded `io.ReadAll` on the community-repo response (persona YAML + index.json) → OOM via a multi-GB body from a compromised repo/MITM. | Deferred → TD-007 (HTTPS trust-on-first-use source; `io.LimitReader` cap in follow-up). |
+   | MEDIUM | internal/personas/client.go:71 | Exported `FetchPersonaYAML` interpolates raw `name` into the fetch URL without `validatePersonaName`; future external callers could inject `../`/`?`/`scheme://`. | Deferred → TD-008 (all current callers pre-validate via `personaPath`; self-guard the seam in follow-up). |
+   | LOW | internal/personas/upgrade.go:77 | Non-semver version diff treated as upgrade (downgrade masquerade). | Deferred → TD-009 (matches AC 02-06 EC1 — specified behavior). |
+   | LOW | internal/personas/install.go:30, upgrade.go:55 | Non-atomic `os.WriteFile` — crash mid-write can truncate a previously valid persona. | Deferred → TD-010 (temp-file + rename in follow-up). |
+   | LOW | internal/personas/list.go:71-83 | `listCommunity` silently degrades a corrupt/unreadable persona to `Version "-"`. | Deferred → TD-011 (read-only display; warn in follow-up). |
 
    **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.3, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   - No CRITICAL/HIGH found → **Adversarial review passed; proceed.**
+   - 2 MEDIUM + 3 LOW → deferred to `tech-debt-captured.md` (TD-007…TD-011).
 
 ### Element B — Cobra subcommands + registration
 
-### 4.3 [ ] **[personas subcommands - RED](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.3 [x] **[personas subcommands - RED](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    Write failing tests, verify they fail correctly:
    - `cmd/atcr/personas_test.go` — integration tests via `httptest.NewServer` for each of `install`, `list`, `search`, `remove`, `test`, `upgrade`
    - `cmd/atcr/main_test.go` — rename `TestRootCmd_HasExactlyFourteenSubcommands` → `...FifteenSubcommands` (count 14 → 15)
    **Files:** `cmd/atcr/personas_test.go`, `cmd/atcr/main_test.go` | **Duration:** 0.75 day
 
-### 4.4 [ ] **[personas subcommands - GREEN](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.4 [x] **[personas subcommands - GREEN](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    Minimal code (T1), verify all (T2), atomic COMMIT:
    - `cmd/atcr/personas.go` — `newPersonasCmd()` + 6 sub-subcommands wired to `internal/personas`
    - `cmd/atcr/main.go` — `root.AddCommand(newPersonasCmd())` (SAME commit as count test bump)
    COMMIT (atomic): `git commit -m "feat(cmd): atcr personas command + 6 subcommands (green)"`
    **Files:** `cmd/atcr/personas.go`, `cmd/atcr/main.go` | **Duration:** 0.75 day
 
-### 4.4.A [ ] **[personas subcommands - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.4.A [x] **[personas subcommands - ADVERSARIAL REVIEW (subagent)](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    **Changed Files:** `cmd/atcr/personas.go`, `cmd/atcr/main.go`, `cmd/atcr/personas_test.go`, `cmd/atcr/main_test.go`
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the implementation in 4.4. Do NOT review inline.
@@ -560,34 +578,37 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent findings (fresh-context general-purpose review):**
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | MEDIUM | personas_test.go (execute merges streams) | `execute` points SetOut/SetErr at one buffer, so tests can't verify the success→stdout / error→stderr contract (FAIL path, `--scores` notice). | Addressed in 4.5 — added `executeSplit` + stream-separation assertions. |
+   | MEDIUM | personas.go:97-102 | `list` warns + exits 0 even on a real dir I/O error, not just absent dir. | **Not a defect** — AC 02-02 Error Scenario 1 mandates exit 0 + stderr warning on an unreadable personas dir (graceful degradation). Spec-compliant; no change. |
+   | LOW | personas.go:171-172 | `test` FAIL emits "FAIL" on stdout AND a returned error on stderr (double output). | Accepted: stdout carries the report, stderr the error — a reasonable convention. No change. |
+   | LOW | personas.go:188-212 | `upgrade` flag-conflict (`--all` + name) and no-arg branches had no test. | Addressed in 4.5 — added exit-2 tests for both. |
+   | LOW | personas.go:33-35 | Default `noFixtureRunner` path never exercised (every test injects a stub). | Addressed in 4.5 — added a default-runner "No fixture" test. The real LLM-backed runner is not wired → TD-012. |
 
    **Action Required:**
-   - CRITICAL/HIGH found → List issues for 4.5, do NOT proceed until fixed
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Adversarial review passed" and proceed
+   - No CRITICAL/HIGH found → **Adversarial review passed; proceed.**
+   - Two cheap test gaps (stream separation, untested branches) closed in 4.5; one MEDIUM is spec-compliant (not a defect); the production fixture-runner scope gap captured as TD-012.
 
-### 4.5 [ ] **[personas CLI - REFACTOR](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
+### 4.5 [x] **[personas CLI - REFACTOR](plan/user-stories/02-personas-cli-discovery-and-lifecycle.md)**
    1. Fix CRITICAL/HIGH issues from 4.2.A and 4.4.A (if any)
    2. Consolidate HTTP client injection pattern; ensure all tests use temp dirs for `PersonasDir`; maintain green (T1), validate (T3)
    3. COMMIT: `git commit -m "refactor(personas): address review + consolidate HTTP injection"`
    **Duration:** 0.5 day
 
-### 4.6 [ ] **Phase 4 — DoD Validation**
-   - `go test ./cmd/atcr/... ./internal/personas/...` green; zero live network calls in CI; `go build ./...` clean
-   - Coverage check for `internal/personas/` ≥80%
+### 4.6 [x] **Phase 4 — DoD Validation**
+   - `go test ./...` green (EXIT=0, all packages incl. `cmd/atcr` + `internal/personas` integration); zero live network calls in CI (all fetch via `httptest.NewServer`); `go build ./...` clean; `go vet ./...` clean; `golangci-lint run` 0 issues
+   - Coverage: `internal/personas` 84.4%, `cmd/atcr` 84.1% (both ≥80%)
+   - `Names()` returns 9; root exposes 15 subcommands (`TestRootCmd_HasExactlyFifteenSubcommands` green); path-traversal guard + validate-before-write verified by tests
    - DoD report (Story-02 complete):
      ```
      Story-02 DoD Complete
-     Auto: {X}/5 | Story-Specific: {Y}/{Z}
+     Auto: 5/5 (tests, coverage, lint, vet, build) | Story-Specific: 23/24 (AC 02-01..02-06 covered; 1 deferred → TD-012: production LLM-backed fixture runner for `personas test` out of phase scope, CLI surface + exit-code contract + injectable seam delivered/tested via stub)
      Manual Review: [ ] Code reviewed
      ```
 
-### 4.LAST [ ] **Phase 4 - GATE: Integration & Exit Review (subagent)**
+### 4.LAST [x] **Phase 4 - GATE: Integration & Exit Review (subagent)**
    **Scope:** All files changed during Phase 4
 
    **Spawn a fresh subagent** via the Agent tool. No memory of the phase's implementation. Do NOT review inline.
@@ -606,16 +627,14 @@ From [documentation/README.md](plan/documentation/README.md):
      - Severity rubric: CRITICAL / HIGH / MEDIUM / LOW
      - Required output: ONLY the findings table below (markdown), no prose
 
-   **Paste the subagent's findings table here (delete rows if none):**
+   **Subagent gate findings (fresh-context hostile integrator):** PASS on all 5 checklist items. `go build`/`go test ./...`/`go vet`/`golangci-lint` all clean. CONTRACT EXIT — `Install(client, baseURL, name, destDir)` is name-first so Phase 5 can branch on `bundle/` prefix with no signature change; `PersonaMeta`/`renderPersonaList` admit a SCORE column additively. CONFIG SURFACE — `ATCR_PERSONAS_URL` override present, default not unconditional, HTTPS. INTEGRATION — clean `bundle/` hook point; root exposes exactly 15 subcommands (asserted). PHASE-EXIT CONTRACT — `internal/personas → registry` boundary declared (boundaries_test.go), acyclic; Phase 5 can add `bundles.Resolve` + `--scores` additively. REGRESSION — existing subcommands unaffected.
    | Severity | File:Line | Issue | Fix |
    |----------|-----------|-------|-----|
-   | CRITICAL | | | |
-   | HIGH | | | |
+   | LOW | cmd/atcr/personas.go:92-96 | `--scores` is a no-op stderr notice (as specified for Phase 4). | By design — Phase 5 wires the scorecard map into `List`/`ListWithScores`. No action. |
 
-   **Action Required:**
-   - CRITICAL/HIGH found → Fix before phase boundary, do NOT stop. Re-run gate.
-   - MEDIUM/LOW found → Append to `clarifications/tech-debt-captured.md`
-   - None found → Note "Phase gate passed" and proceed to phase stop
+   **Phase 5 handoff note (not debt):** `validatePersonaName` permits `/`, so a `bundle/<name>` already passes name validation and would round-trip through the single-persona fetch path. Phase 5 MUST intercept `strings.HasPrefix(name, "bundle/")` at the TOP of `Install` (before `personaPath`/`FetchPersonaYAML`) and delegate to `bundles.Resolve`. A new `internal/bundles` (or `bundles.go` in-package) needs no boundary entry if kept in `internal/personas`; a separate package needs its own `boundaries_test.go` allowlist entry.
+
+   **Action:** No CRITICAL/HIGH/MEDIUM. Single LOW is by-design. **Phase gate passed.**
    **Duration:** 15-30 min
 
 ---

@@ -81,15 +81,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas test <name>` exit code mirrors fixture outcome (0 = all pass, 1 = any fail)
-- [ ] Personas with no fixture block exit 0 with an informational message
-- [ ] Fixture runner is injectable — no live LLM calls in CI test suite
-- [ ] Same fixture runner used by Story 1 bonus personas is reused without duplication
+- [x] `atcr personas test <name>` exit code mirrors fixture outcome (0 = all pass, 1 = any fail)
+- [x] Personas with no fixture block exit 0 with an informational message
+- [x] Fixture runner is injectable — no live LLM calls in CI test suite
+- [ ] Same fixture runner used by Story 1 bonus personas is reused without duplication — DEFERRED → TD-012 (production LLM-backed runner out of Phase 4 scope; injectable `FixtureRunner` seam delivered, default `noFixtureRunner` reports "no fixture")
 
 **Manual Review:**
 - [ ] Code reviewed and approved

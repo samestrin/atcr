@@ -90,15 +90,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas search <keyword>` filters by keyword case-insensitively across name and description fields
-- [ ] Empty results print a user-friendly message and exit 0
-- [ ] HTTP error paths (404, fetch failure, bad JSON) exit non-zero with descriptive error messages
-- [ ] No live HTTP calls in CI — all tests use `httptest.NewServer`
+- [x] `atcr personas search <keyword>` filters by keyword case-insensitively across name and description fields
+- [x] Empty results print a user-friendly message and exit 0
+- [x] HTTP error paths (404, fetch failure, bad JSON) exit non-zero with descriptive error messages
+- [x] No live HTTP calls in CI — all tests use `httptest.NewServer`
 
 **Manual Review:**
 - [ ] Code reviewed and approved

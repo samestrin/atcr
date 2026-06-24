@@ -101,15 +101,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
-- [ ] No linting errors (`golangci-lint run`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./cmd/atcr/... ./internal/personas/...`)
+- [x] No linting errors (`golangci-lint run`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `atcr personas upgrade <name>` overwrites local file only when remote version is newer; exits 0
-- [ ] `atcr personas upgrade --all` upgrades all outdated personas and skips current ones; exits 0
-- [ ] `--dry-run` flag prints what would change without writing any files
-- [ ] `validateAgent` is called on fetched content before overwriting; invalid remote content is rejected without touching the local file
+- [x] `atcr personas upgrade <name>` overwrites local file only when remote version is newer; exits 0
+- [x] `atcr personas upgrade --all` upgrades all outdated personas and skips current ones; exits 0
+- [x] `--dry-run` flag prints what would change without writing any files
+- [x] `validateAgent` is called on fetched content before overwriting; invalid remote content is rejected without touching the local file
 
 **Manual Review:**
 - [ ] Code reviewed and approved

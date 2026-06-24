@@ -52,9 +52,9 @@
 
 _Updated by `/execute-sprint` during execution._
 
-**Current Phase:** Phase 3 complete — gated stop before Phase 4 (— END SPRINT A —)
-**Phases Complete:** 3 / 6
-**Last Checkpoint:** 2026-06-24 — Phase 3 (T1 bonus personas sentinel/tracer/idiomatic + fixtures) green; gate passed (PASS on all 5 checklist items, zero findings). `Names()` returns 9; personas coverage 88.2%; render path network-free. Adversarial 3.2.A: HIGH (Get registry gate) + MEDIUM (fixture test tautology) fixed inline; TD-006 (LOW) captured. Commits: 73a… RED, GREEN, refactor (gate Get + sound fixtures).
+**Current Phase:** Phase 4 complete — gated stop before Phase 5 (Sprint B, Story 02 done)
+**Phases Complete:** 4 / 6
+**Last Checkpoint:** 2026-06-24 — Phase 4 (T2 `atcr personas` CLI) green; gate passed (PASS on all 5 checklist items, no CRITICAL/HIGH/MEDIUM). New `internal/personas` package (install/list/search/remove/test/upgrade) + `cmd/atcr/personas.go` 6 subcommands; root now 15 subcommands; `registry.ValidateAgentYAML` validates fetched YAML before write; path-traversal guarded; zero live network (httptest). Coverage: internal/personas 84.4%, cmd/atcr 84.1%. Adversarial 4.2.A/4.4.A: no CRITICAL/HIGH; TD-007…TD-012 captured (2 MEDIUM, 4 LOW). Commits: 82e808c GREEN(core), d5d31c9 GREEN(cmd, atomic 14→15), e623c39 refactor(test gaps). golang.org/x/mod added for semver.
 
 ---
 

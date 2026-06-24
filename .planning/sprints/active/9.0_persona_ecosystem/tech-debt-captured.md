@@ -43,3 +43,45 @@
 **Issue:** The package doc comment and `Names`' doc comment state the literal count ("nine embedded ... personas"). If the registry grows or shrinks, the prose drifts silently — no test asserts the comment text. Matches the pre-existing convention (the prior comment said "six").
 **Why accepted:** Cosmetic; the authoritative count is asserted by `TestNames_ReturnsAllNine` (length 9 + exact canonical order), so the contract is locked even if the prose drifts. Sprint policy defers LOW.
 **Fix in:** Future doc-tidy pass — replace the hardcoded count with a count-agnostic phrasing ("the embedded default reviewer personas") so the comment cannot go stale.
+
+## TD-007 — Unbounded response body read in persona/index fetch (MEDIUM)
+**Origin:** Phase 4, task 4.2.A adversarial review, 2026-06-24
+**File:** internal/personas/client.go:67
+**Issue:** `fetch` reads the community-repo response with an unbounded `io.ReadAll`. A compromised repo or MITM on the HTTPS fetch could return a multi-GB body and OOM the process. Affects Install, Upgrade (persona YAML) and Search (index.json).
+**Why accepted:** Source is a configurable, HTTPS, trust-on-first-use repo; the threat requires a compromised host or MITM. Bounded impact; sprint policy defers MEDIUM. No live network in CI (httptest only).
+**Fix in:** Phase 6 or follow-up — wrap the body in `io.LimitReader(resp.Body, maxBytes)` (a few MB) before `io.ReadAll` and error on truncation so partial YAML is never validated/written.
+
+## TD-008 — Exported FetchPersonaYAML does not self-validate the name (MEDIUM)
+**Origin:** Phase 4, task 4.2.A adversarial review, 2026-06-24
+**File:** internal/personas/client.go:71
+**Issue:** `FetchPersonaYAML` interpolates the raw `name` into the fetch URL without calling `validatePersonaName`. In-package callers (Install/Upgrade) pre-validate via `personaPath`, but any future external caller of this exported seam could inject `../`, `?`, `#`, or a `scheme://host` into the request path.
+**Why accepted:** No current caller is unguarded — every production path validates first. Defense-in-depth gap only; not exploitable today. Sprint policy defers MEDIUM.
+**Fix in:** Phase 6 or follow-up — call `validatePersonaName(name)` at the top of `FetchPersonaYAML` and `url.PathEscape` each segment, so the fetch boundary is self-guarding.
+
+## TD-009 — Non-semver version diff treated as upgrade (downgrade masquerade) (LOW)
+**Origin:** Phase 4, task 4.2.A adversarial review, 2026-06-24
+**File:** internal/personas/upgrade.go:77
+**Issue:** `isNewer` falls back to `local != remote` for non-semver versions, so any difference (including a downgrade like local `2.0` vs remote `1.0`, both non-semver) reports as an upgrade and overwrites the local file.
+**Why accepted:** Matches AC 02-06 Edge Case 1 ("treats any version change as newer when semver parse fails") — this is the specified behavior, not a defect. Valid semver compares correctly. Captured only as a documented sharp edge.
+**Fix in:** Future — if non-semver ordering becomes a concern, log that non-semver versions force re-install on any change, or refuse to overwrite when the remote is not parseably newer.
+
+## TD-010 — Non-atomic persona file write (LOW)
+**Origin:** Phase 4, task 4.2.A adversarial review, 2026-06-24
+**File:** internal/personas/install.go:30, internal/personas/upgrade.go:55
+**Issue:** Persona YAML is written via `os.WriteFile`. A crash or disk-full mid-write during Upgrade can leave a truncated file replacing a previously valid persona. Validate-before-write protects against invalid content, not partial writes of valid content.
+**Why accepted:** Single-user local CLI; crash-during-write is rare and recoverable via re-install/upgrade. Sprint policy defers LOW. The repo already has an `atomicfs`/`atomicwrite` leaf that could back the fix, but `internal/personas` does not import it today (boundary addition).
+**Fix in:** Future — write to a temp file in the same dir and `os.Rename` into place (or reuse `internal/atomicfs`) for an atomic replace.
+
+## TD-011 — listCommunity silently degrades on read/parse failure (LOW)
+**Origin:** Phase 4, task 4.2.A adversarial review, 2026-06-24
+**File:** internal/personas/list.go:71-83
+**Issue:** In `listCommunity`, a YAML file that fails `os.ReadFile` or fails to unmarshal is silently listed with `Version: "-"` and no language — a corrupt installed persona is indistinguishable from one legitimately lacking a version field.
+**Why accepted:** `list` is a read-only display command; graceful degradation (still show the row by name) is acceptable UX and matches the AC's "exit 0" posture. Sprint policy defers LOW.
+**Fix in:** Future — surface per-row read/parse failures as a stderr warning (mirroring the unreadable-dir warning) so a corrupt persona is visibly flagged.
+
+## TD-012 — `atcr personas test` production fixture runner not wired (MEDIUM)
+**Origin:** Phase 4, task 4.4.A adversarial review, 2026-06-24
+**File:** cmd/atcr/personas.go (personasFixtureRunner = noFixtureRunner{})
+**Issue:** The `test` subcommand's default runner (`noFixtureRunner`) always reports `HasFixture: false`, so in production `atcr personas test <name>` prints "No fixture defined" for every persona. AC 02-05 Scenarios 1-3 (actually executing a persona's fixture and mirroring pass/fail in the exit code) require an LLM-backed fixture runner that is not implemented in this phase. Delivered and tested here: the CLI surface, the exit-code-mirroring contract, and the injectable `FixtureRunner` seam (exercised via a stub in `cmd/atcr/personas_test.go`).
+**Why accepted:** A real fixture runner needs the review/LLM invocation path (out of Phase 4's file scope — internal/personas + cmd only) and must stay network-free in CI. The injectable seam means wiring the real runner later is additive, no API change. AC 02-05's DoD items that are mechanically verifiable (exit-code mirroring, no-fixture message, injectable/no-live-LLM) pass via the stub.
+**Fix in:** A follow-up that reuses Story 1's fixture mechanism (or the verify/fanout invocation path) to build a production `FixtureRunner`, then set it as the `personasFixtureRunner` default. No CLI signature change required.
