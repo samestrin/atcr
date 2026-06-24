@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -410,6 +411,42 @@ func TestSelectEligibleSkeptics_TieBreakByScore(t *testing.T) {
 
 // TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores (AC 03-02): equal
 // (or absent) scores fall through to alphabetical within the matched partition.
+// TestSelectEligibleSkeptics_NaNScoreLowestRank (AC 03-02): a NaN corroboration
+// score must not break strict-weak ordering; it is treated as the lowest rank so
+// finite scores always sort above it.
+func TestSelectEligibleSkeptics_NaNScoreLowestRank(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"alpha": langSkeptic("m-alpha", "go"),
+			"zebra": langSkeptic("m-zebra", "go"),
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "main.go"}
+	scores := map[string]float64{"alpha": math.NaN(), "zebra": 0.90}
+
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
+	assert.Equal(t, []string{"zebra", "alpha"}, got, "NaN score sorts below finite scores")
+}
+
+// TestSelectEligibleSkeptics_AllNaNScoresAlphabetical: when every matched skeptic
+// has a NaN score the comparator ties on the sanitized value and falls back to
+// alphabetical order, keeping selection deterministic.
+func TestSelectEligibleSkeptics_AllNaNScoresAlphabetical(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"alpha": langSkeptic("m-alpha", "go"),
+			"zebra": langSkeptic("m-zebra", "go"),
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "main.go"}
+	scores := map[string]float64{"alpha": math.NaN(), "zebra": math.NaN()}
+
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
+	assert.Equal(t, []string{"alpha", "zebra"}, got, "all NaN scores fall back to alphabetical")
+}
+
 func TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores(t *testing.T) {
 	reg := buildRegistry(
 		map[string]registry.AgentConfig{
