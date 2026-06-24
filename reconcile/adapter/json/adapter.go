@@ -44,6 +44,12 @@ type decodeEnvelope struct {
 // by declaration order (version, reconciled_at, findings, summary, ambiguous);
 // the top-level findings and ambiguous arrays are never omitempty so absence is
 // byte-stable ("[]" rather than a missing key).
+//
+// Dual reconciled_at — deliberate design: the envelope-level reconciled_at is
+// the authoritative encoding timestamp, set by Encode from opts.ReconciledAt.
+// summary.reconciled_at is the value stamped by reconcile.Reconcile() from its
+// own opts; when a caller builds a bare Result without going through Reconcile,
+// that field is empty. Consumers must treat the envelope field as authoritative.
 type encodeEnvelope struct {
 	Version      string                       `json:"version"`
 	ReconciledAt string                       `json:"reconciled_at"`
