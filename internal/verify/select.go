@@ -10,6 +10,7 @@
 package verify
 
 import (
+	"math"
 	"path/filepath"
 	"sort"
 
@@ -135,6 +136,15 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 	// score, so equal scores fall through to alphabetical — fully deterministic.
 	sort.SliceStable(matched, func(i, j int) bool {
 		si, sj := scores[matched[i]], scores[matched[j]]
+		// NaN corroboration scores must not break strict-weak ordering; treat
+		// them as the lowest rank so finite scores always sort above them and
+		// ties between NaN values fall back to alphabetical order.
+		if math.IsNaN(si) {
+			si = math.Inf(-1)
+		}
+		if math.IsNaN(sj) {
+			sj = math.Inf(-1)
+		}
 		if si != sj {
 			return si > sj
 		}
