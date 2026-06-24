@@ -1,7 +1,7 @@
-// Package personas ships the six embedded default reviewer personas and the
-// shared base template. `atcr init` installs editable copies; the prompt
-// resolution chain falls back to these embedded versions when no file
-// overrides them.
+// Package personas ships the nine embedded default reviewer personas (six
+// generalists plus three domain bonus personas) and the shared base template.
+// `atcr init` installs editable copies; the prompt resolution chain falls back
+// to these embedded versions when no file overrides them.
 package personas
 
 import (
@@ -12,10 +12,11 @@ import (
 //go:embed *.md
 var files embed.FS
 
-// canonical order: generalist first, style last.
-var names = []string{"bruce", "greta", "kai", "mira", "dax", "otto"}
+// canonical order: generalists first, then the three domain bonus personas
+// (security, performance, Go idioms), with the style reviewer last.
+var names = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
 
-// Names returns the six embedded persona names in canonical order.
+// Names returns the nine embedded persona names in canonical order.
 func Names() []string {
 	out := make([]string, len(names))
 	copy(out, names)

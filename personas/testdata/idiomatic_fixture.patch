@@ -1,0 +1,11 @@
+diff --git a/parse/num.go b/parse/num.go
+index 5555555..6666666 100644
+--- a/parse/num.go
++++ b/parse/num.go
+@@ -5,6 +5,11 @@ package parse
+ 
++// ParsePort converts s to an int, ignoring any conversion error.
++func ParsePort(s string) int {
++	val, _ := strconv.Atoi(s)
++	return val
++}

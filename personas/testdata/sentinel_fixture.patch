@@ -1,0 +1,13 @@
+diff --git a/store/users.go b/store/users.go
+index 1111111..2222222 100644
+--- a/store/users.go
++++ b/store/users.go
+@@ -10,6 +10,12 @@ package store
+ 
++const apiKey = "FAKE_API_KEY_00000000"
++
++// LookupUser builds a SQL query from caller-supplied input.
++func LookupUser(db *sql.DB, userInput string) (*sql.Rows, error) {
++	query := "SELECT * FROM users WHERE id = " + userInput
++	return db.Query(query)
++}
