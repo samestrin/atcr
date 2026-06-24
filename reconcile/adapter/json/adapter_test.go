@@ -58,6 +58,11 @@ func sampleResult() reconcile.Result {
 		Summary: reconcile.Summary{
 			SourcesScanned: []string{"reviewer-a", "reviewer-b"},
 			TotalFindings:  1,
+			PerSourceCounts: map[string]int{
+				"reviewer-a": 1,
+				"reviewer-b": 2,
+				"reviewer-c": 3,
+			},
 		},
 	}
 }
