@@ -14,6 +14,14 @@
 - `docs/personas-install.md` - create: new installation guide covering all six subcommands and bundle installation
 - `cmd/` (personas subcommand files) - reference: source of truth for flag names and install path constants used in the guide
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-install.md` — create: installation guide
+- `cmd/atcr/personas.go` — source of truth for `install`, `remove`, `list`, `search`, `test`, `upgrade` flags
+- `internal/personas/bundles.go` — bundle resolution for `install bundle/<name>` documentation
+- `internal/personas/paths.go` — `PersonasDir()` install path
+- `internal/personas/client.go` — `RegistryBaseURL` default and override mechanism
+
 ## Happy Path Scenarios
 
 **Scenario 1: Developer installs a community persona using the guide**

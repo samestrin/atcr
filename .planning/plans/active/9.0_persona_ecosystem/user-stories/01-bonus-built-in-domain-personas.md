@@ -13,6 +13,7 @@
 - **Background:** ATCR ships with six generalist built-in personas. Domain specialists currently get only generalist commentary on security vulnerabilities, performance regressions, or Go idiom violations — there is no persona that speaks their domain language. This forces users to either accept shallow coverage or write and maintain their own persona files. Shipping three curated domain personas with the binary removes that friction entirely and makes ATCR immediately useful to vertical market adopters.
 - **Assumptions:** The existing `go:embed *.md` directive in `personas/personas.go` will pick up new `.md` files automatically once they are added to the `personas/` directory. The `AgentConfig.Language` field (T8) will exist before T1 ships, allowing bonus personas to optionally declare a language constraint — but this is optional; T1 personas are valid without it. Fixture-based CI testing requires only a `.patch`/`.diff` file and a Go test; it does not require the T2 `atcr personas test` CLI to be present.
 - **Constraints:** Each bonus persona must follow the exact markdown template structure used by `personas/bruce.md` (system prompt, severity rubric, output format, payload variable slots). The `personas/personas.go:names` slice must be updated manually because `go:embed` loads all `.md` files but only names listed in `names` are exposed via `Names()` and `Get()`. The existing test `TestNames_ReturnsAllSix` must be renamed and updated to expect 9 before the persona files are created (TDD RED phase). CI must not require live network access for fixture verification.
+- **Documentation Reference:** See [Bonus Built-In Personas](../documentation/bonus-personas.md) for persona structure, canonical order, and fixture expectations.
 
 ## Story Details
 
@@ -29,6 +30,14 @@
 - **Achievable:** The implementation adds three `.md` files, three `.patch` fixture files, and updates one Go source file and one test file — no new packages or external dependencies required.
 - **Relevant:** Domain-specific personas are the primary lever for vertical market adoption identified in the Plan 9.0 goal; shipping them with the binary means zero-friction access for the target user segments (security, performance, Go).
 - **Time-bound:** Delivered within Sprint A alongside T8, before Sprint B begins.
+
+## Acceptance Criteria Overview
+
+This story is complete when the following acceptance criteria are met:
+
+- **01-01**: `personas.Names()` returns all nine embedded personas and the old six-persona test is updated.
+- **01-02**: Each bonus persona (`sentinel`, `tracer`, `idiomatic`) has correct prompt content covering its declared domain.
+- **01-03**: CI fixture tests verify each bonus persona produces an expected finding category without live network calls.
 
 ## Acceptance Criteria
 

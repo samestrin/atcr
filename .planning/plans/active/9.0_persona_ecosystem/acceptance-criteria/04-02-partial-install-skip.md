@@ -15,6 +15,14 @@
 - `internal/personas/bundles.go` - create: `Resolve` returns full list; caller loop handles skip logic
 - `internal/personas/bundles_test.go` - create: partial-install skip test with pre-populated temp config dir
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/personas.go` — modify: install subcommand skip logic
+- `internal/personas/bundles.go` — create: `Resolve` returns full persona list
+- `internal/personas/bundles_test.go` — create: partial-install skip tests
+- `internal/personas/install.go` — related: single-persona install path
+- `internal/personas/paths.go` — create: `PersonasDir()` path helpers
+
 ## Happy Path Scenarios
 
 **Scenario 1: Two of four bundle members already installed**

@@ -13,6 +13,7 @@
 - **Background:** ATCR ships with 6 generalist built-in personas and (after Story 1) 3 domain bonus personas. Beyond those 9, vertical-market teams need security, framework, or language personas that do not ship with the binary. Today the only path is writing raw YAML config, which requires reading internal source code and creates a high adoption barrier. The `atcr personas` CLI provides a discoverable, lifecycle-managed alternative backed by a community repo fetched over HTTP.
 - **Assumptions:** A community repo raw endpoint exists at `https://raw.githubusercontent.com/atcr/personas/main` (configurable). Installed personas land in `~/.config/atcr/personas/` and are loaded by the existing registry at startup. The registry already supports loading from that directory. HTTP tests use `httptest.NewServer` — no live network calls reach CI.
 - **Constraints:** All HTTP fetch logic must be testable via `httptest.NewServer`. The `atcr personas` subcommand must be registered atomically with the `TestRootCmd_HasExactlyFourteenSubcommands` test update (bumped to 15) to avoid a CI failure window. No new external dependencies — `github.com/spf13/cobra` and `net/http` (stdlib) are sufficient.
+- **Documentation References:** See [Cobra CLI Patterns](../documentation/cobra-cli-patterns.md) for subcommand architecture and [HTTP & Standard Library Testing](../documentation/http-stdlib-testing.md) for `httptest.NewServer` testing patterns.
 
 ## Story Details
 
@@ -29,6 +30,17 @@
 - **Achievable:** Greenfield `internal/personas` package with a configurable `RegistryBaseURL` constant; Cobra subcommands follow the patterns already established in `cmd/atcr/`; no new external dependencies required.
 - **Relevant:** Removes the primary adoption barrier for vertical-market teams — teams gain domain review coverage without reading internal source code or crafting raw YAML.
 - **Time-bound:** Delivered within Sprint B (after Sprint A lands T8 and T1); all subcommands functional and tested before Sprint B PR is opened.
+
+## Acceptance Criteria Overview
+
+This story is complete when the following acceptance criteria are met:
+
+- **02-01**: `atcr personas install <name>` fetches and installs a persona from the community repo.
+- **02-02**: `atcr personas list` displays all installed personas with name, namespace, and version.
+- **02-03**: `atcr personas search <keyword>` queries the community repo index deterministically.
+- **02-04**: `atcr personas remove <name>` deletes the installed persona file.
+- **02-05**: `atcr personas test <name>` runs the persona against its fixture and reports pass/fail.
+- **02-06**: `atcr personas upgrade <name>` re-fetches personas when the remote version is newer.
 
 ## Acceptance Criteria
 

@@ -18,6 +18,14 @@
 - `cmd/atcr/personas_test.go` - modify: add `TestPersonasTest_*` test cases using fixture YAML and temp directory
 - `internal/verify/invoke_test.go` - reference: `httptest.NewServer` pattern for fetch-based fixture tests
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/test.go` — create: fixture runner delegation
+- `cmd/atcr/personas.go` — modify: add `test` sub-subcommand
+- `cmd/atcr/personas_test.go` — modify: add test cases for `atcr personas test`
+- `personas/testdata/*_fixture.patch` — fixture files for built-in bonus personas
+- `internal/verify/invoke_test.go` — reference: `httptest.NewServer` pattern
+
 ## Happy Path Scenarios
 
 **Scenario 1: Persona fixture passes all test cases**

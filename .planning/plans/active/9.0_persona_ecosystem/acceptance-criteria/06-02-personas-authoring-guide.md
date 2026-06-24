@@ -16,6 +16,17 @@
 - `personas/testdata/` - reference: fixture file location and format that the guide must accurately document
 - `internal/` or relevant Go package containing `TestPersonaFixture` - reference: cross-check fixture requirements against test logic
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/personas-authoring.md` — create: authoring guide
+- `personas/bruce.md` — reference: persona template structure
+- `personas/sentinel.md` — reference: security persona example
+- `personas/tracer.md` — reference: performance persona example
+- `personas/idiomatic.md` — reference: Go idiom persona example
+- `personas/testdata/` — fixture file location and format
+- `internal/registry/config.go:267` — `AgentConfig.Language` schema
+- `internal/verify/select.go:55` — language-aware routing behavior
+
 ## Happy Path Scenarios
 
 **Scenario 1: Contributor creates a valid persona YAML using the template**
@@ -31,7 +42,7 @@
 **Scenario 3: Contributor specifies a language scope using the canonical format**
 - **Given** a contributor authors a Go-specific persona
 - **When** they set `language: ["go"]` in their persona YAML following the guide's canonical format rules (no leading dot, lowercased)
-- **Then** the field is accepted by the registry schema and the persona is routed correctly as a language-aware skeptic
+- **Then** the field is accepted by the registry schema and the persona is preferred for matching file extensions during skeptic selection, with silent fallback to the general pool when no match exists
 
 **Scenario 4: Contributor follows the step-by-step contribution checklist**
 - **Given** a contributor has a complete persona YAML and fixture file

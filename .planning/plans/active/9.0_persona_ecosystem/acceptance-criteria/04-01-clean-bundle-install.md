@@ -17,6 +17,15 @@
 - `internal/personas/bundles/go-production.yaml` - create: manifest declaring go-production persona set
 - `cmd/atcr/personas_install.go` - modify: add `strings.HasPrefix(arg, "bundle/")` guard to delegate to `bundles.Resolve`
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/bundles.go` — create: bundle resolver and manifest parser
+- `internal/personas/bundles/django.yaml` — create: django bundle manifest
+- `internal/personas/bundles/go-production.yaml` — create: go-production bundle manifest
+- `cmd/atcr/personas.go` — modify: detect `bundle/` prefix in install subcommand
+- `internal/personas/install.go` — related: single-persona install path used by bundle expansion
+- `internal/personas/paths.go` — create: `PersonasDir()` path helpers
+
 ## Happy Path Scenarios
 
 **Scenario 1: Install bundle/django on a clean config directory**

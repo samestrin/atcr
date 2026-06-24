@@ -13,6 +13,11 @@
 - `personas/personas.go` - modify: append `sentinel`, `tracer`, `idiomatic` to the `names` slice (canonical order: after `dax`, before `otto`)
 - `personas/personas_test.go` - modify: rename `TestNames_ReturnsAllSix` → `TestNames_ReturnsAllNine` and update expected count from 6 to 9
 
+### Related Files (from codebase-discovery.json)
+
+- `personas/personas.go:16` — embedded persona registry and explicit `names` slice
+- `personas/personas_test.go:9` — `TestNames_ReturnsAllSix` to rename and update to 9 names
+
 ## Happy Path Scenarios
 
 **Scenario 1: Names() returns exactly 9 entries in canonical order**

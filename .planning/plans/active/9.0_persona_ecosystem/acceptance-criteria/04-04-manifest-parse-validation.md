@@ -15,6 +15,11 @@
 - `internal/personas/bundles.go` - create: `BundleManifest` struct, `parseManifest(data []byte) (*BundleManifest, error)` with field validation, `go:embed` directive
 - `internal/personas/bundles_test.go` - create: parse validation tests covering valid manifest, missing `name`, missing `personas`, empty `personas` list, malformed YAML
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/bundles.go` — create: `BundleManifest` struct and `parseManifest`
+- `internal/personas/bundles_test.go` — create: manifest parse validation tests
+
 ## Happy Path Scenarios
 
 **Scenario 1: Valid manifest parses successfully**

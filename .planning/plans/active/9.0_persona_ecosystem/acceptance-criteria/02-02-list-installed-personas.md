@@ -17,6 +17,14 @@
 - `cmd/atcr/personas.go` - modify: add `list` sub-subcommand with `--scores` flag (deferred/no-op for Story 2; wired in Story 5)
 - `cmd/atcr/personas_test.go` - modify: add `TestPersonasList_*` test cases using temp directories
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/list.go` — create: list installed personas
+- `cmd/atcr/personas.go` — modify: add `list` sub-subcommand
+- `cmd/atcr/personas_test.go` — modify: add list test cases
+- `internal/registry/persona.go:44` — persona resolution chain for installed personas
+- `personas/personas.go:16` — built-in persona `names` slice
+
 ## Happy Path Scenarios
 
 **Scenario 1: List with both built-in and community personas installed**

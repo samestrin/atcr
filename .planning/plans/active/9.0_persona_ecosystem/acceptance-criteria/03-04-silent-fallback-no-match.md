@@ -13,6 +13,13 @@
 - `internal/verify/select.go:55` - modify: ensure the two-partition reorder does not emit any log output or return any error when no skeptic language matches the finding extension
 - `internal/verify/select_test.go` - modify: add test cases verifying that fallback to the full pool is silent and produces output identical to pre-routing alphabetical behavior
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/select.go:55` — `SelectEligibleSkeptics`: silent fallback behavior
+- `internal/verify/select_test.go` — add silent-fallback regression tests
+- `internal/registry/config.go:267` — `AgentConfig.Language` nil/empty semantics
+- `.planning/specifications/design-concepts/adversarial-verification-interface.md` — verification interface semantics
+
 ## Happy Path Scenarios
 
 **Scenario 1: No skeptic has a Language field set — output matches pre-routing baseline**
@@ -50,7 +57,7 @@
 - HTTP status / error code: Any log output detected in tests is a test failure
 
 ## Performance Requirements
-- **Response Time:** The no-match code path (all unmatched) must be as fast as pre-routing behavior; the matched slice will be empty (zero allocation) and the append collapses to a no-op.
+- **Response Time:** The no-match code path (all unmatched) must not regress pre-routing behavior; `BenchmarkSelectEligibleSkeptics` shows no statistically significant increase in ns/op, and the matched slice will be empty (zero allocation) so the append collapses to a no-op.
 - **Throughput:** No degradation over pre-routing baseline for workloads with no language-scoped personas installed.
 
 ## Security Considerations

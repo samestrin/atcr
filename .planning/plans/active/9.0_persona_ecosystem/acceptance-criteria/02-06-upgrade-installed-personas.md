@@ -18,6 +18,15 @@
 - `cmd/atcr/personas.go` - modify: add `upgrade` sub-subcommand with `--all` and `--dry-run` flags
 - `cmd/atcr/personas_test.go` - modify: add `TestPersonasUpgrade_*` test cases using `httptest.NewServer` and temp directory
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/upgrade.go` — create: upgrade logic
+- `internal/personas/client.go` — create/modify: HTTP client and `FetchPersonaYAML` helper
+- `cmd/atcr/personas.go` — modify: add `upgrade` sub-subcommand
+- `cmd/atcr/personas_test.go` — modify: add upgrade test cases
+- `internal/personas/install.go` — related: shared install path
+- `internal/registry/persona.go:44` — persona resolution chain
+
 ## Happy Path Scenarios
 
 **Scenario 1: Upgrade a single persona when remote is newer**

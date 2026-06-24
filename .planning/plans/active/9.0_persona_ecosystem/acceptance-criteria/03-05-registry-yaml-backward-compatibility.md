@@ -15,6 +15,14 @@
 - `internal/registry/config_test.go` - modify: add regression test loading an existing fixture registry file that lacks `language` keys and asserting that `SelectEligibleSkeptics` output matches the pre-routing alphabetical baseline
 - `personas/testdata/` - reference: existing YAML fixtures that do not contain `language` key; must continue to parse without errors after the struct change
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/registry/config.go:267` — `AgentConfig.Language` `yaml:"language,omitempty"` field
+- `internal/registry/config_test.go` — add backward-compatibility regression tests
+- `personas/testdata/` — existing YAML fixtures without `language` key
+- `internal/verify/select_test.go` — pre-routing alphabetical baseline assertions
+- `internal/verify/select.go:55` — `SelectEligibleSkeptics` fallback behavior
+
 ## Happy Path Scenarios
 
 **Scenario 1: Existing registry file without `language` key loads without error**
@@ -79,7 +87,7 @@
 **Story-Specific:**
 - [ ] Regression test confirms existing fixture YAML files (without `language` key) load without error after `AgentConfig` struct change
 - [ ] Regression test confirms `SelectEligibleSkeptics` output for a no-language-field registry matches pre-routing alphabetical baseline exactly
-- [ ] Mixed registry (some with `language`, some without) loads cleanly and both agent types function correctly
+- [ ] Mixed registry (some with `language`, some without) loads cleanly and both agent types load without error and produce identical skeptic selection output to the pre-routing baseline when no language match exists
 
 **Manual Review:**
 - [ ] Code reviewed and approved

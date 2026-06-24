@@ -11,7 +11,7 @@
 ## Story Context
 
 - **Background:** `SelectEligibleSkeptics` in `internal/verify/select.go:55` currently selects skeptics from an alphabetically sorted pool with an `n`-cap, with no awareness of the language of the file being reviewed. A Go-scoped persona such as `idiomatic` (shipped in T1) declares `language: [go]` in its registry entry. Without routing, that persona competes equally with generalist skeptics regardless of whether the finding is in a `.go` file, wasting its domain specificity. The routing change introduces a two-partition reorder — language-matched skeptics first, unmatched after — so the existing `n`-cap naturally favors matched skeptics. No behavioral change occurs when no persona declares `language`, preserving full backward compatibility.
-- **Assumptions:** `AgentConfig` gains a new `Language []string` field (canonical form: without leading dot, lowercased, e.g. `["go", "ts"]`) before this routing logic is implemented, making T8 a prerequisite of T1 in Sprint A. The corroboration score tie-break map (`map[string]float64`) passed as a 4th parameter to `SelectEligibleSkeptics` is nil-safe; a nil map degrades to alphabetical ordering within the matched partition. Only one production caller exists (`internal/verify/pipeline.go:162`), so the signature change is fully contained.
+- **Assumptions:** `AgentConfig` gains a new `Language []string` field in `internal/registry/config.go` (canonical form: without leading dot, lowercased, e.g. `["go", "ts"]`) before this routing logic is implemented, making T8 a prerequisite of T1 in Sprint A. The corroboration score tie-break map (`map[string]float64`) passed as a 4th parameter to `SelectEligibleSkeptics` is nil-safe; a nil map degrades to alphabetical ordering within the matched partition. Only one production caller exists (`internal/verify/pipeline.go:162`), so the signature change is fully contained.
 - **Constraints:** Fallback to the general pool when no language-matched skeptic exists must be silent — no log output, no error, no behavioral difference from today's unscoped run. The `Language` field must be backward-compatible: existing `registry.yaml` files that omit the field continue to load and function without modification. The `n`-cap in `select.go:84-86` must not be altered; routing works by reordering the slice the cap acts on, not by changing the cap itself.
 
 ## Story Details
@@ -29,6 +29,16 @@
 - **Achievable:** The change is a contained two-partition reorder on a single already-sorted `[]string` in `select.go`; no new packages, no external dependencies, and one production caller to update.
 - **Relevant:** Language-matched skeptic routing directly improves verification quality for Go (and future language-scoped) personas, which is a primary value driver for vertical market adoption in this plan.
 - **Time-bound:** Completed and verified green within Sprint A, before T1 bonus personas land on top of the new `Language` field.
+
+## Acceptance Criteria Overview
+
+This story is complete when the following acceptance criteria are met:
+
+- **03-01**: `AgentConfig` supports an optional `Language []string` field with validation and canonicalization.
+- **03-02**: `SelectEligibleSkeptics` reorders eligible skeptics to prefer language-matched agents.
+- **03-03**: The production caller in `internal/verify/pipeline.go` passes the new `scores` parameter.
+- **03-04**: Fallback to the general skeptic pool is silent and automatic when no language match exists.
+- **03-05**: Existing registry YAML files without a `language` key continue to load and behave identically.
 
 ## Acceptance Criteria
 
@@ -52,8 +62,9 @@ _Detailed AC: `/create-acceptance-criteria @/Users/samestrin/Documents/GitHub/at
 
 ## Technical Considerations
 
-- **Implementation Notes:** The two-partition reorder operates on the `names []string` slice after `sort.Strings(names)` at approximately `select.go:68`. A `normalizeExt` helper strips the leading dot and lowercases the result of `filepath.Ext(finding.File)` — the same normalization applied to each entry in `skeptic.Language` at load time via `applyDefaults`. The matched partition is built in a single pass over `names`; a second pass collects unmatched; `names = append(matched, unmatched...)` reconstructs the slice. The existing `n`-cap slice expression at lines 84–86 remains untouched.
-- **Integration Points:** `internal/verify/select.go` (core routing logic), `internal/config/agent.go` (new `Language` field, `validateAgent`, `applyDefaults`), `internal/verify/pipeline.go:162` (sole production caller — signature update only), `personas/testdata/` (fixtures for `idiomatic`/`sentinel`/`tracer` that will exercise the `language` field added here).
+- **Implementation Notes:** The two-partition reorder operates on the `names []string` slice after `sort.Strings(names)` at `select.go:81`. A `normalizeExt` helper strips the leading dot and lowercases the result of `filepath.Ext(finding.File)` — the same normalization applied to each entry in `skeptic.Language` at load time via `applyDefaults`. The matched partition is built in a single pass over `names`; a second pass collects unmatched; `names = append(matched, unmatched...)` reconstructs the slice. The existing `n`-cap slice expression at lines 84–86 remains untouched.
+- **Integration Points:** `internal/verify/select.go` (core routing logic), `internal/registry/config.go` (new `Language` field, `validateAgent`, `applyDefaults`), `internal/verify/pipeline.go:162` (sole production caller — signature update only), `personas/testdata/` (fixtures for `idiomatic`/`sentinel`/`tracer` that will exercise the `language` field added here).
+- **Design Reference:** This story extends the adversarial verification interface; see [Adversarial Verification Interface](../../../../specifications/design-concepts/adversarial-verification-interface.md) for CLI/MCP semantics and report rendering conventions.
 - **Data Requirements:** `AgentConfig.Language` is `[]string` with YAML tag `language,omitempty`; nil and empty slice are semantically equivalent (no language constraint). The caller-supplied `scores map[string]float64` maps persona name to corroboration rate (0.0–1.0); nil map is safe and degrades to alphabetical tie-breaking within the matched partition.
 
 ## Potential Risks

@@ -14,9 +14,14 @@
 - `internal/personas/list.go` - modify: after building the joined slice, apply `sort.Slice`: numeric rates descending by value, then `n/a` entries ascending by `strings.ToLower(name)`
 - `internal/personas/list_test.go` - modify: add `TestPersonasListScoresSortOrder` with a fixture covering descending numeric order and alphabetical `n/a` tail
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/list.go` — modify: sort logic for `--scores` output
+- `internal/personas/list_test.go` — modify: add sort-order tests
+
 ## Happy Path Scenarios
 
-**Scenario 1: Mixed numeric and n/a rows sort correctly**
+**Scenario 1: Mixed numeric and n/a rows sort by rate descending then alphabetically**
 - **Given** four personas installed with rates: `sentinel=0.72`, `tracer=n/a`, `idiomatic=0.50`, `guardian=n/a`
 - **When** the user runs `atcr personas list --scores`
 - **Then** the output rows appear in this order: `sentinel (72.0%)`, `idiomatic (50.0%)`, `guardian (n/a)`, `tracer (n/a)` — numeric rows descending, then `n/a` rows alphabetically

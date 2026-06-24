@@ -16,6 +16,16 @@
 - `internal/verify/select.go` - modify: add `normalizeExt` private helper that strips a single leading dot and lowercases the result
 - `internal/verify/select_test.go:44` - modify: add test cases for language-matched selection, no-match fallback, and multiple-match score tie-break
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/select.go:55` — `SelectEligibleSkeptics`: primary extension point for language routing
+- `internal/verify/select.go:81` — `sort.Strings(names)` insertion point for two-partition reorder
+- `internal/verify/select.go:84-86` — existing `n`-cap slice expression (must remain unchanged)
+- `internal/verify/select_test.go:44` — extend with language-match and tie-break tests
+- `internal/reconcile/emit.go:64` — `JSONFinding.File` source for file extension matching
+- `internal/registry/config.go:267` — `AgentConfig.Language` field
+- `.planning/specifications/design-concepts/adversarial-verification-interface.md` — verification interface semantics
+
 ## Happy Path Scenarios
 
 **Scenario 1: Language-matched skeptic selected first**
@@ -40,7 +50,7 @@
 - **When** `SelectEligibleSkeptics` is called with `finding.File = "util.go"`, `n=2`
 - **Then** the returned slice is `["alpha", "zeta"]` (alphabetical; no panic)
 
-**Edge Case 2: Extension with leading dot is normalized correctly**
+**Edge Case 2: Extension with leading dot is normalized to dotless lowercase**
 - **Given** a skeptic with `Language = ["go"]`
 - **When** `normalizeExt` is called on `".go"` (as returned by `filepath.Ext`)
 - **Then** the result is `"go"` (dot stripped, already lowercase)

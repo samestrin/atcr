@@ -30,6 +30,14 @@
 - **Relevant:** Vertical-market adoption hinges on teams being able to install and configure personas without engineering support; contributor growth requires a clear authoring contract.
 - **Time-bound:** Documentation is complete and merged in the same Sprint B that delivers T2, T5, T6, and T7-in-repo, before the 9.0 release cut.
 
+## Acceptance Criteria Overview
+
+This story is complete when the following acceptance criteria are met:
+
+- **06-01**: `docs/personas-install.md` documents all persona lifecycle commands and bundle installation.
+- **06-02**: `docs/personas-authoring.md` provides a persona authoring template, fixture rules, and `language` field guidance.
+- **06-03**: `docs/registry.md` and the example registry YAML files document the `language` field and routing behavior.
+
 ## Acceptance Criteria
 
 | AC | Title | Type |

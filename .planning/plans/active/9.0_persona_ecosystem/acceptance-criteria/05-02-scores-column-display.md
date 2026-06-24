@@ -18,6 +18,14 @@
 - `internal/scorecard/scorecard.go` - read-only reference: `Record` struct at line 52 with `CorroborationRate float64`; no changes required
 - `internal/personas/list_test.go` - modify: add `TestPersonasListWithScores` covering present-in-map and absent-from-map personas; add mixed-case fixture to confirm case-insensitive join
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/list.go` — modify: `--scores` join and formatting logic
+- `internal/scorecard/aggregate.go:118` — `Aggregate()` and `LeaderboardRow`
+- `internal/scorecard/scorecard.go:52` — `Record` schema with `CorroborationRate`
+- `internal/scorecard/paths.go:23` — `scorecard.DefaultDir()` for scorecard path
+- `internal/personas/list_test.go` — modify: add scores column tests
+
 ## Happy Path Scenarios
 
 **Scenario 1: Persona present in scorecard map shows formatted rate**
@@ -50,7 +58,7 @@
 **Edge Case 3: Reviewer name casing mismatch**
 - **Given** the scorecard has `ReviewerName = "Sentinel"` (capital S) and the persona metadata has `Name = "sentinel"` (lowercase)
 - **When** the user runs `atcr personas list --scores`
-- **Then** the join succeeds and `sentinel` shows its rate correctly (case-insensitive key lookup via `strings.ToLower`)
+- **Then** the join succeeds and `sentinel` displays its formatted corroboration rate (case-insensitive key lookup via `strings.ToLower`)
 
 **Edge Case 4: Rate is exactly 0.0 (all findings rejected)**
 - **Given** `sentinel` has a `CorroborationRate` of `0.0`

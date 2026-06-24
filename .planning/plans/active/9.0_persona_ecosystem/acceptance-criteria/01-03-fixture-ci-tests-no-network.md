@@ -15,6 +15,13 @@
 - `personas/testdata/idiomatic_fixture.patch` - create: minimal diff containing an ignored `error` return — unambiguous trigger for `idiomatic`
 - `personas/personas_test.go` - modify: add three fixture-based test functions, one per bonus persona
 
+### Related Files (from codebase-discovery.json)
+
+- `personas/testdata/sentinel_fixture.patch` — create: SQL concatenation / hardcoded secret fixture
+- `personas/testdata/tracer_fixture.patch` — create: ORM-in-loop fixture
+- `personas/testdata/idiomatic_fixture.patch` — create: ignored error return fixture
+- `personas/personas_test.go` — modify: add fixture-based test functions
+
 ## Happy Path Scenarios
 
 **Scenario 1: sentinel fixture triggers a security finding**

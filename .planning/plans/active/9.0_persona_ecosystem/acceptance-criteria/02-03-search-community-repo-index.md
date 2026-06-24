@@ -18,6 +18,14 @@
 - `cmd/atcr/personas.go` - modify: add `search` sub-subcommand wired to `personas.Search()`
 - `cmd/atcr/personas_test.go` - modify: add `TestPersonasSearch_*` test cases using `httptest.NewServer`
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/search.go` — create: search logic
+- `internal/personas/client.go` — create/modify: HTTP client and index fetch helper
+- `cmd/atcr/personas.go` — modify: add `search` sub-subcommand
+- `cmd/atcr/personas_test.go` — modify: add search test cases
+- `internal/verify/invoke_test.go` — reference: `httptest.NewServer` pattern
+
 ## Happy Path Scenarios
 
 **Scenario 1: Keyword matches one or more personas**
@@ -50,7 +58,7 @@
 **Edge Case 3: Index JSON contains extra unknown fields**
 - **Given** `index.json` entries have an additional `tags` field not in `PersonaIndexEntry`
 - **When** the index is parsed
-- **Then** unknown fields are silently ignored; known fields are populated correctly
+- **Then** unknown fields are silently ignored; known fields are populated with the same values present in the JSON index
 
 ## Error Conditions
 

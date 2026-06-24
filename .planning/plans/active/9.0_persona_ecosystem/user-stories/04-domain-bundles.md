@@ -13,6 +13,7 @@
 - **Background:** Teams adopting ATCR for a specific framework need multiple complementary personas to get meaningful coverage. A Django team needs `django-orm` (query pattern checks), `python-types` (type annotation enforcement), `security/owasp` (web security), and `security/secrets` (credential leakage). Installing these one-by-one requires knowing which personas exist, which are relevant, and running four separate commands — creating friction that blocks adoption. Domain bundles package these complementary personas under a single stack-focused name, letting teams reason at the level they already think in: "I'm running Django" rather than "I need personas X, Y, Z, and W."
 - **Assumptions:** The `atcr personas` CLI (T2) is in place before bundle resolution is layered on top. YAML v3 and `embed.FS` are already established patterns in the codebase (used for the bonus personas in T1). Bundle manifests are versioned YAML files checked into the repository under `internal/personas/bundles/`. The resolver handles partial installs (some personas in a bundle already installed) gracefully by skipping already-present entries.
 - **Constraints:** Only two initial bundles ship: `bundle/django` and `bundle/go-production`. The bundle resolver lives exclusively in `internal/personas/bundles.go` — no bundle logic bleeds into the CLI layer or `AgentConfig`. Bundle manifest format is intentionally minimal (name, description, personas list) to keep authoring friction low. The `install bundle/` prefix is the only bundle-aware path; `install <persona>` for individual personas is unchanged.
+- **Documentation Reference:** See [YAML Bundle Manifests](../documentation/yaml-bundle-manifests.md) for manifest parsing rules and `AgentConfig.Language` integration.
 
 ## Story Details
 
@@ -29,6 +30,16 @@
 - **Achievable:** Implementation requires one new Go file (`internal/personas/bundles.go`), two YAML manifest files, and wiring the `install` subcommand to detect the `bundle/` prefix — all within existing patterns already established by T2.
 - **Relevant:** Reduces first-time setup from four commands (and knowledge of which four to run) to one command, directly lowering the adoption barrier for framework-focused teams and making ATCR immediately deployable as a stack-level tool.
 - **Time-bound:** Delivered within Sprint B alongside T2 completion; both bundles are functional before Sprint B's cumulative adversarial review.
+
+## Acceptance Criteria Overview
+
+This story is complete when the following acceptance criteria are met:
+
+- **04-01**: `atcr personas install bundle/django` installs all declared personas on a clean config directory.
+- **04-02**: Partial bundle installs skip already-present personas and install the remainder.
+- **04-03**: Installing an unknown bundle exits non-zero with a clear error and installs nothing.
+- **04-04**: Bundle manifest YAML is validated at parse time with descriptive errors for missing fields.
+- **04-05**: `internal/personas/bundles_test.go` covers expansion, errors, partial installs, and parse validation.
 
 ## Acceptance Criteria
 

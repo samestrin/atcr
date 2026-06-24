@@ -13,7 +13,15 @@
 ## Related Files
 - `internal/verify/pipeline.go:162` - modify: update the single call-site of `SelectEligibleSkeptics` to pass a corroboration scores map (or `nil` when scores are not yet available in this pipeline phase)
 - `internal/verify/select.go` - modify: updated function signature (4th `scores` parameter) that `pipeline.go` must satisfy
-- `internal/verify/pipeline_test.go` - modify: verify the pipeline integration compiles and routes correctly with the new signature
+- `internal/verify/pipeline_test.go` - modify: verify the pipeline integration compiles and routes language-matched skeptics before unmatched skeptics with the new signature
+
+### Related Files (from codebase-discovery.json)
+
+- `internal/verify/pipeline.go:162` — sole production caller of `SelectEligibleSkeptics`
+- `internal/verify/select.go:55` — updated `SelectEligibleSkeptics` signature with 4th `scores` parameter
+- `internal/verify/pipeline_test.go` — verify integration with new signature
+- `internal/scorecard/aggregate.go:118` — `Aggregate()` source for corroboration-rate map
+- `.planning/specifications/design-concepts/adversarial-verification-interface.md` — verification pipeline semantics
 
 ## Happy Path Scenarios
 

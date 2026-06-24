@@ -15,6 +15,12 @@
 - `cmd/atcr/personas_install.go` - modify: `errors.Is` check for `ErrUnknownBundle`, print clear user-facing message and `os.Exit(1)`
 - `internal/personas/bundles_test.go` - create: unknown bundle test case asserting `errors.Is(err, ErrUnknownBundle)` and zero persona list returned
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/bundles.go` — create: `ErrUnknownBundle` sentinel and `Resolve`
+- `cmd/atcr/personas.go` — modify: `errors.Is` handling for unknown bundles
+- `internal/personas/bundles_test.go` — create: unknown bundle test cases
+
 ## Happy Path Scenarios
 
 **Scenario 1: Known bundle name succeeds (control case)**

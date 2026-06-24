@@ -7,7 +7,7 @@ Expand ATCR's reviewer panel beyond the 6 generalist built-in personas by shippi
 - [x] **Plan Created**
 - [x] **User Stories** — `/create-user-stories @.planning/plans/active/9.0_persona_ecosystem/`
 - [x] **Acceptance Criteria** — `/create-acceptance-criteria @.planning/plans/active/9.0_persona_ecosystem/`
-- [ ] **Design Sprint** — `/design-sprint @.planning/plans/active/9.0_persona_ecosystem/`
+- [x] **Design Sprint** — `/design-sprint @.planning/plans/active/9.0_persona_ecosystem/`
 - [ ] **Sprint Plan** — `/create-sprint @.planning/plans/active/9.0_persona_ecosystem/`
 
 ## Sprint Structure (Pre-Decided)
@@ -63,6 +63,7 @@ Expand ATCR's reviewer panel beyond the 6 generalist built-in personas by shippi
 - [Per-Persona Corroboration Scores](documentation/scorecard-corroboration.md) — scorecard aggregation and `atcr personas list --scores` wiring (T6)
 
 ## Plan Assets
+- [Sprint Design](sprint-design.md)
 - [Original Request](original-requirements.md)
 - [Plan](plan.md)
 - [Metadata](metadata.md)

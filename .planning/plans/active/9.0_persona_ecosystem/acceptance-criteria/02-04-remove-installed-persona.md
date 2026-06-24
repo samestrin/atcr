@@ -16,6 +16,14 @@
 - `cmd/atcr/personas.go` - modify: add `remove` sub-subcommand wired to `personas.Remove()`
 - `cmd/atcr/personas_test.go` - modify: add `TestPersonasRemove_*` test cases using temp directory
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/remove.go` — create: remove logic
+- `internal/personas/paths.go` — create: `PersonasDir()` path helpers
+- `cmd/atcr/personas.go` — modify: add `remove` sub-subcommand
+- `cmd/atcr/personas_test.go` — modify: add remove test cases
+- `internal/registry/persona.go:44` — persona resolution chain (removed personas no longer resolve)
+
 ## Happy Path Scenarios
 
 **Scenario 1: Successfully remove an installed community persona**
@@ -33,7 +41,7 @@
 **Edge Case 1: Name uses forward slash (subdirectory) notation**
 - **Given** the user runs `atcr personas remove security/owasp`
 - **When** `Remove()` resolves the path
-- **Then** it correctly maps to `<personasDir>/security/owasp.yaml` (forward slash becomes path separator); no path traversal is possible
+- **Then** it maps exactly to `<personasDir>/security/owasp.yaml` (forward slash becomes path separator); no path traversal is possible
 
 **Edge Case 2: Empty parent directory left after removal**
 - **Given** `~/.config/atcr/personas/security/` contains only `owasp.yaml`, which is then removed

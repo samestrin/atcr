@@ -14,6 +14,14 @@
 - `personas/tracer.md` - create: performance-focused persona covering N+1 queries, memory leaks, allocation hot paths
 - `personas/idiomatic.md` - create: Go idiom persona covering error handling, goroutine leaks, stdlib misuse
 
+### Related Files (from codebase-discovery.json)
+
+- `personas/bruce.md` — structural blueprint for new persona markdown
+- `personas/sentinel.md` — create: security-focused persona
+- `personas/tracer.md` — create: performance-focused persona
+- `personas/idiomatic.md` — create: Go idiom persona
+- `personas/personas.go:16` — `names` slice registration for embedded personas
+
 ## Happy Path Scenarios
 
 **Scenario 1: sentinel.md covers OWASP / injection / secrets domains**

@@ -15,6 +15,14 @@
 - `internal/personas/bundles_test.go` - create: full test suite covering all five required scenarios
 - `internal/personas/bundles.go` - create: production code under test (resolver, manifest parser, error sentinel)
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/bundles_test.go` — create: full bundle test suite
+- `internal/personas/bundles.go` — create: resolver, manifest parser, `ErrUnknownBundle`
+- `internal/personas/bundles/django.yaml` — embedded django manifest
+- `internal/personas/bundles/go-production.yaml` — embedded go-production manifest
+- `internal/verify/invoke_test.go` — reference: `httptest.NewServer` pattern
+
 ## Happy Path Scenarios
 
 **Scenario 1: Successful expansion of bundle/django**

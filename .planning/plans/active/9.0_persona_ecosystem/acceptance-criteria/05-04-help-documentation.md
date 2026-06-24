@@ -14,6 +14,12 @@
 - `cmd/atcr/personas.go` - modify: register `--scores` flag with a human-readable description string explaining that it adds a corroboration-rate column sourced from past review runs
 - `internal/personas/list_test.go` - modify: add `TestPersonasListHelpContainsScoresFlag` that runs `personas list --help` and asserts the output contains `--scores` and a non-empty description
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/personas.go` — modify: register `--scores` flag description
+- `internal/personas/list_test.go` — modify: add help-text assertion test
+- `cmd/atcr/main.go:128` — root command registration
+
 ## Happy Path Scenarios
 
 **Scenario 1: --help output includes --scores flag description**

@@ -15,6 +15,16 @@
 - `examples/registry-without-executor.yaml` - modify: add at least one `language` field example on an agent definition
 - `examples/registry-with-executor.yaml` - modify: add at least one `language` field example on an agent definition (skeptic agent preferred to illustrate routing)
 
+### Related Files (from codebase-discovery.json)
+
+- `docs/registry.md` — modify: document `language` field and routing behavior
+- `examples/registry-without-executor.yaml` — modify: add `language` example
+- `examples/registry-with-executor.yaml` — modify: add `language` example on skeptic agent
+- `internal/registry/config.go:267` — `AgentConfig.Language` field definition
+- `internal/verify/select.go:55` — `SelectEligibleSkeptics` two-partition routing implementation
+- `internal/verify/select.go:84-86` — existing `n`-cap (routing behavior reference)
+- `.planning/specifications/design-concepts/adversarial-verification-interface.md` — verification interface semantics
+
 ## Happy Path Scenarios
 
 **Scenario 1: Developer reads the language field reference in docs/registry.md**

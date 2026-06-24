@@ -13,6 +13,7 @@
 - **Background:** Teams install domain personas (bonus built-ins like `sentinel`, `tracer`, `idiomatic`, or community personas) hoping they will surface more relevant issues than the generalist reviewers. Today there is no feedback loop — a persona either stays installed indefinitely or gets removed by gut feel. Epic 3.3 introduced a scorecard that accumulates corroboration data per reviewer across runs; this story wires that existing data into a visible `--scores` flag on `atcr personas list`, closing the ROI loop without adding new data collection.
 - **Assumptions:** The scorecard JSONL file (`~/.config/atcr/scorecard.jsonl` or equivalent) is already being written by the corroboration pipeline. `scorecard.Aggregate()` returns a `[]LeaderboardRow` where each row has a `ReviewerName string` and `CorroborationRate float64`. The `internal/personas` package (T2) exposes a `List()` function that returns installed persona metadata. At least one review run with corroboration enabled has occurred before `--scores` is meaningful; zero-data personas show `n/a`.
 - **Constraints:** No new data collection — only existing `scorecard.Aggregate()` output is used. The `--scores` flag is additive to the existing `atcr personas list` output; baseline behavior without the flag must not change. The corroboration rate map shape (`map[string]float64`, keyed by reviewer name) is already decided by T8's `SelectEligibleSkeptics` 4th parameter — this story reuses that same map to avoid caller churn.
+- **Documentation Reference:** See [Per-Persona Corroboration Scores](../documentation/scorecard-corroboration.md) for scorecard storage, aggregation, and the shared map shape with T8.
 
 ## Story Details
 
@@ -29,6 +30,15 @@
 - **Achievable:** Implementation requires joining the `List()` output from `internal/personas` with the `map[string]float64` built by `scorecard.Aggregate()` — no new data structures or external dependencies.
 - **Relevant:** Visible corroboration rates give platform leads a concrete, evidence-based metric to justify persona retention or removal, reducing configuration noise on teams that have accumulated unused personas.
 - **Time-bound:** Delivered within Sprint B alongside T2, T5, and T7-in-repo; the score display is the last consumer of the corroboration map already established by T8, so it completes the data pipeline in the same sprint.
+
+## Acceptance Criteria Overview
+
+This story is complete when the following acceptance criteria are met:
+
+- **05-01**: `atcr personas list` without `--scores` produces the same output as before this change.
+- **05-02**: `atcr personas list --scores` adds a `CORROBORATION` column with formatted rates or `n/a`.
+- **05-03**: The scores table is sorted by corroboration rate descending, with `n/a` rows alphabetically at the bottom.
+- **05-04**: The `--scores` flag is documented in `atcr personas list --help` output.
 
 ## Acceptance Criteria
 

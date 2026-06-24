@@ -16,6 +16,13 @@
 - `internal/registry/config.go` - modify: update `validateAgent` to reject empty strings and control characters in `Language` entries; update `applyDefaults` to canonicalize each entry (trim whitespace, strip leading dot, lowercase)
 - `internal/registry/config_test.go` - modify: add table-driven tests for `Language` field validation and canonicalization
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/registry/config.go:267` — `AgentConfig` struct: add `Language []string`
+- `internal/registry/config.go:~625` — `validateAgent`: reject empty/control-character entries
+- `internal/registry/config.go:~699` — `applyDefaults`: canonicalize language entries
+- `internal/registry/config_test.go` — add validation and canonicalization tests
+
 ## Happy Path Scenarios
 
 **Scenario 1: Language field loaded from YAML with dot-prefixed entries**

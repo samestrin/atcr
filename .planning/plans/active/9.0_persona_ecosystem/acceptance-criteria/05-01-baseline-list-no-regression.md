@@ -15,6 +15,13 @@
 - `cmd/atcr/personas.go` - modify: bind the `--scores` flag on the `list` subcommand; verify no positional args or existing flags are altered
 - `internal/personas/list_test.go` - modify: add `TestPersonasListBaseline` asserting output column headers and row format are identical to pre-story output when `--scores` is absent
 
+### Related Files (from codebase-discovery.json)
+
+- `internal/personas/list.go` — modify: baseline list path (no `scorecard.Aggregate()` call when flag absent)
+- `cmd/atcr/personas.go` — modify: bind `--scores` flag on `list`
+- `internal/personas/list_test.go` — modify: add baseline regression test
+- `internal/scorecard/aggregate.go:118` — reference: must NOT be called in baseline path
+
 ## Happy Path Scenarios
 
 **Scenario 1: list without --scores returns unchanged output**

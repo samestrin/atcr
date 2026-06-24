@@ -21,6 +21,18 @@
 - `cmd/atcr/main.go` - modify: register `newPersonasCmd()` under root (line 128)
 - `cmd/atcr/main_test.go` - modify: bump `TestRootCmd_HasExactlyFourteenSubcommands` to 15
 
+### Related Files (from codebase-discovery.json)
+
+- `cmd/atcr/main.go:128` — root command constructor `newRootCmd`
+- `cmd/atcr/main.go:174-189` — `root.AddCommand()` registration block
+- `cmd/atcr/main_test.go:46` — `TestRootCmd_HasExactlyFourteenSubcommands` to update to 15
+- `cmd/atcr/personas.go` — create: `newPersonasCmd()` and `install` sub-subcommand
+- `cmd/atcr/personas_test.go` — create: integration tests for `install`
+- `internal/personas/install.go` — create: install logic
+- `internal/personas/client.go` — create: HTTP client and `RegistryBaseURL`
+- `internal/personas/paths.go` — create: `PersonasDir()` path helpers
+- `internal/registry/persona.go:44` — persona resolution chain for installed files
+
 ## Happy Path Scenarios
 
 **Scenario 1: Successful install of a named persona**
@@ -33,9 +45,9 @@
 - **When** the user runs `atcr personas install security/owasp`
 - **Then** `os.MkdirAll` creates the directory tree, the file is written successfully, and the command exits 0
 
-**Scenario 3: Persona immediately available in registry**
+**Scenario 3: Persona available in registry without restart**
 - **Given** `security/owasp.yaml` has been installed via `atcr personas install`
-- **When** the registry performs its startup scan of `~/.config/atcr/personas/`
+- **When** the registry performs its startup scan of `~/.config/atcr/personas/` in the same running process
 - **Then** `security/owasp` appears as a resolvable persona without restarting the binary
 
 ## Edge Cases
