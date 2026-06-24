@@ -379,6 +379,35 @@ func TestEncode_GoldenFixture(t *testing.T) {
 	}
 }
 
+// TestEncode_DualReconciledAtContract pins the deliberate design: the Encode
+// envelope carries its own top-level reconciled_at (the authoritative RFC3339
+// timestamp), while result.Summary is passed verbatim — so summary.reconciled_at
+// reflects whatever Reconcile() stamped, which may differ when a bare Result is
+// constructed directly without going through Reconcile().
+func TestEncode_DualReconciledAtContract(t *testing.T) {
+	// Bare Result: Summary.ReconciledAt is empty; envelope must still be set.
+	bare := reconcile.Result{}
+	out, err := Encode(bare, reconcile.Options{ReconciledAt: fixedTime})
+	if err != nil {
+		t.Fatalf("Encode returned error: %v", err)
+	}
+	var env struct {
+		ReconciledAt string `json:"reconciled_at"`
+		Summary      struct {
+			ReconciledAt string `json:"reconciled_at"`
+		} `json:"summary"`
+	}
+	if err := stdjson.Unmarshal(out, &env); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if env.ReconciledAt != fixedTime.Format(time.RFC3339) {
+		t.Errorf("envelope reconciled_at = %q, want %q (envelope must be authoritative)", env.ReconciledAt, fixedTime.Format(time.RFC3339))
+	}
+	if env.Summary.ReconciledAt != "" {
+		t.Errorf("summary.reconciled_at = %q, want \"\" for bare Result (Summary is verbatim passthrough)", env.Summary.ReconciledAt)
+	}
+}
+
 func TestNoPathValidationFieldsInOutput(t *testing.T) {
 	out, err := Encode(sampleResult(), reconcile.Options{ReconciledAt: fixedTime})
 	if err != nil {
