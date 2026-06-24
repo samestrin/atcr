@@ -132,6 +132,9 @@ type JSONFinding struct {
 // path-validated records. A Result built directly (no path validation) derives
 // fresh path-less records from the merged findings.
 func (r Result) JSONFindings() []JSONFinding {
+	// Return cached path-stamped records when available; otherwise derive fresh
+	// path-less records from the merged findings. The cache-vs-derivation split
+	// is intentional: RunReconcile validates paths once and reuses the result.
 	if r.jsonFindings != nil {
 		return r.jsonFindings
 	}
