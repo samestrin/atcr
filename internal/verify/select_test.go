@@ -499,6 +499,25 @@ func TestSelectEligibleSkeptics_BackwardCompatNoLanguageField(t *testing.T) {
 	assert.Equal(t, []string{"alpha", "mango"}, got, "no Language field → prior alphabetical n-cap behavior")
 }
 
+// TestSelectEligibleSkeptics_ScoreMapKeyNormalization (TD-013): the scores map
+// produced by reviewerCorroborationRates is keyed lowercase, but registry agent
+// names retain their YAML casing. Without lowercasing the lookup, a mixed-case
+// agent name like "Archer" misses its rate and sorts as if it were 0.
+func TestSelectEligibleSkeptics_ScoreMapKeyNormalization(t *testing.T) {
+	reg := &registry.Registry{
+		Providers: map[string]registry.Provider{"p1": {BaseURL: "u", APIKeyEnv: "K"}},
+		Agents: map[string]registry.AgentConfig{
+			"Archer": {Role: registry.RoleSkeptic, Model: "m-a", Language: []string{"go"}, Provider: "p1"},
+			"bravo":  {Role: registry.RoleSkeptic, Model: "m-b", Language: []string{"go"}, Provider: "p1"},
+		},
+	}
+	finding := reconcile.JSONFinding{File: "main.go", Reviewers: []string{}}
+	// scores keyed lowercase — exactly as reviewerCorroborationRates produces.
+	scores := map[string]float64{"archer": 0.90, "bravo": 0.20}
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
+	require.Equal(t, []string{"Archer", "bravo"}, got, "mixed-case registry key must match lowercase score-map key")
+}
+
 // TestSelectEligibleSkeptics_DotfileExtensionless verifies that dotfiles whose
 // basename equals filepath.Ext (e.g. .gitignore, .env) are treated as extensionless
 // so they do not match language-scoped skeptics. Without the guard, filepath.Ext
