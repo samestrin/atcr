@@ -159,7 +159,10 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		if !meetsSeverityFloor(f.Severity, minSev) {
 			continue // below floor: keep v1 confidence, no skeptic (cost control)
 		}
-		sk := SelectEligibleSkeptics(reg, f, votes)
+		// scores is nil until T6 (Epic 9.0 Phase 5) wires scorecard.Aggregate()
+		// here; nil is the documented "no score data" signal — language routing
+		// still applies, with the matched partition ordered alphabetically.
+		sk := SelectEligibleSkeptics(reg, f, votes, nil)
 		if len(sk) > 0 {
 			needTool = true
 		}

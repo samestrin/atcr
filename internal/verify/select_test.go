@@ -198,7 +198,7 @@ func TestSelectEligibleSkeptics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := buildRegistry(tt.skeptics, tt.reviewers)
-			got := SelectEligibleSkeptics(reg, tt.finding, tt.n)
+			got := SelectEligibleSkeptics(reg, tt.finding, tt.n, nil)
 			assert.NotNil(t, got, "result must be non-nil even when empty")
 			assert.Equal(t, tt.wantNames, skepticNames(got))
 		})
@@ -208,7 +208,7 @@ func TestSelectEligibleSkeptics(t *testing.T) {
 // TestSelectEligibleSkeptics_NilRegistry covers the defensive nil-registry guard
 // (AC 01-02 Error Scenario 1): no panic, non-nil empty slice.
 func TestSelectEligibleSkeptics_NilRegistry(t *testing.T) {
-	got := SelectEligibleSkeptics(nil, reconcile.JSONFinding{Reviewers: []string{"alice"}}, 2)
+	got := SelectEligibleSkeptics(nil, reconcile.JSONFinding{Reviewers: []string{"alice"}}, 2, nil)
 	assert.NotNil(t, got)
 	assert.Empty(t, got)
 }
@@ -232,9 +232,9 @@ func TestSelectEligibleSkeptics_MultipleFindings(t *testing.T) {
 	f2 := reconcile.JSONFinding{Reviewers: []string{"bob"}}          // excludes s2
 	f3 := reconcile.JSONFinding{Reviewers: []string{"alice", "bob"}} // excludes s1+s2
 
-	assert.Equal(t, []string{"s2", "s3"}, skepticNames(SelectEligibleSkeptics(reg, f1, 10)))
-	assert.Equal(t, []string{"s1", "s3"}, skepticNames(SelectEligibleSkeptics(reg, f2, 10)))
-	assert.Equal(t, []string{"s3"}, skepticNames(SelectEligibleSkeptics(reg, f3, 10)))
+	assert.Equal(t, []string{"s2", "s3"}, skepticNames(SelectEligibleSkeptics(reg, f1, 10, nil)))
+	assert.Equal(t, []string{"s1", "s3"}, skepticNames(SelectEligibleSkeptics(reg, f2, 10, nil)))
+	assert.Equal(t, []string{"s3"}, skepticNames(SelectEligibleSkeptics(reg, f3, 10, nil)))
 }
 
 // TestSelectEligibleSkeptics_NoMutation verifies selection is read-only: the
@@ -247,7 +247,7 @@ func TestSelectEligibleSkeptics_NoMutation(t *testing.T) {
 	finding := reconcile.JSONFinding{Reviewers: []string{"alice", "alice"}}
 	before := finding.Reviewers
 
-	_ = SelectEligibleSkeptics(reg, finding, 1)
+	_ = SelectEligibleSkeptics(reg, finding, 1, nil)
 
 	assert.Equal(t, registry.RoleSkeptic, reg.Agents["s1"].Role)
 	assert.Equal(t, []string{"alice", "alice"}, before, "finding reviewers must not be mutated")
@@ -268,7 +268,7 @@ func TestSelectEligibleSkeptics_UndefinedProviderExcludesSkeptic(t *testing.T) {
 			"s-missing": {Provider: "undefined", Model: "m2", Role: registry.RoleSkeptic, SupportsFC: true},
 		},
 	}
-	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{}, 10)
+	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{}, 10, nil)
 	names := skepticNames(got)
 	assert.Equal(t, []string{"s-valid"}, names, "skeptic with undefined provider must be excluded")
 	// Additionally, the returned skeptic must carry the resolved Provider.
@@ -296,7 +296,7 @@ func TestSelectEligibleSkeptics_ScopeSliceIsIndependent(t *testing.T) {
 	)
 	original := []string{"foo", "bar"}
 
-	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{}, 1)
+	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{}, 1, nil)
 	require.Len(t, got, 1)
 
 	// Append to the returned Scope — safe only when len==cap so append allocates
@@ -314,7 +314,7 @@ func TestSelectEligibleSkeptics_CarriesConfig(t *testing.T) {
 		map[string]registry.AgentConfig{"s1": {Provider: "openai", Model: "gpt-4o", Role: registry.RoleSkeptic}},
 		map[string]registry.AgentConfig{"alice": reviewer("claude-sonnet-4-20250514")},
 	)
-	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{Reviewers: []string{"alice"}}, 1)
+	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{Reviewers: []string{"alice"}}, 1, nil)
 	require.Len(t, got, 1)
 	assert.Equal(t, "s1", got[0].Name)
 	assert.Equal(t, "openai", got[0].Config.Provider)
@@ -342,4 +342,122 @@ func TestNormalizeExt_WithAndWithoutDot(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, normalizeExt(tt.in), "normalizeExt(%q)", tt.in)
 	}
+}
+
+// langSkeptic builds a skeptic AgentConfig declaring the given canonical
+// language tokens (dotless, lowercase — the form applyDefaults produces at load).
+func langSkeptic(model string, langs ...string) registry.AgentConfig {
+	return registry.AgentConfig{Provider: "p", Model: model, Role: registry.RoleSkeptic, Language: langs}
+}
+
+// TestSelectEligibleSkeptics_LanguageMatch (AC 03-02): a skeptic whose Language
+// scope matches the finding's file extension is partitioned ahead of an unscoped
+// skeptic, so the n-cap favors the language-matched one.
+func TestSelectEligibleSkeptics_LanguageMatch(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"gopher": langSkeptic("m-gopher", "go"), // matches .go
+			"plain":  skeptic("m-plain"),            // no Language → unscoped
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "internal/foo/main.go"}
+
+	// Full order: matched first, then unmatched.
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, nil))
+	assert.Equal(t, []string{"gopher", "plain"}, got)
+
+	// Under a tight cap the matched skeptic wins despite "gopher" > "plain"
+	// alphabetically — proving the partition, not raw name sort, drives selection.
+	capped := skepticNames(SelectEligibleSkeptics(reg, finding, 1, nil))
+	assert.Equal(t, []string{"gopher"}, capped)
+}
+
+// TestSelectEligibleSkeptics_NoMatchFallback (AC 03-04): when no skeptic declares
+// the finding's language, selection falls back silently to the prior behavior —
+// deterministic alphabetical order, no error, no preference.
+func TestSelectEligibleSkeptics_NoMatchFallback(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"zebra": langSkeptic("m-zebra", "py"), // declares python, not rust
+			"alpha": langSkeptic("m-alpha", "ts"), // declares typescript, not rust
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "src/lib.rs"} // .rs matches neither
+
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, nil))
+	assert.Equal(t, []string{"alpha", "zebra"}, got, "no language match → alphabetical fallback")
+}
+
+// TestSelectEligibleSkeptics_TieBreakByScore (AC 03-02): when multiple skeptics
+// match the language, the matched partition is ordered by corroboration score
+// descending, overriding alphabetical order.
+func TestSelectEligibleSkeptics_TieBreakByScore(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"alpha": langSkeptic("m-alpha", "go"),
+			"zebra": langSkeptic("m-zebra", "go"),
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "main.go"}
+	scores := map[string]float64{"alpha": 0.20, "zebra": 0.90}
+
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
+	assert.Equal(t, []string{"zebra", "alpha"}, got, "higher score sorts first")
+}
+
+// TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores (AC 03-02): equal
+// (or absent) scores fall through to alphabetical within the matched partition.
+func TestSelectEligibleSkeptics_TieBreakAlphabeticalWhenNoScores(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"zebra": langSkeptic("m-zebra", "go"),
+			"alpha": langSkeptic("m-alpha", "go"),
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "main.go"}
+	scores := map[string]float64{} // present but empty → no score data
+
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
+	assert.Equal(t, []string{"alpha", "zebra"}, got, "equal scores → alphabetical")
+}
+
+// TestSelectEligibleSkeptics_NilScoresMap (AC 03-02/03-03): a nil scores map is a
+// valid "no score data" signal — no panic, matched partition ordered alphabetically.
+func TestSelectEligibleSkeptics_NilScoresMap(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"zebra": langSkeptic("m-zebra", "go"),
+			"alpha": langSkeptic("m-alpha", "go"),
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "main.go"}
+
+	var scores map[string]float64 // nil
+	assert.NotPanics(t, func() {
+		got := skepticNames(SelectEligibleSkeptics(reg, finding, 10, scores))
+		assert.Equal(t, []string{"alpha", "zebra"}, got)
+	})
+}
+
+// TestSelectEligibleSkeptics_BackwardCompatNoLanguageField (AC 03-05): a registry
+// whose skeptics declare no Language field routes exactly as before — alphabetical
+// order with the n-cap — regardless of the finding's extension.
+func TestSelectEligibleSkeptics_BackwardCompatNoLanguageField(t *testing.T) {
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{
+			"alpha": skeptic("m-alpha"),
+			"mango": skeptic("m-mango"),
+			"zebra": skeptic("m-zebra"),
+		},
+		nil,
+	)
+	finding := reconcile.JSONFinding{File: "main.go"} // extension present but no skeptic scopes it
+
+	got := skepticNames(SelectEligibleSkeptics(reg, finding, 2, nil))
+	assert.Equal(t, []string{"alpha", "mango"}, got, "no Language field → prior alphabetical n-cap behavior")
 }

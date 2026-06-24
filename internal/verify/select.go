@@ -10,6 +10,7 @@
 package verify
 
 import (
+	"path/filepath"
 	"sort"
 
 	"github.com/samestrin/atcr/internal/reconcile"
@@ -43,8 +44,21 @@ func normalizeExt(ext string) string {
 	return registry.NormalizeLanguageToken(ext)
 }
 
+// languageMatches reports whether ext (already canonical, from normalizeExt)
+// appears in langs. AgentConfig.Language entries are canonicalized to the same
+// dotless, lowercase form at load, so a direct compare is correct. An empty
+// langs slice never matches.
+func languageMatches(langs []string, ext string) bool {
+	for _, l := range langs {
+		if l == ext {
+			return true
+		}
+	}
+	return false
+}
+
 // SelectEligibleSkeptics returns up to n skeptic agents eligible to verify
-// finding, deterministically ordered by agent name.
+// finding, deterministically ordered.
 //
 // The different-model rule is enforced here, never left to configuration
 // discipline: a skeptic is excluded if its model exactly matches the model of
@@ -52,6 +66,16 @@ func normalizeExt(ext string) string {
 // registered agent are skipped silently (the agent may have been removed since
 // the review ran) — they contribute no model to the exclusion set. A nil or
 // empty Reviewers slice excludes nothing, so every skeptic is eligible.
+//
+// Language-aware routing (Epic 9.0): eligible skeptics whose AgentConfig.Language
+// scope includes the finding's file extension are partitioned ahead of unscoped
+// (or differently-scoped) skeptics, so the n-cap prefers a language-matched
+// skeptic. scores maps a skeptic's registry name to its corroboration rate
+// (Epic 3.3 data); within the matched partition, higher score sorts first, ties
+// breaking alphabetically. A nil scores map is a valid "no score data" signal —
+// the matched partition then orders alphabetically. Fallback is silent and
+// automatic: when no skeptic matches the finding's language (none declared, or a
+// different extension), ordering is the prior plain alphabetical-by-name.
 //
 // The result is always non-nil. It is empty when n <= 0, when no agent has
 // role skeptic, or when every skeptic shares a model with a reviewer. An empty
@@ -62,7 +86,7 @@ func normalizeExt(ext string) string {
 // Read-only contract: callers must not mutate fields of the returned Skeptic
 // values. Slice and pointer fields alias the registry's backing memory; mutating
 // them corrupts the shared registry for all subsequent calls in this process.
-func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int) []Skeptic {
+func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int, scores map[string]float64) []Skeptic {
 	out := []Skeptic{}
 	if reg == nil || n <= 0 {
 		return out
@@ -89,6 +113,34 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 		}
 	}
 	sort.Strings(names)
+
+	// Two-partition language reorder: split the alphabetical names into those
+	// whose Language scope matches the finding's extension and those that don't.
+	// Matched names lead, so the n-cap below favors a language-scoped skeptic.
+	// findingLang is "" for an extensionless file — an empty token matches no
+	// Language entry (validateAgent rejects canonical-empty entries), so such a
+	// finding falls through entirely to the unmatched partition.
+	findingLang := normalizeExt(filepath.Ext(finding.File))
+	matched := make([]string, 0, len(names))
+	unmatched := make([]string, 0, len(names))
+	for _, name := range names {
+		if findingLang != "" && languageMatches(skeptics[name].Language, findingLang) {
+			matched = append(matched, name)
+		} else {
+			unmatched = append(unmatched, name)
+		}
+	}
+	// Within the matched partition, prefer higher corroboration score, then
+	// alphabetical. A nil/empty scores map or an absent key yields the zero
+	// score, so equal scores fall through to alphabetical — fully deterministic.
+	sort.SliceStable(matched, func(i, j int) bool {
+		si, sj := scores[matched[i]], scores[matched[j]]
+		if si != sj {
+			return si > sj
+		}
+		return matched[i] < matched[j]
+	})
+	names = append(matched, unmatched...)
 
 	// Take the first n by name. The >= guard is defensive: out grows by one per
 	// iteration today, but >= keeps the cap correct if that ever changes.
