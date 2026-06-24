@@ -12,6 +12,9 @@ import (
 //go:embed *.md
 var files embed.FS
 
+//go:embed testdata/*.patch
+var testfiles embed.FS
+
 // canonical order: generalists first, then the three domain bonus personas
 // (security, performance, Go idioms), with the style reviewer last.
 var names = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
@@ -43,6 +46,17 @@ func Get(name string) (string, error) {
 	data, err := files.ReadFile(name + ".md")
 	if err != nil {
 		return "", fmt.Errorf("internal error: embedded persona %s not found: %w", name, err)
+	}
+	return string(data), nil
+}
+
+// Fixture returns the embedded patch fixture for name. Only the three bonus
+// personas (idiomatic, sentinel, tracer) ship fixtures; other built-ins return
+// an error — callers treat that as HasFixture: false.
+func Fixture(name string) (string, error) {
+	data, err := testfiles.ReadFile("testdata/" + name + "_fixture.patch")
+	if err != nil {
+		return "", fmt.Errorf("no embedded fixture for persona %q", name)
 	}
 	return string(data), nil
 }

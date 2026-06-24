@@ -441,6 +441,38 @@ func TestFetchPersonaYAML_RejectsInvalidNameBeforeFetch(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrPersonaNotFound, "invalid name must fail at validation, not as a 404")
 }
 
+// --- TemplateFixtureRunner -------------------------------------------------
+
+// TestTemplateFixtureRunner_BuiltinWithFixture (TD-012) verifies that
+// TemplateFixtureRunner finds and renders the embedded sentinel fixture
+// without an LLM call.
+func TestTemplateFixtureRunner_BuiltinWithFixture(t *testing.T) {
+	r := TemplateFixtureRunner{}
+	out, err := r.RunFixture("sentinel")
+	require.NoError(t, err)
+	require.True(t, out.HasFixture, "sentinel has an embedded fixture")
+	require.Equal(t, 1, out.Total)
+	require.Equal(t, 1, out.Passed, "sentinel template must render without unresolved template variables")
+}
+
+// TestTemplateFixtureRunner_BuiltinNoFixture verifies that a built-in persona
+// without an embedded fixture (e.g. "bruce") reports HasFixture: false.
+func TestTemplateFixtureRunner_BuiltinNoFixture(t *testing.T) {
+	r := TemplateFixtureRunner{}
+	out, err := r.RunFixture("bruce")
+	require.NoError(t, err)
+	require.False(t, out.HasFixture, "bruce has no embedded fixture")
+}
+
+// TestTemplateFixtureRunner_CommunityReturnsNoFixture verifies that community
+// persona fixture testing returns HasFixture: false (future work).
+func TestTemplateFixtureRunner_CommunityReturnsNoFixture(t *testing.T) {
+	r := TemplateFixtureRunner{}
+	out, err := r.RunFixture("security/owasp")
+	require.NoError(t, err)
+	require.False(t, out.HasFixture, "community personas report no fixture until fixture metadata is wired")
+}
+
 // --- fetch body size limit --------------------------------------------------
 
 func TestFetch_RejectsOversizedBody(t *testing.T) {

@@ -350,13 +350,24 @@ func TestPersonasTest_NoFixture(t *testing.T) {
 	assert.Contains(t, out, "No fixture")
 }
 
-// TestPersonasTest_DefaultRunnerNoFixture exercises the production default
-// runner (noFixtureRunner) — no stub injected — confirming it reports no fixture
-// and exits 0 without a live LLM call.
-func TestPersonasTest_DefaultRunnerNoFixture(t *testing.T) {
+// TestPersonasTest_DefaultRunnerBuiltinFixture exercises the production default
+// runner (TemplateFixtureRunner) — no stub injected — confirming that a built-in
+// persona with an embedded fixture reports PASS without a live LLM call.
+func TestPersonasTest_DefaultRunnerBuiltinFixture(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{})
 	withPersonasEnv(t, srv)
 	out, err := execute(t, "personas", "test", "sentinel")
+	require.NoError(t, err)
+	assert.Contains(t, out, "PASS")
+}
+
+// TestPersonasTest_DefaultRunnerNoFixtureBuiltin confirms that a built-in
+// persona without an embedded fixture (e.g. "bruce") reports no fixture and
+// exits 0 without a live LLM call.
+func TestPersonasTest_DefaultRunnerNoFixtureBuiltin(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	out, err := execute(t, "personas", "test", "bruce")
 	require.NoError(t, err)
 	assert.Contains(t, out, "No fixture")
 }

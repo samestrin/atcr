@@ -79,18 +79,12 @@ var personasDir = personas.PersonasDir
 // ATCR_PERSONAS_URL at an httptest server and let the default client hit it.
 var personasClient personas.HTTPClient = http.DefaultClient
 
-// personasFixtureRunner runs a persona's fixture for `atcr personas test`. The
-// default runner reports no fixture (a real LLM-backed runner is out of this
-// phase's scope — see TD); tests inject a stub to exercise the pass/fail paths.
-var personasFixtureRunner personas.FixtureRunner = noFixtureRunner{}
-
-// noFixtureRunner is the default: it reports that no runnable fixture is wired,
-// so `atcr personas test <name>` exits 0 with an informational message rather
-// than making a live LLM call.
-type noFixtureRunner struct{}
-
-func (noFixtureRunner) RunFixture(string) (personas.FixtureOutcome, error) {
-	return personas.FixtureOutcome{HasFixture: false}, nil
+// personasFixtureRunner runs a persona's fixture for `atcr personas test`.
+// The production default renders built-in persona templates against their
+// embedded patch fixtures without a live LLM call. Tests inject stubs via
+// withFixtureRunner to exercise pass/fail paths with controlled outcomes.
+var personasFixtureRunner personas.FixtureRunner = personas.TemplateFixtureRunner{
+	PersonasDir: func() (string, error) { return personasDir() },
 }
 
 // newPersonasCmd builds `atcr personas`: a parent command hosting the six
