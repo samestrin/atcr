@@ -29,6 +29,10 @@ func ConfidenceForVerdict(prior, verdict string) string {
 // confidenceRank is the confidence ordinal rubric (VERIFIED > HIGH > MEDIUM >
 // LOW), the single source consumers gate on. An unknown tier maps to 0 so
 // ConfidenceAtOrAbove fails closed for it.
+//
+// ConfLow, ConfMedium and ConfHigh are defined in merge.go so the severity/confidence
+// constant blocks live with the functions that consume them; they are referenced here
+// so the rank map stays collocated with ConfidenceVerified.
 var confidenceRank = map[string]int{
 	ConfLow:            1,
 	ConfMedium:         2,
