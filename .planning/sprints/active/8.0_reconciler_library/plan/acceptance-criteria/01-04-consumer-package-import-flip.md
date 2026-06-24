@@ -88,16 +88,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] All 9 consumer packages import `github.com/samestrin/atcr/reconcile` types/severity helpers
-- [ ] Zero local re-declarations of `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable`/`SeverityRank` in consumer packages (grep-verified)
-- [ ] Zero `internal/stream` severity references remain after the flip (grep-verified)
-- [ ] CLI and MCP handlers route `Reconcile` calls through `internal/reconcile/adapter`
+- [x] All 9 consumer packages import `github.com/samestrin/atcr/reconcile` types/severity helpers
+- [x] Zero local re-declarations of `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable`/`SeverityRank` in consumer packages (grep-verified)
+- [x] Zero `internal/stream` severity references remain after the flip (grep-verified)
+- [x] CLI and MCP handlers route `Reconcile` calls through `internal/reconcile/adapter`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the 2026-06-23 audit consumer list (9 packages incl. scorecard + registry) is exhaustive
+- [x] Code reviewed and approved
+- [x] Confirm the 2026-06-23 audit consumer list (9 packages incl. scorecard + registry) is exhaustive

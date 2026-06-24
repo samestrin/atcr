@@ -91,17 +91,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (module job `go test ./...` exits 0 inside `./reconcile` on a clean PR)
-- [ ] No linting errors (the PR-time job itself does not run lint; lint is gated on tag push by AC 06-01)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (module job `go test ./...` exits 0 inside `./reconcile` on a clean PR)
+- [x] No linting errors (the PR-time job itself does not run lint; lint is gated on tag push by AC 06-01)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] ci.yml gains a PR/push job (or step) that cds into `./reconcile` and runs `go test ./...`
-- [ ] The job reuses the `[gauntlet]` runner and Go 1.25 setup from ci.yml (no new runners)
-- [ ] A deliberate `./reconcile` break is caught by the PR-time job while root `go test ./...` stays green (boundary-gap proof)
-- [ ] The boundary reason is documented inline (`# root go test ./... does NOT cross ./reconcile's go.mod boundary`)
+- [x] ci.yml gains a PR/push job (or step) that cds into `./reconcile` and runs `go test ./...`
+- [x] The job reuses the `[gauntlet]` runner and Go 1.25 setup from ci.yml (no new runners)
+- [x] A deliberate `./reconcile` break is caught by the PR-time job while root `go test ./...` stays green (boundary-gap proof)
+- [x] The boundary reason is documented inline (`# root go test ./... does NOT cross ./reconcile's go.mod boundary`)
 - [ ] The module-test job is a required status check on PR protection rules
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the job runs `go test` only (not the full gofmt + lint + race gate) so PR feedback stays fast
+- [x] Code reviewed and approved
+- [x] Confirm the job runs `go test` only (not the full gofmt + lint + race gate) so PR feedback stays fast

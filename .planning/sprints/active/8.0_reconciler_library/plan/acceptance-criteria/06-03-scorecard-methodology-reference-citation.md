@@ -94,18 +94,18 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (doc verification script passes; `go test ./reconcile/...` still green)
-- [ ] No linting errors
-- [ ] Build succeeds (the doc edit does not affect the build)
+- [x] All tests passing (doc verification script passes; `go test ./reconcile/...` still green)
+- [x] No linting errors
+- [x] Build succeeds (the doc edit does not affect the build)
 
 **Story-Specific:**
-- [ ] `docs/scorecard.md` contains an additive note citing `github.com/samestrin/atcr/reconcile` as the standalone reference implementation (AC#8)
-- [ ] The cited path matches `reconcile/go.mod`'s `module` line exactly (byte-for-byte)
-- [ ] The note states the reconciler can be run and inspected independently
-- [ ] The citation lands after the module exists (references a real path, not a planned one)
-- [ ] The edit is additive — existing methodology/schema/privacy sections are unchanged
-- [ ] The note documents the `replace` directive development bridge and that separate-repo publication follows extraction
+- [x] `docs/scorecard.md` contains an additive note citing `github.com/samestrin/atcr/reconcile` as the standalone reference implementation (AC#8)
+- [x] The cited path matches `reconcile/go.mod`'s `module` line exactly (byte-for-byte)
+- [x] The note states the reconciler can be run and inspected independently
+- [x] The citation lands after the module exists (references a real path, not a planned one)
+- [x] The edit is additive — existing methodology/schema/privacy sections are unchanged
+- [x] The note documents the `replace` directive development bridge and that separate-repo publication follows extraction
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the citation lives in `docs/scorecard.md` (not the non-existent `docs/leaderboard-methodology.md`)
+- [x] Code reviewed and approved
+- [x] Confirm the citation lives in `docs/scorecard.md` (not the non-existent `docs/leaderboard-methodology.md`)

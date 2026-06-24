@@ -64,15 +64,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing
-- [ ] No linting errors (`golangci-lint run` clean in root and `./reconcile/`)
-- [ ] Build succeeds (`go build ./...` exit 0 in root; `go build ./...` exit 0 in `./reconcile/`)
+- [x] All tests passing
+- [x] No linting errors (`golangci-lint run` clean in root and `./reconcile/`)
+- [x] Build succeeds (`go build ./...` exit 0 in root; `go build ./...` exit 0 in `./reconcile/`)
 
 **Story-Specific:**
-- [ ] Root `go.mod` contains `replace github.com/samestrin/atcr/reconcile => ./reconcile`
-- [ ] `./reconcile/go.mod` declares `module github.com/samestrin/atcr/reconcile` with stdlib-only non-test deps
-- [ ] `go list -deps ./reconcile/...` (excluding `*_test.go`) shows zero `internal/` or third-party packages
+- [x] Root `go.mod` contains `replace github.com/samestrin/atcr/reconcile => ./reconcile`
+- [x] `./reconcile/go.mod` declares `module github.com/samestrin/atcr/reconcile` with stdlib-only non-test deps
+- [x] `go list -deps ./reconcile/...` (excluding `*_test.go`) shows zero `internal/` or third-party packages
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] `replace` directive path confirmed to be `./reconcile` (not a remote URL)
+- [x] Code reviewed and approved
+- [x] `replace` directive path confirmed to be `./reconcile` (not a remote URL)

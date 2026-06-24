@@ -82,18 +82,18 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/...` runs the `Example` green)
-- [ ] No linting errors (`go vet`, `golangci-lint`)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/...` runs the `Example` green)
+- [x] No linting errors (`go vet`, `golangci-lint`)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] `reconcile/example_test.go` defines a godoc `Example` function (standard `func Example()` or `func ExampleReconcile()`)
-- [ ] The example constructs two `Source` values, calls `Reconcile(sources, opts)`, and asserts on a merged `Result`
-- [ ] The example output demonstrates a merge with `HIGH` confidence and a `<lo> vs <hi>` disagreement annotation
-- [ ] The example compiles and runs under `go test ./reconcile/...` with no external dependencies or network access
-- [ ] The example renders in `go doc github.com/samestrin/atcr/reconcile` output
-- [ ] The example uses the lifted-as-is signature (value `Result` return, no error)
+- [x] `reconcile/example_test.go` defines a godoc `Example` function (standard `func Example()` or `func ExampleReconcile()`)
+- [x] The example constructs two `Source` values, calls `Reconcile(sources, opts)`, and asserts on a merged `Result`
+- [x] The example output demonstrates a merge with `HIGH` confidence and a `<lo> vs <hi>` disagreement annotation
+- [x] The example compiles and runs under `go test ./reconcile/...` with no external dependencies or network access
+- [x] The example renders in `go doc github.com/samestrin/atcr/reconcile` output
+- [x] The example uses the lifted-as-is signature (value `Result` return, no error)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Example output eyeballed against `sortMerged` ordering and confirmed stable across runs
+- [x] Code reviewed and approved
+- [x] Example output eyeballed against `sortMerged` ordering and confirmed stable across runs

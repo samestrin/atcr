@@ -80,17 +80,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/adapter/json/...`)
-- [ ] No linting errors (`go vet`, `golangci-lint`)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/adapter/json/...`)
+- [x] No linting errors (`go vet`, `golangci-lint`)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] Same `Result` + fixed `ReconciledAt` encodes to byte-identical output across two calls
-- [ ] Absent `Disagreement` produces no `"disagreement"` key in output bytes
-- [ ] `nil` `*Verification` produces no `"verification"` key in output bytes
-- [ ] Populated `*Verification` renders `verdict`, `skeptic`, `notes` sub-fields
-- [ ] Field order within a finding object is stable across encodings
+- [x] Same `Result` + fixed `ReconciledAt` encodes to byte-identical output across two calls
+- [x] Absent `Disagreement` produces no `"disagreement"` key in output bytes
+- [x] `nil` `*Verification` produces no `"verification"` key in output bytes
+- [x] Populated `*Verification` renders `verdict`, `skeptic`, `notes` sub-fields
+- [x] Field order within a finding object is stable across encodings
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm `Finding` struct tags carry `omitempty` on `Disagreement` and `*Verification` (coordinate with Story 2 if not yet present)
+- [x] Code reviewed and approved
+- [x] Confirm `Finding` struct tags carry `omitempty` on `Disagreement` and `*Verification` (coordinate with Story 2 if not yet present)

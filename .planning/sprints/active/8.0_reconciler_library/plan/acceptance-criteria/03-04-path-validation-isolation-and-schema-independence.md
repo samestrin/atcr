@@ -76,17 +76,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/adapter/json/...`)
-- [ ] No linting errors (`go vet`, `golangci-lint`)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/adapter/json/...`)
+- [x] No linting errors (`go vet`, `golangci-lint`)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] Encoded output contains none of `PathValid`, `PathWarning`, `PathSuggestion`, `ClusterMerged`
-- [ ] Output `version` field is exactly `"reconcile-json/v1"` for every encoded `Result`
-- [ ] Decode rejects input with `"version":"atcr-findings/v1"`
-- [ ] Decode drops path-validation fields if a producer incorrectly emits them
-- [ ] Package doc and README state the schema independence from `atcr-findings/v1` and the additive-only evolution policy
+- [x] Encoded output contains none of `PathValid`, `PathWarning`, `PathSuggestion`, `ClusterMerged`
+- [x] Output `version` field is exactly `"reconcile-json/v1"` for every encoded `Result`
+- [x] Decode rejects input with `"version":"atcr-findings/v1"`
+- [x] Decode drops path-validation fields if a producer incorrectly emits them
+- [x] Package doc and README state the schema independence from `atcr-findings/v1` and the additive-only evolution policy
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the external adapter never imports or references the ATCR boundary adapter (`internal/reconcile/adapter/adapter.go`)
+- [x] Code reviewed and approved
+- [x] Confirm the external adapter never imports or references the ATCR boundary adapter (`internal/reconcile/adapter/adapter.go`)

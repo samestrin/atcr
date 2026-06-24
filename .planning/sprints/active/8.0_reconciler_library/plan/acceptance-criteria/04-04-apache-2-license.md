@@ -83,18 +83,18 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`verify-license` target passes; `go test ./reconcile/...` still green)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`verify-license` target passes; `go test ./reconcile/...` still green)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] `reconcile/LICENSE` exists at the module root (alongside `reconcile/go.mod`)
-- [ ] LICENSE body matches the verbatim Apache 2.0 full text (only the copyright line differs from canonical)
-- [ ] Copyright line reads `Copyright 2026 Sam Estrin` with no `[yyyy]` / `[name of copyright owner]` placeholders remaining
-- [ ] `go-licenses` (or equivalent) detects the module license as Apache-2.0
-- [ ] No license-enforcement code is introduced by this story
-- [ ] `LICENSE-COMMERCIAL.md` is NOT created by this story (Story 5 owns it); only the README pointer to it is verified
+- [x] `reconcile/LICENSE` exists at the module root (alongside `reconcile/go.mod`)
+- [x] LICENSE body matches the verbatim Apache 2.0 full text (only the copyright line differs from canonical)
+- [x] Copyright line reads `Copyright 2026 Sam Estrin` with no `[yyyy]` / `[name of copyright owner]` placeholders remaining
+- [x] `go-licenses` (or equivalent) detects the module license as Apache-2.0
+- [x] No license-enforcement code is introduced by this story
+- [x] `LICENSE-COMMERCIAL.md` is NOT created by this story (Story 5 owns it); only the README pointer to it is verified
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] LICENSE eyeballed against apache.org canonical text and the copyright line confirmed
+- [x] Code reviewed and approved
+- [x] LICENSE eyeballed against apache.org canonical text and the copyright line confirmed

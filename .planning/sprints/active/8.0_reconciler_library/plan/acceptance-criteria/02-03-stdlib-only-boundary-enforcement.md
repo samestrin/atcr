@@ -85,15 +85,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go build ./reconcile/...` exits 0
-- [ ] `golangci-lint run ./reconcile/...` is clean
-- [ ] `gofmt -l ./reconcile` produces no output
+- [x] `go build ./reconcile/...` exits 0
+- [x] `golangci-lint run ./reconcile/...` is clean
+- [x] `gofmt -l ./reconcile` produces no output
 
 **Story-Specific:**
-- [ ] `go mod tidy` in `./reconcile/` leaves no `require` block
-- [ ] No non-test `.go` file under `reconcile/` imports any third-party package
-- [ ] No file under `reconcile/` imports any `github.com/samestrin/atcr/internal/*` path
-- [ ] testify imports appear only in `*_test.go` files
+- [x] `go mod tidy` in `./reconcile/` leaves no `require` block
+- [x] No non-test `.go` file under `reconcile/` imports any third-party package
+- [x] No file under `reconcile/` imports any `github.com/samestrin/atcr/internal/*` path
+- [x] testify imports appear only in `*_test.go` files
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

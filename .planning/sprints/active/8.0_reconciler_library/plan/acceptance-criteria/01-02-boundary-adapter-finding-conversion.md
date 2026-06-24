@@ -79,16 +79,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (including new RED tests for the conversion)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (including new RED tests for the conversion)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `internal/reconcile/adapter/adapter.go` converts `stream.Finding` → `reconcile.Finding` (9 wire fields round-trip, zero data loss)
-- [ ] Adapter wraps `reconcile.Result` back into `JSONFinding` and stamps `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged`
-- [ ] `*Verification` pointer identity preserved across the boundary (verified by address comparison in a RED test)
-- [ ] Path-validation fields exist ONLY on `JSONFinding`, never on `reconcile.Finding`
+- [x] `internal/reconcile/adapter/adapter.go` converts `stream.Finding` → `reconcile.Finding` (9 wire fields round-trip, zero data loss)
+- [x] Adapter wraps `reconcile.Result` back into `JSONFinding` and stamps `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged`
+- [x] `*Verification` pointer identity preserved across the boundary (verified by address comparison in a RED test)
+- [x] Path-validation fields exist ONLY on `JSONFinding`, never on `reconcile.Finding`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm file I/O from `emit.go`/`discover.go` is relocated into the adapter, not duplicated
+- [x] Code reviewed and approved
+- [x] Confirm file I/O from `emit.go`/`discover.go` is relocated into the adapter, not duplicated

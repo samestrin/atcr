@@ -77,16 +77,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go build ./reconcile/...` exits 0
-- [ ] `go test ./reconcile/...` passes
-- [ ] `gofmt -l ./reconcile` produces no output
-- [ ] `golangci-lint run ./reconcile/...` is clean
+- [x] `go build ./reconcile/...` exits 0
+- [x] `go test ./reconcile/...` passes
+- [x] `gofmt -l ./reconcile` produces no output
+- [x] `golangci-lint run ./reconcile/...` is clean
 
 **Story-Specific:**
-- [ ] `reconcile/go.mod` declares `module github.com/samestrin/atcr/reconcile` with `go 1.25` and no `require` block
-- [ ] Root `go.mod` contains `replace github.com/samestrin/atcr/reconcile => ./reconcile`
-- [ ] `go build ./...` from repo root succeeds (both modules compile)
-- [ ] `go mod tidy` inside `./reconcile/` leaves the `require` block empty
+- [x] `reconcile/go.mod` declares `module github.com/samestrin/atcr/reconcile` with `go 1.25` and no `require` block
+- [x] Root `go.mod` contains `replace github.com/samestrin/atcr/reconcile => ./reconcile`
+- [x] `go build ./...` from repo root succeeds (both modules compile)
+- [x] `go mod tidy` inside `./reconcile/` leaves the `require` block empty
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

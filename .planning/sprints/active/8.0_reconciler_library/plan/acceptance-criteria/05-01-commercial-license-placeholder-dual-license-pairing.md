@@ -83,16 +83,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`verify-commercial-license` target passes; `go test ./reconcile/...` still green)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`verify-commercial-license` target passes; `go test ./reconcile/...` still green)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] `reconcile/LICENSE-COMMERCIAL.md` exists at the module root (alongside `reconcile/go.mod`)
-- [ ] File states a commercial license is available for proprietary/closed-source embedding
-- [ ] File is explicitly labeled a placeholder for evaluation (no binding license-grant language)
-- [ ] Both `reconcile/LICENSE` (Apache 2.0, Story 4) and `reconcile/LICENSE-COMMERCIAL.md` coexist (dual-license pairing complete)
+- [x] `reconcile/LICENSE-COMMERCIAL.md` exists at the module root (alongside `reconcile/go.mod`)
+- [x] File states a commercial license is available for proprietary/closed-source embedding
+- [x] File is explicitly labeled a placeholder for evaluation (no binding license-grant language)
+- [x] Both `reconcile/LICENSE` (Apache 2.0, Story 4) and `reconcile/LICENSE-COMMERCIAL.md` coexist (dual-license pairing complete)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Placeholder language eyeballed to confirm it does not overstate commercial terms or create a legal commitment
+- [x] Code reviewed and approved
+- [x] Placeholder language eyeballed to confirm it does not overstate commercial terms or create a legal commitment

@@ -71,16 +71,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/...` still green; README cross-check script passes)
-- [ ] No linting errors (`go vet`, markdown lint if configured)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/...` still green; README cross-check script passes)
+- [x] No linting errors (`go vet`, markdown lint if configured)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] README shows `Reconcile(sources []Source, opts Options) Result` exactly (value return, no error)
-- [ ] README documents `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`, and `VerdictConfirmed/Refuted/Unverifiable`
-- [ ] README contains no reference to the deferred clean API (`ReconciledFinding`, `(*Result, error)`, `LineTolerance`, `SimilarityThreshold`)
-- [ ] `reconcile/README.md` module path string matches `reconcile/go.mod` module directive
+- [x] README shows `Reconcile(sources []Source, opts Options) Result` exactly (value return, no error)
+- [x] README documents `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`, and `VerdictConfirmed/Refuted/Unverifiable`
+- [x] README contains no reference to the deferred clean API (`ReconciledFinding`, `(*Result, error)`, `LineTolerance`, `SimilarityThreshold`)
+- [x] `reconcile/README.md` module path string matches `reconcile/go.mod` module directive
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] README type list eyeballed against `go doc -all github.com/samestrin/atcr/reconcile` output
+- [x] Code reviewed and approved
+- [x] README type list eyeballed against `go doc -all github.com/samestrin/atcr/reconcile` output

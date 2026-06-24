@@ -86,18 +86,18 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./reconcile/...` green; `verify-readme` target passes)
-- [ ] No linting errors (`go vet`, markdown lint if configured)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test ./reconcile/...` green; `verify-readme` target passes)
+- [x] No linting errors (`go vet`, markdown lint if configured)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] README documents clustering at `FILE, LINE±3` and the deterministic total order
-- [ ] README documents Jaccard dedupe thresholds 0.7 (merge) and 0.4 (ambiguous) and the ambiguity sidecar
-- [ ] README documents max-severity merge with `<lo> vs <hi>` disagreement annotation and confidence v2 `VERIFIED/HIGH/MEDIUM/LOW`
-- [ ] README install snippet module path matches `reconcile/go.mod`
-- [ ] README quickstart mirrors `reconcile/example_test.go` and compiles
-- [ ] README contains a one-line pointer to `LICENSE-COMMERCIAL.md`
+- [x] README documents clustering at `FILE, LINE±3` and the deterministic total order
+- [x] README documents Jaccard dedupe thresholds 0.7 (merge) and 0.4 (ambiguous) and the ambiguity sidecar
+- [x] README documents max-severity merge with `<lo> vs <hi>` disagreement annotation and confidence v2 `VERIFIED/HIGH/MEDIUM/LOW`
+- [x] README install snippet module path matches `reconcile/go.mod`
+- [x] README quickstart mirrors `reconcile/example_test.go` and compiles
+- [x] README contains a one-line pointer to `LICENSE-COMMERCIAL.md`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Behavior description eyeballed against the lifted `reconcile` source constants
+- [x] Code reviewed and approved
+- [x] Behavior description eyeballed against the lifted `reconcile` source constants

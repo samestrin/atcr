@@ -96,17 +96,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go build ./reconcile/...` exits 0 (library types compile)
-- [ ] `go build ./internal/reconcile/adapter/...` exits 0 (adapter compiles)
-- [ ] `go build ./...` exits 0 (full repo builds with import flips)
-- [ ] No linting errors
+- [x] `go build ./reconcile/...` exits 0 (library types compile)
+- [x] `go build ./internal/reconcile/adapter/...` exits 0 (adapter compiles)
+- [x] `go build ./...` exits 0 (full repo builds with import flips)
+- [x] No linting errors
 
 **Story-Specific:**
-- [ ] `reconcile/emit.go` contains `Verification`, verdict constants, and library `Finding` type — no file I/O functions
-- [ ] `reconcile/discover.go` contains `Source` type — no `Discover()` function
-- [ ] `internal/reconcile/adapter/adapter.go` performs `stream.Finding` <-> `reconcile.Finding` conversion
-- [ ] `internal/reconcile/gate.go` imports verdict constants from `github.com/samestrin/atcr/reconcile`
-- [ ] `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged` appear only in ATCR's `JSONFinding`, not in library `Finding`
+- [x] `reconcile/emit.go` contains `Verification`, verdict constants, and library `Finding` type — no file I/O functions
+- [x] `reconcile/discover.go` contains `Source` type — no `Discover()` function
+- [x] `internal/reconcile/adapter/adapter.go` performs `stream.Finding` <-> `reconcile.Finding` conversion
+- [x] `internal/reconcile/gate.go` imports verdict constants from `github.com/samestrin/atcr/reconcile`
+- [x] `PathValid`/`PathWarning`/`PathSuggestion`/`ClusterMerged` appear only in ATCR's `JSONFinding`, not in library `Finding`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

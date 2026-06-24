@@ -83,16 +83,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`verify-commercial-license` target passes; `go test ./reconcile/...` still green)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`verify-commercial-license` target passes; `go test ./reconcile/...` still green)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] File names a contact path a vendor can use to initiate commercial licensing
-- [ ] Contact path is GitHub-hosted (issue template or Discussions) and moves with the repo
-- [ ] File explicitly states no automated enforcement, license-check, or payment-gating code ships with the module
-- [ ] Contact path verified to resolve during the extraction sprint
+- [x] File names a contact path a vendor can use to initiate commercial licensing
+- [x] Contact path is GitHub-hosted (issue template or Discussions) and moves with the repo
+- [x] File explicitly states no automated enforcement, license-check, or payment-gating code ships with the module
+- [x] Contact path verified to resolve during the extraction sprint
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Contact path clicked/loaded to confirm it reaches a live, Sam-owned channel
+- [x] Code reviewed and approved
+- [x] Contact path clicked/loaded to confirm it reaches a live, Sam-owned channel

@@ -90,16 +90,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (root `go test ./...` exit 0; library `go test -race ./...` exit 0)
-- [ ] No linting errors (golangci-lint clean in both root and `./reconcile/`; gofmt clean in `./reconcile/`)
-- [ ] Build succeeds
+- [x] All tests passing (root `go test ./...` exit 0; library `go test -race ./...` exit 0)
+- [x] No linting errors (golangci-lint clean in both root and `./reconcile/`; gofmt clean in `./reconcile/`)
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] Root `.github/workflows/ci.yml` green with unchanged test count (zero behavioral change)
-- [ ] New `.github/workflows/reconcile-module.yml` created and green (gofmt + golangci-lint + `go test -race`)
+- [x] Root `.github/workflows/ci.yml` green with unchanged test count (zero behavioral change)
+- [x] New `.github/workflows/reconcile-module.yml` created and green (gofmt + golangci-lint + `go test -race`)
 - [ ] Both jobs are required status checks on the PR protection rules (dual-job gate)
-- [ ] `gate.go` and `validate.go` stay ATCR-internal, importing library `Verification`/`Verdict` constants unchanged
+- [x] `gate.go` and `validate.go` stay ATCR-internal, importing library `Verification`/`Verdict` constants unchanged
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the library job triggers on tag push (or PR) and runs from `./reconcile/`
+- [x] Code reviewed and approved
+- [x] Confirm the library job triggers on tag push (or PR) and runs from `./reconcile/`

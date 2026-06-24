@@ -79,15 +79,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (existing corpus green)
-- [ ] No linting errors
-- [ ] Build succeeds in both root and `./reconcile/`
+- [x] All tests passing (existing corpus green)
+- [x] No linting errors
+- [x] Build succeeds in both root and `./reconcile/`
 
 **Story-Specific:**
-- [ ] `Verification`, `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable`, `Source`, and the library `Finding` move to `reconcile/` (no copies)
-- [ ] `emit.go`/`discover.go` file I/O relocates to `internal/reconcile/adapter/adapter.go`; library has zero `os`/`io` imports in non-test files
-- [ ] `Merged.Verification` pointer identity preserved (`gate.go` and `internal/debate` operate on the same `*Verification`)
+- [x] `Verification`, `VerdictConfirmed`/`VerdictRefuted`/`VerdictUnverifiable`, `Source`, and the library `Finding` move to `reconcile/` (no copies)
+- [x] `emit.go`/`discover.go` file I/O relocates to `internal/reconcile/adapter/adapter.go`; library has zero `os`/`io` imports in non-test files
+- [x] `Merged.Verification` pointer identity preserved (`gate.go` and `internal/debate` operate on the same `*Verification`)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the split is mechanical (no field renames, no type reshaping)
+- [x] Code reviewed and approved
+- [x] Confirm the split is mechanical (no field renames, no type reshaping)

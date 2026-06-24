@@ -90,16 +90,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (existing corpus: `cluster_merge_test.go`, `disagree_test.go`, `emit_test.go`)
-- [ ] No linting errors
-- [ ] Build succeeds
+- [x] All tests passing (existing corpus: `cluster_merge_test.go`, `disagree_test.go`, `emit_test.go`)
+- [x] No linting errors
+- [x] Build succeeds
 
 **Story-Specific:**
-- [ ] `findings.json`, `ambiguous.json`, `disagreements.json` byte-identical (`diff` exit 0) against pre-extraction baseline
-- [ ] `sortMerged` total-order (severity desc, then file, then line) preserved exactly
-- [ ] `atcr-findings/v1` wire format unchanged (no schema drift in `docs/findings-format.md`)
-- [ ] `SeverityRank` copy in `merge.go` collapsed to library canonical `NormalizeSeverity`/`SeverityRank` with zero value change
+- [x] `findings.json`, `ambiguous.json`, `disagreements.json` byte-identical (`diff` exit 0) against pre-extraction baseline
+- [x] `sortMerged` total-order (severity desc, then file, then line) preserved exactly
+- [x] `atcr-findings/v1` wire format unchanged (no schema drift in `docs/findings-format.md`)
+- [x] `SeverityRank` copy in `merge.go` collapsed to library canonical `NormalizeSeverity`/`SeverityRank` with zero value change
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm baseline fixtures were captured from pre-extraction `main` (not regenerated post-extraction)
+- [x] Code reviewed and approved
+- [x] Confirm baseline fixtures were captured from pre-extraction `main` (not regenerated post-extraction)

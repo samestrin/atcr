@@ -84,16 +84,16 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go build ./reconcile/...` exits 0
-- [ ] `go test ./reconcile/...` passes
-- [ ] `go test ./...` passes (full ATCR corpus — no behavioral change)
-- [ ] No linting errors
+- [x] `go build ./reconcile/...` exits 0
+- [x] `go test ./reconcile/...` passes
+- [x] `go test ./...` passes (full ATCR corpus — no behavioral change)
+- [x] No linting errors
 
 **Story-Specific:**
-- [ ] `reconcile/severity.go` contains `NormalizeSeverity` and `SeverityRank` as canonical definitions
-- [ ] `internal/reconcile/merge.go` no longer has a redundant init-copy at line 30
-- [ ] No circular import between `internal/stream` and `reconcile`
-- [ ] Severity normalization output is byte-identical to pre-migration (verified by existing fixtures)
+- [x] `reconcile/severity.go` contains `NormalizeSeverity` and `SeverityRank` as canonical definitions
+- [x] `internal/reconcile/merge.go` no longer has a redundant init-copy at line 30
+- [x] No circular import between `internal/stream` and `reconcile`
+- [x] Severity normalization output is byte-identical to pre-migration (verified by existing fixtures)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -83,17 +83,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`verify-licensing` target passes; `go test ./reconcile/...` still green)
-- [ ] No linting errors
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`verify-licensing` target passes; `go test ./reconcile/...` still green)
+- [x] No linting errors
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] `reconcile/README.md` includes a short licensing section cross-referencing both `LICENSE` and `LICENSE-COMMERCIAL.md`
-- [ ] Both README license pointers resolve to real files at the module root
-- [ ] The commercial path is discoverable from the README without hunting the file tree
-- [ ] A scan of `./reconcile/` confirms no license-check, payment-gating, or telemetry code exists in the module
+- [x] `reconcile/README.md` includes a short licensing section cross-referencing both `LICENSE` and `LICENSE-COMMERCIAL.md`
+- [x] Both README license pointers resolve to real files at the module root
+- [x] The commercial path is discoverable from the README without hunting the file tree
+- [x] A scan of `./reconcile/` confirms no license-check, payment-gating, or telemetry code exists in the module
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] README licensing section eyeballed to confirm it surfaces (not duplicates) the commercial path
-- [ ] Code scan output reviewed to confirm a clean negative (no enforcement code)
+- [x] Code reviewed and approved
+- [x] README licensing section eyeballed to confirm it surfaces (not duplicates) the commercial path
+- [x] Code scan output reviewed to confirm a clean negative (no enforcement code)

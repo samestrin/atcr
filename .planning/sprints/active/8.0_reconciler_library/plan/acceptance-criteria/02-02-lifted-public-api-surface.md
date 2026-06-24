@@ -86,15 +86,15 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] `go build ./reconcile/...` exits 0
-- [ ] `go test ./reconcile/...` passes
-- [ ] No linting errors from `golangci-lint run ./reconcile/...`
+- [x] `go build ./reconcile/...` exits 0
+- [x] `go test ./reconcile/...` passes
+- [x] No linting errors from `golangci-lint run ./reconcile/...`
 
 **Story-Specific:**
-- [ ] `go doc github.com/samestrin/atcr/reconcile` lists `Reconcile`, `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`, `VerdictConfirmed`, `VerdictRefuted`, `VerdictUnverifiable`
-- [ ] `Reconcile` signature is exactly `func Reconcile(sources []Source, opts Options) Result` (not `(*Result, error)`)
-- [ ] `Finding` type carries all 9 wire-format fields plus `Disagreement` and `*Verification`
-- [ ] Deferred clean API symbols (`ReconciledFinding`, `Options{LineTolerance, SimilarityThreshold}`) are absent
+- [x] `go doc github.com/samestrin/atcr/reconcile` lists `Reconcile`, `Source`, `Finding`, `Merged`, `Options`, `Result`, `Summary`, `Verification`, `VerdictConfirmed`, `VerdictRefuted`, `VerdictUnverifiable`
+- [x] `Reconcile` signature is exactly `func Reconcile(sources []Source, opts Options) Result` (not `(*Result, error)`)
+- [x] `Finding` type carries all 9 wire-format fields plus `Disagreement` and `*Verification`
+- [x] Deferred clean API symbols (`ReconciledFinding`, `Options{LineTolerance, SimilarityThreshold}`) are absent
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

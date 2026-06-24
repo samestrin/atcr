@@ -95,17 +95,17 @@
 
 ## Definition of Done
 **Auto-Verified:**
-- [ ] All tests passing (`go test -race ./...` exits 0 inside `./reconcile`)
-- [ ] No linting errors (gofmt clean; golangci-lint exits 0)
-- [ ] Build succeeds (`go build ./reconcile/...`)
+- [x] All tests passing (`go test -race ./...` exits 0 inside `./reconcile`)
+- [x] No linting errors (gofmt clean; golangci-lint exits 0)
+- [x] Build succeeds (`go build ./reconcile/...`)
 
 **Story-Specific:**
-- [ ] `.github/workflows/reconcile-module.yml` exists and triggers on tag push (release gate, AC#7)
-- [ ] Workflow cds into `./reconcile` and runs all three checks: gofmt + golangci-lint + `go test -race`
-- [ ] Workflow reuses `[gauntlet]` runner and Go 1.25 from ci.yml (no new runners or Go versions)
-- [ ] golangci-lint is pinned to an explicit version consistent with ci.yml (no drift)
-- [ ] `on: push: tags:` filter is scoped to the module's release-tag convention (verified against recent tag history)
+- [x] `.github/workflows/reconcile-module.yml` exists and triggers on tag push (release gate, AC#7)
+- [x] Workflow cds into `./reconcile` and runs all three checks: gofmt + golangci-lint + `go test -race`
+- [x] Workflow reuses `[gauntlet]` runner and Go 1.25 from ci.yml (no new runners or Go versions)
+- [x] golangci-lint is pinned to an explicit version consistent with ci.yml (no drift)
+- [x] `on: push: tags:` filter is scoped to the module's release-tag convention (verified against recent tag history)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
-- [ ] Confirm the workflow is `based_on` ci.yml and the runner/Go setup matches verbatim
+- [x] Code reviewed and approved
+- [x] Confirm the workflow is `based_on` ci.yml and the runner/Go setup matches verbatim
