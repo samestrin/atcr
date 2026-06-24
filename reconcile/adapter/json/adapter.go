@@ -57,6 +57,10 @@ type encodeEnvelope struct {
 // SchemaVersion (the contract field is strict; unknown extra fields are
 // tolerated). A source with no findings yields a non-nil empty slice so it
 // mirrors the always-present findings array of the encode envelope.
+//
+// Decode operates on the caller's fully-buffered bytes: nesting depth is bounded
+// by encoding/json, but the caller is responsible for bounding total input size
+// (for example, with an io.LimitReader before reading untrusted input).
 func Decode(data []byte) ([]reconcile.Source, error) {
 	data = bytes.TrimPrefix(data, utf8BOM)
 	first := firstNonSpace(data)
@@ -80,7 +84,7 @@ func Decode(data []byte) ([]reconcile.Source, error) {
 	sources := make([]reconcile.Source, 0, len(envelopes))
 	for i := range envelopes {
 		if envelopes[i].Version != SchemaVersion {
-			return nil, fmt.Errorf("reconcile-json: version must be %q, got %q", SchemaVersion, envelopes[i].Version)
+			return nil, fmt.Errorf("reconcile-json: source[%d] version must be %q, got %q", i, SchemaVersion, envelopes[i].Version)
 		}
 		findings := envelopes[i].Findings
 		if findings == nil {
