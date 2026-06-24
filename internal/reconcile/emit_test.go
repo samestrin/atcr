@@ -523,3 +523,37 @@ func TestRenderMarkdown_EscapesSourceNamesInSummary(t *testing.T) {
 	assert.NotContains(t, out, "<evil>", "raw HTML in source name must be escaped")
 	assert.Contains(t, out, "&lt;evil&gt;&amp;source", "source name must be HTML-escaped in Summary")
 }
+
+func TestRenderMarkdown_PathWarningLabelMapping(t *testing.T) {
+	// Lock the contract at emit.go: m.PathWarning == stream.PathNotFoundWarning
+	// must render as the Title-case "File not found" display label, not as the
+	// raw constant value ("file not found"). Any other PathWarning renders verbatim.
+	makeResult := func(file, pathWarning string) Result {
+		rec := JSONFinding{
+			Severity: "HIGH", File: file, Line: 1, Problem: "p", Fix: "f",
+			Category: "security", EstMinutes: 10, Evidence: "e",
+			Reviewers: []string{"greta"}, Confidence: "MEDIUM",
+			PathWarning: pathWarning,
+		}
+		return Result{
+			Findings:     []Merged{{Finding: mfL("HIGH", file, 1, "p", "f", "security", 10, "e", "greta")}},
+			jsonFindings: []JSONFinding{rec},
+		}
+	}
+
+	t.Run("PathNotFoundWarning constant renders as File not found", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, RenderMarkdown(&b, makeResult("missing.go", stream.PathNotFoundWarning)))
+		out := b.String()
+		assert.Contains(t, out, "File not found", "canonical warning must display as Title-case label")
+		assert.NotContains(t, out, stream.PathNotFoundWarning, "raw lowercase constant must not appear verbatim in output")
+	})
+
+	t.Run("other PathWarning renders verbatim", func(t *testing.T) {
+		var b bytes.Buffer
+		require.NoError(t, RenderMarkdown(&b, makeResult("other.go", "disk quota exceeded")))
+		out := b.String()
+		assert.Contains(t, out, "disk quota exceeded", "non-canonical warning must render verbatim")
+		assert.NotContains(t, out, "File not found", "File not found label must not appear for non-canonical warnings")
+	})
+}
