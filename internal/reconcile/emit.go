@@ -415,7 +415,7 @@ func renderMarkdown(w io.Writer, summary Summary, findings []JSONFinding, df Dis
 
 	b.WriteString("## Summary\n\n")
 	fmt.Fprintf(&b, "- Total findings: %d\n", summary.TotalFindings)
-	fmt.Fprintf(&b, "- Sources: %s\n", joinOrNone(summary.SourcesScanned))
+	fmt.Fprintf(&b, "- Sources: %s\n", esc(joinOrNone(summary.SourcesScanned)))
 	fmt.Fprintf(&b, "- Clusters collapsed: %d\n", summary.ClustersCollapsed)
 	fmt.Fprintf(&b, "- Severity disagreements: %d\n", summary.SeverityDisagreements)
 	if len(outOfScope) > 0 {

@@ -510,3 +510,16 @@ func TestRenderMarkdown_ShowsPathSuggestion(t *testing.T) {
 	assert.Contains(t, out, "did you mean")
 	assert.Contains(t, out, "internal/auth/validate.go")
 }
+
+func TestRenderMarkdown_EscapesSourceNamesInSummary(t *testing.T) {
+	// Source names are user-controlled filesystem paths; a name containing HTML
+	// or markdown-active chars must be escaped in the "- Sources:" summary line.
+	sources := []Source{{Name: "<evil>&source", Findings: []stream.Finding{
+		mf("LOW", "a.go", 1, "p", "f", "style", 5, "e", "greta"),
+	}}}
+	var b strings.Builder
+	require.NoError(t, RenderMarkdown(&b, Reconcile(sources, recAt())))
+	out := b.String()
+	assert.NotContains(t, out, "<evil>", "raw HTML in source name must be escaped")
+	assert.Contains(t, out, "&lt;evil&gt;&amp;source", "source name must be HTML-escaped in Summary")
+}
