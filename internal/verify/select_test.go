@@ -498,3 +498,34 @@ func TestSelectEligibleSkeptics_BackwardCompatNoLanguageField(t *testing.T) {
 	got := skepticNames(SelectEligibleSkeptics(reg, finding, 2, nil))
 	assert.Equal(t, []string{"alpha", "mango"}, got, "no Language field → prior alphabetical n-cap behavior")
 }
+
+// TestSelectEligibleSkeptics_DotfileExtensionless verifies that dotfiles whose
+// basename equals filepath.Ext (e.g. .gitignore, .env) are treated as extensionless
+// so they do not match language-scoped skeptics. Without the guard, filepath.Ext
+// returns the whole name and normalizeExt strips the dot, causing a spurious match.
+func TestSelectEligibleSkeptics_DotfileExtensionless(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		langKey string
+	}{
+		{"gitignore", ".gitignore", "gitignore"},
+		{"env", ".env", "env"},
+		{"dotgo", ".go", "go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := buildRegistry(
+				map[string]registry.AgentConfig{
+					"alpha":   langSkeptic("m-alpha", "ts"),         // unscoped for this dotfile
+					"matched": langSkeptic("m-matched", tt.langKey), // would wrongly lead without guard
+				},
+				nil,
+			)
+			finding := reconcile.JSONFinding{File: tt.file}
+			// Under n=1 without guard: "matched" leads (language match); with guard: alphabetical → "alpha".
+			got := skepticNames(SelectEligibleSkeptics(reg, finding, 1, nil))
+			assert.Equal(t, []string{"alpha"}, got, "dotfile %q must be treated as extensionless", tt.file)
+		})
+	}
+}
