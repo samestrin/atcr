@@ -85,9 +85,9 @@
 - [ ] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] Regression test confirms existing fixture YAML files (without `language` key) load without error after `AgentConfig` struct change
-- [ ] Regression test confirms `SelectEligibleSkeptics` output for a no-language-field registry matches pre-routing alphabetical baseline exactly
-- [ ] Mixed registry (some with `language`, some without) loads cleanly and both agent types load without error and produce identical skeptic selection output to the pre-routing baseline when no language match exists
+- [x] Regression test confirms existing fixture YAML files (without `language` key) load without error after `AgentConfig` struct change (`TestRegistryExamples_BackwardCompat` — Phase 1)
+- [ ] Regression test confirms `SelectEligibleSkeptics` output for a no-language-field registry matches pre-routing alphabetical baseline exactly _(Phase 2 — routing not yet implemented)_
+- [ ] Mixed registry (some with `language`, some without) loads cleanly and both agent types load without error and produce identical skeptic selection output to the pre-routing baseline when no language match exists _(Phase 2)_
 
 **Manual Review:**
 - [ ] Code reviewed and approved

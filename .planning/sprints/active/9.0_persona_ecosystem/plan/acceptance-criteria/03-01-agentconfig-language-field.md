@@ -88,15 +88,15 @@
 ## Definition of Done
 
 **Auto-Verified:**
-- [ ] All tests passing (`go test ./internal/registry/...`)
-- [ ] No linting errors (`golangci-lint run ./internal/registry/...`)
-- [ ] Build succeeds (`go build ./...`)
+- [x] All tests passing (`go test ./internal/registry/...`)
+- [x] No linting errors (`golangci-lint run ./internal/registry/...`)
+- [x] Build succeeds (`go build ./...`)
 
 **Story-Specific:**
-- [ ] `AgentConfig` has `Language []string \`yaml:"language,omitempty"\`` field in `internal/registry/config.go`
-- [ ] `applyDefaults` canonicalizes each Language entry (trim → strip leading dot → lowercase)
-- [ ] `validateAgent` rejects empty strings and entries containing control characters
-- [ ] Existing registry YAML files without `language` key load without error
+- [x] `AgentConfig` has `Language []string \`yaml:"language,omitempty"\`` field in `internal/registry/config.go`
+- [x] `applyDefaults` canonicalizes each Language entry (trim → strip leading dot → lowercase)
+- [x] `validateAgent` rejects empty strings and entries containing control characters (canonical-empty form, incl. `"."` / `" . "` — adversarial 1.2.A fix)
+- [x] Existing registry YAML files without `language` key load without error
 
 **Manual Review:**
 - [ ] Code reviewed and approved

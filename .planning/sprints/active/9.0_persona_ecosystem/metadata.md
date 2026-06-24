@@ -52,9 +52,9 @@
 
 _Updated by `/execute-sprint` during execution._
 
-**Current Phase:** _Not started_
-**Phases Complete:** 0 / 6
-**Last Checkpoint:** _TBD_
+**Current Phase:** Phase 1 complete — gated stop before Phase 2
+**Phases Complete:** 1 / 6
+**Last Checkpoint:** 2026-06-24 — Phase 1 (T8 AgentConfig.Language field + normalizeExt) green; gate passed. Commits: 734fce2 (green), 2555330 (refactor).
 
 ---
 
