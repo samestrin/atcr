@@ -161,27 +161,6 @@ func classify(a, b map[string]struct{}) (relation, float64) {
 	}
 }
 
-// jaccard returns the token-set Jaccard similarity of a and b in [0,1]. Empty
-// input on either side yields 0. (Decisions use classify; jaccard is retained
-// for direct similarity inspection and tests.)
-func jaccard(a, b string) float64 {
-	ta, tb := tokenize(a), tokenize(b)
-	if len(ta) == 0 || len(tb) == 0 {
-		return 0
-	}
-	inter := 0
-	for t := range ta {
-		if _, ok := tb[t]; ok {
-			inter++
-		}
-	}
-	union := len(ta) + len(tb) - inter
-	if union == 0 {
-		return 0
-	}
-	return float64(inter) / float64(union)
-}
-
 // tokenize lowercases s and returns its set of alphanumeric word tokens.
 func tokenize(s string) map[string]struct{} {
 	set := map[string]struct{}{}

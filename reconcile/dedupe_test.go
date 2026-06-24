@@ -2,22 +2,27 @@ package reconcile
 
 import "testing"
 
-func TestJaccard_Identical(t *testing.T) {
-	eq(t, jaccard("token never expires", "token never expires"), 1.0, "identical → 1.0")
+func TestClassifySimilarity_Identical(t *testing.T) {
+	_, sim := classify(tokenize("token never expires"), tokenize("token never expires"))
+	eq(t, sim, 1.0, "identical → 1.0")
 }
 
-func TestJaccard_Disjoint(t *testing.T) {
-	eq(t, jaccard("alpha beta", "gamma delta"), 0.0, "disjoint → 0.0")
+func TestClassifySimilarity_Disjoint(t *testing.T) {
+	_, sim := classify(tokenize("alpha beta"), tokenize("gamma delta"))
+	eq(t, sim, 0.0, "disjoint → 0.0")
 }
 
-func TestJaccard_PartialAndCaseInsensitive(t *testing.T) {
+func TestClassifySimilarity_PartialAndCaseInsensitive(t *testing.T) {
 	// {alpha,beta,gamma} vs {alpha,beta,delta}: 2 shared / 4 union = 0.5.
-	inDelta(t, jaccard("Alpha BETA gamma", "alpha beta DELTA"), 0.5, 1e-9, "case-insensitive partial")
+	_, sim := classify(tokenize("Alpha BETA gamma"), tokenize("alpha beta DELTA"))
+	inDelta(t, sim, 0.5, 1e-9, "case-insensitive partial")
 }
 
-func TestJaccard_EmptyIsZero(t *testing.T) {
-	eq(t, jaccard("", "anything"), 0.0, "empty left")
-	eq(t, jaccard("anything", ""), 0.0, "empty right")
+func TestClassifySimilarity_EmptyIsZero(t *testing.T) {
+	_, sim := classify(tokenize(""), tokenize("anything"))
+	eq(t, sim, 0.0, "empty left")
+	_, sim = classify(tokenize("anything"), tokenize(""))
+	eq(t, sim, 0.0, "empty right")
 }
 
 func TestDedupeCluster_HighSimilarityMerges(t *testing.T) {
