@@ -30,7 +30,15 @@
 - **Relevant:** Vertical-market adoption hinges on teams being able to install and configure personas without engineering support; contributor growth requires a clear authoring contract.
 - **Time-bound:** Documentation is complete and merged in the same Sprint B that delivers T2, T5, T6, and T7-in-repo, before the 9.0 release cut.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [06-01](../acceptance-criteria/06-01-personas-install-guide.md) | Personas Install Guide | Manual |
+| [06-02](../acceptance-criteria/06-02-personas-authoring-guide.md) | Personas Authoring Guide | Manual / Unit |
+| [06-03](../acceptance-criteria/06-03-registry-and-example-updates.md) | Registry Docs and Example YAML Updates | Unit / Manual |
+
+## Original Criteria Overview
 
 1. `docs/personas-install.md` covers install, list, search, test, upgrade, remove, and bundle installation with working command examples and the `~/.config/atcr/personas/` install path.
 2. `docs/personas-authoring.md` provides a fill-in-the-blank persona template with all required fields, canonical `language` format rules, fixture file requirements, and a step-by-step contribution checklist.

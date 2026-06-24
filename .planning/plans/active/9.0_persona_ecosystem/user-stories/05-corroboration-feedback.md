@@ -30,7 +30,16 @@
 - **Relevant:** Visible corroboration rates give platform leads a concrete, evidence-based metric to justify persona retention or removal, reducing configuration noise on teams that have accumulated unused personas.
 - **Time-bound:** Delivered within Sprint B alongside T2, T5, and T7-in-repo; the score display is the last consumer of the corroboration map already established by T8, so it completes the data pipeline in the same sprint.
 
-## Acceptance Criteria Overview
+## Acceptance Criteria
+
+| AC | Title | Type |
+|----|-------|------|
+| [05-01](../acceptance-criteria/05-01-baseline-list-no-regression.md) | Baseline List No Regression | Unit + Integration |
+| [05-02](../acceptance-criteria/05-02-scores-column-display.md) | Scores Column Display | Unit |
+| [05-03](../acceptance-criteria/05-03-sort-ordering.md) | Sort Ordering | Unit |
+| [05-04](../acceptance-criteria/05-04-help-documentation.md) | Help Documentation | Unit |
+
+## Original Criteria Overview
 
 1. `atcr personas list` without `--scores` produces the same output as before this change — no regression to baseline behavior.
 2. `atcr personas list --scores` adds a `CORROBORATION` column to the list table; each row shows the reviewer's rate as `XX.X%` when scorecard data exists, or `n/a` when the reviewer has no recorded runs.
