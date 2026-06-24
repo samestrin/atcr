@@ -59,8 +59,15 @@ const (
 )
 
 // SeverityRank is the canonical severity rubric, re-exported from the library
-// (single source of truth — no second copy).
-var SeverityRank = reclib.SeverityRank
+// (single source of truth — no second copy). It is copied defensively so an
+// ATCR-internal mutation cannot accidentally corrupt the shared library map.
+var SeverityRank = func() map[string]int {
+	cp := make(map[string]int, len(reclib.SeverityRank))
+	for k, v := range reclib.SeverityRank {
+		cp[k] = v
+	}
+	return cp
+}()
 
 // Re-exported pure functions. These delegate to the library so there is exactly
 // one implementation of each.
