@@ -40,3 +40,18 @@ func TestHashBytes_StablePrefixedDigest(t *testing.T) {
 	eq(t, h, HashBytes([]byte("hello")), "deterministic")
 	notEq(t, h, HashBytes([]byte("world")), "different input differs")
 }
+
+// TestAmbiguousHash_Golden guards byte-stability of the canonical sidecar
+// encoding. Any change to field tags, ordering, indentation, or trailing
+// newline that perturbs emitted bytes will break this hash and fail CI.
+func TestAmbiguousHash_Golden(t *testing.T) {
+	clusters := []AmbiguousCluster{
+		{ID: "amb-1", File: "a.go", Line: 1, Similarity: 0.5, Findings: []Finding{
+			{File: "a.go", Line: 1, Problem: "p1", Reviewer: "greta"},
+			{File: "a.go", Line: 1, Problem: "p2", Reviewer: "kai"},
+		}},
+	}
+	want := "sha256:c97fab233b4d4f34c21e8de29ed7e643523a530f129e93b56f23244555551e5e"
+	got := AmbiguousHash(clusters)
+	eq(t, got, want, "golden hash must match canonical encoding")
+}
