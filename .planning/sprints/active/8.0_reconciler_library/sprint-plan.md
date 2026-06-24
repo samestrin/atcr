@@ -309,7 +309,7 @@ From [plan/documentation/](plan/documentation/):
    4. ~~Move `disagree.go` → `reconcile/disagree.go`~~ **REMOVED (Phase 2 Clarification Q2):** `disagree.go` (`BuildDisagreements`, `DisagreementsFile`, radar renderers) stays ATCR-internal — consumes `JSONFinding` and uses `os`/`html`/markdown rendering, incompatible with the stdlib-only library.
    5. Move `confidence.go` → `reconcile/confidence.go` (`ConfidenceForVerdict`/`ConfidenceAtOrAbove`). (AC 02-02)
    6. Move `cluster.go` → `reconcile/cluster.go` (FILE, LINE±3 single-linkage). (AC 02-02)
-   7. Move `ambiguous.go` → `reconcile/ambiguous.go` (`AmbiguousID`/`AmbiguousHash`/`AmbiguousCluster`). (AC 02-02)
+   7. Move `ambiguous.go` → `reconcile/ambiguous.go` (`AmbiguousID`/`AmbiguousHash`; `AmbiguousCluster` is in `dedupe.go`). (AC 02-02)
    8. Move `attribution.go` → `reconcile/attribution.go` (`EvidenceSep`/`FixAttribution`). (AC 02-02)
    9. Move `internal/stream/severity.go` (`NormalizeSeverity`/`SeverityRank`) → `reconcile/severity.go`; eliminate the `merge.go:30` init-copy (library becomes canonical owner). (AC 02-05)
    10. Move pure-logic tests with their code (e.g. `TestReconcile_TwoReviewersAgreeHighConfidence` → `reconcile/reconcile_test.go`). (AC 02-02)
