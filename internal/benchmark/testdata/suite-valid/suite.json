@@ -1,0 +1,16 @@
+{
+  "suite": "fixture-mini",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "id": "case-01-nil-deref",
+      "diff": "case-01.diff",
+      "expected_categories": ["correctness"]
+    },
+    {
+      "id": "case-02-sql-injection",
+      "diff": "case-02.diff",
+      "expected_categories": ["security", "correctness"]
+    }
+  ]
+}

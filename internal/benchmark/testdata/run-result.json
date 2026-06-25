@@ -1,0 +1,16 @@
+{
+  "suite": "fixture-mini",
+  "suite_version": "1.0.0",
+  "generated_at": "2026-06-24T12:00:00Z",
+  "reviewers": [
+    {
+      "model": "claude-sonnet-4-6",
+      "persona": "bruce",
+      "runs": 2,
+      "findings_raised_avg": 10.5,
+      "corroboration_rate": 0.6,
+      "cost_per_corroborated_finding_usd": 0.006,
+      "latency_p50_ms": 8900
+    }
+  ]
+}
