@@ -1,0 +1,592 @@
+{
+  "generated": "2026-06-24",
+  "discovery_method": "semantic",
+  "queries": [
+    "AgentConfig language field registry schema",
+    "SelectEligibleSkeptics language routing file extension",
+    "persona embed names slice builtin",
+    "cobra root command AddCommand subcommand",
+    "scorecard corroboration rate per reviewer"
+  ],
+  "match_count": 18,
+  "build_from": {
+    "primary_file": "internal/verify/select.go",
+    "reason": "SelectEligibleSkeptics at line 55 is the exact function T8 must extend. The two-partition reorder on the already-sorted `names` slice is a contained change: sort by language-match first, then let the existing n-cap (lines 85-87) take the top n. One caller signature change is required (DECIDED 2026-06-24): a nil-safe scores map[string]float64 4th parameter; the sole production caller is internal/verify/pipeline.go:162. The finding's file extension is available from reconcile.JSONFinding.File (internal/reconcile/emit.go:64).",
+    "suggested_approach": "Signature: SelectEligibleSkeptics(reg, finding, n, scores map[string]float64) — DECIDED 2026-06-24 (caller-supplied map, nil = no score data; chosen over functional option / new overload). After sort.Strings(names) at line 81, partition into matched (skeptic.Config.Language entries overlap normalizeExt(filepath.Ext(finding.File))) and unmatched; rebuild names as append(matched, unmatched...). Tie-break within matched: scores[name] desc, then name asc (absent key = zero value, falls through to alphabetical; nil map = alphabetical-only). Add a small helper normalizeExt(ext string) string = strings.ToLower(strings.TrimPrefix(ext, \".\")) for consistent matching. Language canonical form is without-dot-lowercased, canonicalized at load (see config.go applyDefaults), so both sides compare equal. Thread the scores map from pipeline.go:162 — the caller builds it from scorecard.Aggregate() (LeaderboardRow.CorroborationRate keyed by reviewer), the same source T6 uses, so verify gains no scorecard import."
+  },
+  "semantic_matches": [
+    {
+      "file": "internal/verify/select.go",
+      "symbol": "SelectEligibleSkeptics",
+      "type": "function",
+      "line": 55,
+      "score": 1.0,
+      "query": "SelectEligibleSkeptics language routing file extension",
+      "relevance": "Primary extension point for T8: add two-partition reorder after sort.Strings(names)"
+    },
+    {
+      "file": "internal/verify/select_test.go",
+      "symbol": "TestSelectEligibleSkeptics",
+      "type": "function",
+      "line": 44,
+      "score": 1.0,
+      "query": "SelectEligibleSkeptics language routing file extension",
+      "relevance": "Test to extend with language-match, no-match fallback, and tie-break cases"
+    },
+    {
+      "file": "internal/registry/config.go",
+      "symbol": "AgentConfig",
+      "type": "struct",
+      "line": 267,
+      "score": 0.997,
+      "query": "AgentConfig language field registry schema",
+      "relevance": "T8 schema change: add Language []string yaml:\"language,omitempty\" following the exact pattern of Scope []string. Do NOT reuse Scope — it means prompt-injection focus categories."
+    },
+    {
+      "file": "personas/personas.go",
+      "symbol": "names",
+      "type": "file",
+      "line": 16,
+      "score": 0.998,
+      "query": "persona embed names slice builtin",
+      "relevance": "Canonical names slice — add sentinel, tracer, idiomatic for T1; go:embed picks up *.md automatically"
+    },
+    {
+      "file": "personas/personas_test.go",
+      "symbol": "TestNames_ReturnsAllSix",
+      "type": "function",
+      "line": 9,
+      "score": 0.818,
+      "query": "persona embed names slice builtin",
+      "relevance": "Test name and expected count (6) will need updating when 3 bonus personas are added (→ 9)"
+    },
+    {
+      "file": "cmd/atcr/main.go",
+      "symbol": "newRootCmd",
+      "type": "function",
+      "line": 128,
+      "score": 0.908,
+      "query": "cobra root command AddCommand subcommand",
+      "relevance": "Add newPersonasCmd() to root.AddCommand() for T2; currently has 14 subcommands at lines 174-189"
+    },
+    {
+      "file": "cmd/atcr/main_test.go",
+      "symbol": "TestRootCmd_HasExactlyFourteenSubcommands",
+      "type": "function",
+      "line": 46,
+      "score": 0.724,
+      "query": "cobra root command AddCommand subcommand",
+      "relevance": "Will need updating to 15 when personas command is added"
+    },
+    {
+      "file": "docs/registry.md",
+      "symbol": "Agent fields",
+      "type": "file",
+      "line": 58,
+      "score": 0.998,
+      "query": "AgentConfig language field registry schema",
+      "relevance": "Registry docs to update with language field description in T7-in-repo"
+    },
+    {
+      "file": "internal/registry/persona.go",
+      "symbol": "ResolvePersona",
+      "type": "function",
+      "line": 44,
+      "score": 0.96,
+      "query": "persona embed names slice builtin",
+      "relevance": "Persona resolution chain for installed community personas (T2): installed .md files in registry personas dir (~/.config/atcr/personas) are resolved here"
+    },
+    {
+      "file": "internal/scorecard/scorecard.go",
+      "symbol": "Record",
+      "type": "struct",
+      "line": 52,
+      "score": 0.99,
+      "query": "scorecard corroboration rate per reviewer",
+      "relevance": "T6 source of per-reviewer/persona corroboration rate (CorroborationRate field)"
+    },
+    {
+      "file": "internal/scorecard/aggregate.go",
+      "symbol": "Aggregate",
+      "type": "function",
+      "line": 118,
+      "score": 0.95,
+      "query": "scorecard corroboration rate per reviewer",
+      "relevance": "T6 helper for aggregating corroboration rates across scorecard records for --scores"
+    },
+    {
+      "file": "internal/scorecard/paths.go",
+      "symbol": "DefaultDir",
+      "type": "function",
+      "line": 20,
+      "score": 0.92,
+      "query": "scorecard corroboration rate per reviewer",
+      "relevance": "T6: default scorecard store path is ~/.config/atcr/scorecard (used by personas list --scores)"
+    },
+    {
+      "file": "cmd/atcr/leaderboard.go",
+      "symbol": "runLeaderboard",
+      "type": "function",
+      "line": 42,
+      "score": 0.85,
+      "query": "scorecard corroboration rate per reviewer",
+      "relevance": "Existing CLI pattern for reading and aggregating scorecard records by persona name"
+    },
+    {
+      "file": "internal/verify/invoke_test.go",
+      "symbol": "testSkeptic",
+      "type": "function",
+      "line": 22,
+      "score": 0.93,
+      "query": "SelectEligibleSkeptics language routing file extension",
+      "relevance": "Helper factory for skeptic test fixtures — pattern to follow for language-aware skeptic tests"
+    },
+    {
+      "file": "cmd/atcr/serve.go",
+      "symbol": "newServeCmd",
+      "type": "function",
+      "line": 22,
+      "score": 0.832,
+      "query": "cobra root command AddCommand subcommand",
+      "relevance": "Simple subcommand pattern to follow for newPersonasCmd scaffold (own file, no subcommands itself)"
+    },
+    {
+      "file": "docs/scorecard.md",
+      "symbol": "Record Schema (v1)",
+      "type": "file",
+      "line": 25,
+      "score": 0.234,
+      "query": "scorecard corroboration rate per reviewer",
+      "relevance": "T6: corroboration rate per reviewer is stored here — source for the scores map fed into SelectEligibleSkeptics tie-break"
+    }
+  ],
+  "existing_patterns": [
+    {
+      "name": "Optional AgentConfig field",
+      "description": "New optional fields on AgentConfig are value slices (nil = unset) following Scope []string. Add the field at internal/registry/config.go:267 (inside AgentConfig), validation in validateAgent around line 625, and canonicalization in applyDefaults around line 699. Each is backward-compatible: a 1.x config missing the field parses cleanly with the zero value. Language []string follows Scope []string exactly.",
+      "files": ["internal/registry/config.go"],
+      "follow_for": "T8 Language field addition"
+    },
+    {
+      "name": "Embedded Persona Files",
+      "description": "Personas are .md files in personas/ embedded via go:embed *.md. Adding a new persona requires: (1) create the .md file, (2) add its name to the names slice in personas.go:16. The embed directive picks up *.md automatically — no registration beyond names[] is needed. Persona resolution for installed community personas is handled by internal/registry/persona.go:ResolvePersona.",
+      "files": ["personas/personas.go", "personas/bruce.md", "internal/registry/persona.go"],
+      "follow_for": "T1 bonus persona authoring and T2 installed persona resolution"
+    },
+    {
+      "name": "Cobra Subcommand File",
+      "description": "Each top-level atcr subcommand lives in its own file under cmd/atcr/ (e.g., serve.go, review.go). The constructor returns *cobra.Command and is registered in newRootCmd (cmd/atcr/main.go:128, AddCommand at lines 174-189) via root.AddCommand(). Parent-subcommand nesting (atcr personas install) uses AddCommand on the parent command, not root.",
+      "files": ["cmd/atcr/main.go", "cmd/atcr/serve.go", "cmd/atcr/review.go"],
+      "follow_for": "T2 atcr personas CLI"
+    },
+    {
+      "name": "Deterministic Skeptic Selection",
+      "description": "SelectEligibleSkeptics (internal/verify/select.go:55) sorts candidate names alphabetically before applying the n-cap (lines 85-87), ensuring deterministic output. T8's two-partition reorder must preserve determinism within each partition: sort matched alphabetically (then by corroboration score desc), sort unmatched alphabetically. The finding's file extension comes from reconcile.JSONFinding.File.",
+      "files": ["internal/verify/select.go", "internal/reconcile/emit.go"],
+      "follow_for": "T8 two-partition reorder"
+    },
+    {
+      "name": "httptest.NewServer for external fetch",
+      "description": "External HTTP calls in tests use httptest.NewServer to serve static JSON/YAML responses, pointed at a configurable URL field. No live external calls in unit tests. Pattern matches the epic's decision: fetch source is configurable, default is a constant, test via httptest.",
+      "files": ["internal/verify/invoke_test.go"],
+      "follow_for": "T2 install/search/upgrade fetch tests"
+    },
+    {
+      "name": "Persona resolution chain",
+      "description": "ResolvePersona in internal/registry/persona.go:44 walks six levels (task-message, project dir, registry dir, base files, embedded agent, embedded base). Installed community personas land in ~/.config/atcr/personas/ (registry personas dir) and are picked up at level 3. Path traversal and symlink guards already exist; T2 install must write to the same directory.",
+      "files": ["internal/registry/persona.go", "internal/registry/config.go"],
+      "follow_for": "T2 install/remove and T8 language-scoped persona lookup"
+    },
+    {
+      "name": "Scorecard aggregation for corroboration rates",
+      "description": "The internal/scorecard package stores per-reviewer records in ~/.config/atcr/scorecard/YYYY-MM.jsonl. Aggregate (internal/scorecard/aggregate.go:118) groups by (reviewer, model) and emits CorroborationRate. T6 can reuse scorecard.ReadAll + ApplyFilters or Aggregate to populate atcr personas list --scores.",
+      "files": ["internal/scorecard/scorecard.go", "internal/scorecard/aggregate.go", "internal/scorecard/paths.go", "cmd/atcr/leaderboard.go"],
+      "follow_for": "T6 --scores wiring"
+    }
+  ],
+  "related_files": [
+    {
+      "path": "internal/verify/select.go",
+      "relevance": "high",
+      "purpose": "SelectEligibleSkeptics — primary T8 extension point",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/verify/select_test.go",
+      "relevance": "high",
+      "purpose": "Tests for SelectEligibleSkeptics — add language routing tests",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "internal/registry/config.go",
+      "relevance": "high",
+      "purpose": "AgentConfig struct — add Language []string field; validateAgent and applyDefaults must canonicalize/validate it",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "personas/personas.go",
+      "relevance": "high",
+      "purpose": "Embedded persona registry — add sentinel, tracer, idiomatic to names slice",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "personas/personas_test.go",
+      "relevance": "high",
+      "purpose": "Persona tests — update count from 6 to 9",
+      "likely_modification": "modify"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "relevance": "high",
+      "purpose": "Root command — register newPersonasCmd()",
+      "likely_modification": "minor"
+    },
+    {
+      "path": "cmd/atcr/main_test.go",
+      "relevance": "high",
+      "purpose": "Subcommand count test — update 14→15",
+      "likely_modification": "minor"
+    },
+    {
+      "path": "internal/registry/persona.go",
+      "relevance": "high",
+      "purpose": "Persona resolution chain — installed community personas are resolved from ~/.config/atcr/personas/",
+      "likely_modification": "reference-only for T8/T1; may extend for T2 if install writes need validation hooks"
+    },
+    {
+      "path": "internal/registry/persona_test.go",
+      "relevance": "medium",
+      "purpose": "Tests for persona resolution — useful reference for installed persona behavior",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/scorecard/scorecard.go",
+      "relevance": "high",
+      "purpose": "Scorecard Record schema — source of CorroborationRate for T6 and T8 tie-break",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/scorecard/aggregate.go",
+      "relevance": "high",
+      "purpose": "Aggregate/LeaderboardRow — reusable for computing per-persona corroboration rates in --scores",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/scorecard/paths.go",
+      "relevance": "medium",
+      "purpose": "Default scorecard store path (~/.config/atcr/scorecard)",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/scorecard/store.go",
+      "relevance": "medium",
+      "purpose": "ReadAll / FindByRunID for loading scorecard JSONL records",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/scorecard.go",
+      "relevance": "medium",
+      "purpose": "Existing CLI pattern for reading scorecard records by run_id",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "cmd/atcr/leaderboard.go",
+      "relevance": "medium",
+      "purpose": "Existing CLI pattern for aggregating scorecard records by reviewer/persona",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/registry.md",
+      "relevance": "medium",
+      "purpose": "Registry docs — document language field and skeptic routing behavior (T7-in-repo)",
+      "likely_modification": "extend"
+    },
+    {
+      "path": "examples/registry-without-executor.yaml",
+      "relevance": "medium",
+      "purpose": "Example registry without a skeptic — add language field example after T8",
+      "likely_modification": "minor"
+    },
+    {
+      "path": "examples/registry-with-executor.yaml",
+      "relevance": "medium",
+      "purpose": "Example registry with a skeptic — add language field example after T8",
+      "likely_modification": "minor"
+    },
+    {
+      "path": "docs/scorecard.md",
+      "relevance": "medium",
+      "purpose": "Scorecard docs — source for corroboration data used in T6 and T8 tie-break",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "internal/payload/scope.go",
+      "relevance": "medium",
+      "purpose": "ScopeFocus rendering — proves Scope is prompt-injection focus, not language routing; do NOT reuse Scope for T8",
+      "likely_modification": "reference-only"
+    },
+    {
+      "path": "docs/examples/registry.yaml",
+      "relevance": "low",
+      "purpose": "Previously referenced example registry file",
+      "likely_modification": "none",
+      "status": "deprecated",
+      "reason": "docs/examples/ directory does not exist in this repo. Use examples/registry-without-executor.yaml and examples/registry-with-executor.yaml instead."
+    }
+  ],
+  "integration_gaps": [
+    {
+      "location": "internal/verify/select.go:SelectEligibleSkeptics",
+      "type": "hook",
+      "description": "T8: after sort.Strings(names), partition into language-matched and unmatched; let n-cap favor matched. The finding file extension is filepath.Ext(finding.File). Open design point: how to pass corroboration scores into the selector (functional option, overload, or caller-supplied map)."
+    },
+    {
+      "location": "internal/registry/config.go:AgentConfig",
+      "type": "hook",
+      "description": "T8: add Language []string yaml:\"language,omitempty\" — nil = no language constraint, backward-compatible. Validation in validateAgent (~line 625): each element must be a non-empty file extension string. Canonicalization in applyDefaults (~line 699): trim whitespace and optionally normalize leading dot."
+    },
+    {
+      "location": "personas/personas.go:names",
+      "type": "entry-point",
+      "description": "T1: append sentinel, tracer, idiomatic to names slice; create corresponding .md files. The go:embed picks them up automatically."
+    },
+    {
+      "location": "cmd/atcr/main.go:newRootCmd",
+      "type": "entry-point",
+      "description": "T2: add newPersonasCmd() to root.AddCommand() at lines 174-189. The personas command itself hosts install/remove/list/search/test/upgrade as sub-subcommands."
+    },
+    {
+      "location": "internal/registry/persona.go:ResolvePersona",
+      "type": "hook",
+      "description": "T2: installed community personas are written to ~/.config/atcr/personas/ and resolved through the existing six-level chain. Install/remove/list must keep this directory in sync with registry expectations (no path traversal, no symlinks, _base reserved)."
+    },
+    {
+      "location": "internal/scorecard",
+      "type": "hook",
+      "description": "T6: wire corroboration rate per reviewer/persona from scorecard records into atcr personas list --scores. Read scorecard JSONL from scorecard.DefaultDir() (~/.config/atcr/scorecard/) via scorecard.ReadAll or Aggregate; map by reviewer name."
+    },
+    {
+      "location": "internal/reconcile/emit.go:JSONFinding.File",
+      "type": "hook",
+      "description": "T8: SelectEligibleSkeptics needs the finding's file extension; it is available on finding.File. Add a small helper to normalize extension strings (with/without leading dot) for matching against AgentConfig.Language entries."
+    }
+  ],
+  "reusable_components": [
+    {
+      "name": "AgentConfig optional field pattern",
+      "path": "internal/registry/config.go",
+      "can_extend": true,
+      "usage_example": "Language []string `yaml:\"language,omitempty\"` — nil slice = no constraint; add validation in validateAgent and canonicalization in applyDefaults"
+    },
+    {
+      "name": "go:embed persona files",
+      "path": "personas/personas.go",
+      "can_extend": true,
+      "usage_example": "Add name to names slice + create personas/<name>.md; embed directive includes automatically"
+    },
+    {
+      "name": "Skeptic struct",
+      "path": "internal/verify/select.go",
+      "can_extend": true,
+      "usage_example": "Skeptic{Name, Config, Provider} — already carries AgentConfig, so Language field is available once added to AgentConfig"
+    },
+    {
+      "name": "Scorecard aggregation",
+      "path": "internal/scorecard/aggregate.go",
+      "can_extend": true,
+      "usage_example": "scorecard.ReadAll(dir, opts) → ApplyFilters → Aggregate to get per-persona CorroborationRate for --scores"
+    },
+    {
+      "name": "Persona resolution chain",
+      "path": "internal/registry/persona.go",
+      "can_extend": true,
+      "usage_example": "ResolvePersona(agentName, persona, taskMessage, dirs PersonaDirs{Project, Registry}) resolves installed ~/.config/atcr/personas/<name>.md files"
+    }
+  ],
+  "architecture_notes": [
+    "No root.go in cmd/atcr/: root command lives in main.go:newRootCmd (line 128). New subcommands go in their own files (e.g., cmd/atcr/personas.go).",
+    "SelectEligibleSkeptics is deterministic by design (sort.Strings before n-cap at lines 81 and 85-87). The two-partition reorder must maintain this: sort matched partition alphabetically (or by corroboration desc then alpha), sort unmatched partition alphabetically.",
+    "AgentConfig.Scope is NOT for language routing: it injects focus categories into the persona prompt via internal/payload/scope.go:ScopeFocus. Language is a separate orthogonal concern (file-extension scoping). Do not reuse Scope.",
+    "The personas package uses embed.FS, not os.ReadFile: new personas must be actual .md files under personas/, not generated at runtime. Test fixtures for T1 should be testdata/ .patch or .diff files in a new personas/testdata/ or internal/personas/testdata/ directory.",
+    "The atcr personas CLI (T2) fetches from a configurable URL (default github.com/atcr/personas raw). Installed personas land in ~/.config/atcr/personas/. The fetch path is tested with httptest.NewServer — no live external calls in tests.",
+    "Currently 14 subcommands registered in newRootCmd (review, reconcile, verify, debate, report, github, range, status, init, serve, doctor, trust, scorecard, leaderboard); TestRootCmd_HasExactlyFourteenSubcommands will fail when personas is added — update to 15.",
+    "TestNames_ReturnsAllSix will fail when 3 bonus personas are added — rename and update expected count to 9.",
+    "Sprint order matters: T8 (AgentConfig schema + skeptic routing) must land before T1 (bonus personas that may use Language field). Sprint B (T2/T5/T6/T7) depends on T8's registry changes being merged.",
+    "Persona resolution for installed community personas reuses the existing ResolvePersona chain in internal/registry/persona.go; T2 install must write files into the registry personas directory returned by the config path resolver (typically ~/.config/atcr/personas/).",
+    "T6 --scores can reuse internal/scorecard.ReadAll + Aggregate (or ApplyFilters) rather than inventing a new aggregation path. The scorecard store lives at ~/.config/atcr/scorecard/YYYY-MM.jsonl.",
+    "RESOLVED 2026-06-24 (was: open design point) — corroboration scores reach SelectEligibleSkeptics via a caller-supplied scores map[string]float64 4th parameter (reviewer name -> corroboration rate), nil-safe (nil = alphabetical-only tie-break). Chosen over functional option (avoids Option machinery for one optional input) and new overload (avoids a first-class scoreless path). Only one production caller (internal/verify/pipeline.go:162). The same map shape is built from scorecard.Aggregate() (LeaderboardRow.CorroborationRate keyed by reviewer) and shared with T6's --scores consumer, so verify gains no scorecard import.",
+    "RESOLVED 2026-06-24 — AgentConfig.Language canonical form is WITHOUT leading dot, lowercased (e.g. [\"go\",\"ts\"]). YAML accepts both \"go\" and \".go\"; applyDefaults canonicalizes each entry (trim space, strip one leading dot, lowercase), mirroring the existing MinSeverity/Role load-time canonicalization. validateAgent rejects empty entries + control chars (mirror the Scope guard) but enforces no language allow-list. Matching uses normalizeExt(ext) = strings.ToLower(strings.TrimPrefix(ext, \".\")) on filepath.Ext(finding.File) so both sides compare in the same canonical form."
+  ],
+  "files_to_modify": [
+    {
+      "path": "internal/registry/config.go",
+      "reason": "Add Language []string field to AgentConfig (T8); validate in validateAgent; canonicalize in applyDefaults",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/verify/select.go",
+      "reason": "Extend SelectEligibleSkeptics with two-partition language reorder (T8)",
+      "scope": "minor"
+    },
+    {
+      "path": "internal/verify/select_test.go",
+      "reason": "Add tests for language match, no-match fallback, tie-break (T8)",
+      "scope": "minor"
+    },
+    {
+      "path": "personas/personas.go",
+      "reason": "Add sentinel, tracer, idiomatic to names slice (T1)",
+      "scope": "trivial"
+    },
+    {
+      "path": "personas/personas_test.go",
+      "reason": "Update TestNames_ReturnsAllSix: rename + change expected count 6→9 (T1)",
+      "scope": "trivial"
+    },
+    {
+      "path": "cmd/atcr/main.go",
+      "reason": "Register newPersonasCmd() in root.AddCommand() (T2)",
+      "scope": "trivial"
+    },
+    {
+      "path": "cmd/atcr/main_test.go",
+      "reason": "Update TestRootCmd_HasExactlyFourteenSubcommands: rename + 14→15 (T2)",
+      "scope": "trivial"
+    },
+    {
+      "path": "docs/registry.md",
+      "reason": "Document language field and skeptic routing behavior (T7-in-repo)",
+      "scope": "minor"
+    },
+    {
+      "path": "examples/registry-without-executor.yaml",
+      "reason": "Add optional language field example for agent definitions (T7-in-repo)",
+      "scope": "trivial"
+    },
+    {
+      "path": "examples/registry-with-executor.yaml",
+      "reason": "Add optional language field example for skeptic agent (T7-in-repo)",
+      "scope": "trivial"
+    },
+    {
+      "path": "docs/examples/registry.yaml",
+      "reason": "Previously referenced example registry path; directory does not exist",
+      "scope": "none",
+      "status": "deprecated",
+      "deprecation_reason": "docs/examples/ directory does not exist in this workspace. Use examples/registry-without-executor.yaml and examples/registry-with-executor.yaml instead."
+    }
+  ],
+  "files_to_create": [
+    {
+      "path": "personas/sentinel.md",
+      "purpose": "Security reviewer persona: OWASP Top 10, injection, auth bypass, secrets leakage, insecure defaults",
+      "based_on": "personas/bruce.md (structure) + security domain prompt"
+    },
+    {
+      "path": "personas/tracer.md",
+      "purpose": "Performance reviewer persona: N+1 queries, memory leaks, algorithmic complexity, unnecessary allocations",
+      "based_on": "personas/bruce.md (structure) + performance domain prompt"
+    },
+    {
+      "path": "personas/idiomatic.md",
+      "purpose": "Go idioms reviewer persona: error handling conventions, goroutine leaks, interface abuse, stdlib misuse",
+      "based_on": "personas/bruce.md (structure) + Go idioms domain prompt"
+    },
+    {
+      "path": "personas/testdata/sentinel_fixture.patch",
+      "purpose": "CI fixture: a small Go diff containing a known SQL injection or OWASP Top 10 pattern that sentinel must flag",
+      "based_on": null
+    },
+    {
+      "path": "personas/testdata/tracer_fixture.patch",
+      "purpose": "CI fixture: a small Go diff with a known N+1 query or memory leak that tracer must flag",
+      "based_on": null
+    },
+    {
+      "path": "personas/testdata/idiomatic_fixture.patch",
+      "purpose": "CI fixture: a small Go diff with a known idioms violation (e.g., ignored error, goroutine leak) that idiomatic must flag",
+      "based_on": null
+    },
+    {
+      "path": "cmd/atcr/personas.go",
+      "purpose": "atcr personas parent command + install/remove/list/search/test/upgrade subcommands",
+      "based_on": "cmd/atcr/serve.go (file pattern)"
+    },
+    {
+      "path": "cmd/atcr/personas_test.go",
+      "purpose": "Tests for personas command: registered, subcommands exist, basic flag parsing",
+      "based_on": "cmd/atcr/debate_test.go"
+    },
+    {
+      "path": "internal/personas/client.go",
+      "purpose": "HTTP client for fetching from the configurable community repo URL (install, search, upgrade)",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/client_test.go",
+      "purpose": "Tests using httptest.NewServer to exercise install/search/upgrade without live network calls",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/install.go",
+      "purpose": "Install logic: fetch from URL, write to ~/.config/atcr/personas/, handle versioning",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/list.go",
+      "purpose": "List installed personas from ~/.config/atcr/personas/ with name/namespace/version display",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/search.go",
+      "purpose": "Search community repo by keyword (fetches index from configurable URL)",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/test.go",
+      "purpose": "Run a persona against its fixture and report pass/fail",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/remove.go",
+      "purpose": "Remove installed persona from ~/.config/atcr/personas/",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/upgrade.go",
+      "purpose": "Upgrade installed personas to latest version from community repo",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/bundles.go",
+      "purpose": "Bundle manifest YAML format + install bundle/ resolution (T5)",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/bundles_test.go",
+      "purpose": "Tests for bundle manifest parsing and install bundle/ resolution",
+      "based_on": null
+    },
+    {
+      "path": "internal/personas/paths.go",
+      "purpose": "Resolve install directory (~/.config/atcr/personas/) and related filesystem paths",
+      "based_on": null
+    },
+    {
+      "path": "docs/personas-install.md",
+      "purpose": "Installation guide: how to install, list, upgrade, remove personas and bundles (T7-in-repo)",
+      "based_on": null
+    },
+    {
+      "path": "docs/personas-authoring.md",
+      "purpose": "Persona authoring template: prompt structure, fixture requirements, language scope field (T7-in-repo)",
+      "based_on": null
+    }
+  ],
+  "test_patterns": {
+    "framework": "go test (testify/require)",
+    "test_location": "*_test.go in same package directory",
+    "naming_convention": "Test<Unit>_<Scenario>",
+    "example_test": "internal/verify/select_test.go"
+  }
+}

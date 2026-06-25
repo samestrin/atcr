@@ -10,7 +10,10 @@
 package verify
 
 import (
+	"math"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
@@ -33,8 +36,31 @@ type Skeptic struct {
 	Provider registry.Provider
 }
 
+// normalizeExt canonicalizes a finding's file extension (e.g. ".go", ".GO") to
+// the same dotless, lowercase token AgentConfig.Language entries are
+// canonicalized to at load. It delegates to registry.NormalizeLanguageToken —
+// the single shared canonicalizer — so the two sides of a language-routing match
+// (a finding's extension and a skeptic's declared languages) can never drift out
+// of the same form. Phase 2 consumes this when partitioning skeptics by language.
+func normalizeExt(ext string) string {
+	return registry.NormalizeLanguageToken(ext)
+}
+
+// languageMatches reports whether ext (already canonical, from normalizeExt)
+// appears in langs. AgentConfig.Language entries are canonicalized to the same
+// dotless, lowercase form at load, so a direct compare is correct. An empty
+// langs slice never matches.
+func languageMatches(langs []string, ext string) bool {
+	for _, l := range langs {
+		if l == ext {
+			return true
+		}
+	}
+	return false
+}
+
 // SelectEligibleSkeptics returns up to n skeptic agents eligible to verify
-// finding, deterministically ordered by agent name.
+// finding, deterministically ordered.
 //
 // The different-model rule is enforced here, never left to configuration
 // discipline: a skeptic is excluded if its model exactly matches the model of
@@ -42,6 +68,16 @@ type Skeptic struct {
 // registered agent are skipped silently (the agent may have been removed since
 // the review ran) — they contribute no model to the exclusion set. A nil or
 // empty Reviewers slice excludes nothing, so every skeptic is eligible.
+//
+// Language-aware routing (Epic 9.0): eligible skeptics whose AgentConfig.Language
+// scope includes the finding's file extension are partitioned ahead of unscoped
+// (or differently-scoped) skeptics, so the n-cap prefers a language-matched
+// skeptic. scores maps a skeptic's registry name to its corroboration rate
+// (Epic 3.3 data); within the matched partition, higher score sorts first, ties
+// breaking alphabetically. A nil scores map is a valid "no score data" signal —
+// the matched partition then orders alphabetically. Fallback is silent and
+// automatic: when no skeptic matches the finding's language (none declared, or a
+// different extension), ordering is the prior plain alphabetical-by-name.
 //
 // The result is always non-nil. It is empty when n <= 0, when no agent has
 // role skeptic, or when every skeptic shares a model with a reviewer. An empty
@@ -52,7 +88,7 @@ type Skeptic struct {
 // Read-only contract: callers must not mutate fields of the returned Skeptic
 // values. Slice and pointer fields alias the registry's backing memory; mutating
 // them corrupts the shared registry for all subsequent calls in this process.
-func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int) []Skeptic {
+func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFinding, n int, scores map[string]float64) []Skeptic {
 	out := []Skeptic{}
 	if reg == nil || n <= 0 {
 		return out
@@ -79,6 +115,52 @@ func SelectEligibleSkeptics(reg *registry.Registry, finding reconcile.JSONFindin
 		}
 	}
 	sort.Strings(names)
+
+	// Two-partition language reorder: split the alphabetical names into those
+	// whose Language scope matches the finding's extension and those that don't.
+	// Matched names lead, so the n-cap below favors a language-scoped skeptic.
+	// findingLang is "" for an extensionless file — an empty token matches no
+	// Language entry (validateAgent rejects canonical-empty entries), so such a
+	// finding falls through entirely to the unmatched partition.
+	//
+	// Dotfile guard: filepath.Ext(".gitignore") returns ".gitignore" (the whole
+	// basename), so normalizeExt would produce "gitignore" — a spurious language
+	// match. When base == ext the file IS the extension (dotfile); treat as
+	// extensionless so it falls through to the unmatched partition.
+	rawExt := filepath.Ext(finding.File)
+	if filepath.Base(finding.File) == rawExt {
+		rawExt = ""
+	}
+	findingLang := normalizeExt(rawExt)
+	matched := make([]string, 0, len(names))
+	unmatched := make([]string, 0, len(names))
+	for _, name := range names {
+		if findingLang != "" && languageMatches(skeptics[name].Language, findingLang) {
+			matched = append(matched, name)
+		} else {
+			unmatched = append(unmatched, name)
+		}
+	}
+	// Within the matched partition, prefer higher corroboration score, then
+	// alphabetical. A nil/empty scores map or an absent key yields the zero
+	// score, so equal scores fall through to alphabetical — fully deterministic.
+	sort.SliceStable(matched, func(i, j int) bool {
+		si, sj := scores[strings.ToLower(matched[i])], scores[strings.ToLower(matched[j])]
+		// NaN corroboration scores must not break strict-weak ordering; treat
+		// them as the lowest rank so finite scores always sort above them and
+		// ties between NaN values fall back to alphabetical order.
+		if math.IsNaN(si) {
+			si = math.Inf(-1)
+		}
+		if math.IsNaN(sj) {
+			sj = math.Inf(-1)
+		}
+		if si != sj {
+			return si > sj
+		}
+		return matched[i] < matched[j]
+	})
+	names = append(matched, unmatched...)
 
 	// Take the first n by name. The >= guard is defensive: out grows by one per
 	// iteration today, but >= keeps the cap correct if that ever changes.

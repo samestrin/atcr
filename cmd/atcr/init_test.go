@@ -14,7 +14,7 @@ import (
 	"github.com/samestrin/atcr/personas"
 )
 
-var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "otto"}
+var personaNames = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
 
 // initDir runs a fresh init into dir, failing the test on error.
 func initDir(t *testing.T, dir string) {
@@ -30,7 +30,7 @@ func TestInit_FreshDirectory(t *testing.T) {
 	// Config exists, parses strictly, and carries the documented defaults.
 	cfg, err := registry.LoadProjectConfig(filepath.Join(dir, ".atcr", "config.yaml"))
 	require.NoError(t, err)
-	assert.Equal(t, personaNames, cfg.Agents, "default roster lists all six personas")
+	assert.Equal(t, personaNames, cfg.Agents, "default roster lists all nine personas")
 	assert.Equal(t, "blocks", cfg.PayloadMode)
 	require.NotNil(t, cfg.TimeoutSecs)
 	assert.Equal(t, 600, *cfg.TimeoutSecs)
@@ -38,7 +38,7 @@ func TestInit_FreshDirectory(t *testing.T) {
 	require.NotNil(t, cfg.MaxParallel, "template must carry max_parallel so the knob is visible")
 	assert.Equal(t, registry.DefaultMaxParallel, *cfg.MaxParallel)
 
-	// Six persona files plus the base template.
+	// Nine persona files plus the base template.
 	for _, name := range append([]string{"_base"}, personaNames...) {
 		path := filepath.Join(dir, ".atcr", "personas", name+".md")
 		assert.FileExists(t, path)
