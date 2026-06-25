@@ -90,6 +90,9 @@ func newBenchmarkExportCmd() *cobra.Command {
 }
 
 func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
+	// Cobra GetString errors are unreachable: both flags are registered above
+	// ("in" is MarkFlagRequired), so GetString returns the flag value or its
+	// default, never an error. Project-wide convention (27 sites).
 	in, _ := cmd.Flags().GetString("in")
 	output, _ := cmd.Flags().GetString("output")
 
