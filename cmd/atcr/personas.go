@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -77,7 +78,7 @@ var personasDir = commpersonas.PersonasDir
 
 // personasClient is the HTTP client used for community-repo fetches. Tests point
 // ATCR_PERSONAS_URL at an httptest server and let the default client hit it.
-var personasClient commpersonas.HTTPClient = http.DefaultClient
+var personasClient commpersonas.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // personasFixtureRunner runs a persona's fixture for `atcr personas test`.
 // The production default renders built-in persona templates against their
