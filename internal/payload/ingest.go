@@ -93,20 +93,34 @@ func BuildEntriesFromDiffFile(path string, maxBytes int64) ([]FileEntry, error) 
 	if maxBytes > 0 && fi.Size() > maxBytes {
 		return nil, fmt.Errorf("diff ingestion: diff file %q size %d exceeds max %d bytes", path, fi.Size(), maxBytes)
 	}
-	var r io.Reader = f
-	if maxBytes > 0 {
-		// Bound the read independently of the pre-read Stat so a file that grows
-		// between Stat and read still cannot exceed the cap (TOCTOU defense).
-		r = io.LimitReader(f, maxBytes+1)
-	}
-	data, err := io.ReadAll(r)
+	// Bound the read independently of the pre-read Stat so a file that grows
+	// between Stat and read still cannot exceed the cap (TOCTOU defense).
+	data, err := readCapped(f, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("diff ingestion: reading diff file %q: %w", path, err)
 	}
-	if maxBytes > 0 && int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("diff ingestion: diff file %q exceeds max %d bytes", path, maxBytes)
-	}
 	return BuildEntriesFromDiff(string(data))
+}
+
+// readCapped reads all of r, rejecting a source that holds more than maxBytes
+// (maxBytes <= 0 disables the cap). It reads exactly ONE byte past the cap via
+// LimitReader so the post-read length check can distinguish a source at the cap
+// (accepted) from one beyond it (rejected) — e.g. a file that grew between Stat
+// and read. The "+1" over-read and the ">maxBytes" recheck are a matched pair and
+// are colocated here so neither can silently drift from the other and turn the cap
+// into dead code; TestReadCapped_RejectsSourceLargerThanCap pins the invariant.
+func readCapped(r io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return io.ReadAll(r)
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("exceeds max %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 // hunkCountsRe captures the old-side and new-side line counts from a unified-diff

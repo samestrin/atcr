@@ -325,6 +325,28 @@ func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries), "CRLF diff must round-trip verbatim")
 }
 
+// readCapped pins the LimitReader "+1" / ">maxBytes" recheck pair that defends
+// the diff-file read against a source larger than the cap (e.g. a file grown
+// between Stat and read). Dropping the +1 would let LimitReader cap reads at
+// exactly maxBytes, making the recheck dead code and silently accepting oversized
+// input — this test fails if that regression is introduced.
+func TestReadCapped_RejectsSourceLargerThanCap(t *testing.T) {
+	const capBytes = 16
+	_, err := readCapped(strings.NewReader(strings.Repeat("x", capBytes+5)), capBytes)
+	require.Error(t, err, "a source larger than the cap must be rejected by the post-read recheck")
+	assert.Contains(t, err.Error(), "exceeds")
+
+	// A source exactly at the cap is accepted (boundary).
+	data, err := readCapped(strings.NewReader(strings.Repeat("x", capBytes)), capBytes)
+	require.NoError(t, err)
+	assert.Len(t, data, capBytes)
+
+	// maxBytes <= 0 disables the cap entirely.
+	data, err = readCapped(strings.NewReader(strings.Repeat("x", capBytes+5)), 0)
+	require.NoError(t, err)
+	assert.Len(t, data, capBytes+5)
+}
+
 // A missing diff file surfaces a clear open error rather than a vacuous result.
 func TestBuildEntriesFromDiffFile_MissingFileErrors(t *testing.T) {
 	dir := t.TempDir()
