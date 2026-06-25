@@ -105,7 +105,12 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		CostPerCorroboratedFindingUSD: costPer(a.costTotal, a.corroborated),
 		LatencyP50MS:                  medianInt64(a.latencies),
 	}
-	if a.hasVerification {
+	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
+	// records that some verification pointer was present; a degenerate record can
+	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),
+	// in which case there is no rate to report and the key must stay absent — a 0.0
+	// here would be indistinguishable from a genuine all-refuted rate.
+	if a.hasVerification && (a.verified+a.refuted > 0 || len(a.storedRates) > 0) {
 		// Count-based aggregation (verified/(verified+refuted)) is authoritative
 		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
 		// average of per-run rates). Only when NO counts survive in the group (a
@@ -114,10 +119,9 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
 		// public value.
 		var rate float64
-		switch {
-		case a.verified+a.refuted > 0:
+		if a.verified+a.refuted > 0 {
 			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
-		case len(a.storedRates) > 0:
+		} else {
 			sum := 0.0
 			for _, v := range a.storedRates {
 				sum += v
