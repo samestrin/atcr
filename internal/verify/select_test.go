@@ -2,6 +2,7 @@ package verify
 
 import (
 	"math"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -546,5 +547,50 @@ func TestSelectEligibleSkeptics_DotfileExtensionless(t *testing.T) {
 			got := skepticNames(SelectEligibleSkeptics(reg, finding, 1, nil))
 			assert.Equal(t, []string{"alpha"}, got, "dotfile %q must be treated as extensionless", tt.file)
 		})
+	}
+}
+
+// TestSelectEligibleSkeptics_LoadedRegistryNoEmptyLanguage verifies the
+// cross-package invariant: a registry loaded via registry.LoadRegistry contains
+// no skeptic whose Language slice includes an empty token. If validateAgent
+// regresses and stops rejecting empty Language entries, this catches it at the
+// registry-load boundary — stronger coverage than the isolated unit test at
+// internal/registry/config_test.go:664-695, which tests validateAgent directly
+// but not the end-to-end YAML → load path that feeds SelectEligibleSkeptics.
+func TestSelectEligibleSkeptics_LoadedRegistryNoEmptyLanguage(t *testing.T) {
+	const yamlBody = `
+providers:
+  mock:
+    base_url: http://mock.example.com
+    api_key_env: MOCK_KEY
+agents:
+  gopher:
+    provider: mock
+    model: mock-model
+    role: skeptic
+    language:
+      - go
+      - ts
+  generalist:
+    provider: mock
+    model: mock-model-2
+    role: skeptic
+`
+	f, err := os.CreateTemp("", "registry-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	_, err = f.WriteString(yamlBody)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	reg, err := registry.LoadRegistry(f.Name())
+	require.NoError(t, err)
+
+	for name, cfg := range reg.AgentsByRole(registry.RoleSkeptic) {
+		for _, lang := range cfg.Language {
+			assert.NotEmpty(t, lang,
+				"skeptic %q has empty language token in loaded registry — validateAgent must have regressed",
+				name)
+		}
 	}
 }
