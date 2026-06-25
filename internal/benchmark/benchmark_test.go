@@ -105,6 +105,14 @@ func TestValidate_RejectsPathTraversalDiff(t *testing.T) {
 	require.Error(t, m.Validate(), "a diff path escaping the suite dir must be rejected")
 }
 
+func TestValidate_RejectsDotDiffPath(t *testing.T) {
+	m := Manifest{
+		Suite: "s", SuiteVersion: "1.0.0",
+		Cases: []Case{{ID: "c", Diff: ".", ExpectedCategories: []string{"x"}}},
+	}
+	require.Error(t, m.Validate(), "a diff path of '.' must be rejected (not a valid diff file)")
+}
+
 func TestValidate_Valid(t *testing.T) {
 	m := Manifest{
 		Suite: "s", SuiteVersion: "1.0.0",
