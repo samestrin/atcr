@@ -276,9 +276,10 @@ func costPer(totalCost float64, corroborated int) float64 {
 }
 
 // medianInt64 returns the p50 (median) of the latencies: the middle element for
-// an odd count, the integer mean of the two middle elements for an even count,
-// and 0 for an empty slice. The input is copied before sorting so the caller's
-// accumulator order is not mutated.
+// an odd count, and for an even count the integer median — the FLOOR of the
+// average of the two middle elements (p50 is an int64 millisecond field, so it is
+// reported as a whole millisecond, never rounded up). Empty slice returns 0. The
+// input is copied before sorting so the caller's accumulator order is not mutated.
 func medianInt64(xs []int64) int64 {
 	n := len(xs)
 	if n == 0 {
@@ -290,7 +291,10 @@ func medianInt64(xs []int64) int64 {
 	if n%2 == 1 {
 		return sorted[n/2]
 	}
-	return (sorted[n/2-1] + sorted[n/2]) / 2
+	// lo + (hi-lo)/2 is the overflow-safe form of (lo+hi)/2: it never sums two
+	// near-MaxInt64 values, while still yielding floor((lo+hi)/2) since hi >= lo.
+	lo, hi := sorted[n/2-1], sorted[n/2]
+	return lo + (hi-lo)/2
 }
 
 // scrubField is defense-in-depth over the allowlist: reviewer/model/role are the
