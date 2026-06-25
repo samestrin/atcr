@@ -266,6 +266,12 @@ func hunkLineCounts(header string) (oldCount, newCount int) {
 // byte offset where each line begins. A trailing newline yields a final empty
 // line at offset len(s), which matches no marker.
 func splitLinesWithOffsets(s string) (lines []string, offsets []int) {
+	// Pre-size both slices to the line count (newline count + 1) so a large
+	// multi-file diff fills them without repeated grow/realloc. strings.Count is
+	// allocation-free (unlike bytes.Count, which would copy s).
+	n := strings.Count(s, "\n") + 1
+	lines = make([]string, 0, n)
+	offsets = make([]int, 0, n)
 	start := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\n' {
@@ -295,6 +301,9 @@ func diffSectionPath(section string) (string, error) {
 			ln, rest = rest[:nl], rest[nl+1:]
 		} else {
 			rest = ""
+		}
+		if strings.HasPrefix(ln, hunkMarker) {
+			break // the hunk body begins here; the git/old/new headers all precede it
 		}
 		switch {
 		case gitHeader == "" && strings.HasPrefix(ln, gitDiffMarker):

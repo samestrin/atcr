@@ -3,6 +3,7 @@ package payload
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -274,6 +275,29 @@ func TestBuildEntriesFromDiffFile_MissingFileErrors(t *testing.T) {
 	t.Chdir(dir)
 	_, err := BuildEntriesFromDiffFile("does-not-exist.diff", DefaultMaxDiffBytes)
 	require.Error(t, err)
+}
+
+// BenchmarkBuildEntriesFromDiff_LargeMultiFile exercises the ingestion hot path
+// on a large multi-file loose diff so -benchmem surfaces the per-line index and
+// per-section path-scan allocations (pre-sized splitLinesWithOffsets + early-break
+// diffSectionPath).
+func BenchmarkBuildEntriesFromDiff_LargeMultiFile(b *testing.B) {
+	var sb strings.Builder
+	for f := 0; f < 200; f++ {
+		name := "pkg/file" + strconv.Itoa(f) + ".go"
+		sb.WriteString("--- a/" + name + "\n+++ b/" + name + "\n@@ -1,40 +1,40 @@\n")
+		for ln := 0; ln < 40; ln++ {
+			sb.WriteString("-old line " + strconv.Itoa(ln) + "\n+new line " + strconv.Itoa(ln) + "\n")
+		}
+	}
+	diff := sb.String()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := BuildEntriesFromDiff(diff); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 // Parity anchor (AC4): the suite fixture case-01.diff, fed through the ingestion
