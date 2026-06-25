@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 7 |
-| MEDIUM | 0 | 24 | 64 |
-| LOW | 0 | 22 | 84 |
+| MEDIUM | 1 | 24 | 64 |
+| LOW | 3 | 22 | 84 |
 
-**Last Modified:** 2026-06-24 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 155 | **Total Items:** 203
+**Last Modified:** 2026-06-24 | **Open Items:** 4 | **Deferred Items:** 48 | **Resolved Items:** 155 | **Total Items:** 207
 
 ## Directory Structure
 
@@ -33,6 +33,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-24] From Sprint: epic-10.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | cmd/atcr/benchmark.go:104 | benchmark export emits run-result reviewer identities verbatim without re-anonymizing, while production leaderboard --export scrubs persona/model at source; a non-conforming run-result could carry PII into a public submission | Expose a scorecard anonymization entry point and re-scrub persona/model in benchmark.BuildSubmission (or enforce pre-anonymization when atcr benchmark run produces the run-result in Epic 10.1) | SECURITY | 30 | execute-epic-stage3 |
+| 1 | [ ] | LOW | cmd/atcr/benchmark.go:84 | --output help text "(follows symlinks)" is copied from leaderboard.go but is factually wrong; writeExportFile os.Renames a temp file onto the target, REPLACING a symlink rather than following it | Reword the help/comment to "atomically replaces the target (a symlink at the path is replaced, not followed)" in benchmark.go and leaderboard.go | DOCS | 10 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/benchmark.go:97 | runBenchmarkExport guards rr.Suite/rr.SuiteVersion non-empty but not Reviewers; a run-result with zero reviewers yields a contentless public submission (empty reviewers array) | Reject len(rr.Reviewers)==0 in runBenchmarkExport with a clear error, mirroring the suite/version guard | EDGE_CASES | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/benchmark/benchmark.go:60 | isSafeRelPath blocks ".." and absolute paths but does not resolve symlinks, so an in-suite symlink diff pointing outside the tree passes validation and Load/ReproHash stat+read the target (read-only; no exfiltration or write) | After joining, os.Lstat the diff path or filepath.EvalSymlinks and re-check containment under suitePath before stat/read | SECURITY | 30 | execute-epic-independent |
 
 ### [2026-06-24] From Sprint: 9.0_persona_ecosystem
 

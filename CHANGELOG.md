@@ -1,3 +1,24 @@
+## [10.0.0] - 2026-06-24
+
+### Added
+
+- `atcr benchmark` command with `verify` (validate a suite manifest + print its reproducibility hash) and `export` (emit a suite-tagged public submission, distinct from the production export) subcommands
+- `internal/benchmark` package: versioned suite-manifest contract (`Load`/`Validate` with a path-traversal guard), a deterministic content-based reproducibility hash, the run-result input contract, and the suite-tagged submission envelope
+- `internal/version` package supplying `atcr_version` for public submissions (ldflags-overridable; `0.0.0` in dev builds)
+- `docs/benchmark.md` benchmark-suite guide (suite contract, verify, export, run-result contract, privacy model)
+
+### Changed
+
+- Reshaped the public leaderboard submission schema (`atcr leaderboard --export`) to the Epic 10.0 spec: envelope `{submission_schema, atcr_version, submitted_at, reviewers[]}`; per-reviewer `{model, persona, runs, findings_raised_avg, corroboration_rate, survived_skeptic_rate, cost_per_corroborated_finding_usd, latency_p50_ms}`
+- Shrank the public submission allowlist: dropped the `filters` envelope, token counts, `role`, `index`, and the corroborated/solo/verified/refuted internals; `cost_per_corroborated_finding_usd` and `latency_p50_ms` are now real metrics (cost÷corroborated; true median) rather than the prior total/mean
+- `survived_skeptic_rate` is now omitted entirely when no verification ran (distinguishable from a genuine `0.0`)
+- Decoupled the public submission schema version (`submission_schema`) from the on-disk store schema version (`schema_version`)
+- Updated `docs/scorecard.md` to document the new submission schema and privacy model
+
+*Note: `atcr benchmark run` (live execution + scoring) and the curated standard-v1 suite content are deferred to Epic 10.1 and the external benchmark-suite repo.*
+
+*Shipped via /execute-epic (epic 10.0)*
+
 ## [9.0.0] - 2026-06-24
 
 ### Added

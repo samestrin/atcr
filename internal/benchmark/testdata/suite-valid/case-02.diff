@@ -1,0 +1,7 @@
+--- a/query.go
++++ b/query.go
+@@ -1,2 +1,2 @@
+ func lookup(db *sql.DB, name string) *Row {
+-	return db.QueryRow("SELECT * FROM u WHERE n = $1", name)
++	return db.QueryRow("SELECT * FROM u WHERE n = '" + name + "'") // planted SQL-injection defect
+ }

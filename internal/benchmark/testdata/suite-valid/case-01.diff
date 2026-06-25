@@ -1,0 +1,11 @@
+--- a/pay.go
++++ b/pay.go
+@@ -1,3 +1,4 @@
+ func total(items []*Item) int {
+-	return items[0].Price
++	sum := 0
++	for _, it := range items {
++		sum += it.Price // it may be nil: planted nil-deref defect
++	}
++	return sum
+ }

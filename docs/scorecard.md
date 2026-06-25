@@ -200,40 +200,59 @@ atcr leaderboard --export --output /tmp/submission.json
 atcr leaderboard --export --since 30d --model claude-sonnet-4-6
 ```
 
-The document is an envelope:
+The document is the Epic 10.0 submission envelope. It is an **aggregate over the
+selected slice** — the active filters are applied but are deliberately **not
+echoed** (they would leak query parameters about your local dataset):
 
 ```json
 {
-  "schema_version": 1,
-  "exported_at": "2026-06-15T00:00:00Z",
-  "filters": { "since": "30d", "model": "", "persona": "" },
-  "records": [
+  "submission_schema": 1,
+  "atcr_version": "0.0.0",
+  "submitted_at": "2026-06-15T00:00:00Z",
+  "reviewers": [
     {
-      "index": 0,
-      "reviewer": "bruce",
       "model": "claude-sonnet-4-6",
-      "role": "reviewer",
+      "persona": "bruce",
       "runs": 8,
-      "findings_raised": 96,
-      "findings_corroborated": 54,
-      "findings_solo": 42,
+      "findings_raised_avg": 12.0,
       "corroboration_rate": 0.5625,
-      "findings_verified": 30,
-      "findings_refuted": 6,
       "survived_skeptic_rate": 0.8333,
-      "cost_usd": 0.32,
-      "tokens_in": 113600,
-      "tokens_out": 32000,
-      "latency_ms_avg": 9100
+      "cost_per_corroborated_finding_usd": 0.0059,
+      "latency_p50_ms": 9100
     }
   ]
 }
 ```
 
-Records are aggregated by `(reviewer, model, role)`, sorted ascending by
-`(model, reviewer, role)`, and indexed by position. A no-match/empty result
-writes the canonical guidance to stderr and exits `1` (so a `--export | jq`
-pipeline never sees non-JSON on stdout).
+| Envelope field | Type | Description |
+|----------------|------|-------------|
+| `submission_schema` | int | Public submission schema version (currently `1`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
+| `atcr_version` | string | The ATCR build that produced the submission (`internal/version`; `0.0.0` in dev builds, stamped via ldflags for releases). |
+| `submitted_at` | string | RFC3339 export timestamp (also the `--since` window anchor, so output is reproducible). |
+| `reviewers` | array | One aggregated row per `(persona, model)`. |
+
+| Reviewer field | Type | Presence | Description |
+|----------------|------|----------|-------------|
+| `model` | string | always | Model id (scrubbed). |
+| `persona` | string | always | Reviewer/persona name (scrubbed; not PII). |
+| `runs` | int | always | Number of runs aggregated into this row. |
+| `findings_raised_avg` | float | always | Mean findings raised **per run** (not the total). |
+| `corroboration_rate` | float | always | Corroborated / raised across the group (clamped to `[0,1]`). |
+| `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
+| `cost_per_corroborated_finding_usd` | float | always | Total cost ÷ corroborated findings (`0.0` when none corroborated; never Inf/NaN). |
+| `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
+
+Reviewers are aggregated by `(persona, model)` (role is dropped from the public
+schema — it is a constant `"reviewer"` for reconcile records), sorted ascending by
+`(model, persona)`. Output is deterministic (byte-identical for the same input +
+`submitted_at`). A no-match/empty result writes the canonical guidance to stderr
+and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
+
+> **Suite vs production submissions.** `leaderboard --export` produces a
+> *production* submission from your local runs. The public board accepts only
+> *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
+> so cherry-picked production runs cannot game it — see
+> [`docs/benchmark.md`](benchmark.md).
 
 ### `atcr reconcile --no-scorecard`
 
@@ -261,21 +280,28 @@ The local store (`~/.config/atcr/scorecard/`) holds your real `run_id` and may
 carry your reviewer/model names — it is local and never shared. **Only the
 `--export` path produces a shareable document, and it is anonymized.**
 
-`--export` is **allowlist-based**: the public record carries only the fields
+`--export` is **allowlist-based**: the public submission carries only the fields
 listed below. A field that is not on the allowlist cannot leak, because it is
-never copied into the public structure in the first place.
+never copied into the public structure in the first place. The Epic 10.0 schema
+deliberately **shrank** the allowlist relative to the local store — the smaller
+the surface, the less can leak.
 
 **Preserved (allowlist):**
 
-- `schema_version`, `exported_at`, and the echoed `filters`
-- `reviewer`/persona name, `model`, `role`
-- Numeric metrics: `runs`, `findings_raised`, `findings_corroborated`,
-  `findings_solo`, `corroboration_rate`, `findings_verified`, `findings_refuted`,
-  `survived_skeptic_rate`, `cost_usd`, `tokens_in`, `tokens_out`, `latency_ms_avg`
+- Envelope: `submission_schema`, `atcr_version`, `submitted_at`
+- Per reviewer: `model`, `persona`, `runs`, `findings_raised_avg`,
+  `corroboration_rate`, `survived_skeptic_rate` (omitted when no verification ran),
+  `cost_per_corroborated_finding_usd`, `latency_p50_ms`
 
 **Stripped / never exported:**
 
 - `run_id`
+- The active filters (`since`/`model`/`persona`) — applied to select the slice,
+  but **not echoed**, so a submission does not reveal your query parameters.
+- The local-store internals: `findings_corroborated`, `findings_solo`,
+  `findings_verified`, `findings_refuted`, `cost_usd` (raw total), `tokens_in`,
+  `tokens_out`, `latency_ms` (raw per-run), `role`, `index`. Only the derived
+  public metrics above are emitted.
 - Filesystem paths (absolute, Windows `C:\…`, and `~`-relative — including
   path-like substrings glued into a field)
 - Email addresses
@@ -285,11 +311,11 @@ never copied into the public structure in the first place.
 - Repository content, hostnames, usernames, and organization names — none are
   collected into a record in the first place
 
-As defense-in-depth, the three string fields that _are_ exported
-(`reviewer`, `model`, `role`) additionally pass through a scrubber that removes
-any path-like, email, or credential-like substring before emission. The
-allowlist is the primary guarantee; the scrubber is the backstop. Export output
-is deterministic, so you can diff it before sharing.
+As defense-in-depth, the two string fields that _are_ exported (`persona`,
+`model`) additionally pass through a scrubber that removes any path-like, email,
+or credential-like substring before emission. The allowlist is the primary
+guarantee; the scrubber is the backstop. Export output is deterministic, so you
+can diff it before sharing.
 
 > **Accuracy is a contract.** The privacy model above must match
 > `internal/scorecard/export.go`. Any discrepancy is treated as a documentation
@@ -299,18 +325,22 @@ is deterministic, so you can diff it before sharing.
 
 ## Schema versioning
 
-`schema_version` is `1` today and is stamped on every stored record and every
-export envelope. When a future epic changes the schema:
+There are **two independent version numbers**:
 
-- The version is incremented.
-- Old records remain readable — the reader tolerates records of earlier versions,
-  and unknown/absent optional fields degrade gracefully.
-- Version negotiation for the public submission format is handled by the
-  `leaderboard --export` path, not by individual records.
+- `schema_version` (`1`) is stamped on every **stored** record (the local JSONL
+  store).
+- `submission_schema` (`1`) is stamped on every **public submission** envelope
+  (`leaderboard --export` and `benchmark export`).
 
-The v1 public export format is **experimental** until Epic 10.0 (the public
-Model-Eval Leaderboard) stabilizes it. Treat the exact field set as subject to
-change until then.
+They are decoupled on purpose: the local store format and the public submission
+format evolve separately, so bumping one never silently changes the other. When a
+future epic changes either schema:
+
+- That version is incremented independently.
+- Old stored records remain readable — the reader tolerates earlier versions, and
+  unknown/absent optional fields degrade gracefully.
+- Version negotiation for the public submission format is handled by the export
+  paths, not by individual stored records.
 
 ---
 
@@ -340,6 +370,9 @@ public import path; separate-repository publication follows the extraction.
 
 ## Related
 
+- [`docs/benchmark.md`](benchmark.md) — the standard benchmark-suite tooling
+  (`atcr benchmark verify` / `export`), the suite-manifest contract, and the
+  suite-tagged submission format that feeds the public board.
 - [`github.com/samestrin/atcr/reconcile`](../reconcile/README.md) — the standalone
   deterministic reconciler module that is the reference implementation backing
   every scorecard record (run and inspect it independently).
