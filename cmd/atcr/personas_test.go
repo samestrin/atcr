@@ -301,6 +301,16 @@ func TestPersonasSearch_NoMatch(t *testing.T) {
 	assert.Contains(t, out, "No personas found")
 }
 
+func TestPersonasSearch_EmptyKeywordIsUsageError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{"/index.json": cmdIndexJSON})
+	withPersonasEnv(t, srv)
+
+	_, _, err := executeSplit(t, "personas", "search", "")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "keyword cannot be empty")
+}
+
 func TestPersonasRemove_Integration(t *testing.T) {
 	srv := personasTestServer(t, map[string]string{"/security/owasp.yaml": cmdValidPersonaYAML})
 	dir := withPersonasEnv(t, srv)
