@@ -140,6 +140,22 @@ func TestPrepareReviewFromDiff_MalformedDiffPropagates(t *testing.T) {
 	assert.NoDirExists(t, out, "a malformed diff must not scaffold a review")
 }
 
+// OutputDir and IDOverride are mutually exclusive; the error must refer to the
+// request fields, not the CLI flag names.
+func TestPrepareReviewFromDiff_OutputDirAndIDOverrideMutuallyExclusive(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	req := diffReq(t.TempDir(), "")
+	req.OutputDir = filepath.Join(t.TempDir(), "ext-review")
+	req.IDOverride = "custom-id"
+
+	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OutputDir")
+	assert.Contains(t, err.Error(), "IDOverride")
+	assert.NotContains(t, err.Error(), "--output-dir")
+	assert.NotContains(t, err.Error(), "--id")
+}
+
 // When the byte budget drops a NON-LAST file from a multi-file diff (independent
 // review MEDIUM), the elision must be observable downstream: the agents' status
 // records the dropped file, and the materialized payload contains only the kept
