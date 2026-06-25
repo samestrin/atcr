@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -237,6 +238,22 @@ func TestPersonasList_ScoresNoDataFooter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stdout, "n/a")
 	assert.Contains(t, stdout, "No scorecard data found at /home/u/.config/atcr/scorecard")
+}
+
+func TestPersonasList_ScoresReadErrorDegradesGracefully(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withPersonasScores(t, personasScoreData{
+		rates: map[string]float64{"bruce": 0.5},
+		path:  "/home/u/.config/atcr/scorecard",
+	}, errors.New("permission denied"), nil)
+
+	stdout, stderr, err := executeSplit(t, "personas", "list", "--scores")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "CORROBORATION")
+	assert.Contains(t, stdout, "n/a")
+	assert.Contains(t, stderr, "permission denied")
+	assert.Contains(t, stdout, "Scorecard data at /home/u/.config/atcr/scorecard is unreadable")
 }
 
 func TestPersonasList_BaselineDoesNotLoadScores(t *testing.T) {
