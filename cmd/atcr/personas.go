@@ -221,7 +221,10 @@ func newPersonasSearchCmd() *cobra.Command {
 		Short: "Search the community repository by keyword",
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			keyword := args[0]
+			keyword := strings.TrimSpace(args[0])
+			if keyword == "" {
+				return usageError(fmt.Errorf("keyword cannot be empty"))
+			}
 			entries, err := commpersonas.Search(personasClient, commpersonas.BaseURL(), keyword)
 			if err != nil {
 				return err
