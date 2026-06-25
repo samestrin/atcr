@@ -172,11 +172,27 @@ func ReproHash(suitePath string) (string, error) {
 		for _, cat := range cats {
 			writeField(h, cat)
 		}
-		diffBytes, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
+		diffPath := filepath.Join(suitePath, c.Diff)
+		f, err := os.Open(diffPath)
 		if err != nil {
 			return "", fmt.Errorf("hashing case %q diff: %w", c.ID, err)
 		}
-		writeField(h, string(diffBytes))
+		fi, err := f.Stat()
+		if err != nil {
+			f.Close()
+			return "", fmt.Errorf("hashing case %q diff stat: %w", c.ID, err)
+		}
+		if fi.Size() > MaxDiffBytes {
+			f.Close()
+			return "", fmt.Errorf("hashing case %q diff: size %d exceeds max %d bytes", c.ID, fi.Size(), MaxDiffBytes)
+		}
+		// Length-prefix for unambiguous hashing (matches writeField format).
+		_, _ = fmt.Fprintf(h, "%d:", fi.Size())
+		if _, err := io.Copy(h, f); err != nil {
+			f.Close()
+			return "", fmt.Errorf("hashing case %q diff: %w", c.ID, err)
+		}
+		f.Close()
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
