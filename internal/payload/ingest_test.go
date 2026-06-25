@@ -151,6 +151,46 @@ func TestBuildEntriesFromDiffFile_SizeCapRejectsOversized(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
+// A git binary/mode-only section carries no `--- `/`+++ ` lines, so the head
+// path must be parsed from the `diff --git a/<old> b/<new>` header instead.
+func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
+	diff := "diff --git a/logo.png b/logo.png\n" +
+		"index abc1234..def5678 100644\n" +
+		"Binary files a/logo.png and b/logo.png differ\n" +
+		"diff --git a/main.go b/main.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/main.go\n" +
+		"+++ b/main.go\n" +
+		"@@ -1,1 +1,1 @@\n" +
+		"-a\n" +
+		"+b\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "logo.png", entries[0].Path, "binary section path comes from the diff --git header")
+	assert.Equal(t, "main.go", entries[1].Path)
+	assert.Equal(t, diff, joinBodies(entries), "binary + text git diff must round-trip verbatim")
+}
+
+// CRLF line endings (Windows-authored diffs) must still split correctly and
+// round-trip verbatim, with the trailing CR stripped from the parsed path.
+func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
+	diff := "--- a/x.go\r\n+++ b/x.go\r\n@@ -1,1 +1,1 @@\r\n-a\r\n+b\r\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "x.go", entries[0].Path, "trailing CR must be stripped from the path")
+	assert.Equal(t, diff, joinBodies(entries), "CRLF diff must round-trip verbatim")
+}
+
+// A missing diff file surfaces a clear open error rather than a vacuous result.
+func TestBuildEntriesFromDiffFile_MissingFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	_, err := BuildEntriesFromDiffFile("does-not-exist.diff", DefaultMaxDiffBytes)
+	require.Error(t, err)
+}
+
 // Parity anchor (AC4): the suite fixture case-01.diff, fed through the ingestion
 // path, must round-trip verbatim and parse the head path — the same []FileEntry
 // shape a git-sourced ModeDiff payload would carry for the same file.
