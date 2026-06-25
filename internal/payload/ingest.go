@@ -287,7 +287,15 @@ func splitLinesWithOffsets(s string) (lines []string, offsets []int) {
 // any hunk body), so a later `--- `/`+++ ` removed/added line cannot shadow them.
 func diffSectionPath(section string) (string, error) {
 	var oldPath, newPath, gitHeader string
-	for _, ln := range strings.Split(section, "\n") {
+	// Walk the section line-by-line with IndexByte rather than strings.Split, which
+	// would allocate a slice sized to the whole section just to read its header.
+	for rest := section; rest != ""; {
+		ln := rest
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			ln, rest = rest[:nl], rest[nl+1:]
+		} else {
+			rest = ""
+		}
 		switch {
 		case gitHeader == "" && strings.HasPrefix(ln, gitDiffMarker):
 			gitHeader = ln
