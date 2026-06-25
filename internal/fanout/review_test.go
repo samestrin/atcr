@@ -559,7 +559,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
 // silently empty payload that produces a plausible-looking vacuous review.
 func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
-	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"})
+	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "greta")
 	assert.Contains(t, err.Error(), "blocks")
