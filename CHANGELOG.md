@@ -1,3 +1,18 @@
+## [Technical Debt] - 2026-06-25
+
+### Fixed
+
+- Trailing empty lines and no-newline markers no longer abort diff section parsing
+- Inflated loose hunk counts are now rejected instead of silently swallowing the next file
+- Diff ingestion hot path uses IndexByte walking and pre-sized builders to cut allocations
+- Traversal and absolute paths in diff content are rejected as unsafe
+- Spaced git-header paths now parse correctly via symmetric midpoint detection
+- Diff-file paths that symlink outside the working tree are rejected
+- `--no-prefix` binary git headers recover the symmetric path correctly
+- Roster and mutual-exclusion checks hoisted into shared `validateReviewRequest`; `readCapped` extracted to pin TOCTOU +1/recheck invariant
+- Combined/merge diffs rejected with a clear unsupported-format diagnostic; partial truncation at `PrepareReviewFromDiff` now logged
+- `PrepareReviewFromDiff` error messages use parameter names; removed unused `t.Setenv` in test
+
 ## [10.1.0] - 2026-06-25
 
 ### Added

@@ -1,0 +1,98 @@
+{
+  "reviewers": [
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 11179,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 102590,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 107130,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 173580,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 234746,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 248729,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "timeout",
+      "durationMs": 300006,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "timeout",
+      "durationMs": 300006,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 455662,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "dax-local",
+      "model": "llm-large",
+      "status": "ok",
+      "durationMs": 7689,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "timeout",
+      "durationMs": 600000,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded"
+    },
+    {
+      "agent": "archer-backup",
+      "model": "mellum2",
+      "status": "ok",
+      "durationMs": 5630,
+      "tdLineCount": 0
+    }
+  ],
+  "totalFindings": 8,
+  "partial": true,
+  "totalDurationMs": 605632,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-25T10:16:23-07:00"
+}

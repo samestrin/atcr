@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/review.go:378|ForceMode overrides agent config unconditionally|Verify forceMode is only set for diff ingestion|correctness|10|forceMode overrides EffectivePayloadMode even if non-empty in git path|bruce

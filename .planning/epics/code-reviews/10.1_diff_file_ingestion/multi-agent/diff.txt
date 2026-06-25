@@ -1,0 +1,1067 @@
+diff --git a/internal/fanout/ingest_review_test.go b/internal/fanout/ingest_review_test.go
+new file mode 100644
+index 0000000..49930b9
+--- /dev/null
++++ b/internal/fanout/ingest_review_test.go
+@@ -0,0 +1,241 @@
++package fanout
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// looseDiff is a two-file loose unified diff (the suite-fixture format, no
++// `diff --git` header) used across the ingestion tests.
++const looseDiff = "--- a/pay.go\n" +
++	"+++ b/pay.go\n" +
++	"@@ -1,2 +1,2 @@\n" +
++	" func total(items []*Item) int {\n" +
++	"-\treturn items[0].Price\n" +
++	"+\treturn sum(items)\n" +
++	"--- a/query.go\n" +
++	"+++ b/query.go\n" +
++	"@@ -1,1 +1,1 @@\n" +
++	"-safe\n" +
++	"+unsafe\n"
++
++// diffReq builds a range-less ReviewRequest writing to an explicit OutputDir, so
++// the scaffold does not depend on a repo root having an .atcr tree.
++func diffReq(root, out string) ReviewRequest {
++	return ReviewRequest{
++		Root:       root,
++		OutputDir:  out,
++		Branch:     "feature/test",
++		Date:       "2026-06-10",
++		TimeSuffix: "120000",
++		StartedAt:  time.Unix(1000, 0).UTC(),
++	}
++}
++
++// PrepareReviewFromDiff must scaffold a runnable PreparedReview from a loose diff
++// and force every agent to diff mode — even when the project's configured mode is
++// "blocks" — writing a single payload/diff.txt and a manifest whose per-agent map
++// records "diff" for all agents. The manifest's range fields are empty (no git
++// range), and the payload content is the ingested diff verbatim.
++func TestPrepareReviewFromDiff_ScaffoldsAndForcesDiffMode(t *testing.T) {
++	cfg := twoAgentConfig("http://unused") // PayloadMode: "blocks"
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++
++	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
++	require.NoError(t, err)
++	require.NotNil(t, prep)
++	assert.Equal(t, out, prep.Dir)
++	assert.Equal(t, 2, prep.AgentCount(), "both roster agents become slots")
++
++	// Only the diff payload artifact is written (no blocks/files).
++	assert.FileExists(t, filepath.Join(out, "payload", "diff.txt"))
++	assert.NoFileExists(t, filepath.Join(out, "payload", "blocks.txt"))
++	diffBytes, err := os.ReadFile(filepath.Join(out, "payload", "diff.txt"))
++	require.NoError(t, err)
++	assert.Equal(t, looseDiff, string(diffBytes), "payload is the ingested diff verbatim")
++
++	// Manifest: diff mode forced for every agent, range fields empty.
++	mdata, err := os.ReadFile(filepath.Join(out, "manifest.json"))
++	require.NoError(t, err)
++	var m payload.Manifest
++	require.NoError(t, json.Unmarshal(mdata, &m))
++	assert.Equal(t, "diff", m.PayloadMode)
++	assert.Equal(t, "diff", m.PerAgentPayload["greta"], "configured blocks mode is overridden to diff")
++	assert.Equal(t, "diff", m.PerAgentPayload["kai"])
++	assert.Empty(t, m.Base, "a range-less diff has no base")
++	assert.Empty(t, m.Head, "a range-less diff has no head")
++	assert.ElementsMatch(t, []string{"greta", "kai"}, m.Roster)
++}
++
++// An empty diff is rejected before any scaffold, mapped to ErrNoReviewableContent.
++func TestPrepareReviewFromDiff_EmptyDiffRejected(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++
++	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, "   \n")
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrNoReviewableContent)
++	assert.NoDirExists(t, out, "no scaffold for an empty diff")
++}
++
++// A byte budget below every file's size drops all files and must surface
++// ErrPayloadFullyDropped rather than forwarding an empty payload.
++func TestPrepareReviewFromDiff_BudgetDropsAllErrors(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	cfg.Settings.PayloadByteBudget = 1
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++
++	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, ErrPayloadFullyDropped)
++}
++
++// A diff larger than payload.DefaultMaxDiffBytes is rejected before parsing or
++// scaffolding, so a hostile multi-GB diff cannot exhaust memory at the exported
++// ingestion boundary (the epic's MaxDiffBytes mitigation).
++func TestPrepareReviewFromDiff_SizeCapRejectsOversized(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++
++	oversized := strings.Repeat("a", int(payload.DefaultMaxDiffBytes)+1)
++	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, oversized)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "exceeds")
++	assert.NoDirExists(t, out, "an oversized diff must not scaffold a review")
++}
++
++// An empty roster short-circuits before scaffolding, like PrepareReview.
++func TestPrepareReviewFromDiff_EmptyRosterRejected(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	cfg.Project.Agents = nil
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++
++	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
++	require.ErrorIs(t, err, ErrEmptyRoster)
++}
++
++// A malformed (non-diff) input must surface the primitive's parse error through
++// the entry rather than scaffolding a vacuous review.
++func TestPrepareReviewFromDiff_MalformedDiffPropagates(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++
++	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, "not a diff at all\n")
++	require.Error(t, err)
++	assert.NoDirExists(t, out, "a malformed diff must not scaffold a review")
++}
++
++// When the byte budget drops a NON-LAST file from a multi-file diff (independent
++// review MEDIUM), the elision must be observable downstream: the agents' status
++// records the dropped file, and the materialized payload contains only the kept
++// files — the same truncation contract the git-range path honors.
++func TestPrepareReviewFromDiff_MidFileBudgetDropSurfacesTruncation(t *testing.T) {
++	t.Setenv("ATCR_TEST_KEY", "secret")
++	// Three files; the MIDDLE one is by far the largest, so largest-first byte
++	// budgeting drops it specifically.
++	fileA := "--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
++	fileMid := "--- a/mid.go\n+++ b/mid.go\n@@ -1,1 +1,1 @@\n-" + strings.Repeat("x", 2000) + "\n+" + strings.Repeat("y", 2000) + "\n"
++	fileZ := "--- a/z.go\n+++ b/z.go\n@@ -1,1 +1,1 @@\n-y\n+z\n"
++	diff := fileA + fileMid + fileZ
++
++	cfg := twoAgentConfig("http://unused")
++	cfg.Settings.PayloadByteBudget = 256 // fits a.go + z.go, not mid.go
++	root := t.TempDir()
++	req := ReviewRequest{
++		Root: root, Branch: "feature/test", Date: "2026-06-10",
++		TimeSuffix: "120000", StartedAt: time.Unix(1000, 0).UTC(),
++	}
++
++	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, diff)
++	require.NoError(t, err)
++
++	// The materialized payload contains only the kept files, mid.go elided.
++	diffBytes, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "diff.txt"))
++	require.NoError(t, err)
++	assert.Equal(t, fileA+fileZ, string(diffBytes), "dropped middle file must be elided from the payload")
++
++	res, err := ExecuteReview(context.Background(), newFake(), prep)
++	require.NoError(t, err)
++
++	for _, agent := range []string{"greta", "kai"} {
++		data, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", agent, "status.json"))
++		require.NoError(t, err)
++		var st AgentStatus
++		require.NoError(t, json.Unmarshal(data, &st))
++		assert.True(t, st.Truncated, "agent %s must record truncation", agent)
++		assert.Contains(t, st.FilesDropped, "mid.go", "agent %s must list the dropped middle file", agent)
++	}
++}
++
++// readFixture loads a suite diff fixture relative to the fanout package dir.
++func readFixture(t *testing.T, name string) string {
++	t.Helper()
++	data, err := os.ReadFile(filepath.Join("..", "benchmark", "testdata", "suite-valid", name))
++	require.NoError(t, err)
++	return string(data)
++}
++
++// AC4 + AC5: the suite fixture case-01.diff, fed through PrepareReviewFromDiff on
++// the default (non-output-dir) path, must scaffold a review whose diff payload is
++// the fixture bytes verbatim, repoint .atcr/latest, and be accepted unchanged by
++// ExecuteReview running against a stub Completer (no network) — proving an
++// ingested diff reviews end to end on the production modePayload path.
++func TestPrepareReviewFromDiff_FixtureEndToEnd(t *testing.T) {
++	fixture := readFixture(t, "case-01.diff")
++	cfg := twoAgentConfig("http://unused") // completer is the fake; URL unused
++	root := t.TempDir()
++	req := ReviewRequest{
++		Root:       root,
++		Range:      ReviewRange{}, // range-less: a standalone diff
++		Branch:     "feature/test",
++		Date:       "2026-06-10",
++		TimeSuffix: "120000",
++		StartedAt:  time.Unix(1000, 0).UTC(),
++	}
++
++	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, fixture)
++	require.NoError(t, err)
++	require.Equal(t, 2, prep.AgentCount())
++
++	// The ingested diff is the payload, verbatim.
++	diffBytes, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "diff.txt"))
++	require.NoError(t, err)
++	assert.Equal(t, fixture, string(diffBytes), "AC4: ingested payload reproduces the fixture bytes")
++
++	// ExecuteReview accepts the prepared review unchanged and fans out with no
++	// network (the fake Completer succeeds for every agent).
++	res, err := ExecuteReview(context.Background(), newFake(), prep)
++	require.NoError(t, err)
++	require.NotNil(t, res)
++	assert.Equal(t, 2, res.Summary.Succeeded, "AC5: both agents reviewed the ingested diff")
++	assert.False(t, res.Summary.Partial)
++
++	// .atcr/latest was repointed (default path, no --output-dir).
++	latest, err := ReadLatest(root)
++	require.NoError(t, err)
++	assert.Equal(t, res.ID, latest)
++
++	// Manifest records diff mode for every agent, with empty range provenance.
++	mdata, err := os.ReadFile(filepath.Join(prep.Dir, "manifest.json"))
++	require.NoError(t, err)
++	var m payload.Manifest
++	require.NoError(t, json.Unmarshal(mdata, &m))
++	assert.Equal(t, "diff", m.PayloadMode)
++	assert.Empty(t, m.Base)
++	assert.Empty(t, m.Head)
++}
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+index b58ce30..5e0a365 100644
+--- a/internal/fanout/resume.go
++++ b/internal/fanout/resume.go
+@@ -284,7 +284,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+-	slots, _, err := buildSlots(cfg, payloads, req.Range)
++	slots, _, err := buildSlots(cfg, payloads, req.Range, "")
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+diff --git a/internal/fanout/retry_wiring_test.go b/internal/fanout/retry_wiring_test.go
+index 5bcd382..8377f10 100644
+--- a/internal/fanout/retry_wiring_test.go
++++ b/internal/fanout/retry_wiring_test.go
+@@ -39,12 +39,12 @@ func TestBuildAgent_PropagatesRetryFields(t *testing.T) {
+ 	cfg := retryCfg()
+ 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+ 
+-	greta, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"})
++	greta, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "")
+ 	require.NoError(t, err)
+ 	assert.Equal(t, 5, greta.MaxRetries, "unset agent inherits resolved global max_retries")
+ 	assert.Equal(t, 500, greta.InitialBackoffMs, "unset agent inherits resolved global initial_backoff_ms")
+ 
+-	kai, _, err := buildAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"})
++	kai, _, err := buildAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "")
+ 	require.NoError(t, err)
+ 	assert.Equal(t, 9, kai.MaxRetries, "per-agent max_retries override wins")
+ 	assert.Equal(t, 500, kai.InitialBackoffMs, "inherits global initial_backoff_ms when not overridden")
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index fab2eb7..8668710 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -211,11 +211,22 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 	if empty {
+ 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
+ 	}
+-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range)
++	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "")
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode)
++}
+ 
++// finalizePreparedReview is the shared scaffold-and-assemble tail of the two
++// review-preparation entry points (PrepareReview's git-range path and
++// PrepareReviewFromDiff's ingestion path): it derives the review id, claims the
++// review directory (honoring --output-dir/--id/--force), writes the payload
++// artifacts, an in-progress manifest, and the .atcr/latest pointer, and wires the
++// diff cache. payloadMode is recorded as the manifest's PayloadMode (the
++// configured mode for the git path, "diff" for the ingestion path); the range
++// provenance comes from req.Range, which the ingestion caller leaves empty.
++func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string) (*PreparedReview, error) {
+ 	// Derive the id unconditionally: for --output-dir the id is provenance-only
+ 	// (written to the manifest and PreparedReview.ID but not used for the path),
+ 	// while for --id and the default derived case the id IS the path component.
+@@ -292,7 +303,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 		DetectionMode:   req.Range.DetectionMode,
+ 		DefaultBranch:   req.Range.DefaultBranch,
+ 		CommitCount:     req.Range.CommitCount,
+-		PayloadMode:     cfg.Settings.PayloadMode,
++		PayloadMode:     payloadMode,
+ 		MaxParallel:     cfg.Settings.MaxParallel,
+ 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
+ 		PerAgentPayload: perAgentMode,
+@@ -321,6 +332,65 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+ }
+ 
++// PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:
++// it builds the payload from a standalone unified diff (via the payload package's
++// diff-file primitive) instead of from a git range, then scaffolds the review on
++// the exact same path. Because a bare diff is the only available representation,
++// every agent reviews it regardless of its configured payload mode — the payloads
++// map is keyed solely to "diff" and buildSlots is forced to "diff", so a roster
++// whose default mode is blocks/files still resolves cleanly. The resulting
++// PreparedReview is accepted unchanged by ExecuteReview (same Slots/modePayload
++// wiring); with no repo snapshot, Head is empty so any tool-enabled agent degrades
++// to single-shot.
++//
++// req.Range is provenance-only here and may be left zero (a range-less diff has no
++// base/head); req.OutputDir/IDOverride/Force are honored identically to
++// PrepareReview, so callers (e.g. a benchmark run) can redirect output.
++func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
++	if len(rosterNames(cfg.Project)) == 0 {
++		return nil, ErrEmptyRoster
++	}
++	if req.OutputDir != "" && req.IDOverride != "" {
++		return nil, fmt.Errorf("--output-dir and --id are mutually exclusive")
++	}
++	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
++	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
++	// externally-sourced diffs), so a hostile multi-GB diff must be rejected before
++	// BuildEntriesFromDiff allocates its per-line index — honoring the epic's
++	// MaxDiffBytes memory-exhaustion mitigation. payload.DefaultMaxDiffBytes mirrors
++	// benchmark.MaxDiffBytes (10 MiB).
++	if int64(len(diffText)) > payload.DefaultMaxDiffBytes {
++		return nil, fmt.Errorf("diff ingestion: diff size %d exceeds max %d bytes", len(diffText), payload.DefaultMaxDiffBytes)
++	}
++	entries, err := payload.BuildEntriesFromDiff(diffText)
++	if err != nil {
++		return nil, err
++	}
++	// An empty diff (no reviewable files) must refuse before scaffolding, mirroring
++	// PrepareReview's empty-payload guard so a no-op run never creates a directory
++	// or repoints .atcr/latest.
++	if len(entries) == 0 {
++		return nil, fmt.Errorf("%w: the diff contains no reviewable files", ErrNoReviewableContent)
++	}
++	kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
++	if trunc.AllDropped {
++		return nil, fmt.Errorf("%w (mode diff, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
++	}
++	var b strings.Builder
++	for _, e := range kept {
++		b.WriteString(e.Body)
++	}
++	diffMode := string(payload.ModeDiff)
++	payloads := map[string]modePayload{
++		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
++	}
++	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode)
++	if err != nil {
++		return nil, err
++	}
++	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode)
++}
++
+ // runEngine wires the optional read-only tool harness for p's tool-enabled slots
+ // (a head snapshot → path jail → dispatcher, shared across the run, plus a
+ // per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
+@@ -557,12 +627,12 @@ func neededModes(cfg *ReviewConfig) []string {
+ // aborts the whole run fail-fast: these are configuration errors the user must
+ // fix, not transient per-agent outcomes, so there is nothing useful to preserve
+ // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
+-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange) ([]Slot, map[string]string, error) {
++func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode string) ([]Slot, map[string]string, error) {
+ 	perAgentMode := map[string]string{}
+ 	var slots []Slot
+ 
+ 	add := func(name string, serial bool) error {
+-		primary, mode, err := buildAgent(cfg, name, payloads, rng)
++		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode)
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -643,12 +713,19 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
+ 
+ // buildAgent resolves an agent's persona, renders its prompt against the payload
+ // it sees, and assembles the invocation. It returns the agent and its mode.
+-func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange) (Agent, string, error) {
++func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode string) (Agent, string, error) {
+ 	ac, ok := cfg.Registry.Agents[name]
+ 	if !ok {
+ 		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
+ 	}
+-	mode := ac.EffectivePayloadMode(cfg.Settings)
++	// forceMode (non-empty) overrides the agent's configured payload mode. The
++	// diff-file ingestion path sets it to "diff" because the ingested diff is the
++	// only available representation, so every agent reviews it regardless of its
++	// effective mode; the git-range path passes "" to keep per-agent modes.
++	mode := forceMode
++	if mode == "" {
++		mode = ac.EffectivePayloadMode(cfg.Settings)
++	}
+ 	mp, ok := payloads[mode]
+ 	if !ok {
+ 		// Defensive: payloads is built by neededModes over the same roster, so a
+diff --git a/internal/fanout/review_scope_inject_test.go b/internal/fanout/review_scope_inject_test.go
+index 5ff8c7b..7b8389e 100644
+--- a/internal/fanout/review_scope_inject_test.go
++++ b/internal/fanout/review_scope_inject_test.go
+@@ -18,14 +18,14 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
+ 	payloads := map[string]modePayload{"blocks": {Text: "some diff", FileCount: 1}}
+ 	rng := ReviewRange{Base: "a", Head: "b"}
+ 
+-	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng)
++	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng, "")
+ 	require.NoError(t, err)
+ 	require.Contains(t, gretaAgent.Prompt, "performance", "scoped agent prompt must mention its scope categories")
+ 	require.Contains(t, gretaAgent.Prompt, "efficiency")
+ 	// The invocation prompt the model actually receives must carry it too.
+ 	require.Contains(t, gretaAgent.Invocation.Prompt, "performance")
+ 
+-	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng)
++	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng, "")
+ 	require.NoError(t, err)
+ 	require.NotContains(t, kaiAgent.Prompt, "Review Focus", "unscoped agent prompt must be unchanged")
+ 	// Lock the invocation prompt too — the model actually receives this, so an
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index 4bb778b..a2fc048 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -559,7 +559,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
+ // silently empty payload that produces a plausible-looking vacuous review.
+ func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
+ 	cfg := twoAgentConfig("http://unused")
+-	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"})
++	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "")
+ 	require.Error(t, err)
+ 	assert.Contains(t, err.Error(), "greta")
+ 	assert.Contains(t, err.Error(), "blocks")
+diff --git a/internal/fanout/review_tools_test.go b/internal/fanout/review_tools_test.go
+index a61a6d7..f933669 100644
+--- a/internal/fanout/review_tools_test.go
++++ b/internal/fanout/review_tools_test.go
+@@ -38,7 +38,7 @@ func TestBuildAgent_PropagatesToolFields(t *testing.T) {
+ 	cfg := toolCfg()
+ 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+ 
+-	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"})
++	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "")
+ 	require.NoError(t, err)
+ 	assert.True(t, a.Tools)
+ 	assert.Equal(t, 5, a.MaxTurns)
+@@ -101,7 +101,7 @@ func TestBuildAgent_PropagatesSupportsFC(t *testing.T) {
+ 	cfg := toolCfg()
+ 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+ 
+-	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"})
++	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "")
+ 	require.NoError(t, err)
+ 	assert.True(t, a.SupportsFC, "greta declares supports_function_calling=true")
+ }
+diff --git a/internal/payload/ingest.go b/internal/payload/ingest.go
+new file mode 100644
+index 0000000..ac0ab32
+--- /dev/null
++++ b/internal/payload/ingest.go
+@@ -0,0 +1,340 @@
++package payload
++
++import (
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strconv"
++	"strings"
++)
++
++// DefaultMaxDiffBytes is the default size cap for diff-file reads, mirroring
++// benchmark.MaxDiffBytes (10 MiB): a hostile or accidental multi-GB diff in
++// externally-sourced input must not cause unbounded allocation. A maxBytes <= 0
++// passed to BuildEntriesFromDiffFile means unlimited.
++const DefaultMaxDiffBytes int64 = 10 * 1024 * 1024
++
++// Section-boundary and file-header markers. A `git diff` patch delimits files
++// with a `diff --git ` line; a loose unified diff (the suite-fixture format)
++// has no such line and is delimited by the `--- `/`+++ `/`@@ ` header triple.
++const (
++	gitDiffMarker = "diff --git "
++	oldFileMarker = "--- "
++	newFileMarker = "+++ "
++	hunkMarker    = "@@ "
++	devNull       = "/dev/null"
++)
++
++// BuildEntriesFromDiff parses unified diff text into per-file FileEntry values —
++// the same []FileEntry shape BuildEntries(ModeDiff, ...) returns. The mapping is
++// round-trip byte-identical: concatenating the returned bodies (as joinEntries
++// does) reproduces diffText exactly, so an ingested diff reviews on the same
++// modePayload path a git-sourced one does.
++//
++// It accepts both full `git diff` patches (split on `diff --git ` boundaries)
++// and loose `--- `/`+++ `/`@@ ` unified diffs. Bodies are preserved verbatim (no
++// trailing-newline normalization, unlike the git-sourced builder) so the
++// round-trip is exact. An empty or whitespace-only diff yields zero entries; the
++// caller (the fanout ingestion entry) maps that to ErrNoReviewableContent.
++func BuildEntriesFromDiff(diffText string) ([]FileEntry, error) {
++	if strings.TrimSpace(diffText) == "" {
++		return []FileEntry{}, nil
++	}
++	starts, err := fileSectionStarts(diffText)
++	if err != nil {
++		return nil, err
++	}
++	entries := make([]FileEntry, 0, len(starts))
++	for k, s := range starts {
++		end := len(diffText)
++		if k+1 < len(starts) {
++			end = starts[k+1]
++		}
++		body := diffText[s:end]
++		path, err := diffSectionPath(body)
++		if err != nil {
++			return nil, err
++		}
++		entries = append(entries, FileEntry{Path: path, Size: int64(len(body)), Body: body})
++	}
++	return entries, nil
++}
++
++// BuildEntriesFromDiffFile reads a diff file (bounded by maxBytes, rejecting
++// absolute paths and `..` traversal — mirroring the suite manifest's
++// isSafeRelPath guard) and delegates to BuildEntriesFromDiff. A maxBytes <= 0
++// disables the cap. Callers holding an absolute path (e.g. a `git diff` redirected
++// to /tmp) read the bytes themselves and call BuildEntriesFromDiff directly; the
++// path guard here is intentionally strict for the relative-path ingestion case.
++func BuildEntriesFromDiffFile(path string, maxBytes int64) ([]FileEntry, error) {
++	if !isSafeDiffPath(path) {
++		return nil, fmt.Errorf("diff ingestion: refusing unsafe diff path %q: must be a relative path within the working tree (no absolute paths, no .. traversal)", path)
++	}
++	f, err := os.Open(path)
++	if err != nil {
++		return nil, fmt.Errorf("diff ingestion: opening diff file: %w", err)
++	}
++	defer func() { _ = f.Close() }()
++	fi, err := f.Stat()
++	if err != nil {
++		return nil, fmt.Errorf("diff ingestion: stat diff file %q: %w", path, err)
++	}
++	if !fi.Mode().IsRegular() {
++		return nil, fmt.Errorf("diff ingestion: diff file %q is not a regular file", path)
++	}
++	if maxBytes > 0 && fi.Size() > maxBytes {
++		return nil, fmt.Errorf("diff ingestion: diff file %q size %d exceeds max %d bytes", path, fi.Size(), maxBytes)
++	}
++	var r io.Reader = f
++	if maxBytes > 0 {
++		// Bound the read independently of the pre-read Stat so a file that grows
++		// between Stat and read still cannot exceed the cap (TOCTOU defense).
++		r = io.LimitReader(f, maxBytes+1)
++	}
++	data, err := io.ReadAll(r)
++	if err != nil {
++		return nil, fmt.Errorf("diff ingestion: reading diff file %q: %w", path, err)
++	}
++	if maxBytes > 0 && int64(len(data)) > maxBytes {
++		return nil, fmt.Errorf("diff ingestion: diff file %q exceeds max %d bytes", path, maxBytes)
++	}
++	return BuildEntriesFromDiff(string(data))
++}
++
++// hunkCountsRe captures the old-side and new-side line counts from a unified-diff
++// hunk header `@@ -a,b +c,d @@`. Group 1 is b (old count), group 2 is d (new
++// count); each defaults to 1 when its `,count` is absent.
++var hunkCountsRe = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
++
++// fileSectionStarts returns the byte offsets at which each per-file section
++// begins, covering the whole input contiguously so the sections partition
++// diffText with no loss (the guarantee behind round-trip identity). It detects
++// `git diff` format (boundaries on column-0 `diff --git ` lines, unspoofable
++// because every hunk-body line carries a +/-/space prefix) when any such line is
++// present, else loose format (delegated to looseSectionStarts, which counts hunk
++// body lines so a `--- `/`+++ ` body line cannot be mistaken for a header). The
++// first section must start at offset 0; leading preamble is an error rather than
++// silently-dropped bytes.
++func fileSectionStarts(diff string) ([]int, error) {
++	lines, offsets := splitLinesWithOffsets(diff)
++
++	gitMode := false
++	for _, ln := range lines {
++		if strings.HasPrefix(ln, gitDiffMarker) {
++			gitMode = true
++			break
++		}
++	}
++
++	if !gitMode {
++		return looseSectionStarts(lines, offsets)
++	}
++
++	var starts []int
++	for i, ln := range lines {
++		if strings.HasPrefix(ln, gitDiffMarker) {
++			starts = append(starts, offsets[i])
++		}
++	}
++	if len(starts) == 0 {
++		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `diff --git` line)")
++	}
++	if starts[0] != 0 {
++		return nil, fmt.Errorf("diff ingestion: unexpected content before the first file section (would be lost on round-trip)")
++	}
++	return starts, nil
++}
++
++// looseSectionStarts finds the per-file section offsets in a loose diff (no
++// `diff --git` line) by walking it structurally: each section is a `--- `/`+++ `
++// header pair followed by one or more `@@ ` hunks, and each hunk body is consumed
++// by its declared old/new line counts. Counting the body is what makes a removed
++// line rendering `--- X` or an added line `+++ Y` — even one sitting immediately
++// before the next hunk's `@@` header — get consumed as body and never mistaken
++// for the next file's header. The first line must be a header (so starts[0] == 0,
++// preserving round-trip identity); anything else is an error.
++func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
++	var starts []int
++	n := len(lines)
++	i := 0
++	for i < n {
++		// Tolerate a single trailing empty line produced by a final newline.
++		if lines[i] == "" && i == n-1 {
++			break
++		}
++		if !looseHeaderAt(lines, i) {
++			if len(starts) == 0 {
++				return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `--- `/`+++ `/`@@ ` header triple)")
++			}
++			return nil, fmt.Errorf("diff ingestion: unexpected content at line %d (not a file header or hunk)", i+1)
++		}
++		starts = append(starts, offsets[i])
++		i += 2 // consume the `--- ` and `+++ ` header lines
++
++		for i < n && strings.HasPrefix(lines[i], hunkMarker) {
++			oldRem, newRem := hunkLineCounts(lines[i])
++			i++ // past the `@@ ` header
++			for i < n && (oldRem > 0 || newRem > 0) {
++				switch {
++				case strings.HasPrefix(lines[i], "-"):
++					oldRem--
++				case strings.HasPrefix(lines[i], "+"):
++					newRem--
++				case strings.HasPrefix(lines[i], `\`):
++					// "\ No newline at end of file" — counts toward neither side.
++				default:
++					// Context line (space-prefixed, or a blank line): both sides.
++					oldRem--
++					newRem--
++				}
++				i++
++			}
++		}
++	}
++	if len(starts) == 0 {
++		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `--- `/`+++ `/`@@ ` header triple)")
++	}
++	return starts, nil
++}
++
++// looseHeaderAt reports whether a loose-diff file header (`--- `/`+++ `/`@@ `
++// triple) begins at line i.
++func looseHeaderAt(lines []string, i int) bool {
++	n := len(lines)
++	return strings.HasPrefix(lines[i], oldFileMarker) &&
++		i+1 < n && strings.HasPrefix(lines[i+1], newFileMarker) &&
++		i+2 < n && strings.HasPrefix(lines[i+2], hunkMarker)
++}
++
++// hunkLineCounts returns the old-side and new-side body line counts declared by a
++// `@@ -a,b +c,d @@` hunk header, each defaulting to 1 when its count is absent. A
++// header that does not parse defaults to (1, 1): real diffs always carry a
++// well-formed hunk header, and the loose walk only reaches here on a line already
++// beginning with `@@ `.
++func hunkLineCounts(header string) (oldCount, newCount int) {
++	oldCount, newCount = 1, 1
++	m := hunkCountsRe.FindStringSubmatch(header)
++	if m == nil {
++		return oldCount, newCount
++	}
++	if m[1] != "" {
++		oldCount, _ = strconv.Atoi(m[1])
++	}
++	if m[2] != "" {
++		newCount, _ = strconv.Atoi(m[2])
++	}
++	return oldCount, newCount
++}
++
++// splitLinesWithOffsets splits s on '\n' into lines (newline excluded) and the
++// byte offset where each line begins. A trailing newline yields a final empty
++// line at offset len(s), which matches no marker.
++func splitLinesWithOffsets(s string) (lines []string, offsets []int) {
++	start := 0
++	for i := 0; i < len(s); i++ {
++		if s[i] == '\n' {
++			lines = append(lines, s[start:i])
++			offsets = append(offsets, start)
++			start = i + 1
++		}
++	}
++	lines = append(lines, s[start:])
++	offsets = append(offsets, start)
++	return lines, offsets
++}
++
++// diffSectionPath derives the head-side path for one file section. It prefers
++// the new path (`+++ b/<path>`); for a deletion (`+++ /dev/null`) it falls back
++// to the old path (`--- a/<path>`); for a header-only git section with no
++// `---`/`+++` lines (binary/mode-only) it parses the `b/` path from the
++// `diff --git ` line. The first `--- `/`+++ ` lines are the headers (they precede
++// any hunk body), so a later `--- `/`+++ ` removed/added line cannot shadow them.
++func diffSectionPath(section string) (string, error) {
++	var oldPath, newPath, gitHeader string
++	for _, ln := range strings.Split(section, "\n") {
++		switch {
++		case gitHeader == "" && strings.HasPrefix(ln, gitDiffMarker):
++			gitHeader = ln
++		case newPath == "" && strings.HasPrefix(ln, newFileMarker):
++			newPath = parseDiffPathField(ln[len(newFileMarker):])
++		case oldPath == "" && strings.HasPrefix(ln, oldFileMarker):
++			oldPath = parseDiffPathField(ln[len(oldFileMarker):])
++		}
++	}
++	if newPath != "" && newPath != devNull {
++		return newPath, nil
++	}
++	if oldPath != "" && oldPath != devNull {
++		return oldPath, nil
++	}
++	if gitHeader != "" {
++		if p := headPathFromGitHeader(gitHeader); p != "" {
++			return p, nil
++		}
++	}
++	return "", fmt.Errorf("diff ingestion: cannot determine file path for section: %s", firstLine(section))
++}
++
++// parseDiffPathField extracts the path from a `--- `/`+++ ` header value: it
++// drops a trailing tab-delimited timestamp (some diff tools append one), trims a
++// trailing CR, and strips the conventional a/ or b/ prefix (absent under
++// `git diff --no-prefix`). It does not trim surrounding spaces — diff paths may
++// contain them.
++func parseDiffPathField(field string) string {
++	if tab := strings.IndexByte(field, '\t'); tab >= 0 {
++		field = field[:tab]
++	}
++	field = strings.TrimSuffix(field, "\r")
++	if field == devNull {
++		return devNull
++	}
++	for _, pfx := range []string{"a/", "b/"} {
++		if strings.HasPrefix(field, pfx) {
++			return field[len(pfx):]
++		}
++	}
++	return field
++}
++
++// headPathFromGitHeader extracts the new path from a `diff --git a/<old> b/<new>`
++// line by taking the segment after the last ` b/` token — the same head-side key
++// the splitter uses, sufficient for the header-only (binary/mode) sections that
++// carry no `+++` line.
++func headPathFromGitHeader(header string) string {
++	const sep = " b/"
++	if i := strings.LastIndex(header, sep); i >= 0 {
++		return header[i+len(sep):]
++	}
++	return ""
++}
++
++// firstLine returns the first line of s for use in diagnostics.
++func firstLine(s string) string {
++	if nl := strings.IndexByte(s, '\n'); nl >= 0 {
++		return s[:nl]
++	}
++	return s
++}
++
++// isSafeDiffPath rejects absolute paths and any path that, once cleaned, escapes
++// the working tree (a leading ".." segment) — the diff-file path-traversal guard,
++// mirroring the suite manifest's isSafeRelPath so a hostile path argument cannot
++// make the ingestion path read an arbitrary file. Like isSafeRelPath, it is a
++// lexical check: it does NOT resolve symlinks, so a relative in-tree path whose
++// component is a symlink pointing outside the tree is out of this guard's scope —
++// callers ingesting untrusted suite trees should pre-resolve paths if that matters.
++func isSafeDiffPath(p string) bool {
++	if filepath.IsAbs(p) {
++		return false
++	}
++	clean := filepath.Clean(p)
++	if clean == "." {
++		return false
++	}
++	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
++		return false
++	}
++	return true
++}
+diff --git a/internal/payload/ingest_test.go b/internal/payload/ingest_test.go
+new file mode 100644
+index 0000000..46faa29
+--- /dev/null
++++ b/internal/payload/ingest_test.go
+@@ -0,0 +1,240 @@
++package payload
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// joinBodies concatenates entry bodies, mirroring joinEntries — the round-trip
++// target the ingestion primitive must reproduce byte-for-byte.
++func joinBodies(entries []FileEntry) string {
++	var b strings.Builder
++	for _, e := range entries {
++		b.WriteString(e.Body)
++	}
++	return b.String()
++}
++
++// A loose unified diff (no `diff --git` header, the suite-fixture format) must
++// split into one entry per file, with bodies that round-trip to the input
++// byte-for-byte and head paths parsed from the `+++ b/<path>` line.
++func TestBuildEntriesFromDiff_LooseRoundTrip(t *testing.T) {
++	diff := "--- a/alpha.go\n" +
++		"+++ b/alpha.go\n" +
++		"@@ -1,3 +1,3 @@\n" +
++		" func a() int {\n" +
++		"-\treturn 0\n" +
++		"+\treturn 1\n" +
++		" }\n" +
++		"--- a/sub/beta.go\n" +
++		"+++ b/sub/beta.go\n" +
++		"@@ -1,1 +1,1 @@\n" +
++		"-old\n" +
++		"+new\n"
++
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 2, "one entry per file section")
++
++	assert.Equal(t, "alpha.go", entries[0].Path)
++	assert.Equal(t, "sub/beta.go", entries[1].Path)
++	assert.Equal(t, diff, joinBodies(entries), "joined bodies must reproduce the input diff verbatim")
++	for _, e := range entries {
++		assert.Equal(t, int64(len(e.Body)), e.Size, "Size must equal len(Body)")
++	}
++}
++
++// A full `git diff` patch (with `diff --git`/`index` headers) must split on the
++// `diff --git ` boundaries, round-trip verbatim, and parse the head path from
++// the `+++ b/<path>` line.
++func TestBuildEntriesFromDiff_GitFormatRoundTrip(t *testing.T) {
++	diff := "diff --git a/alpha.go b/alpha.go\n" +
++		"index e69de29..4b825dc 100644\n" +
++		"--- a/alpha.go\n" +
++		"+++ b/alpha.go\n" +
++		"@@ -1,1 +1,1 @@\n" +
++		"-x\n" +
++		"+y\n" +
++		"diff --git a/sub/beta.go b/sub/beta.go\n" +
++		"index 1111111..2222222 100644\n" +
++		"--- a/sub/beta.go\n" +
++		"+++ b/sub/beta.go\n" +
++		"@@ -1,1 +1,1 @@\n" +
++		"-p\n" +
++		"+q\n"
++
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 2)
++	assert.Equal(t, "alpha.go", entries[0].Path)
++	assert.Equal(t, "sub/beta.go", entries[1].Path)
++	assert.Equal(t, diff, joinBodies(entries), "git-format diff must round-trip verbatim")
++}
++
++// A deleted file renders `+++ /dev/null`; the head path must fall back to the
++// old (`--- a/<path>`) side rather than recording "/dev/null".
++func TestBuildEntriesFromDiff_DeletedFileUsesOldPath(t *testing.T) {
++	diff := "--- a/gone.go\n" +
++		"+++ /dev/null\n" +
++		"@@ -1,1 +0,0 @@\n" +
++		"-was here\n"
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 1)
++	assert.Equal(t, "gone.go", entries[0].Path)
++}
++
++// An empty (or whitespace-only) diff yields zero entries with no error — the
++// no-content case the fanout layer maps to ErrNoReviewableContent.
++func TestBuildEntriesFromDiff_EmptyIsZeroEntries(t *testing.T) {
++	for _, in := range []string{"", "   \n  \n"} {
++		entries, err := BuildEntriesFromDiff(in)
++		require.NoError(t, err)
++		assert.Empty(t, entries)
++	}
++}
++
++// Non-diff garbage (no recognizable file headers) is an explicit error, not a
++// silently empty payload.
++func TestBuildEntriesFromDiff_GarbageErrors(t *testing.T) {
++	_, err := BuildEntriesFromDiff("this is not a diff\njust some text\n")
++	require.Error(t, err)
++}
++
++// Content before the first file section would be lost on round-trip, so it is
++// rejected rather than silently misattributed.
++func TestBuildEntriesFromDiff_LeadingContentErrors(t *testing.T) {
++	diff := "garbage preamble\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
++	_, err := BuildEntriesFromDiff(diff)
++	require.Error(t, err)
++}
++
++// The file variant reads a relative diff path, honoring the size cap.
++func TestBuildEntriesFromDiffFile_ReadsRelativePath(t *testing.T) {
++	dir := t.TempDir()
++	t.Chdir(dir)
++	diff := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
++	require.NoError(t, os.WriteFile("patch.diff", []byte(diff), 0o644))
++
++	entries, err := BuildEntriesFromDiffFile("patch.diff", DefaultMaxDiffBytes)
++	require.NoError(t, err)
++	require.Len(t, entries, 1)
++	assert.Equal(t, "x.go", entries[0].Path)
++	assert.Equal(t, diff, joinBodies(entries))
++}
++
++// The file variant rejects absolute paths and `..` traversal, mirroring the
++// suite manifest's isSafeRelPath guard.
++func TestBuildEntriesFromDiffFile_RejectsUnsafePaths(t *testing.T) {
++	for _, p := range []string{"/etc/passwd", "../escape.diff", "../../x.diff"} {
++		_, err := BuildEntriesFromDiffFile(p, 0)
++		require.Error(t, err, "path %q must be rejected", p)
++		assert.Contains(t, err.Error(), "unsafe")
++	}
++}
++
++// The file variant enforces the byte cap before parsing, so a hostile multi-GB
++// diff cannot exhaust memory.
++func TestBuildEntriesFromDiffFile_SizeCapRejectsOversized(t *testing.T) {
++	dir := t.TempDir()
++	t.Chdir(dir)
++	big := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+" + strings.Repeat("z", 4096) + "\n"
++	require.NoError(t, os.WriteFile("big.diff", []byte(big), 0o644))
++
++	_, err := BuildEntriesFromDiffFile("big.diff", 64)
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "exceeds")
++}
++
++// REGRESSION (independent review HIGH): a single file whose hunk body contains a
++// removed line rendering as `--- X` and an added line rendering as `+++ Y`
++// immediately before the next hunk's `@@` header must NOT be mis-split into a
++// second (phantom) file entry. The hunk-line-counting parser consumes each hunk's
++// declared budget so body lines can never spoof a file header.
++func TestBuildEntriesFromDiff_HunkBodyDoesNotSpoofHeader(t *testing.T) {
++	diff := "--- a/real.go\n" +
++		"+++ b/real.go\n" +
++		"@@ -1,1 +1,1 @@\n" +
++		"--- X\n" + // removed line of source content "-- X"
++		"+++ Y\n" + // added line of source content "++ Y"
++		"@@ -10,1 +10,1 @@\n" +
++		"-old\n" +
++		"+new\n"
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 1, "hunk-body lines rendering as ---/+++ must not spoof a file header")
++	assert.Equal(t, "real.go", entries[0].Path)
++	assert.Equal(t, diff, joinBodies(entries), "must still round-trip verbatim")
++}
++
++// A normal multi-hunk single-file diff stays one entry under the counting parser.
++func TestBuildEntriesFromDiff_MultiHunkSingleFile(t *testing.T) {
++	diff := "--- a/m.go\n+++ b/m.go\n" +
++		"@@ -1,2 +1,2 @@\n ctx\n-a\n+b\n" +
++		"@@ -10,2 +10,2 @@\n ctx2\n-c\n+d\n"
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 1)
++	assert.Equal(t, "m.go", entries[0].Path)
++	assert.Equal(t, diff, joinBodies(entries))
++}
++
++// A git binary/mode-only section carries no `--- `/`+++ ` lines, so the head
++// path must be parsed from the `diff --git a/<old> b/<new>` header instead.
++func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
++	diff := "diff --git a/logo.png b/logo.png\n" +
++		"index abc1234..def5678 100644\n" +
++		"Binary files a/logo.png and b/logo.png differ\n" +
++		"diff --git a/main.go b/main.go\n" +
++		"index 1111111..2222222 100644\n" +
++		"--- a/main.go\n" +
++		"+++ b/main.go\n" +
++		"@@ -1,1 +1,1 @@\n" +
++		"-a\n" +
++		"+b\n"
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 2)
++	assert.Equal(t, "logo.png", entries[0].Path, "binary section path comes from the diff --git header")
++	assert.Equal(t, "main.go", entries[1].Path)
++	assert.Equal(t, diff, joinBodies(entries), "binary + text git diff must round-trip verbatim")
++}
++
++// CRLF line endings (Windows-authored diffs) must still split correctly and
++// round-trip verbatim, with the trailing CR stripped from the parsed path.
++func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
++	diff := "--- a/x.go\r\n+++ b/x.go\r\n@@ -1,1 +1,1 @@\r\n-a\r\n+b\r\n"
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 1)
++	assert.Equal(t, "x.go", entries[0].Path, "trailing CR must be stripped from the path")
++	assert.Equal(t, diff, joinBodies(entries), "CRLF diff must round-trip verbatim")
++}
++
++// A missing diff file surfaces a clear open error rather than a vacuous result.
++func TestBuildEntriesFromDiffFile_MissingFileErrors(t *testing.T) {
++	dir := t.TempDir()
++	t.Chdir(dir)
++	_, err := BuildEntriesFromDiffFile("does-not-exist.diff", DefaultMaxDiffBytes)
++	require.Error(t, err)
++}
++
++// Parity anchor (AC4): the suite fixture case-01.diff, fed through the ingestion
++// path, must round-trip verbatim and parse the head path — the same []FileEntry
++// shape a git-sourced ModeDiff payload would carry for the same file.
++func TestBuildEntriesFromDiff_FixtureParity(t *testing.T) {
++	data, err := os.ReadFile(filepath.Join("..", "benchmark", "testdata", "suite-valid", "case-01.diff"))
++	require.NoError(t, err)
++	diff := string(data)
++
++	entries, err := BuildEntriesFromDiff(diff)
++	require.NoError(t, err)
++	require.Len(t, entries, 1, "case-01.diff is a single-file diff")
++	assert.Equal(t, "pay.go", entries[0].Path)
++	assert.Equal(t, diff, joinBodies(entries), "ingested entry must reproduce the fixture bytes verbatim")
++}
