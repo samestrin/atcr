@@ -107,7 +107,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	rr, err := benchmark.Run(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC())
+	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC())
 	if err != nil {
 		return err
 	}

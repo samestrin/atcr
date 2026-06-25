@@ -1,4 +1,4 @@
-package benchmark
+package main
 
 import (
 	"context"
@@ -8,27 +8,34 @@ import (
 	"sort"
 	"time"
 
+	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
-// Run executes a benchmark suite end to end and returns the suite-tagged
-// RunResult that `atcr benchmark export` consumes. It loads + validates the suite
-// (Load), then for each case ingests the case diff through the EXACT production
-// review path (fanout.PrepareReviewFromDiff → fanout.ExecuteReview, the diff-file
-// ingestion entry Epic 10.1 added), reads the per-reviewer findings + usage from
-// the review's pool artifacts, scores the findings against the case's expected
-// categories (Score), and aggregates one scorecard.PublicRecord per reviewer.
+// executeBenchmarkRun executes a benchmark suite end to end and returns the
+// suite-tagged benchmark.RunResult that `atcr benchmark export` consumes. It loads
+// + validates the suite (benchmark.Load), then for each case ingests the case diff
+// through the EXACT production review path (fanout.PrepareReviewFromDiff →
+// fanout.ExecuteReview, the diff-file ingestion entry Epic 10.1 added), reads the
+// per-reviewer findings + usage from the review's pool artifacts, scores the
+// findings against the case's expected categories (benchmark.Score), and aggregates
+// one scorecard.PublicRecord per reviewer.
+//
+// It lives in cmd/atcr — the composition root — rather than internal/benchmark so
+// that package stays the light suite-contract + scorer leaf (no live-LLM
+// dependency); the orchestration is the layer that wires the contract to the
+// fan-out engine.
 //
 // The Completer is injected so the CLI passes the real llmclient and tests pass a
 // stub (no network). generatedAt is injected (not time.Now) so two runs over the
 // same suite + transcript produce a byte-identical RunResult — the reproducibility
-// contract export relies on. Each case's review artifacts are written under a
-// temp directory that is removed before Run returns; only the scored findings flow
-// into the result, so the temp path never affects output.
-func Run(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*RunResult, error) {
-	m, err := Load(suitePath)
+// contract export relies on. Each case's review artifacts are written under a temp
+// directory that is removed before the function returns; only the scored findings
+// flow into the result, so the temp path never affects output.
+func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*benchmark.RunResult, error) {
+	m, err := benchmark.Load(suitePath)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +50,7 @@ func Run(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Complet
 	type reviewerAcc struct {
 		model     string
 		persona   string
-		cases     []CaseScore
+		cases     []benchmark.CaseScore
 		costUSD   float64
 		latencies []int64 // per-case wall-clock, recorded only when usage was reported
 	}
@@ -98,7 +105,7 @@ func Run(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Complet
 				accs[a.Agent] = acc
 				order = append(order, a.Agent)
 			}
-			acc.cases = append(acc.cases, CaseScore{Expected: c.ExpectedCategories, Raised: raisedByReviewer[a.Agent]})
+			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raisedByReviewer[a.Agent]})
 			// Cost + latency are usage-gated: a completer that reports no token
 			// usage (the test stub) contributes neither, keeping the score
 			// deterministic. status.json only records Model/tokens when usage > 0.
@@ -110,10 +117,10 @@ func Run(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Complet
 	}
 
 	sort.Strings(order)
-	reviewers := make([]ReviewerScore, 0, len(order))
+	reviewers := make([]benchmark.ReviewerScore, 0, len(order))
 	for _, name := range order {
 		acc := accs[name]
-		reviewers = append(reviewers, ReviewerScore{
+		reviewers = append(reviewers, benchmark.ReviewerScore{
 			Model:        acc.model,
 			Persona:      acc.persona,
 			Cases:        acc.cases,
@@ -122,11 +129,11 @@ func Run(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Complet
 		})
 	}
 
-	return &RunResult{
+	return &benchmark.RunResult{
 		Suite:        m.Suite,
 		SuiteVersion: m.SuiteVersion,
 		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
-		Reviewers:    Score(reviewers),
+		Reviewers:    benchmark.Score(reviewers),
 	}, nil
 }
 

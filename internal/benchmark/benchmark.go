@@ -3,14 +3,14 @@
 // planted-defect expected categories, a deterministic reproducibility hash over
 // that content, and the suite-tagged public submission envelope.
 //
-// This package is the in-repo half of `atcr benchmark`. It ships the CONTRACT
-// (Load/Validate/ReproHash), the suite-tagged Submission envelope and the
-// RunResult contract `atcr benchmark export` consumes, the scorer (Score, which
-// folds per-case findings into the public reviewer schema), and the suite
-// execution loop (Run, which drives each case's diff through the review pipeline
-// via internal/fanout). The curated standard-v1 suite CONTENT lives in the
-// external atcr/benchmark-suite repo. The contract/scorer half stays stdlib +
-// scorecard-type only; the live-LLM dependency is confined to run.go.
+// This package is the in-repo contract + scorer half of `atcr benchmark`. It
+// ships the CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission
+// envelope and the RunResult contract `atcr benchmark export` consumes, and the
+// scorer (Score, which folds per-case findings into the public reviewer schema).
+// It stays stdlib + scorecard-type only, with no live-LLM dependency: the suite
+// EXECUTION loop that drives each case's diff through the review pipeline lives in
+// cmd/atcr (the composition root that may import internal/fanout). The curated
+// standard-v1 suite CONTENT lives in the external atcr/benchmark-suite repo.
 package benchmark
 
 import (
