@@ -185,6 +185,18 @@ func TestBuildEntriesFromDiff_MultiHunkSingleFile(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries))
 }
 
+// A path extracted from untrusted diff content that escapes the working tree
+// (absolute, or a `..` traversal) must be rejected at the ingestion boundary
+// rather than returned as a FileEntry path a downstream consumer might resolve.
+func TestBuildEntriesFromDiff_RejectsTraversalInContentPath(t *testing.T) {
+	for _, p := range []string{"../../etc/passwd", "/etc/passwd"} {
+		diff := "--- a/" + p + "\n+++ b/" + p + "\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+		_, err := BuildEntriesFromDiff(diff)
+		require.Error(t, err, "path %q must be rejected", p)
+		assert.Contains(t, err.Error(), "unsafe")
+	}
+}
+
 // A loose diff whose input ends in `\n\n` (a final blank context line plus the
 // terminating newline) produces multiple trailing empty lines after splitting;
 // the tolerance must consume ALL of them so the diff round-trips rather than
