@@ -35,6 +35,15 @@ func TestLoad_RejectsMissingDiffFile(t *testing.T) {
 	require.Error(t, err, "a case whose diff file does not exist must fail to load")
 }
 
+func TestLoad_RejectsDirectoryAsDiff(t *testing.T) {
+	dir := t.TempDir()
+	// Create a subdirectory that the manifest will point to as the diff "file".
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "not-a-file"), 0o700))
+	writeManifest(t, dir, `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"c1","diff":"not-a-file","expected_categories":["x"]}]}`)
+	_, err := Load(dir)
+	require.Error(t, err, "a directory used as a diff must be rejected (only regular files are valid diffs)")
+}
+
 func TestValidate_Errors(t *testing.T) {
 	cases := map[string]Manifest{
 		"empty suite name":     {SuiteVersion: "1.0.0", Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"x"}}}},
