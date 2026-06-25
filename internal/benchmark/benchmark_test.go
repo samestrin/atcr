@@ -44,6 +44,32 @@ func TestLoad_RejectsDirectoryAsDiff(t *testing.T) {
 	require.Error(t, err, "a directory used as a diff must be rejected (only regular files are valid diffs)")
 }
 
+func TestValidate_RejectsEmptyAndDuplicateCategories(t *testing.T) {
+	cases := map[string]Manifest{
+		"empty category string": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{""}}},
+		},
+		"whitespace-only category": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"  "}}},
+		},
+		"mixed valid and empty": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"security", ""}}},
+		},
+		"duplicate categories": {
+			Suite: "s", SuiteVersion: "1.0.0",
+			Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"security", "security"}}},
+		},
+	}
+	for name, m := range cases {
+		t.Run(name, func(t *testing.T) {
+			require.Error(t, m.Validate(), "%s must be rejected", name)
+		})
+	}
+}
+
 func TestValidate_Errors(t *testing.T) {
 	cases := map[string]Manifest{
 		"empty suite name":     {SuiteVersion: "1.0.0", Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"x"}}}},
