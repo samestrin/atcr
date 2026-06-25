@@ -371,13 +371,35 @@ func parseDiffPathField(field string) string {
 }
 
 // headPathFromGitHeader extracts the new path from a `diff --git a/<old> b/<new>`
-// line by taking the segment after the last ` b/` token — the same head-side key
-// the splitter uses, sufficient for the header-only (binary/mode) sections that
-// carry no `+++` line.
+// line, for the header-only (binary/mode) sections that carry no `+++` line. The
+// header is ambiguous when a path itself contains the literal " b/" token, so a
+// naive last-" b/"-token split mis-truncates such paths. For the overwhelmingly
+// common modification case (old == new) the header is the symmetric form
+// `a/<P> b/<P>`, which splits unambiguously at its midpoint even when <P> contains
+// " b/". Renames and `--no-prefix` headers stay genuinely ambiguous for spaced
+// paths and fall back to the last " b/" token (correct for unspaced paths).
 func headPathFromGitHeader(header string) string {
 	const sep = " b/"
-	if i := strings.LastIndex(header, sep); i >= 0 {
-		return header[i+len(sep):]
+	body := strings.TrimPrefix(header, gitDiffMarker) // "a/<old> b/<new>"
+	if !strings.HasPrefix(body, "a/") {
+		return lastBToken(body, sep) // --no-prefix or unexpected shape
+	}
+	body = body[len("a/"):] // "<old> b/<new>"
+	// Symmetric "<P> b/<P>" check: len == len(P) + len(sep) + len(P).
+	if len(body) >= len(sep) && (len(body)-len(sep))%2 == 0 {
+		half := (len(body) - len(sep)) / 2
+		if body[half:half+len(sep)] == sep && body[:half] == body[half+len(sep):] {
+			return body[half+len(sep):]
+		}
+	}
+	return lastBToken(body, sep)
+}
+
+// lastBToken returns the segment after the last ` b/` token of s, or "" when
+// absent — the unspaced-path fallback for headPathFromGitHeader.
+func lastBToken(s, sep string) string {
+	if i := strings.LastIndex(s, sep); i >= 0 {
+		return s[i+len(sep):]
 	}
 	return ""
 }
