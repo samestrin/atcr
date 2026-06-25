@@ -140,6 +140,19 @@ func AnonymizeRecord(raw Record) PublicRecord {
 	return a.finalize()
 }
 
+// ScrubPublicRecord re-applies the identity-field scrub to the two string fields
+// a PublicRecord carries (Model, Persona). It exists for callers that wrap an
+// externally-supplied PublicRecord into a public artifact WITHOUT having gone
+// through AnonymizeRecord's ingestion scrub — notably benchmark.BuildSubmission,
+// which consumes a hand-suppliable run-result file. The numeric metrics are
+// governed by the PublicRecord allowlist and are left untouched. Idempotent: a
+// record already scrubbed at ingestion passes through unchanged.
+func ScrubPublicRecord(r PublicRecord) PublicRecord {
+	r.Model = scrubField(r.Model)
+	r.Persona = scrubField(r.Persona)
+	return r
+}
+
 // clampNonNeg* / clampRate guard the public submission against a corrupt-but-
 // parseable source record: a negative count or an out-of-[0,1] rate in a public
 // leaderboard is worse than a dropped value, so ingested metrics are bounded

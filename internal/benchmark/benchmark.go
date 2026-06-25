@@ -228,13 +228,14 @@ func writeField(h io.Writer, s string) {
 // under ~/.config/atcr/benchmark/<run-id>.json. Reviewers reuse the single
 // public reviewer schema so benchmark and production submissions share columns.
 //
-// PRIVACY CONTRACT: Reviewers MUST already be anonymized by the producer (the
+// PRIVACY CONTRACT: Reviewers SHOULD already be anonymized by the producer (the
 // scorecard aggregation that `atcr benchmark run` uses scrubs identity strings
-// at source, exactly like `leaderboard --export`). BuildSubmission wraps these
-// records verbatim and does NOT re-scrub, so a hand-crafted or non-conforming
-// run-result could carry PII into a public submission. A defense-in-depth
-// re-scrub at export time is tracked as tech debt (see TD: benchmark export
-// re-anonymization).
+// at source, exactly like `leaderboard --export`). As defense-in-depth — because
+// `atcr benchmark export` consumes a hand-suppliable run-result file that never
+// passed through the producer — BuildSubmission additionally re-scrubs each
+// reviewer's identity fields via scorecard.ScrubPublicRecord, so a non-conforming
+// run-result cannot carry PII into a public submission. The PublicRecord allowlist
+// remains the primary guarantee; this re-scrub is the backstop.
 type RunResult struct {
 	Suite        string                   `json:"suite"`
 	SuiteVersion string                   `json:"suite_version"`
@@ -270,6 +271,13 @@ var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
 // stamping the schema version, build version, source marker, and submittedAt.
 // submittedAt is passed in (not time.Now) so the result is reproducible.
 func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
+	// Defense-in-depth re-scrub: rr.Reviewers may come from an externally-supplied
+	// run-result, so re-apply the field scrub here rather than trusting the
+	// producer (see PRIVACY CONTRACT above).
+	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
+	for i, rev := range rr.Reviewers {
+		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
+	}
 	return Submission{
 		SubmissionSchema: scorecard.SubmissionSchema,
 		AtcrVersion:      version.Version,
@@ -277,6 +285,6 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Source:           SourceBenchmarkSuite,
 		Suite:            rr.Suite,
 		SuiteVersion:     rr.SuiteVersion,
-		Reviewers:        rr.Reviewers,
+		Reviewers:        scrubbed,
 	}
 }
