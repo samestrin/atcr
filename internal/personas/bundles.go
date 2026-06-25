@@ -44,6 +44,14 @@ func parseManifest(data []byte) (*BundleManifest, error) {
 	if len(m.Personas) == 0 {
 		return nil, fmt.Errorf("bundle manifest %q has no personas", m.Name)
 	}
+	for _, p := range m.Personas {
+		if strings.HasPrefix(p, "bundle/") {
+			return nil, fmt.Errorf("bundle manifest %q: member %q is a bundle reference, not a persona", m.Name, p)
+		}
+		if err := validatePersonaName(p); err != nil {
+			return nil, fmt.Errorf("bundle manifest %q: invalid persona %q: %w", m.Name, p, err)
+		}
+	}
 	return &m, nil
 }
 

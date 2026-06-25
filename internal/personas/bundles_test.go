@@ -144,7 +144,7 @@ func TestParseManifest_InvalidPersonaNames(t *testing.T) {
 		data := []byte(fmt.Sprintf("name: bad\npersonas: [%s]\n", member))
 		_, err := parseManifest(data)
 		require.Errorf(t, err, "member %q must be rejected", member)
-		assert.Contains(t, err.Error(), "invalid persona")
+		assert.Contains(t, err.Error(), "bundle manifest \"bad\"")
 	}
 }
 
