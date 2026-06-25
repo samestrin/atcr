@@ -3,6 +3,7 @@ package scorecard
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -398,4 +399,18 @@ func TestAnonymizeRecord_SingleRunDerivedFields(t *testing.T) {
 	assert.Equal(t, int64(9100), pr.LatencyP50MS)
 	require.NotNil(t, pr.SurvivedSkepticRate)
 	assert.InDelta(t, 0.8, *pr.SurvivedSkepticRate, 1e-9)
+}
+
+func TestClampNonNegF_RejectsNonFinite(t *testing.T) {
+	assert.Equal(t, 0.0, clampNonNegF(math.NaN()), "NaN must clamp to 0")
+	assert.Equal(t, 0.0, clampNonNegF(math.Inf(1)), "+Inf must clamp to 0")
+	assert.Equal(t, 0.0, clampNonNegF(math.Inf(-1)), "-Inf must clamp to 0")
+	assert.Equal(t, 5.0, clampNonNegF(5.0), "finite positive passes through")
+}
+
+func TestClampRate_RejectsNonFinite(t *testing.T) {
+	assert.Equal(t, 0.0, clampRate(math.NaN()), "NaN must clamp to 0")
+	assert.Equal(t, 1.0, clampRate(math.Inf(1)), "+Inf must clamp to 1")
+	assert.Equal(t, 0.0, clampRate(math.Inf(-1)), "-Inf must clamp to 0")
+	assert.Equal(t, 0.5, clampRate(0.5), "finite [0,1] passes through")
 }
