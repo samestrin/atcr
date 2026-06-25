@@ -184,6 +184,19 @@ func TestBuildEntriesFromDiff_MultiHunkSingleFile(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries))
 }
 
+// A loose diff whose input ends in `\n\n` (a final blank context line plus the
+// terminating newline) produces multiple trailing empty lines after splitting;
+// the tolerance must consume ALL of them so the diff round-trips rather than
+// aborting with "unexpected content".
+func TestBuildEntriesFromDiff_TrailingBlankLineRoundTrips(t *testing.T) {
+	diff := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "x.go", entries[0].Path)
+	assert.Equal(t, diff, joinBodies(entries), "trailing blank line must round-trip verbatim")
+}
+
 // A git binary/mode-only section carries no `--- `/`+++ ` lines, so the head
 // path must be parsed from the `diff --git a/<old> b/<new>` header instead.
 func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
