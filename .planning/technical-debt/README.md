@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 24 | 0 |
-| LOW | 0 | 22 | 0 |
+| LOW | 3 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 48
+**Last Modified:** 2026-06-25 | **Open Items:** 3 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 51
 
 ## Directory Structure
 
@@ -33,6 +33,14 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-25] From Sprint: epic-10.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/payload/ingest.go:172 | diffSectionPath cannot derive the head path for `git diff --no-prefix` binary or rename-only sections (no `+++` line and no ` b/` token), so such a diff errors instead of ingesting | Parse the `diff --git <old> <new>` header positionally when the ` b/` token is absent (no-prefix), or document the --no-prefix-binary limitation | EDGE_CASES | 30 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/fanout/review.go:330 | The `--output-dir and --id are mutually exclusive` guard is duplicated verbatim in PrepareReview and PrepareReviewFromDiff rather than in a shared helper, risking future drift | Hoist the mutual-exclusion check into a shared validateReviewRequest helper called by both entry points | REGRESSION_RISK | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/payload/ingest.go:561 | The post-read `int64(len(data)) > maxBytes` recheck only works because LimitReader caps at maxBytes+1; a future edit changing the +1 would silently turn the TOCTOU guard into dead code | Add a test that a file grown between Stat and read is still rejected, pinning the +1<->recheck invariant | ERROR_PATHS | 20 | execute-epic-independent |
 
 ### [2026-06-23] From Sprint: 8.0_reconciler_library
 
