@@ -138,6 +138,30 @@ func TestReproHash_DeterministicAndContentSensitive(t *testing.T) {
 	assert.NotEqual(t, h1, h3, "a changed diff must change the reproducibility hash")
 }
 
+func TestReproHash_RejectsOversizedDiff(t *testing.T) {
+	// ReproHash must enforce a per-file size cap so a hostile suite cannot
+	// exhaust memory via a multi-GB diff. The cap is an implementation detail;
+	// what we assert is that a diff exceeding the cap is rejected, not silently
+	// read into memory.
+	dir := t.TempDir()
+	// Use a cap-friendly manifest: one case whose diff is "big.diff".
+	writeManifest(t, dir, `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"c1","diff":"big.diff","expected_categories":["x"]}]}`)
+	// Create a file that exceeds the per-file cap (we set cap via an internal
+	// helper in the impl; here we just write a file > 0 bytes and trust that
+	// the impl's cap is exercised). For this RED test we write a 1-byte file
+	// and rely on a unit-level cap check via an exported constant.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "big.diff"), []byte("x"), 0o600))
+
+	// The implementation should expose MaxDiffBytes. With a 0-byte cap, even a
+	// 1-byte diff must be rejected.
+	origCap := MaxDiffBytes
+	MaxDiffBytes = 0
+	defer func() { MaxDiffBytes = origCap }()
+
+	_, err := ReproHash(dir)
+	require.Error(t, err, "a diff exceeding MaxDiffBytes must be rejected")
+}
+
 func TestReproHash_IndependentOfCaseOrder(t *testing.T) {
 	// Reordering cases in the manifest must NOT change the hash (content, not order,
 	// defines reproducibility).

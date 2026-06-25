@@ -228,6 +228,11 @@ type Submission struct {
 // a production review). The public board accepts only this source.
 const SourceBenchmarkSuite = "benchmark-suite"
 
+// MaxDiffBytes is the per-file size cap for diff files read during ReproHash.
+// A hostile or accidental multi-GB diff in an externally-sourced suite must not
+// cause unbounded memory allocation. Set to 0 to reject all diffs (used by tests).
+var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
+
 // BuildSubmission wraps a suite RunResult in the public submission envelope,
 // stamping the schema version, build version, source marker, and submittedAt.
 // submittedAt is passed in (not time.Now) so the result is reproducible.
