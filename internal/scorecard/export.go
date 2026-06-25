@@ -3,6 +3,7 @@ package scorecard
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -158,7 +159,7 @@ func clampNonNeg64(n int64) int64 {
 }
 
 func clampNonNegF(f float64) float64 {
-	if f < 0 {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
 		return 0
 	}
 	return f
@@ -166,6 +167,12 @@ func clampNonNegF(f float64) float64 {
 
 func clampRate(f float64) float64 {
 	switch {
+	case math.IsNaN(f):
+		return 0
+	case math.IsInf(f, 1):
+		return 1
+	case math.IsInf(f, -1):
+		return 0
 	case f < 0:
 		return 0
 	case f > 1:
