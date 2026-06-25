@@ -197,6 +197,20 @@ func TestBuildEntriesFromDiff_TrailingBlankLineRoundTrips(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries), "trailing blank line must round-trip verbatim")
 }
 
+// An untrusted loose diff whose first hunk header inflates its declared line
+// count must be rejected, not silently merged with the following file's content.
+// A real body line is always prefixed (-/+/space/\); an over-count overruns into
+// the next hunk's bare `@@ ` header, which the parser detects and rejects rather
+// than swallowing two files into one entry (the bytes would still round-trip,
+// hiding the corruption from the round-trip contract test).
+func TestBuildEntriesFromDiff_InflatedHunkCountRejected(t *testing.T) {
+	diff := "--- a/first.go\n+++ b/first.go\n@@ -1,5 +1,1 @@\n-a\n+b\n" +
+		"--- a/second.go\n+++ b/second.go\n@@ -1,1 +1,1 @@\n-c\n+d\n"
+	_, err := BuildEntriesFromDiff(diff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "claims more")
+}
+
 // A loose diff carrying `\ No newline at end of file` after a hunk's counted
 // body lines must attach the marker to the current hunk (consume it) rather than
 // leaving it to be mis-read as content after the section — both on the final file
