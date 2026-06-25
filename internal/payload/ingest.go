@@ -160,8 +160,10 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 	n := len(lines)
 	i := 0
 	for i < n {
-		// Tolerate a single trailing empty line produced by a final newline.
-		if lines[i] == "" && i == n-1 {
+		// Tolerate trailing empty lines produced by final newline(s): a diff
+		// ending in `\n` leaves one empty line after splitting, `\n\n` leaves two,
+		// and so on. When only empty lines remain, the sections are complete.
+		if lines[i] == "" && allEmpty(lines, i) {
 			break
 		}
 		if !looseHeaderAt(lines, i) {
@@ -197,6 +199,17 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `--- `/`+++ `/`@@ ` header triple)")
 	}
 	return starts, nil
+}
+
+// allEmpty reports whether every line from index i onward is empty — the
+// trailing blank lines a final newline (or several) leaves after splitting.
+func allEmpty(lines []string, i int) bool {
+	for ; i < len(lines); i++ {
+		if lines[i] != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // looseHeaderAt reports whether a loose-diff file header (`--- `/`+++ `/`@@ `
