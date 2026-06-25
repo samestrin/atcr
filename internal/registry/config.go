@@ -707,6 +707,20 @@ func (r *Registry) validateAgent(name string, a AgentConfig) []error {
 			errs = append(errs, agentErrf(name, "agent '%s': language entry '%s' contains invalid characters", name, s))
 		}
 	}
+	// AgentConfig.Persona names the reviewer prompt template — fanout passes it to
+	// ResolvePersona, whose validateName already rejects path traversal. Reject
+	// control characters and cap the length here too, mirroring the executor
+	// persona guard and the Scope/Language guards, so a malformed community
+	// persona fails fast at load rather than at runtime resolution. (Persona is a
+	// template selector, not verbatim prompt text, so this is defense-in-depth and
+	// a clearer load-time error — it closes the last unguarded prompt/fs-adjacent
+	// agent string rather than an active interpolation-injection path.)
+	if strings.IndexFunc(a.Persona, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) >= 0 {
+		errs = append(errs, agentErrf(name, "agent '%s': persona must not contain control characters", name))
+	}
+	if len(a.Persona) > MaxExecutorPersonaLen {
+		errs = append(errs, agentErrf(name, "agent '%s': persona must be at most %d characters", name, MaxExecutorPersonaLen))
+	}
 	return errs
 }
 
