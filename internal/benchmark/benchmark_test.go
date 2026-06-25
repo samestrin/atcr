@@ -135,6 +135,18 @@ func TestValidate_Valid(t *testing.T) {
 	require.NoError(t, m.Validate())
 }
 
+func TestReproHashManifest_MatchesReproHash(t *testing.T) {
+	// ReproHashManifest must produce the same hash as ReproHash when given the
+	// same manifest — it's an optimization that skips the redundant Load.
+	m, err := Load("testdata/suite-valid")
+	require.NoError(t, err)
+	h1, err := ReproHash("testdata/suite-valid")
+	require.NoError(t, err)
+	h2, err := ReproHashManifest(m, "testdata/suite-valid")
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2, "ReproHashManifest must produce the same hash as ReproHash")
+}
+
 func TestReproHash_DeterministicAndContentSensitive(t *testing.T) {
 	h1, err := ReproHash("testdata/suite-valid")
 	require.NoError(t, err)

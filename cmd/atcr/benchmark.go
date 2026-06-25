@@ -57,7 +57,7 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	hash, err := benchmark.ReproHash(suitePath)
+	hash, err := benchmark.ReproHashManifest(m, suitePath)
 	if err != nil {
 		return err
 	}

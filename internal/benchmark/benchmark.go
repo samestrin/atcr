@@ -150,11 +150,22 @@ func isSafeRelPath(p string) bool {
 // ordering does not affect the hash — content does. Two suites with identical
 // cases and diff bytes hash equally; a single changed diff byte changes the hash.
 // This is the `atcr benchmark verify` reproducibility anchor.
+// ReproHash loads the suite at suitePath and returns its reproducibility hash.
+// Callers that already hold a loaded *Manifest should use ReproHashManifest to
+// avoid a redundant Load.
 func ReproHash(suitePath string) (string, error) {
 	m, err := Load(suitePath)
 	if err != nil {
 		return "", err
 	}
+	return ReproHashManifest(m, suitePath)
+}
+
+// ReproHashManifest returns the reproducibility hash for an already-loaded
+// manifest. It is the implementation body of ReproHash; callers that have
+// already called Load (such as `atcr benchmark verify`) can use this directly
+// to skip the redundant parse.
+func ReproHashManifest(m *Manifest, suitePath string) (string, error) {
 	cases := make([]Case, len(m.Cases))
 	copy(cases, m.Cases)
 	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
