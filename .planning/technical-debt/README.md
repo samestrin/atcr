@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 24 | 0 |
-| LOW | 0 | 22 | 0 |
+| MEDIUM | 1 | 24 | 0 |
+| LOW | 4 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 48
+**Last Modified:** 2026-06-25 | **Open Items:** 5 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 53
 
 ## Directory Structure
 
@@ -33,6 +33,16 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-25] From Sprint: epic-10.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | internal/payload/ingest.go:240 | isSafeDiffPath mirrors isSafeRelPath exactly but neither resolves symlinks, so a relative path that is itself a symlink to a file outside the working tree passes the guard and is read via os.Open | Harden isSafeDiffPath and benchmark.isSafeRelPath together (filepath.EvalSymlinks + working-tree root re-check, or Lstat-reject symlinks) so the two guards stay consistent | SECURITY | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/payload/ingest.go:223 | headPathFromGitHeader uses strings.LastIndex(header, " b/") which mis-parses a git header whose path legitimately contains the literal " b/" substring | Parse the git header relative to the a/ token structure, or require a +++/--- header for ambiguous space-containing paths | CORRECTNESS | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/payload/ingest.go:115 | Loose-format detection requires a literal "@@ " marker, so merge/combined diffs ("@@@ ") and mode/rename-only loose sections surface as a generic "no file sections found" error rather than a clear unsupported-format diagnostic | Detect "@@@ " combined-diff markers and emit an explicit unsupported-format error, or document the loose-format limitation in the function comment | EDGE_CASES | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/payload/ingest.go:80 | BuildEntriesFromDiffFile has three overlapping size guards (pre-read fi.Size, LimitReader maxBytes+1, post-read len check) which are harder to reason about than one TOCTOU-safe post-read check | Keep only LimitReader(maxBytes+1) + post-read length check and drop the redundant pre-read Stat-size rejection, or comment why both are intentionally retained | UNDER_ENGINEERING | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/fanout/review.go:376 | Partial truncation (Truncated true, AllDropped false) is not surfaced to the caller of PrepareReviewFromDiff, so a run that silently dropped some files from an oversized diff produces a subset review with no signal at the ingestion boundary | Log or return the Truncation summary from PrepareReviewFromDiff when trunc.Truncated is true | OBSERVABILITY | 15 | execute-epic-independent |
 
 ### [2026-06-23] From Sprint: 8.0_reconciler_library
 
