@@ -298,6 +298,36 @@ func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
 	}
 }
 
+func TestScrubField_ClosesDenylistGaps(t *testing.T) {
+	// Backstop hardening (export.go:285): glued absolute paths under additional FHS
+	// roots, UNC paths, no-TLD emails, and sk_/AIza credential shapes must all be
+	// stripped from the identity backstop, not just the originally-covered set.
+	cases := []struct{ in, mustNotContain string }{
+		{"node/opt/secret/key", "/opt/"},
+		{"host/srv/data/x", "/srv/"},
+		{"a/mnt/vol/y", "/mnt/"},
+		{"b/root/sshkey", "/root/"},
+		{"c/private/keys/z", "/private/"},
+		{"d/usr/local/secret", "/usr/"},
+		{`\\fileserver\share`, "fileserver"},
+		{"admin@localhost", "@localhost"},
+		{"sk_live_abc123DEF", "sk_live_"},
+		{"AIzaSyABCDEF0123", "AIza"},
+	}
+	for _, c := range cases {
+		got := scrubField("claude " + c.in)
+		assert.NotContains(t, got, c.mustNotContain,
+			"scrubField must strip %q (from input %q)", c.mustNotContain, c.in)
+	}
+}
+
+func TestScrubField_PreservesProviderModelAndUnscrubbed(t *testing.T) {
+	// The hardened denylist must NOT over-strip a normal provider-prefixed model id
+	// or a plain persona name.
+	assert.Equal(t, "anthropic/claude-3", scrubField("anthropic/claude-3"))
+	assert.Equal(t, "bruce", scrubField("bruce"))
+}
+
 func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "anthropic/claude-3", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
