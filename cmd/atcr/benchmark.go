@@ -8,28 +8,32 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
+	"github.com/samestrin/atcr/internal/fanout"
+	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/spf13/cobra"
 )
 
-// newBenchmarkCmd builds `atcr benchmark`: the bounded in-repo half of the
-// standard-suite tooling (Epic 10.0). `verify` validates a suite manifest and
-// prints its reproducibility hash; `export` wraps a suite run-result in the
-// suite-tagged public submission envelope. Live execution + scoring
-// (`benchmark run`) is Epic 10.1; the curated standard-v1 suite content lives in
-// the external atcr/benchmark-suite repo.
+// newBenchmarkCmd builds `atcr benchmark`: the standard-suite tooling for the
+// public Model-Eval Leaderboard (Epic 10.0 / 10.2). `verify` validates a suite
+// manifest and prints its reproducibility hash; `run` executes a suite through the
+// review pipeline and writes a scored run-result; `export` wraps a run-result in
+// the suite-tagged public submission envelope. The curated standard-v1 suite
+// content lives in the external atcr/benchmark-suite repo.
 func newBenchmarkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "benchmark",
 		Short: "Standard benchmark-suite tooling for the public leaderboard",
 		Long: "Tooling for the standard benchmark suite that feeds the public Model-Eval\n" +
 			"Leaderboard. `verify` validates a suite manifest and prints its\n" +
-			"reproducibility hash; `export` produces a suite-tagged public submission\n" +
-			"record (distinct from `leaderboard --export`, so suite runs are\n" +
+			"reproducibility hash; `run` executes the suite through the review pipeline\n" +
+			"and writes a scored run-result; `export` produces a suite-tagged public\n" +
+			"submission record (distinct from `leaderboard --export`, so suite runs are\n" +
 			"distinguishable from production runs on the public board).",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkExportCmd())
+	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkRunCmd(), newBenchmarkExportCmd())
 	return cmd
 }
 
@@ -71,11 +75,60 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
 	return werr
 }
 
+// newBenchmarkRunCmd builds `atcr benchmark run --suite-path <dir> [--out <file>]`:
+// load + validate the suite, execute each case's diff through the review pipeline
+// (the diff-file ingestion path), score the findings against each case's expected
+// categories, and write the suite-tagged run-result that `benchmark export`
+// consumes. The run-result's GeneratedAt is stamped from the wall clock here; the
+// scoring is deterministic given the same suite + transcript.
+func newBenchmarkRunCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "Execute a benchmark suite through the review pipeline and write a scored run-result",
+		Args:  usageArgs(cobra.NoArgs),
+		RunE:  runBenchmarkRun,
+	}
+	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
+	cmd.Flags().String("out", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	_ = cmd.MarkFlagRequired("suite-path")
+	return cmd
+}
+
+func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
+	// Cobra GetString errors are unreachable: both flags are registered above
+	// ("suite-path" is MarkFlagRequired). Project-wide convention.
+	suitePath, _ := cmd.Flags().GetString("suite-path")
+	out, _ := cmd.Flags().GetString("out")
+
+	// Discover config the same way `atcr review` does (registry + project config
+	// rooted at the cwd), so the benchmark roster is the project's reviewers.
+	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
+	if err != nil {
+		return err
+	}
+
+	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(rr, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding run-result: %w", err)
+	}
+	if out == "" {
+		_, werr := cmd.OutOrStdout().Write(append(data, '\n'))
+		return werr
+	}
+	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
+	return writeExportFile(out, data)
+}
+
 // newBenchmarkExportCmd builds `atcr benchmark export --in <run-result.json>`:
 // read a suite run-result and emit the suite-tagged public submission envelope.
-// The run-result is produced by `atcr benchmark run` (Epic 10.1); export reads it
-// rather than the local scorecard, so a production run can never be passed off as
-// a suite submission.
+// The run-result is produced by `atcr benchmark run`; export reads it rather than
+// the local scorecard, so a production run can never be passed off as a suite
+// submission.
 func newBenchmarkExportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",

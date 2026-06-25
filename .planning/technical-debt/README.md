@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 24 | 0 |
-| LOW | 0 | 22 | 0 |
+| LOW | 4 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 48
+**Last Modified:** 2026-06-25 | **Open Items:** 4 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 52
 
 ## Directory Structure
 
@@ -33,6 +33,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-25] From Sprint: epic-10.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/benchmark/run.go:51 | benchmark run emits no per-case progress; a multi-case suite reviewed over the network is silent until the whole run completes | log a per-case progress line (case id + reviewer count) via log.FromContext before each ExecuteReview call | CROSS_CUTTING | 15 | execute-epic-cumulative |
+| U | [ ] | LOW | docs/benchmark.md:reproducibility | the byte-identical claim holds only under a fixed transcript (recorded reviewer outputs AND usage+latency); two live runs differ via wall-clock DurationMS and provider tokens | state reproducibility is conditioned on identical recorded usage+latency, not just the same suite + textual outputs | OBSERVABILITY | 10 | execute-epic-independent |
+| U | [ ] | LOW | cmd/atcr/benchmark_run.go:170 | reviewerModel/persona are pinned when a reviewer is first seen; if its first case failed (no usage, empty AgentStatus.Model) the model stays the config fallback even when a later case reports the provider id | prefer the provider-reported Model from any case that reported usage, or resolve identity after accumulating all cases | CORRECTNESS | 20 | execute-epic-independent |
+| U | [ ] | LOW | internal/benchmark/score.go:98 | scoreOne counts a case with empty Expected in the macro-average denominator while contributing 0 recall, silently lowering recall; the suite path is safe via Validate but Score is exported | skip cases with no expected categories from the recall denominator, or document that Score requires every CaseScore.Expected non-empty | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-23] From Sprint: 8.0_reconciler_library
 
