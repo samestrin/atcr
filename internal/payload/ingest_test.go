@@ -100,6 +100,21 @@ func TestBuildEntriesFromDiff_EmptyIsZeroEntries(t *testing.T) {
 	}
 }
 
+// A combined/merge diff (`diff --cc` with `@@@` hunks) is unsupported; ingestion
+// must reject it with a clear unsupported-format diagnostic rather than the
+// generic "no file sections found" error.
+func TestBuildEntriesFromDiff_CombinedDiffRejectedClearly(t *testing.T) {
+	diff := "diff --cc main.go\n" +
+		"index 1111,2222..3333 100644\n" +
+		"--- a/main.go\n" +
+		"+++ b/main.go\n" +
+		"@@@ -1,1 -1,1 +1,1 @@@\n" +
+		"++merged\n"
+	_, err := BuildEntriesFromDiff(diff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "combined", "combined/merge diffs must get a clear unsupported-format error")
+}
+
 // Non-diff garbage (no recognizable file headers) is an explicit error, not a
 // silently empty payload.
 func TestBuildEntriesFromDiff_GarbageErrors(t *testing.T) {
