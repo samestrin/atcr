@@ -35,6 +35,29 @@ func TestBase(t *testing.T) {
 	require.NotEmpty(t, s)
 }
 
+// TestEmbeddedFilesMatchNames verifies that the //go:embed *.md directive only
+// captures the registered personas plus the shared _base.md template. A stray
+// markdown file or a missing persona template becomes a build/test failure
+// rather than a latent runtime internal-error.
+func TestEmbeddedFilesMatchNames(t *testing.T) {
+	want := make(map[string]struct{}, len(names)+1)
+	for _, n := range names {
+		want[n+".md"] = struct{}{}
+	}
+	want["_base.md"] = struct{}{}
+
+	entries, err := files.ReadDir(".")
+	require.NoError(t, err)
+	got := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		got[e.Name()] = struct{}{}
+	}
+	require.Equal(t, want, got, "embedded .md files must exactly match registered personas plus _base.md")
+}
+
 // TestGet_BonusPersonasNonEmpty confirms each of the three bonus personas
 // resolves to a non-empty embedded template (AC 01-01 Scenario 2).
 func TestGet_BonusPersonasNonEmpty(t *testing.T) {
