@@ -111,3 +111,73 @@ func TestPrepareReviewFromDiff_EmptyRosterRejected(t *testing.T) {
 	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
 	require.ErrorIs(t, err, ErrEmptyRoster)
 }
+
+// A malformed (non-diff) input must surface the primitive's parse error through
+// the entry rather than scaffolding a vacuous review.
+func TestPrepareReviewFromDiff_MalformedDiffPropagates(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+
+	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, "not a diff at all\n")
+	require.Error(t, err)
+	assert.NoDirExists(t, out, "a malformed diff must not scaffold a review")
+}
+
+// readFixture loads a suite diff fixture relative to the fanout package dir.
+func readFixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "benchmark", "testdata", "suite-valid", name))
+	require.NoError(t, err)
+	return string(data)
+}
+
+// AC4 + AC5: the suite fixture case-01.diff, fed through PrepareReviewFromDiff on
+// the default (non-output-dir) path, must scaffold a review whose diff payload is
+// the fixture bytes verbatim, repoint .atcr/latest, and be accepted unchanged by
+// ExecuteReview running against a stub Completer (no network) — proving an
+// ingested diff reviews end to end on the production modePayload path.
+func TestPrepareReviewFromDiff_FixtureEndToEnd(t *testing.T) {
+	fixture := readFixture(t, "case-01.diff")
+	cfg := twoAgentConfig("http://unused") // completer is the fake; URL unused
+	root := t.TempDir()
+	req := ReviewRequest{
+		Root:       root,
+		Range:      ReviewRange{}, // range-less: a standalone diff
+		Branch:     "feature/test",
+		Date:       "2026-06-10",
+		TimeSuffix: "120000",
+		StartedAt:  time.Unix(1000, 0).UTC(),
+	}
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, fixture)
+	require.NoError(t, err)
+	require.Equal(t, 2, prep.AgentCount())
+
+	// The ingested diff is the payload, verbatim.
+	diffBytes, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "diff.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, fixture, string(diffBytes), "AC4: ingested payload reproduces the fixture bytes")
+
+	// ExecuteReview accepts the prepared review unchanged and fans out with no
+	// network (the fake Completer succeeds for every agent).
+	res, err := ExecuteReview(context.Background(), newFake(), prep)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.Equal(t, 2, res.Summary.Succeeded, "AC5: both agents reviewed the ingested diff")
+	assert.False(t, res.Summary.Partial)
+
+	// .atcr/latest was repointed (default path, no --output-dir).
+	latest, err := ReadLatest(root)
+	require.NoError(t, err)
+	assert.Equal(t, res.ID, latest)
+
+	// Manifest records diff mode for every agent, with empty range provenance.
+	mdata, err := os.ReadFile(filepath.Join(prep.Dir, "manifest.json"))
+	require.NoError(t, err)
+	var m payload.Manifest
+	require.NoError(t, json.Unmarshal(mdata, &m))
+	assert.Equal(t, "diff", m.PayloadMode)
+	assert.Empty(t, m.Base)
+	assert.Empty(t, m.Head)
+}
