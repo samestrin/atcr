@@ -27,3 +27,16 @@ func TestVersionOf_CorruptYAMLReturnsError(t *testing.T) {
 	require.Error(t, err, "corrupt local YAML must surface a parse error")
 	assert.Contains(t, err.Error(), "parse")
 }
+
+func TestIsNewer_MixedValidityTreatsAsUpToDate(t *testing.T) {
+	cases := []struct {
+		local, remote string
+	}{
+		{"v1.0.0", "latest"},
+		{"latest", "v1.0.0"},
+		{"v2.0.0", "v1.0.0"},
+	}
+	for _, c := range cases {
+		assert.False(t, isNewer(c.local, c.remote), "isNewer(%q, %q) should treat mixed/ambiguous validity as up-to-date", c.local, c.remote)
+	}
+}
