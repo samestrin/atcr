@@ -29,6 +29,13 @@ func TestGet_UnknownPersona(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestIsRegistered_KnownAndUnknown(t *testing.T) {
+	require.True(t, isRegistered("bruce"))
+	require.True(t, isRegistered("otto"))
+	require.False(t, isRegistered("nonexistent"))
+	require.False(t, isRegistered(""))
+}
+
 func TestBase(t *testing.T) {
 	s, err := Base()
 	require.NoError(t, err)
