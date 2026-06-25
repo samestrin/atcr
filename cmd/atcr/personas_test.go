@@ -395,3 +395,14 @@ func TestPersonasUpgrade_AllEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "No community personas installed")
 }
+
+func TestPersonasTest_ZeroCasesWarn(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+	withFixtureRunner(t, stubFixtureRunner{personas.FixtureOutcome{HasFixture: true, Passed: 0, Total: 0}})
+
+	stdout, stderr, err := executeSplit(t, "personas", "test", "sentinel")
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "WARN")
+	assert.NotContains(t, stdout, "PASS")
+}
