@@ -156,6 +156,27 @@ func TestInstall_OverwritesExisting(t *testing.T) {
 	require.NoError(t, Install(srv.Client(), srv.URL, "security/owasp", dir))
 }
 
+func TestInstall_WritesAtomicallyWithRestrictedPermissions(t *testing.T) {
+	srv := testServer(t, map[string]string{"/security/owasp.yaml": validPersonaYAML})
+	dir := t.TempDir()
+
+	require.NoError(t, Install(srv.Client(), srv.URL, "security/owasp", dir))
+
+	dest := filepath.Join(dir, "security", "owasp.yaml")
+	info, err := os.Stat(dest)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	dirInfo, err := os.Stat(filepath.Join(dir, "security"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm())
+
+	// Atomic replace: no stray temp files left behind.
+	matches, err := filepath.Glob(filepath.Join(dir, "security", ".*.tmp-*"))
+	require.NoError(t, err)
+	assert.Empty(t, matches)
+}
+
 // --- List -------------------------------------------------------------------
 
 func TestList_BuiltinsOnlyWhenDirMissing(t *testing.T) {
