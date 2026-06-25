@@ -3,6 +3,7 @@ package personas
 import (
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,7 +63,7 @@ func ListWithScores(personasDir string, scores map[string]float64) ([]ScoredPers
 	scored := make([]ScoredPersona, 0, len(metas))
 	for _, m := range metas {
 		sp := ScoredPersona{PersonaMeta: m}
-		if rate, ok := scores[strings.ToLower(m.Name)]; ok {
+		if rate, ok := scores[strings.ToLower(m.Name)]; ok && !math.IsNaN(rate) {
 			r := rate
 			sp.Rate = &r
 		}
