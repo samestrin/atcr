@@ -102,7 +102,11 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("run-result %s is missing suite/suite_version", in)
 	}
 
-	sub := benchmark.BuildSubmission(rr, time.Now().UTC())
+	generatedAt, err := time.Parse(time.RFC3339, rr.GeneratedAt)
+	if err != nil {
+		return fmt.Errorf("parsing generated_at %q: %w", rr.GeneratedAt, err)
+	}
+	sub := benchmark.BuildSubmission(rr, generatedAt)
 	out, err := json.MarshalIndent(sub, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding submission: %w", err)
