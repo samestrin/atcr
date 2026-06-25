@@ -2,7 +2,6 @@ package personas
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/payload"
@@ -72,17 +71,6 @@ func fixtureCtx(diff string) payload.PayloadContext {
 // personasDir) and delegates fixture execution to runner. It errors if the
 // persona is neither a built-in nor installed.
 func TestPersona(personasDir, name string, runner FixtureRunner) (FixtureOutcome, error) {
-	if !isBuiltin(name) {
-		dest, err := personaPath(personasDir, name)
-		if err != nil {
-			return FixtureOutcome{}, err
-		}
-		if _, err := os.Stat(dest); err != nil {
-			if os.IsNotExist(err) {
-				return FixtureOutcome{}, fmt.Errorf("persona %q is not installed", name)
-			}
-			return FixtureOutcome{}, fmt.Errorf("failed to stat persona %q: %w", name, err)
-		}
-	}
+	_ = personasDir // reserved for future community fixture support; runner owns resolution.
 	return runner.RunFixture(name)
 }

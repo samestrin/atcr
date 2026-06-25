@@ -380,8 +380,9 @@ func TestTestPersona_BuiltinResolves(t *testing.T) {
 }
 
 func TestTestPersona_UnknownPersona(t *testing.T) {
-	_, err := TestPersona(t.TempDir(), "security/nope", stubRunner{})
-	require.Error(t, err)
+	out, err := TestPersona(t.TempDir(), "security/nope", stubRunner{})
+	require.NoError(t, err)
+	assert.False(t, out.HasFixture, "unknown community persona returns no fixture; runner owns resolution")
 }
 
 // --- fetch timeout ----------------------------------------------------------
