@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -101,14 +103,20 @@ func BuildEntriesFromDiffFile(path string, maxBytes int64) ([]FileEntry, error) 
 	return BuildEntriesFromDiff(string(data))
 }
 
+// hunkCountsRe captures the old-side and new-side line counts from a unified-diff
+// hunk header `@@ -a,b +c,d @@`. Group 1 is b (old count), group 2 is d (new
+// count); each defaults to 1 when its `,count` is absent.
+var hunkCountsRe = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
+
 // fileSectionStarts returns the byte offsets at which each per-file section
 // begins, covering the whole input contiguously so the sections partition
 // diffText with no loss (the guarantee behind round-trip identity). It detects
-// `git diff` format (boundaries on `diff --git ` lines) when any such line is
-// present, else loose format (boundaries on a `--- `/`+++ `/`@@ ` header triple,
-// which a removed/added hunk line cannot spoof — a hunk header never appears
-// mid-hunk). The first section must start at offset 0; leading preamble is an
-// error rather than silently-dropped bytes.
+// `git diff` format (boundaries on column-0 `diff --git ` lines, unspoofable
+// because every hunk-body line carries a +/-/space prefix) when any such line is
+// present, else loose format (delegated to looseSectionStarts, which counts hunk
+// body lines so a `--- `/`+++ ` body line cannot be mistaken for a header). The
+// first section must start at offset 0; leading preamble is an error rather than
+// silently-dropped bytes.
 func fileSectionStarts(diff string) ([]int, error) {
 	lines, offsets := splitLinesWithOffsets(diff)
 
@@ -120,30 +128,104 @@ func fileSectionStarts(diff string) ([]int, error) {
 		}
 	}
 
-	var starts []int
-	if gitMode {
-		for i, ln := range lines {
-			if strings.HasPrefix(ln, gitDiffMarker) {
-				starts = append(starts, offsets[i])
-			}
-		}
-	} else {
-		for i := 0; i+2 < len(lines); i++ {
-			if strings.HasPrefix(lines[i], oldFileMarker) &&
-				strings.HasPrefix(lines[i+1], newFileMarker) &&
-				strings.HasPrefix(lines[i+2], hunkMarker) {
-				starts = append(starts, offsets[i])
-			}
-		}
+	if !gitMode {
+		return looseSectionStarts(lines, offsets)
 	}
 
+	var starts []int
+	for i, ln := range lines {
+		if strings.HasPrefix(ln, gitDiffMarker) {
+			starts = append(starts, offsets[i])
+		}
+	}
 	if len(starts) == 0 {
-		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `diff --git` line or a `--- `/`+++ `/`@@ ` header triple)")
+		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `diff --git` line)")
 	}
 	if starts[0] != 0 {
 		return nil, fmt.Errorf("diff ingestion: unexpected content before the first file section (would be lost on round-trip)")
 	}
 	return starts, nil
+}
+
+// looseSectionStarts finds the per-file section offsets in a loose diff (no
+// `diff --git` line) by walking it structurally: each section is a `--- `/`+++ `
+// header pair followed by one or more `@@ ` hunks, and each hunk body is consumed
+// by its declared old/new line counts. Counting the body is what makes a removed
+// line rendering `--- X` or an added line `+++ Y` — even one sitting immediately
+// before the next hunk's `@@` header — get consumed as body and never mistaken
+// for the next file's header. The first line must be a header (so starts[0] == 0,
+// preserving round-trip identity); anything else is an error.
+func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
+	var starts []int
+	n := len(lines)
+	i := 0
+	for i < n {
+		// Tolerate a single trailing empty line produced by a final newline.
+		if lines[i] == "" && i == n-1 {
+			break
+		}
+		if !looseHeaderAt(lines, i) {
+			if len(starts) == 0 {
+				return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `--- `/`+++ `/`@@ ` header triple)")
+			}
+			return nil, fmt.Errorf("diff ingestion: unexpected content at line %d (not a file header or hunk)", i+1)
+		}
+		starts = append(starts, offsets[i])
+		i += 2 // consume the `--- ` and `+++ ` header lines
+
+		for i < n && strings.HasPrefix(lines[i], hunkMarker) {
+			oldRem, newRem := hunkLineCounts(lines[i])
+			i++ // past the `@@ ` header
+			for i < n && (oldRem > 0 || newRem > 0) {
+				switch {
+				case strings.HasPrefix(lines[i], "-"):
+					oldRem--
+				case strings.HasPrefix(lines[i], "+"):
+					newRem--
+				case strings.HasPrefix(lines[i], `\`):
+					// "\ No newline at end of file" — counts toward neither side.
+				default:
+					// Context line (space-prefixed, or a blank line): both sides.
+					oldRem--
+					newRem--
+				}
+				i++
+			}
+		}
+	}
+	if len(starts) == 0 {
+		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `--- `/`+++ `/`@@ ` header triple)")
+	}
+	return starts, nil
+}
+
+// looseHeaderAt reports whether a loose-diff file header (`--- `/`+++ `/`@@ `
+// triple) begins at line i.
+func looseHeaderAt(lines []string, i int) bool {
+	n := len(lines)
+	return strings.HasPrefix(lines[i], oldFileMarker) &&
+		i+1 < n && strings.HasPrefix(lines[i+1], newFileMarker) &&
+		i+2 < n && strings.HasPrefix(lines[i+2], hunkMarker)
+}
+
+// hunkLineCounts returns the old-side and new-side body line counts declared by a
+// `@@ -a,b +c,d @@` hunk header, each defaulting to 1 when its count is absent. A
+// header that does not parse defaults to (1, 1): real diffs always carry a
+// well-formed hunk header, and the loose walk only reaches here on a line already
+// beginning with `@@ `.
+func hunkLineCounts(header string) (oldCount, newCount int) {
+	oldCount, newCount = 1, 1
+	m := hunkCountsRe.FindStringSubmatch(header)
+	if m == nil {
+		return oldCount, newCount
+	}
+	if m[1] != "" {
+		oldCount, _ = strconv.Atoi(m[1])
+	}
+	if m[2] != "" {
+		newCount, _ = strconv.Atoi(m[2])
+	}
+	return oldCount, newCount
 }
 
 // splitLinesWithOffsets splits s on '\n' into lines (newline excluded) and the
@@ -239,7 +321,10 @@ func firstLine(s string) string {
 // isSafeDiffPath rejects absolute paths and any path that, once cleaned, escapes
 // the working tree (a leading ".." segment) — the diff-file path-traversal guard,
 // mirroring the suite manifest's isSafeRelPath so a hostile path argument cannot
-// make the ingestion path read an arbitrary file.
+// make the ingestion path read an arbitrary file. Like isSafeRelPath, it is a
+// lexical check: it does NOT resolve symlinks, so a relative in-tree path whose
+// component is a symlink pointing outside the tree is out of this guard's scope —
+// callers ingesting untrusted suite trees should pre-resolve paths if that matters.
 func isSafeDiffPath(p string) bool {
 	if filepath.IsAbs(p) {
 		return false

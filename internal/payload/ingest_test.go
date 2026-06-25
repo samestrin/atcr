@@ -151,6 +151,39 @@ func TestBuildEntriesFromDiffFile_SizeCapRejectsOversized(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds")
 }
 
+// REGRESSION (independent review HIGH): a single file whose hunk body contains a
+// removed line rendering as `--- X` and an added line rendering as `+++ Y`
+// immediately before the next hunk's `@@` header must NOT be mis-split into a
+// second (phantom) file entry. The hunk-line-counting parser consumes each hunk's
+// declared budget so body lines can never spoof a file header.
+func TestBuildEntriesFromDiff_HunkBodyDoesNotSpoofHeader(t *testing.T) {
+	diff := "--- a/real.go\n" +
+		"+++ b/real.go\n" +
+		"@@ -1,1 +1,1 @@\n" +
+		"--- X\n" + // removed line of source content "-- X"
+		"+++ Y\n" + // added line of source content "++ Y"
+		"@@ -10,1 +10,1 @@\n" +
+		"-old\n" +
+		"+new\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "hunk-body lines rendering as ---/+++ must not spoof a file header")
+	assert.Equal(t, "real.go", entries[0].Path)
+	assert.Equal(t, diff, joinBodies(entries), "must still round-trip verbatim")
+}
+
+// A normal multi-hunk single-file diff stays one entry under the counting parser.
+func TestBuildEntriesFromDiff_MultiHunkSingleFile(t *testing.T) {
+	diff := "--- a/m.go\n+++ b/m.go\n" +
+		"@@ -1,2 +1,2 @@\n ctx\n-a\n+b\n" +
+		"@@ -10,2 +10,2 @@\n ctx2\n-c\n+d\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "m.go", entries[0].Path)
+	assert.Equal(t, diff, joinBodies(entries))
+}
+
 // A git binary/mode-only section carries no `--- `/`+++ ` lines, so the head
 // path must be parsed from the `diff --git a/<old> b/<new>` header instead.
 func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {

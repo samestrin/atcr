@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +123,48 @@ func TestPrepareReviewFromDiff_MalformedDiffPropagates(t *testing.T) {
 	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, "not a diff at all\n")
 	require.Error(t, err)
 	assert.NoDirExists(t, out, "a malformed diff must not scaffold a review")
+}
+
+// When the byte budget drops a NON-LAST file from a multi-file diff (independent
+// review MEDIUM), the elision must be observable downstream: the agents' status
+// records the dropped file, and the materialized payload contains only the kept
+// files — the same truncation contract the git-range path honors.
+func TestPrepareReviewFromDiff_MidFileBudgetDropSurfacesTruncation(t *testing.T) {
+	t.Setenv("ATCR_TEST_KEY", "secret")
+	// Three files; the MIDDLE one is by far the largest, so largest-first byte
+	// budgeting drops it specifically.
+	fileA := "--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+	fileMid := "--- a/mid.go\n+++ b/mid.go\n@@ -1,1 +1,1 @@\n-" + strings.Repeat("x", 2000) + "\n+" + strings.Repeat("y", 2000) + "\n"
+	fileZ := "--- a/z.go\n+++ b/z.go\n@@ -1,1 +1,1 @@\n-y\n+z\n"
+	diff := fileA + fileMid + fileZ
+
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = 256 // fits a.go + z.go, not mid.go
+	root := t.TempDir()
+	req := ReviewRequest{
+		Root: root, Branch: "feature/test", Date: "2026-06-10",
+		TimeSuffix: "120000", StartedAt: time.Unix(1000, 0).UTC(),
+	}
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, diff)
+	require.NoError(t, err)
+
+	// The materialized payload contains only the kept files, mid.go elided.
+	diffBytes, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "diff.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, fileA+fileZ, string(diffBytes), "dropped middle file must be elided from the payload")
+
+	res, err := ExecuteReview(context.Background(), newFake(), prep)
+	require.NoError(t, err)
+
+	for _, agent := range []string{"greta", "kai"} {
+		data, err := os.ReadFile(filepath.Join(res.Dir, "sources", "pool", "raw", "agent", agent, "status.json"))
+		require.NoError(t, err)
+		var st AgentStatus
+		require.NoError(t, json.Unmarshal(data, &st))
+		assert.True(t, st.Truncated, "agent %s must record truncation", agent)
+		assert.Contains(t, st.FilesDropped, "mid.go", "agent %s must list the dropped middle file", agent)
+	}
 }
 
 // readFixture loads a suite diff fixture relative to the fanout package dir.
