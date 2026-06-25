@@ -61,9 +61,9 @@ type Options struct {
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
 // the tally written to verification.json/summary.json; FindingsProcessed is the
-// number of findings sent through a live skeptic this run — jobs with at least one
-// eligible skeptic AND a live dispatcher (skipped/below-floor/no-eligible-skeptic/
-// harness-failed findings are excluded); DurationMs is the wall-clock cost.
+// number of findings selected for live skeptic review this run — jobs with at least
+// one eligible skeptic AND a live dispatcher at plan time (skipped/below-floor/
+// no-eligible-skeptic findings are excluded); DurationMs is the wall-clock cost.
 type Result struct {
 	VerdictCounts     VerdictCounts
 	FindingsProcessed int
@@ -159,7 +159,12 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		if !meetsSeverityFloor(f.Severity, minSev) {
 			continue // below floor: keep v1 confidence, no skeptic (cost control)
 		}
-		sk := SelectEligibleSkeptics(reg, f, votes)
+		// scores is nil until T6 (Epic 9.0 Phase 5) wires scorecard.Aggregate()
+		// here; nil is the documented "no score data" signal — language routing
+		// still applies, with the matched partition ordered alphabetically.
+		// Key convention when wired: keyed by skeptic registry name (reg.Agents key),
+		// not reviewer name — a mismatch silently reverts every skeptic to zero score.
+		sk := SelectEligibleSkeptics(reg, f, votes, nil)
 		if len(sk) > 0 {
 			needTool = true
 		}

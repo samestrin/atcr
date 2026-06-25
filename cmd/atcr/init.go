@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/samestrin/atcr/internal/registry"
-	"github.com/samestrin/atcr/personas"
+	builtins "github.com/samestrin/atcr/personas"
 )
 
 // newInitCmd builds `atcr init`: write the project config and editable
@@ -52,7 +52,7 @@ func initTargets(dir string) []string {
 		filepath.Join(dir, ".atcr", ".gitignore"),
 		filepath.Join(personasDir, "_base.md"),
 	}
-	for _, name := range personas.Names() {
+	for _, name := range builtins.Names() {
 		targets = append(targets, filepath.Join(personasDir, name+".md"))
 	}
 	return targets
@@ -117,7 +117,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		return nil
 	}
 
-	roster := personas.Names()
+	roster := builtins.Names()
 	if err := write(targets[0], registry.DefaultProjectConfigYAML(roster)); err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		return err
 	}
 
-	base, err := personas.Base()
+	base, err := builtins.Base()
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func runInit(dir string, force bool, out, errOut io.Writer) error {
 		return err
 	}
 	for _, name := range roster {
-		content, err := personas.Get(name)
+		content, err := builtins.Get(name)
 		if err != nil {
 			return err
 		}

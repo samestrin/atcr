@@ -1,0 +1,16 @@
+diff --git a/store/orders.go b/store/orders.go
+index 3333333..4444444 100644
+--- a/store/orders.go
++++ b/store/orders.go
+@@ -20,6 +20,13 @@ package store
+ 
++// LoadUsers fetches one user per id inside the loop.
++func LoadUsers(db *gorm.DB, ids []int) []User {
++	var users []User
++	for _, id := range ids {
++		var u User
++		db.Find(&u, id)
++		users = append(users, u)
++	}
++	return users
++}

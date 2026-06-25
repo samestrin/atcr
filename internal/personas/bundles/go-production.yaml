@@ -1,0 +1,6 @@
+name: go-production
+description: Go production-readiness review panel
+personas:
+  - security/owasp
+  - security/secrets
+  - performance/memory
