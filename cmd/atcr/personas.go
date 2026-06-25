@@ -124,6 +124,9 @@ func newPersonasInstallCmd() *cobra.Command {
 			}
 			name := args[0]
 			if bundleName, ok := strings.CutPrefix(name, "bundle/"); ok {
+				if bundleName == "" {
+					return usageError(fmt.Errorf("bundle name is required (e.g. bundle/security)"))
+				}
 				return installBundle(cmd, dir, bundleName)
 			}
 			if err := commpersonas.Install(personasClient, commpersonas.BaseURL(), name, dir); err != nil {
