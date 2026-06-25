@@ -3,13 +3,14 @@
 // planted-defect expected categories, a deterministic reproducibility hash over
 // that content, and the suite-tagged public submission envelope.
 //
-// This package is the bounded in-repo half of `atcr benchmark`. It ships the
-// CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission envelope, and
-// the RunResult input contract that `atcr benchmark export` consumes. It does NOT
-// execute reviews against the suite or score findings: live execution + scoring
-// is Epic 10.1, and the curated standard-v1 suite CONTENT lives in the external
-// atcr/benchmark-suite repo (Task 3). Keeping execution out keeps this package
-// stdlib + scorecard-type only, with no live-LLM dependency.
+// This package is the in-repo half of `atcr benchmark`. It ships the CONTRACT
+// (Load/Validate/ReproHash), the suite-tagged Submission envelope and the
+// RunResult contract `atcr benchmark export` consumes, the scorer (Score, which
+// folds per-case findings into the public reviewer schema), and the suite
+// execution loop (Run, which drives each case's diff through the review pipeline
+// via internal/fanout). The curated standard-v1 suite CONTENT lives in the
+// external atcr/benchmark-suite repo. The contract/scorer half stays stdlib +
+// scorecard-type only; the live-LLM dependency is confined to run.go.
 package benchmark
 
 import (
@@ -42,7 +43,7 @@ type Manifest struct {
 // Case is one fixed-diff benchmark case. Diff is a path RELATIVE to the suite
 // directory (never absolute, never escaping it — enforced by Validate).
 // ExpectedCategories are the planted-defect categories a competent reviewer
-// should surface; the scoring engine that consumes them is Epic 10.1.
+// should surface; Score matches findings against them (case-insensitively).
 type Case struct {
 	ID                 string   `json:"id"`
 	Diff               string   `json:"diff"`
@@ -223,14 +224,13 @@ func writeField(h io.Writer, s string) {
 
 // RunResult is the input contract `atcr benchmark export` consumes: the
 // model-eval aggregates produced by a suite run, tagged with the suite identity.
-// Epic 10.0 ships this minimal shape (the fields export needs); Epic 10.1's
-// `atcr benchmark run` produces conforming files (and may add scoring detail)
-// under ~/.config/atcr/benchmark/<run-id>.json. Reviewers reuse the single
-// public reviewer schema so benchmark and production submissions share columns.
+// `atcr benchmark run` (Run) produces conforming values; the Reviewers reuse the
+// single public reviewer schema so benchmark and production submissions share
+// columns.
 //
-// PRIVACY CONTRACT: Reviewers SHOULD already be anonymized by the producer (the
-// scorecard aggregation that `atcr benchmark run` uses scrubs identity strings
-// at source, exactly like `leaderboard --export`). As defense-in-depth — because
+// PRIVACY CONTRACT: Reviewers SHOULD already be anonymized by the producer (Score
+// scrubs identity strings at source via scorecard.ScrubPublicRecord, exactly like
+// `leaderboard --export`). As defense-in-depth — because
 // `atcr benchmark export` consumes a hand-suppliable run-result file that never
 // passed through the producer — BuildSubmission additionally re-scrubs each
 // reviewer's identity fields via scorecard.ScrubPublicRecord, so a non-conforming

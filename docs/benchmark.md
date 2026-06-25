@@ -6,19 +6,23 @@ cases with planted defects; running the same suite across models yields
 *comparable* scores, and only suite-sourced submissions are eligible for the
 public board — so cherry-picked production runs cannot game it.
 
-This page documents the **bounded in-repo half** that ships today:
+This page documents the in-repo tooling:
 
 - the **suite-manifest contract** (`internal/benchmark`),
 - `atcr benchmark verify` — validate a suite and print its reproducibility hash,
-- `atcr benchmark export` — emit a suite-tagged public submission record.
+- `atcr benchmark run` — execute a suite through the review pipeline and write a scored run-result,
+- `atcr benchmark export` — emit a suite-tagged public submission record from a run-result.
 
-> **What is NOT here yet.** Live execution + scoring (`atcr benchmark run`) is
-> **Epic 10.1**: it needs a new diff-file→payload ingestion path (the review
-> pipeline is built around git ranges, not loose diff files) and the scoring
-> rubric. The curated `standard-v1` suite **content** lives in the external
-> `github.com/atcr/benchmark-suite` repo (it is not bundled here). Until those
-> land, `verify` and `export` operate against any suite directory and run-result
-> file that satisfy the contracts below.
+The full loop is **`run` → `export`**: `run` produces a run-result by reviewing
+every case's diff and scoring the findings; `export` wraps that run-result in the
+public submission envelope. The public board accepts only `source ==
+"benchmark-suite"` submissions, so production runs cannot be passed off as suite
+scores.
+
+> **Suite content is external.** The curated `standard-v1` suite **content** lives
+> in the external `github.com/atcr/benchmark-suite` repo (it is not bundled here).
+> The tooling here operates against any suite directory that satisfies the contract
+> below — including the in-repo `internal/benchmark/testdata/suite-valid` fixture.
 
 ---
 
@@ -60,7 +64,7 @@ my-suite/
 | `cases` | array | Required, at least one case. |
 | `cases[].id` | string | Required, non-empty, **unique** within the suite. |
 | `cases[].diff` | string | Required. Path **relative to** the suite directory; must not be absolute or escape the directory (`..` is rejected). The file must exist. |
-| `cases[].expected_categories` | string[] | Required, at least one. The planted-defect categories a competent reviewer should surface. (Consumed by the scoring engine in Epic 10.1.) |
+| `cases[].expected_categories` | string[] | Required, at least one. The planted-defect categories a competent reviewer should surface. Matched case-insensitively against each finding's category by the scorer (see `benchmark run`). |
 
 `internal/benchmark.Load(suitePath)` reads, validates, and confirms every diff
 file exists — it returns an error rather than a half-valid suite.
@@ -94,12 +98,69 @@ Behavior:
 
 ---
 
+## `atcr benchmark run --suite-path <dir> [--out <path>]`
+
+Execute a suite through the **review pipeline** and write a scored run-result.
+
+```bash
+atcr benchmark run --suite-path ./my-suite --out run.json
+atcr benchmark run --suite-path ./my-suite          # run-result to stdout
+```
+
+For each case, `run` ingests the case's diff through the same diff-file ingestion
+path production uses (so the suite is scored on the exact payload the real pipeline
+sees), fans out the project's configured reviewer roster against it, then scores
+each reviewer's findings against the case's `expected_categories`. The roster and
+provider settings are discovered from the project config the same way `atcr review`
+discovers them.
+
+### Scoring
+
+Each reviewer's per-case findings are folded into the **single public reviewer
+schema** (the same row shape `export` and `leaderboard --export` emit):
+
+| Field | Benchmark meaning |
+|-------|-------------------|
+| `corroboration_rate` | **Category recall** — the macro-average across cases of (distinct `expected_categories` the reviewer surfaced ≥1 matching finding for) ÷ (distinct expected categories). This is the headline benchmark metric. |
+| `findings_raised_avg` | Mean findings raised per case (volume/thoroughness). |
+| `runs` | Number of cases scored. |
+| `cost_per_corroborated_finding_usd` | Recorded cost ÷ findings whose category matched an expected one (0 when the provider reports no usage). |
+| `latency_p50_ms` | Median per-case latency over cases with reported usage (0 otherwise). |
+
+> **`corroboration_rate` is repurposed as a recall proxy here.** In a production
+> submission it means cross-reviewer corroboration; in a benchmark submission it
+> carries category recall against the planted defects. The `source ==
+> "benchmark-suite"` tag on the submission disambiguates the two. **Precision is
+> deliberately not reported:** `expected_categories` is the planted-defect *subset*,
+> not exhaustive ground truth, so a precision-vs-planted metric would penalize a
+> reviewer for also surfacing legitimate non-planted issues. Category recall plus
+> `findings_raised_avg` capture coverage and volume without that distortion.
+
+Category matching is case-insensitive and whitespace-trimmed on both sides.
+
+### Reproducibility
+
+`run` stamps `generated_at` from the wall clock, but the **scoring is
+deterministic**: two runs over the same suite and the same transcript (reviewer
+outputs) produce a byte-identical run-result. Set the same `generated_at` (e.g. by
+reusing a captured run-result) to compare two runs field-for-field.
+
+Behavior:
+- Invalid suite (missing `suite.json`, failing validation, missing diff) → error.
+- A case whose entire roster fails to review → error (a case nothing reviewed is
+  not scored as zero). Partial failures score the failed reviewers as recall 0 for
+  that case.
+- `--suite-path` is required. `--out` writes the JSON to a file (atomic, parents
+  created) instead of stdout.
+
+---
+
 ## `atcr benchmark export --in <run-result.json> [--output <path>]`
 
 Emit a **suite-tagged** public submission record from a suite run-result.
 
 ```bash
-atcr benchmark export --in ~/.config/atcr/benchmark/run-2026-06-24.json
+atcr benchmark export --in run.json
 atcr benchmark export --in run.json --output /tmp/submission.json
 ```
 
@@ -147,9 +208,9 @@ production run can never be passed off as a suite submission. A run-result is:
 }
 ```
 
-`atcr benchmark run` (Epic 10.1) produces these under
-`~/.config/atcr/benchmark/<run-id>.json`. Until then, you supply a conforming
-file via `--in`.
+`atcr benchmark run --out <path>` produces a conforming run-result; you can also
+supply one by hand. `export` reuses the run-result's `generated_at` as the
+submission's `submitted_at`, so the same run-result always exports identically.
 
 Behavior:
 - Missing/malformed run-result, or one missing `suite`/`suite_version` → error.
@@ -166,15 +227,15 @@ keys; see [`docs/scorecard.md` → Privacy Model](scorecard.md#privacy-model)) p
 the suite identity (`source`, `suite`, `suite_version`).
 
 > **Anonymization happens at the producer, with an export-time backstop.** The
-> run-result is expected to come from `atcr benchmark run` (Epic 10.1), whose
-> scorecard aggregation scrubs identity strings at source, exactly like
-> `leaderboard --export` — that producer scrub remains the primary guarantee, so
-> do not rely on the backstop and do not hand-craft a run-result from
+> run-result is expected to come from `atcr benchmark run`, whose scorer emits the
+> public reviewer schema and re-scrubs each `model`/`persona` via
+> `scorecard.ScrubPublicRecord` at source — that producer scrub is the primary
+> guarantee, so do not rely on the backstop and do not hand-craft a run-result from
 > un-anonymized data. As defense-in-depth, because `benchmark export` consumes a
-> hand-suppliable run-result file, `BuildSubmission` additionally re-scrubs each
-> reviewer's `model`/`persona` via `scorecard.ScrubPublicRecord` before emitting,
-> so a non-conforming run-result cannot carry PII into a public submission. The
-> `PublicRecord` allowlist remains the boundary; the numeric metrics are untouched.
+> hand-suppliable run-result file, `BuildSubmission` re-scrubs the same fields
+> again before emitting, so a non-conforming run-result cannot carry PII into a
+> public submission. The `PublicRecord` allowlist remains the boundary; the numeric
+> metrics are untouched.
 
 ---
 
@@ -184,5 +245,4 @@ the suite identity (`source`, `suite`, `suite_version`).
   `leaderboard --export` production submission, and the shared public reviewer
   schema + privacy model.
 - `github.com/atcr/benchmark-suite` — the external repo holding the curated
-  `standard-v1` suite content (Task 3).
-- Epic 10.1 (`benchmark run`) — live execution against suite cases + scoring.
+  `standard-v1` suite content.
