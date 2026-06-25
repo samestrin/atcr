@@ -91,6 +91,21 @@ func TestBenchmarkExport_OutputFlagWritesFile(t *testing.T) {
 	require.Contains(t, string(data), "benchmark-suite")
 }
 
+func TestBenchmarkExport_UsesGeneratedAtForSubmittedAt(t *testing.T) {
+	in := writeRunResult(t)
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
+	require.Equal(t, 0, code, out)
+
+	var sub struct {
+		SubmittedAt string `json:"submitted_at"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &sub))
+	// The run-result has generated_at="2026-06-24T12:00:00Z" (see writeRunResult).
+	// submitted_at must match it for reproducibility, not be time.Now().
+	require.Equal(t, "2026-06-24T12:00:00Z", sub.SubmittedAt,
+		"submitted_at must use run-result's generated_at for reproducibility")
+}
+
 func TestBenchmarkExport_MissingInputFails(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", filepath.Join(t.TempDir(), "nope.json"))
 	require.NotEqual(t, 0, code, "a missing run-result file must fail export: %s", out)
