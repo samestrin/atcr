@@ -353,6 +353,15 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if req.OutputDir != "" && req.IDOverride != "" {
 		return nil, fmt.Errorf("--output-dir and --id are mutually exclusive")
 	}
+	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
+	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
+	// externally-sourced diffs), so a hostile multi-GB diff must be rejected before
+	// BuildEntriesFromDiff allocates its per-line index — honoring the epic's
+	// MaxDiffBytes memory-exhaustion mitigation. payload.DefaultMaxDiffBytes mirrors
+	// benchmark.MaxDiffBytes (10 MiB).
+	if int64(len(diffText)) > payload.DefaultMaxDiffBytes {
+		return nil, fmt.Errorf("diff ingestion: diff size %d exceeds max %d bytes", len(diffText), payload.DefaultMaxDiffBytes)
+	}
 	entries, err := payload.BuildEntriesFromDiff(diffText)
 	if err != nil {
 		return nil, err
