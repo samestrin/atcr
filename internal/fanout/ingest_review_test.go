@@ -145,7 +145,6 @@ func TestPrepareReviewFromDiff_MalformedDiffPropagates(t *testing.T) {
 // records the dropped file, and the materialized payload contains only the kept
 // files — the same truncation contract the git-range path honors.
 func TestPrepareReviewFromDiff_MidFileBudgetDropSurfacesTruncation(t *testing.T) {
-	t.Setenv("ATCR_TEST_KEY", "secret")
 	// Three files; the MIDDLE one is by far the largest, so largest-first byte
 	// budgeting drops it specifically.
 	fileA := "--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
