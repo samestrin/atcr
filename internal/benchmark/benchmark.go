@@ -112,6 +112,16 @@ func (m *Manifest) Validate() error {
 		if len(c.ExpectedCategories) == 0 {
 			return fmt.Errorf("case %q: at least one expected_category is required", c.ID)
 		}
+		seenCats := make(map[string]bool, len(c.ExpectedCategories))
+		for _, cat := range c.ExpectedCategories {
+			if strings.TrimSpace(cat) == "" {
+				return fmt.Errorf("case %q: expected_category must not be empty or blank", c.ID)
+			}
+			if seenCats[cat] {
+				return fmt.Errorf("case %q: duplicate expected_category %q", c.ID, cat)
+			}
+			seenCats[cat] = true
+		}
 	}
 	return nil
 }
