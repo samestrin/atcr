@@ -68,8 +68,12 @@ func Load(suitePath string) (*Manifest, error) {
 	}
 	for _, c := range m.Cases {
 		diffPath := filepath.Join(suitePath, c.Diff)
-		if _, err := os.Stat(diffPath); err != nil {
+		fi, err := os.Stat(diffPath)
+		if err != nil {
 			return nil, fmt.Errorf("case %q diff file: %w", c.ID, err)
+		}
+		if !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("case %q diff file %q is not a regular file", c.ID, c.Diff)
 		}
 	}
 	return &m, nil
