@@ -197,7 +197,9 @@ func ReproHashManifest(m *Manifest, suitePath string) (string, error) {
 			f.Close()
 			return "", fmt.Errorf("hashing case %q diff: size %d exceeds max %d bytes", c.ID, fi.Size(), MaxDiffBytes)
 		}
-		// Length-prefix for unambiguous hashing (matches writeField format).
+		// Length-prefix for unambiguous hashing (matches writeField format). h is a
+		// sha256 hash whose Write never returns an error, so the discarded write
+		// result here (and in writeField) is a safe-to-ignore unreachable failure.
 		_, _ = fmt.Fprintf(h, "%d:", fi.Size())
 		if _, err := io.Copy(h, f); err != nil {
 			f.Close()
@@ -209,7 +211,11 @@ func ReproHashManifest(m *Manifest, suitePath string) (string, error) {
 }
 
 // writeField writes a length-prefixed field to the hash so concatenation is
-// unambiguous across field boundaries.
+// unambiguous across field boundaries. h is always a sha256 hash (hash.Hash),
+// whose Write is contractually documented never to return an error, so the
+// discarded write results below are unreachable failures — checking them would
+// be dead code. Kept as io.Writer for testability; do not widen the signature to
+// return an error for callers that can never observe one.
 func writeField(h io.Writer, s string) {
 	_, _ = fmt.Fprintf(h, "%d:", len(s))
 	_, _ = io.WriteString(h, s)
