@@ -270,6 +270,20 @@ func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries), "binary + text git diff must round-trip verbatim")
 }
 
+// A header-only (binary) git section whose path legitimately contains the literal
+// " b/" substring must parse via the symmetric `a/<P> b/<P>` midpoint, not the
+// last " b/" token (which would truncate the path to "dir.png").
+func TestBuildEntriesFromDiff_GitBinarySectionSpacedPath(t *testing.T) {
+	diff := "diff --git a/my b/dir.png b/my b/dir.png\n" +
+		"index abc1234..def5678 100644\n" +
+		"Binary files a/my b/dir.png and b/my b/dir.png differ\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "my b/dir.png", entries[0].Path, "spaced binary path must parse via the symmetric midpoint")
+	assert.Equal(t, diff, joinBodies(entries))
+}
+
 // CRLF line endings (Windows-authored diffs) must still split correctly and
 // round-trip verbatim, with the trailing CR stripped from the parsed path.
 func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
