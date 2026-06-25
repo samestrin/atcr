@@ -214,6 +214,29 @@ func TestList_IncludesCommunityWithMetadata(t *testing.T) {
 	assert.Equal(t, []string{"go"}, owasp.Language)
 }
 
+func TestListCommunity_SurfacesCorruptYAML(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "security"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "security", "owasp.yaml"), []byte("version: [unclosed"), 0o644))
+
+	metas, err := listCommunity(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not parse persona file")
+	require.Len(t, metas, 1)
+	assert.Equal(t, "security/owasp", metas[0].Name)
+	assert.Equal(t, "-", metas[0].Version)
+}
+
+func TestListCommunity_SkipsBuiltinNameCollision(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "bruce.yaml"), []byte(validPersonaYAML), 0o644))
+
+	metas, err := listCommunity(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "collides with built-in persona")
+	assert.Empty(t, metas, "community file matching a built-in name must be skipped")
+}
+
 // --- Search -----------------------------------------------------------------
 
 func TestSearch_FiltersByKeyword(t *testing.T) {

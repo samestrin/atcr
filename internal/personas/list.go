@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"math"
@@ -121,6 +122,7 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 		return nil, fmt.Errorf("could not read personas directory %s: %w", personasDir, err)
 	}
 	var out []PersonaMeta
+	var warnings []error
 	walkErr := filepath.WalkDir(personasDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -137,10 +139,19 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 			return nil
 		}
 		name := filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel)))
+		if isBuiltin(name) {
+			warnings = append(warnings, fmt.Errorf("skipping community file %q: name collides with built-in persona %q", rel, name))
+			return nil
+		}
 		meta := PersonaMeta{Name: name, Version: "-", Source: "community"}
-		if data, readErr := os.ReadFile(path); readErr == nil {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			warnings = append(warnings, fmt.Errorf("could not read persona file %q: %w", rel, readErr))
+		} else {
 			var fm personaFileMeta
-			if yaml.Unmarshal(data, &fm) == nil {
+			if unmarshalErr := yaml.Unmarshal(data, &fm); unmarshalErr != nil {
+				warnings = append(warnings, fmt.Errorf("could not parse persona file %q: %w", rel, unmarshalErr))
+			} else {
 				if strings.TrimSpace(fm.Version) != "" {
 					meta.Version = fm.Version
 				}
@@ -154,5 +165,8 @@ func listCommunity(personasDir string) ([]PersonaMeta, error) {
 		out = append(out, meta)
 		return nil
 	})
-	return out, walkErr
+	if walkErr != nil {
+		return out, walkErr
+	}
+	return out, errors.Join(warnings...)
 }
