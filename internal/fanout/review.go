@@ -178,6 +178,23 @@ type PreparedReview struct {
 // AgentCount is the number of reviewer slots the prepared review will run.
 func (p *PreparedReview) AgentCount() int { return len(p.Slots) }
 
+// validateReviewRequest enforces the invariants shared by both review-preparation
+// entry points (PrepareReview and PrepareReviewFromDiff): a non-empty roster, and
+// the mutual exclusion of OutputDir and IDOverride. Centralizing them keeps the
+// two entry points from drifting (the guard once diverged between them). The error
+// names the request FIELDS, not the CLI flags — both functions are library API
+// reachable by non-CLI callers (the MCP server, the benchmark harness), and the
+// CLI emits its own flag-named usage error earlier at flag-parse time.
+func validateReviewRequest(cfg *ReviewConfig, req ReviewRequest) error {
+	if len(rosterNames(cfg.Project)) == 0 {
+		return ErrEmptyRoster
+	}
+	if req.OutputDir != "" && req.IDOverride != "" {
+		return fmt.Errorf("OutputDir and IDOverride are mutually exclusive")
+	}
+	return nil
+}
+
 // PrepareReview runs phase one of a review: build per-mode payloads, assemble
 // the roster into parallel/serial slots (with fallback chains), derive the
 // review id, scaffold the review directory, and write the payload artifacts, an
@@ -188,11 +205,8 @@ func (p *PreparedReview) AgentCount() int { return len(p.Slots) }
 // review directory or repoints .atcr/latest. (LoadReviewConfig also rejects
 // this earlier; PrepareReview is defended for direct/MCP callers.)
 func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*PreparedReview, error) {
-	if len(rosterNames(cfg.Project)) == 0 {
-		return nil, ErrEmptyRoster
-	}
-	if req.OutputDir != "" && req.IDOverride != "" {
-		return nil, fmt.Errorf("--output-dir and --id are mutually exclusive")
+	if err := validateReviewRequest(cfg, req); err != nil {
+		return nil, err
 	}
 	payloads, err := buildPayloads(ctx, cfg, req.Repo, req.Range.Base, req.Range.Head)
 	if err != nil {
@@ -347,11 +361,8 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 // base/head); req.OutputDir/IDOverride/Force are honored identically to
 // PrepareReview, so callers (e.g. a benchmark run) can redirect output.
 func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
-	if len(rosterNames(cfg.Project)) == 0 {
-		return nil, ErrEmptyRoster
-	}
-	if req.OutputDir != "" && req.IDOverride != "" {
-		return nil, fmt.Errorf("OutputDir and IDOverride are mutually exclusive")
+	if err := validateReviewRequest(cfg, req); err != nil {
+		return nil, err
 	}
 	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
 	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
