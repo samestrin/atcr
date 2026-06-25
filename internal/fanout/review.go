@@ -211,11 +211,22 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if empty {
 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "")
 	if err != nil {
 		return nil, err
 	}
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, cfg.Settings.PayloadMode)
+}
 
+// finalizePreparedReview is the shared scaffold-and-assemble tail of the two
+// review-preparation entry points (PrepareReview's git-range path and
+// PrepareReviewFromDiff's ingestion path): it derives the review id, claims the
+// review directory (honoring --output-dir/--id/--force), writes the payload
+// artifacts, an in-progress manifest, and the .atcr/latest pointer, and wires the
+// diff cache. payloadMode is recorded as the manifest's PayloadMode (the
+// configured mode for the git path, "diff" for the ingestion path); the range
+// provenance comes from req.Range, which the ingestion caller leaves empty.
+func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, payloads map[string]modePayload, perAgentMode map[string]string, slots []Slot, payloadMode string) (*PreparedReview, error) {
 	// Derive the id unconditionally: for --output-dir the id is provenance-only
 	// (written to the manifest and PreparedReview.ID but not used for the path),
 	// while for --id and the default derived case the id IS the path component.
@@ -292,7 +303,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 		DetectionMode:   req.Range.DetectionMode,
 		DefaultBranch:   req.Range.DefaultBranch,
 		CommitCount:     req.Range.CommitCount,
-		PayloadMode:     cfg.Settings.PayloadMode,
+		PayloadMode:     payloadMode,
 		MaxParallel:     cfg.Settings.MaxParallel,
 		TimeoutSecs:     cfg.Settings.TimeoutSecs,
 		PerAgentPayload: perAgentMode,
@@ -319,6 +330,56 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// run's agents; ExecuteReview hands it to the engine.
 	revCache := cache.NewStore(filepath.Join(req.Root, ".atcr", "cache"), cfg.Settings.CacheMaxBytes)
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
+}
+
+// PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview:
+// it builds the payload from a standalone unified diff (via the payload package's
+// diff-file primitive) instead of from a git range, then scaffolds the review on
+// the exact same path. Because a bare diff is the only available representation,
+// every agent reviews it regardless of its configured payload mode — the payloads
+// map is keyed solely to "diff" and buildSlots is forced to "diff", so a roster
+// whose default mode is blocks/files still resolves cleanly. The resulting
+// PreparedReview is accepted unchanged by ExecuteReview (same Slots/modePayload
+// wiring); with no repo snapshot, Head is empty so any tool-enabled agent degrades
+// to single-shot.
+//
+// req.Range is provenance-only here and may be left zero (a range-less diff has no
+// base/head); req.OutputDir/IDOverride/Force are honored identically to
+// PrepareReview, so callers (e.g. a benchmark run) can redirect output.
+func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
+	if len(rosterNames(cfg.Project)) == 0 {
+		return nil, ErrEmptyRoster
+	}
+	if req.OutputDir != "" && req.IDOverride != "" {
+		return nil, fmt.Errorf("--output-dir and --id are mutually exclusive")
+	}
+	entries, err := payload.BuildEntriesFromDiff(diffText)
+	if err != nil {
+		return nil, err
+	}
+	// An empty diff (no reviewable files) must refuse before scaffolding, mirroring
+	// PrepareReview's empty-payload guard so a no-op run never creates a directory
+	// or repoints .atcr/latest.
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("%w: the diff contains no reviewable files", ErrNoReviewableContent)
+	}
+	kept, trunc := payload.ApplyByteBudget(entries, cfg.Settings.PayloadByteBudget)
+	if trunc.AllDropped {
+		return nil, fmt.Errorf("%w (mode diff, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
+	}
+	var b strings.Builder
+	for _, e := range kept {
+		b.WriteString(e.Body)
+	}
+	diffMode := string(payload.ModeDiff)
+	payloads := map[string]modePayload{
+		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
+	}
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode)
+	if err != nil {
+		return nil, err
+	}
+	return finalizePreparedReview(ctx, cfg, req, payloads, perAgentMode, slots, diffMode)
 }
 
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
@@ -557,12 +618,12 @@ func neededModes(cfg *ReviewConfig) []string {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange) ([]Slot, map[string]string, error) {
+func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode string) ([]Slot, map[string]string, error) {
 	perAgentMode := map[string]string{}
 	var slots []Slot
 
 	add := func(name string, serial bool) error {
-		primary, mode, err := buildAgent(cfg, name, payloads, rng)
+		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode)
 		if err != nil {
 			return err
 		}
@@ -643,12 +704,19 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 
 // buildAgent resolves an agent's persona, renders its prompt against the payload
 // it sees, and assembles the invocation. It returns the agent and its mode.
-func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange) (Agent, string, error) {
+func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode string) (Agent, string, error) {
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
 		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
 	}
-	mode := ac.EffectivePayloadMode(cfg.Settings)
+	// forceMode (non-empty) overrides the agent's configured payload mode. The
+	// diff-file ingestion path sets it to "diff" because the ingested diff is the
+	// only available representation, so every agent reviews it regardless of its
+	// effective mode; the git-range path passes "" to keep per-agent modes.
+	mode := forceMode
+	if mode == "" {
+		mode = ac.EffectivePayloadMode(cfg.Settings)
+	}
 	mp, ok := payloads[mode]
 	if !ok {
 		// Defensive: payloads is built by neededModes over the same roster, so a

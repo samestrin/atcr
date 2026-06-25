@@ -1,3 +1,12 @@
+## [10.1.0] - 2026-06-25
+
+### Added
+
+- Diff-file ingestion path: the review pipeline can now build a payload from a standalone unified diff — both loose `--- `/`+++ `/`@@ ` diffs and full `git diff` patches — instead of only a git `base..head` range, via `payload.BuildEntriesFromDiff` / `BuildEntriesFromDiffFile` and the exported `fanout.PrepareReviewFromDiff`
+- Diff ingestion preserves byte-exact round-trip parity with the source diff, enforces a size cap, and rejects path traversal on the file-path variant; the resulting `PreparedReview` is accepted unchanged by `ExecuteReview`, with every reviewer seeing the ingested diff regardless of its configured payload mode
+
+*Shipped via /execute-epic (epic 10.1)*
+
 ## [Technical Debt] - 2026-06-25
 
 ### Fixed

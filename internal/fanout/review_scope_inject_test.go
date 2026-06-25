@@ -18,14 +18,14 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
 	payloads := map[string]modePayload{"blocks": {Text: "some diff", FileCount: 1}}
 	rng := ReviewRange{Base: "a", Head: "b"}
 
-	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng)
+	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng, "")
 	require.NoError(t, err)
 	require.Contains(t, gretaAgent.Prompt, "performance", "scoped agent prompt must mention its scope categories")
 	require.Contains(t, gretaAgent.Prompt, "efficiency")
 	// The invocation prompt the model actually receives must carry it too.
 	require.Contains(t, gretaAgent.Invocation.Prompt, "performance")
 
-	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng)
+	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng, "")
 	require.NoError(t, err)
 	require.NotContains(t, kaiAgent.Prompt, "Review Focus", "unscoped agent prompt must be unchanged")
 	// Lock the invocation prompt too — the model actually receives this, so an
