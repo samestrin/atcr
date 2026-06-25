@@ -186,6 +186,7 @@ func newRootCmd() *cobra.Command {
 		newTrustCmd(),
 		newScorecardCmd(),
 		newLeaderboardCmd(),
+		newPersonasCmd(),
 	)
 	return root
 }

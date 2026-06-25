@@ -224,6 +224,42 @@ agents:
 
 The verification stage also reads an optional registry-level `verify:` block (`min_severity`, `votes`) — see [verification.md](verification.md#cost-controls) for those knobs and the full mechanics.
 
+## Language scope and skeptic routing (`language`, active in 9.0)
+
+An agent may declare an optional `language` scope — the file extensions it specializes in — so the verification stage can prefer a language-matched skeptic over a generalist when refuting a finding. It is the routing lever behind the community persona ecosystem (Epic 9.0): a Go-specific persona is preferred on Go findings, a TypeScript one on `.ts` findings, and so on.
+
+| Field | Type | Default | Validated at load | Effect |
+|-------|------|---------|-------------------|--------|
+| `language` | string[] (per agent) | — (no constraint) | each entry must be non-empty in canonical form and free of control characters | Declares the file extensions this agent specializes in. When a finding's file extension matches one of these, the agent is **preferred** in skeptic selection over an agent with no matching scope. Optional and backward-compatible — an omitted field imposes no constraint. |
+
+**Canonical format — no leading dot, lowercased.** Entries are canonicalized at load: surrounding whitespace is trimmed, a single leading dot is stripped, and the value is lowercased. So `go`, `.go`, and ` .GO ` all store as `go` and compare identically against a finding's normalized file extension. Multiple values are allowed:
+
+```yaml
+agents:
+  skeptic-go:
+    provider: openrouter
+    model: anthropic/claude-3.7-sonnet
+    role: skeptic
+    tools: true
+    supports_function_calling: true
+    language: ["go", "ts"]   # canonical: dotless, lowercased
+```
+
+Prefer writing the canonical form directly (`["go"]`). A leading-dot or mixed-case value such as `[".Go"]` is **not** an error — it is canonicalized to `["go"]` at load. What *is* rejected (a load error) is an entry that is empty, whitespace-only, or just a dot (`"."`), since each canonicalizes to a blank token that would match every extensionless finding; control characters are rejected too. There is **no** allow-list of known languages — third-party persona authors may declare any extension.
+
+**Nil semantics.** Omit `language` (or leave it empty) and the agent carries no language constraint: it is eligible for **every** review regardless of the repository's detected language, with no routing preference. This is the default and keeps every pre-9.0 registry loading and routing unchanged.
+
+### How routing works (`SelectEligibleSkeptics`)
+
+When the verify stage picks skeptics for a finding, it first collects the eligible skeptics (excluding any whose model matches a crediting reviewer's — a model never verifies its own work), sorts them alphabetically for determinism, then applies a **two-partition reorder**:
+
+1. **Matched partition** — skeptics whose `language` scope contains the finding's (normalized) file extension. These lead, so the per-finding skeptic cap favors them. Within this partition, ordering is by corroboration score (highest first, from prior-run scorecard data) then alphabetical; with no score data the partition is simply alphabetical.
+2. **Unmatched partition** — every other eligible skeptic, in alphabetical order, appended after the matched ones.
+
+**Silent, automatic fallback.** If no skeptic's `language` matches the finding — or the finding's file has no extension — the matched partition is empty and all eligible skeptics fall through to the unmatched partition. Selection proceeds exactly as it did pre-9.0: the review is never blocked for lack of a language-scoped skeptic, and no warning is emitted. A registry with only generalist (unscoped) skeptics routes precisely as before.
+
+The runnable examples [`examples/registry-without-executor.yaml`](../examples/registry-without-executor.yaml) and [`examples/registry-with-executor.yaml`](../examples/registry-with-executor.yaml) each declare a `language` scope on an agent. See [personas-install.md](personas-install.md) and [personas-authoring.md](personas-authoring.md) for installing and authoring language-scoped community personas.
+
 ## Judge agents (`role: judge`, active in 6.0)
 
 The cross-examination stage (`atcr debate`) casts three seats per disputed finding: a **proposer** (a crediting reviewer's agent), a **challenger** (a `role: skeptic` agent), and a **judge** (a `role: judge` agent). All three must be **distinct models** — enforced by the engine. Give the judge the strongest model available, with `tools: true` and `supports_function_calling: true` so it can read the cited code:

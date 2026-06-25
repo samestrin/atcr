@@ -36,6 +36,11 @@ agents:
     model: claude-opus-4-8
     role: skeptic
     supports_function_calling: true
+    # Language scope (Epic 9.0): when a finding's file extension matches one of
+    # these, SelectEligibleSkeptics prefers this skeptic over an unscoped one.
+    # Canonical form is dotless + lowercased; multi-value is allowed, e.g.
+    # ["go", "ts"]. Omit the field entirely for a generalist skeptic.
+    language: ["go"]
 
 # The executor is a SINGLE model run only in the fix phase — not part of the
 # review panel. Use a more capable model here: spend on fix quality, not review

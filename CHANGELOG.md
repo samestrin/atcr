@@ -1,3 +1,37 @@
+## [9.0.0] - 2026-06-24
+
+### Added
+
+- `internal/personas` lifecycle package with install, upgrade, list, search, score, and bundle support
+- `atcr personas` CLI command with 6 subcommands: install, upgrade, list, search, test, init
+- Language-aware two-partition skeptic routing in the verification pipeline
+- Domain bundle support with `bundle/` install delegation
+- `list --scores` corroboration display for reviewer-aggregated persona scoring
+- Embedded bonus personas: sentinel, tracer, idiomatic
+- `AgentConfig.Language` field with extension normalization via `normalizeExt`
+- Persona install and authoring documentation with registry cross-references
+
+### Changed
+
+- Score-map key normalized to lowercase in `SelectEligibleSkeptics` for case-insensitive routing
+- Per-reviewer score aggregation with bundle member deduplication in personas list
+
+### Fixed
+
+- Guarded `AgentConfig.Persona` against control characters and over-length values
+- Hardened persona install with atomic writes, restricted permissions (0o600/0o700), and symlink rejection at destination
+- Added HTTP timeout and body-size cap to personas fetch client
+- Validated bundle manifest members up front before processing
+- Resolved NaN score ordering hazard in skeptic selection
+- Guarded dotfile inputs in `SelectEligibleSkeptics` to prevent spurious language matches
+- Stripped all leading dots in `NormalizeLanguageToken` for consistent canonicalization
+- Fixed `isNewer` to treat mixed semver validity as up-to-date
+- Surfaced `versionOf` unmarshal errors and aborted upgrade on corrupt YAML
+- Guarded `Total==0` edge case in persona test command to warn instead of false-pass
+- Fixed empty bundle argument and empty search keyword edge cases
+
+*Shipped via /execute-sprint (sprint 9.0_persona_ecosystem)*
+
 ## [8.0.0] - 2026-06-23
 
 Extracted `internal/reconcile` into a standalone nested Go module with its own `go.mod`, independent CI scorecard, and JSON adapter. All consumer packages now import types, severity helpers, and core reconcile logic from the library rather than from the top-level module.
