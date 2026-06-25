@@ -25,6 +25,14 @@ const (
 	newFileMarker = "+++ "
 	hunkMarker    = "@@ "
 	devNull       = "/dev/null"
+
+	// Combined (merge) diff markers — `git diff` for a merge emits `diff --cc`/
+	// `diff --combined` headers and `@@@ ` hunks. This two-way ingester does not
+	// support that 3+-way format; detecting these markers lets it reject such a
+	// diff with a clear diagnostic instead of a generic "no file sections" error.
+	combinedHunkMarker = "@@@ "
+	combinedHeaderCC   = "diff --cc "
+	combinedHeader     = "diff --combined "
 )
 
 // BuildEntriesFromDiff parses unified diff text into per-file FileEntry values —
@@ -142,6 +150,12 @@ func fileSectionStarts(diff string) ([]int, error) {
 
 	gitMode := false
 	for _, ln := range lines {
+		// Reject combined/merge diffs up front with a specific diagnostic: their
+		// `@@@ ` hunks and `diff --cc`/`diff --combined` headers are unsupported and
+		// would otherwise fall through to a generic "no file sections" error.
+		if strings.HasPrefix(ln, combinedHunkMarker) || strings.HasPrefix(ln, combinedHeaderCC) || strings.HasPrefix(ln, combinedHeader) {
+			return nil, fmt.Errorf("diff ingestion: combined/merge diffs (`diff --cc`/`@@@ ` hunks) are not supported; supply a two-way unified diff")
+		}
 		if strings.HasPrefix(ln, gitDiffMarker) {
 			gitMode = true
 			break
