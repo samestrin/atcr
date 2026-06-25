@@ -139,6 +139,22 @@ func TestBuildEntriesFromDiffFile_RejectsUnsafePaths(t *testing.T) {
 	}
 }
 
+// The file variant must reject a relative, lexically-in-tree path that is a
+// symlink resolving OUTSIDE the working tree — the lexical isSafeDiffPath guard
+// cannot catch this, so a runtime symlink check closes the gap.
+func TestBuildEntriesFromDiffFile_RejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	external := filepath.Join(outside, "secret.diff")
+	require.NoError(t, os.WriteFile(external, []byte("--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"), 0o644))
+	t.Chdir(root)
+	require.NoError(t, os.Symlink(external, "link.diff"))
+
+	_, err := BuildEntriesFromDiffFile("link.diff", DefaultMaxDiffBytes)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside the working tree")
+}
+
 // The file variant enforces the byte cap before parsing, so a hostile multi-GB
 // diff cannot exhaust memory.
 func TestBuildEntriesFromDiffFile_SizeCapRejectsOversized(t *testing.T) {
