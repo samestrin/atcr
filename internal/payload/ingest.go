@@ -314,18 +314,39 @@ func diffSectionPath(section string) (string, error) {
 			oldPath = parseDiffPathField(ln[len(oldFileMarker):])
 		}
 	}
-	if newPath != "" && newPath != devNull {
-		return newPath, nil
+	var path string
+	switch {
+	case newPath != "" && newPath != devNull:
+		path = newPath
+	case oldPath != "" && oldPath != devNull:
+		path = oldPath
+	case gitHeader != "":
+		path = headPathFromGitHeader(gitHeader)
 	}
-	if oldPath != "" && oldPath != devNull {
-		return oldPath, nil
+	if path == "" {
+		return "", fmt.Errorf("diff ingestion: cannot determine file path for section: %s", firstLine(section))
 	}
-	if gitHeader != "" {
-		if p := headPathFromGitHeader(gitHeader); p != "" {
-			return p, nil
-		}
+	// The path comes from untrusted diff content; reject one that escapes the
+	// working tree so a hostile `+++ b/../../etc/passwd` header never reaches a
+	// FileEntry a downstream consumer might resolve. (Provenance only today, but
+	// validated at the boundary as defense-in-depth.)
+	if !isSafeDiffContentPath(path) {
+		return "", fmt.Errorf("diff ingestion: refusing unsafe path %q extracted from diff content (absolute path or .. traversal)", path)
 	}
-	return "", fmt.Errorf("diff ingestion: cannot determine file path for section: %s", firstLine(section))
+	return path, nil
+}
+
+// isSafeDiffContentPath reports whether a path extracted from untrusted diff
+// content stays within the working tree: not absolute, and with no leading `..`
+// segment that escapes the root. Purely lexical — the path is provenance and is
+// never opened, so (unlike isSafeDiffPath, which guards a path that IS opened) it
+// has no symlink concern.
+func isSafeDiffContentPath(p string) bool {
+	if filepath.IsAbs(p) {
+		return false
+	}
+	clean := filepath.Clean(p)
+	return clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 // parseDiffPathField extracts the path from a `--- `/`+++ ` header value: it
