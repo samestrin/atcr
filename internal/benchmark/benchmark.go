@@ -68,8 +68,12 @@ func Load(suitePath string) (*Manifest, error) {
 	}
 	for _, c := range m.Cases {
 		diffPath := filepath.Join(suitePath, c.Diff)
-		if _, err := os.Stat(diffPath); err != nil {
+		fi, err := os.Lstat(diffPath)
+		if err != nil {
 			return nil, fmt.Errorf("case %q diff file: %w", c.ID, err)
+		}
+		if !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("case %q diff file %q is not a regular file", c.ID, c.Diff)
 		}
 	}
 	return &m, nil
@@ -108,6 +112,16 @@ func (m *Manifest) Validate() error {
 		if len(c.ExpectedCategories) == 0 {
 			return fmt.Errorf("case %q: at least one expected_category is required", c.ID)
 		}
+		seenCats := make(map[string]bool, len(c.ExpectedCategories))
+		for _, cat := range c.ExpectedCategories {
+			if strings.TrimSpace(cat) == "" {
+				return fmt.Errorf("case %q: expected_category must not be empty or blank", c.ID)
+			}
+			if seenCats[cat] {
+				return fmt.Errorf("case %q: duplicate expected_category %q", c.ID, cat)
+			}
+			seenCats[cat] = true
+		}
 	}
 	return nil
 }
@@ -121,6 +135,9 @@ func isSafeRelPath(p string) bool {
 		return false
 	}
 	clean := filepath.Clean(p)
+	if clean == "." {
+		return false
+	}
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return false
 	}
@@ -133,11 +150,22 @@ func isSafeRelPath(p string) bool {
 // ordering does not affect the hash — content does. Two suites with identical
 // cases and diff bytes hash equally; a single changed diff byte changes the hash.
 // This is the `atcr benchmark verify` reproducibility anchor.
+// ReproHash loads the suite at suitePath and returns its reproducibility hash.
+// Callers that already hold a loaded *Manifest should use ReproHashManifest to
+// avoid a redundant Load.
 func ReproHash(suitePath string) (string, error) {
 	m, err := Load(suitePath)
 	if err != nil {
 		return "", err
 	}
+	return ReproHashManifest(m, suitePath)
+}
+
+// ReproHashManifest returns the reproducibility hash for an already-loaded
+// manifest. It is the implementation body of ReproHash; callers that have
+// already called Load (such as `atcr benchmark verify`) can use this directly
+// to skip the redundant parse.
+func ReproHashManifest(m *Manifest, suitePath string) (string, error) {
 	cases := make([]Case, len(m.Cases))
 	copy(cases, m.Cases)
 	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
@@ -155,17 +183,39 @@ func ReproHash(suitePath string) (string, error) {
 		for _, cat := range cats {
 			writeField(h, cat)
 		}
-		diffBytes, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
+		diffPath := filepath.Join(suitePath, c.Diff)
+		f, err := os.Open(diffPath)
 		if err != nil {
 			return "", fmt.Errorf("hashing case %q diff: %w", c.ID, err)
 		}
-		writeField(h, string(diffBytes))
+		fi, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			return "", fmt.Errorf("hashing case %q diff stat: %w", c.ID, err)
+		}
+		if fi.Size() > MaxDiffBytes {
+			_ = f.Close()
+			return "", fmt.Errorf("hashing case %q diff: size %d exceeds max %d bytes", c.ID, fi.Size(), MaxDiffBytes)
+		}
+		// Length-prefix for unambiguous hashing (matches writeField format). h is a
+		// sha256 hash whose Write never returns an error, so the discarded write
+		// result here (and in writeField) is a safe-to-ignore unreachable failure.
+		_, _ = fmt.Fprintf(h, "%d:", fi.Size())
+		if _, err := io.Copy(h, f); err != nil {
+			_ = f.Close()
+			return "", fmt.Errorf("hashing case %q diff: %w", c.ID, err)
+		}
+		_ = f.Close()
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // writeField writes a length-prefixed field to the hash so concatenation is
-// unambiguous across field boundaries.
+// unambiguous across field boundaries. h is always a sha256 hash (hash.Hash),
+// whose Write is contractually documented never to return an error, so the
+// discarded write results below are unreachable failures — checking them would
+// be dead code. Kept as io.Writer for testability; do not widen the signature to
+// return an error for callers that can never observe one.
 func writeField(h io.Writer, s string) {
 	_, _ = fmt.Fprintf(h, "%d:", len(s))
 	_, _ = io.WriteString(h, s)
@@ -178,13 +228,14 @@ func writeField(h io.Writer, s string) {
 // under ~/.config/atcr/benchmark/<run-id>.json. Reviewers reuse the single
 // public reviewer schema so benchmark and production submissions share columns.
 //
-// PRIVACY CONTRACT: Reviewers MUST already be anonymized by the producer (the
+// PRIVACY CONTRACT: Reviewers SHOULD already be anonymized by the producer (the
 // scorecard aggregation that `atcr benchmark run` uses scrubs identity strings
-// at source, exactly like `leaderboard --export`). BuildSubmission wraps these
-// records verbatim and does NOT re-scrub, so a hand-crafted or non-conforming
-// run-result could carry PII into a public submission. A defense-in-depth
-// re-scrub at export time is tracked as tech debt (see TD: benchmark export
-// re-anonymization).
+// at source, exactly like `leaderboard --export`). As defense-in-depth — because
+// `atcr benchmark export` consumes a hand-suppliable run-result file that never
+// passed through the producer — BuildSubmission additionally re-scrubs each
+// reviewer's identity fields via scorecard.ScrubPublicRecord, so a non-conforming
+// run-result cannot carry PII into a public submission. The PublicRecord allowlist
+// remains the primary guarantee; this re-scrub is the backstop.
 type RunResult struct {
 	Suite        string                   `json:"suite"`
 	SuiteVersion string                   `json:"suite_version"`
@@ -211,10 +262,22 @@ type Submission struct {
 // a production review). The public board accepts only this source.
 const SourceBenchmarkSuite = "benchmark-suite"
 
+// MaxDiffBytes is the per-file size cap for diff files read during ReproHash.
+// A hostile or accidental multi-GB diff in an externally-sourced suite must not
+// cause unbounded memory allocation. Set to 0 to reject all diffs (used by tests).
+var MaxDiffBytes = int64(10 * 1024 * 1024) // 10 MiB
+
 // BuildSubmission wraps a suite RunResult in the public submission envelope,
 // stamping the schema version, build version, source marker, and submittedAt.
 // submittedAt is passed in (not time.Now) so the result is reproducible.
 func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
+	// Defense-in-depth re-scrub: rr.Reviewers may come from an externally-supplied
+	// run-result, so re-apply the field scrub here rather than trusting the
+	// producer (see PRIVACY CONTRACT above).
+	scrubbed := make([]scorecard.PublicRecord, len(rr.Reviewers))
+	for i, rev := range rr.Reviewers {
+		scrubbed[i] = scorecard.ScrubPublicRecord(rev)
+	}
 	return Submission{
 		SubmissionSchema: scorecard.SubmissionSchema,
 		AtcrVersion:      version.Version,
@@ -222,6 +285,6 @@ func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
 		Source:           SourceBenchmarkSuite,
 		Suite:            rr.Suite,
 		SuiteVersion:     rr.SuiteVersion,
-		Reviewers:        rr.Reviewers,
+		Reviewers:        scrubbed,
 	}
 }

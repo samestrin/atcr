@@ -1,0 +1,2 @@
+MEDIUM|cmd/atcr/benchmark.go:82|Using current time for submitted_at instead of run-result's generated_at|Use rr.GeneratedAt parsed as time|correctness|10|sub := benchmark.BuildSubmission(rr, time.Now().UTC())|reviewer
+HIGH|internal/scorecard/export.go:221|Returning pointer to local variable|Allocate float64 on heap|correctness|5|pr.SurvivedSkepticRate = &rate|reviewer

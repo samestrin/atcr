@@ -3,6 +3,7 @@ package scorecard
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -207,6 +208,55 @@ func TestExport_SurvivedSkepticRateOnlyRecordNotZeroed(t *testing.T) {
 	assert.InDelta(t, 0.73, *r.SurvivedSkepticRate, 1e-9, "stored rate must not be zeroed when counts are absent")
 }
 
+func TestMedianInt64_EvenCountDoesNotOverflow(t *testing.T) {
+	// Two near-MaxInt64 latencies: the naive (a+b)/2 overflows int64 and wraps to a
+	// negative wrong answer. The overflow-safe form a+(b-a)/2 must return the true
+	// floor-of-average and stay positive.
+	a := int64(math.MaxInt64) - 3
+	b := int64(math.MaxInt64) - 1
+	got := medianInt64([]int64{a, b})
+	want := a + (b-a)/2 // MaxInt64-2, computed without the overflowing sum
+	assert.Equal(t, want, got, "even-count median must not overflow int64")
+	assert.Positive(t, got, "an overflowing sum would flip the median negative")
+}
+
+func TestExport_SurvivedSkepticOmittedWhenVerificationRanButNoCountsOrRates(t *testing.T) {
+	// Degenerate shape: verification pointers are present (hasVerification) but every
+	// verdict count is zero AND no stored rate survives (verified+refuted==0,
+	// storedRates empty). There is no rate data, so the key must be OMITTED — not
+	// emitted as a misleading 0.0 that is indistinguishable from a genuine
+	// all-refuted rate (the verified+refuted>0 case).
+	v, ref := 0, 0
+	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+	rec.FindingsVerified = &v
+	rec.FindingsRefuted = &ref
+	rec.SurvivedSkepticRate = nil
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "survived_skeptic_rate",
+		"no verdict counts and no stored rate => omit the key, not 0.0")
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Nil(t, r.SurvivedSkepticRate)
+}
+
+func TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual(t *testing.T) {
+	// By-design invariant: grouping uses the SCRUBBED identity (Export ingestion
+	// scrubs persona/model once, then keys by the result). Two records whose
+	// Reviewer/Model differ BEFORE scrubbing but scrub to the same value must merge
+	// into a single aggregated row. This locks the merge so a future refactor that
+	// scrubbed AFTER keying — silently un-merging groups and changing public output —
+	// is caught.
+	r1 := exportRec("bruce /tmp/secretA", "gpt-4 /var/log/a", 1)
+	r2 := exportRec("bruce /tmp/secretB", "gpt-4 /var/log/b", 2)
+	data, err := Export([]Record{r1, r2}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	out := parseEnvelope(t, data).Reviewers
+	require.Len(t, out, 1, "distinct pre-scrub identities that scrub equal must merge into one group")
+	assert.Equal(t, 2, out[0].Runs, "the merged group aggregates both runs")
+	assert.Equal(t, "bruce", out[0].Persona, "persona is the scrubbed identity")
+	assert.Equal(t, "gpt-4", out[0].Model, "model is the scrubbed identity")
+}
+
 func TestExport_AnonymizationStripsRunID(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
@@ -264,6 +314,36 @@ func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
 	for _, p := range []string{"/etc/passwd", "/etc/", "/var/log", "/var/"} {
 		assert.NotContains(t, s, p, "must strip alnum-glued absolute path %q", p)
 	}
+}
+
+func TestScrubField_ClosesDenylistGaps(t *testing.T) {
+	// Backstop hardening (export.go:285): glued absolute paths under additional FHS
+	// roots, UNC paths, no-TLD emails, and sk_/AIza credential shapes must all be
+	// stripped from the identity backstop, not just the originally-covered set.
+	cases := []struct{ in, mustNotContain string }{
+		{"node/opt/secret/key", "/opt/"},
+		{"host/srv/data/x", "/srv/"},
+		{"a/mnt/vol/y", "/mnt/"},
+		{"b/root/sshkey", "/root/"},
+		{"c/private/keys/z", "/private/"},
+		{"d/usr/local/secret", "/usr/"},
+		{`\\fileserver\share`, "fileserver"},
+		{"admin@localhost", "@localhost"},
+		{"sk_live_abc123DEF", "sk_live_"},
+		{"AIzaSyABCDEF0123", "AIza"},
+	}
+	for _, c := range cases {
+		got := scrubField("claude " + c.in)
+		assert.NotContains(t, got, c.mustNotContain,
+			"scrubField must strip %q (from input %q)", c.mustNotContain, c.in)
+	}
+}
+
+func TestScrubField_PreservesProviderModelAndUnscrubbed(t *testing.T) {
+	// The hardened denylist must NOT over-strip a normal provider-prefixed model id
+	// or a plain persona name.
+	assert.Equal(t, "anthropic/claude-3", scrubField("anthropic/claude-3"))
+	assert.Equal(t, "bruce", scrubField("bruce"))
 }
 
 func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
@@ -398,4 +478,18 @@ func TestAnonymizeRecord_SingleRunDerivedFields(t *testing.T) {
 	assert.Equal(t, int64(9100), pr.LatencyP50MS)
 	require.NotNil(t, pr.SurvivedSkepticRate)
 	assert.InDelta(t, 0.8, *pr.SurvivedSkepticRate, 1e-9)
+}
+
+func TestClampNonNegF_RejectsNonFinite(t *testing.T) {
+	assert.Equal(t, 0.0, clampNonNegF(math.NaN()), "NaN must clamp to 0")
+	assert.Equal(t, 0.0, clampNonNegF(math.Inf(1)), "+Inf must clamp to 0")
+	assert.Equal(t, 0.0, clampNonNegF(math.Inf(-1)), "-Inf must clamp to 0")
+	assert.Equal(t, 5.0, clampNonNegF(5.0), "finite positive passes through")
+}
+
+func TestClampRate_RejectsNonFinite(t *testing.T) {
+	assert.Equal(t, 0.0, clampRate(math.NaN()), "NaN must clamp to 0")
+	assert.Equal(t, 1.0, clampRate(math.Inf(1)), "+Inf must clamp to 1")
+	assert.Equal(t, 0.0, clampRate(math.Inf(-1)), "-Inf must clamp to 0")
+	assert.Equal(t, 0.5, clampRate(0.5), "finite [0,1] passes through")
 }

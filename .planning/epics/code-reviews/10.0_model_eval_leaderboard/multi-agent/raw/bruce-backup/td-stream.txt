@@ -1,0 +1,1 @@
+MEDIUM|internal/scorecard/export.go:103-110|NaN returned when verification data exists but verdict counts and stored rates are absent, producing invalid JSON|null check on storedRates before division|correctness|10|len(a.storedRates)==0 && verdict counts==0: 0.0/0.0 = NaN, propagates to JSON as null|bruce

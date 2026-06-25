@@ -1,0 +1,11 @@
+HIGH|internal/benchmark/benchmark.go:156|Path traversal vulnerability in ReproHash|Validate diff path again before reading in ReproHash|security|10|Load validates but ReproHash re-loads without re-validating|bruce
+HIGH|internal/benchmark/benchmark.go:184|Missing error check on fmt.Fprintf/WriteString|Check write errors or use io.WriteString with error handling|error-handling|5|writeField ignores write errors to hash|bruce
+MEDIUM|internal/benchmark/benchmark.go:227|RunResult reviewers not re-scrubbed at export|Add defense-in-depth re-scrub in BuildSubmission|security|15|Comment admits hand-crafted run-result could leak PII|bruce
+MEDIUM|internal/scorecard/export.go:218|Division by zero risk in costPer when corroborated=0|Already guarded but add explicit test for zero corroborated|correctness|5|costPer returns 0 when corroborated <= 0|bruce
+MEDIUM|internal/scorecard/export.go:238|medianInt64 integer division loses precision for even counts|Document that p50 is integer median (floor of average)|correctness|5|(sorted[n/2-1] + sorted[n/2]) / 2 truncates|bruce
+LOW|internal/benchmark/benchmark.go:74|isSafeRelPath doesn't handle symlink escape|Add filepath.EvalSymlinks check or document limitation|security|10|Clean path check only, symlinks could escape|bruce
+LOW|internal/scorecard/export.go:195|ExportedAt/SubmittedAt uses time.Now() in tests only|Ensure production code uses passed exportedAt, not time.Now()|correctness|5|Export takes exportedAt parameter correctly|bruce
+LOW|cmd/atcr/benchmark.go:98|writeExportFile not defined in this file|Verify writeExportFile exists in leaderboard.go and is accessible|maintainability|5|Comment references writeExportFile from leaderboard.go|bruce
+LOW|internal/benchmark/benchmark.go:132|ReproHash calls Load which re-reads manifest|Consider passing Manifest to avoid double I/O|performance|5|Load reads manifest, ReproHash calls Load then re-reads diffs|bruce
+LOW|internal/scorecard/export.go:115|scrubField called twice for same identity|Scrub once at ingestion, already done but verify no double-scrub|maintainability|5|persona/model scrubbed at ingestion, finalize doesn't re-scrub|bruce
+LOW|docs/benchmark.md:158|Privacy model admits no re-scrub at export time|Track as tech debt but document clearly|maintainability|5|Defense-in-depth re-scrub tracked as tech debt|bruce

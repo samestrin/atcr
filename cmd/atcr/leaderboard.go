@@ -35,7 +35,7 @@ func newLeaderboardCmd() *cobra.Command {
 	cmd.Flags().String("model", "", "filter to an exact model id")
 	cmd.Flags().String("persona", "", "filter to an exact reviewer/persona name")
 	cmd.Flags().Bool("export", false, "emit anonymized public submission JSON instead of the table")
-	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (follows symlinks)")
+	cmd.Flags().String("output", "", "with --export: write JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	return cmd
 }
 

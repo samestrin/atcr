@@ -1,0 +1,6 @@
+SECURITY|cmd/atcr/benchmark.go:12|Missing input validation|Add bounds check for suitePath and output path to prevent directory traversal|security|5|User-controlled path used in file operations without sanitization|bruce
+SECURITY|cmd/atcr/benchmark_test.go:45|Missing input validation|Ensure test cases validate negative values and edge conditions in run results|security|3|Test does not cover malicious or malformed input scenarios|bruce
+PERFORMANCE|cmd/atcr/benchmark.go:85|Unbounded loop|Replace range loop with explicit index check to avoid potential panics on malformed data|performance|4|Loop iterates over potentially unbounded slice without validation|bruce
+CORRECTNESS|cmd/atcr/benchmark_test.go:105|Incorrect assertion|Verify cost per finding is calculated correctly when corroborated findings are zero|correctness|5|Test assumes undefined behavior for zero corroborated findings|bruce
+MAINTAINABILITY|cmd/atcr/benchmark.go:110| unclear naming|Rename 'data' variable to 'runResultData' for better readability in export function|maintainability|2|Variable name does not clearly indicate its content|bruce
+MAINTAINABILITY|cmd/atcr/benchmark_test.go:55|unclear naming|Rename 'sub' variable to 'submissionEnvelope' in test for better clarity|maintainability|2|Variable name does not reflect its purpose in the test|bruce

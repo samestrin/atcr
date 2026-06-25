@@ -1,0 +1,4 @@
+LOW|cmd/atcr/benchmark.go:58|Ignored GetString error for required flag|Check and return the flag retrieval error|error-handling|2|suitePath, _ := cmd.Flags().GetString("suite-path")|bruce
+LOW|cmd/atcr/benchmark.go:94|Ignored GetString error for required flag|Check and return the flag retrieval error|error-handling|2|in, _ := cmd.Flags().GetString("in")|bruce
+LOW|cmd/atcr/benchmark.go:95|Ignored GetString error for optional flag|Check and return the flag retrieval error|error-handling|2|output, _ := cmd.Flags().GetString("output")|bruce
+LOW|internal/benchmark/benchmark.go:115|Path validator permits dot path causing ReproHash to fail on directories|Reject clean == "." in isSafeRelPath|correctness|5|filepath.Clean(".") passes validation but os.ReadFile(suiteDir) errors|bruce
