@@ -351,7 +351,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 		return nil, ErrEmptyRoster
 	}
 	if req.OutputDir != "" && req.IDOverride != "" {
-		return nil, fmt.Errorf("--output-dir and --id are mutually exclusive")
+		return nil, fmt.Errorf("OutputDir and IDOverride are mutually exclusive")
 	}
 	// Bound the in-memory diff, mirroring BuildEntriesFromDiffFile's cap: this
 	// exported entry is the production ingestion deliverable (Epic 10.2 feeds it
