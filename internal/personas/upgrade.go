@@ -43,7 +43,15 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 		return UpgradeResult{}, fmt.Errorf("persona %q failed validation: %w", name, err)
 	}
 
-	res := UpgradeResult{Name: name, FromVersion: versionOf(localData), ToVersion: versionOf(remoteData)}
+	localVersion, err := versionOf(localData)
+	if err != nil {
+		return UpgradeResult{}, fmt.Errorf("installed persona %q is unparseable; aborting upgrade: %w", name, err)
+	}
+	remoteVersion, err := versionOf(remoteData)
+	if err != nil {
+		return UpgradeResult{}, fmt.Errorf("remote persona %q is unparseable; aborting upgrade: %w", name, err)
+	}
+	res := UpgradeResult{Name: name, FromVersion: localVersion, ToVersion: remoteVersion}
 	if !isNewer(res.FromVersion, res.ToVersion) {
 		res.UpToDate = true
 		return res, nil
@@ -58,14 +66,18 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 	return res, nil
 }
 
-// versionOf extracts the version metadata field, or "-" when absent.
-func versionOf(data []byte) string {
+// versionOf extracts the version metadata field, or "-" when absent. A corrupt
+// YAML payload surfaces as an error so callers do not silently treat it as a
+// missing version and overwrite a customized local persona.
+func versionOf(data []byte) (string, error) {
 	var fm personaFileMeta
-	_ = yaml.Unmarshal(data, &fm)
-	if strings.TrimSpace(fm.Version) == "" {
-		return "-"
+	if err := yaml.Unmarshal(data, &fm); err != nil {
+		return "-", fmt.Errorf("failed to parse persona metadata: %w", err)
 	}
-	return fm.Version
+	if strings.TrimSpace(fm.Version) == "" {
+		return "-", nil
+	}
+	return fm.Version, nil
 }
 
 // isNewer reports whether remote is a newer version than local. Valid semver is
