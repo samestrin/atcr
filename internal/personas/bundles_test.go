@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -136,6 +137,15 @@ func TestParseManifest_MalformedYAML(t *testing.T) {
 	_, err := parseManifest(data)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse bundle manifest")
+}
+
+func TestParseManifest_InvalidPersonaNames(t *testing.T) {
+	for _, member := range []string{"bundle/security", "../etc/passwd", "invalid@name"} {
+		data := []byte(fmt.Sprintf("name: bad\npersonas: [%s]\n", member))
+		_, err := parseManifest(data)
+		require.Errorf(t, err, "member %q must be rejected", member)
+		assert.Contains(t, err.Error(), "invalid persona")
+	}
 }
 
 func TestDedupePreserveOrder(t *testing.T) {
