@@ -19,13 +19,19 @@ var testfiles embed.FS
 // (security, performance, Go idioms), with the style reviewer last.
 var names = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
 
-func init() {
+// expectedEmbeddedFiles returns the set of .md files that must be present in the
+// embedded persona directory: one per registered persona plus the shared base.
+func expectedEmbeddedFiles() map[string]struct{} {
 	want := make(map[string]struct{}, len(names)+1)
 	for _, n := range names {
 		want[n+".md"] = struct{}{}
 	}
 	want["_base.md"] = struct{}{}
+	return want
+}
 
+func init() {
+	want := expectedEmbeddedFiles()
 	entries, err := files.ReadDir(".")
 	if err != nil {
 		panic(fmt.Sprintf("personas: failed to read embedded files: %v", err))

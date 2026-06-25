@@ -40,11 +40,7 @@ func TestBase(t *testing.T) {
 // markdown file or a missing persona template becomes a build/test failure
 // rather than a latent runtime internal-error.
 func TestEmbeddedFilesMatchNames(t *testing.T) {
-	want := make(map[string]struct{}, len(names)+1)
-	for _, n := range names {
-		want[n+".md"] = struct{}{}
-	}
-	want["_base.md"] = struct{}{}
+	want := expectedEmbeddedFiles()
 
 	entries, err := files.ReadDir(".")
 	require.NoError(t, err)
