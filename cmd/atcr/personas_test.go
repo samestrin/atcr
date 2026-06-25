@@ -178,6 +178,7 @@ func TestPersonasInstall_BundleMemberFailureExitsNonZero(t *testing.T) {
 	_, stderr, err := executeSplit(t, "personas", "install", "bundle/django")
 	require.Error(t, err)
 	assert.Contains(t, stderr, "failed to install security/owasp")
+	assert.Contains(t, err.Error(), "1 of 4 bundle personas failed to install")
 	// The other members still landed despite the mid-bundle failure.
 	assert.FileExists(t, filepath.Join(dir, "security", "secrets.yaml"))
 }
