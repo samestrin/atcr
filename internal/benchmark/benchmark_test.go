@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/samestrin/atcr/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -231,6 +232,29 @@ func TestBuildSubmission_TagsSuiteAndDistinctFromProduction(t *testing.T) {
 	for _, k := range []string{`"source"`, `"suite"`, `"suite_version"`} {
 		assert.Contains(t, s, k, "benchmark submission must carry %s (distinct from production export)", k)
 	}
+}
+
+func TestBuildSubmission_ReScrubsReviewerPII(t *testing.T) {
+	// Defense-in-depth: rr.Reviewers come from an externally-supplied run-result
+	// (atcr benchmark export consumes a hand-suppliable --in file), so a
+	// non-conforming record carrying PII in its identity fields must be scrubbed
+	// before it lands in a public submission — not passed through verbatim.
+	rr := RunResult{
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		GeneratedAt:  "2026-06-24T00:00:00Z",
+		Reviewers: []scorecard.PublicRecord{{
+			Persona: "bruce /Users/sam/secret.txt",
+			Model:   "anthropic/claude-3 sam@example.com",
+			Runs:    1,
+		}},
+	}
+	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
+	sub := BuildSubmission(rr, at)
+
+	require.Len(t, sub.Reviewers, 1)
+	assert.Equal(t, "bruce", sub.Reviewers[0].Persona, "absolute-path PII must be scrubbed from persona")
+	assert.Equal(t, "anthropic/claude-3", sub.Reviewers[0].Model, "email PII must be scrubbed from model")
 }
 
 // --- helpers ---
