@@ -102,6 +102,21 @@ func TestPrepareReviewFromDiff_BudgetDropsAllErrors(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPayloadFullyDropped)
 }
 
+// A diff larger than payload.DefaultMaxDiffBytes is rejected before parsing or
+// scaffolding, so a hostile multi-GB diff cannot exhaust memory at the exported
+// ingestion boundary (the epic's MaxDiffBytes mitigation).
+func TestPrepareReviewFromDiff_SizeCapRejectsOversized(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+
+	oversized := strings.Repeat("a", int(payload.DefaultMaxDiffBytes)+1)
+	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, oversized)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+	assert.NoDirExists(t, out, "an oversized diff must not scaffold a review")
+}
+
 // An empty roster short-circuits before scaffolding, like PrepareReview.
 func TestPrepareReviewFromDiff_EmptyRosterRejected(t *testing.T) {
 	cfg := twoAgentConfig("http://unused")
