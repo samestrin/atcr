@@ -3,6 +3,7 @@ package payload
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,6 +100,21 @@ func TestBuildEntriesFromDiff_EmptyIsZeroEntries(t *testing.T) {
 	}
 }
 
+// A combined/merge diff (`diff --cc` with `@@@` hunks) is unsupported; ingestion
+// must reject it with a clear unsupported-format diagnostic rather than the
+// generic "no file sections found" error.
+func TestBuildEntriesFromDiff_CombinedDiffRejectedClearly(t *testing.T) {
+	diff := "diff --cc main.go\n" +
+		"index 1111,2222..3333 100644\n" +
+		"--- a/main.go\n" +
+		"+++ b/main.go\n" +
+		"@@@ -1,1 -1,1 +1,1 @@@\n" +
+		"++merged\n"
+	_, err := BuildEntriesFromDiff(diff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "combined", "combined/merge diffs must get a clear unsupported-format error")
+}
+
 // Non-diff garbage (no recognizable file headers) is an explicit error, not a
 // silently empty payload.
 func TestBuildEntriesFromDiff_GarbageErrors(t *testing.T) {
@@ -136,6 +152,22 @@ func TestBuildEntriesFromDiffFile_RejectsUnsafePaths(t *testing.T) {
 		require.Error(t, err, "path %q must be rejected", p)
 		assert.Contains(t, err.Error(), "unsafe")
 	}
+}
+
+// The file variant must reject a relative, lexically-in-tree path that is a
+// symlink resolving OUTSIDE the working tree — the lexical isSafeDiffPath guard
+// cannot catch this, so a runtime symlink check closes the gap.
+func TestBuildEntriesFromDiffFile_RejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	external := filepath.Join(outside, "secret.diff")
+	require.NoError(t, os.WriteFile(external, []byte("--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"), 0o644))
+	t.Chdir(root)
+	require.NoError(t, os.Symlink(external, "link.diff"))
+
+	_, err := BuildEntriesFromDiffFile("link.diff", DefaultMaxDiffBytes)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside the working tree")
 }
 
 // The file variant enforces the byte cap before parsing, so a hostile multi-GB
@@ -184,6 +216,70 @@ func TestBuildEntriesFromDiff_MultiHunkSingleFile(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries))
 }
 
+// A path extracted from untrusted diff content that escapes the working tree
+// (absolute, or a `..` traversal) must be rejected at the ingestion boundary
+// rather than returned as a FileEntry path a downstream consumer might resolve.
+func TestBuildEntriesFromDiff_RejectsTraversalInContentPath(t *testing.T) {
+	for _, p := range []string{"../../etc/passwd", "/etc/passwd"} {
+		diff := "--- a/" + p + "\n+++ b/" + p + "\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+		_, err := BuildEntriesFromDiff(diff)
+		require.Error(t, err, "path %q must be rejected", p)
+		assert.Contains(t, err.Error(), "unsafe")
+	}
+}
+
+// A loose diff whose input ends in `\n\n` (a final blank context line plus the
+// terminating newline) produces multiple trailing empty lines after splitting;
+// the tolerance must consume ALL of them so the diff round-trips rather than
+// aborting with "unexpected content".
+func TestBuildEntriesFromDiff_TrailingBlankLineRoundTrips(t *testing.T) {
+	diff := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "x.go", entries[0].Path)
+	assert.Equal(t, diff, joinBodies(entries), "trailing blank line must round-trip verbatim")
+}
+
+// An untrusted loose diff whose first hunk header inflates its declared line
+// count must be rejected, not silently merged with the following file's content.
+// A real body line is always prefixed (-/+/space/\); an over-count overruns into
+// the next hunk's bare `@@ ` header, which the parser detects and rejects rather
+// than swallowing two files into one entry (the bytes would still round-trip,
+// hiding the corruption from the round-trip contract test).
+func TestBuildEntriesFromDiff_InflatedHunkCountRejected(t *testing.T) {
+	diff := "--- a/first.go\n+++ b/first.go\n@@ -1,5 +1,1 @@\n-a\n+b\n" +
+		"--- a/second.go\n+++ b/second.go\n@@ -1,1 +1,1 @@\n-c\n+d\n"
+	_, err := BuildEntriesFromDiff(diff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "claims more")
+}
+
+// A loose diff carrying `\ No newline at end of file` after a hunk's counted
+// body lines must attach the marker to the current hunk (consume it) rather than
+// leaving it to be mis-read as content after the section — both on the final file
+// and on an interior file of a multi-file diff.
+func TestBuildEntriesFromDiff_NoNewlineMarkerRoundTrips(t *testing.T) {
+	// Single file, marker trailing the last hunk line.
+	single := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n\\ No newline at end of file\n"
+	entries, err := BuildEntriesFromDiff(single)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "x.go", entries[0].Path)
+	assert.Equal(t, single, joinBodies(entries), "trailing no-newline marker must round-trip verbatim")
+
+	// Multi-file: the no-newline marker terminates the FIRST file's hunk; the
+	// second file's header must still be recognized as a new section.
+	multi := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n\\ No newline at end of file\n" +
+		"--- a/y.go\n+++ b/y.go\n@@ -1,1 +1,1 @@\n-c\n+d\n"
+	entries, err = BuildEntriesFromDiff(multi)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "x.go", entries[0].Path)
+	assert.Equal(t, "y.go", entries[1].Path)
+	assert.Equal(t, multi, joinBodies(entries), "interior no-newline marker must not break section splitting")
+}
+
 // A git binary/mode-only section carries no `--- `/`+++ ` lines, so the head
 // path must be parsed from the `diff --git a/<old> b/<new>` header instead.
 func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
@@ -205,6 +301,34 @@ func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries), "binary + text git diff must round-trip verbatim")
 }
 
+// A header-only (binary) git section whose path legitimately contains the literal
+// " b/" substring must parse via the symmetric `a/<P> b/<P>` midpoint, not the
+// last " b/" token (which would truncate the path to "dir.png").
+func TestBuildEntriesFromDiff_GitBinarySectionSpacedPath(t *testing.T) {
+	diff := "diff --git a/my b/dir.png b/my b/dir.png\n" +
+		"index abc1234..def5678 100644\n" +
+		"Binary files a/my b/dir.png and b/my b/dir.png differ\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "my b/dir.png", entries[0].Path, "spaced binary path must parse via the symmetric midpoint")
+	assert.Equal(t, diff, joinBodies(entries))
+}
+
+// A `git diff --no-prefix` binary/mode-only section carries no a/ b/ markers and
+// no `+++` line; the head path must still be recovered from the symmetric
+// `diff --git <P> <P>` header rather than erroring with "cannot determine path".
+func TestBuildEntriesFromDiff_GitNoPrefixBinarySection(t *testing.T) {
+	diff := "diff --git logo.png logo.png\n" +
+		"index abc1234..def5678 100644\n" +
+		"Binary files logo.png and logo.png differ\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "logo.png", entries[0].Path, "no-prefix binary path comes from the symmetric diff --git header")
+	assert.Equal(t, diff, joinBodies(entries))
+}
+
 // CRLF line endings (Windows-authored diffs) must still split correctly and
 // round-trip verbatim, with the trailing CR stripped from the parsed path.
 func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
@@ -216,12 +340,57 @@ func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries), "CRLF diff must round-trip verbatim")
 }
 
+// readCapped pins the LimitReader "+1" / ">maxBytes" recheck pair that defends
+// the diff-file read against a source larger than the cap (e.g. a file grown
+// between Stat and read). Dropping the +1 would let LimitReader cap reads at
+// exactly maxBytes, making the recheck dead code and silently accepting oversized
+// input — this test fails if that regression is introduced.
+func TestReadCapped_RejectsSourceLargerThanCap(t *testing.T) {
+	const capBytes = 16
+	_, err := readCapped(strings.NewReader(strings.Repeat("x", capBytes+5)), capBytes)
+	require.Error(t, err, "a source larger than the cap must be rejected by the post-read recheck")
+	assert.Contains(t, err.Error(), "exceeds")
+
+	// A source exactly at the cap is accepted (boundary).
+	data, err := readCapped(strings.NewReader(strings.Repeat("x", capBytes)), capBytes)
+	require.NoError(t, err)
+	assert.Len(t, data, capBytes)
+
+	// maxBytes <= 0 disables the cap entirely.
+	data, err = readCapped(strings.NewReader(strings.Repeat("x", capBytes+5)), 0)
+	require.NoError(t, err)
+	assert.Len(t, data, capBytes+5)
+}
+
 // A missing diff file surfaces a clear open error rather than a vacuous result.
 func TestBuildEntriesFromDiffFile_MissingFileErrors(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	_, err := BuildEntriesFromDiffFile("does-not-exist.diff", DefaultMaxDiffBytes)
 	require.Error(t, err)
+}
+
+// BenchmarkBuildEntriesFromDiff_LargeMultiFile exercises the ingestion hot path
+// on a large multi-file loose diff so -benchmem surfaces the per-line index and
+// per-section path-scan allocations (pre-sized splitLinesWithOffsets + early-break
+// diffSectionPath).
+func BenchmarkBuildEntriesFromDiff_LargeMultiFile(b *testing.B) {
+	var sb strings.Builder
+	for f := 0; f < 200; f++ {
+		name := "pkg/file" + strconv.Itoa(f) + ".go"
+		sb.WriteString("--- a/" + name + "\n+++ b/" + name + "\n@@ -1,40 +1,40 @@\n")
+		for ln := 0; ln < 40; ln++ {
+			sb.WriteString("-old line " + strconv.Itoa(ln) + "\n+new line " + strconv.Itoa(ln) + "\n")
+		}
+	}
+	diff := sb.String()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := BuildEntriesFromDiff(diff); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 // Parity anchor (AC4): the suite fixture case-01.diff, fed through the ingestion

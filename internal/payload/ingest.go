@@ -25,6 +25,14 @@ const (
 	newFileMarker = "+++ "
 	hunkMarker    = "@@ "
 	devNull       = "/dev/null"
+
+	// Combined (merge) diff markers — `git diff` for a merge emits `diff --cc`/
+	// `diff --combined` headers and `@@@ ` hunks. This two-way ingester does not
+	// support that 3+-way format; detecting these markers lets it reject such a
+	// diff with a clear diagnostic instead of a generic "no file sections" error.
+	combinedHunkMarker = "@@@ "
+	combinedHeaderCC   = "diff --cc "
+	combinedHeader     = "diff --combined "
 )
 
 // BuildEntriesFromDiff parses unified diff text into per-file FileEntry values —
@@ -72,6 +80,12 @@ func BuildEntriesFromDiffFile(path string, maxBytes int64) ([]FileEntry, error) 
 	if !isSafeDiffPath(path) {
 		return nil, fmt.Errorf("diff ingestion: refusing unsafe diff path %q: must be a relative path within the working tree (no absolute paths, no .. traversal)", path)
 	}
+	// isSafeDiffPath is purely lexical: a relative, in-tree path can still be (or
+	// traverse) a symlink pointing outside the working tree. Resolve symlinks and
+	// reject an escape before os.Open follows the link to an external file.
+	if err := rejectDiffSymlinkEscape(path); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("diff ingestion: opening diff file: %w", err)
@@ -87,20 +101,34 @@ func BuildEntriesFromDiffFile(path string, maxBytes int64) ([]FileEntry, error) 
 	if maxBytes > 0 && fi.Size() > maxBytes {
 		return nil, fmt.Errorf("diff ingestion: diff file %q size %d exceeds max %d bytes", path, fi.Size(), maxBytes)
 	}
-	var r io.Reader = f
-	if maxBytes > 0 {
-		// Bound the read independently of the pre-read Stat so a file that grows
-		// between Stat and read still cannot exceed the cap (TOCTOU defense).
-		r = io.LimitReader(f, maxBytes+1)
-	}
-	data, err := io.ReadAll(r)
+	// Bound the read independently of the pre-read Stat so a file that grows
+	// between Stat and read still cannot exceed the cap (TOCTOU defense).
+	data, err := readCapped(f, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("diff ingestion: reading diff file %q: %w", path, err)
 	}
-	if maxBytes > 0 && int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("diff ingestion: diff file %q exceeds max %d bytes", path, maxBytes)
-	}
 	return BuildEntriesFromDiff(string(data))
+}
+
+// readCapped reads all of r, rejecting a source that holds more than maxBytes
+// (maxBytes <= 0 disables the cap). It reads exactly ONE byte past the cap via
+// LimitReader so the post-read length check can distinguish a source at the cap
+// (accepted) from one beyond it (rejected) — e.g. a file that grew between Stat
+// and read. The "+1" over-read and the ">maxBytes" recheck are a matched pair and
+// are colocated here so neither can silently drift from the other and turn the cap
+// into dead code; TestReadCapped_RejectsSourceLargerThanCap pins the invariant.
+func readCapped(r io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return io.ReadAll(r)
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("exceeds max %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 // hunkCountsRe captures the old-side and new-side line counts from a unified-diff
@@ -122,6 +150,12 @@ func fileSectionStarts(diff string) ([]int, error) {
 
 	gitMode := false
 	for _, ln := range lines {
+		// Reject combined/merge diffs up front with a specific diagnostic: their
+		// `@@@ ` hunks and `diff --cc`/`diff --combined` headers are unsupported and
+		// would otherwise fall through to a generic "no file sections" error.
+		if strings.HasPrefix(ln, combinedHunkMarker) || strings.HasPrefix(ln, combinedHeaderCC) || strings.HasPrefix(ln, combinedHeader) {
+			return nil, fmt.Errorf("diff ingestion: combined/merge diffs (`diff --cc`/`@@@ ` hunks) are not supported; supply a two-way unified diff")
+		}
 		if strings.HasPrefix(ln, gitDiffMarker) {
 			gitMode = true
 			break
@@ -160,8 +194,10 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 	n := len(lines)
 	i := 0
 	for i < n {
-		// Tolerate a single trailing empty line produced by a final newline.
-		if lines[i] == "" && i == n-1 {
+		// Tolerate trailing empty lines produced by final newline(s): a diff
+		// ending in `\n` leaves one empty line after splitting, `\n\n` leaves two,
+		// and so on. When only empty lines remain, the sections are complete.
+		if lines[i] == "" && allEmpty(lines, i) {
 			break
 		}
 		if !looseHeaderAt(lines, i) {
@@ -175,8 +211,21 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 
 		for i < n && strings.HasPrefix(lines[i], hunkMarker) {
 			oldRem, newRem := hunkLineCounts(lines[i])
+			hunkLine := i
 			i++ // past the `@@ ` header
 			for i < n && (oldRem > 0 || newRem > 0) {
+				// A bare `@@ ` line is never a hunk-body line (every body line is
+				// prefixed -/+/space/\), so reaching one while body budget remains
+				// means this hunk header over-claimed its line count — a malformed or
+				// hostile loose diff inflating a count to swallow the following hunk
+				// or file. Reject it loudly: a silent merge would still round-trip
+				// byte-for-byte, hiding the corruption from the contract test. (A
+				// count tuned to land exactly on a following `--- `/`+++ ` pair
+				// without crossing a bare `@@ ` is an unresolved residual; the bare
+				// `@@ ` boundary is the only marker unambiguously not body content.)
+				if strings.HasPrefix(lines[i], hunkMarker) {
+					return nil, fmt.Errorf("diff ingestion: hunk at line %d claims more body lines than the section contains (malformed or hostile diff)", hunkLine+1)
+				}
 				switch {
 				case strings.HasPrefix(lines[i], "-"):
 					oldRem--
@@ -191,12 +240,31 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 				}
 				i++
 			}
+			// A `\ No newline at end of file` marker trails its hunk's counted
+			// body lines (it counts toward neither side, so the budget loop above
+			// has already exited). Consume any such markers into this hunk so they
+			// are not mistaken for content after the section — which would abort an
+			// otherwise valid loose diff, or merge it with the next file.
+			for i < n && strings.HasPrefix(lines[i], `\`) {
+				i++
+			}
 		}
 	}
 	if len(starts) == 0 {
 		return nil, fmt.Errorf("diff ingestion: no file sections found (expected a `--- `/`+++ `/`@@ ` header triple)")
 	}
 	return starts, nil
+}
+
+// allEmpty reports whether every line from index i onward is empty — the
+// trailing blank lines a final newline (or several) leaves after splitting.
+func allEmpty(lines []string, i int) bool {
+	for ; i < len(lines); i++ {
+		if lines[i] != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // looseHeaderAt reports whether a loose-diff file header (`--- `/`+++ `/`@@ `
@@ -232,6 +300,12 @@ func hunkLineCounts(header string) (oldCount, newCount int) {
 // byte offset where each line begins. A trailing newline yields a final empty
 // line at offset len(s), which matches no marker.
 func splitLinesWithOffsets(s string) (lines []string, offsets []int) {
+	// Pre-size both slices to the line count (newline count + 1) so a large
+	// multi-file diff fills them without repeated grow/realloc. strings.Count is
+	// allocation-free (unlike bytes.Count, which would copy s).
+	n := strings.Count(s, "\n") + 1
+	lines = make([]string, 0, n)
+	offsets = make([]int, 0, n)
 	start := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\n' {
@@ -253,7 +327,18 @@ func splitLinesWithOffsets(s string) (lines []string, offsets []int) {
 // any hunk body), so a later `--- `/`+++ ` removed/added line cannot shadow them.
 func diffSectionPath(section string) (string, error) {
 	var oldPath, newPath, gitHeader string
-	for _, ln := range strings.Split(section, "\n") {
+	// Walk the section line-by-line with IndexByte rather than strings.Split, which
+	// would allocate a slice sized to the whole section just to read its header.
+	for rest := section; rest != ""; {
+		ln := rest
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			ln, rest = rest[:nl], rest[nl+1:]
+		} else {
+			rest = ""
+		}
+		if strings.HasPrefix(ln, hunkMarker) {
+			break // the hunk body begins here; the git/old/new headers all precede it
+		}
 		switch {
 		case gitHeader == "" && strings.HasPrefix(ln, gitDiffMarker):
 			gitHeader = ln
@@ -263,18 +348,39 @@ func diffSectionPath(section string) (string, error) {
 			oldPath = parseDiffPathField(ln[len(oldFileMarker):])
 		}
 	}
-	if newPath != "" && newPath != devNull {
-		return newPath, nil
+	var path string
+	switch {
+	case newPath != "" && newPath != devNull:
+		path = newPath
+	case oldPath != "" && oldPath != devNull:
+		path = oldPath
+	case gitHeader != "":
+		path = headPathFromGitHeader(gitHeader)
 	}
-	if oldPath != "" && oldPath != devNull {
-		return oldPath, nil
+	if path == "" {
+		return "", fmt.Errorf("diff ingestion: cannot determine file path for section: %s", firstLine(section))
 	}
-	if gitHeader != "" {
-		if p := headPathFromGitHeader(gitHeader); p != "" {
-			return p, nil
-		}
+	// The path comes from untrusted diff content; reject one that escapes the
+	// working tree so a hostile `+++ b/../../etc/passwd` header never reaches a
+	// FileEntry a downstream consumer might resolve. (Provenance only today, but
+	// validated at the boundary as defense-in-depth.)
+	if !isSafeDiffContentPath(path) {
+		return "", fmt.Errorf("diff ingestion: refusing unsafe path %q extracted from diff content (absolute path or .. traversal)", path)
 	}
-	return "", fmt.Errorf("diff ingestion: cannot determine file path for section: %s", firstLine(section))
+	return path, nil
+}
+
+// isSafeDiffContentPath reports whether a path extracted from untrusted diff
+// content stays within the working tree: not absolute, and with no leading `..`
+// segment that escapes the root. Purely lexical — the path is provenance and is
+// never opened, so (unlike isSafeDiffPath, which guards a path that IS opened) it
+// has no symlink concern.
+func isSafeDiffContentPath(p string) bool {
+	if filepath.IsAbs(p) {
+		return false
+	}
+	clean := filepath.Clean(p)
+	return clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 // parseDiffPathField extracts the path from a `--- `/`+++ ` header value: it
@@ -299,13 +405,50 @@ func parseDiffPathField(field string) string {
 }
 
 // headPathFromGitHeader extracts the new path from a `diff --git a/<old> b/<new>`
-// line by taking the segment after the last ` b/` token — the same head-side key
-// the splitter uses, sufficient for the header-only (binary/mode) sections that
-// carry no `+++` line.
+// line, for the header-only (binary/mode) sections that carry no `+++` line. The
+// header is ambiguous when a path itself contains the literal " b/" token, so a
+// naive last-" b/"-token split mis-truncates such paths. For the overwhelmingly
+// common modification case (old == new) the header is the symmetric form
+// `a/<P> b/<P>`, which splits unambiguously at its midpoint even when <P> contains
+// " b/". Renames and `--no-prefix` headers stay genuinely ambiguous for spaced
+// paths and fall back to the last " b/" token (correct for unspaced paths).
 func headPathFromGitHeader(header string) string {
 	const sep = " b/"
-	if i := strings.LastIndex(header, sep); i >= 0 {
-		return header[i+len(sep):]
+	body := strings.TrimPrefix(header, gitDiffMarker) // "a/<old> b/<new>"
+	if !strings.HasPrefix(body, "a/") {
+		// --no-prefix: `diff --git <old> <new>` with no a/ b/ markers. The common
+		// modification/binary case is symmetric (`<P> <P>`); recover it via a
+		// single-space midpoint even when <P> contains spaces. Renames or
+		// asymmetric spaced paths stay ambiguous (documented limitation) -> "".
+		return symmetricMidpoint(body, " ")
+	}
+	body = body[len("a/"):] // "<old> b/<new>"
+	if p := symmetricMidpoint(body, sep); p != "" {
+		return p
+	}
+	return lastBToken(body, sep)
+}
+
+// symmetricMidpoint returns the second half of body when it has the symmetric
+// form `<P><sep><P>` (the common same-path git header, where old == new), even
+// when <P> itself contains sep. It returns "" for an asymmetric (rename) or
+// genuinely ambiguous spaced header.
+func symmetricMidpoint(body, sep string) string {
+	if len(body) < len(sep) || (len(body)-len(sep))%2 != 0 {
+		return ""
+	}
+	half := (len(body) - len(sep)) / 2
+	if body[half:half+len(sep)] == sep && body[:half] == body[half+len(sep):] {
+		return body[half+len(sep):]
+	}
+	return ""
+}
+
+// lastBToken returns the segment after the last ` b/` token of s, or "" when
+// absent — the unspaced-path fallback for headPathFromGitHeader.
+func lastBToken(s, sep string) string {
+	if i := strings.LastIndex(s, sep); i >= 0 {
+		return s[i+len(sep):]
 	}
 	return ""
 }
@@ -337,4 +480,40 @@ func isSafeDiffPath(p string) bool {
 		return false
 	}
 	return true
+}
+
+// rejectDiffSymlinkEscape resolves the symlinks in a (lexically-validated) diff
+// path and rejects it when the real target lands outside the working tree — the
+// filesystem-aware companion to isSafeDiffPath's lexical guard. A path that does
+// not yet resolve (EvalSymlinks errors) is left to the subsequent os.Open, and a
+// failure to determine the working-tree root fails open (the lexical guard still
+// applies). The root is itself symlink-resolved so the comparison holds on
+// platforms whose temp/working dirs sit behind a symlink (e.g. macOS /var ->
+// /private/var).
+func rejectDiffSymlinkEscape(path string) error {
+	// Resolve to an absolute path BEFORE following symlinks so every component
+	// (including the working-tree root itself, e.g. macOS /var -> /private/var) is
+	// resolved consistently — EvalSymlinks on a bare relative path leaves it
+	// relative and Abs would then join the UNresolved cwd, spuriously diverging
+	// from the resolved root below.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil // does not resolve; os.Open reports the concrete failure
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolvedRoot
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("diff ingestion: refusing diff path %q: resolves outside the working tree via a symlink", path)
+	}
+	return nil
 }

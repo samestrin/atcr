@@ -1,14 +1,17 @@
 package fanout
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -140,12 +143,27 @@ func TestPrepareReviewFromDiff_MalformedDiffPropagates(t *testing.T) {
 	assert.NoDirExists(t, out, "a malformed diff must not scaffold a review")
 }
 
+// OutputDir and IDOverride are mutually exclusive; the error must refer to the
+// request fields, not the CLI flag names.
+func TestPrepareReviewFromDiff_OutputDirAndIDOverrideMutuallyExclusive(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	req := diffReq(t.TempDir(), "")
+	req.OutputDir = filepath.Join(t.TempDir(), "ext-review")
+	req.IDOverride = "custom-id"
+
+	_, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OutputDir")
+	assert.Contains(t, err.Error(), "IDOverride")
+	assert.NotContains(t, err.Error(), "--output-dir")
+	assert.NotContains(t, err.Error(), "--id")
+}
+
 // When the byte budget drops a NON-LAST file from a multi-file diff (independent
 // review MEDIUM), the elision must be observable downstream: the agents' status
 // records the dropped file, and the materialized payload contains only the kept
 // files — the same truncation contract the git-range path honors.
 func TestPrepareReviewFromDiff_MidFileBudgetDropSurfacesTruncation(t *testing.T) {
-	t.Setenv("ATCR_TEST_KEY", "secret")
 	// Three files; the MIDDLE one is by far the largest, so largest-first byte
 	// budgeting drops it specifically.
 	fileA := "--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
@@ -180,6 +198,36 @@ func TestPrepareReviewFromDiff_MidFileBudgetDropSurfacesTruncation(t *testing.T)
 		assert.True(t, st.Truncated, "agent %s must record truncation", agent)
 		assert.Contains(t, st.FilesDropped, "mid.go", "agent %s must list the dropped middle file", agent)
 	}
+}
+
+// PrepareReviewFromDiff must surface PARTIAL truncation at the ingestion boundary
+// (independent review LOW/observability): when the byte budget drops some — but
+// not all — files, a warning is logged so an operator sees the subset review was
+// not built from the whole diff. (AllDropped already errors; this covers the
+// silent partial case.)
+func TestPrepareReviewFromDiff_PartialTruncationLoggedAtBoundary(t *testing.T) {
+	fileA := "--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+	fileMid := "--- a/mid.go\n+++ b/mid.go\n@@ -1,1 +1,1 @@\n-" + strings.Repeat("x", 2000) + "\n+" + strings.Repeat("y", 2000) + "\n"
+	fileZ := "--- a/z.go\n+++ b/z.go\n@@ -1,1 +1,1 @@\n-y\n+z\n"
+	diff := fileA + fileMid + fileZ
+
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = 256 // fits a.go + z.go, not mid.go
+	req := ReviewRequest{
+		Root: t.TempDir(), Branch: "feature/test", Date: "2026-06-10",
+		TimeSuffix: "120000", StartedAt: time.Unix(1000, 0).UTC(),
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	_, err := PrepareReviewFromDiff(ctx, cfg, req, diff)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "truncat", "partial truncation must be logged at the ingestion boundary")
+	assert.Contains(t, out, "mid.go", "the dropped file must be named in the boundary log")
 }
 
 // readFixture loads a suite diff fixture relative to the fanout package dir.
