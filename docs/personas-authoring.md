@@ -52,6 +52,8 @@ The loader canonicalizes every entry (trim whitespace → strip **all** leading 
 
 **Single trailing extensions only:** `language` entries must be single trailing extensions such as `go` or `ts`. Compound forms like `tar.gz` or `d.ts` are stored verbatim, but the router canonicalizes a finding's extension to its last segment (e.g. `gz` or `ts`), so compound entries silently never match. Use the last segment (`gz`, `ts`) instead.
 
+**Only *surrounding* whitespace is trimmed:** canonicalization removes leading/trailing whitespace, but *interior* whitespace is left untouched. An entry like `"g o"` is stored verbatim as `g o` and — like a compound extension — silently never matches any finding extension; it is **not** rejected at load. Write a single contiguous token (`go`), never one with embedded spaces.
+
 **Nil semantics:** omit `language` entirely (or leave it empty) and the persona carries no constraint — it participates in every review regardless of the repository's detected language, with no routing preference. Use a `language` scope only when the persona is genuinely language-specific.
 
 ## 2. The prompt template
