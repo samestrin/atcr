@@ -321,6 +321,12 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	return &PreparedReview{ID: id, Dir: dir, Slots: slots, TimeoutSec: cfg.Settings.TimeoutSecs, MaxParallel: cfg.Settings.MaxParallel, Repo: req.Repo, Head: req.Range.Head, manifest: m, cache: revCache, cacheNoRead: req.NoCache}, nil
 }
 
+// PrepareReviewFromDiff is the diff-file ingestion counterpart of PrepareReview
+// (stub — implemented in the GREEN stage).
+func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewRequest, diffText string) (*PreparedReview, error) {
+	return nil, errors.New("not implemented")
+}
+
 // runEngine wires the optional read-only tool harness for p's tool-enabled slots
 // (a head snapshot → path jail → dispatcher, shared across the run, plus a
 // per-agent transcript writer under poolDir), runs the fan-out under p's timeout,
