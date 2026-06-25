@@ -355,6 +355,47 @@ func TestUpgrade_NotInstalled(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestUpgrade_WritesAt0600(t *testing.T) {
+	remote := `provider: anthropic
+model: claude-sonnet-4-6
+role: reviewer
+version: "1.1.0"
+`
+	srv := testServer(t, map[string]string{"/security/owasp.yaml": remote})
+	dir := t.TempDir()
+	installFixture(t, dir, "security/owasp", validPersonaYAML) // v1.0.0
+
+	_, err := Upgrade(srv.Client(), srv.URL, dir, "security/owasp", false)
+	require.NoError(t, err)
+
+	info, err := os.Stat(filepath.Join(dir, "security", "owasp.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "upgraded persona must be written at 0o600")
+}
+
+func TestUpgrade_RejectsSymlinkAtDest(t *testing.T) {
+	remote := `provider: anthropic
+model: claude-sonnet-4-6
+role: reviewer
+version: "1.1.0"
+`
+	srv := testServer(t, map[string]string{"/security/owasp.yaml": remote})
+	dir := t.TempDir()
+	installFixture(t, dir, "security/owasp", validPersonaYAML)
+
+	target := filepath.Join(t.TempDir(), "external.yaml")
+	require.NoError(t, os.WriteFile(target, []byte("sensitive"), 0o644))
+	dest := filepath.Join(dir, "security", "owasp.yaml")
+	require.NoError(t, os.Remove(dest))
+	require.NoError(t, os.Symlink(target, dest))
+
+	_, err := Upgrade(srv.Client(), srv.URL, dir, "security/owasp", false)
+	require.Error(t, err, "Upgrade must reject a symlink at the destination path")
+
+	got, _ := os.ReadFile(target)
+	assert.Equal(t, "sensitive", string(got), "symlink target must remain untouched")
+}
+
 // --- TestPersona (fixture runner delegation) --------------------------------
 
 type stubRunner struct {

@@ -3,6 +3,7 @@ package personas
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/samestrin/atcr/internal/registry"
@@ -60,7 +61,31 @@ func Upgrade(client HTTPClient, baseURL, personasDir, name string, dryRun bool) 
 	if dryRun {
 		return res, nil
 	}
-	if err := os.WriteFile(dest, remoteData, 0o644); err != nil {
+	// Guard against TOCTOU symlink attacks: if dest is a symlink, writing
+	// through it would follow it and write outside the personas directory.
+	if fi, lerr := os.Lstat(dest); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return UpgradeResult{}, fmt.Errorf("refusing to write persona to symlink at %s", dest)
+	}
+	// Atomic replace: stage to a sibling temp file and rename into place so
+	// readers never observe a partially-written persona.
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
+	if err != nil {
+		return UpgradeResult{}, fmt.Errorf("failed to create persona temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(remoteData); err != nil {
+		_ = tmp.Close()
+		return UpgradeResult{}, fmt.Errorf("failed to write persona temp file: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return UpgradeResult{}, fmt.Errorf("failed to set persona temp file permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return UpgradeResult{}, fmt.Errorf("failed to close persona temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
 		return UpgradeResult{}, fmt.Errorf("failed to write persona to %s: %w", dest, err)
 	}
 	return res, nil
