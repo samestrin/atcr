@@ -117,14 +117,14 @@ func TestLeaderboardCmd_ExportFlag(t *testing.T) {
 	// --export emits JSON, not the table: the table header must be absent.
 	require.NotContains(t, out, "REVIEWER\t")
 	var env struct {
-		SchemaVersion int `json:"schema_version"`
-		Records       []struct {
-			Reviewer string `json:"reviewer"`
-		} `json:"records"`
+		SubmissionSchema int `json:"submission_schema"`
+		Reviewers        []struct {
+			Persona string `json:"persona"`
+		} `json:"reviewers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &env), "export stdout must be valid JSON: %s", out)
-	require.Equal(t, 1, env.SchemaVersion)
-	require.Len(t, env.Records, 2)
+	require.Equal(t, 1, env.SubmissionSchema)
+	require.Len(t, env.Reviewers, 2)
 }
 
 func TestLeaderboardCmd_OutputFlag(t *testing.T) {
@@ -135,15 +135,15 @@ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
 	code, out := execCmdCapture(t, "leaderboard", "--export", "--output", dest)
 	require.Equal(t, 0, code, out)
 	// --output routes JSON to the file (creating parents), not stdout.
-	require.NotContains(t, out, "schema_version")
+	require.NotContains(t, out, "submission_schema")
 
 	data, err := os.ReadFile(dest)
 	require.NoError(t, err, "output file must be created")
 	var env struct {
-		SchemaVersion int `json:"schema_version"`
+		SubmissionSchema int `json:"submission_schema"`
 	}
 	require.NoError(t, json.Unmarshal(data, &env))
-	require.Equal(t, 1, env.SchemaVersion)
+	require.Equal(t, 1, env.SubmissionSchema)
 
 	info, err := os.Stat(dest)
 	require.NoError(t, err)
@@ -230,12 +230,12 @@ func TestLeaderboardCmd_SinceAllExportIncludesOldRecords(t *testing.T) {
 	code, out := execCmdCapture(t, "leaderboard", "--export", "--since", "all")
 	require.Equal(t, 0, code, "--export --since all must include old records: %s", out)
 	var env struct {
-		Records []struct {
-			Reviewer string `json:"reviewer"`
-		} `json:"records"`
+		Reviewers []struct {
+			Persona string `json:"persona"`
+		} `json:"reviewers"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &env), "export must be valid JSON: %s", out)
-	require.NotEmpty(t, env.Records, "old records must appear in export with --since all")
+	require.NotEmpty(t, env.Reviewers, "old records must appear in export with --since all")
 }
 
 func TestRenderLeaderboard_WriteErrorPropagated(t *testing.T) {

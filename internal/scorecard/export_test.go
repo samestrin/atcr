@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,8 +19,7 @@ import (
 var fixedExportNow = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
 // exportRec builds a reviewer record dated ageDays before fixedExportNow with a
-// full metric set (incl. tokens) so export aggregation and preservation can be
-// asserted exactly.
+// full metric set so export aggregation and derivation can be asserted exactly.
 func exportRec(reviewer, model string, ageDays int) Record {
 	ts := fixedExportNow.AddDate(0, 0, -ageDays).UTC().Format(time.RFC3339)
 	return Record{
@@ -47,19 +47,147 @@ func parseEnvelope(t *testing.T, data []byte) ExportEnvelope {
 	return env
 }
 
-func TestExport_ValidJSON(t *testing.T) {
+func TestExport_EnvelopeMatchesSpec(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
 
 	env := parseEnvelope(t, data)
-	assert.Equal(t, 1, env.SchemaVersion)
-	_, perr := time.Parse(time.RFC3339, env.ExportedAt)
-	require.NoError(t, perr, "exported_at must be RFC3339")
-	assert.Equal(t, "30d", env.Filters.Since)
-	require.Len(t, env.Records, 1)
-	assert.Equal(t, 0, env.Records[0].Index, "first record index is 0")
-	assert.Equal(t, 1, env.Records[0].Runs, "a single source record aggregates to runs=1")
+	assert.Equal(t, SubmissionSchema, env.SubmissionSchema, "submission_schema is the public schema constant")
+	assert.Equal(t, 1, env.SubmissionSchema, "spec pins submission_schema to 1")
+	assert.Equal(t, version.Version, env.AtcrVersion, "atcr_version comes from internal/version")
+	_, perr := time.Parse(time.RFC3339, env.SubmittedAt)
+	require.NoError(t, perr, "submitted_at must be RFC3339")
+	require.Len(t, env.Reviewers, 1)
+	assert.Equal(t, 1, env.Reviewers[0].Runs, "a single source record aggregates to runs=1")
+}
+
+// TestExport_EnvelopeKeysAreSpecExact pins the exact top-level and per-reviewer
+// JSON keys: no legacy key (schema_version/exported_at/records/filters) may leak,
+// and no dropped field (tokens, role, index, the corroborated/solo/verified/
+// refuted counts) may appear.
+func TestExport_EnvelopeKeysAreSpecExact(t *testing.T) {
+	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+		FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	s := string(data)
+
+	for _, k := range []string{`"submission_schema"`, `"atcr_version"`, `"submitted_at"`, `"reviewers"`} {
+		assert.Contains(t, s, k, "envelope must carry spec key %s", k)
+	}
+	for _, k := range []string{`"model"`, `"persona"`, `"runs"`, `"findings_raised_avg"`,
+		`"corroboration_rate"`, `"cost_per_corroborated_finding_usd"`, `"latency_p50_ms"`} {
+		assert.Contains(t, s, k, "reviewer record must carry spec key %s", k)
+	}
+	for _, k := range []string{`"schema_version"`, `"exported_at"`, `"records"`, `"filters"`,
+		`"reviewer"`, `"role"`, `"index"`, `"findings_raised"`, `"findings_corroborated"`,
+		`"findings_solo"`, `"findings_verified"`, `"findings_refuted"`, `"cost_usd"`,
+		`"tokens_in"`, `"tokens_out"`, `"latency_ms_avg"`, `"run_id"`} {
+		assert.NotContains(t, s, k, "dropped/legacy key %s must not appear", k)
+	}
+}
+
+func TestExport_FindingsRaisedAvgIsPerRun(t *testing.T) {
+	// Two runs, 12 raised each => average 12.0 (NOT the sum 24).
+	recs := []Record{
+		exportRec("bruce", "claude-sonnet-4-6", 1),
+		exportRec("bruce", "claude-sonnet-4-6", 3),
+	}
+	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	out := parseEnvelope(t, data).Reviewers
+	require.Len(t, out, 1, "same (persona, model) collapses to one aggregated row")
+	assert.Equal(t, 2, out[0].Runs)
+	assert.InDelta(t, 12.0, out[0].FindingsRaisedAvg, 1e-9, "findings_raised_avg is per-run, not the total")
+}
+
+func TestExport_CostPerCorroboratedFinding(t *testing.T) {
+	// One run: cost 0.04, corroborated 7 => 0.04/7.
+	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+		FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.InDelta(t, 0.04/7.0, r.CostPerCorroboratedFindingUSD, 1e-9)
+}
+
+func TestExport_CostPerCorroboratedZeroWhenNoCorroboration(t *testing.T) {
+	rec := exportRec("bruce", "m", 1)
+	rec.FindingsCorroborated = 0
+	rec.CostUSD = 0.5
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Equal(t, 0.0, r.CostPerCorroboratedFindingUSD, "no corroborated findings => 0, never Inf/NaN")
+}
+
+func TestExport_LatencyP50IsMedian(t *testing.T) {
+	// Three runs with latencies 100, 9100, 200 => median 200.
+	mk := func(age int, lat int64) Record {
+		r := exportRec("bruce", "claude-sonnet-4-6", age)
+		r.LatencyMS = lat
+		return r
+	}
+	recs := []Record{mk(1, 100), mk(2, 9100), mk(3, 200)}
+	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Equal(t, int64(200), r.LatencyP50MS, "p50 is the median of per-run latencies, not the mean")
+}
+
+func TestExport_LatencyP50EvenCountAveragesMiddle(t *testing.T) {
+	mk := func(age int, lat int64) Record {
+		r := exportRec("bruce", "claude-sonnet-4-6", age)
+		r.LatencyMS = lat
+		return r
+	}
+	// Four runs: 100, 200, 300, 500 => median (200+300)/2 = 250.
+	recs := []Record{mk(1, 100), mk(2, 200), mk(3, 300), mk(4, 500)}
+	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Equal(t, int64(250), r.LatencyP50MS)
+}
+
+func TestExport_SurvivedSkepticOmittedWhenNoVerification(t *testing.T) {
+	// No verification pointers => survived_skeptic_rate key must be omitted entirely.
+	data, err := Export([]Record{exportRec("bruce", "m", 1)},
+		FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "survived_skeptic_rate",
+		"absent verification omits the key (not 0.0, not null)")
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Nil(t, r.SurvivedSkepticRate)
+}
+
+func TestExport_SurvivedSkepticPresentWhenVerified(t *testing.T) {
+	v, ref := 4, 1
+	rate := ratio(4, 5)
+	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+	rec.FindingsVerified = &v
+	rec.FindingsRefuted = &ref
+	rec.SurvivedSkepticRate = &rate
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.SurvivedSkepticRate, "verification present => rate emitted")
+	assert.InDelta(t, 0.8, *r.SurvivedSkepticRate, 1e-9)
+}
+
+func TestExport_SurvivedSkepticZeroIsEmittedWhenAllRefuted(t *testing.T) {
+	// Verification ran but every finding was refuted: rate is a legitimate 0.0 and
+	// must be EMITTED (pointer to 0.0), distinguishable from "no verification" (nil).
+	v, ref := 0, 5
+	rate := 0.0
+	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+	rec.FindingsVerified = &v
+	rec.FindingsRefuted = &ref
+	rec.SurvivedSkepticRate = &rate
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "survived_skeptic_rate", "ran-but-all-refuted emits 0.0, not omit")
+	r := parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.SurvivedSkepticRate)
+	assert.Equal(t, 0.0, *r.SurvivedSkepticRate)
 }
 
 func TestExport_AnonymizationStripsRunID(t *testing.T) {
@@ -92,8 +220,6 @@ func TestExport_AnonymizationStripsAPIKeys(t *testing.T) {
 }
 
 func TestExport_AnonymizationStripsGluedPathAndWinPath(t *testing.T) {
-	// A path glued to a non-space byte (host=/etc/passwd) and a Windows path must
-	// both be stripped — the scrub is not anchored to whitespace.
 	rec := exportRec("bruce", `host=/etc/passwd C:\Users\sam\id_rsa`, 1)
 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
@@ -114,11 +240,6 @@ func TestExport_AnonymizationStripsEmailAndMoreKeys(t *testing.T) {
 }
 
 func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
-	// A path root glued directly to an alphanumeric byte (host/etc/passwd, no
-	// separator) must still be stripped. scrubAbsPath deliberately PRESERVES an
-	// alnum-preceded '/' so provider-prefixed model ids like "anthropic/claude-3"
-	// survive; that allowance leaks an embedded absolute path unless an
-	// embedded-path-root scrub also runs. Regression guard for the export.go:238 TD.
 	rec := exportRec("bruce", "host/etc/passwd node/var/log/secret", 1)
 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
@@ -129,76 +250,35 @@ func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
 }
 
 func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
-	// A provider-prefixed model id carries an internal '/', which is NOT an
-	// absolute path and must survive scrubbing.
 	data, err := Export([]Record{exportRec("bruce", "anthropic/claude-3", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
-	assert.Equal(t, "anthropic/claude-3", parseEnvelope(t, data).Records[0].Model)
+	assert.Equal(t, "anthropic/claude-3", parseEnvelope(t, data).Reviewers[0].Model)
 }
 
 func TestExport_ClampsNegativeMetrics(t *testing.T) {
-	// A corrupt-but-parseable record with negative counts must not produce a
-	// negative or out-of-range metric in the public submission.
 	rec := exportRec("bruce", "m", 1)
 	rec.FindingsRaised = -5
 	rec.FindingsCorroborated = -2
-	rec.TokensIn = -100
 	rec.CostUSD = -1.0
+	rec.LatencyMS = -100
 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
-	r := parseEnvelope(t, data).Records[0]
-	assert.GreaterOrEqual(t, r.FindingsRaised, 0)
-	assert.GreaterOrEqual(t, r.FindingsCorroborated, 0)
-	assert.GreaterOrEqual(t, r.TokensIn, 0)
-	assert.GreaterOrEqual(t, r.CostUSD, 0.0)
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.GreaterOrEqual(t, r.FindingsRaisedAvg, 0.0)
+	assert.GreaterOrEqual(t, r.CostPerCorroboratedFindingUSD, 0.0)
+	assert.GreaterOrEqual(t, r.LatencyP50MS, int64(0))
 	assert.GreaterOrEqual(t, r.CorroborationRate, 0.0)
 	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
 }
 
-func TestExport_MetricsPreserved(t *testing.T) {
+func TestExport_PersonaAndModelPreserved(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
-	r := parseEnvelope(t, data).Records[0]
-	assert.Equal(t, 12, r.FindingsRaised)
-	assert.Equal(t, 7, r.FindingsCorroborated)
-	assert.Equal(t, 5, r.FindingsSolo)
-	assert.InDelta(t, ratio(7, 12), r.CorroborationRate, 1e-9)
-	assert.InDelta(t, 0.04, r.CostUSD, 1e-9)
-	assert.Equal(t, 14200, r.TokensIn)
-	assert.Equal(t, 4000, r.TokensOut)
-	assert.Equal(t, int64(9100), r.LatencyMSAvg)
-}
-
-func TestExport_ModelPersonaRolePreserved(t *testing.T) {
-	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
-		FilterOpts{Since: "30d"}, fixedExportNow)
-	require.NoError(t, err)
-	r := parseEnvelope(t, data).Records[0]
-	assert.Equal(t, "bruce", r.Reviewer, "persona names are not PII; preserved as-is")
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Equal(t, "bruce", r.Persona, "persona names are not PII; preserved as-is")
 	assert.Equal(t, "claude-sonnet-4-6", r.Model)
-	assert.Equal(t, "reviewer", r.Role)
-}
-
-func TestExport_VerificationZeroWhenAbsent(t *testing.T) {
-	// A record with no verification pointers must serialize zero values (not
-	// omitted/null) for the verification metrics (AC 04-03 Scenario 8).
-	data, err := Export([]Record{exportRec("bruce", "m", 1)},
-		FilterOpts{Since: "30d"}, fixedExportNow)
-	require.NoError(t, err)
-	var raw []map[string]json.RawMessage
-	env := struct {
-		Records []map[string]json.RawMessage `json:"records"`
-	}{}
-	require.NoError(t, json.Unmarshal(data, &env))
-	raw = env.Records
-	require.Len(t, raw, 1)
-	for _, f := range []string{"findings_verified", "findings_refuted", "survived_skeptic_rate"} {
-		v, ok := raw[0][f]
-		require.True(t, ok, "verification field %q must be present (no omitempty)", f)
-		assert.NotEqual(t, "null", string(v), "%q must be a zero value, not null", f)
-	}
 }
 
 func TestExport_Determinism(t *testing.T) {
@@ -214,7 +294,7 @@ func TestExport_Determinism(t *testing.T) {
 	assert.Equal(t, a, b, "Export must be byte-identical for identical input")
 }
 
-func TestExport_SortedByModelReviewerRole(t *testing.T) {
+func TestExport_SortedByModelPersona(t *testing.T) {
 	recs := []Record{
 		exportRec("bruce", "gpt-4", 1),
 		exportRec("alice", "claude-sonnet-4-6", 1),
@@ -222,60 +302,29 @@ func TestExport_SortedByModelReviewerRole(t *testing.T) {
 	}
 	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
 	require.NoError(t, err)
-	recsOut := parseEnvelope(t, data).Records
-	require.Len(t, recsOut, 3)
-	// (model asc, reviewer asc): claude/alice, claude/bruce, gpt-4/bruce.
-	assert.Equal(t, "claude-sonnet-4-6", recsOut[0].Model)
-	assert.Equal(t, "alice", recsOut[0].Reviewer)
-	assert.Equal(t, "claude-sonnet-4-6", recsOut[1].Model)
-	assert.Equal(t, "bruce", recsOut[1].Reviewer)
-	assert.Equal(t, "gpt-4", recsOut[2].Model)
-	// indices are sequential in sorted order.
-	for i, r := range recsOut {
-		assert.Equal(t, i, r.Index)
-	}
+	out := parseEnvelope(t, data).Reviewers
+	require.Len(t, out, 3)
+	// (model asc, persona asc): claude/alice, claude/bruce, gpt-4/bruce.
+	assert.Equal(t, "claude-sonnet-4-6", out[0].Model)
+	assert.Equal(t, "alice", out[0].Persona)
+	assert.Equal(t, "claude-sonnet-4-6", out[1].Model)
+	assert.Equal(t, "bruce", out[1].Persona)
+	assert.Equal(t, "gpt-4", out[2].Model)
 }
 
-func TestExport_AggregatesRunsPerReviewerModel(t *testing.T) {
-	recs := []Record{
-		exportRec("bruce", "claude-sonnet-4-6", 1),
-		exportRec("bruce", "claude-sonnet-4-6", 3),
-	}
-	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
-	require.NoError(t, err)
-	out := parseEnvelope(t, data).Records
-	require.Len(t, out, 1, "same (reviewer, model) collapses to one aggregated row")
-	assert.Equal(t, 2, out[0].Runs)
-	assert.Equal(t, 24, out[0].FindingsRaised, "raised is summed across runs")
-}
-
-func TestExport_FiltersApplied(t *testing.T) {
+func TestExport_FiltersAppliedButNotEchoed(t *testing.T) {
 	recs := []Record{
 		exportRec("bruce", "claude-sonnet-4-6", 2),
 		exportRec("diana", "gpt-4o", 40), // older than 7d window
 	}
 	data, err := Export(recs, FilterOpts{Since: "7d", Model: "claude-sonnet-4-6"}, fixedExportNow)
 	require.NoError(t, err)
+	// Filters select the slice but are NOT echoed (they would leak query params
+	// about the user's local dataset).
+	assert.NotContains(t, string(data), "filters")
 	env := parseEnvelope(t, data)
-	assert.Equal(t, "7d", env.Filters.Since)
-	assert.Equal(t, "claude-sonnet-4-6", env.Filters.Model)
-	require.Len(t, env.Records, 1)
-	assert.Equal(t, "bruce", env.Records[0].Reviewer)
-}
-
-// TestExport_AllFiltersEchoedDistinctly pins the FilterOpts -> ExportFilters
-// mapping with a distinct value per field (Persona was previously unasserted).
-// Distinct values make a misaligned field mapping (e.g. a future reorder of the
-// struct fields) surface as a wrong-field echo instead of a silent pass.
-func TestExport_AllFiltersEchoedDistinctly(t *testing.T) {
-	recs := []Record{exportRec("bruce", "claude-sonnet-4-6", 1)}
-	opts := FilterOpts{Since: "7d", Model: "claude-sonnet-4-6", Persona: "bruce"}
-	data, err := Export(recs, opts, fixedExportNow)
-	require.NoError(t, err)
-	env := parseEnvelope(t, data)
-	assert.Equal(t, "7d", env.Filters.Since)
-	assert.Equal(t, "claude-sonnet-4-6", env.Filters.Model)
-	assert.Equal(t, "bruce", env.Filters.Persona)
+	require.Len(t, env.Reviewers, 1)
+	assert.Equal(t, "bruce", env.Reviewers[0].Persona)
 }
 
 func TestExport_NoMatchError(t *testing.T) {
@@ -300,7 +349,7 @@ func TestExport_NoPIIPatternsInOutput(t *testing.T) {
 	assert.False(t, strings.Contains(s, "run_id"))
 }
 
-func TestAnonymizeRecord_StripsRunIDPreservesMetrics(t *testing.T) {
+func TestAnonymizeRecord_SingleRunDerivedFields(t *testing.T) {
 	v, ref := 4, 1
 	rate := 0.8
 	raw := Record{
@@ -311,9 +360,9 @@ func TestAnonymizeRecord_StripsRunIDPreservesMetrics(t *testing.T) {
 		Model:                "claude-sonnet-4-6",
 		Role:                 "reviewer",
 		FindingsRaised:       120,
-		FindingsCorroborated: 78,
-		FindingsSolo:         42,
-		CorroborationRate:    0.65,
+		FindingsCorroborated: 80,
+		FindingsSolo:         40,
+		CorroborationRate:    ratio(80, 120),
 		CostUSD:              0.60,
 		TokensIn:             213000,
 		TokensOut:            60000,
@@ -323,19 +372,13 @@ func TestAnonymizeRecord_StripsRunIDPreservesMetrics(t *testing.T) {
 		SurvivedSkepticRate:  &rate,
 	}
 	pr := AnonymizeRecord(raw)
-	assert.Equal(t, "bruce", pr.Reviewer)
+	assert.Equal(t, "bruce", pr.Persona)
 	assert.Equal(t, "claude-sonnet-4-6", pr.Model)
-	assert.Equal(t, "reviewer", pr.Role)
 	assert.Equal(t, 1, pr.Runs, "a single record anonymizes to runs=1")
-	assert.Equal(t, 120, pr.FindingsRaised)
-	assert.Equal(t, 78, pr.FindingsCorroborated)
-	assert.Equal(t, 42, pr.FindingsSolo)
-	assert.InDelta(t, 0.65, pr.CorroborationRate, 1e-9)
-	assert.Equal(t, 4, pr.FindingsVerified)
-	assert.Equal(t, 1, pr.FindingsRefuted)
-	assert.InDelta(t, 0.8, pr.SurvivedSkepticRate, 1e-9)
-	assert.Equal(t, 0.60, pr.CostUSD)
-	assert.Equal(t, 213000, pr.TokensIn)
-	assert.Equal(t, 60000, pr.TokensOut)
-	assert.Equal(t, int64(9100), pr.LatencyMSAvg)
+	assert.InDelta(t, 120.0, pr.FindingsRaisedAvg, 1e-9, "single run: avg == raised")
+	assert.InDelta(t, ratio(80, 120), pr.CorroborationRate, 1e-9)
+	assert.InDelta(t, 0.60/80.0, pr.CostPerCorroboratedFindingUSD, 1e-9)
+	assert.Equal(t, int64(9100), pr.LatencyP50MS)
+	require.NotNil(t, pr.SurvivedSkepticRate)
+	assert.InDelta(t, 0.8, *pr.SurvivedSkepticRate, 1e-9)
 }

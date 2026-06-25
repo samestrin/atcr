@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/version"
 )
 
 // ErrNoExportRecords is returned by Export when no record survives the filters
@@ -14,85 +16,108 @@ import (
 // user-facing guidance (AC 04-04); callers write no output on this path.
 var ErrNoExportRecords = errors.New("no records match the export filters")
 
-// PublicRecord is one aggregated row of the v1 public submission schema. It is an
-// allowlist: only these fields are ever emitted, so a field that is not here
-// (run_id, paths, hostnames, keys) cannot leak. No field carries `omitempty` —
-// an absent numeric field would itself encode information, so every field is
-// always present, zero values included (AC 04-03).
+// SubmissionSchema is the version of the PUBLIC leaderboard submission format
+// (Epic 10.0). It is intentionally decoupled from the on-disk store's
+// SchemaVersion: the local record format and the public submission format evolve
+// independently, so bumping one must not silently change the other.
+const SubmissionSchema = 1
+
+// PublicRecord is one aggregated reviewer row of the public submission schema,
+// matching the Epic 10.0 spec JSON exactly. It is an allowlist: only these fields
+// are ever emitted, so anything not here (run_id, paths, hostnames, keys, raw
+// token/cost/count internals) cannot leak. SurvivedSkepticRate is the sole
+// omitempty field — a nil pointer omits the key, which distinguishes "no
+// verification ran for this group" (key absent) from "verification ran and every
+// finding was refuted" (key present with value 0.0).
 type PublicRecord struct {
-	Index                int     `json:"index"`
-	Reviewer             string  `json:"reviewer"`
-	Model                string  `json:"model"`
-	Role                 string  `json:"role"`
-	Runs                 int     `json:"runs"`
-	FindingsRaised       int     `json:"findings_raised"`
-	FindingsCorroborated int     `json:"findings_corroborated"`
-	FindingsSolo         int     `json:"findings_solo"`
-	CorroborationRate    float64 `json:"corroboration_rate"`
-	FindingsVerified     int     `json:"findings_verified"`
-	FindingsRefuted      int     `json:"findings_refuted"`
-	// SurvivedSkepticRate is verified/(verified+refuted), or 0.0 when that
-	// denominator is zero. 0.0 is therefore ambiguous: it means BOTH "no
-	// verification ran for this group" and "every finding was refuted/unverifiable".
-	// The field is always present (no omitempty, per the allowlist contract above)
-	// and a sentinel is impossible because clampRate pins it to [0,1]; a consumer
-	// disambiguates via findings_verified+findings_refuted > 0 (zero => no verification).
-	SurvivedSkepticRate float64 `json:"survived_skeptic_rate"`
-	CostUSD             float64 `json:"cost_usd"`
-	TokensIn            int     `json:"tokens_in"`
-	TokensOut           int     `json:"tokens_out"`
-	LatencyMSAvg        int64   `json:"latency_ms_avg"`
+	Model                         string   `json:"model"`
+	Persona                       string   `json:"persona"`
+	Runs                          int      `json:"runs"`
+	FindingsRaisedAvg             float64  `json:"findings_raised_avg"`
+	CorroborationRate             float64  `json:"corroboration_rate"`
+	SurvivedSkepticRate           *float64 `json:"survived_skeptic_rate,omitempty"`
+	CostPerCorroboratedFindingUSD float64  `json:"cost_per_corroborated_finding_usd"`
+	LatencyP50MS                  int64    `json:"latency_p50_ms"`
 }
 
-// ExportFilters echoes the active filter values back in the envelope so a
-// submission is self-describing about the slice of data it represents.
-type ExportFilters struct {
-	Since   string `json:"since"`
-	Model   string `json:"model"`
-	Persona string `json:"persona"`
-}
-
-// ExportEnvelope is the top-level v1 public submission document.
+// ExportEnvelope is the top-level public submission document (Epic 10.0 spec).
+// The active filters are deliberately NOT echoed: they would leak query
+// parameters about the submitter's local dataset, and a public submission is
+// defined as an aggregate over the selected slice, not a description of the query.
 type ExportEnvelope struct {
-	SchemaVersion int            `json:"schema_version"`
-	ExportedAt    string         `json:"exported_at"`
-	Filters       ExportFilters  `json:"filters"`
-	Records       []PublicRecord `json:"records"`
+	SubmissionSchema int            `json:"submission_schema"`
+	AtcrVersion      string         `json:"atcr_version"`
+	SubmittedAt      string         `json:"submitted_at"`
+	Reviewers        []PublicRecord `json:"reviewers"`
 }
 
-// AnonymizeRecord maps one internal Record to a PublicRecord, copying only the
-// v1 allowlist fields and dropping everything else (run_id, verification
-// pointers become plain zero-safe values). It is the single field-mapping
-// primitive: Export anonymizes every record through it before aggregating, so
-// the allowlist is defined in exactly one place. A single record anonymizes to
-// runs=1 with latency_ms_avg equal to its own latency. Identity strings
-// (reviewer/model/role) are scrubbed of path-like and key-like substrings as
-// defense-in-depth, even though they are not normally PII-bearing.
-func AnonymizeRecord(raw Record) PublicRecord {
+// reviewerAcc accumulates the raw per-run inputs for one (persona, model) group.
+// The public per-reviewer metrics are derived ONLY at finalize() time: an average
+// (findings_raised_avg), a median (latency_p50_ms), and a ratio-of-totals
+// (cost_per_corroborated, corroboration_rate) cannot be composed from per-run
+// PublicRecords without bias, so aggregation works from raw records and the
+// public row is computed once at the end. persona/model are scrubbed at ingestion
+// (the single anonymization point), so finalize() never re-scrubs.
+type reviewerAcc struct {
+	persona         string
+	model           string
+	runs            int
+	raisedTotal     int
+	corroborated    int
+	costTotal       float64
+	latencies       []int64
+	verified        int
+	refuted         int
+	hasVerification bool
+}
+
+func (a *reviewerAcc) add(r Record) {
+	a.runs++
+	a.raisedTotal += clampNonNeg(r.FindingsRaised)
+	a.corroborated += clampNonNeg(r.FindingsCorroborated)
+	a.costTotal += clampNonNegF(r.CostUSD)
+	a.latencies = append(a.latencies, clampNonNeg64(r.LatencyMS))
+	// Any verification pointer present marks the group as verified; the counts
+	// sum only over the runs that actually carried verification data.
+	if r.FindingsVerified != nil {
+		a.verified += clampNonNeg(*r.FindingsVerified)
+		a.hasVerification = true
+	}
+	if r.FindingsRefuted != nil {
+		a.refuted += clampNonNeg(*r.FindingsRefuted)
+		a.hasVerification = true
+	}
+	if r.SurvivedSkepticRate != nil {
+		a.hasVerification = true
+	}
+}
+
+func (a *reviewerAcc) finalize() PublicRecord {
 	pr := PublicRecord{
-		Reviewer:             scrubField(raw.Reviewer),
-		Model:                scrubField(raw.Model),
-		Role:                 scrubField(raw.Role),
-		Runs:                 1,
-		FindingsRaised:       clampNonNeg(raw.FindingsRaised),
-		FindingsCorroborated: clampNonNeg(raw.FindingsCorroborated),
-		FindingsSolo:         clampNonNeg(raw.FindingsSolo),
-		CorroborationRate:    clampRate(raw.CorroborationRate),
-		CostUSD:              clampNonNegF(raw.CostUSD),
-		TokensIn:             clampNonNeg(raw.TokensIn),
-		TokensOut:            clampNonNeg(raw.TokensOut),
-		LatencyMSAvg:         clampNonNeg64(raw.LatencyMS),
+		Model:                         a.model,
+		Persona:                       a.persona,
+		Runs:                          a.runs,
+		FindingsRaisedAvg:             avgPerRun(a.raisedTotal, a.runs),
+		CorroborationRate:             clampRate(ratio(a.corroborated, a.raisedTotal)),
+		CostPerCorroboratedFindingUSD: costPer(a.costTotal, a.corroborated),
+		LatencyP50MS:                  medianInt64(a.latencies),
 	}
-	if raw.FindingsVerified != nil {
-		pr.FindingsVerified = clampNonNeg(*raw.FindingsVerified)
-	}
-	if raw.FindingsRefuted != nil {
-		pr.FindingsRefuted = clampNonNeg(*raw.FindingsRefuted)
-	}
-	if raw.SurvivedSkepticRate != nil {
-		pr.SurvivedSkepticRate = clampRate(*raw.SurvivedSkepticRate)
+	if a.hasVerification {
+		rate := clampRate(ratio(a.verified, a.verified+a.refuted))
+		pr.SurvivedSkepticRate = &rate
 	}
 	return pr
+}
+
+// AnonymizeRecord maps one internal Record to a single-run PublicRecord, scrubbing
+// the persona/model identities and deriving the public metrics as if the record
+// were a one-run group (avg == its raised, p50 == its latency, cost-per ==
+// cost/corroborated). It shares the reviewerAcc finalize path so the allowlist
+// and the derivation math live in exactly one place.
+func AnonymizeRecord(raw Record) PublicRecord {
+	a := reviewerAcc{persona: scrubField(raw.Reviewer), model: scrubField(raw.Model)}
+	a.add(raw)
+	return a.finalize()
 }
 
 // clampNonNeg* / clampRate guard the public submission against a corrupt-but-
@@ -132,13 +157,13 @@ func clampRate(f float64) float64 {
 }
 
 // Export filters, anonymizes, aggregates, and serializes the scorecard records
-// into a deterministic v1 public submission document. Filters are applied BEFORE
-// anonymization (AC 04-04). Records are aggregated by (reviewer, model, role) —
-// summing finding/token/cost totals, counting runs, and averaging latency — then
-// sorted ascending by (model, reviewer, role) and indexed by position, so the
-// same input and exportedAt always produce byte-identical output. exportedAt is
-// used both as the envelope timestamp and as the --since window anchor, so the
-// document is fully reproducible (no hidden time.Now()).
+// into a deterministic public submission document. Filters are applied BEFORE
+// anonymization (AC 04-04). Records are aggregated by (persona, model) — role is
+// dropped from the public schema and is a constant ("reviewer") for reconcile
+// records anyway — then sorted ascending by (model, persona), so the same input
+// and exportedAt always produce byte-identical output. exportedAt is used both as
+// the envelope timestamp and as the --since window anchor, so the document is
+// fully reproducible (no hidden time.Now()).
 func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, error) {
 	filtered, err := ApplyFilters(records, opts, exportedAt)
 	if err != nil {
@@ -148,72 +173,81 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
 		return nil, ErrNoExportRecords
 	}
 
-	type key struct{ reviewer, model, role string }
-	type acc struct {
-		pr           PublicRecord
-		latencyTotal int64
-	}
-	groups := map[key]*acc{}
+	type key struct{ persona, model string }
+	groups := map[key]*reviewerAcc{}
 	order := make([]key, 0)
 
 	for _, r := range filtered {
-		pub := AnonymizeRecord(r)
-		k := key{pub.Reviewer, pub.Model, pub.Role}
+		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
+		// so finalize() never re-scrubs and two records that scrub to the same
+		// identity merge into one group.
+		persona := scrubField(r.Reviewer)
+		model := scrubField(r.Model)
+		k := key{persona, model}
 		a, ok := groups[k]
 		if !ok {
-			a = &acc{pr: PublicRecord{Reviewer: pub.Reviewer, Model: pub.Model, Role: pub.Role}}
+			a = &reviewerAcc{persona: persona, model: model}
 			groups[k] = a
 			order = append(order, k)
 		}
-		p := &a.pr
-		p.Runs += pub.Runs
-		p.FindingsRaised += pub.FindingsRaised
-		p.FindingsCorroborated += pub.FindingsCorroborated
-		p.FindingsSolo += pub.FindingsSolo
-		p.CostUSD += pub.CostUSD
-		p.TokensIn += pub.TokensIn
-		p.TokensOut += pub.TokensOut
-		p.FindingsVerified += pub.FindingsVerified
-		p.FindingsRefuted += pub.FindingsRefuted
-		a.latencyTotal += pub.LatencyMSAvg
+		a.add(r)
 	}
 
 	rows := make([]PublicRecord, 0, len(order))
 	for _, k := range order {
-		a := groups[k]
-		p := a.pr
-		p.CorroborationRate = ratio(p.FindingsCorroborated, p.FindingsRaised)
-		p.SurvivedSkepticRate = ratio(p.FindingsVerified, p.FindingsVerified+p.FindingsRefuted)
-		if p.Runs > 0 {
-			p.LatencyMSAvg = a.latencyTotal / int64(p.Runs)
-		}
-		rows = append(rows, p)
+		rows = append(rows, groups[k].finalize())
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Model != rows[j].Model {
 			return rows[i].Model < rows[j].Model
 		}
-		if rows[i].Reviewer != rows[j].Reviewer {
-			return rows[i].Reviewer < rows[j].Reviewer
-		}
-		return rows[i].Role < rows[j].Role
+		return rows[i].Persona < rows[j].Persona
 	})
-	for i := range rows {
-		rows[i].Index = i
-	}
 
 	env := ExportEnvelope{
-		SchemaVersion: SchemaVersion,
-		ExportedAt:    exportedAt.UTC().Format(time.RFC3339),
-		// Explicit field assignment, not ExportFilters(opts): a type conversion
-		// silently misaligns if FilterOpts fields are reordered (same types, new
-		// order → wrong since/model/persona in the public envelope, no compile
-		// error). Naming each field is immune to reordering and equally terse.
-		Filters: ExportFilters{Since: opts.Since, Model: opts.Model, Persona: opts.Persona}, //nolint:staticcheck
-		Records: rows,
+		SubmissionSchema: SubmissionSchema,
+		AtcrVersion:      version.Version,
+		SubmittedAt:      exportedAt.UTC().Format(time.RFC3339),
+		Reviewers:        rows,
 	}
 	return json.MarshalIndent(env, "", "  ")
+}
+
+// avgPerRun returns total/runs as a float, or 0.0 when runs == 0.
+func avgPerRun(total, runs int) float64 {
+	if runs <= 0 {
+		return 0
+	}
+	return float64(total) / float64(runs)
+}
+
+// costPer returns total cost divided by the corroborated-finding count, or 0.0
+// when there are no corroborated findings (the metric is undefined; 0 is the
+// documented sentinel, never Inf/NaN).
+func costPer(totalCost float64, corroborated int) float64 {
+	if corroborated <= 0 {
+		return 0
+	}
+	return totalCost / float64(corroborated)
+}
+
+// medianInt64 returns the p50 (median) of the latencies: the middle element for
+// an odd count, the integer mean of the two middle elements for an even count,
+// and 0 for an empty slice. The input is copied before sorting so the caller's
+// accumulator order is not mutated.
+func medianInt64(xs []int64) int64 {
+	n := len(xs)
+	if n == 0 {
+		return 0
+	}
+	sorted := make([]int64, n)
+	copy(sorted, xs)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
 }
 
 // scrubField is defense-in-depth over the allowlist: reviewer/model/role are the
