@@ -7,6 +7,16 @@ import (
 	builtins "github.com/samestrin/atcr/personas"
 )
 
+// builtinSet is the O(1) lookup backing isBuiltin. It is populated once at init
+// from the immutable names slice so repeated calls do not re-allocate.
+var builtinSet = make(map[string]struct{})
+
+func init() {
+	for _, n := range builtins.Names() {
+		builtinSet[n] = struct{}{}
+	}
+}
+
 // Remove deletes the installed community persona name from personasDir. It
 // refuses built-in persona names and path-traversal names, and reports a clear
 // error when the persona is not installed.
@@ -32,10 +42,6 @@ func Remove(name, personasDir string) error {
 
 // isBuiltin reports whether name is one of the embedded built-in personas.
 func isBuiltin(name string) bool {
-	for _, n := range builtins.Names() {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	_, ok := builtinSet[name]
+	return ok
 }
