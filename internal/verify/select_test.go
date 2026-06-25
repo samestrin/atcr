@@ -309,6 +309,38 @@ func TestSelectEligibleSkeptics_ScopeSliceIsIndependent(t *testing.T) {
 		"appending to a returned Scope must not mutate the registry backing array")
 }
 
+// TestSelectEligibleSkeptics_LanguageSliceIsIndependent verifies the same
+// read-only contract for Language that the Scope test above covers for Scope.
+// Language (Epic 9.0) is a reference field that aliases the registry's backing
+// memory when len==cap (the common case after decode), so appending to a
+// returned skeptic's Language must not corrupt the registry's own copy. If
+// append would corrupt the registry, this test fails and a deep-copy is
+// required. (resolve-td TD-004: Language shared the Scope guarantee but had no
+// test pinning it.)
+func TestSelectEligibleSkeptics_LanguageSliceIsIndependent(t *testing.T) {
+	t.Parallel()
+	reg := buildRegistry(
+		map[string]registry.AgentConfig{"sk": {
+			Provider: "openai",
+			Model:    "gpt-4o",
+			Role:     registry.RoleSkeptic,
+			Language: []string{"go", "ts"},
+		}},
+		nil,
+	)
+	original := []string{"go", "ts"}
+
+	got := SelectEligibleSkeptics(reg, reconcile.JSONFinding{}, 1, nil)
+	require.Len(t, got, 1)
+
+	// Append to the returned Language — safe only when len==cap so append
+	// allocates a new backing array. Assert the registry copy is untouched.
+	got[0].Config.Language = append(got[0].Config.Language, "injected")
+
+	assert.Equal(t, original, reg.Agents["sk"].Language,
+		"appending to a returned Language must not mutate the registry backing array")
+}
+
 // usable AgentConfig alongside the name, so Phase 2 can invoke the skeptic
 // without re-resolving it (AC 01-02: result values are usable, not zeroed).
 func TestSelectEligibleSkeptics_CarriesConfig(t *testing.T) {
