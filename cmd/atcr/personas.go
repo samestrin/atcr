@@ -196,7 +196,7 @@ func newPersonasListCmd() *cobra.Command {
 func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	data, err := personasScores(cmd.ErrOrStderr())
 	if err != nil {
-		return fmt.Errorf("failed to load scorecard data: %w", err)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read scorecard data: %v\n", err)
 	}
 	scored, listErr := commpersonas.ListWithScores(dir, data.rates)
 	if listErr != nil {
@@ -205,7 +205,10 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	if err := renderScoredList(cmd.OutOrStdout(), scored); err != nil {
 		return err
 	}
-	if len(data.rates) == 0 {
+	switch {
+	case err != nil:
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nScorecard data at %s is unreadable\n", data.path)
+	case len(data.rates) == 0:
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNo scorecard data found at %s\n", data.path)
 	}
 	return nil
