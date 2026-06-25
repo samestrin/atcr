@@ -190,6 +190,23 @@ func TestExport_SurvivedSkepticZeroIsEmittedWhenAllRefuted(t *testing.T) {
 	assert.Equal(t, 0.0, *r.SurvivedSkepticRate)
 }
 
+func TestExport_SurvivedSkepticRateOnlyRecordNotZeroed(t *testing.T) {
+	// Degenerate (corrupt/externally-supplied) record: a SurvivedSkepticRate
+	// pointer is set but the verdict COUNT pointers are nil — a shape the public
+	// Record type permits. finalize() must carry the stored rate, not force
+	// ratio(0,0)=0 and silently zero a real public value.
+	rate := 0.73
+	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+	rec.FindingsVerified = nil
+	rec.FindingsRefuted = nil
+	rec.SurvivedSkepticRate = &rate
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	r := parseEnvelope(t, data).Reviewers[0]
+	require.NotNil(t, r.SurvivedSkepticRate, "a stored rate must still be emitted")
+	assert.InDelta(t, 0.73, *r.SurvivedSkepticRate, 1e-9, "stored rate must not be zeroed when counts are absent")
+}
+
 func TestExport_AnonymizationStripsRunID(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)

@@ -68,6 +68,7 @@ type reviewerAcc struct {
 	latencies       []int64
 	verified        int
 	refuted         int
+	storedRates     []float64
 	hasVerification bool
 }
 
@@ -88,6 +89,7 @@ func (a *reviewerAcc) add(r Record) {
 		a.hasVerification = true
 	}
 	if r.SurvivedSkepticRate != nil {
+		a.storedRates = append(a.storedRates, clampRate(*r.SurvivedSkepticRate))
 		a.hasVerification = true
 	}
 }
@@ -103,7 +105,24 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		LatencyP50MS:                  medianInt64(a.latencies),
 	}
 	if a.hasVerification {
-		rate := clampRate(ratio(a.verified, a.verified+a.refuted))
+		// Count-based aggregation (verified/(verified+refuted)) is authoritative
+		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
+		// average of per-run rates). Only when NO counts survive in the group (a
+		// corrupt/partial record carrying a rate pointer but nil count pointers, a
+		// shape the public Record type permits) do we fall back to the mean of the
+		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
+		// public value.
+		var rate float64
+		switch {
+		case a.verified+a.refuted > 0:
+			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
+		case len(a.storedRates) > 0:
+			sum := 0.0
+			for _, v := range a.storedRates {
+				sum += v
+			}
+			rate = clampRate(sum / float64(len(a.storedRates)))
+		}
 		pr.SurvivedSkepticRate = &rate
 	}
 	return pr
