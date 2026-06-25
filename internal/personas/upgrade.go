@@ -80,13 +80,22 @@ func versionOf(data []byte) (string, error) {
 	return fm.Version, nil
 }
 
-// isNewer reports whether remote is a newer version than local. Valid semver is
-// compared structurally; otherwise any difference is treated as an upgrade.
+// isNewer reports whether remote is a newer version than local. Valid semver
+// is compared structurally. When exactly one side is valid semver the versions
+// are not comparable, so the local copy is treated as up-to-date to avoid
+// silently overwriting a newer or customized local persona. Otherwise any
+// difference is treated as an upgrade.
 func isNewer(local, remote string) bool {
 	lv := "v" + strings.TrimPrefix(local, "v")
 	rv := "v" + strings.TrimPrefix(remote, "v")
-	if semver.IsValid(lv) && semver.IsValid(rv) {
+	lValid := semver.IsValid(lv)
+	rValid := semver.IsValid(rv)
+	switch {
+	case lValid && rValid:
 		return semver.Compare(rv, lv) > 0
+	case lValid || rValid:
+		return false
+	default:
+		return local != remote
 	}
-	return local != remote
 }
