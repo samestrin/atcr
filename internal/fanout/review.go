@@ -387,6 +387,15 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if trunc.AllDropped {
 		return nil, fmt.Errorf("%w (mode diff, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
 	}
+	// Surface PARTIAL truncation at the ingestion boundary: a subset review built
+	// from an oversized diff is otherwise silent here (the per-agent status records
+	// it downstream, but an operator gets no signal at the point the files were
+	// dropped). AllDropped already returned above, so this is the some-but-not-all
+	// case.
+	if trunc.Truncated {
+		log.FromContext(ctx).Warn("diff ingestion: byte budget truncated the review payload; reviewing a subset of the diff",
+			"kept", len(kept), "dropped", len(trunc.FilesDropped), "files_dropped", trunc.FilesDropped)
+	}
 	var totalLen int
 	for _, e := range kept {
 		totalLen += len(e.Body)
