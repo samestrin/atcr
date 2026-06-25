@@ -1,6 +1,7 @@
 package personas
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,16 @@ func TestListWithScores_ZeroRateIsNotNa(t *testing.T) {
 	require.NotNil(t, sentinel)
 	require.NotNil(t, sentinel.Rate, "rate 0.0 is data, not n/a")
 	assert.Equal(t, "0.0%", FormatRate(sentinel.Rate))
+}
+
+func TestListWithScores_NaNRateTreatedAsNa(t *testing.T) {
+	scores := map[string]float64{"sentinel": math.NaN()}
+	scored, err := ListWithScores(filepath.Join(t.TempDir(), "absent"), scores)
+	require.NoError(t, err)
+	sentinel := scoredByName(scored, "sentinel")
+	require.NotNil(t, sentinel)
+	assert.Nil(t, sentinel.Rate, "NaN rate must be treated as n/a")
+	assert.Equal(t, "n/a", FormatRate(sentinel.Rate))
 }
 
 // --- sortScoredPersonas -----------------------------------------------------
