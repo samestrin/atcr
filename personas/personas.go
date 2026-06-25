@@ -19,6 +19,34 @@ var testfiles embed.FS
 // (security, performance, Go idioms), with the style reviewer last.
 var names = []string{"bruce", "greta", "kai", "mira", "dax", "sentinel", "tracer", "idiomatic", "otto"}
 
+func init() {
+	want := make(map[string]struct{}, len(names)+1)
+	for _, n := range names {
+		want[n+".md"] = struct{}{}
+	}
+	want["_base.md"] = struct{}{}
+
+	entries, err := files.ReadDir(".")
+	if err != nil {
+		panic(fmt.Sprintf("personas: failed to read embedded files: %v", err))
+	}
+	got := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		got[e.Name()] = struct{}{}
+	}
+	if len(got) != len(want) {
+		panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md %v", got, want))
+	}
+	for name := range got {
+		if _, ok := want[name]; !ok {
+			panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md %v", got, want))
+		}
+	}
+}
+
 // Names returns the embedded persona names in canonical order.
 func Names() []string {
 	out := make([]string, len(names))
