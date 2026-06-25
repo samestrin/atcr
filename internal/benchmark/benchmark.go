@@ -68,7 +68,7 @@ func Load(suitePath string) (*Manifest, error) {
 	}
 	for _, c := range m.Cases {
 		diffPath := filepath.Join(suitePath, c.Diff)
-		fi, err := os.Stat(diffPath)
+		fi, err := os.Lstat(diffPath)
 		if err != nil {
 			return nil, fmt.Errorf("case %q diff file: %w", c.ID, err)
 		}
