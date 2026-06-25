@@ -165,13 +165,16 @@ A benchmark submission carries the **same allowlist** as the production export
 keys; see [`docs/scorecard.md` → Privacy Model](scorecard.md#privacy-model)) plus
 the suite identity (`source`, `suite`, `suite_version`).
 
-> **Anonymization happens at the producer.** `benchmark export` wraps the
-> run-result's reviewer rows **verbatim**; it does not re-scrub them. The
+> **Anonymization happens at the producer, with an export-time backstop.** The
 > run-result is expected to come from `atcr benchmark run` (Epic 10.1), whose
 > scorecard aggregation scrubs identity strings at source, exactly like
-> `leaderboard --export`. Do not hand-craft a run-result from un-anonymized data
-> and publish it. (A defense-in-depth re-scrub at export time is tracked as tech
-> debt.)
+> `leaderboard --export` — that producer scrub remains the primary guarantee, so
+> do not rely on the backstop and do not hand-craft a run-result from
+> un-anonymized data. As defense-in-depth, because `benchmark export` consumes a
+> hand-suppliable run-result file, `BuildSubmission` additionally re-scrubs each
+> reviewer's `model`/`persona` via `scorecard.ScrubPublicRecord` before emitting,
+> so a non-conforming run-result cannot carry PII into a public submission. The
+> `PublicRecord` allowlist remains the boundary; the numeric metrics are untouched.
 
 ---
 

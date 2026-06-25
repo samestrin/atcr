@@ -1,3 +1,25 @@
+## [Technical Debt] - 2026-06-25
+
+### Fixed
+
+- Hardened benchmark manifest `Load` against symlink traversal and non-regular diff files
+- Rejected empty and duplicate `expected_categories` during suite validation
+- Blocked dot-path components in `isSafeRelPath`
+- Capped reproducibility-hash diff reads and streamed hashing via `io.Copy`
+- Eliminated redundant manifest loads in reproducibility hashing
+- Added overflow-safe even-count median computation and documented integer-floor p50 behavior
+- Fixed `--output` help text in the leaderboard command
+- Hardened `scrubField` backstop against glued FHS roots, UNC paths, no-TLD emails, and `sk_`/`AIza` key prefixes
+- Re-scrubbed reviewer PII in `BuildSubmission` via the public-record scrubber
+- Omitted `survived_skeptic_rate` when no verification verdicts or stored rates support it
+- Clamped non-finite floats (NaN/Inf) in `clampNonNegF` and `clampRate`
+- Documented safe-to-ignore error paths for hash writes and `GetString`
+- Documented the benchmark privacy model's export-time re-scrub backstop
+- Added suite-field validation and documented the `GetString` convention
+- Used `rr.GeneratedAt` for `submitted_at` in benchmark exports
+- Closed clarified technical-debt items (5 via Q1-Q5, 9 post-clarification, 12 from model-eval review)
+- Added regression coverage for by-design merge of distinct identities that scrub equal
+
 ## [10.0.0] - 2026-06-24
 
 ### Added
