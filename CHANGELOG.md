@@ -1,3 +1,13 @@
+## [10.1.0] - 2026-06-25
+
+### Added
+
+- Diff-file ingestion path: review a standalone unified diff end-to-end on the same payload pipeline a `repo/base/head` git range uses, with no checkout required
+- `payload.BuildEntriesFromDiff` / `BuildEntriesFromDiffFile` — parse loose or `git diff`-format unified diff text (or a diff file) into the same `[]FileEntry` shape as the git-sourced builder, round-trip byte-identical, with a size cap and path-traversal guard on the file-path variant
+- `fanout.PrepareReviewFromDiff` — assemble a `PreparedReview` from an ingested diff (size-capped, every agent forced to diff mode) that `ExecuteReview` accepts unchanged
+
+*Shipped via /execute-epic (epic 10.1)*
+
 ## [Technical Debt] - 2026-06-25
 
 ### Fixed
