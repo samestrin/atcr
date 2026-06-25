@@ -35,6 +35,20 @@ func TestLoad_RejectsMissingDiffFile(t *testing.T) {
 	require.Error(t, err, "a case whose diff file does not exist must fail to load")
 }
 
+func TestLoad_RejectsSymlinkAsDiff(t *testing.T) {
+	dir := t.TempDir()
+	// Create a target file outside the suite and a symlink inside pointing to it.
+	// os.Stat follows symlinks (so the old code accepted them); os.Lstat inspects
+	// the link itself, which is not a regular file.
+	external := filepath.Join(t.TempDir(), "secret.txt")
+	require.NoError(t, os.WriteFile(external, []byte("sensitive"), 0o600))
+	link := filepath.Join(dir, "case.diff")
+	require.NoError(t, os.Symlink(external, link))
+	writeManifest(t, dir, `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"c1","diff":"case.diff","expected_categories":["x"]}]}`)
+	_, err := Load(dir)
+	require.Error(t, err, "a symlink used as a diff must be rejected (Load must not follow symlinks outside the suite)")
+}
+
 func TestLoad_RejectsDirectoryAsDiff(t *testing.T) {
 	dir := t.TempDir()
 	// Create a subdirectory that the manifest will point to as the diff "file".
