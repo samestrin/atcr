@@ -300,6 +300,20 @@ func TestBuildEntriesFromDiff_GitBinarySectionSpacedPath(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries))
 }
 
+// A `git diff --no-prefix` binary/mode-only section carries no a/ b/ markers and
+// no `+++` line; the head path must still be recovered from the symmetric
+// `diff --git <P> <P>` header rather than erroring with "cannot determine path".
+func TestBuildEntriesFromDiff_GitNoPrefixBinarySection(t *testing.T) {
+	diff := "diff --git logo.png logo.png\n" +
+		"index abc1234..def5678 100644\n" +
+		"Binary files logo.png and logo.png differ\n"
+	entries, err := BuildEntriesFromDiff(diff)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "logo.png", entries[0].Path, "no-prefix binary path comes from the symmetric diff --git header")
+	assert.Equal(t, diff, joinBodies(entries))
+}
+
 // CRLF line endings (Windows-authored diffs) must still split correctly and
 // round-trip verbatim, with the trailing CR stripped from the parsed path.
 func TestBuildEntriesFromDiff_CRLFLineEndings(t *testing.T) {
