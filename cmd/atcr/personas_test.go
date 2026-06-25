@@ -159,6 +159,16 @@ func TestPersonasInstall_BundleUnknownExitsNonZero(t *testing.T) {
 	assert.Contains(t, err.Error(), `unknown bundle: "nope"`)
 }
 
+func TestPersonasInstall_BundleEmptyNameIsUsageError(t *testing.T) {
+	srv := personasTestServer(t, map[string]string{})
+	withPersonasEnv(t, srv)
+
+	_, _, err := executeSplit(t, "personas", "install", "bundle/")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, exitCode(err))
+	assert.Contains(t, err.Error(), "bundle name is required")
+}
+
 func TestPersonasInstall_BundleMemberFailureExitsNonZero(t *testing.T) {
 	routes := bundleDjangoRoutes()
 	delete(routes, "/security/owasp.yaml") // one member 404s
