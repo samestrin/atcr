@@ -1,3 +1,16 @@
+## [10.2.0] - 2026-06-25
+
+### Added
+
+- `atcr benchmark run --suite-path <dir> [--out <file>]`: executes a benchmark suite through the review pipeline (via the diff-file ingestion path), scores each reviewer's findings against every case's planted-defect `expected_categories`, and writes the suite-tagged `benchmark.RunResult` that `atcr benchmark export` consumes — completing the `run → export` loop
+- Benchmark scorer folds per-reviewer category recall into the shared public reviewer schema's `corroboration_rate` (with `findings_raised_avg` for volume), re-scrubbing each record via `scorecard.ScrubPublicRecord`; `generated_at` is injectable so two runs over the same suite and transcript are byte-identical
+
+### Fixed
+
+- Corrected the malformed hunk header in the `suite-valid` fixture's `case-02.diff` so it parses as a valid unified diff
+
+*Shipped via /execute-epic (epic 10.2)*
+
 ## [Technical Debt] - 2026-06-25
 
 ### Fixed
