@@ -190,11 +190,11 @@ func ReproHashManifest(m *Manifest, suitePath string) (string, error) {
 		}
 		fi, err := f.Stat()
 		if err != nil {
-			f.Close()
+			_ = f.Close()
 			return "", fmt.Errorf("hashing case %q diff stat: %w", c.ID, err)
 		}
 		if fi.Size() > MaxDiffBytes {
-			f.Close()
+			_ = f.Close()
 			return "", fmt.Errorf("hashing case %q diff: size %d exceeds max %d bytes", c.ID, fi.Size(), MaxDiffBytes)
 		}
 		// Length-prefix for unambiguous hashing (matches writeField format). h is a
@@ -202,10 +202,10 @@ func ReproHashManifest(m *Manifest, suitePath string) (string, error) {
 		// result here (and in writeField) is a safe-to-ignore unreachable failure.
 		_, _ = fmt.Fprintf(h, "%d:", fi.Size())
 		if _, err := io.Copy(h, f); err != nil {
-			f.Close()
+			_ = f.Close()
 			return "", fmt.Errorf("hashing case %q diff: %w", c.ID, err)
 		}
-		f.Close()
+		_ = f.Close()
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
