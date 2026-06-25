@@ -177,8 +177,21 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 
 		for i < n && strings.HasPrefix(lines[i], hunkMarker) {
 			oldRem, newRem := hunkLineCounts(lines[i])
+			hunkLine := i
 			i++ // past the `@@ ` header
 			for i < n && (oldRem > 0 || newRem > 0) {
+				// A bare `@@ ` line is never a hunk-body line (every body line is
+				// prefixed -/+/space/\), so reaching one while body budget remains
+				// means this hunk header over-claimed its line count — a malformed or
+				// hostile loose diff inflating a count to swallow the following hunk
+				// or file. Reject it loudly: a silent merge would still round-trip
+				// byte-for-byte, hiding the corruption from the contract test. (A
+				// count tuned to land exactly on a following `--- `/`+++ ` pair
+				// without crossing a bare `@@ ` is an unresolved residual; the bare
+				// `@@ ` boundary is the only marker unambiguously not body content.)
+				if strings.HasPrefix(lines[i], hunkMarker) {
+					return nil, fmt.Errorf("diff ingestion: hunk at line %d claims more body lines than the section contains (malformed or hostile diff)", hunkLine+1)
+				}
 				switch {
 				case strings.HasPrefix(lines[i], "-"):
 					oldRem--
