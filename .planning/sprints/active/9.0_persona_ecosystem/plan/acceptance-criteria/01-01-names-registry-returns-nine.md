@@ -110,4 +110,4 @@ func TestGet_BonusPersonasNonEmpty(t *testing.T) {
 - [x] No duplicate names in the `names` slice
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -104,4 +104,4 @@
 - [x] Both embedded manifests (`django.yaml`, `go-production.yaml`) parse successfully in a round-trip test
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

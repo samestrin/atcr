@@ -139,4 +139,4 @@ func TestIdiomaticFixture(t *testing.T) {
 - [x] No test in `personas/` makes live HTTP or DNS calls (verified by CI network policy or test audit)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

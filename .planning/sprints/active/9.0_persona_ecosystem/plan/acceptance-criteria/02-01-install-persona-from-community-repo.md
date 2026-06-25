@@ -113,4 +113,4 @@
 - [x] `TestRootCmd_HasExactlyFourteenSubcommands` updated to 15 (renamed `...Fifteen...`) in the same commit that registers `newPersonasCmd()`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

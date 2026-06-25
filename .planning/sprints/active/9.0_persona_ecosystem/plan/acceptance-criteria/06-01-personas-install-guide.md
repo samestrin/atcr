@@ -113,4 +113,4 @@
 - [x] No reference to the deprecated `docs/examples/registry.yaml` path appears in the file
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

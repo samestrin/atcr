@@ -113,4 +113,4 @@
 - [x] A step-by-step contribution checklist is present at the end of the guide
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

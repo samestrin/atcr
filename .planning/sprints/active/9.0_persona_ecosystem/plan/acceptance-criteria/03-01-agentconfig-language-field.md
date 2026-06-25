@@ -99,4 +99,4 @@
 - [x] Existing registry YAML files without `language` key load without error
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

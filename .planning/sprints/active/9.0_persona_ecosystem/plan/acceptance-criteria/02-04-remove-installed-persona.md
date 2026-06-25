@@ -94,4 +94,4 @@
 - [x] Built-in persona names are rejected with a clear error message
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

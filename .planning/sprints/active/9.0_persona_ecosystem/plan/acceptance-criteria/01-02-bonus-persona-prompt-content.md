@@ -121,4 +121,4 @@ func TestBonusPersonas_TemplateRenders(t *testing.T) {
 - [x] All three templates render without error when given a valid payload
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

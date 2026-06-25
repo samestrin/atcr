@@ -101,4 +101,4 @@
 - [x] No live HTTP calls in CI — all tests use `httptest.NewServer`
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

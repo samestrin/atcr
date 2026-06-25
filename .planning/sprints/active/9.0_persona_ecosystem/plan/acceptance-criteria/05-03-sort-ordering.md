@@ -88,4 +88,4 @@
 - [x] All-`n/a` fixture sorts alphabetically (no panic or empty output)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

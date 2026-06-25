@@ -87,4 +87,4 @@
 - [x] No other callers of `SelectEligibleSkeptics` exist with the old 3-argument signature (verified by grep before and after)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

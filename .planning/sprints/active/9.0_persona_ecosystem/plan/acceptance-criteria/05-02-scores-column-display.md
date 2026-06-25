@@ -102,4 +102,4 @@
 - [x] Absent scorecard file produces footer note `No scorecard data found at <path>` and all-`n/a` table
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

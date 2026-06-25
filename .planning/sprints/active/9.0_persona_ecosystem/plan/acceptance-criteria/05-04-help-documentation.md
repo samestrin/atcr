@@ -75,4 +75,4 @@
 - [x] Description string references `n/a` behavior for personas without run history
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

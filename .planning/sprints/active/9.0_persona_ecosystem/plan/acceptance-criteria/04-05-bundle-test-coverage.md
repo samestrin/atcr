@@ -98,4 +98,4 @@
 - [x] `bundles_test.go` covers manifest parse validation (missing required field returns descriptive error, not panic)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-23-0258f9
-question: "Should HTTP client endpoints (like a community personas registry URL) be configurable or hardcoded?"
-created: 2026-06-23
+id: mem-2026-06-24-944b80
+question: "How should a community persona whose file name matches a built-in name be handled in atcr personas list?"
+created: 2026-06-24
 last_retrieved: ""
-sprints: []
-files: [internal/ghaction/client.go, internal/llmclient/client.go, internal/registry/config.go]
-tags: [clarifications, epic-9.0_persona_ecosystem, architecture, testability, http-client]
+sprints: [9.0_persona_ecosystem]
+files: [internal/personas/list.go]
+tags: [clarifications, sprint-9.0_persona_ecosystem, error-handling, implementation]
 retrievals: 0
 status: active
-type: clarifications
+type: clarifications /resolve-td session 2026-06-24
 ---
 
-# Should HTTP client endpoints (like a community personas regi
+# How should a community persona whose file name matches a bui
 
 ## Decision
 
-Use a configurable URL with a hardcoded default constant. The project-wide pattern is a struct field with a named default constant, so tests can point the client at an httptest.NewServer stub. Examples: ghaction.Client.APIURL (internal/ghaction/client.go:24), llmclient.Invocation.BaseURL (internal/llmclient/client.go:127). Provider base_url is also user-configurable in registry YAML (internal/registry/config.go:40). Never hardcode unconditionally — always expose the field for test injection.
+Skip the community file and return a warning alongside the valid rows (same accumulation pattern as per-file error surfacing). Built-in names are canonical and take priority. Renaming would confuse users; flagging as a hard error conflicts with AC 02-02 Error Scenario 1 ("exit 0 + stderr warning on unreadable personas dir — graceful degradation") and the overall exit-0 posture of the list command. The collision check belongs at internal/personas/list.go:139 after name derivation: if isBuiltin(name) is true, accumulate a warning and skip (continue). The CLI caller emits the warning to stderr; list exits 0 with no duplicate rows.
 
 ## Rationale
 
@@ -27,6 +27,4 @@ Use a configurable URL with a hardcoded default constant. The project-wide patte
 
 ## Code Reference
 
-- internal/ghaction/client.go
-- internal/llmclient/client.go
-- internal/registry/config.go
+- internal/personas/list.go

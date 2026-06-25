@@ -105,4 +105,4 @@
 - [x] Unit tests cover language-match, no-match fallback, tie-break by score, tie-break by alphabet, and nil-scores cases
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

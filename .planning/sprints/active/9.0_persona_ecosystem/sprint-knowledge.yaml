@@ -1,6 +1,22 @@
 # Sprint Knowledge Manifest
 # Tracks knowledge entries created during and referenced by this sprint
 
-created: []
+created:
+  - mem-2026-06-24-9e1c26  # Q3: Multi-model reviewer score aggregation in reviewerCorroborationRates
+  - mem-2026-06-24-96a4eb  # Q5: NaN guard in SelectEligibleSkeptics score comparator
+  - mem-2026-06-24-46d173  # Q3 (resolve-td): validateAgent Language guard has no allow-list by design
+  - mem-2026-06-24-ecefcc  # Q1 (resolve-td): FixtureRunner implementation pattern — Story 1 fixture mechanism
+  - mem-2026-06-24-fa8476  # Q2 (resolve-td): Score-map key normalization belongs in SelectEligibleSkeptics
+  - mem-2026-06-24-e8f432  # Q3 (resolve-td): Top-level personas package alias convention (builtins)
+
+  - mem-2026-06-24-97aae1  # Q7 (resolve-td): bundle/ guard in install.go is defense-in-depth, not routing duplication
+  - mem-2026-06-24-8f5ce8  # Q1 (resolve-td batch 2): nil-guard not needed before sort.SliceStable — nil scores map → safe 0.0 float64; NaN mitigated at select.go:152-157
+  - mem-2026-06-24-e9ed53  # Q3 (resolve-td batch 2): Language invariant needs cross-package integration test (LoadRegistry → AgentsByRole), not just comment
+  - mem-2026-06-24-e898cb  # Q6 (resolve-td batch 2): TD-013 fix already live at select.go:148; phantom archer-backup duplicate rows beyond EOF in TD README
+  - mem-2026-06-24-590ced  # Q1 (resolve-td batch 3): archer-backup phantom TD-015 rows at select.go:875/:1001/:1265/:1529 — file is 190 lines, all beyond EOF, bulk-close [x]
+
+  - mem-2026-06-24-119fb7  # Q2 (resolve-td): internal/personas error surfacing pattern — return alongside results, not os.Stderr or logger
+  - mem-2026-06-24-944b80  # Q3 (resolve-td): community/built-in name collision in list — skip with warning, built-in takes priority
+  - mem-2026-06-24-40a98d  # Q6 (resolve-td): both-non-semver upgrade behavior is AC 02-06 EC1 specified, close without fix
 
 referenced: []

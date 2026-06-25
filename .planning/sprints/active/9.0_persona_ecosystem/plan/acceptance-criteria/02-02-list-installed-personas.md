@@ -102,4 +102,4 @@
 - [x] `--scores` flag is accepted without error (no-op output acceptable for Story 2)
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

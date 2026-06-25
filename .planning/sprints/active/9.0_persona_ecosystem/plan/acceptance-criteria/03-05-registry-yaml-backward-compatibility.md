@@ -90,4 +90,4 @@
 - [x] Mixed registry (some with `language`, some without) loads cleanly and both agent types load without error and produce identical skeptic selection output to the pre-routing baseline when no language match exists _(Phase 2)_
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

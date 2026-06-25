@@ -86,4 +86,4 @@
 - [x] Path traversal inputs (e.g. `../etc/passwd`) are rejected as unknown bundles without any filesystem access
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -112,4 +112,4 @@
 - [x] `validateAgent` is called on fetched content before overwriting; invalid remote content is rejected without touching the local file
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

@@ -92,4 +92,4 @@
 - [ ] Same fixture runner used by Story 1 bonus personas is reused without duplication — DEFERRED → TD-012 (production LLM-backed runner out of Phase 4 scope; injectable `FixtureRunner` seam delivered, default `noFixtureRunner` reports "no fixture")
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

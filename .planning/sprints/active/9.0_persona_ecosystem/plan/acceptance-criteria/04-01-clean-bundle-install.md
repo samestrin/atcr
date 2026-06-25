@@ -87,4 +87,4 @@
 - [x] `internal/personas/bundles_test.go` unit test verifies resolver expands `bundle/django` to the exact four-persona list
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved

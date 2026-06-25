@@ -78,4 +78,4 @@
 - [x] `TestPersonasListBaseline` passes in CI
 
 **Manual Review:**
-- [ ] Code reviewed and approved
+- [x] Code reviewed and approved
