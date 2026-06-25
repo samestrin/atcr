@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/samestrin/atcr/internal/personas"
+	commpersonas "github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/scorecard"
 	"github.com/spf13/cobra"
 )
@@ -73,17 +73,17 @@ func reviewerCorroborationRates(rows []scorecard.LeaderboardRow) map[string]floa
 
 // personasDir resolves the community personas directory. A package var so tests
 // can point it at a temp directory.
-var personasDir = personas.PersonasDir
+var personasDir = commpersonas.PersonasDir
 
 // personasClient is the HTTP client used for community-repo fetches. Tests point
 // ATCR_PERSONAS_URL at an httptest server and let the default client hit it.
-var personasClient personas.HTTPClient = http.DefaultClient
+var personasClient commpersonas.HTTPClient = http.DefaultClient
 
 // personasFixtureRunner runs a persona's fixture for `atcr personas test`.
 // The production default renders built-in persona templates against their
 // embedded patch fixtures without a live LLM call. Tests inject stubs via
 // withFixtureRunner to exercise pass/fail paths with controlled outcomes.
-var personasFixtureRunner personas.FixtureRunner = personas.TemplateFixtureRunner{
+var personasFixtureRunner commpersonas.FixtureRunner = commpersonas.TemplateFixtureRunner{
 	PersonasDir: func() (string, error) { return personasDir() },
 }
 
@@ -126,7 +126,7 @@ func newPersonasInstallCmd() *cobra.Command {
 			if bundleName, ok := strings.CutPrefix(name, "bundle/"); ok {
 				return installBundle(cmd, dir, bundleName)
 			}
-			if err := personas.Install(personasClient, personas.BaseURL(), name, dir); err != nil {
+			if err := commpersonas.Install(personasClient, commpersonas.BaseURL(), name, dir); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed persona %q\n", name)
@@ -140,7 +140,7 @@ func newPersonasInstallCmd() *cobra.Command {
 // message; a member fetch/write failure is reported but does not abort the
 // remaining members, and the command exits non-zero if any member failed.
 func installBundle(cmd *cobra.Command, dir, bundleName string) error {
-	outcomes, err := personas.InstallBundle(personasClient, personas.BaseURL(), bundleName, dir)
+	outcomes, err := commpersonas.InstallBundle(personasClient, commpersonas.BaseURL(), bundleName, dir)
 	if err != nil {
 		return err // includes ErrUnknownBundle ("unknown bundle: \"<name>\"")
 	}
@@ -175,7 +175,7 @@ func newPersonasListCmd() *cobra.Command {
 			if scores, _ := cmd.Flags().GetBool("scores"); scores {
 				return listPersonasWithScores(cmd, dir)
 			}
-			metas, listErr := personas.List(dir)
+			metas, listErr := commpersonas.List(dir)
 			if listErr != nil {
 				// Degrade gracefully: warn but still render the built-ins.
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
@@ -195,7 +195,7 @@ func listPersonasWithScores(cmd *cobra.Command, dir string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load scorecard data: %w", err)
 	}
-	scored, listErr := personas.ListWithScores(dir, data.rates)
+	scored, listErr := commpersonas.ListWithScores(dir, data.rates)
 	if listErr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", listErr)
 	}
@@ -215,7 +215,7 @@ func newPersonasSearchCmd() *cobra.Command {
 		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			keyword := args[0]
-			entries, err := personas.Search(personasClient, personas.BaseURL(), keyword)
+			entries, err := commpersonas.Search(personasClient, commpersonas.BaseURL(), keyword)
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,7 @@ func newPersonasRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := personas.Remove(args[0], dir); err != nil {
+			if err := commpersonas.Remove(args[0], dir); err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed persona %q\n", args[0])
@@ -258,7 +258,7 @@ func newPersonasTestCmd() *cobra.Command {
 				return err
 			}
 			name := args[0]
-			outcome, err := personas.TestPersona(dir, name, personasFixtureRunner)
+			outcome, err := commpersonas.TestPersona(dir, name, personasFixtureRunner)
 			if err != nil {
 				return err
 			}
@@ -321,7 +321,7 @@ func newPersonasUpgradeCmd() *cobra.Command {
 func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun bool) error {
 	var failed bool
 	for _, name := range names {
-		res, err := personas.Upgrade(personasClient, personas.BaseURL(), dir, name, dryRun)
+		res, err := commpersonas.Upgrade(personasClient, commpersonas.BaseURL(), dir, name, dryRun)
 		if err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed to upgrade %s: %v (skipping)\n", name, err)
 			failed = true
@@ -344,7 +344,7 @@ func runPersonaUpgrades(cmd *cobra.Command, dir string, names []string, dryRun b
 
 // installedCommunityNames lists the names of community personas under dir.
 func installedCommunityNames(dir string) ([]string, error) {
-	metas, err := personas.List(dir)
+	metas, err := commpersonas.List(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,7 @@ func formatLanguages(langs []string) string {
 }
 
 // renderPersonaList writes the Name/Version/Source/Language table.
-func renderPersonaList(w io.Writer, metas []personas.PersonaMeta) error {
+func renderPersonaList(w io.Writer, metas []commpersonas.PersonaMeta) error {
 	rows := make([]string, len(metas))
 	for i, m := range metas {
 		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s", m.Name, m.Version, m.Source, formatLanguages(m.Language))
@@ -392,16 +392,16 @@ func renderPersonaList(w io.Writer, metas []personas.PersonaMeta) error {
 
 // renderScoredList writes the Name/Version/Source/Language/Corroboration table,
 // rendering each persona's rate as "XX.X%" or "n/a".
-func renderScoredList(w io.Writer, scored []personas.ScoredPersona) error {
+func renderScoredList(w io.Writer, scored []commpersonas.ScoredPersona) error {
 	rows := make([]string, len(scored))
 	for i, s := range scored {
-		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s", s.Name, s.Version, s.Source, formatLanguages(s.Language), personas.FormatRate(s.Rate))
+		rows[i] = fmt.Sprintf("%s\t%s\t%s\t%s\t%s", s.Name, s.Version, s.Source, formatLanguages(s.Language), commpersonas.FormatRate(s.Rate))
 	}
 	return writeTable(w, "NAME\tVERSION\tSOURCE\tLANGUAGE\tCORROBORATION", rows)
 }
 
 // renderPersonaSearch writes the Name/Version/Description table of index hits.
-func renderPersonaSearch(w io.Writer, entries []personas.PersonaIndexEntry) error {
+func renderPersonaSearch(w io.Writer, entries []commpersonas.PersonaIndexEntry) error {
 	rows := make([]string, len(entries))
 	for i, e := range entries {
 		version := e.Version
