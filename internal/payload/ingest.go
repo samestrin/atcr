@@ -72,6 +72,12 @@ func BuildEntriesFromDiffFile(path string, maxBytes int64) ([]FileEntry, error) 
 	if !isSafeDiffPath(path) {
 		return nil, fmt.Errorf("diff ingestion: refusing unsafe diff path %q: must be a relative path within the working tree (no absolute paths, no .. traversal)", path)
 	}
+	// isSafeDiffPath is purely lexical: a relative, in-tree path can still be (or
+	// traverse) a symlink pointing outside the working tree. Resolve symlinks and
+	// reject an escape before os.Open follows the link to an external file.
+	if err := rejectDiffSymlinkEscape(path); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("diff ingestion: opening diff file: %w", err)
@@ -431,4 +437,40 @@ func isSafeDiffPath(p string) bool {
 		return false
 	}
 	return true
+}
+
+// rejectDiffSymlinkEscape resolves the symlinks in a (lexically-validated) diff
+// path and rejects it when the real target lands outside the working tree — the
+// filesystem-aware companion to isSafeDiffPath's lexical guard. A path that does
+// not yet resolve (EvalSymlinks errors) is left to the subsequent os.Open, and a
+// failure to determine the working-tree root fails open (the lexical guard still
+// applies). The root is itself symlink-resolved so the comparison holds on
+// platforms whose temp/working dirs sit behind a symlink (e.g. macOS /var ->
+// /private/var).
+func rejectDiffSymlinkEscape(path string) error {
+	// Resolve to an absolute path BEFORE following symlinks so every component
+	// (including the working-tree root itself, e.g. macOS /var -> /private/var) is
+	// resolved consistently — EvalSymlinks on a bare relative path leaves it
+	// relative and Abs would then join the UNresolved cwd, spuriously diverging
+	// from the resolved root below.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil // does not resolve; os.Open reports the concrete failure
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolvedRoot
+	}
+	rel, err := filepath.Rel(root, real)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("diff ingestion: refusing diff path %q: resolves outside the working tree via a symlink", path)
+	}
+	return nil
 }
