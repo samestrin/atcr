@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -71,21 +72,14 @@ func Resolve(name string) ([]string, error) {
 	return m.Personas, nil
 }
 
+// bundleNameRe constrains bundle names to the same safe-identifier class as
+// persona names, minus the namespace slash. Requiring an alphanumeric first
+// character prevents separator-only names like "-" or "_".
+var bundleNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
 // isValidBundleName reports whether name is a flat, safe bundle identifier.
 func isValidBundleName(name string) bool {
-	if name == "" {
-		return false
-	}
-	matched := true
-	for _, r := range name {
-		isAllowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '_' || r == '-'
-		if !isAllowed {
-			matched = false
-			break
-		}
-	}
-	return matched
+	return name != "" && bundleNameRe.MatchString(name)
 }
 
 // dedupePreserveOrder returns names with duplicates removed, keeping first-seen
