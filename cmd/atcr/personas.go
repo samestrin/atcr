@@ -147,20 +147,20 @@ func installBundle(cmd *cobra.Command, dir, bundleName string) error {
 	if err != nil {
 		return err // includes ErrUnknownBundle ("unknown bundle: \"<name>\"")
 	}
-	var failed bool
+	var failed int
 	for _, o := range outcomes {
 		switch {
 		case o.Err != nil:
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "failed to install %s: %v\n", o.Name, o.Err)
-			failed = true
+			failed++
 		case o.AlreadyPresent:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s already present\n", o.Name)
 		default:
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Installed %s\n", o.Name)
 		}
 	}
-	if failed {
-		return fmt.Errorf("one or more bundle personas failed to install")
+	if failed > 0 {
+		return fmt.Errorf("%d of %d bundle personas failed to install", failed, len(outcomes))
 	}
 	return nil
 }
