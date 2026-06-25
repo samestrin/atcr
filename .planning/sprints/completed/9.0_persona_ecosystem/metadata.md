@@ -76,3 +76,5 @@ _Updated by `/execute-sprint` during execution._
 ### Changes
 - **Files Changed:** 42 (code + docs; 109 incl. .planning tracking)
 - **Commits:** 21 (vs main)
+
+**Merge Commit:** 2d342f0028118e9304e0b884c80b0dc663507305
