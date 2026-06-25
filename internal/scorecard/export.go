@@ -3,6 +3,7 @@ package scorecard
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -104,7 +105,12 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		CostPerCorroboratedFindingUSD: costPer(a.costTotal, a.corroborated),
 		LatencyP50MS:                  medianInt64(a.latencies),
 	}
-	if a.hasVerification {
+	// Emit the rate ONLY when real verdict data backs it. hasVerification merely
+	// records that some verification pointer was present; a degenerate record can
+	// carry zero counts AND no stored rate (verified+refuted==0, storedRates empty),
+	// in which case there is no rate to report and the key must stay absent — a 0.0
+	// here would be indistinguishable from a genuine all-refuted rate.
+	if a.hasVerification && (a.verified+a.refuted > 0 || len(a.storedRates) > 0) {
 		// Count-based aggregation (verified/(verified+refuted)) is authoritative
 		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
 		// average of per-run rates). Only when NO counts survive in the group (a
@@ -113,10 +119,9 @@ func (a *reviewerAcc) finalize() PublicRecord {
 		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
 		// public value.
 		var rate float64
-		switch {
-		case a.verified+a.refuted > 0:
+		if a.verified+a.refuted > 0 {
 			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
-		case len(a.storedRates) > 0:
+		} else {
 			sum := 0.0
 			for _, v := range a.storedRates {
 				sum += v
@@ -139,6 +144,19 @@ func AnonymizeRecord(raw Record) PublicRecord {
 	return a.finalize()
 }
 
+// ScrubPublicRecord re-applies the identity-field scrub to the two string fields
+// a PublicRecord carries (Model, Persona). It exists for callers that wrap an
+// externally-supplied PublicRecord into a public artifact WITHOUT having gone
+// through AnonymizeRecord's ingestion scrub — notably benchmark.BuildSubmission,
+// which consumes a hand-suppliable run-result file. The numeric metrics are
+// governed by the PublicRecord allowlist and are left untouched. Idempotent: a
+// record already scrubbed at ingestion passes through unchanged.
+func ScrubPublicRecord(r PublicRecord) PublicRecord {
+	r.Model = scrubField(r.Model)
+	r.Persona = scrubField(r.Persona)
+	return r
+}
+
 // clampNonNeg* / clampRate guard the public submission against a corrupt-but-
 // parseable source record: a negative count or an out-of-[0,1] rate in a public
 // leaderboard is worse than a dropped value, so ingested metrics are bounded
@@ -158,7 +176,7 @@ func clampNonNeg64(n int64) int64 {
 }
 
 func clampNonNegF(f float64) float64 {
-	if f < 0 {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
 		return 0
 	}
 	return f
@@ -166,6 +184,12 @@ func clampNonNegF(f float64) float64 {
 
 func clampRate(f float64) float64 {
 	switch {
+	case math.IsNaN(f):
+		return 0
+	case math.IsInf(f, 1):
+		return 1
+	case math.IsInf(f, -1):
+		return 0
 	case f < 0:
 		return 0
 	case f > 1:
@@ -252,9 +276,10 @@ func costPer(totalCost float64, corroborated int) float64 {
 }
 
 // medianInt64 returns the p50 (median) of the latencies: the middle element for
-// an odd count, the integer mean of the two middle elements for an even count,
-// and 0 for an empty slice. The input is copied before sorting so the caller's
-// accumulator order is not mutated.
+// an odd count, and for an even count the integer median — the FLOOR of the
+// average of the two middle elements (p50 is an int64 millisecond field, so it is
+// reported as a whole millisecond, never rounded up). Empty slice returns 0. The
+// input is copied before sorting so the caller's accumulator order is not mutated.
 func medianInt64(xs []int64) int64 {
 	n := len(xs)
 	if n == 0 {
@@ -266,7 +291,10 @@ func medianInt64(xs []int64) int64 {
 	if n%2 == 1 {
 		return sorted[n/2]
 	}
-	return (sorted[n/2-1] + sorted[n/2]) / 2
+	// lo + (hi-lo)/2 is the overflow-safe form of (lo+hi)/2: it never sums two
+	// near-MaxInt64 values, while still yielding floor((lo+hi)/2) since hi >= lo.
+	lo, hi := sorted[n/2-1], sorted[n/2]
+	return lo + (hi-lo)/2
 }
 
 // scrubField is defense-in-depth over the allowlist: reviewer/model/role are the
@@ -284,6 +312,7 @@ func medianInt64(xs []int64) int64 {
 // collapsed.
 func scrubField(s string) string {
 	s = scrubWinPath.ReplaceAllString(s, "")
+	s = scrubUNCPath.ReplaceAllString(s, "")
 	s = scrubHome.ReplaceAllString(s, "")
 	s = scrubEmbeddedPath.ReplaceAllString(s, "")
 	s = scrubAbsPath.ReplaceAllString(s, "$1")
@@ -294,16 +323,26 @@ func scrubField(s string) string {
 
 var (
 	scrubWinPath = regexp.MustCompile(`[A-Za-z]:\\\S*`)
+	// scrubUNCPath strips a Windows UNC token (\\host\share...). scrubWinPath only
+	// covers drive-letter paths, so a leading double-backslash form would otherwise
+	// survive the backstop.
+	scrubUNCPath = regexp.MustCompile(`\\\\\S+`)
 	scrubHome    = regexp.MustCompile(`~\S*`)
 	// scrubEmbeddedPath removes a whole whitespace-delimited token that embeds a
 	// known absolute-path root, even when the '/' is glued to a preceding
 	// alphanumeric (e.g. "host/etc/passwd"). scrubAbsPath below deliberately keeps
 	// an alnum-preceded '/' so provider-prefixed model ids like "anthropic/claude-3"
 	// survive — but that allowance would otherwise leak an embedded system path. A
-	// real path root never appears in a model id, so dropping the token is safe.
-	scrubEmbeddedPath = regexp.MustCompile(`\S*(?:/etc/|/Users/|/home/|/var/|/tmp/)\S*`)
+	// real path root never appears in a model id, so dropping the token is safe. The
+	// root set covers the common FHS dirs that can hold sensitive paths.
+	scrubEmbeddedPath = regexp.MustCompile(`\S*(?:/etc/|/Users/|/home/|/var/|/tmp/|/opt/|/srv/|/mnt/|/root/|/private/|/usr/)\S*`)
 	// Leading capture preserves the non-path byte before the stripped '/'-run.
 	scrubAbsPath = regexp.MustCompile(`(^|[^A-Za-z0-9])/\S*`)
-	scrubEmail   = regexp.MustCompile(`[\w.+-]+@[\w.-]+\.\w+`)
-	scrubKey     = regexp.MustCompile(`(?i)\b(sk-[a-z0-9-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
+	// scrubEmail strips addresses with OR without a TLD dot (user@host.com AND
+	// user@localhost) — the backstop should not require a public-domain shape.
+	scrubEmail = regexp.MustCompile(`[\w.+-]+@[\w.-]+`)
+	// scrubKey covers common token/key shapes. sk-/sk_ (OpenAI-style, both hyphen
+	// and underscore variants) and AIza (Google API key) are included alongside the
+	// GitHub/GitLab/Slack/AWS/bearer shapes.
+	scrubKey = regexp.MustCompile(`(?i)\b(sk[-_][a-z0-9_-]+|aiza[a-z0-9_-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
 )
