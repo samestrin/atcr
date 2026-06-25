@@ -239,6 +239,24 @@ func TestExport_SurvivedSkepticOmittedWhenVerificationRanButNoCountsOrRates(t *t
 	assert.Nil(t, r.SurvivedSkepticRate)
 }
 
+func TestExport_DistinctIdentitiesMergeWhenTheyScrubEqual(t *testing.T) {
+	// By-design invariant: grouping uses the SCRUBBED identity (Export ingestion
+	// scrubs persona/model once, then keys by the result). Two records whose
+	// Reviewer/Model differ BEFORE scrubbing but scrub to the same value must merge
+	// into a single aggregated row. This locks the merge so a future refactor that
+	// scrubbed AFTER keying — silently un-merging groups and changing public output —
+	// is caught.
+	r1 := exportRec("bruce /tmp/secretA", "gpt-4 /var/log/a", 1)
+	r2 := exportRec("bruce /tmp/secretB", "gpt-4 /var/log/b", 2)
+	data, err := Export([]Record{r1, r2}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	out := parseEnvelope(t, data).Reviewers
+	require.Len(t, out, 1, "distinct pre-scrub identities that scrub equal must merge into one group")
+	assert.Equal(t, 2, out[0].Runs, "the merged group aggregates both runs")
+	assert.Equal(t, "bruce", out[0].Persona, "persona is the scrubbed identity")
+	assert.Equal(t, "gpt-4", out[0].Model, "model is the scrubbed identity")
+}
+
 func TestExport_AnonymizationStripsRunID(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
