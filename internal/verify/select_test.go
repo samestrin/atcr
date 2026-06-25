@@ -610,7 +610,7 @@ agents:
 `
 	f, err := os.CreateTemp("", "registry-*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	_, err = f.WriteString(yamlBody)
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
