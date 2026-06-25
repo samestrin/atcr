@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -237,4 +238,47 @@ agents:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "bruce")
 	assert.Contains(t, err.Error(), "scope")
+}
+
+// AgentConfig.Persona selects a reviewer prompt template (resolved via
+// ResolvePersona, whose validateName already rejects path traversal). It is the
+// one prompt/filesystem-adjacent agent string with no control-char or length
+// guard in validateAgent, unlike the executor persona and the Scope/Language
+// entries. A control character in it must be rejected at load validation,
+// mirroring the executor persona guard, so a malformed community persona fails
+// fast at config validation rather than at runtime resolution.
+func TestRegistryLoad_AgentPersonaWithNewline(t *testing.T) {
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    persona: "owasp\nmalicious"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "persona")
+}
+
+// An over-long persona is rejected at load, mirroring the executor persona cap
+// (shared MaxExecutorPersonaLen) so prompt-stuffing via the agent persona field
+// is bounded the same way as the executor's.
+func TestRegistryLoad_AgentPersonaTooLong(t *testing.T) {
+	long := strings.Repeat("a", MaxExecutorPersonaLen+1)
+	_, err := LoadRegistry(writeRegistry(t, `
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+agents:
+  bruce:
+    provider: openai
+    model: gpt-4
+    persona: "`+long+`"
+`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bruce")
+	assert.Contains(t, err.Error(), "persona")
 }
