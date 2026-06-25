@@ -376,7 +376,12 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	if trunc.AllDropped {
 		return nil, fmt.Errorf("%w (mode diff, dropped %d file(s))", ErrPayloadFullyDropped, len(trunc.FilesDropped))
 	}
+	var totalLen int
+	for _, e := range kept {
+		totalLen += len(e.Body)
+	}
 	var b strings.Builder
+	b.Grow(totalLen)
 	for _, e := range kept {
 		b.WriteString(e.Body)
 	}
