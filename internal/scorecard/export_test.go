@@ -208,6 +208,25 @@ func TestExport_SurvivedSkepticRateOnlyRecordNotZeroed(t *testing.T) {
 	assert.InDelta(t, 0.73, *r.SurvivedSkepticRate, 1e-9, "stored rate must not be zeroed when counts are absent")
 }
 
+func TestExport_SurvivedSkepticOmittedWhenVerificationRanButNoCountsOrRates(t *testing.T) {
+	// Degenerate shape: verification pointers are present (hasVerification) but every
+	// verdict count is zero AND no stored rate survives (verified+refuted==0,
+	// storedRates empty). There is no rate data, so the key must be OMITTED — not
+	// emitted as a misleading 0.0 that is indistinguishable from a genuine
+	// all-refuted rate (the verified+refuted>0 case).
+	v, ref := 0, 0
+	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
+	rec.FindingsVerified = &v
+	rec.FindingsRefuted = &ref
+	rec.SurvivedSkepticRate = nil
+	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "survived_skeptic_rate",
+		"no verdict counts and no stored rate => omit the key, not 0.0")
+	r := parseEnvelope(t, data).Reviewers[0]
+	assert.Nil(t, r.SurvivedSkepticRate)
+}
+
 func TestExport_AnonymizationStripsRunID(t *testing.T) {
 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
 		FilterOpts{Since: "30d"}, fixedExportNow)
