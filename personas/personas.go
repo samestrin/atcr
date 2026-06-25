@@ -30,6 +30,10 @@ func expectedEmbeddedFiles() map[string]struct{} {
 	return want
 }
 
+// nameSet is the O(1) lookup backing isRegistered, populated once at init from
+// the immutable names slice.
+var nameSet map[string]struct{}
+
 func init() {
 	want := expectedEmbeddedFiles()
 	entries, err := files.ReadDir(".")
@@ -51,6 +55,11 @@ func init() {
 			panic(fmt.Sprintf("personas: embedded .md files %v do not match registered personas plus _base.md %v", got, want))
 		}
 	}
+
+	nameSet = make(map[string]struct{}, len(names))
+	for _, n := range names {
+		nameSet[n] = struct{}{}
+	}
 }
 
 // Names returns the embedded persona names in canonical order.
@@ -62,12 +71,8 @@ func Names() []string {
 
 // isRegistered reports whether name is one of the canonical persona names.
 func isRegistered(name string) bool {
-	for _, n := range names {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	_, ok := nameSet[name]
+	return ok
 }
 
 // Get returns the embedded persona template for name. Only the canonical
