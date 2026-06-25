@@ -193,6 +193,14 @@ func looseSectionStarts(lines []string, offsets []int) ([]int, error) {
 				}
 				i++
 			}
+			// A `\ No newline at end of file` marker trails its hunk's counted
+			// body lines (it counts toward neither side, so the budget loop above
+			// has already exited). Consume any such markers into this hunk so they
+			// are not mistaken for content after the section — which would abort an
+			// otherwise valid loose diff, or merge it with the next file.
+			for i < n && strings.HasPrefix(lines[i], `\`) {
+				i++
+			}
 		}
 	}
 	if len(starts) == 0 {
