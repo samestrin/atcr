@@ -1,0 +1,2 @@
+MEDIUM|internal/payload/ingest.go:293|Unvalidated path extraction from untrusted diff content|Sanitize extracted paths or reject traversal sequences before returning FileEntry|security|15|parseDiffPathField returns raw paths like ../../etc/passwd|greta
+LOW|internal/payload/ingest.go:322|Lexical path guard bypassable via symlinks|Use filepath.EvalSymlinks or explicitly document symlink risk for untrusted trees|security|5|isSafeDiffPath comment admits symlink bypass|greta

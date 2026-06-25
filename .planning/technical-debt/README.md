@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 24 | 0 |
-| LOW | 6 | 22 | 0 |
+| MEDIUM | 0 | 24 | 0 |
+| LOW | 0 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 7 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 55
+**Last Modified:** 2026-06-25 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 48
 
 ## Directory Structure
 
@@ -33,18 +33,6 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
-
-### [2026-06-25] From Sprint: epic-10.1
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/payload/ingest.go:172 | diffSectionPath cannot derive the head path for `git diff --no-prefix` binary or rename-only sections (no `+++` line and no ` b/` token), so such a diff errors instead of ingesting | Parse the `diff --git <old> <new>` header positionally when the ` b/` token is absent (no-prefix), or document the --no-prefix-binary limitation | EDGE_CASES | 30 | execute-epic-cumulative |
-| U | [ ] | LOW | internal/fanout/review.go:330 | The `--output-dir and --id are mutually exclusive` guard is duplicated verbatim in PrepareReview and PrepareReviewFromDiff rather than in a shared helper, risking future drift | Hoist the mutual-exclusion check into a shared validateReviewRequest helper called by both entry points | REGRESSION_RISK | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/payload/ingest.go:561 | The post-read `int64(len(data)) > maxBytes` recheck only works because LimitReader caps at maxBytes+1; a future edit changing the +1 would silently turn the TOCTOU guard into dead code | Add a test that a file grown between Stat and read is still rejected, pinning the +1<->recheck invariant | ERROR_PATHS | 20 | execute-epic-independent |
-| U | [ ] | MEDIUM | internal/payload/ingest.go:328 | isSafeDiffPath mirrors isSafeRelPath exactly but neither resolves symlinks, so a relative path that is itself a symlink to a file outside the working tree passes the guard and is read via os.Open | Harden isSafeDiffPath and benchmark.isSafeRelPath together (filepath.EvalSymlinks + working-tree root re-check, or Lstat-reject symlinks) so the two guards stay consistent | SECURITY | 30 | execute-epic-independent |
-| U | [ ] | LOW | internal/payload/ingest.go:305 | headPathFromGitHeader uses strings.LastIndex(header, " b/") which mis-parses a git header whose path legitimately contains the literal " b/" substring | Parse the git header relative to the a/ token structure, or require a +++/--- header for ambiguous space-containing paths | CORRECTNESS | 30 | execute-epic-independent |
-| U | [ ] | LOW | internal/payload/ingest.go:120 | Loose-format detection requires a literal "@@ " marker, so merge/combined diffs ("@@@ ") and mode/rename-only loose sections surface as a generic "no file sections found" error rather than a clear unsupported-format diagnostic | Detect "@@@ " combined-diff markers and emit an explicit unsupported-format error, or document the loose-format limitation in the function comment | EDGE_CASES | 15 | execute-epic-independent |
-| U | [ ] | LOW | internal/fanout/review.go:376 | Partial truncation (Truncated true, AllDropped false) is not surfaced to the caller of PrepareReviewFromDiff, so a run that silently dropped some files from an oversized diff produces a subset review with no signal at the ingestion boundary | Log or return the Truncation summary from PrepareReviewFromDiff when trunc.Truncated is true | OBSERVABILITY | 15 | execute-epic-independent |
 
 ### [2026-06-23] From Sprint: 8.0_reconciler_library
 

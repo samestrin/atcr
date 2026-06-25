@@ -1,0 +1,1 @@
+LOW|internal/fanout/ingest_review_test.go:162|Unused t.Setenv("ATCR_TEST_KEY", "secret") in test|Remove the unused env var line — it is set but never read|correctness|2|Test sets env var with no read; leftover debug code|claude

@@ -1,0 +1,3 @@
+MEDIUM|internal/fanout/review.go:354|Internal error uses CLI flag names|Use parameter names OutputDir and IDOverride|maintainability|2|fmt.Errorf("--output-dir and --id are mutually exclusive")|bruce
+LOW|internal/payload/ingest.go:218|strings.Split allocates slice for entire section|Use strings.IndexByte loop to iterate|performance|5|strings.Split(section, "\n")|bruce
+LOW|internal/fanout/review.go:375|Unbounded strings.Builder causes reallocations|Pre-allocate with b.Grow(len(diffText))|performance|3|var b strings.Builder|bruce

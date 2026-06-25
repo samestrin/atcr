@@ -1,0 +1,11 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+LOW|internal/fanout/ingest_review_test.go:159|Spurious unexplained env var in test|Remove the t.Setenv call|maintainability|1|ATCR_TEST_KEY is set but never consumed in this test|bruce
+MEDIUM|internal/payload/ingest.go:293|Unvalidated path extraction from untrusted diff content|Sanitize extracted paths or reject traversal sequences before returning FileEntry|security|15|parseDiffPathField returns raw paths like ../../etc/passwd|greta
+LOW|internal/payload/ingest.go:322|Lexical path guard bypassable via symlinks|Use filepath.EvalSymlinks or explicitly document symlink risk for untrusted trees|security|5|isSafeDiffPath comment admits symlink bypass|greta
+LOW|internal/fanout/ingest_review_test.go:162|Unused t.Setenv("ATCR_TEST_KEY", "secret") in test|Remove the unused env var line — it is set but never read|correctness|2|Test sets env var with no read; leftover debug code|claude
+MEDIUM|internal/fanout/review.go:354|Internal error uses CLI flag names|Use parameter names OutputDir and IDOverride|maintainability|2|fmt.Errorf("--output-dir and --id are mutually exclusive")|bruce
+LOW|internal/payload/ingest.go:218|strings.Split allocates slice for entire section|Use strings.IndexByte loop to iterate|performance|5|strings.Split(section, "\n")|bruce
+LOW|internal/fanout/review.go:375|Unbounded strings.Builder causes reallocations|Pre-allocate with b.Grow(len(diffText))|performance|3|var b strings.Builder|bruce
+MEDIUM|internal/fanout/review.go:378|ForceMode overrides agent config unconditionally|Verify forceMode is only set for diff ingestion|correctness|10|forceMode overrides EffectivePayloadMode even if non-empty in git path|bruce
