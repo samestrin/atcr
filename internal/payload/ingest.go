@@ -388,17 +388,32 @@ func headPathFromGitHeader(header string) string {
 	const sep = " b/"
 	body := strings.TrimPrefix(header, gitDiffMarker) // "a/<old> b/<new>"
 	if !strings.HasPrefix(body, "a/") {
-		return lastBToken(body, sep) // --no-prefix or unexpected shape
+		// --no-prefix: `diff --git <old> <new>` with no a/ b/ markers. The common
+		// modification/binary case is symmetric (`<P> <P>`); recover it via a
+		// single-space midpoint even when <P> contains spaces. Renames or
+		// asymmetric spaced paths stay ambiguous (documented limitation) -> "".
+		return symmetricMidpoint(body, " ")
 	}
 	body = body[len("a/"):] // "<old> b/<new>"
-	// Symmetric "<P> b/<P>" check: len == len(P) + len(sep) + len(P).
-	if len(body) >= len(sep) && (len(body)-len(sep))%2 == 0 {
-		half := (len(body) - len(sep)) / 2
-		if body[half:half+len(sep)] == sep && body[:half] == body[half+len(sep):] {
-			return body[half+len(sep):]
-		}
+	if p := symmetricMidpoint(body, sep); p != "" {
+		return p
 	}
 	return lastBToken(body, sep)
+}
+
+// symmetricMidpoint returns the second half of body when it has the symmetric
+// form `<P><sep><P>` (the common same-path git header, where old == new), even
+// when <P> itself contains sep. It returns "" for an asymmetric (rename) or
+// genuinely ambiguous spaced header.
+func symmetricMidpoint(body, sep string) string {
+	if len(body) < len(sep) || (len(body)-len(sep))%2 != 0 {
+		return ""
+	}
+	half := (len(body) - len(sep)) / 2
+	if body[half:half+len(sep)] == sep && body[:half] == body[half+len(sep):] {
+		return body[half+len(sep):]
+	}
+	return ""
 }
 
 // lastBToken returns the segment after the last ` b/` token of s, or "" when
