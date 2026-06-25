@@ -65,6 +65,25 @@ func TestBundleResolve_PathTraversalIsUnknown(t *testing.T) {
 	}
 }
 
+func TestBundleResolve_InvalidCharactersAreUnknown(t *testing.T) {
+	// Bundle names mirror the persona-name safe-identifier class (without the
+	// namespace slash): they must start with an alphanumeric and contain only
+	// letters, digits, underscores, and hyphens.
+	for _, name := range []string{"_django", "django orm", "django@", "go--production!"} {
+		_, err := Resolve(name)
+		require.Errorf(t, err, "name %q must be rejected", name)
+		assert.ErrorIs(t, err, ErrUnknownBundle)
+	}
+}
+
+func TestIsValidBundleName_RequiresAlphanumericStart(t *testing.T) {
+	assert.False(t, isValidBundleName("_django"))
+	assert.False(t, isValidBundleName("-django"))
+	assert.True(t, isValidBundleName("django"))
+	assert.True(t, isValidBundleName("go-production"))
+	assert.True(t, isValidBundleName("django_orm"))
+}
+
 // --- parseManifest ----------------------------------------------------------
 
 func TestParseManifest_Valid(t *testing.T) {
