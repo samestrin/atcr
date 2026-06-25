@@ -113,7 +113,7 @@ func TestMedianInt64(t *testing.T) {
 	assert.Equal(t, int64(0), medianInt64(nil))
 	assert.Equal(t, int64(5), medianInt64([]int64{5}))
 	assert.Equal(t, int64(20), medianInt64([]int64{30, 10, 20}))
-	assert.Equal(t, int64(10), medianInt64([]int64{20, 10}), "even count -> lower middle")
+	assert.Equal(t, int64(15), medianInt64([]int64{20, 10}), "even count -> floor of two middles, matching scorecard")
 }
 
 // AC: the run-result written by `benchmark run` is consumed unchanged by

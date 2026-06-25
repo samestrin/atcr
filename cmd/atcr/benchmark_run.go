@@ -179,14 +179,23 @@ func reviewerPersona(cfg *fanout.ReviewConfig, agent string) string {
 	return agent
 }
 
-// medianInt64 returns the p50 of vs (lower-middle for an even count); 0 for an
-// empty slice, so a no-usage run reports a deterministic 0 latency.
+// medianInt64 returns the p50 of vs; 0 for an empty slice, so a no-usage run
+// reports a deterministic 0 latency. It uses the SAME definition as
+// scorecard.medianInt64 (odd: the middle element; even: floor of the two middles)
+// so the shared public latency_p50_ms column is computed identically for benchmark
+// and production rows on the leaderboard. lo + (hi-lo)/2 is the overflow-safe form
+// of floor((lo+hi)/2).
 func medianInt64(vs []int64) int64 {
-	if len(vs) == 0 {
+	n := len(vs)
+	if n == 0 {
 		return 0
 	}
-	sorted := make([]int64, len(vs))
+	sorted := make([]int64, n)
 	copy(sorted, vs)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	return sorted[(len(sorted)-1)/2]
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	lo, hi := sorted[n/2-1], sorted[n/2]
+	return lo + (hi-lo)/2
 }
