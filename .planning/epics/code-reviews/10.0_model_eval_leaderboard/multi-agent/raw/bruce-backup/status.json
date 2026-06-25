@@ -1,0 +1,9 @@
+{
+  "agent_name": "bruce-backup",
+  "model": "minimax-m2.7",
+  "status": "ok",
+  "duration_ms": 93268,
+  "fallback_used": true,
+  "fallback_from": "bruce",
+  "original_error": "stream read failed: context deadline exceeded"
+}

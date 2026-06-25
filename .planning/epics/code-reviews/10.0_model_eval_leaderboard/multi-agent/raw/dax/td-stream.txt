@@ -1,0 +1,3 @@
+MEDIUM|internal/benchmark/benchmark.go:153|writeField ignores write errors|Check and propagate write errors|error-handling|5|writeField discards errors from fmt.Fprintf and io.WriteString|bruce
+MEDIUM|internal/scorecard/export.go:223|SurvivedSkepticRate fallback averages per-run rates|Use count-based aggregation only or document fallback|correctness|10|Averaging per-run rates when counts absent can bias the public metric|bruce
+LOW|internal/benchmark/benchmark.go:227|BuildSubmission copies reviewers verbatim without re-scrub|Add defense-in-depth re-scrub or enforce at producer|security|15|PRIVACY CONTRACT doc says re-scrub is tech debt; hand-crafted run-result could leak PII|bruce

@@ -1,0 +1,2035 @@
+diff --git a/cmd/atcr/benchmark.go b/cmd/atcr/benchmark.go
+new file mode 100644
+index 0000000..edc577b
+--- /dev/null
++++ b/cmd/atcr/benchmark.go
+@@ -0,0 +1,116 @@
++package main
++
++import (
++	"encoding/json"
++	"fmt"
++	"os"
++	"time"
++
++	"github.com/samestrin/atcr/internal/benchmark"
++	"github.com/spf13/cobra"
++)
++
++// newBenchmarkCmd builds `atcr benchmark`: the bounded in-repo half of the
++// standard-suite tooling (Epic 10.0). `verify` validates a suite manifest and
++// prints its reproducibility hash; `export` wraps a suite run-result in the
++// suite-tagged public submission envelope. Live execution + scoring
++// (`benchmark run`) is Epic 10.1; the curated standard-v1 suite content lives in
++// the external atcr/benchmark-suite repo.
++func newBenchmarkCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "benchmark",
++		Short: "Standard benchmark-suite tooling for the public leaderboard",
++		Long: "Tooling for the standard benchmark suite that feeds the public Model-Eval\n" +
++			"Leaderboard. `verify` validates a suite manifest and prints its\n" +
++			"reproducibility hash; `export` produces a suite-tagged public submission\n" +
++			"record (distinct from `leaderboard --export`, so suite runs are\n" +
++			"distinguishable from production runs on the public board).",
++		Args: usageArgs(cobra.NoArgs),
++		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
++	}
++	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkExportCmd())
++	return cmd
++}
++
++// newBenchmarkVerifyCmd builds `atcr benchmark verify --suite-path <dir>`: load
++// and validate the suite manifest, confirm every case diff exists, and print the
++// deterministic reproducibility hash. Read-only.
++func newBenchmarkVerifyCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "verify",
++		Short: "Validate a benchmark suite manifest and print its reproducibility hash",
++		Args:  usageArgs(cobra.NoArgs),
++		RunE:  runBenchmarkVerify,
++	}
++	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
++	_ = cmd.MarkFlagRequired("suite-path")
++	return cmd
++}
++
++func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
++	suitePath, _ := cmd.Flags().GetString("suite-path")
++
++	m, err := benchmark.Load(suitePath)
++	if err != nil {
++		return err
++	}
++	hash, err := benchmark.ReproHash(suitePath)
++	if err != nil {
++		return err
++	}
++	noun := "cases"
++	if len(m.Cases) == 1 {
++		noun = "case"
++	}
++	_, werr := fmt.Fprintf(cmd.OutOrStdout(),
++		"suite %q version %s: %d %s, valid\nreproducibility hash: %s\n",
++		m.Suite, m.SuiteVersion, len(m.Cases), noun, hash)
++	return werr
++}
++
++// newBenchmarkExportCmd builds `atcr benchmark export --in <run-result.json>`:
++// read a suite run-result and emit the suite-tagged public submission envelope.
++// The run-result is produced by `atcr benchmark run` (Epic 10.1); export reads it
++// rather than the local scorecard, so a production run can never be passed off as
++// a suite submission.
++func newBenchmarkExportCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "export",
++		Short: "Emit a suite-tagged public submission record from a benchmark run-result",
++		Args:  usageArgs(cobra.NoArgs),
++		RunE:  runBenchmarkExport,
++	}
++	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by `atcr benchmark run`)")
++	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (follows symlinks)")
++	_ = cmd.MarkFlagRequired("in")
++	return cmd
++}
++
++func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
++	in, _ := cmd.Flags().GetString("in")
++	output, _ := cmd.Flags().GetString("output")
++
++	data, err := os.ReadFile(in)
++	if err != nil {
++		return fmt.Errorf("reading run-result %s: %w", in, err)
++	}
++	var rr benchmark.RunResult
++	if err := json.Unmarshal(data, &rr); err != nil {
++		return fmt.Errorf("parsing run-result %s: %w", in, err)
++	}
++	if rr.Suite == "" || rr.SuiteVersion == "" {
++		return fmt.Errorf("run-result %s is missing suite/suite_version", in)
++	}
++
++	sub := benchmark.BuildSubmission(rr, time.Now().UTC())
++	out, err := json.MarshalIndent(sub, "", "  ")
++	if err != nil {
++		return fmt.Errorf("encoding submission: %w", err)
++	}
++	if output == "" {
++		_, werr := cmd.OutOrStdout().Write(append(out, '\n'))
++		return werr
++	}
++	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
++	return writeExportFile(output, out)
++}
+diff --git a/cmd/atcr/benchmark_test.go b/cmd/atcr/benchmark_test.go
+new file mode 100644
+index 0000000..4ebe1d4
+--- /dev/null
++++ b/cmd/atcr/benchmark_test.go
+@@ -0,0 +1,102 @@
++package main
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++// writeValidSuite writes a minimal valid benchmark suite (manifest + one diff
++// file) into a fresh temp dir and returns its path.
++func writeValidSuite(t *testing.T) string {
++	t.Helper()
++	dir := t.TempDir()
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "case-01.diff"),
++		[]byte("--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new // planted defect\n"), 0o600))
++	manifest := `{"suite":"mini","suite_version":"1.2.0","cases":[` +
++		`{"id":"case-01","diff":"case-01.diff","expected_categories":["correctness"]}]}`
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(manifest), 0o600))
++	return dir
++}
++
++func TestBenchmarkVerify_ValidSuite(t *testing.T) {
++	dir := writeValidSuite(t)
++	code, out := execCmdCapture(t, "benchmark", "verify", "--suite-path", dir)
++	require.Equal(t, 0, code, out)
++	require.Contains(t, out, "mini")
++	require.Contains(t, out, "1.2.0")
++	require.Contains(t, out, "1 case")
++	require.Regexp(t, "[0-9a-f]{64}", out, "verify must print the 64-hex reproducibility hash")
++}
++
++func TestBenchmarkVerify_InvalidSuiteFails(t *testing.T) {
++	code, out := execCmdCapture(t, "benchmark", "verify", "--suite-path", t.TempDir())
++	require.NotEqual(t, 0, code, "a directory without suite.json must fail verify: %s", out)
++}
++
++func TestBenchmarkVerify_RequiresSuitePath(t *testing.T) {
++	code, _ := execCmdCapture(t, "benchmark", "verify")
++	require.NotEqual(t, 0, code, "verify without --suite-path is a usage error")
++}
++
++func writeRunResult(t *testing.T) string {
++	t.Helper()
++	dir := t.TempDir()
++	path := filepath.Join(dir, "run-result.json")
++	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
++		`"reviewers":[{"model":"claude-sonnet-4-6","persona":"bruce","runs":2,` +
++		`"findings_raised_avg":10.5,"corroboration_rate":0.6,` +
++		`"cost_per_corroborated_finding_usd":0.006,"latency_p50_ms":8900}]}`
++	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
++	return path
++}
++
++func TestBenchmarkExport_ProducesSuiteTaggedJSON(t *testing.T) {
++	in := writeRunResult(t)
++	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
++	require.Equal(t, 0, code, out)
++
++	var sub struct {
++		SubmissionSchema int    `json:"submission_schema"`
++		Source           string `json:"source"`
++		Suite            string `json:"suite"`
++		SuiteVersion     string `json:"suite_version"`
++		Reviewers        []struct {
++			Persona string `json:"persona"`
++		} `json:"reviewers"`
++	}
++	require.NoError(t, json.Unmarshal([]byte(out), &sub), "export stdout must be valid JSON: %s", out)
++	require.Equal(t, 1, sub.SubmissionSchema)
++	require.Equal(t, "benchmark-suite", sub.Source, "distinct from production export")
++	require.Equal(t, "mini", sub.Suite)
++	require.Equal(t, "1.2.0", sub.SuiteVersion)
++	require.Len(t, sub.Reviewers, 1)
++	require.Equal(t, "bruce", sub.Reviewers[0].Persona)
++	// Distinct from production --export: the production envelope has no source/suite.
++	require.NotContains(t, out, `"filters"`)
++}
++
++func TestBenchmarkExport_OutputFlagWritesFile(t *testing.T) {
++	in := writeRunResult(t)
++	dest := filepath.Join(t.TempDir(), "nested", "submission.json")
++	code, out := execCmdCapture(t, "benchmark", "export", "--in", in, "--output", dest)
++	require.Equal(t, 0, code, out)
++	require.NotContains(t, out, "submission_schema", "JSON goes to the file, not stdout")
++
++	data, err := os.ReadFile(dest)
++	require.NoError(t, err)
++	require.Contains(t, string(data), "benchmark-suite")
++}
++
++func TestBenchmarkExport_MissingInputFails(t *testing.T) {
++	code, out := execCmdCapture(t, "benchmark", "export", "--in", filepath.Join(t.TempDir(), "nope.json"))
++	require.NotEqual(t, 0, code, "a missing run-result file must fail export: %s", out)
++}
++
++func TestBenchmarkExport_RequiresInput(t *testing.T) {
++	code, _ := execCmdCapture(t, "benchmark", "export")
++	require.NotEqual(t, 0, code, "export without --in is a usage error")
++}
+diff --git a/cmd/atcr/leaderboard_test.go b/cmd/atcr/leaderboard_test.go
+index d590cda..1d33e1f 100644
+--- a/cmd/atcr/leaderboard_test.go
++++ b/cmd/atcr/leaderboard_test.go
+@@ -117,14 +117,14 @@ func TestLeaderboardCmd_ExportFlag(t *testing.T) {
+ 	// --export emits JSON, not the table: the table header must be absent.
+ 	require.NotContains(t, out, "REVIEWER\t")
+ 	var env struct {
+-		SchemaVersion int `json:"schema_version"`
+-		Records       []struct {
+-			Reviewer string `json:"reviewer"`
+-		} `json:"records"`
++		SubmissionSchema int `json:"submission_schema"`
++		Reviewers        []struct {
++			Persona string `json:"persona"`
++		} `json:"reviewers"`
+ 	}
+ 	require.NoError(t, json.Unmarshal([]byte(out), &env), "export stdout must be valid JSON: %s", out)
+-	require.Equal(t, 1, env.SchemaVersion)
+-	require.Len(t, env.Records, 2)
++	require.Equal(t, 1, env.SubmissionSchema)
++	require.Len(t, env.Reviewers, 2)
+ }
+ 
+ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
+@@ -135,15 +135,15 @@ func TestLeaderboardCmd_OutputFlag(t *testing.T) {
+ 	code, out := execCmdCapture(t, "leaderboard", "--export", "--output", dest)
+ 	require.Equal(t, 0, code, out)
+ 	// --output routes JSON to the file (creating parents), not stdout.
+-	require.NotContains(t, out, "schema_version")
++	require.NotContains(t, out, "submission_schema")
+ 
+ 	data, err := os.ReadFile(dest)
+ 	require.NoError(t, err, "output file must be created")
+ 	var env struct {
+-		SchemaVersion int `json:"schema_version"`
++		SubmissionSchema int `json:"submission_schema"`
+ 	}
+ 	require.NoError(t, json.Unmarshal(data, &env))
+-	require.Equal(t, 1, env.SchemaVersion)
++	require.Equal(t, 1, env.SubmissionSchema)
+ 
+ 	info, err := os.Stat(dest)
+ 	require.NoError(t, err)
+@@ -230,12 +230,12 @@ func TestLeaderboardCmd_SinceAllExportIncludesOldRecords(t *testing.T) {
+ 	code, out := execCmdCapture(t, "leaderboard", "--export", "--since", "all")
+ 	require.Equal(t, 0, code, "--export --since all must include old records: %s", out)
+ 	var env struct {
+-		Records []struct {
+-			Reviewer string `json:"reviewer"`
+-		} `json:"records"`
++		Reviewers []struct {
++			Persona string `json:"persona"`
++		} `json:"reviewers"`
+ 	}
+ 	require.NoError(t, json.Unmarshal([]byte(out), &env), "export must be valid JSON: %s", out)
+-	require.NotEmpty(t, env.Records, "old records must appear in export with --since all")
++	require.NotEmpty(t, env.Reviewers, "old records must appear in export with --since all")
+ }
+ 
+ func TestRenderLeaderboard_WriteErrorPropagated(t *testing.T) {
+diff --git a/cmd/atcr/main.go b/cmd/atcr/main.go
+index c0f2258..20c904d 100644
+--- a/cmd/atcr/main.go
++++ b/cmd/atcr/main.go
+@@ -186,6 +186,7 @@ func newRootCmd() *cobra.Command {
+ 		newTrustCmd(),
+ 		newScorecardCmd(),
+ 		newLeaderboardCmd(),
++		newBenchmarkCmd(),
+ 		newPersonasCmd(),
+ 	)
+ 	return root
+diff --git a/cmd/atcr/main_test.go b/cmd/atcr/main_test.go
+index 7aba620..401d086 100644
+--- a/cmd/atcr/main_test.go
++++ b/cmd/atcr/main_test.go
+@@ -43,9 +43,9 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
+ 	}
+ }
+ 
+-func TestRootCmd_HasExactlyFifteenSubcommands(t *testing.T) {
+-	// The fourteen prior commands plus `personas` (epic 9.0), which manages
+-	// community reviewer personas (install/list/search/remove/test/upgrade).
++func TestRootCmd_HasExactlySixteenSubcommands(t *testing.T) {
++	// The fifteen prior commands plus `benchmark` (epic 10.0), the standard
++	// benchmark-suite tooling (verify/export) feeding the public leaderboard.
+ 	root := newRootCmd()
+ 	names := map[string]bool{}
+ 	for _, c := range root.Commands() {
+@@ -54,8 +54,8 @@ func TestRootCmd_HasExactlyFifteenSubcommands(t *testing.T) {
+ 		}
+ 		names[c.Name()] = true
+ 	}
+-	assert.Len(t, names, 15)
+-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard", "personas"} {
++	assert.Len(t, names, 16)
++	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas"} {
+ 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
+ 	}
+ }
+diff --git a/docs/benchmark.md b/docs/benchmark.md
+new file mode 100644
+index 0000000..dc5e3e9
+--- /dev/null
++++ b/docs/benchmark.md
+@@ -0,0 +1,185 @@
++# Benchmark Suite
++
++`atcr benchmark` is the standard-suite tooling that feeds the public **Model-Eval
++Leaderboard** (Epic 10.0). A benchmark suite is a versioned, fixed set of diff
++cases with planted defects; running the same suite across models yields
++*comparable* scores, and only suite-sourced submissions are eligible for the
++public board — so cherry-picked production runs cannot game it.
++
++This page documents the **bounded in-repo half** that ships today:
++
++- the **suite-manifest contract** (`internal/benchmark`),
++- `atcr benchmark verify` — validate a suite and print its reproducibility hash,
++- `atcr benchmark export` — emit a suite-tagged public submission record.
++
++> **What is NOT here yet.** Live execution + scoring (`atcr benchmark run`) is
++> **Epic 10.1**: it needs a new diff-file→payload ingestion path (the review
++> pipeline is built around git ranges, not loose diff files) and the scoring
++> rubric. The curated `standard-v1` suite **content** lives in the external
++> `github.com/atcr/benchmark-suite` repo (it is not bundled here). Until those
++> land, `verify` and `export` operate against any suite directory and run-result
++> file that satisfy the contracts below.
++
++---
++
++## Suite manifest contract
++
++A suite is a directory containing a `suite.json` manifest plus the diff files it
++references:
++
++```
++my-suite/
++├── suite.json
++├── case-01.diff
++└── case-02.diff
++```
++
++```json
++{
++  "suite": "standard-v1",
++  "suite_version": "1.0.0",
++  "cases": [
++    {
++      "id": "case-01-nil-deref",
++      "diff": "case-01.diff",
++      "expected_categories": ["correctness"]
++    },
++    {
++      "id": "case-02-sql-injection",
++      "diff": "case-02.diff",
++      "expected_categories": ["security", "correctness"]
++    }
++  ]
++}
++```
++
++| Field | Type | Rules |
++|-------|------|-------|
++| `suite` | string | Required, non-empty. The suite identity. |
++| `suite_version` | string | Required, non-empty. Pins reproducibility; travels with every submission. |
++| `cases` | array | Required, at least one case. |
++| `cases[].id` | string | Required, non-empty, **unique** within the suite. |
++| `cases[].diff` | string | Required. Path **relative to** the suite directory; must not be absolute or escape the directory (`..` is rejected). The file must exist. |
++| `cases[].expected_categories` | string[] | Required, at least one. The planted-defect categories a competent reviewer should surface. (Consumed by the scoring engine in Epic 10.1.) |
++
++`internal/benchmark.Load(suitePath)` reads, validates, and confirms every diff
++file exists — it returns an error rather than a half-valid suite.
++
++---
++
++## `atcr benchmark verify --suite-path <dir>`
++
++Validate a suite manifest and print its **reproducibility hash**. Read-only.
++
++```bash
++atcr benchmark verify --suite-path ./my-suite
++```
++
++```
++suite "standard-v1" version 1.0.0: 2 cases, valid
++reproducibility hash: 3f9a…<64 hex>
++```
++
++The reproducibility hash is a deterministic SHA-256 over the suite's *content*:
++the suite identity, each case's id + expected categories, and the **bytes** of
++each diff file. It is **independent of case order** in the manifest (content, not
++ordering, defines reproducibility) and **content-sensitive** (a single changed
++diff byte changes the hash). Two people with the same suite version can confirm
++they are running byte-identical cases by comparing hashes.
++
++Behavior:
++- Missing `suite.json`, malformed JSON, a failing validation rule, or a missing
++  diff file → error, non-zero exit.
++- `--suite-path` is required.
++
++---
++
++## `atcr benchmark export --in <run-result.json> [--output <path>]`
++
++Emit a **suite-tagged** public submission record from a suite run-result.
++
++```bash
++atcr benchmark export --in ~/.config/atcr/benchmark/run-2026-06-24.json
++atcr benchmark export --in run.json --output /tmp/submission.json
++```
++
++The output envelope is **distinct from the production `leaderboard --export`** by
++its `source`, `suite`, and `suite_version` fields — that is what lets the public
++board accept suite submissions and reject production ones:
++
++```json
++{
++  "submission_schema": 1,
++  "atcr_version": "0.0.0",
++  "submitted_at": "2026-06-24T12:00:00Z",
++  "source": "benchmark-suite",
++  "suite": "standard-v1",
++  "suite_version": "1.0.0",
++  "reviewers": [
++    {
++      "model": "claude-sonnet-4-6",
++      "persona": "bruce",
++      "runs": 2,
++      "findings_raised_avg": 10.5,
++      "corroboration_rate": 0.6,
++      "cost_per_corroborated_finding_usd": 0.006,
++      "latency_p50_ms": 8900
++    }
++  ]
++}
++```
++
++The `reviewers[]` rows reuse the **same public reviewer schema** as
++`leaderboard --export` (documented in [`docs/scorecard.md`](scorecard.md)), so the
++public board renders one consistent set of columns for both submission sources.
++
++### The run-result contract
++
++`export` reads a **run-result** file rather than your local scorecard — so a
++production run can never be passed off as a suite submission. A run-result is:
++
++```json
++{
++  "suite": "standard-v1",
++  "suite_version": "1.0.0",
++  "generated_at": "2026-06-24T12:00:00Z",
++  "reviewers": [ /* public reviewer rows */ ]
++}
++```
++
++`atcr benchmark run` (Epic 10.1) produces these under
++`~/.config/atcr/benchmark/<run-id>.json`. Until then, you supply a conforming
++file via `--in`.
++
++Behavior:
++- Missing/malformed run-result, or one missing `suite`/`suite_version` → error.
++- `--in` is required. `--output` writes the JSON to a file (`0600`, parents
++  created) instead of stdout.
++
++---
++
++## Privacy model
++
++A benchmark submission carries the **same allowlist** as the production export
++(`model`, `persona`, and the derived numeric metrics — no `run_id`, no paths, no
++keys; see [`docs/scorecard.md` → Privacy Model](scorecard.md#privacy-model)) plus
++the suite identity (`source`, `suite`, `suite_version`).
++
++> **Anonymization happens at the producer.** `benchmark export` wraps the
++> run-result's reviewer rows **verbatim**; it does not re-scrub them. The
++> run-result is expected to come from `atcr benchmark run` (Epic 10.1), whose
++> scorecard aggregation scrubs identity strings at source, exactly like
++> `leaderboard --export`. Do not hand-craft a run-result from un-anonymized data
++> and publish it. (A defense-in-depth re-scrub at export time is tracked as tech
++> debt.)
++
++---
++
++## Related
++
++- [`docs/scorecard.md`](scorecard.md) — the local scorecard store, the
++  `leaderboard --export` production submission, and the shared public reviewer
++  schema + privacy model.
++- `github.com/atcr/benchmark-suite` — the external repo holding the curated
++  `standard-v1` suite content (Task 3).
++- Epic 10.1 (`benchmark run`) — live execution against suite cases + scoring.
+diff --git a/docs/scorecard.md b/docs/scorecard.md
+index 4bdbc84..fcaa2d9 100644
+--- a/docs/scorecard.md
++++ b/docs/scorecard.md
+@@ -200,40 +200,59 @@ atcr leaderboard --export --output /tmp/submission.json
+ atcr leaderboard --export --since 30d --model claude-sonnet-4-6
+ ```
+ 
+-The document is an envelope:
++The document is the Epic 10.0 submission envelope. It is an **aggregate over the
++selected slice** — the active filters are applied but are deliberately **not
++echoed** (they would leak query parameters about your local dataset):
+ 
+ ```json
+ {
+-  "schema_version": 1,
+-  "exported_at": "2026-06-15T00:00:00Z",
+-  "filters": { "since": "30d", "model": "", "persona": "" },
+-  "records": [
++  "submission_schema": 1,
++  "atcr_version": "0.0.0",
++  "submitted_at": "2026-06-15T00:00:00Z",
++  "reviewers": [
+     {
+-      "index": 0,
+-      "reviewer": "bruce",
+       "model": "claude-sonnet-4-6",
+-      "role": "reviewer",
++      "persona": "bruce",
+       "runs": 8,
+-      "findings_raised": 96,
+-      "findings_corroborated": 54,
+-      "findings_solo": 42,
++      "findings_raised_avg": 12.0,
+       "corroboration_rate": 0.5625,
+-      "findings_verified": 30,
+-      "findings_refuted": 6,
+       "survived_skeptic_rate": 0.8333,
+-      "cost_usd": 0.32,
+-      "tokens_in": 113600,
+-      "tokens_out": 32000,
+-      "latency_ms_avg": 9100
++      "cost_per_corroborated_finding_usd": 0.0059,
++      "latency_p50_ms": 9100
+     }
+   ]
+ }
+ ```
+ 
+-Records are aggregated by `(reviewer, model, role)`, sorted ascending by
+-`(model, reviewer, role)`, and indexed by position. A no-match/empty result
+-writes the canonical guidance to stderr and exits `1` (so a `--export | jq`
+-pipeline never sees non-JSON on stdout).
++| Envelope field | Type | Description |
++|----------------|------|-------------|
++| `submission_schema` | int | Public submission schema version (currently `1`). Decoupled from the on-disk store's `schema_version`: the local record format and the public submission format version independently. |
++| `atcr_version` | string | The ATCR build that produced the submission (`internal/version`; `0.0.0` in dev builds, stamped via ldflags for releases). |
++| `submitted_at` | string | RFC3339 export timestamp (also the `--since` window anchor, so output is reproducible). |
++| `reviewers` | array | One aggregated row per `(persona, model)`. |
++
++| Reviewer field | Type | Presence | Description |
++|----------------|------|----------|-------------|
++| `model` | string | always | Model id (scrubbed). |
++| `persona` | string | always | Reviewer/persona name (scrubbed; not PII). |
++| `runs` | int | always | Number of runs aggregated into this row. |
++| `findings_raised_avg` | float | always | Mean findings raised **per run** (not the total). |
++| `corroboration_rate` | float | always | Corroborated / raised across the group (clamped to `[0,1]`). |
++| `survived_skeptic_rate` | float | **omitempty** | Verified / (verified + refuted). **Omitted entirely** when no verification ran for the group; present as `0.0` only when verification ran and every finding was refuted. The omission is the disambiguator. |
++| `cost_per_corroborated_finding_usd` | float | always | Total cost ÷ corroborated findings (`0.0` when none corroborated; never Inf/NaN). |
++| `latency_p50_ms` | int | always | Median (p50) of per-run latencies — not the mean. |
++
++Reviewers are aggregated by `(persona, model)` (role is dropped from the public
++schema — it is a constant `"reviewer"` for reconcile records), sorted ascending by
++`(model, persona)`. Output is deterministic (byte-identical for the same input +
++`submitted_at`). A no-match/empty result writes the canonical guidance to stderr
++and exits `1` (so a `--export | jq` pipeline never sees non-JSON on stdout).
++
++> **Suite vs production submissions.** `leaderboard --export` produces a
++> *production* submission from your local runs. The public board accepts only
++> *suite* submissions (`atcr benchmark export`, tagged `source: "benchmark-suite"`)
++> so cherry-picked production runs cannot game it — see
++> [`docs/benchmark.md`](benchmark.md).
+ 
+ ### `atcr reconcile --no-scorecard`
+ 
+@@ -261,21 +280,28 @@ The local store (`~/.config/atcr/scorecard/`) holds your real `run_id` and may
+ carry your reviewer/model names — it is local and never shared. **Only the
+ `--export` path produces a shareable document, and it is anonymized.**
+ 
+-`--export` is **allowlist-based**: the public record carries only the fields
++`--export` is **allowlist-based**: the public submission carries only the fields
+ listed below. A field that is not on the allowlist cannot leak, because it is
+-never copied into the public structure in the first place.
++never copied into the public structure in the first place. The Epic 10.0 schema
++deliberately **shrank** the allowlist relative to the local store — the smaller
++the surface, the less can leak.
+ 
+ **Preserved (allowlist):**
+ 
+-- `schema_version`, `exported_at`, and the echoed `filters`
+-- `reviewer`/persona name, `model`, `role`
+-- Numeric metrics: `runs`, `findings_raised`, `findings_corroborated`,
+-  `findings_solo`, `corroboration_rate`, `findings_verified`, `findings_refuted`,
+-  `survived_skeptic_rate`, `cost_usd`, `tokens_in`, `tokens_out`, `latency_ms_avg`
++- Envelope: `submission_schema`, `atcr_version`, `submitted_at`
++- Per reviewer: `model`, `persona`, `runs`, `findings_raised_avg`,
++  `corroboration_rate`, `survived_skeptic_rate` (omitted when no verification ran),
++  `cost_per_corroborated_finding_usd`, `latency_p50_ms`
+ 
+ **Stripped / never exported:**
+ 
+ - `run_id`
++- The active filters (`since`/`model`/`persona`) — applied to select the slice,
++  but **not echoed**, so a submission does not reveal your query parameters.
++- The local-store internals: `findings_corroborated`, `findings_solo`,
++  `findings_verified`, `findings_refuted`, `cost_usd` (raw total), `tokens_in`,
++  `tokens_out`, `latency_ms` (raw per-run), `role`, `index`. Only the derived
++  public metrics above are emitted.
+ - Filesystem paths (absolute, Windows `C:\…`, and `~`-relative — including
+   path-like substrings glued into a field)
+ - Email addresses
+@@ -285,11 +311,11 @@ never copied into the public structure in the first place.
+ - Repository content, hostnames, usernames, and organization names — none are
+   collected into a record in the first place
+ 
+-As defense-in-depth, the three string fields that _are_ exported
+-(`reviewer`, `model`, `role`) additionally pass through a scrubber that removes
+-any path-like, email, or credential-like substring before emission. The
+-allowlist is the primary guarantee; the scrubber is the backstop. Export output
+-is deterministic, so you can diff it before sharing.
++As defense-in-depth, the two string fields that _are_ exported (`persona`,
++`model`) additionally pass through a scrubber that removes any path-like, email,
++or credential-like substring before emission. The allowlist is the primary
++guarantee; the scrubber is the backstop. Export output is deterministic, so you
++can diff it before sharing.
+ 
+ > **Accuracy is a contract.** The privacy model above must match
+ > `internal/scorecard/export.go`. Any discrepancy is treated as a documentation
+@@ -299,18 +325,22 @@ is deterministic, so you can diff it before sharing.
+ 
+ ## Schema versioning
+ 
+-`schema_version` is `1` today and is stamped on every stored record and every
+-export envelope. When a future epic changes the schema:
++There are **two independent version numbers**:
++
++- `schema_version` (`1`) is stamped on every **stored** record (the local JSONL
++  store).
++- `submission_schema` (`1`) is stamped on every **public submission** envelope
++  (`leaderboard --export` and `benchmark export`).
+ 
+-- The version is incremented.
+-- Old records remain readable — the reader tolerates records of earlier versions,
+-  and unknown/absent optional fields degrade gracefully.
+-- Version negotiation for the public submission format is handled by the
+-  `leaderboard --export` path, not by individual records.
++They are decoupled on purpose: the local store format and the public submission
++format evolve separately, so bumping one never silently changes the other. When a
++future epic changes either schema:
+ 
+-The v1 public export format is **experimental** until Epic 10.0 (the public
+-Model-Eval Leaderboard) stabilizes it. Treat the exact field set as subject to
+-change until then.
++- That version is incremented independently.
++- Old stored records remain readable — the reader tolerates earlier versions, and
++  unknown/absent optional fields degrade gracefully.
++- Version negotiation for the public submission format is handled by the export
++  paths, not by individual stored records.
+ 
+ ---
+ 
+@@ -340,6 +370,9 @@ public import path; separate-repository publication follows the extraction.
+ 
+ ## Related
+ 
++- [`docs/benchmark.md`](benchmark.md) — the standard benchmark-suite tooling
++  (`atcr benchmark verify` / `export`), the suite-manifest contract, and the
++  suite-tagged submission format that feeds the public board.
+ - [`github.com/samestrin/atcr/reconcile`](../reconcile/README.md) — the standalone
+   deterministic reconciler module that is the reference implementation backing
+   every scorecard record (run and inspect it independently).
+diff --git a/internal/benchmark/benchmark.go b/internal/benchmark/benchmark.go
+new file mode 100644
+index 0000000..6b34348
+--- /dev/null
++++ b/internal/benchmark/benchmark.go
+@@ -0,0 +1,227 @@
++// Package benchmark defines the standard-suite contract for the Model-Eval
++// Leaderboard (Epic 10.0): a versioned suite manifest of fixed-diff cases with
++// planted-defect expected categories, a deterministic reproducibility hash over
++// that content, and the suite-tagged public submission envelope.
++//
++// This package is the bounded in-repo half of `atcr benchmark`. It ships the
++// CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission envelope, and
++// the RunResult input contract that `atcr benchmark export` consumes. It does NOT
++// execute reviews against the suite or score findings: live execution + scoring
++// is Epic 10.1, and the curated standard-v1 suite CONTENT lives in the external
++// atcr/benchmark-suite repo (Task 3). Keeping execution out keeps this package
++// stdlib + scorecard-type only, with no live-LLM dependency.
++package benchmark
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/scorecard"
++	"github.com/samestrin/atcr/internal/version"
++)
++
++// Manifest is a versioned benchmark suite: a stable set of diff cases that any
++// user can run to produce comparable scores. suite_version is what pins
++// reproducibility — only suite runs (not cherry-picked production runs) are
++// eligible for the public board, so the suite identity travels with every
++// submission.
++type Manifest struct {
++	Suite        string `json:"suite"`
++	SuiteVersion string `json:"suite_version"`
++	Cases        []Case `json:"cases"`
++}
++
++// Case is one fixed-diff benchmark case. Diff is a path RELATIVE to the suite
++// directory (never absolute, never escaping it — enforced by Validate).
++// ExpectedCategories are the planted-defect categories a competent reviewer
++// should surface; the scoring engine that consumes them is Epic 10.1.
++type Case struct {
++	ID                 string   `json:"id"`
++	Diff               string   `json:"diff"`
++	ExpectedCategories []string `json:"expected_categories"`
++}
++
++// Load reads <suitePath>/suite.json, validates the manifest structurally, and
++// confirms every case's diff file exists on disk. It returns a clear error
++// (rather than a half-built manifest) on any failure, so a caller never runs a
++// partially-valid suite.
++func Load(suitePath string) (*Manifest, error) {
++	manifestPath := filepath.Join(suitePath, "suite.json")
++	data, err := os.ReadFile(manifestPath)
++	if err != nil {
++		return nil, fmt.Errorf("reading suite manifest %s: %w", manifestPath, err)
++	}
++	var m Manifest
++	if err := json.Unmarshal(data, &m); err != nil {
++		return nil, fmt.Errorf("parsing suite manifest %s: %w", manifestPath, err)
++	}
++	if err := m.Validate(); err != nil {
++		return nil, fmt.Errorf("invalid suite manifest %s: %w", manifestPath, err)
++	}
++	for _, c := range m.Cases {
++		diffPath := filepath.Join(suitePath, c.Diff)
++		if _, err := os.Stat(diffPath); err != nil {
++			return nil, fmt.Errorf("case %q diff file: %w", c.ID, err)
++		}
++	}
++	return &m, nil
++}
++
++// Validate enforces the structural contract: non-empty suite/version, at least
++// one case, and for every case a non-empty unique id, a non-empty relative diff
++// path that does not escape the suite directory, and at least one expected
++// category. It does NOT touch the filesystem (Load does the existence check), so
++// it is usable on an in-memory manifest.
++func (m *Manifest) Validate() error {
++	if strings.TrimSpace(m.Suite) == "" {
++		return fmt.Errorf("suite name is required")
++	}
++	if strings.TrimSpace(m.SuiteVersion) == "" {
++		return fmt.Errorf("suite_version is required")
++	}
++	if len(m.Cases) == 0 {
++		return fmt.Errorf("suite must define at least one case")
++	}
++	seen := make(map[string]bool, len(m.Cases))
++	for i, c := range m.Cases {
++		if strings.TrimSpace(c.ID) == "" {
++			return fmt.Errorf("case %d: id is required", i)
++		}
++		if seen[c.ID] {
++			return fmt.Errorf("case %q: duplicate id", c.ID)
++		}
++		seen[c.ID] = true
++		if strings.TrimSpace(c.Diff) == "" {
++			return fmt.Errorf("case %q: diff path is required", c.ID)
++		}
++		if !isSafeRelPath(c.Diff) {
++			return fmt.Errorf("case %q: diff path %q must be relative and within the suite directory", c.ID, c.Diff)
++		}
++		if len(c.ExpectedCategories) == 0 {
++			return fmt.Errorf("case %q: at least one expected_category is required", c.ID)
++		}
++	}
++	return nil
++}
++
++// isSafeRelPath rejects absolute paths and any path that, once cleaned, escapes
++// the suite directory (a leading ".." segment). This is the suite-manifest's
++// path-traversal guard: a malicious or buggy suite must not make Load stat an
++// arbitrary file outside the suite tree.
++func isSafeRelPath(p string) bool {
++	if filepath.IsAbs(p) {
++		return false
++	}
++	clean := filepath.Clean(p)
++	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
++		return false
++	}
++	return true
++}
++
++// ReproHash returns a deterministic SHA-256 over the suite's reproducible
++// content: the suite identity, each case's id + expected categories, and the
++// BYTES of each case's diff file. Cases are sorted by id first, so manifest
++// ordering does not affect the hash — content does. Two suites with identical
++// cases and diff bytes hash equally; a single changed diff byte changes the hash.
++// This is the `atcr benchmark verify` reproducibility anchor.
++func ReproHash(suitePath string) (string, error) {
++	m, err := Load(suitePath)
++	if err != nil {
++		return "", err
++	}
++	cases := make([]Case, len(m.Cases))
++	copy(cases, m.Cases)
++	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
++
++	h := sha256.New()
++	// Suite identity. Length-prefixing each field prevents ambiguity between
++	// adjacent fields (e.g. suite "ab"+version "c" vs "a"+"bc").
++	writeField(h, m.Suite)
++	writeField(h, m.SuiteVersion)
++	for _, c := range cases {
++		writeField(h, c.ID)
++		cats := make([]string, len(c.ExpectedCategories))
++		copy(cats, c.ExpectedCategories)
++		sort.Strings(cats)
++		for _, cat := range cats {
++			writeField(h, cat)
++		}
++		diffBytes, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
++		if err != nil {
++			return "", fmt.Errorf("hashing case %q diff: %w", c.ID, err)
++		}
++		writeField(h, string(diffBytes))
++	}
++	return hex.EncodeToString(h.Sum(nil)), nil
++}
++
++// writeField writes a length-prefixed field to the hash so concatenation is
++// unambiguous across field boundaries.
++func writeField(h io.Writer, s string) {
++	_, _ = fmt.Fprintf(h, "%d:", len(s))
++	_, _ = io.WriteString(h, s)
++}
++
++// RunResult is the input contract `atcr benchmark export` consumes: the
++// model-eval aggregates produced by a suite run, tagged with the suite identity.
++// Epic 10.0 ships this minimal shape (the fields export needs); Epic 10.1's
++// `atcr benchmark run` produces conforming files (and may add scoring detail)
++// under ~/.config/atcr/benchmark/<run-id>.json. Reviewers reuse the single
++// public reviewer schema so benchmark and production submissions share columns.
++//
++// PRIVACY CONTRACT: Reviewers MUST already be anonymized by the producer (the
++// scorecard aggregation that `atcr benchmark run` uses scrubs identity strings
++// at source, exactly like `leaderboard --export`). BuildSubmission wraps these
++// records verbatim and does NOT re-scrub, so a hand-crafted or non-conforming
++// run-result could carry PII into a public submission. A defense-in-depth
++// re-scrub at export time is tracked as tech debt (see TD: benchmark export
++// re-anonymization).
++type RunResult struct {
++	Suite        string                   `json:"suite"`
++	SuiteVersion string                   `json:"suite_version"`
++	GeneratedAt  string                   `json:"generated_at"`
++	Reviewers    []scorecard.PublicRecord `json:"reviewers"`
++}
++
++// Submission is the suite-tagged public submission envelope — DISTINCT from the
++// production scorecard export by the source/suite/suite_version fields. Only
++// suite-sourced submissions (source == "benchmark-suite") are eligible for the
++// public board, which is what prevents cherry-picked production runs from gaming
++// it.
++type Submission struct {
++	SubmissionSchema int                      `json:"submission_schema"`
++	AtcrVersion      string                   `json:"atcr_version"`
++	SubmittedAt      string                   `json:"submitted_at"`
++	Source           string                   `json:"source"`
++	Suite            string                   `json:"suite"`
++	SuiteVersion     string                   `json:"suite_version"`
++	Reviewers        []scorecard.PublicRecord `json:"reviewers"`
++}
++
++// SourceBenchmarkSuite marks a submission as produced by the standard suite (not
++// a production review). The public board accepts only this source.
++const SourceBenchmarkSuite = "benchmark-suite"
++
++// BuildSubmission wraps a suite RunResult in the public submission envelope,
++// stamping the schema version, build version, source marker, and submittedAt.
++// submittedAt is passed in (not time.Now) so the result is reproducible.
++func BuildSubmission(rr RunResult, submittedAt time.Time) Submission {
++	return Submission{
++		SubmissionSchema: scorecard.SubmissionSchema,
++		AtcrVersion:      version.Version,
++		SubmittedAt:      submittedAt.UTC().Format(time.RFC3339),
++		Source:           SourceBenchmarkSuite,
++		Suite:            rr.Suite,
++		SuiteVersion:     rr.SuiteVersion,
++		Reviewers:        rr.Reviewers,
++	}
++}
+diff --git a/internal/benchmark/benchmark_test.go b/internal/benchmark/benchmark_test.go
+new file mode 100644
+index 0000000..997e61b
+--- /dev/null
++++ b/internal/benchmark/benchmark_test.go
+@@ -0,0 +1,175 @@
++package benchmark
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/version"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestLoad_ValidSuite(t *testing.T) {
++	m, err := Load("testdata/suite-valid")
++	require.NoError(t, err)
++	assert.Equal(t, "fixture-mini", m.Suite)
++	assert.Equal(t, "1.0.0", m.SuiteVersion)
++	require.Len(t, m.Cases, 2)
++	assert.Equal(t, "case-01-nil-deref", m.Cases[0].ID)
++	assert.Equal(t, "case-02.diff", m.Cases[1].Diff)
++	assert.Equal(t, []string{"security", "correctness"}, m.Cases[1].ExpectedCategories)
++}
++
++func TestLoad_MissingSuiteJSON(t *testing.T) {
++	_, err := Load(t.TempDir())
++	require.Error(t, err, "a directory without suite.json must fail to load")
++}
++
++func TestLoad_RejectsMissingDiffFile(t *testing.T) {
++	dir := t.TempDir()
++	writeManifest(t, dir, `{"suite":"s","suite_version":"1.0.0","cases":[{"id":"c1","diff":"nope.diff","expected_categories":["x"]}]}`)
++	_, err := Load(dir)
++	require.Error(t, err, "a case whose diff file does not exist must fail to load")
++}
++
++func TestValidate_Errors(t *testing.T) {
++	cases := map[string]Manifest{
++		"empty suite name":     {SuiteVersion: "1.0.0", Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"x"}}}},
++		"empty suite version":  {Suite: "s", Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"x"}}}},
++		"no cases":             {Suite: "s", SuiteVersion: "1.0.0"},
++		"empty case id":        {Suite: "s", SuiteVersion: "1.0.0", Cases: []Case{{Diff: "c.diff", ExpectedCategories: []string{"x"}}}},
++		"empty diff":           {Suite: "s", SuiteVersion: "1.0.0", Cases: []Case{{ID: "c", ExpectedCategories: []string{"x"}}}},
++		"no expected category": {Suite: "s", SuiteVersion: "1.0.0", Cases: []Case{{ID: "c", Diff: "c.diff"}}},
++	}
++	for name, m := range cases {
++		t.Run(name, func(t *testing.T) {
++			require.Error(t, m.Validate(), "%s must be rejected", name)
++		})
++	}
++}
++
++func TestValidate_RejectsDuplicateCaseID(t *testing.T) {
++	m := Manifest{
++		Suite: "s", SuiteVersion: "1.0.0",
++		Cases: []Case{
++			{ID: "dup", Diff: "a.diff", ExpectedCategories: []string{"x"}},
++			{ID: "dup", Diff: "b.diff", ExpectedCategories: []string{"x"}},
++		},
++	}
++	require.Error(t, m.Validate(), "duplicate case ids must be rejected")
++}
++
++func TestValidate_RejectsPathTraversalDiff(t *testing.T) {
++	m := Manifest{
++		Suite: "s", SuiteVersion: "1.0.0",
++		Cases: []Case{{ID: "c", Diff: "../../../etc/passwd", ExpectedCategories: []string{"x"}}},
++	}
++	require.Error(t, m.Validate(), "a diff path escaping the suite dir must be rejected")
++}
++
++func TestValidate_Valid(t *testing.T) {
++	m := Manifest{
++		Suite: "s", SuiteVersion: "1.0.0",
++		Cases: []Case{{ID: "c", Diff: "c.diff", ExpectedCategories: []string{"x"}}},
++	}
++	require.NoError(t, m.Validate())
++}
++
++func TestReproHash_DeterministicAndContentSensitive(t *testing.T) {
++	h1, err := ReproHash("testdata/suite-valid")
++	require.NoError(t, err)
++	h2, err := ReproHash("testdata/suite-valid")
++	require.NoError(t, err)
++	assert.Equal(t, h1, h2, "reproducibility hash must be deterministic for identical content")
++	assert.NotEmpty(t, h1)
++
++	// A copy with one diff byte changed must hash differently.
++	dir := t.TempDir()
++	copySuite(t, "testdata/suite-valid", dir)
++	appendByte(t, filepath.Join(dir, "case-01.diff"))
++	h3, err := ReproHash(dir)
++	require.NoError(t, err)
++	assert.NotEqual(t, h1, h3, "a changed diff must change the reproducibility hash")
++}
++
++func TestReproHash_IndependentOfCaseOrder(t *testing.T) {
++	// Reordering cases in the manifest must NOT change the hash (content, not order,
++	// defines reproducibility).
++	base, err := ReproHash("testdata/suite-valid")
++	require.NoError(t, err)
++
++	dir := t.TempDir()
++	copySuite(t, "testdata/suite-valid", dir)
++	m, err := Load(dir)
++	require.NoError(t, err)
++	m.Cases[0], m.Cases[1] = m.Cases[1], m.Cases[0]
++	writeManifestStruct(t, dir, m)
++
++	reordered, err := ReproHash(dir)
++	require.NoError(t, err)
++	assert.Equal(t, base, reordered, "case order must not affect the reproducibility hash")
++}
++
++func TestBuildSubmission_TagsSuiteAndDistinctFromProduction(t *testing.T) {
++	data, err := os.ReadFile("testdata/run-result.json")
++	require.NoError(t, err)
++	var rr RunResult
++	require.NoError(t, json.Unmarshal(data, &rr))
++
++	at := time.Date(2026, 6, 24, 12, 0, 0, 0, time.UTC)
++	sub := BuildSubmission(rr, at)
++
++	assert.Equal(t, "benchmark-suite", sub.Source, "source marks this as a suite submission, not production")
++	assert.Equal(t, "fixture-mini", sub.Suite)
++	assert.Equal(t, "1.0.0", sub.SuiteVersion)
++	assert.Equal(t, version.Version, sub.AtcrVersion)
++	assert.Equal(t, "2026-06-24T12:00:00Z", sub.SubmittedAt)
++	require.Len(t, sub.Reviewers, 1)
++	assert.Equal(t, "bruce", sub.Reviewers[0].Persona)
++
++	// Distinct from production --export: the suite/source fields are present and
++	// the envelope marshals them.
++	out, err := json.Marshal(sub)
++	require.NoError(t, err)
++	s := string(out)
++	for _, k := range []string{`"source"`, `"suite"`, `"suite_version"`} {
++		assert.Contains(t, s, k, "benchmark submission must carry %s (distinct from production export)", k)
++	}
++}
++
++// --- helpers ---
++
++func writeManifest(t *testing.T, dir, body string) {
++	t.Helper()
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), []byte(body), 0o600))
++}
++
++func writeManifestStruct(t *testing.T, dir string, m *Manifest) {
++	t.Helper()
++	b, err := json.Marshal(m)
++	require.NoError(t, err)
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.json"), b, 0o600))
++}
++
++func copySuite(t *testing.T, src, dst string) {
++	t.Helper()
++	entries, err := os.ReadDir(src)
++	require.NoError(t, err)
++	for _, e := range entries {
++		b, err := os.ReadFile(filepath.Join(src, e.Name()))
++		require.NoError(t, err)
++		require.NoError(t, os.WriteFile(filepath.Join(dst, e.Name()), b, 0o600))
++	}
++}
++
++func appendByte(t *testing.T, path string) {
++	t.Helper()
++	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
++	require.NoError(t, err)
++	_, err = f.WriteString("x")
++	require.NoError(t, err)
++	require.NoError(t, f.Close())
++}
+diff --git a/internal/benchmark/testdata/run-result.json b/internal/benchmark/testdata/run-result.json
+new file mode 100644
+index 0000000..576842b
+--- /dev/null
++++ b/internal/benchmark/testdata/run-result.json
+@@ -0,0 +1,16 @@
++{
++  "suite": "fixture-mini",
++  "suite_version": "1.0.0",
++  "generated_at": "2026-06-24T12:00:00Z",
++  "reviewers": [
++    {
++      "model": "claude-sonnet-4-6",
++      "persona": "bruce",
++      "runs": 2,
++      "findings_raised_avg": 10.5,
++      "corroboration_rate": 0.6,
++      "cost_per_corroborated_finding_usd": 0.006,
++      "latency_p50_ms": 8900
++    }
++  ]
++}
+diff --git a/internal/benchmark/testdata/suite-valid/case-01.diff b/internal/benchmark/testdata/suite-valid/case-01.diff
+new file mode 100644
+index 0000000..3b01c6b
+--- /dev/null
++++ b/internal/benchmark/testdata/suite-valid/case-01.diff
+@@ -0,0 +1,11 @@
++--- a/pay.go
+++++ b/pay.go
++@@ -1,3 +1,4 @@
++ func total(items []*Item) int {
++-	return items[0].Price
+++	sum := 0
+++	for _, it := range items {
+++		sum += it.Price // it may be nil: planted nil-deref defect
+++	}
+++	return sum
++ }
+diff --git a/internal/benchmark/testdata/suite-valid/case-02.diff b/internal/benchmark/testdata/suite-valid/case-02.diff
+new file mode 100644
+index 0000000..c24a7f0
+--- /dev/null
++++ b/internal/benchmark/testdata/suite-valid/case-02.diff
+@@ -0,0 +1,7 @@
++--- a/query.go
+++++ b/query.go
++@@ -1,2 +1,2 @@
++ func lookup(db *sql.DB, name string) *Row {
++-	return db.QueryRow("SELECT * FROM u WHERE n = $1", name)
+++	return db.QueryRow("SELECT * FROM u WHERE n = '" + name + "'") // planted SQL-injection defect
++ }
+diff --git a/internal/benchmark/testdata/suite-valid/suite.json b/internal/benchmark/testdata/suite-valid/suite.json
+new file mode 100644
+index 0000000..9f7ee68
+--- /dev/null
++++ b/internal/benchmark/testdata/suite-valid/suite.json
+@@ -0,0 +1,16 @@
++{
++  "suite": "fixture-mini",
++  "suite_version": "1.0.0",
++  "cases": [
++    {
++      "id": "case-01-nil-deref",
++      "diff": "case-01.diff",
++      "expected_categories": ["correctness"]
++    },
++    {
++      "id": "case-02-sql-injection",
++      "diff": "case-02.diff",
++      "expected_categories": ["security", "correctness"]
++    }
++  ]
++}
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 1568667..6ec3d51 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -33,6 +33,7 @@ var allowedInternalImports = map[string][]string{
+ 	"registry":       {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
+ 	"tools":          {},
+ 	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
++	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
+ 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+ 	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
+ 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+@@ -40,13 +41,14 @@ var allowedInternalImports = map[string][]string{
+ 	"doctor":         {"llmclient", "registry"},
+ 	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs", "cache"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1); cache: diff-cache replay on the single-shot review path (epic 5.2)
+ 	"reconcile":      {"stream", "atomicfs"},
+-	"scorecard":      {"llmclient", "reconcile", "fanout"},
+-	"personas":       {"registry", "payload"}, // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
++	"scorecard":      {"llmclient", "reconcile", "fanout", "version"}, // version: atcr_version stamped into the public submission envelope (epic 10.0)
++	"personas":       {"registry", "payload"},                         // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
+ 	"report":         {"stream", "reconcile"},
+ 	"ghaction":       {"reconcile"},                                                                                                    // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+ 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper
+ 	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+ 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
++	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+diff --git a/internal/scorecard/export.go b/internal/scorecard/export.go
+index 08006bb..e46b738 100644
+--- a/internal/scorecard/export.go
++++ b/internal/scorecard/export.go
+@@ -7,6 +7,8 @@ import (
+ 	"sort"
+ 	"strings"
+ 	"time"
++
++	"github.com/samestrin/atcr/internal/version"
+ )
+ 
+ // ErrNoExportRecords is returned by Export when no record survives the filters
+@@ -14,87 +16,129 @@ import (
+ // user-facing guidance (AC 04-04); callers write no output on this path.
+ var ErrNoExportRecords = errors.New("no records match the export filters")
+ 
+-// PublicRecord is one aggregated row of the v1 public submission schema. It is an
+-// allowlist: only these fields are ever emitted, so a field that is not here
+-// (run_id, paths, hostnames, keys) cannot leak. No field carries `omitempty` —
+-// an absent numeric field would itself encode information, so every field is
+-// always present, zero values included (AC 04-03).
++// SubmissionSchema is the version of the PUBLIC leaderboard submission format
++// (Epic 10.0). It is intentionally decoupled from the on-disk store's
++// SchemaVersion: the local record format and the public submission format evolve
++// independently, so bumping one must not silently change the other.
++const SubmissionSchema = 1
++
++// PublicRecord is one aggregated reviewer row of the public submission schema,
++// matching the Epic 10.0 spec JSON exactly. It is an allowlist: only these fields
++// are ever emitted, so anything not here (run_id, paths, hostnames, keys, raw
++// token/cost/count internals) cannot leak. SurvivedSkepticRate is the sole
++// omitempty field — a nil pointer omits the key, which distinguishes "no
++// verification ran for this group" (key absent) from "verification ran and every
++// finding was refuted" (key present with value 0.0).
+ type PublicRecord struct {
+-	Index                int     `json:"index"`
+-	Reviewer             string  `json:"reviewer"`
+-	Model                string  `json:"model"`
+-	Role                 string  `json:"role"`
+-	Runs                 int     `json:"runs"`
+-	FindingsRaised       int     `json:"findings_raised"`
+-	FindingsCorroborated int     `json:"findings_corroborated"`
+-	FindingsSolo         int     `json:"findings_solo"`
+-	CorroborationRate    float64 `json:"corroboration_rate"`
+-	FindingsVerified     int     `json:"findings_verified"`
+-	FindingsRefuted      int     `json:"findings_refuted"`
+-	// SurvivedSkepticRate is verified/(verified+refuted), or 0.0 when that
+-	// denominator is zero. 0.0 is therefore ambiguous: it means BOTH "no
+-	// verification ran for this group" and "every finding was refuted/unverifiable".
+-	// The field is always present (no omitempty, per the allowlist contract above)
+-	// and a sentinel is impossible because clampRate pins it to [0,1]; a consumer
+-	// disambiguates via findings_verified+findings_refuted > 0 (zero => no verification).
+-	SurvivedSkepticRate float64 `json:"survived_skeptic_rate"`
+-	CostUSD             float64 `json:"cost_usd"`
+-	TokensIn            int     `json:"tokens_in"`
+-	TokensOut           int     `json:"tokens_out"`
+-	LatencyMSAvg        int64   `json:"latency_ms_avg"`
++	Model                         string   `json:"model"`
++	Persona                       string   `json:"persona"`
++	Runs                          int      `json:"runs"`
++	FindingsRaisedAvg             float64  `json:"findings_raised_avg"`
++	CorroborationRate             float64  `json:"corroboration_rate"`
++	SurvivedSkepticRate           *float64 `json:"survived_skeptic_rate,omitempty"`
++	CostPerCorroboratedFindingUSD float64  `json:"cost_per_corroborated_finding_usd"`
++	LatencyP50MS                  int64    `json:"latency_p50_ms"`
+ }
+ 
+-// ExportFilters echoes the active filter values back in the envelope so a
+-// submission is self-describing about the slice of data it represents.
+-type ExportFilters struct {
+-	Since   string `json:"since"`
+-	Model   string `json:"model"`
+-	Persona string `json:"persona"`
++// ExportEnvelope is the top-level public submission document (Epic 10.0 spec).
++// The active filters are deliberately NOT echoed: they would leak query
++// parameters about the submitter's local dataset, and a public submission is
++// defined as an aggregate over the selected slice, not a description of the query.
++type ExportEnvelope struct {
++	SubmissionSchema int            `json:"submission_schema"`
++	AtcrVersion      string         `json:"atcr_version"`
++	SubmittedAt      string         `json:"submitted_at"`
++	Reviewers        []PublicRecord `json:"reviewers"`
+ }
+ 
+-// ExportEnvelope is the top-level v1 public submission document.
+-type ExportEnvelope struct {
+-	SchemaVersion int            `json:"schema_version"`
+-	ExportedAt    string         `json:"exported_at"`
+-	Filters       ExportFilters  `json:"filters"`
+-	Records       []PublicRecord `json:"records"`
++// reviewerAcc accumulates the raw per-run inputs for one (persona, model) group.
++// The public per-reviewer metrics are derived ONLY at finalize() time: an average
++// (findings_raised_avg), a median (latency_p50_ms), and a ratio-of-totals
++// (cost_per_corroborated, corroboration_rate) cannot be composed from per-run
++// PublicRecords without bias, so aggregation works from raw records and the
++// public row is computed once at the end. persona/model are scrubbed at ingestion
++// (the single anonymization point), so finalize() never re-scrubs.
++type reviewerAcc struct {
++	persona         string
++	model           string
++	runs            int
++	raisedTotal     int
++	corroborated    int
++	costTotal       float64
++	latencies       []int64
++	verified        int
++	refuted         int
++	storedRates     []float64
++	hasVerification bool
+ }
+ 
+-// AnonymizeRecord maps one internal Record to a PublicRecord, copying only the
+-// v1 allowlist fields and dropping everything else (run_id, verification
+-// pointers become plain zero-safe values). It is the single field-mapping
+-// primitive: Export anonymizes every record through it before aggregating, so
+-// the allowlist is defined in exactly one place. A single record anonymizes to
+-// runs=1 with latency_ms_avg equal to its own latency. Identity strings
+-// (reviewer/model/role) are scrubbed of path-like and key-like substrings as
+-// defense-in-depth, even though they are not normally PII-bearing.
+-func AnonymizeRecord(raw Record) PublicRecord {
+-	pr := PublicRecord{
+-		Reviewer:             scrubField(raw.Reviewer),
+-		Model:                scrubField(raw.Model),
+-		Role:                 scrubField(raw.Role),
+-		Runs:                 1,
+-		FindingsRaised:       clampNonNeg(raw.FindingsRaised),
+-		FindingsCorroborated: clampNonNeg(raw.FindingsCorroborated),
+-		FindingsSolo:         clampNonNeg(raw.FindingsSolo),
+-		CorroborationRate:    clampRate(raw.CorroborationRate),
+-		CostUSD:              clampNonNegF(raw.CostUSD),
+-		TokensIn:             clampNonNeg(raw.TokensIn),
+-		TokensOut:            clampNonNeg(raw.TokensOut),
+-		LatencyMSAvg:         clampNonNeg64(raw.LatencyMS),
++func (a *reviewerAcc) add(r Record) {
++	a.runs++
++	a.raisedTotal += clampNonNeg(r.FindingsRaised)
++	a.corroborated += clampNonNeg(r.FindingsCorroborated)
++	a.costTotal += clampNonNegF(r.CostUSD)
++	a.latencies = append(a.latencies, clampNonNeg64(r.LatencyMS))
++	// Any verification pointer present marks the group as verified; the counts
++	// sum only over the runs that actually carried verification data.
++	if r.FindingsVerified != nil {
++		a.verified += clampNonNeg(*r.FindingsVerified)
++		a.hasVerification = true
+ 	}
+-	if raw.FindingsVerified != nil {
+-		pr.FindingsVerified = clampNonNeg(*raw.FindingsVerified)
++	if r.FindingsRefuted != nil {
++		a.refuted += clampNonNeg(*r.FindingsRefuted)
++		a.hasVerification = true
+ 	}
+-	if raw.FindingsRefuted != nil {
+-		pr.FindingsRefuted = clampNonNeg(*raw.FindingsRefuted)
++	if r.SurvivedSkepticRate != nil {
++		a.storedRates = append(a.storedRates, clampRate(*r.SurvivedSkepticRate))
++		a.hasVerification = true
++	}
++}
++
++func (a *reviewerAcc) finalize() PublicRecord {
++	pr := PublicRecord{
++		Model:                         a.model,
++		Persona:                       a.persona,
++		Runs:                          a.runs,
++		FindingsRaisedAvg:             avgPerRun(a.raisedTotal, a.runs),
++		CorroborationRate:             clampRate(ratio(a.corroborated, a.raisedTotal)),
++		CostPerCorroboratedFindingUSD: costPer(a.costTotal, a.corroborated),
++		LatencyP50MS:                  medianInt64(a.latencies),
+ 	}
+-	if raw.SurvivedSkepticRate != nil {
+-		pr.SurvivedSkepticRate = clampRate(*raw.SurvivedSkepticRate)
++	if a.hasVerification {
++		// Count-based aggregation (verified/(verified+refuted)) is authoritative
++		// when verdict counts are present — AC 01-05 EC3 (rate from totals, not an
++		// average of per-run rates). Only when NO counts survive in the group (a
++		// corrupt/partial record carrying a rate pointer but nil count pointers, a
++		// shape the public Record type permits) do we fall back to the mean of the
++		// stored rates, rather than forcing ratio(0,0)=0 and silently zeroing a real
++		// public value.
++		var rate float64
++		switch {
++		case a.verified+a.refuted > 0:
++			rate = clampRate(ratio(a.verified, a.verified+a.refuted))
++		case len(a.storedRates) > 0:
++			sum := 0.0
++			for _, v := range a.storedRates {
++				sum += v
++			}
++			rate = clampRate(sum / float64(len(a.storedRates)))
++		}
++		pr.SurvivedSkepticRate = &rate
+ 	}
+ 	return pr
+ }
+ 
++// AnonymizeRecord maps one internal Record to a single-run PublicRecord, scrubbing
++// the persona/model identities and deriving the public metrics as if the record
++// were a one-run group (avg == its raised, p50 == its latency, cost-per ==
++// cost/corroborated). It shares the reviewerAcc finalize path so the allowlist
++// and the derivation math live in exactly one place.
++func AnonymizeRecord(raw Record) PublicRecord {
++	a := reviewerAcc{persona: scrubField(raw.Reviewer), model: scrubField(raw.Model)}
++	a.add(raw)
++	return a.finalize()
++}
++
+ // clampNonNeg* / clampRate guard the public submission against a corrupt-but-
+ // parseable source record: a negative count or an out-of-[0,1] rate in a public
+ // leaderboard is worse than a dropped value, so ingested metrics are bounded
+@@ -132,13 +176,13 @@ func clampRate(f float64) float64 {
+ }
+ 
+ // Export filters, anonymizes, aggregates, and serializes the scorecard records
+-// into a deterministic v1 public submission document. Filters are applied BEFORE
+-// anonymization (AC 04-04). Records are aggregated by (reviewer, model, role) —
+-// summing finding/token/cost totals, counting runs, and averaging latency — then
+-// sorted ascending by (model, reviewer, role) and indexed by position, so the
+-// same input and exportedAt always produce byte-identical output. exportedAt is
+-// used both as the envelope timestamp and as the --since window anchor, so the
+-// document is fully reproducible (no hidden time.Now()).
++// into a deterministic public submission document. Filters are applied BEFORE
++// anonymization (AC 04-04). Records are aggregated by (persona, model) — role is
++// dropped from the public schema and is a constant ("reviewer") for reconcile
++// records anyway — then sorted ascending by (model, persona), so the same input
++// and exportedAt always produce byte-identical output. exportedAt is used both as
++// the envelope timestamp and as the --since window anchor, so the document is
++// fully reproducible (no hidden time.Now()).
+ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, error) {
+ 	filtered, err := ApplyFilters(records, opts, exportedAt)
+ 	if err != nil {
+@@ -148,74 +192,83 @@ func Export(records []Record, opts FilterOpts, exportedAt time.Time) ([]byte, er
+ 		return nil, ErrNoExportRecords
+ 	}
+ 
+-	type key struct{ reviewer, model, role string }
+-	type acc struct {
+-		pr           PublicRecord
+-		latencyTotal int64
+-	}
+-	groups := map[key]*acc{}
++	type key struct{ persona, model string }
++	groups := map[key]*reviewerAcc{}
+ 	order := make([]key, 0)
+ 
+ 	for _, r := range filtered {
+-		pub := AnonymizeRecord(r)
+-		k := key{pub.Reviewer, pub.Model, pub.Role}
++		// Scrub once, at ingestion: keying and storage use the scrubbed identity,
++		// so finalize() never re-scrubs and two records that scrub to the same
++		// identity merge into one group.
++		persona := scrubField(r.Reviewer)
++		model := scrubField(r.Model)
++		k := key{persona, model}
+ 		a, ok := groups[k]
+ 		if !ok {
+-			a = &acc{pr: PublicRecord{Reviewer: pub.Reviewer, Model: pub.Model, Role: pub.Role}}
++			a = &reviewerAcc{persona: persona, model: model}
+ 			groups[k] = a
+ 			order = append(order, k)
+ 		}
+-		p := &a.pr
+-		p.Runs += pub.Runs
+-		p.FindingsRaised += pub.FindingsRaised
+-		p.FindingsCorroborated += pub.FindingsCorroborated
+-		p.FindingsSolo += pub.FindingsSolo
+-		p.CostUSD += pub.CostUSD
+-		p.TokensIn += pub.TokensIn
+-		p.TokensOut += pub.TokensOut
+-		p.FindingsVerified += pub.FindingsVerified
+-		p.FindingsRefuted += pub.FindingsRefuted
+-		a.latencyTotal += pub.LatencyMSAvg
++		a.add(r)
+ 	}
+ 
+ 	rows := make([]PublicRecord, 0, len(order))
+ 	for _, k := range order {
+-		a := groups[k]
+-		p := a.pr
+-		p.CorroborationRate = ratio(p.FindingsCorroborated, p.FindingsRaised)
+-		p.SurvivedSkepticRate = ratio(p.FindingsVerified, p.FindingsVerified+p.FindingsRefuted)
+-		if p.Runs > 0 {
+-			p.LatencyMSAvg = a.latencyTotal / int64(p.Runs)
+-		}
+-		rows = append(rows, p)
++		rows = append(rows, groups[k].finalize())
+ 	}
+ 
+ 	sort.Slice(rows, func(i, j int) bool {
+ 		if rows[i].Model != rows[j].Model {
+ 			return rows[i].Model < rows[j].Model
+ 		}
+-		if rows[i].Reviewer != rows[j].Reviewer {
+-			return rows[i].Reviewer < rows[j].Reviewer
+-		}
+-		return rows[i].Role < rows[j].Role
++		return rows[i].Persona < rows[j].Persona
+ 	})
+-	for i := range rows {
+-		rows[i].Index = i
+-	}
+ 
+ 	env := ExportEnvelope{
+-		SchemaVersion: SchemaVersion,
+-		ExportedAt:    exportedAt.UTC().Format(time.RFC3339),
+-		// Explicit field assignment, not ExportFilters(opts): a type conversion
+-		// silently misaligns if FilterOpts fields are reordered (same types, new
+-		// order → wrong since/model/persona in the public envelope, no compile
+-		// error). Naming each field is immune to reordering and equally terse.
+-		Filters: ExportFilters{Since: opts.Since, Model: opts.Model, Persona: opts.Persona}, //nolint:staticcheck
+-		Records: rows,
++		SubmissionSchema: SubmissionSchema,
++		AtcrVersion:      version.Version,
++		SubmittedAt:      exportedAt.UTC().Format(time.RFC3339),
++		Reviewers:        rows,
+ 	}
+ 	return json.MarshalIndent(env, "", "  ")
+ }
+ 
++// avgPerRun returns total/runs as a float, or 0.0 when runs == 0.
++func avgPerRun(total, runs int) float64 {
++	if runs <= 0 {
++		return 0
++	}
++	return float64(total) / float64(runs)
++}
++
++// costPer returns total cost divided by the corroborated-finding count, or 0.0
++// when there are no corroborated findings (the metric is undefined; 0 is the
++// documented sentinel, never Inf/NaN).
++func costPer(totalCost float64, corroborated int) float64 {
++	if corroborated <= 0 {
++		return 0
++	}
++	return totalCost / float64(corroborated)
++}
++
++// medianInt64 returns the p50 (median) of the latencies: the middle element for
++// an odd count, the integer mean of the two middle elements for an even count,
++// and 0 for an empty slice. The input is copied before sorting so the caller's
++// accumulator order is not mutated.
++func medianInt64(xs []int64) int64 {
++	n := len(xs)
++	if n == 0 {
++		return 0
++	}
++	sorted := make([]int64, n)
++	copy(sorted, xs)
++	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
++	if n%2 == 1 {
++		return sorted[n/2]
++	}
++	return (sorted[n/2-1] + sorted[n/2]) / 2
++}
++
+ // scrubField is defense-in-depth over the allowlist: reviewer/model/role are the
+ // only string fields the public schema carries, and they are controlled internal
+ // identities, but a crafted or corrupt source record could embed PII in them, so
+diff --git a/internal/scorecard/export_test.go b/internal/scorecard/export_test.go
+index 239ce89..ef03e5a 100644
+--- a/internal/scorecard/export_test.go
++++ b/internal/scorecard/export_test.go
+@@ -8,6 +8,7 @@ import (
+ 	"testing"
+ 	"time"
+ 
++	"github.com/samestrin/atcr/internal/version"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ )
+@@ -18,8 +19,7 @@ import (
+ var fixedExportNow = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+ 
+ // exportRec builds a reviewer record dated ageDays before fixedExportNow with a
+-// full metric set (incl. tokens) so export aggregation and preservation can be
+-// asserted exactly.
++// full metric set so export aggregation and derivation can be asserted exactly.
+ func exportRec(reviewer, model string, ageDays int) Record {
+ 	ts := fixedExportNow.AddDate(0, 0, -ageDays).UTC().Format(time.RFC3339)
+ 	return Record{
+@@ -47,19 +47,164 @@ func parseEnvelope(t *testing.T, data []byte) ExportEnvelope {
+ 	return env
+ }
+ 
+-func TestExport_ValidJSON(t *testing.T) {
++func TestExport_EnvelopeMatchesSpec(t *testing.T) {
+ 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+ 		FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+ 
+ 	env := parseEnvelope(t, data)
+-	assert.Equal(t, 1, env.SchemaVersion)
+-	_, perr := time.Parse(time.RFC3339, env.ExportedAt)
+-	require.NoError(t, perr, "exported_at must be RFC3339")
+-	assert.Equal(t, "30d", env.Filters.Since)
+-	require.Len(t, env.Records, 1)
+-	assert.Equal(t, 0, env.Records[0].Index, "first record index is 0")
+-	assert.Equal(t, 1, env.Records[0].Runs, "a single source record aggregates to runs=1")
++	assert.Equal(t, SubmissionSchema, env.SubmissionSchema, "submission_schema is the public schema constant")
++	assert.Equal(t, 1, env.SubmissionSchema, "spec pins submission_schema to 1")
++	assert.Equal(t, version.Version, env.AtcrVersion, "atcr_version comes from internal/version")
++	_, perr := time.Parse(time.RFC3339, env.SubmittedAt)
++	require.NoError(t, perr, "submitted_at must be RFC3339")
++	require.Len(t, env.Reviewers, 1)
++	assert.Equal(t, 1, env.Reviewers[0].Runs, "a single source record aggregates to runs=1")
++}
++
++// TestExport_EnvelopeKeysAreSpecExact pins the exact top-level and per-reviewer
++// JSON keys: no legacy key (schema_version/exported_at/records/filters) may leak,
++// and no dropped field (tokens, role, index, the corroborated/solo/verified/
++// refuted counts) may appear.
++func TestExport_EnvelopeKeysAreSpecExact(t *testing.T) {
++	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
++		FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	s := string(data)
++
++	for _, k := range []string{`"submission_schema"`, `"atcr_version"`, `"submitted_at"`, `"reviewers"`} {
++		assert.Contains(t, s, k, "envelope must carry spec key %s", k)
++	}
++	for _, k := range []string{`"model"`, `"persona"`, `"runs"`, `"findings_raised_avg"`,
++		`"corroboration_rate"`, `"cost_per_corroborated_finding_usd"`, `"latency_p50_ms"`} {
++		assert.Contains(t, s, k, "reviewer record must carry spec key %s", k)
++	}
++	for _, k := range []string{`"schema_version"`, `"exported_at"`, `"records"`, `"filters"`,
++		`"reviewer"`, `"role"`, `"index"`, `"findings_raised"`, `"findings_corroborated"`,
++		`"findings_solo"`, `"findings_verified"`, `"findings_refuted"`, `"cost_usd"`,
++		`"tokens_in"`, `"tokens_out"`, `"latency_ms_avg"`, `"run_id"`} {
++		assert.NotContains(t, s, k, "dropped/legacy key %s must not appear", k)
++	}
++}
++
++func TestExport_FindingsRaisedAvgIsPerRun(t *testing.T) {
++	// Two runs, 12 raised each => average 12.0 (NOT the sum 24).
++	recs := []Record{
++		exportRec("bruce", "claude-sonnet-4-6", 1),
++		exportRec("bruce", "claude-sonnet-4-6", 3),
++	}
++	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	out := parseEnvelope(t, data).Reviewers
++	require.Len(t, out, 1, "same (persona, model) collapses to one aggregated row")
++	assert.Equal(t, 2, out[0].Runs)
++	assert.InDelta(t, 12.0, out[0].FindingsRaisedAvg, 1e-9, "findings_raised_avg is per-run, not the total")
++}
++
++func TestExport_CostPerCorroboratedFinding(t *testing.T) {
++	// One run: cost 0.04, corroborated 7 => 0.04/7.
++	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
++		FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.InDelta(t, 0.04/7.0, r.CostPerCorroboratedFindingUSD, 1e-9)
++}
++
++func TestExport_CostPerCorroboratedZeroWhenNoCorroboration(t *testing.T) {
++	rec := exportRec("bruce", "m", 1)
++	rec.FindingsCorroborated = 0
++	rec.CostUSD = 0.5
++	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.Equal(t, 0.0, r.CostPerCorroboratedFindingUSD, "no corroborated findings => 0, never Inf/NaN")
++}
++
++func TestExport_LatencyP50IsMedian(t *testing.T) {
++	// Three runs with latencies 100, 9100, 200 => median 200.
++	mk := func(age int, lat int64) Record {
++		r := exportRec("bruce", "claude-sonnet-4-6", age)
++		r.LatencyMS = lat
++		return r
++	}
++	recs := []Record{mk(1, 100), mk(2, 9100), mk(3, 200)}
++	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.Equal(t, int64(200), r.LatencyP50MS, "p50 is the median of per-run latencies, not the mean")
++}
++
++func TestExport_LatencyP50EvenCountAveragesMiddle(t *testing.T) {
++	mk := func(age int, lat int64) Record {
++		r := exportRec("bruce", "claude-sonnet-4-6", age)
++		r.LatencyMS = lat
++		return r
++	}
++	// Four runs: 100, 200, 300, 500 => median (200+300)/2 = 250.
++	recs := []Record{mk(1, 100), mk(2, 200), mk(3, 300), mk(4, 500)}
++	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.Equal(t, int64(250), r.LatencyP50MS)
++}
++
++func TestExport_SurvivedSkepticOmittedWhenNoVerification(t *testing.T) {
++	// No verification pointers => survived_skeptic_rate key must be omitted entirely.
++	data, err := Export([]Record{exportRec("bruce", "m", 1)},
++		FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	assert.NotContains(t, string(data), "survived_skeptic_rate",
++		"absent verification omits the key (not 0.0, not null)")
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.Nil(t, r.SurvivedSkepticRate)
++}
++
++func TestExport_SurvivedSkepticPresentWhenVerified(t *testing.T) {
++	v, ref := 4, 1
++	rate := ratio(4, 5)
++	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
++	rec.FindingsVerified = &v
++	rec.FindingsRefuted = &ref
++	rec.SurvivedSkepticRate = &rate
++	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	r := parseEnvelope(t, data).Reviewers[0]
++	require.NotNil(t, r.SurvivedSkepticRate, "verification present => rate emitted")
++	assert.InDelta(t, 0.8, *r.SurvivedSkepticRate, 1e-9)
++}
++
++func TestExport_SurvivedSkepticZeroIsEmittedWhenAllRefuted(t *testing.T) {
++	// Verification ran but every finding was refuted: rate is a legitimate 0.0 and
++	// must be EMITTED (pointer to 0.0), distinguishable from "no verification" (nil).
++	v, ref := 0, 5
++	rate := 0.0
++	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
++	rec.FindingsVerified = &v
++	rec.FindingsRefuted = &ref
++	rec.SurvivedSkepticRate = &rate
++	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	assert.Contains(t, string(data), "survived_skeptic_rate", "ran-but-all-refuted emits 0.0, not omit")
++	r := parseEnvelope(t, data).Reviewers[0]
++	require.NotNil(t, r.SurvivedSkepticRate)
++	assert.Equal(t, 0.0, *r.SurvivedSkepticRate)
++}
++
++func TestExport_SurvivedSkepticRateOnlyRecordNotZeroed(t *testing.T) {
++	// Degenerate (corrupt/externally-supplied) record: a SurvivedSkepticRate
++	// pointer is set but the verdict COUNT pointers are nil — a shape the public
++	// Record type permits. finalize() must carry the stored rate, not force
++	// ratio(0,0)=0 and silently zero a real public value.
++	rate := 0.73
++	rec := exportRec("bruce", "claude-sonnet-4-6", 1)
++	rec.FindingsVerified = nil
++	rec.FindingsRefuted = nil
++	rec.SurvivedSkepticRate = &rate
++	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
++	require.NoError(t, err)
++	r := parseEnvelope(t, data).Reviewers[0]
++	require.NotNil(t, r.SurvivedSkepticRate, "a stored rate must still be emitted")
++	assert.InDelta(t, 0.73, *r.SurvivedSkepticRate, 1e-9, "stored rate must not be zeroed when counts are absent")
+ }
+ 
+ func TestExport_AnonymizationStripsRunID(t *testing.T) {
+@@ -92,8 +237,6 @@ func TestExport_AnonymizationStripsAPIKeys(t *testing.T) {
+ }
+ 
+ func TestExport_AnonymizationStripsGluedPathAndWinPath(t *testing.T) {
+-	// A path glued to a non-space byte (host=/etc/passwd) and a Windows path must
+-	// both be stripped — the scrub is not anchored to whitespace.
+ 	rec := exportRec("bruce", `host=/etc/passwd C:\Users\sam\id_rsa`, 1)
+ 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+@@ -114,11 +257,6 @@ func TestExport_AnonymizationStripsEmailAndMoreKeys(t *testing.T) {
+ }
+ 
+ func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
+-	// A path root glued directly to an alphanumeric byte (host/etc/passwd, no
+-	// separator) must still be stripped. scrubAbsPath deliberately PRESERVES an
+-	// alnum-preceded '/' so provider-prefixed model ids like "anthropic/claude-3"
+-	// survive; that allowance leaks an embedded absolute path unless an
+-	// embedded-path-root scrub also runs. Regression guard for the export.go:238 TD.
+ 	rec := exportRec("bruce", "host/etc/passwd node/var/log/secret", 1)
+ 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+@@ -129,76 +267,35 @@ func TestExport_AnonymizationStripsAlnumGluedAbsPath(t *testing.T) {
+ }
+ 
+ func TestExport_PreservesProviderPrefixedModel(t *testing.T) {
+-	// A provider-prefixed model id carries an internal '/', which is NOT an
+-	// absolute path and must survive scrubbing.
+ 	data, err := Export([]Record{exportRec("bruce", "anthropic/claude-3", 1)},
+ 		FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+-	assert.Equal(t, "anthropic/claude-3", parseEnvelope(t, data).Records[0].Model)
++	assert.Equal(t, "anthropic/claude-3", parseEnvelope(t, data).Reviewers[0].Model)
+ }
+ 
+ func TestExport_ClampsNegativeMetrics(t *testing.T) {
+-	// A corrupt-but-parseable record with negative counts must not produce a
+-	// negative or out-of-range metric in the public submission.
+ 	rec := exportRec("bruce", "m", 1)
+ 	rec.FindingsRaised = -5
+ 	rec.FindingsCorroborated = -2
+-	rec.TokensIn = -100
+ 	rec.CostUSD = -1.0
++	rec.LatencyMS = -100
+ 	data, err := Export([]Record{rec}, FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+-	r := parseEnvelope(t, data).Records[0]
+-	assert.GreaterOrEqual(t, r.FindingsRaised, 0)
+-	assert.GreaterOrEqual(t, r.FindingsCorroborated, 0)
+-	assert.GreaterOrEqual(t, r.TokensIn, 0)
+-	assert.GreaterOrEqual(t, r.CostUSD, 0.0)
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.GreaterOrEqual(t, r.FindingsRaisedAvg, 0.0)
++	assert.GreaterOrEqual(t, r.CostPerCorroboratedFindingUSD, 0.0)
++	assert.GreaterOrEqual(t, r.LatencyP50MS, int64(0))
+ 	assert.GreaterOrEqual(t, r.CorroborationRate, 0.0)
+ 	assert.LessOrEqual(t, r.CorroborationRate, 1.0)
+ }
+ 
+-func TestExport_MetricsPreserved(t *testing.T) {
+-	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+-		FilterOpts{Since: "30d"}, fixedExportNow)
+-	require.NoError(t, err)
+-	r := parseEnvelope(t, data).Records[0]
+-	assert.Equal(t, 12, r.FindingsRaised)
+-	assert.Equal(t, 7, r.FindingsCorroborated)
+-	assert.Equal(t, 5, r.FindingsSolo)
+-	assert.InDelta(t, ratio(7, 12), r.CorroborationRate, 1e-9)
+-	assert.InDelta(t, 0.04, r.CostUSD, 1e-9)
+-	assert.Equal(t, 14200, r.TokensIn)
+-	assert.Equal(t, 4000, r.TokensOut)
+-	assert.Equal(t, int64(9100), r.LatencyMSAvg)
+-}
+-
+-func TestExport_ModelPersonaRolePreserved(t *testing.T) {
++func TestExport_PersonaAndModelPreserved(t *testing.T) {
+ 	data, err := Export([]Record{exportRec("bruce", "claude-sonnet-4-6", 1)},
+ 		FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+-	r := parseEnvelope(t, data).Records[0]
+-	assert.Equal(t, "bruce", r.Reviewer, "persona names are not PII; preserved as-is")
++	r := parseEnvelope(t, data).Reviewers[0]
++	assert.Equal(t, "bruce", r.Persona, "persona names are not PII; preserved as-is")
+ 	assert.Equal(t, "claude-sonnet-4-6", r.Model)
+-	assert.Equal(t, "reviewer", r.Role)
+-}
+-
+-func TestExport_VerificationZeroWhenAbsent(t *testing.T) {
+-	// A record with no verification pointers must serialize zero values (not
+-	// omitted/null) for the verification metrics (AC 04-03 Scenario 8).
+-	data, err := Export([]Record{exportRec("bruce", "m", 1)},
+-		FilterOpts{Since: "30d"}, fixedExportNow)
+-	require.NoError(t, err)
+-	var raw []map[string]json.RawMessage
+-	env := struct {
+-		Records []map[string]json.RawMessage `json:"records"`
+-	}{}
+-	require.NoError(t, json.Unmarshal(data, &env))
+-	raw = env.Records
+-	require.Len(t, raw, 1)
+-	for _, f := range []string{"findings_verified", "findings_refuted", "survived_skeptic_rate"} {
+-		v, ok := raw[0][f]
+-		require.True(t, ok, "verification field %q must be present (no omitempty)", f)
+-		assert.NotEqual(t, "null", string(v), "%q must be a zero value, not null", f)
+-	}
+ }
+ 
+ func TestExport_Determinism(t *testing.T) {
+@@ -214,7 +311,7 @@ func TestExport_Determinism(t *testing.T) {
+ 	assert.Equal(t, a, b, "Export must be byte-identical for identical input")
+ }
+ 
+-func TestExport_SortedByModelReviewerRole(t *testing.T) {
++func TestExport_SortedByModelPersona(t *testing.T) {
+ 	recs := []Record{
+ 		exportRec("bruce", "gpt-4", 1),
+ 		exportRec("alice", "claude-sonnet-4-6", 1),
+@@ -222,60 +319,29 @@ func TestExport_SortedByModelReviewerRole(t *testing.T) {
+ 	}
+ 	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
+ 	require.NoError(t, err)
+-	recsOut := parseEnvelope(t, data).Records
+-	require.Len(t, recsOut, 3)
+-	// (model asc, reviewer asc): claude/alice, claude/bruce, gpt-4/bruce.
+-	assert.Equal(t, "claude-sonnet-4-6", recsOut[0].Model)
+-	assert.Equal(t, "alice", recsOut[0].Reviewer)
+-	assert.Equal(t, "claude-sonnet-4-6", recsOut[1].Model)
+-	assert.Equal(t, "bruce", recsOut[1].Reviewer)
+-	assert.Equal(t, "gpt-4", recsOut[2].Model)
+-	// indices are sequential in sorted order.
+-	for i, r := range recsOut {
+-		assert.Equal(t, i, r.Index)
+-	}
+-}
+-
+-func TestExport_AggregatesRunsPerReviewerModel(t *testing.T) {
+-	recs := []Record{
+-		exportRec("bruce", "claude-sonnet-4-6", 1),
+-		exportRec("bruce", "claude-sonnet-4-6", 3),
+-	}
+-	data, err := Export(recs, FilterOpts{Since: "30d"}, fixedExportNow)
+-	require.NoError(t, err)
+-	out := parseEnvelope(t, data).Records
+-	require.Len(t, out, 1, "same (reviewer, model) collapses to one aggregated row")
+-	assert.Equal(t, 2, out[0].Runs)
+-	assert.Equal(t, 24, out[0].FindingsRaised, "raised is summed across runs")
++	out := parseEnvelope(t, data).Reviewers
++	require.Len(t, out, 3)
++	// (model asc, persona asc): claude/alice, claude/bruce, gpt-4/bruce.
++	assert.Equal(t, "claude-sonnet-4-6", out[0].Model)
++	assert.Equal(t, "alice", out[0].Persona)
++	assert.Equal(t, "claude-sonnet-4-6", out[1].Model)
++	assert.Equal(t, "bruce", out[1].Persona)
++	assert.Equal(t, "gpt-4", out[2].Model)
+ }
+ 
+-func TestExport_FiltersApplied(t *testing.T) {
++func TestExport_FiltersAppliedButNotEchoed(t *testing.T) {
+ 	recs := []Record{
+ 		exportRec("bruce", "claude-sonnet-4-6", 2),
+ 		exportRec("diana", "gpt-4o", 40), // older than 7d window
+ 	}
+ 	data, err := Export(recs, FilterOpts{Since: "7d", Model: "claude-sonnet-4-6"}, fixedExportNow)
+ 	require.NoError(t, err)
++	// Filters select the slice but are NOT echoed (they would leak query params
++	// about the user's local dataset).
++	assert.NotContains(t, string(data), "filters")
+ 	env := parseEnvelope(t, data)
+-	assert.Equal(t, "7d", env.Filters.Since)
+-	assert.Equal(t, "claude-sonnet-4-6", env.Filters.Model)
+-	require.Len(t, env.Records, 1)
+-	assert.Equal(t, "bruce", env.Records[0].Reviewer)
+-}
+-
+-// TestExport_AllFiltersEchoedDistinctly pins the FilterOpts -> ExportFilters
+-// mapping with a distinct value per field (Persona was previously unasserted).
+-// Distinct values make a misaligned field mapping (e.g. a future reorder of the
+-// struct fields) surface as a wrong-field echo instead of a silent pass.
+-func TestExport_AllFiltersEchoedDistinctly(t *testing.T) {
+-	recs := []Record{exportRec("bruce", "claude-sonnet-4-6", 1)}
+-	opts := FilterOpts{Since: "7d", Model: "claude-sonnet-4-6", Persona: "bruce"}
+-	data, err := Export(recs, opts, fixedExportNow)
+-	require.NoError(t, err)
+-	env := parseEnvelope(t, data)
+-	assert.Equal(t, "7d", env.Filters.Since)
+-	assert.Equal(t, "claude-sonnet-4-6", env.Filters.Model)
+-	assert.Equal(t, "bruce", env.Filters.Persona)
++	require.Len(t, env.Reviewers, 1)
++	assert.Equal(t, "bruce", env.Reviewers[0].Persona)
+ }
+ 
+ func TestExport_NoMatchError(t *testing.T) {
+@@ -300,7 +366,7 @@ func TestExport_NoPIIPatternsInOutput(t *testing.T) {
+ 	assert.False(t, strings.Contains(s, "run_id"))
+ }
+ 
+-func TestAnonymizeRecord_StripsRunIDPreservesMetrics(t *testing.T) {
++func TestAnonymizeRecord_SingleRunDerivedFields(t *testing.T) {
+ 	v, ref := 4, 1
+ 	rate := 0.8
+ 	raw := Record{
+@@ -311,9 +377,9 @@ func TestAnonymizeRecord_StripsRunIDPreservesMetrics(t *testing.T) {
+ 		Model:                "claude-sonnet-4-6",
+ 		Role:                 "reviewer",
+ 		FindingsRaised:       120,
+-		FindingsCorroborated: 78,
+-		FindingsSolo:         42,
+-		CorroborationRate:    0.65,
++		FindingsCorroborated: 80,
++		FindingsSolo:         40,
++		CorroborationRate:    ratio(80, 120),
+ 		CostUSD:              0.60,
+ 		TokensIn:             213000,
+ 		TokensOut:            60000,
+@@ -323,19 +389,13 @@ func TestAnonymizeRecord_StripsRunIDPreservesMetrics(t *testing.T) {
+ 		SurvivedSkepticRate:  &rate,
+ 	}
+ 	pr := AnonymizeRecord(raw)
+-	assert.Equal(t, "bruce", pr.Reviewer)
++	assert.Equal(t, "bruce", pr.Persona)
+ 	assert.Equal(t, "claude-sonnet-4-6", pr.Model)
+-	assert.Equal(t, "reviewer", pr.Role)
+ 	assert.Equal(t, 1, pr.Runs, "a single record anonymizes to runs=1")
+-	assert.Equal(t, 120, pr.FindingsRaised)
+-	assert.Equal(t, 78, pr.FindingsCorroborated)
+-	assert.Equal(t, 42, pr.FindingsSolo)
+-	assert.InDelta(t, 0.65, pr.CorroborationRate, 1e-9)
+-	assert.Equal(t, 4, pr.FindingsVerified)
+-	assert.Equal(t, 1, pr.FindingsRefuted)
+-	assert.InDelta(t, 0.8, pr.SurvivedSkepticRate, 1e-9)
+-	assert.Equal(t, 0.60, pr.CostUSD)
+-	assert.Equal(t, 213000, pr.TokensIn)
+-	assert.Equal(t, 60000, pr.TokensOut)
+-	assert.Equal(t, int64(9100), pr.LatencyMSAvg)
++	assert.InDelta(t, 120.0, pr.FindingsRaisedAvg, 1e-9, "single run: avg == raised")
++	assert.InDelta(t, ratio(80, 120), pr.CorroborationRate, 1e-9)
++	assert.InDelta(t, 0.60/80.0, pr.CostPerCorroboratedFindingUSD, 1e-9)
++	assert.Equal(t, int64(9100), pr.LatencyP50MS)
++	require.NotNil(t, pr.SurvivedSkepticRate)
++	assert.InDelta(t, 0.8, *pr.SurvivedSkepticRate, 1e-9)
+ }
+diff --git a/internal/version/version.go b/internal/version/version.go
+new file mode 100644
+index 0000000..9ade7ab
+--- /dev/null
++++ b/internal/version/version.go
+@@ -0,0 +1,16 @@
++// Package version holds the ATCR build version, surfaced in the public
++// leaderboard submission envelope (Epic 10.0) as atcr_version so a submission is
++// self-describing about which build produced it.
++//
++// Version is a var (not a const) so a release build can stamp it at link time:
++//
++//	go build -ldflags "-X github.com/samestrin/atcr/internal/version.Version=1.2.3" ./cmd/atcr
++//
++// The default "0.0.0" is a deliberate neutral placeholder: the repo carries no
++// git tags and go.mod declares no semver, so an unstamped (dev) build reports
++// 0.0.0 rather than a misleading real-looking version.
++package version
++
++// Version is the ATCR build version. Overridden at link time for releases; the
++// dev/default value is the neutral "0.0.0".
++var Version = "0.0.0"

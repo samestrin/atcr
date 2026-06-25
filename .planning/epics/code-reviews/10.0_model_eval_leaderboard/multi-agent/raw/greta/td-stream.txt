@@ -1,0 +1,1 @@
+MEDIUM|internal/benchmark/benchmark.go:156|PII leakage via unscrubbed run-result input|Add defense-in-depth scrubbing of PublicRecord fields at export time|security|15|RunResult wraps reviewers verbatim; manual input bypasses anonymization|greta
