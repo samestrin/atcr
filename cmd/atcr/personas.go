@@ -266,6 +266,9 @@ func newPersonasTestCmd() *cobra.Command {
 			case !outcome.HasFixture:
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "No fixture defined for persona %q\n", name)
 				return nil
+			case outcome.Total == 0:
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "WARN: no test cases defined for persona %q\n", name)
+				return nil
 			case outcome.Passed == outcome.Total:
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "PASS: %s (%d/%d cases)\n", name, outcome.Passed, outcome.Total)
 				return nil
