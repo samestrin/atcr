@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/samestrin/atcr/internal/benchmark"
@@ -48,6 +49,8 @@ func newBenchmarkVerifyCmd() *cobra.Command {
 }
 
 func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
+	// Cobra GetString error is unreachable: flag registered above, MarkFlagRequired
+	// enforces presence before RunE executes. Project-wide convention (27 sites).
 	suitePath, _ := cmd.Flags().GetString("suite-path")
 
 	m, err := benchmark.Load(suitePath)
@@ -81,7 +84,7 @@ func newBenchmarkExportCmd() *cobra.Command {
 		RunE:  runBenchmarkExport,
 	}
 	cmd.Flags().String("in", "", "path to a benchmark run-result JSON file (produced by `atcr benchmark run`)")
-	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (follows symlinks)")
+	cmd.Flags().String("output", "", "write the submission JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
 	_ = cmd.MarkFlagRequired("in")
 	return cmd
 }
@@ -98,8 +101,11 @@ func runBenchmarkExport(cmd *cobra.Command, _ []string) error {
 	if err := json.Unmarshal(data, &rr); err != nil {
 		return fmt.Errorf("parsing run-result %s: %w", in, err)
 	}
-	if rr.Suite == "" || rr.SuiteVersion == "" {
+	if strings.TrimSpace(rr.Suite) == "" || strings.TrimSpace(rr.SuiteVersion) == "" {
 		return fmt.Errorf("run-result %s is missing suite/suite_version", in)
+	}
+	if len(rr.Reviewers) == 0 {
+		return fmt.Errorf("run-result %s has no reviewers", in)
 	}
 
 	generatedAt, err := time.Parse(time.RFC3339, rr.GeneratedAt)

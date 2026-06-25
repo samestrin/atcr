@@ -106,6 +106,29 @@ func TestBenchmarkExport_UsesGeneratedAtForSubmittedAt(t *testing.T) {
 		"submitted_at must use run-result's generated_at for reproducibility")
 }
 
+func TestBenchmarkExport_RejectsWhitespaceOnlySuiteFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run-result.json")
+	body := `{"suite":" ","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z",` +
+		`"reviewers":[{"model":"claude-sonnet-4-6","persona":"bruce","runs":2,` +
+		`"findings_raised_avg":10.5,"corroboration_rate":0.6,` +
+		`"cost_per_corroborated_finding_usd":0.006,"latency_p50_ms":8900}]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "whitespace-only suite must fail: %s", out)
+	require.Contains(t, out, "missing suite/suite_version")
+}
+
+func TestBenchmarkExport_RejectsEmptyReviewers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run-result.json")
+	body := `{"suite":"mini","suite_version":"1.2.0","generated_at":"2026-06-24T12:00:00Z","reviewers":[]}`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	code, out := execCmdCapture(t, "benchmark", "export", "--in", path)
+	require.NotEqual(t, 0, code, "empty reviewers must fail: %s", out)
+	require.Contains(t, out, "no reviewers")
+}
+
 func TestBenchmarkExport_MissingInputFails(t *testing.T) {
 	code, out := execCmdCapture(t, "benchmark", "export", "--in", filepath.Join(t.TempDir(), "nope.json"))
 	require.NotEqual(t, 0, code, "a missing run-result file must fail export: %s", out)
