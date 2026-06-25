@@ -312,6 +312,7 @@ func medianInt64(xs []int64) int64 {
 // collapsed.
 func scrubField(s string) string {
 	s = scrubWinPath.ReplaceAllString(s, "")
+	s = scrubUNCPath.ReplaceAllString(s, "")
 	s = scrubHome.ReplaceAllString(s, "")
 	s = scrubEmbeddedPath.ReplaceAllString(s, "")
 	s = scrubAbsPath.ReplaceAllString(s, "$1")
@@ -322,16 +323,26 @@ func scrubField(s string) string {
 
 var (
 	scrubWinPath = regexp.MustCompile(`[A-Za-z]:\\\S*`)
+	// scrubUNCPath strips a Windows UNC token (\\host\share...). scrubWinPath only
+	// covers drive-letter paths, so a leading double-backslash form would otherwise
+	// survive the backstop.
+	scrubUNCPath = regexp.MustCompile(`\\\\\S+`)
 	scrubHome    = regexp.MustCompile(`~\S*`)
 	// scrubEmbeddedPath removes a whole whitespace-delimited token that embeds a
 	// known absolute-path root, even when the '/' is glued to a preceding
 	// alphanumeric (e.g. "host/etc/passwd"). scrubAbsPath below deliberately keeps
 	// an alnum-preceded '/' so provider-prefixed model ids like "anthropic/claude-3"
 	// survive — but that allowance would otherwise leak an embedded system path. A
-	// real path root never appears in a model id, so dropping the token is safe.
-	scrubEmbeddedPath = regexp.MustCompile(`\S*(?:/etc/|/Users/|/home/|/var/|/tmp/)\S*`)
+	// real path root never appears in a model id, so dropping the token is safe. The
+	// root set covers the common FHS dirs that can hold sensitive paths.
+	scrubEmbeddedPath = regexp.MustCompile(`\S*(?:/etc/|/Users/|/home/|/var/|/tmp/|/opt/|/srv/|/mnt/|/root/|/private/|/usr/)\S*`)
 	// Leading capture preserves the non-path byte before the stripped '/'-run.
 	scrubAbsPath = regexp.MustCompile(`(^|[^A-Za-z0-9])/\S*`)
-	scrubEmail   = regexp.MustCompile(`[\w.+-]+@[\w.-]+\.\w+`)
-	scrubKey     = regexp.MustCompile(`(?i)\b(sk-[a-z0-9-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
+	// scrubEmail strips addresses with OR without a TLD dot (user@host.com AND
+	// user@localhost) — the backstop should not require a public-domain shape.
+	scrubEmail = regexp.MustCompile(`[\w.+-]+@[\w.-]+`)
+	// scrubKey covers common token/key shapes. sk-/sk_ (OpenAI-style, both hyphen
+	// and underscore variants) and AIza (Google API key) are included alongside the
+	// GitHub/GitLab/Slack/AWS/bearer shapes.
+	scrubKey = regexp.MustCompile(`(?i)\b(sk[-_][a-z0-9_-]+|aiza[a-z0-9_-]+|ghp_\w+|gho_\w+|ghu_\w+|ghs_\w+|ghr_\w+|github_pat_\w+|glpat-\S+|xox[baprs]-\S+|xapp-\S+|akia[a-z0-9]{16}|asia[a-z0-9]+|bearer\s+\S+|(?:authorization|api[_-]?key|token)\s*[:=]\s*\S+)`)
 )
