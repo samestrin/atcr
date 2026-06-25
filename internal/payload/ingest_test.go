@@ -197,6 +197,31 @@ func TestBuildEntriesFromDiff_TrailingBlankLineRoundTrips(t *testing.T) {
 	assert.Equal(t, diff, joinBodies(entries), "trailing blank line must round-trip verbatim")
 }
 
+// A loose diff carrying `\ No newline at end of file` after a hunk's counted
+// body lines must attach the marker to the current hunk (consume it) rather than
+// leaving it to be mis-read as content after the section — both on the final file
+// and on an interior file of a multi-file diff.
+func TestBuildEntriesFromDiff_NoNewlineMarkerRoundTrips(t *testing.T) {
+	// Single file, marker trailing the last hunk line.
+	single := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n\\ No newline at end of file\n"
+	entries, err := BuildEntriesFromDiff(single)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "x.go", entries[0].Path)
+	assert.Equal(t, single, joinBodies(entries), "trailing no-newline marker must round-trip verbatim")
+
+	// Multi-file: the no-newline marker terminates the FIRST file's hunk; the
+	// second file's header must still be recognized as a new section.
+	multi := "--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-a\n+b\n\\ No newline at end of file\n" +
+		"--- a/y.go\n+++ b/y.go\n@@ -1,1 +1,1 @@\n-c\n+d\n"
+	entries, err = BuildEntriesFromDiff(multi)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "x.go", entries[0].Path)
+	assert.Equal(t, "y.go", entries[1].Path)
+	assert.Equal(t, multi, joinBodies(entries), "interior no-newline marker must not break section splitting")
+}
+
 // A git binary/mode-only section carries no `--- `/`+++ ` lines, so the head
 // path must be parsed from the `diff --git a/<old> b/<new>` header instead.
 func TestBuildEntriesFromDiff_GitBinarySection(t *testing.T) {
