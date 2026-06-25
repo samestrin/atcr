@@ -208,6 +208,18 @@ func TestExport_SurvivedSkepticRateOnlyRecordNotZeroed(t *testing.T) {
 	assert.InDelta(t, 0.73, *r.SurvivedSkepticRate, 1e-9, "stored rate must not be zeroed when counts are absent")
 }
 
+func TestMedianInt64_EvenCountDoesNotOverflow(t *testing.T) {
+	// Two near-MaxInt64 latencies: the naive (a+b)/2 overflows int64 and wraps to a
+	// negative wrong answer. The overflow-safe form a+(b-a)/2 must return the true
+	// floor-of-average and stay positive.
+	a := int64(math.MaxInt64) - 3
+	b := int64(math.MaxInt64) - 1
+	got := medianInt64([]int64{a, b})
+	want := a + (b-a)/2 // MaxInt64-2, computed without the overflowing sum
+	assert.Equal(t, want, got, "even-count median must not overflow int64")
+	assert.Positive(t, got, "an overflowing sum would flip the median negative")
+}
+
 func TestExport_SurvivedSkepticOmittedWhenVerificationRanButNoCountsOrRates(t *testing.T) {
 	// Degenerate shape: verification pointers are present (hasVerification) but every
 	// verdict count is zero AND no stored rate survives (verified+refuted==0,
