@@ -135,6 +135,9 @@ func isSafeRelPath(p string) bool {
 		return false
 	}
 	clean := filepath.Clean(p)
+	if clean == "." {
+		return false
+	}
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return false
 	}
