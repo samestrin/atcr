@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/internal/personas"
 	"github.com/samestrin/atcr/internal/scorecard"
@@ -82,6 +83,12 @@ func withPersonasEnv(t *testing.T, srv *httptest.Server) string {
 	personasDir = func() (string, error) { return dir, nil }
 	t.Cleanup(func() { personasDir = oldDir })
 	return dir
+}
+
+func TestPersonasClient_HasTimeout(t *testing.T) {
+	c, ok := personasClient.(*http.Client)
+	require.True(t, ok)
+	assert.Greater(t, c.Timeout, time.Duration(0))
 }
 
 func TestPersonas_HelpListsSubcommands(t *testing.T) {
