@@ -184,7 +184,15 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	if runErr != nil {
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
-			res.ExitCode = ee.ExitCode()
+			ec := ee.ExitCode()
+			// Docker reserved exit codes indicate the runtime itself failed, not the
+			// workload. Treat them as backend faults so they are not misreported as
+			// a program result.
+			if ec == 125 || ec == 126 || ec == 127 {
+				logger.Error("sandbox exec runtime error", "backend", "docker", "command", cmdStr, "exit_code", ec, "error", runErr)
+				return res, fmt.Errorf("docker run: runtime error (exit %d): %w", ec, runErr)
+			}
+			res.ExitCode = ec
 			logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
 			return res, nil
 		}
