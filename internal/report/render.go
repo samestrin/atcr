@@ -178,7 +178,14 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 		}
 		// Execution-reproduction badge (Epic 11.0): a finding carrying an
 		// evidence_exec block was demonstrated by running code in the sandbox.
-		if f.EvidenceExec != nil {
+		// Gate the badge on an actually-reproduced failure: a confirmed verdict
+		// AND a non-zero exit code. repro.Stamp attaches EvidenceExec even on an
+		// unverifiable verdict (timeout, disagreeing exits, both-zero deterministic
+		// PASS), so without this guard a finding that did NOT reproduce would render
+		// a green "Reproduced: cmd (exit 0)" badge — a lie to the operator.
+		if f.EvidenceExec != nil && f.EvidenceExec.ExitCode != 0 &&
+			f.Verification != nil &&
+			canonicalize(f.Verification.Verdict) == canonicalize(reclib.VerdictConfirmed) {
 			writeReproducedBlock(&b, f.EvidenceExec)
 		}
 	}

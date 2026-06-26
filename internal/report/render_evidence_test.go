@@ -71,7 +71,8 @@ func TestRender_NoBadgeWithoutEvidenceExec(t *testing.T) {
 func TestRender_ReproducedBadge_EmptyOutputOmitsLine(t *testing.T) {
 	findings := []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED", Reviewers: []string{"r"},
-		EvidenceExec: &reconcile.EvidenceExec{Command: "true", ExitCode: 0, OutputExcerpt: ""},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "repro"},
+		EvidenceExec: &reconcile.EvidenceExec{Command: "false", ExitCode: 1, OutputExcerpt: ""},
 	}}
 	var b strings.Builder
 	require.NoError(t, Render(&b, findings, FormatMarkdown))
@@ -83,6 +84,7 @@ func TestRender_ReproducedBadge_EmptyOutputOmitsLine(t *testing.T) {
 func TestRender_ReproducedBadge_CommandNotEntityMangled(t *testing.T) {
 	findings := []reconcile.JSONFinding{{
 		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED", Reviewers: []string{"r"},
+		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "repro"},
 		EvidenceExec: &reconcile.EvidenceExec{Command: `echo "<foo>" && bar`, ExitCode: 1, OutputExcerpt: "FAIL"},
 	}}
 	var b strings.Builder
