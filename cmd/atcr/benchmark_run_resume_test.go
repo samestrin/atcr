@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -252,4 +254,41 @@ func TestExecuteBenchmarkRun_RejectsCheckpointCaseIDDrift(t *testing.T) {
 	_, err = executeBenchmarkRun(context.Background(), cfg, &countingCompleter{}, suiteValidPath, gen, path)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errCheckpointSuiteMismatch, "a per-index case-id drift aborts the resume")
+}
+
+// Resume reports how many cases are being replayed from the checkpoint vs
+// executed fresh, so an operator can tell the run resumed and gauge progress.
+func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
+	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	// First run completes the suite and writes a checkpoint.
+	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	// Capture stderr from the resumed run.
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	_, err = executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	require.NoError(t, w.Close())
+	<-done
+	os.Stderr = oldStderr
+
+	out := buf.String()
+	assert.Contains(t, out, "Resuming")
+	assert.Contains(t, out, "replayed 2")
+	assert.Contains(t, out, "remaining 0")
 }
