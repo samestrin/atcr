@@ -122,3 +122,45 @@ func TestSaveCheckpoint_WritesCompactJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "\n", "checkpoint JSON must be compact, not indented")
 }
+
+// saveCheckpoint must leave the previous valid checkpoint intact when the next
+// write fails (e.g., disk full / permissions). The temp-file + rename design
+// guarantees the on-disk file always reflects a whole number of cases (AC1).
+func TestSaveCheckpoint_PreservesPriorOnWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ckpt.json")
+	first := &runCheckpoint{
+		ReproHash:    "abc123",
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		Cases: []checkpointCase{
+			{Index: 0, CaseID: "case-01"},
+		},
+	}
+	require.NoError(t, saveCheckpoint(path, first))
+
+	// Make the directory unwritable so the second save cannot create its temp file.
+	require.NoError(t, os.Chmod(dir, 0o000))
+	defer func() { require.NoError(t, os.Chmod(dir, 0o700)) }()
+
+	second := &runCheckpoint{
+		ReproHash:    "abc123",
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		Cases: []checkpointCase{
+			{Index: 0, CaseID: "case-01"},
+			{Index: 1, CaseID: "case-02"},
+		},
+	}
+	err := saveCheckpoint(path, second)
+	require.Error(t, err, "second save must fail when the output directory is unwritable")
+
+	// After restoring permissions, the prior checkpoint must still parse and hold
+	// exactly the first case.
+	require.NoError(t, os.Chmod(dir, 0o700))
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	require.NotNil(t, cp)
+	assert.Len(t, cp.Cases, 1, "prior valid checkpoint must survive a failed overwrite")
+	assert.Equal(t, "case-01", cp.Cases[0].CaseID)
+}
