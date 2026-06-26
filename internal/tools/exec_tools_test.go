@@ -41,6 +41,11 @@ func newExecDispatcher(t *testing.T, b sandbox.Backend) *Dispatcher {
 	return d
 }
 
+// execCtx is an exec-eligible context: the per-call gate (Epic 11.1) now refuses
+// run_tests/run_script unless the caller affirmatively granted eligibility, so
+// handler-behavior tests must dispatch through one.
+func execCtx() context.Context { return WithExecEligibility(context.Background(), true) }
+
 func TestExecutionTools_Defs(t *testing.T) {
 	defs := ExecutionTools()
 	names := map[string]ToolDef{}
@@ -72,7 +77,7 @@ func TestRunTests_Handler_ScopesTargetAndReportsExit(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{Command: "go test ./internal/x", ExitCode: 1, Output: "FAIL: x"}}
 	d := newExecDispatcher(t, b)
 
-	res, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{"target":"./internal/x"}`))
+	res, err := d.Execute(execCtx(), "run_tests", json.RawMessage(`{"target":"./internal/x"}`))
 	require.NoError(t, err)
 	// The project test command is taken from config and the target is appended.
 	assert.Equal(t, []string{"go", "test", "./...", "./internal/x"}, b.last.Command)
@@ -87,7 +92,7 @@ func TestRunTests_Handler_ScopesTargetAndReportsExit(t *testing.T) {
 func TestRunTests_Handler_NoTargetRunsFullSuite(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
-	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
+	_, err := d.Execute(execCtx(), "run_tests", json.RawMessage(`{}`))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"go", "test", "./..."}, b.last.Command)
 }
@@ -96,7 +101,7 @@ func TestRunScript_Handler_PassesContentAndTimeout(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 2, Output: "boom"}}
 	d := newExecDispatcher(t, b)
 
-	res, err := d.Execute(context.Background(), "run_script",
+	res, err := d.Execute(execCtx(), "run_script",
 		json.RawMessage(`{"content":"echo hi\nexit 2\n","timeout":5}`))
 	require.NoError(t, err)
 	assert.Equal(t, "echo hi\nexit 2\n", b.last.Script)
@@ -123,7 +128,7 @@ func TestRunScript_Handler_ClampsTimeout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 			d := newExecDispatcher(t, b)
-			_, err := d.Execute(context.Background(), "run_script",
+			_, err := d.Execute(execCtx(), "run_script",
 				json.RawMessage(fmt.Sprintf(`{"content":"echo hi\n","timeout":%d}`, tc.timeout)))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, b.last.Timeout,
@@ -134,7 +139,7 @@ func TestRunScript_Handler_ClampsTimeout(t *testing.T) {
 
 func TestRunScript_Handler_RequiresContent(t *testing.T) {
 	d := newExecDispatcher(t, &stubBackend{})
-	_, err := d.Execute(context.Background(), "run_script", json.RawMessage(`{}`))
+	_, err := d.Execute(execCtx(), "run_script", json.RawMessage(`{}`))
 	require.Error(t, err, "run_script with no content must be a tool error")
 }
 
@@ -142,7 +147,7 @@ func TestRunTests_Handler_RejectsFlaglikeTarget(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
 	for _, target := range []string{"-v", "--output=/tmp/x", "-run=TestX"} {
-		_, err := d.Execute(context.Background(), "run_tests",
+		_, err := d.Execute(execCtx(), "run_tests",
 			json.RawMessage(`{"target":"`+target+`"}`))
 		require.Error(t, err, "a target starting with '-' must be rejected as argument injection: %q", target)
 		assert.Empty(t, b.last.Command, "a rejected target must not be dispatched to the backend: %q", target)
@@ -153,10 +158,40 @@ func TestRunScript_Handler_RejectsOversizedContent(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
 	big := strings.Repeat("a", 64*1024+1)
-	_, err := d.Execute(context.Background(), "run_script",
+	_, err := d.Execute(execCtx(), "run_script",
 		json.RawMessage(`{"content":"`+big+`"}`))
 	require.Error(t, err, "run_script content over the size cap must be a tool error")
 	assert.Empty(t, b.last.Script, "oversized content must not be dispatched to the backend")
+}
+
+func TestDispatcher_Execute_RefusesExecToolWithoutEligibility(t *testing.T) {
+	// AC1: the read-only boundary is STRUCTURAL at dispatch. Even on a shared
+	// dispatcher that HAS the exec tools registered (EnableExecution), a caller
+	// that was not granted exec eligibility (a bare, non-eligible context) must be
+	// refused — the call must never reach the sandbox backend.
+	for _, name := range []string{"run_tests", "run_script"} {
+		t.Run(name, func(t *testing.T) {
+			b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+			d := newExecDispatcher(t, b)
+			_, err := d.Execute(context.Background(), name, json.RawMessage(`{"content":"echo hi\n","target":"./x"}`))
+			require.Error(t, err, "an exec tool named by a non-eligible caller must be a tool error, not an execution")
+			var te *ToolError
+			assert.ErrorAs(t, err, &te, "refusal must be a non-fatal ToolError, never a panic")
+			assert.Empty(t, b.last.Command, "a refused exec call must never reach the backend")
+			assert.Empty(t, b.last.Script, "a refused exec call must never reach the backend")
+		})
+	}
+}
+
+func TestDispatcher_Execute_AllowsExecToolWithEligibility(t *testing.T) {
+	// Positive control: with eligibility granted in the context, the same call on
+	// the same dispatcher runs normally — the gate refuses only the non-eligible.
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+	ctx := WithExecEligibility(context.Background(), true)
+	_, err := d.Execute(ctx, "run_tests", json.RawMessage(`{}`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"go", "test", "./..."}, b.last.Command)
 }
 
 func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
@@ -176,4 +211,27 @@ func TestDispatcher_EnableExecution_ConcurrentWithExecute(t *testing.T) {
 
 	// Concurrent Execute must not race with EnableExecution's registration.
 	_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
+}
+
+func TestDispatcher_EnableExecution_ConcurrentExecuteNeverFailsOpen(t *testing.T) {
+	// Gate-first ordering invariant (Epic 11.1 hardening): while EnableExecution is
+	// registering the exec tools, a concurrent NON-eligible Execute must never reach
+	// the backend. With handler-first ordering there is a window where the handler
+	// exists but the gate flag is not yet set (fail-OPEN); gate-first closes it.
+	// Run under -race with many iterations to exercise the registration window.
+	for i := 0; i < 200; i++ {
+		d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+		b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+		done := make(chan struct{})
+		go func() {
+			d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
+			close(done)
+		}()
+		// A bare (non-eligible) context: whether the handler is registered yet or not,
+		// the call must be either "unknown tool" or an eligibility refusal — never an
+		// execution.
+		_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
+		<-done
+		require.Empty(t, b.last.Command, "a non-eligible exec call must never reach the backend, even mid-registration")
+	}
 }
