@@ -1,3 +1,18 @@
+## [Technical Debt] - 2026-06-26
+
+### Fixed
+
+- Fixed a data race between `Dispatcher.SetLimits` and `capResult` by guarding `limits` (and the exec backend fields) under the dispatcher mutex
+- Replaced the zero-size `struct{}` context keys with distinct `iota`-typed keys, eliminating a latent collision where Go may give two zero-size keys the same address
+- Made the verify determinism re-run's exec-eligibility grant structural at the function boundary (`reproduceAgain` now takes an explicit `exec` flag), so a non-exec flow cannot re-introduce a non-exec → exec escalation
+- Rejected `run_tests` with an empty configured test command and `run_script`/`run_tests` with a non-positive execution timeout, instead of forwarding an unusable spec to the sandbox
+
+### Added
+
+- Surfaced exec-eligibility refusals operator-side via a context-injected `RefusalLogger` sink (wired in the fan-out tool loop), so an operator can see when a read-only agent attempts `run_tests`/`run_script` — previously the refusal reached only the model
+
+*Resolved from the unmerged td/2026-06-26 run, rebased onto the Epic 11.2 exec-registration boundary*
+
 ## [11.2.0] - 2026-06-26
 
 ### Changed

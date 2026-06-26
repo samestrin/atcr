@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,19 +193,30 @@ func TestRunScript_Handler_RejectsOversizedContent(t *testing.T) {
 func TestDispatcher_Execute_RefusesExecToolWithoutEligibility(t *testing.T) {
 	// AC1: the read-only boundary is STRUCTURAL at dispatch. Even on a shared
 	// dispatcher that HAS the exec tools registered (EnableExecution), a caller
-	// that was not granted exec eligibility (a bare, non-eligible context) must be
-	// refused — the call must never reach the sandbox backend.
+	// that was not granted exec eligibility must be refused — the call must never
+	// reach the sandbox backend. This covers both the absent-key path and an
+	// explicit deny (false) value, which pins default-deny against a
+	// presence-vs-value regression.
+	cases := []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"absent", context.Background()},
+		{"explicit_false", WithExecEligibility(context.Background(), false)},
+	}
 	for _, name := range []string{"run_tests", "run_script"} {
-		t.Run(name, func(t *testing.T) {
-			b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
-			d := newExecDispatcher(t, b)
-			_, err := d.Execute(context.Background(), name, json.RawMessage(`{"content":"echo hi\n","target":"./x"}`))
-			require.Error(t, err, "an exec tool named by a non-eligible caller must be a tool error, not an execution")
-			var te *ToolError
-			assert.ErrorAs(t, err, &te, "refusal must be a non-fatal ToolError, never a panic")
-			assert.Empty(t, b.last.Command, "a refused exec call must never reach the backend")
-			assert.Empty(t, b.last.Script, "a refused exec call must never reach the backend")
-		})
+		for _, tc := range cases {
+			t.Run(name+"_"+tc.name, func(t *testing.T) {
+				b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+				d := newExecDispatcher(t, b)
+				_, err := d.Execute(tc.ctx, name, json.RawMessage(`{"content":"echo hi\n","target":"./x"}`))
+				require.Error(t, err, "an exec tool named by a non-eligible caller must be a tool error, not an execution")
+				var te *ToolError
+				assert.ErrorAs(t, err, &te, "refusal must be a non-fatal ToolError, never a panic")
+				assert.Empty(t, b.last.Command, "a refused exec call must never reach the backend")
+				assert.Empty(t, b.last.Script, "a refused exec call must never reach the backend")
+			})
+		}
 	}
 }
 
@@ -224,18 +236,6 @@ func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
 	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
 	require.Error(t, err, "exec tools must be unknown until EnableExecution is called")
 	assert.Contains(t, err.Error(), "unknown tool")
-}
-
-func TestDispatcher_EnableExecution_ConcurrentWithExecute(t *testing.T) {
-	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
-	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
-
-	go func() {
-		d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
-	}()
-
-	// Concurrent Execute must not race with EnableExecution's registration.
-	_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
 }
 
 func TestDispatcher_EnableExecution_ConcurrentExecuteNeverFailsOpen(t *testing.T) {
@@ -259,4 +259,93 @@ func TestDispatcher_EnableExecution_ConcurrentExecuteNeverFailsOpen(t *testing.T
 		<-done
 		require.Empty(t, b.last.Command, "a non-eligible exec call must never reach the backend, even mid-registration")
 	}
+}
+
+func TestDispatcher_Execute_RefusalLoggerNamesTool(t *testing.T) {
+	// When an exec-gated tool is refused for a non-eligible caller, the injected
+	// RefusalLogger sink must fire with the refused tool name so an operator can see
+	// the attempt. With eligibility granted, the same call must NOT fire the sink.
+	d := newExecDispatcher(t, &stubBackend{})
+
+	var refused []string
+	ctx := WithRefusalLogger(context.Background(), func(tool string) { refused = append(refused, tool) })
+	_, err := d.Execute(ctx, "run_tests", json.RawMessage(`{}`))
+	require.Error(t, err, "a non-eligible caller must be refused")
+	assert.Equal(t, []string{"run_tests"}, refused, "the refusal sink must be invoked naming the refused tool")
+
+	refused = nil
+	ctxOK := WithRefusalLogger(WithExecEligibility(context.Background(), true),
+		func(tool string) { refused = append(refused, tool) })
+	_, err = d.Execute(ctxOK, "run_tests", json.RawMessage(`{}`))
+	require.NoError(t, err)
+	assert.Empty(t, refused, "an allowed exec call must not fire the refusal sink")
+}
+
+func TestDispatcher_EnableExecution_RaceWithEligibleExecute(t *testing.T) {
+	// Eligible-caller companion to ...ConcurrentExecuteNeverFailsOpen: an exec-eligible
+	// Execute racing EnableExecution must not data-race on the backend fields
+	// (execBackend/execTestCmd/execTimeout). EnableExecution now publishes them under
+	// d.mu, so a reader that observes the registered handler also observes the fields.
+	// Run under -race to exercise the publish/read window.
+	for i := 0; i < 200; i++ {
+		d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+		b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+		done := make(chan struct{})
+		go func() {
+			d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
+			close(done)
+		}()
+		// Eligible context: if the handler is registered, the call reaches runInSandbox
+		// and reads the backend fields concurrently with EnableExecution's publish.
+		_, _ = d.Execute(execCtx(), "run_tests", json.RawMessage(`{}`))
+		<-done
+	}
+}
+
+func TestRunTests_Handler_RequiresTestCmd(t *testing.T) {
+	// If EnableExecution is wired with an empty test command, run_tests must fail
+	// with a clear configuration error instead of forwarding an empty Command to
+	// the sandbox backend.
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d.EnableExecution(b, []string{}, 30*time.Second)
+	_, err := d.Execute(execCtx(), "run_tests", json.RawMessage(`{}`))
+	require.Error(t, err, "run_tests with an empty test command must be a configuration error")
+	var te *ToolError
+	assert.ErrorAs(t, err, &te)
+	assert.Empty(t, b.last.Command, "an empty test command must not be dispatched to the backend")
+}
+
+func TestRunScript_Handler_RequiresExecTimeout(t *testing.T) {
+	// A zero or unset execTimeout must not be forwarded to the sandbox backend;
+	// the handler must reject the call with a clear configuration error.
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d.EnableExecution(b, []string{"go", "test", "./..."}, 0)
+	_, err := d.Execute(execCtx(), "run_script", json.RawMessage(`{"content":"echo hi\n","timeout":5}`))
+	require.Error(t, err, "run_script with a zero execTimeout must be a configuration error")
+	var te *ToolError
+	assert.ErrorAs(t, err, &te)
+	assert.Empty(t, b.last.Script, "a zero execTimeout must not be dispatched to the backend")
+}
+
+func TestDispatcher_SetLimits_RaceWithCapResult(t *testing.T) {
+	// Regression test for the race between SetLimits writing d.limits and
+	// capResult reading d.limits without synchronization.
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			d.SetLimits(Limits{MaxResultBytes: 100 + i})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = d.capResult(ToolResult{Content: "x"})
+		}
+	}()
+	wg.Wait()
 }
