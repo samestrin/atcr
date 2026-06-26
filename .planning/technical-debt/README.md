@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 25 | 0 |
-| LOW | 0 | 23 | 0 |
+| LOW | 2 | 23 | 0 |
 
-**Last Modified:** 2026-06-26 | **Open Items:** 0 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 50
+**Last Modified:** 2026-06-26 | **Open Items:** 2 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 52
 
 ## Directory Structure
 
@@ -33,6 +33,13 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-26] From Sprint: epic-11.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/tools/dispatch.go:175 | A refused exec call is surfaced only to the model as a tool result with no dispatcher-side log or metric, so an operator cannot see that a non-exec agent attempted run_tests/run_script | Emit a Warn/Debug log or counter at the refusal point naming the tool and that eligibility was absent | OBSERVABILITY | 15 | execute-epic-independent |
+| U | [ ] | LOW | internal/tools/exec_tools.go:66 | WithExecEligibility is exported package-wide so any package importing tools (not just fanout.loop and verify.evidence) can grant eligibility=true, widening the trust surface the structural gate aims to narrow | Keep exported but document the closed set of authorized callers and add a test/lint asserting only fanout and verify reference it | SECURITY | 30 | execute-epic-independent |
 
 ### [2026-06-26] From Sprint: 11.0_executing_reviewers
 
