@@ -69,12 +69,12 @@ func TestExecuteBenchmarkRun_WritesCheckpointPerCase(t *testing.T) {
 	require.Len(t, cp.Cases[0].Reviewers, 1)
 	assert.Equal(t, "greta", cp.Cases[0].Reviewers[0].Agent)
 	assert.Equal(t, "m-greta", cp.Cases[0].Reviewers[0].Model)
-	assert.Equal(t, []string{"correctness"}, cp.Cases[0].Reviewers[0].Expected)
+	assert.Equal(t, []string{"correctness"}, cp.Cases[0].Expected)
 	assert.Equal(t, []string{"correctness"}, cp.Cases[0].Reviewers[0].Raised)
 
 	assert.Equal(t, 1, cp.Cases[1].Index)
 	assert.Equal(t, "case-02-sql-injection", cp.Cases[1].CaseID)
-	assert.Equal(t, []string{"security", "correctness"}, cp.Cases[1].Reviewers[0].Expected)
+	assert.Equal(t, []string{"security", "correctness"}, cp.Cases[1].Expected)
 }
 
 // AC1: a run aborted mid-suite leaves a checkpoint containing exactly the completed

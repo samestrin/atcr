@@ -32,11 +32,12 @@ func TestCheckpoint_RoundTrips(t *testing.T) {
 		Roster:       []string{"greta=m-greta"},
 		Cases: []checkpointCase{
 			{
-				Index:  0,
-				CaseID: "case-01",
+				Index:    0,
+				CaseID:   "case-01",
+				Expected: []string{"correctness"},
 				Reviewers: []checkpointReviewer{
 					{Agent: "greta", Model: "m-greta", Persona: "greta",
-						Expected: []string{"correctness"}, Raised: []string{"correctness"},
+						Raised:        []string{"correctness"},
 						UsageReported: true, CostUSD: 0.0125, LatencyMS: 1200},
 				},
 			},

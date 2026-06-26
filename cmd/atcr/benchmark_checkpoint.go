@@ -46,20 +46,22 @@ type runCheckpoint struct {
 type checkpointCase struct {
 	Index     int                  `json:"index"`
 	CaseID    string               `json:"case_id"`
+	Expected  []string             `json:"expected"`
 	Reviewers []checkpointReviewer `json:"reviewers"`
 }
 
 // checkpointReviewer captures exactly the per-reviewer fields the run loop folds
 // into a reviewerAcc for one case: identity (model/persona, locked at first
-// sighting), the case score (expected vs raised categories), and the usage-gated
-// cost/latency contribution. Storing the already-computed cost contribution (not the
-// raw tokens) and replaying it in case order keeps the float sum and latency median
-// byte-identical to an uninterrupted run.
+// sighting), the case score (raised categories), and the usage-gated cost/latency
+// contribution. Expected categories live on checkpointCase because they are
+// identical for every reviewer of a case and originate from the suite manifest.
+// Storing the already-computed cost contribution (not the raw tokens) and replaying
+// it in case order keeps the float sum and latency median byte-identical to an
+// uninterrupted run.
 type checkpointReviewer struct {
 	Agent         string   `json:"agent"`
 	Model         string   `json:"model"`
 	Persona       string   `json:"persona"`
-	Expected      []string `json:"expected"`
 	Raised        []string `json:"raised"`
 	UsageReported bool     `json:"usage_reported"`
 	CostUSD       float64  `json:"cost_usd"`

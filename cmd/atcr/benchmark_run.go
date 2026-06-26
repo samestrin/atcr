@@ -104,7 +104,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
 					errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
 			}
-			replayCheckpointCase(accs, &order, entry)
+			replayCheckpointCase(accs, &order, entry, c.ExpectedCategories)
 			continue
 		}
 
@@ -172,7 +172,6 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 					Agent:         a.Agent,
 					Model:         model,
 					Persona:       persona,
-					Expected:      c.ExpectedCategories,
 					Raised:        raised,
 					UsageReported: usageReported,
 					CostUSD:       cost,
@@ -185,7 +184,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// atomic write means a process killed mid-suite leaves a checkpoint holding
 		// exactly the cases that completed.
 		if cp != nil {
-			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Reviewers: caseReviewers})
+			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers})
 			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
 				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
 			}
@@ -261,10 +260,12 @@ func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, 
 
 // replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
 // back into the accumulator via the same applyReviewerOutcome path the fresh loop
-// uses — no review re-execution and no Completer call (AC2).
-func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase) {
+// uses — no review re-execution and no Completer call (AC2). Expected categories
+// are re-read from the suite manifest (passed in as expected) because they are
+// identical for every reviewer of a case and are not durable per-reviewer state.
+func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase, expected []string) {
 	for _, r := range entry.Reviewers {
-		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, r.Expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
 	}
 }
 
