@@ -179,6 +179,12 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		Command: cmdStr,
 		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
 	}
+	logger.Info("sandbox exec",
+		"backend", b.Name(),
+		"command", res.Command,
+		"exit_code", res.ExitCode,
+		"timed_out", res.TimedOut,
+	)
 
 	// Distinguish a timeout (deadline exceeded) from a real program exit.
 	if runCtx.Err() == context.DeadlineExceeded {

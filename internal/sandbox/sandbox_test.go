@@ -1,7 +1,9 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -199,4 +202,24 @@ func TestTruncate_ReservesMarkerSpaceAndReportsCorrectDrop(t *testing.T) {
 	result2 := truncate(s2, 21)
 	assert.LessOrEqual(t, len(result2), 21)
 	assert.True(t, utf8.ValidString(result2), "result must be valid UTF-8")
+}
+
+func TestDockerBackendRun_EmitsAuditLog(t *testing.T) {
+	fake := writeFakeDocker(t, `echo "ok"; exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	_, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "sandbox exec")
+	assert.Contains(t, out, "command=\"go test\"")
+	assert.Contains(t, out, "exit_code=0")
+	assert.Contains(t, out, "backend=docker")
 }

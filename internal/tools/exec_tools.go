@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/sandbox"
 )
 
@@ -114,12 +113,6 @@ func (d *Dispatcher) runInSandbox(ctx context.Context, spec sandbox.RunSpec) (To
 	if err != nil {
 		return ToolResult{}, toolErrf("sandbox run failed: %v", err)
 	}
-	log.FromContext(ctx).Info("sandbox exec",
-		"backend", d.execBackend.Name(),
-		"command", res.Command,
-		"exit_code", res.ExitCode,
-		"timed_out", res.TimedOut,
-	)
 	var b strings.Builder
 	fmt.Fprintf(&b, "$ %s\n", res.Command)
 	if res.TimedOut {
