@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
+	"strings"
 )
 
 // runCheckpoint is the on-disk durable record of a benchmark run's completed,
@@ -24,10 +26,17 @@ import (
 // internal/benchmark, keeping that package a live-LLM-free suite-contract + scorer
 // leaf.
 type runCheckpoint struct {
-	ReproHash    string           `json:"repro_hash"`
-	Suite        string           `json:"suite"`
-	SuiteVersion string           `json:"suite_version"`
-	Cases        []checkpointCase `json:"cases"`
+	ReproHash    string `json:"repro_hash"`
+	Suite        string `json:"suite"`
+	SuiteVersion string `json:"suite_version"`
+	// Roster is the sorted "agent=model" signature of the reviewer panel that
+	// produced this checkpoint. ReproHash covers only suite CONTENT (cases + diffs),
+	// not the panel, so a roster/model change would otherwise resume silently —
+	// mixing stale checkpointed reviewers with freshly-executed ones. Recording the
+	// roster lets validateCheckpointRoster fail closed on drift, mirroring fanout's
+	// ErrRosterChanged precedent.
+	Roster []string         `json:"roster"`
+	Cases  []checkpointCase `json:"cases"`
 }
 
 // checkpointCase is one completed case's scored outcome, keyed by its index in the
@@ -62,6 +71,12 @@ type checkpointReviewer struct {
 // the stale checkpoint to start fresh) rather than silently discarding or mixing
 // it — mirroring fanout's ErrRangeChanged / ErrRosterChanged hard-abort contract.
 var errCheckpointSuiteMismatch = errors.New("checkpoint suite identity changed since it was written")
+
+// errCheckpointRosterMismatch reports that the configured reviewer roster (agent
+// set and/or per-agent model) differs from the roster the checkpoint recorded.
+// Resume fails closed rather than silently scoring different reviewers over
+// different subsets of cases — mirroring fanout's ErrRosterChanged contract.
+var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed since it was written")
 
 // loadCheckpoint reads and parses a checkpoint file. A missing file returns
 // (nil, nil): it is the legitimate first-run case (start fresh), not an error. A
@@ -114,6 +129,41 @@ func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string
 			errCheckpointSuiteMismatch, cp.Suite, cp.SuiteVersion, shortHash(cp.ReproHash), suite, suiteVersion, shortHash(reproHash))
 	}
 	return nil
+}
+
+// validateCheckpointRoster enforces the roster guard (AC4): the configured reviewer
+// panel must match the one recorded in the checkpoint. Both signatures are
+// "agent=model" entries; they are compared as sorted sets so declaration order is
+// irrelevant. Any added, removed, or model-changed reviewer returns
+// errCheckpointRosterMismatch so the caller aborts rather than mixing panels.
+func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
+	recorded := sortedCopy(cp.Roster)
+	current := sortedCopy(roster)
+	if !equalStrings(recorded, current) {
+		return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
+			errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
+	}
+	return nil
+}
+
+// sortedCopy returns a sorted copy of s without mutating the input.
+func sortedCopy(s []string) []string {
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
+}
+
+// equalStrings reports whether two string slices are element-wise equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // shortHash trims a repro hash to 12 chars for legible diagnostics, leaving shorter

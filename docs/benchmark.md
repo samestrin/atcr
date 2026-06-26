@@ -172,11 +172,13 @@ already-paid-for work of cases `1..N-1` would otherwise be lost.
 - A resumed run produces a **byte-identical** run-result to an uninterrupted run over
   the same suite + transcript — the reproducibility contract holds across the resume
   boundary.
-- Resume is guarded by **suite identity**: the checkpoint records the suite's
-  reproducibility hash (see `verify`), name, and version. If any of them changed
-  since the checkpoint was written, the run **fails closed** with a clear message
-  (remove the checkpoint to start fresh) rather than silently mixing inconsistent
-  work into a new run.
+- Resume is guarded by **suite identity** and **roster identity**: the checkpoint
+  records the suite's reproducibility hash (see `verify`), name, and version, plus the
+  reviewer panel (each agent and its configured model). If the suite content changed,
+  or the roster changed (a reviewer added/removed, or a model swapped), the run
+  **fails closed** with a clear message (remove the checkpoint to start fresh) rather
+  than silently mixing inconsistent work into a new run. The roster check is separate
+  because the reproducibility hash covers only suite content, not the panel.
 
 Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
 total-roster case failure still aborts the run (a transient infrastructure failure

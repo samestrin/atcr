@@ -55,15 +55,21 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		if lerr != nil {
 			return nil, lerr
 		}
+		roster := rosterSignature(cfg)
 		if existing != nil {
 			// Suite-identity guard (AC4): a checkpoint from a different or changed
-			// suite is rejected, never silently mixed into this run.
+			// suite is rejected, never silently mixed into this run. The roster guard
+			// catches a changed reviewer panel — orthogonal to ReproHash, which hashes
+			// only suite content.
 			if verr := validateCheckpoint(existing, curHash, m.Suite, m.SuiteVersion); verr != nil {
+				return nil, verr
+			}
+			if verr := validateCheckpointRoster(existing, roster); verr != nil {
 				return nil, verr
 			}
 			cp = existing
 		} else {
-			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion}
+			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
 		}
 		done = cp.doneIndex()
 	}
@@ -198,6 +204,22 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
 		Reviewers:    benchmark.Score(reviewers),
 	}, nil
+}
+
+// rosterSignature builds the deterministic "agent=model" signature of the
+// configured reviewer panel, sorted by agent name. It uses the CONFIGURED model
+// (registry), not a runtime usage-reported one, so the same config always yields the
+// same signature — the stable identity a resume compares against to reject a changed
+// panel (AC4 roster guard). An agent with no configured model contributes an empty
+// model component, which still distinguishes it from a later-configured one.
+func rosterSignature(cfg *fanout.ReviewConfig) []string {
+	names := append([]string(nil), cfg.Project.Agents...)
+	sort.Strings(names)
+	sig := make([]string, len(names))
+	for i, n := range names {
+		sig[i] = n + "=" + cfg.Registry.Agents[n].Model
+	}
+	return sig
 }
 
 // reviewerAcc accumulates one reviewer's outcomes across every case.

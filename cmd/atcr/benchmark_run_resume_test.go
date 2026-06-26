@@ -191,6 +191,44 @@ func TestBenchmarkRunCmd_HasOptionalCheckpointFlag(t *testing.T) {
 	assert.Equal(t, "", f.DefValue, "checkpoint is opt-in: default empty = off")
 }
 
+// AC4 (roster guard): ReproHash covers only suite content, NOT the reviewer roster.
+// A roster change (added/removed reviewer) across a resume would silently mix stale
+// checkpointed reviewers with freshly-executed ones, so a roster-set drift must fail
+// closed — mirroring fanout's ErrRosterChanged precedent.
+func TestExecuteBenchmarkRun_RejectsRosterMembershipDrift(t *testing.T) {
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	cfg1 := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+	_, err := executeBenchmarkRun(context.Background(), cfg1, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	// Resume with kai swapped for zara — same suite, changed roster.
+	cfg2 := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"zara", "m-zara", "zara"})
+	resume := &countingCompleter{}
+	_, err = executeBenchmarkRun(context.Background(), cfg2, resume, suiteValidPath, gen, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch, "a changed roster aborts the resume")
+	assert.Equal(t, 0, resume.calls, "the roster guard fires before any review executes")
+}
+
+// AC4 (roster guard): a same-name reviewer whose configured model changed is also a
+// roster drift — the checkpoint's recorded model would otherwise be replayed against
+// new cases run with the new model.
+func TestExecuteBenchmarkRun_RejectsRosterModelDrift(t *testing.T) {
+	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+
+	cfg1 := benchCfg([3]string{"greta", "m-greta", "greta"})
+	_, err := executeBenchmarkRun(context.Background(), cfg1, stubCompleter{}, suiteValidPath, gen, path)
+	require.NoError(t, err)
+
+	cfg2 := benchCfg([3]string{"greta", "m-greta-v2", "greta"}) // same agent, new model
+	_, err = executeBenchmarkRun(context.Background(), cfg2, &countingCompleter{}, suiteValidPath, gen, path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointRosterMismatch, "a changed model aborts the resume")
+}
+
 // AC4 (defense in depth): ReproHash is order-independent, so a suite whose cases are
 // merely reordered shares the same hash but a different index->case mapping. The
 // per-index CaseID guard catches that drift and fails closed rather than silently
