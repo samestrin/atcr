@@ -29,12 +29,12 @@ type runCheckpoint struct {
 	ReproHash    string `json:"repro_hash"`
 	Suite        string `json:"suite"`
 	SuiteVersion string `json:"suite_version"`
-	// Roster is the sorted "agent=model" signature of the reviewer panel that
-	// produced this checkpoint. ReproHash covers only suite CONTENT (cases + diffs),
-	// not the panel, so a roster/model change would otherwise resume silently —
-	// mixing stale checkpointed reviewers with freshly-executed ones. Recording the
-	// roster lets validateCheckpointRoster fail closed on drift, mirroring fanout's
-	// ErrRosterChanged precedent.
+	// Roster is the sorted "agent=model=persona" signature of the reviewer panel
+	// that produced this checkpoint. ReproHash covers only suite CONTENT (cases +
+	// diffs), not the panel, so a roster/model/persona change would otherwise resume
+	// silently — mixing stale checkpointed reviewers with freshly-executed ones.
+	// Recording the roster lets validateCheckpointRoster fail closed on drift,
+	// mirroring fanout's ErrRosterChanged precedent.
 	Roster []string         `json:"roster"`
 	Cases  []checkpointCase `json:"cases"`
 }

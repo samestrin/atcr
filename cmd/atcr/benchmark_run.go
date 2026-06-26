@@ -212,18 +212,20 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	}, nil
 }
 
-// rosterSignature builds the deterministic "agent=model" signature of the
-// configured reviewer panel, sorted by agent name. It uses the CONFIGURED model
-// (registry), not a runtime usage-reported one, so the same config always yields the
+// rosterSignature builds the deterministic "agent=model=persona" signature of the
+// configured reviewer panel, sorted by agent name. It uses the CONFIGURED values
+// (registry), not runtime usage-reported ones, so the same config always yields the
 // same signature — the stable identity a resume compares against to reject a changed
-// panel (AC4 roster guard). An agent with no configured model contributes an empty
-// model component, which still distinguishes it from a later-configured one.
+// panel (AC4 roster guard). Persona is included because it is a behavioral modifier
+// (system prompt) that can change reviewer outputs even when model stays the same.
+// An agent with no configured model or persona contributes an empty component,
+// which still distinguishes it from a later-configured one.
 func rosterSignature(cfg *fanout.ReviewConfig) []string {
 	names := append([]string(nil), cfg.Project.Agents...)
 	sort.Strings(names)
 	sig := make([]string, len(names))
 	for i, n := range names {
-		sig[i] = n + "=" + cfg.Registry.Agents[n].Model
+		sig[i] = n + "=" + cfg.Registry.Agents[n].Model + "=" + cfg.Registry.Agents[n].Persona
 	}
 	return sig
 }
