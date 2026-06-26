@@ -3,6 +3,8 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,6 +156,15 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	if err != nil {
 		return RunResult{}, err
 	}
+	// Name the container so a timeout can target it directly. exec.CommandContext
+	// only SIGKILLs the `docker run` CLI client on timeout, not the container the
+	// daemon runs; without an explicit kill the workload keeps consuming CPU/mem/
+	// PIDs until it self-exits. The name is generated before the spawn so it is
+	// known regardless of daemon timing (a --cidfile would race a slow start).
+	containerName := "atcr-sbx-" + randHex(8)
+	named := make([]string, 0, len(args)+2)
+	named = append(named, args[0], "--name", containerName) // args[0] == "run"
+	args = append(named, args[1:]...)
 	// Bound concurrent container spawns; block until a slot frees or ctx is done.
 	// Lazily allocate the semaphore so a struct-literal backend (nil sem) still
 	// enforces MaxConcurrent — the mitigation for the Critical-rated resource-abuse
@@ -214,6 +225,14 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	if runCtx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = timeoutExitCode
+		// The killed CLI does not stop the container; kill it explicitly so its
+		// caps are reclaimed. --rm (in args) removes it once it stops. Use a fresh
+		// background context so the kill is not itself cut short by the dead runCtx.
+		killCtx, killCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if killErr := exec.CommandContext(killCtx, b.cfg.DockerPath, "kill", containerName).Run(); killErr != nil {
+			logger.Warn("sandbox exec kill-on-timeout failed", "backend", "docker", "container", containerName, "error", killErr)
+		}
+		killCancel()
 		logger.Warn("sandbox exec timed out", "backend", "docker", "command", cmdStr, "timeout", timeout)
 		return res, nil
 	}
@@ -362,6 +381,17 @@ func parseDockerMemory(s string) (int64, error) {
 		return 0, fmt.Errorf("invalid memory value %q: %w", s, err)
 	}
 	return n * mult, nil
+}
+
+// randHex returns n random bytes hex-encoded, used to make a unique container
+// name. On the (vanishingly unlikely) crypto/rand failure it falls back to a
+// nanosecond timestamp — uniqueness here is best-effort labeling, not security.
+func randHex(n int) string {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
 }
 
 // dockerOutput runs a docker subcommand with a timeout and returns its captured
