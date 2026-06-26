@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samestrin/atcr/internal/log"
@@ -67,6 +68,10 @@ type DockerBackend struct {
 	cfg DockerConfig
 	// sem bounds concurrent container spawns to cfg.MaxConcurrent (buffered slots).
 	sem chan struct{}
+	// semOnce lazily allocates sem on first Run so a backend built as a struct
+	// literal (bypassing NewDockerBackend) still enforces the cap instead of
+	// failing open. Safe under concurrent Run.
+	semOnce sync.Once
 }
 
 // NewDockerBackend constructs a Docker backend from cfg.
@@ -144,13 +149,23 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		return RunResult{}, err
 	}
 	// Bound concurrent container spawns; block until a slot frees or ctx is done.
-	if b.sem != nil {
-		select {
-		case b.sem <- struct{}{}:
-			defer func() { <-b.sem }()
-		case <-ctx.Done():
-			return RunResult{}, ctx.Err()
+	// Lazily allocate the semaphore so a struct-literal backend (nil sem) still
+	// enforces MaxConcurrent — the mitigation for the Critical-rated resource-abuse
+	// risk — rather than silently spawning unlimited containers.
+	b.semOnce.Do(func() {
+		if b.sem == nil {
+			n := b.cfg.MaxConcurrent
+			if n <= 0 {
+				n = 4
+			}
+			b.sem = make(chan struct{}, n)
 		}
+	})
+	select {
+	case b.sem <- struct{}{}:
+		defer func() { <-b.sem }()
+	case <-ctx.Done():
+		return RunResult{}, ctx.Err()
 	}
 	timeout := spec.Timeout
 	if timeout <= 0 {
