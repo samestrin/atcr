@@ -111,9 +111,15 @@ func runScriptHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessa
 	if len(a.Content) > maxScriptBytes {
 		return ToolResult{}, toolErrf("run_script: content too large (%d bytes, max %d)", len(a.Content), maxScriptBytes)
 	}
+	// Clamp a model-supplied per-call timeout to the operator's configured
+	// per-run budget: the override may only SHORTEN a run, never extend it past
+	// d.execTimeout (which SandboxConfig.Validate already bounded by
+	// MaxTimeoutSecs). Non-positive values keep the default budget.
 	timeout := d.execTimeout
 	if a.Timeout > 0 {
-		timeout = time.Duration(a.Timeout) * time.Second
+		if req := time.Duration(a.Timeout) * time.Second; req < timeout {
+			timeout = req
+		}
 	}
 	return d.runInSandbox(ctx, sandbox.RunSpec{Script: a.Content, SnapshotDir: d.root, Timeout: timeout})
 }
