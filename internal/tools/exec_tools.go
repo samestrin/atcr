@@ -84,12 +84,18 @@ func (d *Dispatcher) EnableExecution(backend sandbox.Backend, testCmd []string, 
 	d.execBackend = backend
 	d.execTestCmd = append([]string(nil), testCmd...)
 	d.execTimeout = timeout
-	d.mustRegister("run_tests", runTestsHandler, pathSpec{})
-	d.mustRegister("run_script", runScriptHandler, pathSpec{})
+	// Gate-first ordering: mark the tools exec-gated BEFORE registering their
+	// handlers. Execute reads handlers and execTools under one RLock, and the
+	// handler is the last thing set, so a concurrent Execute can never observe a
+	// registered exec handler without its gate flag already in place — closing the
+	// fail-OPEN window that handler-first ordering would leave. This keeps the gate
+	// at least as strong as the handler's availability at every instant.
 	d.mu.Lock()
 	d.execTools["run_tests"] = true
 	d.execTools["run_script"] = true
 	d.mu.Unlock()
+	d.mustRegister("run_tests", runTestsHandler, pathSpec{})
+	d.mustRegister("run_script", runScriptHandler, pathSpec{})
 }
 
 type runTestsArgs struct {

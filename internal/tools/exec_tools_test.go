@@ -212,3 +212,26 @@ func TestDispatcher_EnableExecution_ConcurrentWithExecute(t *testing.T) {
 	// Concurrent Execute must not race with EnableExecution's registration.
 	_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
 }
+
+func TestDispatcher_EnableExecution_ConcurrentExecuteNeverFailsOpen(t *testing.T) {
+	// Gate-first ordering invariant (Epic 11.1 hardening): while EnableExecution is
+	// registering the exec tools, a concurrent NON-eligible Execute must never reach
+	// the backend. With handler-first ordering there is a window where the handler
+	// exists but the gate flag is not yet set (fail-OPEN); gate-first closes it.
+	// Run under -race with many iterations to exercise the registration window.
+	for i := 0; i < 200; i++ {
+		d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+		b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+		done := make(chan struct{})
+		go func() {
+			d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
+			close(done)
+		}()
+		// A bare (non-eligible) context: whether the handler is registered yet or not,
+		// the call must be either "unknown tool" or an eligibility refusal — never an
+		// execution.
+		_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
+		<-done
+		require.Empty(t, b.last.Command, "a non-eligible exec call must never reach the backend, even mid-registration")
+	}
+}
