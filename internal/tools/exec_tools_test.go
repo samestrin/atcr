@@ -1,12 +1,15 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,4 +130,22 @@ func TestDispatcher_EnableExecution_ConcurrentWithExecute(t *testing.T) {
 
 	// Concurrent Execute must not race with EnableExecution's registration.
 	_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
+}
+
+func TestRunTests_Handler_EmitsAuditLog(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	b := &stubBackend{result: sandbox.RunResult{Command: "go test ./x", ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+
+	_, err := d.Execute(ctx, "run_tests", json.RawMessage(`{}`))
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "sandbox exec")
+	assert.Contains(t, out, "command=\"go test ./x\"")
+	assert.Contains(t, out, "exit_code=0")
+	assert.Contains(t, out, "backend=stub")
 }
