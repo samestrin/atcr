@@ -121,6 +121,26 @@ type JSONFinding struct {
 	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
 	// producers MUST leave it empty (it is set only by the verify fix phase).
 	FixWarning string `json:"fix_warning,omitempty"`
+	// EvidenceExec carries the execution-reproduction block (Epic 11.0): the
+	// command a repro/skeptic agent ran in the sandbox, its exit code, and a
+	// truncated output excerpt. It is set ONLY by the repro write-back (a
+	// reproduced finding also gets Verification.Verdict=confirmed, skeptic="repro"),
+	// never by any reconcile-time path. omitempty keeps every non-reproduced record
+	// byte-identical to pre-11.0 findings.json.
+	EvidenceExec *EvidenceExec `json:"evidence_exec,omitempty"`
+}
+
+// EvidenceExec is the executable-evidence block attached to a finding that was
+// reproduced by running code in the sandbox (Epic 11.0). It is the categorical
+// upgrade from asserted to demonstrated: a finding carrying it cannot be a
+// hallucination, and it hands the resolver a failing command to start from.
+type EvidenceExec struct {
+	// Command is the human-readable command that was executed.
+	Command string `json:"command"`
+	// ExitCode is the command's exit status (non-zero == reproduced failure).
+	ExitCode int `json:"exit_code"`
+	// OutputExcerpt is the captured combined output, truncated to a budget.
+	OutputExcerpt string `json:"output_excerpt"`
 }
 
 // JSONFindings converts the merged findings to their JSON schema records.

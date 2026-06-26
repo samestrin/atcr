@@ -1,0 +1,135 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/samestrin/atcr/internal/sandbox"
+)
+
+// ExecutionTools returns the execution-only tool definitions (Epic 11.0). They
+// are NOT part of Tools(): they are offered solely to execution-enabled agents
+// (see fanout.wireToolDefs) and only execute when a dispatcher has an exec
+// backend wired via EnableExecution. Keeping them out of the default set
+// preserves the read-only guarantee of the v1 tool harness for every other agent.
+func ExecutionTools() []ToolDef {
+	return []ToolDef{runTestsDef(), runScriptDef()}
+}
+
+func runTestsDef() ToolDef {
+	return ToolDef{
+		Name: "run_tests",
+		Description: "Run the project's test suite inside the sandbox (network-isolated, read-only snapshot) " +
+			"and return the exit code and output. Optional target scopes the run (e.g. a package path). " +
+			"Use this to PROVE a finding by reproducing a failure.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"target": map[string]any{"type": "string", "description": "Optional package/path to scope the test run."},
+			},
+			"required": []string{},
+		},
+	}
+}
+
+func runScriptDef() ToolDef {
+	return ToolDef{
+		Name: "run_script",
+		Description: "Run a short shell script inside the sandbox (network-isolated, read-only snapshot, writable " +
+			"/scratch) and return the exit code and output. Use this to write a minimal reproduction of a bug.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"content": map[string]any{"type": "string", "description": "The shell script body to execute with /bin/sh."},
+				"timeout": map[string]any{"type": "integer", "description": "Optional per-run timeout in seconds."},
+			},
+			"required": []string{"content"},
+		},
+	}
+}
+
+// EnableExecution wires a sandbox backend into the dispatcher and registers the
+// run_tests/run_script tools. testCmd is the project's test command (from
+// config); timeout is the default per-run budget. It is called once, during
+// construction, only when the operator opted into `--exec` with a backend that
+// passed Preflight — so the dispatcher's default (no-exec) build keeps exactly
+// the three read-only tools.
+func (d *Dispatcher) EnableExecution(backend sandbox.Backend, testCmd []string, timeout time.Duration) {
+	d.execBackend = backend
+	d.execTestCmd = append([]string(nil), testCmd...)
+	d.execTimeout = timeout
+	d.mustRegister("run_tests", runTestsHandler, pathSpec{})
+	d.mustRegister("run_script", runScriptHandler, pathSpec{})
+}
+
+type runTestsArgs struct {
+	Target string `json:"target"`
+}
+
+func runTestsHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, _ string) (ToolResult, error) {
+	var a runTestsArgs
+	if err := unmarshalToolArgs(argsJSON, &a); err != nil {
+		return ToolResult{}, toolErrf("run_tests: invalid arguments: %v", err)
+	}
+	cmd := append([]string(nil), d.execTestCmd...)
+	if t := strings.TrimSpace(a.Target); t != "" {
+		cmd = append(cmd, t)
+	}
+	return d.runInSandbox(ctx, sandbox.RunSpec{Command: cmd, SnapshotDir: d.root, Timeout: d.execTimeout})
+}
+
+type runScriptArgs struct {
+	Content string `json:"content"`
+	Timeout int    `json:"timeout"`
+}
+
+func runScriptHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, _ string) (ToolResult, error) {
+	var a runScriptArgs
+	if err := unmarshalToolArgs(argsJSON, &a); err != nil {
+		return ToolResult{}, toolErrf("run_script: invalid arguments: %v", err)
+	}
+	if strings.TrimSpace(a.Content) == "" {
+		return ToolResult{}, toolErrf("run_script: content is required")
+	}
+	timeout := d.execTimeout
+	if a.Timeout > 0 {
+		timeout = time.Duration(a.Timeout) * time.Second
+	}
+	return d.runInSandbox(ctx, sandbox.RunSpec{Script: a.Content, SnapshotDir: d.root, Timeout: timeout})
+}
+
+// runInSandbox executes spec on the wired backend and renders the result into a
+// model-facing tool message: the command, the exit code (with a timeout marker),
+// then the captured output. A nil backend is a programming error (handlers are
+// only registered by EnableExecution), surfaced as a tool error rather than a panic.
+func (d *Dispatcher) runInSandbox(ctx context.Context, spec sandbox.RunSpec) (ToolResult, error) {
+	if d.execBackend == nil {
+		return ToolResult{}, toolErrf("execution backend not configured")
+	}
+	res, err := d.execBackend.Run(ctx, spec)
+	if err != nil {
+		return ToolResult{}, toolErrf("sandbox run failed: %v", err)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "$ %s\n", res.Command)
+	if res.TimedOut {
+		fmt.Fprintf(&b, "exit code: %d (timed out)\n", res.ExitCode)
+	} else {
+		fmt.Fprintf(&b, "exit code: %d\n", res.ExitCode)
+	}
+	b.WriteString(res.Output)
+	return ToolResult{Content: b.String()}, nil
+}
+
+// unmarshalToolArgs unmarshals tool arguments, tolerating empty/whitespace input
+// as an empty object so optional-only tools accept a bare call.
+func unmarshalToolArgs(argsJSON json.RawMessage, v any) error {
+	trimmed := strings.TrimSpace(string(argsJSON))
+	if trimmed == "" || trimmed == "{}" {
+		return nil
+	}
+	return json.Unmarshal([]byte(trimmed), v)
+}

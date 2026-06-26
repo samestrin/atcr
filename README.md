@@ -181,6 +181,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
 - [docs/registry.md](docs/registry.md) — providers, personas, agents, fallbacks, lanes, precedence
 - [docs/payload-modes.md](docs/payload-modes.md) — blocks vs. diff vs. files, token guidance
 - [docs/findings-format.md](docs/findings-format.md) — the versioned `atcr-findings/v1` contract
+- [docs/execution.md](docs/execution.md) — opt-in `--exec` sandboxed reproduction, the `evidence_exec` block, and the security posture
 - [docs/disagreement-radar.md](docs/disagreement-radar.md) — the disagreement radar, `--disagreements` view, and `disagreements.json` handoff schema
 - [docs/ci-integration.md](docs/ci-integration.md) — exit codes and PR gates
 - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
