@@ -136,11 +136,14 @@ func TestExecuteBenchmarkRun_FullResumeIsZeroCostAndIdentical(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, int(second.calls.Load()), "a fully-checkpointed re-run makes zero Completer calls (AC2)")
 
-	jBaseline, _ := json.Marshal(baseline)
-	j1, _ := json.Marshal(rr1)
-	j2, _ := json.Marshal(rr2)
-	assert.JSONEq(t, string(jBaseline), string(j1), "checkpointed run == uninterrupted run")
-	assert.JSONEq(t, string(jBaseline), string(j2), "resumed run is byte-identical to uninterrupted (AC3)")
+	jBaseline, err := json.Marshal(baseline)
+	require.NoError(t, err)
+	j1, err := json.Marshal(rr1)
+	require.NoError(t, err)
+	j2, err := json.Marshal(rr2)
+	require.NoError(t, err)
+	assert.Equal(t, string(jBaseline), string(j1), "checkpointed run == uninterrupted run")
+	assert.Equal(t, string(jBaseline), string(j2), "resumed run is byte-identical to uninterrupted (AC3)")
 }
 
 // AC2 + AC3 (partial): a run that completed only case 0 before failing resumes by
