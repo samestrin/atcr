@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -97,6 +98,59 @@ func TestLoadCheckpoint_CorruptErrors(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
 	_, err := loadCheckpoint(path)
 	require.Error(t, err)
+}
+
+// loadCheckpoint must reject internally inconsistent checkpoints: duplicate
+// indices, out-of-range indices, or empty case IDs would silently corrupt replay
+// (last-write-wins in doneIndex), so they are treated as corrupt instead.
+func TestLoadCheckpoint_IntegrityErrors(t *testing.T) {
+	base := &runCheckpoint{
+		ReproHash:    "hash",
+		Suite:        "suite",
+		SuiteVersion: "1.0.0",
+	}
+	cases := []struct {
+		name string
+		cp   *runCheckpoint
+	}{
+		{
+			name: "duplicate index",
+			cp: func() *runCheckpoint {
+				c := *base
+				c.Cases = []checkpointCase{
+					{Index: 0, CaseID: "a"},
+					{Index: 0, CaseID: "b"},
+				}
+				return &c
+			}(),
+		},
+		{
+			name: "negative index",
+			cp: func() *runCheckpoint {
+				c := *base
+				c.Cases = []checkpointCase{{Index: -1, CaseID: "a"}}
+				return &c
+			}(),
+		},
+		{
+			name: "empty case id",
+			cp: func() *runCheckpoint {
+				c := *base
+				c.Cases = []checkpointCase{{Index: 0, CaseID: ""}}
+				return &c
+			}(),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ckpt.json")
+			data, err := json.Marshal(tc.cp)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+			_, err = loadCheckpoint(path)
+			require.Error(t, err, "checkpoint with %s must be rejected", tc.name)
+		})
+	}
 }
 
 // saveCheckpoint must encode the checkpoint as compact JSON so the on-disk file
