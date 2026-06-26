@@ -128,6 +128,22 @@ func TestDockerBackendRun_WorkloadExitCodesAreResults(t *testing.T) {
 	}
 }
 
+func TestDockerBackend_StructLiteral_AppliesConcurrencyCap(t *testing.T) {
+	fakeDocker := writeFakeDocker(t, fakeDockerExitBody())
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fakeDocker
+	// Build the backend as a struct literal, bypassing NewDockerBackend, so sem
+	// starts nil. The Critical-rated resource-abuse mitigation (MaxConcurrent) must
+	// still apply rather than failing open.
+	b := &DockerBackend{cfg: cfg}
+	spec := RunSpec{Command: []string{"true"}, SnapshotDir: t.TempDir()}
+
+	_, err := b.Run(context.Background(), spec)
+	require.NoError(t, err)
+	require.NotNil(t, b.sem, "a struct-literal backend must still enforce the concurrency cap, not fail open")
+	assert.Equal(t, cfg.MaxConcurrent, cap(b.sem), "the live cap must match the configured MaxConcurrent")
+}
+
 func TestDockerBackend_DockerCmd_ContextCancelNotTimeout(t *testing.T) {
 	fake := writeFakeDocker(t, `sleep 5; exit 0`)
 	cfg := DefaultDockerConfig()
