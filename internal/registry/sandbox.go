@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -62,6 +63,49 @@ func (s *SandboxConfig) Validate() error {
 	}
 	if s.TimeoutSecs != nil && (*s.TimeoutSecs <= 0 || *s.TimeoutSecs > MaxTimeoutSecs) {
 		return fmt.Errorf("sandbox.timeout_secs must be within 1..%d", MaxTimeoutSecs)
+	}
+	if err := validateMemory(s.Memory); err != nil {
+		return err
+	}
+	if err := validateCPUs(s.CPUs); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateMemory rejects a non-empty Memory that docker's --memory would not
+// accept. Memory and CPUs are operator strings injected verbatim into
+// docker run --memory/--cpus, so a typo that parses at config load but faults
+// the container at runtime (or silently weakens the cap) must fail here instead.
+// An empty value inherits the hardened default; a valid value is a positive
+// number with an optional b/k/m/g unit suffix (e.g. "512m", "1.5g", or a bare
+// byte count). "0", "abc", and "512x" are rejected.
+func validateMemory(mem string) error {
+	m := strings.TrimSpace(mem)
+	if m == "" {
+		return nil
+	}
+	num := m
+	switch m[len(m)-1] {
+	case 'b', 'k', 'm', 'g', 'B', 'K', 'M', 'G':
+		num = m[:len(m)-1]
+	}
+	if v, err := strconv.ParseFloat(num, 64); err != nil || v <= 0 {
+		return fmt.Errorf("sandbox.memory %q is not a valid docker size (e.g. \"512m\", \"1.5g\")", mem)
+	}
+	return nil
+}
+
+// validateCPUs rejects a non-empty CPUs that docker's --cpus would not accept.
+// An empty value inherits the hardened default; otherwise it must be a positive
+// float (e.g. "1.5"). "0", "-1", and "abc" are rejected.
+func validateCPUs(cpus string) error {
+	c := strings.TrimSpace(cpus)
+	if c == "" {
+		return nil
+	}
+	if v, err := strconv.ParseFloat(c, 64); err != nil || v <= 0 {
+		return fmt.Errorf("sandbox.cpus %q must be a positive number (e.g. \"1.5\")", cpus)
 	}
 	return nil
 }
