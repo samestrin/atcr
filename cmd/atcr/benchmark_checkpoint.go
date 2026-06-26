@@ -130,6 +130,12 @@ func validateCheckpointIntegrity(cp *runCheckpoint) error {
 // the shared writeExportFile helper), so a process killed mid-write leaves the
 // previous valid checkpoint intact — the on-disk file always reflects a whole
 // number of completed cases (AC1).
+//
+// The full file is rewritten after every scored case intentionally: serial LLM
+// latency dominates the runtime by orders of magnitude, and the atomic
+// temp-file+rename guarantee requires rewriting the whole checkpoint. An
+// append-friendly format would add parsing/dedup complexity without a measurable
+// win at realistic suite sizes.
 func saveCheckpoint(path string, cp *runCheckpoint) error {
 	data, err := json.Marshal(cp)
 	if err != nil {
