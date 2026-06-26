@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 25 | 0 |
-| LOW | 2 | 23 | 0 |
+| LOW | 5 | 23 | 0 |
 
-**Last Modified:** 2026-06-26 | **Open Items:** 2 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 52
+**Last Modified:** 2026-06-26 | **Open Items:** 5 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 55
 
 ## Directory Structure
 
@@ -33,6 +33,14 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-26] From Sprint: epic-11.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/tools/dispatch.go:123 | execToolPatterns uses substring matching so "run"/"eval" reject legitimate read-only names (e.g. prune_* or *retrieval*); harmless today but constrains future read-only tool naming | Match on _-split token boundaries instead of strings.Contains, or document the accepted false-positive set | REGRESSION_RISK | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/tools/dispatch.go:123 | exec-verb list omits common execution verbs (spawn/invoke/launch/system/cmd/fork/popen/subprocess) so an exec-named handler using one slips past the name lint; mitigated since external handlers cannot reach the unexported execBackend | Expand the fragment list or add a comment stating the true boundary is the unexported execBackend (name guard is defense-in-depth only) | EDGE_CASES | 15 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/tools/exec_tools_test.go:49 | TestEnableExecution_EveryExecToolIsGated keys off ExecutionTools() rather than handlers whose bodies reach runInSandbox, so a future in-package sandbox-reaching handler not added to ExecutionTools() escapes this invariant | Assert any sandbox-reaching handler is registered only via registerExec, or document ExecutionTools() as the authoritative exec-tool registry the test relies on | UNDER_ENGINEERING | 30 | execute-epic-independent |
 
 ### [2026-06-26] From Sprint: epic-11.1
 
