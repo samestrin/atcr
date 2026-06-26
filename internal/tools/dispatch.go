@@ -56,12 +56,13 @@ type pathSpec struct {
 // through the jail and enforcing a per-call byte cap. It is the sole path by
 // which handlers are invoked.
 type Dispatcher struct {
-	jail     Resolver
-	root     string
-	limits   Limits
-	handlers map[string]handlerFunc
-	pathArgs map[string]pathSpec
-	mu       sync.RWMutex // guards handlers and pathArgs
+	jail      Resolver
+	root      string
+	limits    Limits
+	handlers  map[string]handlerFunc
+	pathArgs  map[string]pathSpec
+	execTools map[string]bool // names gated behind per-call exec eligibility
+	mu        sync.RWMutex    // guards handlers, pathArgs, and execTools
 
 	// Execution backend (Epic 11.0), nil unless EnableExecution was called. When
 	// set, the run_tests/run_script tools are registered and execute inside the
@@ -78,11 +79,12 @@ type Dispatcher struct {
 func NewDispatcher(jail Resolver, limits Limits) *Dispatcher {
 	limits.normalize()
 	d := &Dispatcher{
-		jail:     jail,
-		root:     jail.Root(),
-		limits:   limits,
-		handlers: map[string]handlerFunc{},
-		pathArgs: map[string]pathSpec{},
+		jail:      jail,
+		root:      jail.Root(),
+		limits:    limits,
+		handlers:  map[string]handlerFunc{},
+		pathArgs:  map[string]pathSpec{},
+		execTools: map[string]bool{},
 	}
 	d.mustRegister("read_file", readFileHandler, pathSpec{name: "path", required: true})
 	d.mustRegister("grep", grepHandler, pathSpec{name: "dir"})
@@ -155,9 +157,23 @@ func (d *Dispatcher) Execute(ctx context.Context, name string, argsJSON json.Raw
 	d.mu.RLock()
 	h, ok := d.handlers[name]
 	spec := d.pathArgs[name]
+	execGated := d.execTools[name]
 	d.mu.RUnlock()
 	if !ok {
 		return ToolResult{}, toolErrf("unknown tool: %s", name)
+	}
+
+	// Structural read-only boundary (Epic 11.1): an execution-gated tool
+	// (run_tests/run_script) runs ONLY when the calling agent affirmatively
+	// carried exec eligibility into the dispatch context. This refusal is
+	// enforced here, at the single chokepoint every call passes through, so the
+	// guarantee holds regardless of how the dispatcher was wired — a non-exec
+	// agent sharing an exec-enabled dispatcher cannot reach an exec handler by
+	// merely naming it. Default-deny (absent eligibility = refused) makes the
+	// boundary fail-closed; a ToolError (never a panic) lets the agent loop relay
+	// the refusal as a normal tool result.
+	if execGated && !execEligible(ctx) {
+		return ToolResult{}, toolErrf("tool %q requires execution eligibility, which was not granted to this agent", name)
 	}
 
 	defer func() {

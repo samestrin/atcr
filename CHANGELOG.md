@@ -1,3 +1,13 @@
+## [11.1.0] - 2026-06-26
+
+### Changed
+
+- Made the read-only tool boundary structural at the dispatch layer: `Dispatcher.Execute` now refuses `run_tests`/`run_script` from any agent not granted exec eligibility, independent of how callers wire `EnableExecution`
+- Threaded per-agent exec eligibility through the fan-out tool loop and the verify determinism re-run, default-deny (fail-closed)
+- Closed a fail-open window in `EnableExecution` by marking exec tools gated before registering their handlers
+
+*Shipped via /execute-epic (epic 11.1)*
+
 ## [Technical Debt] - 2026-06-26
 
 ### Fixed

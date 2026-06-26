@@ -71,6 +71,12 @@ func (r *execEvidenceRecorder) reproduceAgain(ctx context.Context) (string, *rec
 	if r.lastName == "" {
 		return reclib.VerdictUnverifiable, nil
 	}
+	// The determinism re-runs go straight to the dispatcher (not through the tool
+	// loop that would otherwise grant eligibility), so carry exec eligibility
+	// explicitly past the structural gate (Epic 11.1). This path is reached ONLY
+	// in an --exec run (callers guard it with `if exec`), and it re-executes the
+	// skeptic's own run_tests/run_script call, so the agent was already exec-eligible.
+	ctx = tools.WithExecEligibility(ctx, true)
 	res1, err1 := r.inner.Execute(ctx, r.lastName, r.lastArgs)
 	res2, err2 := r.inner.Execute(ctx, r.lastName, r.lastArgs)
 	if err1 != nil || err2 != nil {

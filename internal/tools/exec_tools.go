@@ -51,6 +51,29 @@ func runScriptDef() ToolDef {
 	}
 }
 
+// execEligibilityKey is the context key under which a caller's exec eligibility
+// is carried. Its unexported type prevents collision with any other package's
+// context values.
+type execEligibilityKey struct{}
+
+// WithExecEligibility returns a context that grants (allowed=true) or denies the
+// caller permission to invoke execution-gated tools (run_tests/run_script).
+// Dispatcher.Execute reads this per call: it is the structural, per-caller gate
+// that makes the read-only boundary independent of how a dispatcher was wired.
+// Eligibility is FAIL-CLOSED — a context without this value (or with false)
+// cannot reach an exec tool, so a caller that does not affirmatively grant
+// eligibility can never escalate to execution.
+func WithExecEligibility(ctx context.Context, allowed bool) context.Context {
+	return context.WithValue(ctx, execEligibilityKey{}, allowed)
+}
+
+// execEligible reports whether ctx was granted exec eligibility. Absent value =
+// not eligible (default-deny).
+func execEligible(ctx context.Context) bool {
+	allowed, _ := ctx.Value(execEligibilityKey{}).(bool)
+	return allowed
+}
+
 // EnableExecution wires a sandbox backend into the dispatcher and registers the
 // run_tests/run_script tools. testCmd is the project's test command (from
 // config); timeout is the default per-run budget. It is called once, during
@@ -61,6 +84,16 @@ func (d *Dispatcher) EnableExecution(backend sandbox.Backend, testCmd []string, 
 	d.execBackend = backend
 	d.execTestCmd = append([]string(nil), testCmd...)
 	d.execTimeout = timeout
+	// Gate-first ordering: mark the tools exec-gated BEFORE registering their
+	// handlers. Execute reads handlers and execTools under one RLock, and the
+	// handler is the last thing set, so a concurrent Execute can never observe a
+	// registered exec handler without its gate flag already in place — closing the
+	// fail-OPEN window that handler-first ordering would leave. This keeps the gate
+	// at least as strong as the handler's availability at every instant.
+	d.mu.Lock()
+	d.execTools["run_tests"] = true
+	d.execTools["run_script"] = true
+	d.mu.Unlock()
 	d.mustRegister("run_tests", runTestsHandler, pathSpec{})
 	d.mustRegister("run_script", runScriptHandler, pathSpec{})
 }
