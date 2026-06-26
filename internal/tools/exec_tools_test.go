@@ -116,3 +116,15 @@ func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
 	require.Error(t, err, "exec tools must be unknown until EnableExecution is called")
 	assert.Contains(t, err.Error(), "unknown tool")
 }
+
+func TestDispatcher_EnableExecution_ConcurrentWithExecute(t *testing.T) {
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+
+	go func() {
+		d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
+	}()
+
+	// Concurrent Execute must not race with EnableExecution's registration.
+	_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
+}
