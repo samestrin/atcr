@@ -197,10 +197,15 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			ec := ee.ExitCode()
-			// Docker reserved exit codes indicate the runtime itself failed, not the
-			// workload. Treat them as backend faults so they are not misreported as
-			// a program result.
-			if ec == 125 || ec == 126 || ec == 127 {
+			// Docker reserved exit codes (125-127) and signal deaths (128+N, including
+			// 137 SIGKILL/OOM-kill) originate from the runtime or kernel, not the
+			// workload. Treat them as backend faults so they are not misreported as a
+			// program result.
+			if ec >= 128 {
+				logger.Error("sandbox exec container killed", "backend", "docker", "command", cmdStr, "exit_code", ec, "signal", ec-128, "error", runErr)
+				return res, fmt.Errorf("docker run: container killed by signal %d (OOM or daemon kill, exit %d): %w", ec-128, ec, runErr)
+			}
+			if ec >= 125 {
 				logger.Error("sandbox exec runtime error", "backend", "docker", "command", cmdStr, "exit_code", ec, "error", runErr)
 				return res, fmt.Errorf("docker run: runtime error (exit %d): %w", ec, runErr)
 			}
