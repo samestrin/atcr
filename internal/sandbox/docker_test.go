@@ -69,6 +69,46 @@ exit 0`)
 	assert.Contains(t, err.Error(), "preflight")
 }
 
+// fakeDockerInfoBody answers `docker info` with the given MemTotal (bytes) and
+// NCPU, and exits 0 for every other subcommand (version, image inspect, run).
+func fakeDockerInfoBody(memTotal int64, ncpu int) string {
+	return fmt.Sprintf(`if [ "$1" = "info" ]; then
+  echo '{"MemTotal": %d, "NCPU": %d}'
+  exit 0
+fi
+exit 0`, memTotal, ncpu)
+}
+
+func TestDockerBackend_Preflight_RejectsMemoryExceedingHost(t *testing.T) {
+	fake := writeFakeDocker(t, fakeDockerInfoBody(1<<30, 2)) // 1 GiB, 2 CPUs
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	cfg.Memory = "2g" // exceeds the 1 GiB host
+	b := NewDockerBackend(cfg)
+	err := b.Preflight(context.Background())
+	require.Error(t, err, "configured memory above host MemTotal must fail preflight")
+	assert.Contains(t, err.Error(), "memory")
+}
+
+func TestDockerBackend_Preflight_RejectsCPUsExceedingHost(t *testing.T) {
+	fake := writeFakeDocker(t, fakeDockerInfoBody(8<<30, 2)) // 8 GiB, 2 CPUs
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	cfg.CPUs = "4" // exceeds the 2-CPU host
+	b := NewDockerBackend(cfg)
+	err := b.Preflight(context.Background())
+	require.Error(t, err, "configured cpus above host NCPU must fail preflight")
+	assert.Contains(t, err.Error(), "cpus")
+}
+
+func TestDockerBackend_Preflight_AcceptsCapsWithinHost(t *testing.T) {
+	fake := writeFakeDocker(t, fakeDockerInfoBody(8<<30, 8)) // 8 GiB, 8 CPUs
+	cfg := DefaultDockerConfig()                             // 512m / 1.0 cpus — within host
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+	require.NoError(t, b.Preflight(context.Background()), "caps within host must pass preflight")
+}
+
 func TestDockerBackendRun_SignalDeathsAreBackendErrors(t *testing.T) {
 	fakeDocker := writeFakeDocker(t, fakeDockerExitBody())
 	cfg := DefaultDockerConfig()
