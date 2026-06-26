@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/samestrin/atcr/internal/log"
 )
 
 // DockerConfig parameterizes the Docker backend. Zero values are not safe; use
@@ -34,6 +36,11 @@ type DockerConfig struct {
 	Timeout time.Duration
 	// MaxOutputBytes truncates captured combined stdout+stderr.
 	MaxOutputBytes int
+	// MaxConcurrent bounds the number of containers running at once across this
+	// backend. A review verifies findings concurrently and each skeptic may run
+	// many tools, so without this cap a large finding set could fork enough
+	// containers to exhaust the host (the Critical-rated resource-abuse risk).
+	MaxConcurrent int
 }
 
 // DefaultDockerConfig returns a hardened, conservative default configuration.
@@ -48,6 +55,7 @@ func DefaultDockerConfig() DockerConfig {
 		ScratchSize:    "64m",
 		Timeout:        60 * time.Second,
 		MaxOutputBytes: 64 * 1024,
+		MaxConcurrent:  4,
 	}
 }
 
@@ -55,6 +63,8 @@ func DefaultDockerConfig() DockerConfig {
 // resource-capped, non-root container with the snapshot mounted read-only.
 type DockerBackend struct {
 	cfg DockerConfig
+	// sem bounds concurrent container spawns to cfg.MaxConcurrent (buffered slots).
+	sem chan struct{}
 }
 
 // NewDockerBackend constructs a Docker backend from cfg.
@@ -68,7 +78,10 @@ func NewDockerBackend(cfg DockerConfig) *DockerBackend {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 60 * time.Second
 	}
-	return &DockerBackend{cfg: cfg}
+	if cfg.MaxConcurrent <= 0 {
+		cfg.MaxConcurrent = 4
+	}
+	return &DockerBackend{cfg: cfg, sem: make(chan struct{}, cfg.MaxConcurrent)}
 }
 
 // Name implements Backend.
@@ -92,6 +105,15 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		"--cpus", cfg.CPUs,
 		"--pids-limit", strconv.Itoa(cfg.PidsLimit),
 		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
+		// Point HOME, temp, and common build caches at the writable scratch tmpfs so
+		// runners that need to write (go test's build cache, mktemp, pip, etc.) work
+		// under the read-only rootfs + read-only /work. Harmless for runners that
+		// ignore them (e.g. pytest).
+		"-e", "HOME=/scratch",
+		"-e", "TMPDIR=/scratch",
+		"-e", "XDG_CACHE_HOME=/scratch/.cache",
+		"-e", "GOCACHE=/scratch/.gocache",
+		"-e", "GOTMPDIR=/scratch",
 		"--workdir", "/work",
 		"-v", spec.SnapshotDir + ":/work:ro",
 	}
@@ -119,10 +141,22 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	if err != nil {
 		return RunResult{}, err
 	}
+	// Bound concurrent container spawns; block until a slot frees or ctx is done.
+	if b.sem != nil {
+		select {
+		case b.sem <- struct{}{}:
+			defer func() { <-b.sem }()
+		case <-ctx.Done():
+			return RunResult{}, ctx.Err()
+		}
+	}
 	timeout := spec.Timeout
 	if timeout <= 0 {
 		timeout = b.cfg.Timeout
 	}
+	logger := log.FromContext(ctx)
+	cmdStr := renderCommand(spec)
+	logger.Info("sandbox exec start", "backend", "docker", "command", cmdStr)
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -136,7 +170,7 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 
 	runErr := cmd.Run()
 	res := RunResult{
-		Command: renderCommand(spec),
+		Command: cmdStr,
 		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
 	}
 
@@ -144,17 +178,21 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 	if runCtx.Err() == context.DeadlineExceeded {
 		res.TimedOut = true
 		res.ExitCode = timeoutExitCode
+		logger.Warn("sandbox exec timed out", "backend", "docker", "command", cmdStr, "timeout", timeout)
 		return res, nil
 	}
 	if runErr != nil {
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
 			res.ExitCode = ee.ExitCode()
+			logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
 			return res, nil
 		}
 		// Not an exit status: spawn failure, binary missing, etc. — a backend fault.
+		logger.Error("sandbox exec backend fault", "backend", "docker", "command", cmdStr, "error", runErr)
 		return res, fmt.Errorf("docker run: %w", runErr)
 	}
+	logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
 	return res, nil
 }
 

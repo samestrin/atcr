@@ -46,6 +46,9 @@ func (s *SandboxConfig) Validate() error {
 	if b := strings.TrimSpace(s.Backend); b != "" && b != SandboxBackendDocker {
 		return fmt.Errorf("sandbox.backend %q is unsupported (only %q)", s.Backend, SandboxBackendDocker)
 	}
+	if strings.TrimSpace(s.Image) == "" {
+		return errors.New("sandbox.image is required when a sandbox block is present (a base image carrying the toolchain your test_command needs)")
+	}
 	if len(s.TestCommand) == 0 {
 		return errors.New("sandbox.test_command is required when a sandbox block is present")
 	}

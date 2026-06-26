@@ -57,6 +57,25 @@ func TestDockerRunArgs_HardeningFlagsPresent(t *testing.T) {
 	assert.Contains(t, joined, "go test ./...")
 }
 
+func TestDockerRunArgs_WritableTempEnv(t *testing.T) {
+	// go test (and most runners) must be able to write a build cache / temp under
+	// the read-only rootfs; these env vars point them at the writable /scratch.
+	args, err := dockerRunArgs(DefaultDockerConfig(), RunSpec{Command: []string{"go", "test"}, SnapshotDir: "/tmp/snap"})
+	require.NoError(t, err)
+	joined := strings.Join(args, " ")
+	assert.Contains(t, joined, "HOME=/scratch")
+	assert.Contains(t, joined, "TMPDIR=/scratch")
+	assert.Contains(t, joined, "GOCACHE=/scratch")
+}
+
+func TestNewDockerBackend_ConcurrencyCap(t *testing.T) {
+	cfg := DefaultDockerConfig()
+	cfg.MaxConcurrent = 3
+	assert.Equal(t, 3, cap(NewDockerBackend(cfg).sem), "the semaphore must bound concurrency to MaxConcurrent")
+	// An unset/zero MaxConcurrent gets a positive default (never an unbounded backend).
+	assert.Positive(t, cap(NewDockerBackend(DockerConfig{}).sem))
+}
+
 func TestDockerRunArgs_ScriptUsesStdinShell(t *testing.T) {
 	cfg := DefaultDockerConfig()
 	args, err := dockerRunArgs(cfg, RunSpec{Script: "echo hi\nexit 3\n", SnapshotDir: "/tmp/snap"})

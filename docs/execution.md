@@ -83,6 +83,21 @@ agent keeps the read-only tool set unchanged):
   scratch overlay.
 
 Output is captured, truncated to a budget, and attached to the agent transcript.
+`/work` (the snapshot) is **read-only**; the only writable location is the
+`/scratch` tmpfs. `HOME`, `TMPDIR`, and the common build-cache vars
+(`GOCACHE`/`GOTMPDIR`/`XDG_CACHE_HOME`) are pointed at `/scratch` so test runners
+that need to write a cache or temp files work under the read-only rootfs; a
+script that needs scratch space should write under `/scratch`.
+
+> **Status (Epic 11.0):** the sandbox, the execution tools, the `--exec` gate,
+> the `evidence_exec` data model, the two-run determinism rule, and the
+> "Reproduced" badge renderer are all shipped and tested. The final wiring that
+> **automatically** runs a skeptic's reproduction through the determinism rule
+> and stamps `evidence_exec` onto the finding in a live run is gated behind the
+> Epic 11.0 security review (it executes untrusted code, the highest-bar change),
+> and is the activation step tracked for that review. Until then, `--exec` gives
+> skeptics the `run_tests`/`run_script` tools (their output informs the verdict),
+> and the `evidence_exec` block / badge render whenever the block is present.
 
 ## Determinism — flaky tests cannot poison evidence
 

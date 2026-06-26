@@ -32,7 +32,7 @@ var allowedInternalImports = map[string][]string{
 	"errors":         {},                                       // error-classification taxonomy; stdlib-only (epic 4.0)
 	"registry":       {"stream"},                               // stream is the canonical zero-dependency severity leaf (epic 3.5)
 	"tools":          {"sandbox"},                              // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec)
-	"sandbox":        {},                                       // container-isolated executor for --exec reproduction; stdlib-only leaf (epic 11.0)
+	"sandbox":        {"log"},                                  // container-isolated executor for --exec reproduction; log: structured audit line per sandbox run (epic 11.0)
 	"repro":          {"reconcile", "sandbox"},                 // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
 	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
