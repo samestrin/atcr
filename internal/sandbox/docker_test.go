@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,4 +100,22 @@ func TestDockerBackendRun_WorkloadExitCodesAreResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDockerBackend_DockerCmd_ContextCancelNotTimeout(t *testing.T) {
+	fake := writeFakeDocker(t, `sleep 5; exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := b.dockerCmd(ctx, 5*time.Second, "version")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "context canceled")
+	assert.NotContains(t, err.Error(), "timed out", "cancellations must not be reported as timeouts")
 }
