@@ -11,6 +11,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -130,6 +131,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		if err != nil {
 			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
 		}
+		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(cfg.Project.Agents))
 		res, err := fanout.ExecuteReview(ctx, completer, prep)
 		if err != nil {
 			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
