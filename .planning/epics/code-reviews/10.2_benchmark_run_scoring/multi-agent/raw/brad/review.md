@@ -1,0 +1,1 @@
+MEDIUM|cmd/atcr/benchmark_run_test.go:55|Stub finding string missing REVIEWER field|Append agent name to match 8-field TD_STREAM format|correctness|5|String has 7 fields, parser expects REVIEWER as 8th|bruce

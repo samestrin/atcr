@@ -1,0 +1,2 @@
+MEDIUM|cmd/atcr/benchmark_run.go:42|Missing manifest validation after loading|Add benchmark.Validate(m) after Load and before work dir creation|correctness|5|Load manifest without validation|ai-reviewer
+HIGH|cmd/atcr/benchmark_run.go:102|Agent from pool summary not checked for existence in registry|Check agent exists in registry before use; return error if not|correctness|5|Loop over agents without registry check|ai-reviewer

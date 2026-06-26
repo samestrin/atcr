@@ -1,0 +1,836 @@
+diff --git a/cmd/atcr/benchmark.go b/cmd/atcr/benchmark.go
+index cee35f1..bc316dc 100644
+--- a/cmd/atcr/benchmark.go
++++ b/cmd/atcr/benchmark.go
+@@ -8,28 +8,32 @@ import (
+ 	"time"
+ 
+ 	"github.com/samestrin/atcr/internal/benchmark"
++	"github.com/samestrin/atcr/internal/fanout"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
+ 	"github.com/spf13/cobra"
+ )
+ 
+-// newBenchmarkCmd builds `atcr benchmark`: the bounded in-repo half of the
+-// standard-suite tooling (Epic 10.0). `verify` validates a suite manifest and
+-// prints its reproducibility hash; `export` wraps a suite run-result in the
+-// suite-tagged public submission envelope. Live execution + scoring
+-// (`benchmark run`) is Epic 10.1; the curated standard-v1 suite content lives in
+-// the external atcr/benchmark-suite repo.
++// newBenchmarkCmd builds `atcr benchmark`: the standard-suite tooling for the
++// public Model-Eval Leaderboard (Epic 10.0 / 10.2). `verify` validates a suite
++// manifest and prints its reproducibility hash; `run` executes a suite through the
++// review pipeline and writes a scored run-result; `export` wraps a run-result in
++// the suite-tagged public submission envelope. The curated standard-v1 suite
++// content lives in the external atcr/benchmark-suite repo.
+ func newBenchmarkCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "benchmark",
+ 		Short: "Standard benchmark-suite tooling for the public leaderboard",
+ 		Long: "Tooling for the standard benchmark suite that feeds the public Model-Eval\n" +
+ 			"Leaderboard. `verify` validates a suite manifest and prints its\n" +
+-			"reproducibility hash; `export` produces a suite-tagged public submission\n" +
+-			"record (distinct from `leaderboard --export`, so suite runs are\n" +
++			"reproducibility hash; `run` executes the suite through the review pipeline\n" +
++			"and writes a scored run-result; `export` produces a suite-tagged public\n" +
++			"submission record (distinct from `leaderboard --export`, so suite runs are\n" +
+ 			"distinguishable from production runs on the public board).",
+ 		Args: usageArgs(cobra.NoArgs),
+ 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+ 	}
+-	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkExportCmd())
++	cmd.AddCommand(newBenchmarkVerifyCmd(), newBenchmarkRunCmd(), newBenchmarkExportCmd())
+ 	return cmd
+ }
+ 
+@@ -71,11 +75,60 @@ func runBenchmarkVerify(cmd *cobra.Command, _ []string) error {
+ 	return werr
+ }
+ 
++// newBenchmarkRunCmd builds `atcr benchmark run --suite-path <dir> [--out <file>]`:
++// load + validate the suite, execute each case's diff through the review pipeline
++// (the diff-file ingestion path), score the findings against each case's expected
++// categories, and write the suite-tagged run-result that `benchmark export`
++// consumes. The run-result's GeneratedAt is stamped from the wall clock here; the
++// scoring is deterministic given the same suite + transcript.
++func newBenchmarkRunCmd() *cobra.Command {
++	cmd := &cobra.Command{
++		Use:   "run",
++		Short: "Execute a benchmark suite through the review pipeline and write a scored run-result",
++		Args:  usageArgs(cobra.NoArgs),
++		RunE:  runBenchmarkRun,
++	}
++	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
++	cmd.Flags().String("out", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
++	_ = cmd.MarkFlagRequired("suite-path")
++	return cmd
++}
++
++func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
++	// Cobra GetString errors are unreachable: both flags are registered above
++	// ("suite-path" is MarkFlagRequired). Project-wide convention.
++	suitePath, _ := cmd.Flags().GetString("suite-path")
++	out, _ := cmd.Flags().GetString("out")
++
++	// Discover config the same way `atcr review` does (registry + project config
++	// rooted at the cwd), so the benchmark roster is the project's reviewers.
++	cfg, err := fanout.LoadReviewConfig(".", registry.CLIOverrides{})
++	if err != nil {
++		return err
++	}
++
++	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC())
++	if err != nil {
++		return err
++	}
++
++	data, err := json.MarshalIndent(rr, "", "  ")
++	if err != nil {
++		return fmt.Errorf("encoding run-result: %w", err)
++	}
++	if out == "" {
++		_, werr := cmd.OutOrStdout().Write(append(data, '\n'))
++		return werr
++	}
++	// writeExportFile (leaderboard.go) atomically writes to path, creating parents.
++	return writeExportFile(out, data)
++}
++
+ // newBenchmarkExportCmd builds `atcr benchmark export --in <run-result.json>`:
+ // read a suite run-result and emit the suite-tagged public submission envelope.
+-// The run-result is produced by `atcr benchmark run` (Epic 10.1); export reads it
+-// rather than the local scorecard, so a production run can never be passed off as
+-// a suite submission.
++// The run-result is produced by `atcr benchmark run`; export reads it rather than
++// the local scorecard, so a production run can never be passed off as a suite
++// submission.
+ func newBenchmarkExportCmd() *cobra.Command {
+ 	cmd := &cobra.Command{
+ 		Use:   "export",
+diff --git a/cmd/atcr/benchmark_run.go b/cmd/atcr/benchmark_run.go
+new file mode 100644
+index 0000000..8c401e6
+--- /dev/null
++++ b/cmd/atcr/benchmark_run.go
+@@ -0,0 +1,201 @@
++package main
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++	"sort"
++	"time"
++
++	"github.com/samestrin/atcr/internal/benchmark"
++	"github.com/samestrin/atcr/internal/fanout"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/stream"
++)
++
++// executeBenchmarkRun executes a benchmark suite end to end and returns the
++// suite-tagged benchmark.RunResult that `atcr benchmark export` consumes. It loads
++// + validates the suite (benchmark.Load), then for each case ingests the case diff
++// through the EXACT production review path (fanout.PrepareReviewFromDiff →
++// fanout.ExecuteReview, the diff-file ingestion entry Epic 10.1 added), reads the
++// per-reviewer findings + usage from the review's pool artifacts, scores the
++// findings against the case's expected categories (benchmark.Score), and aggregates
++// one scorecard.PublicRecord per reviewer.
++//
++// It lives in cmd/atcr — the composition root — rather than internal/benchmark so
++// that package stays the light suite-contract + scorer leaf (no live-LLM
++// dependency); the orchestration is the layer that wires the contract to the
++// fan-out engine.
++//
++// The Completer is injected so the CLI passes the real llmclient and tests pass a
++// stub (no network). generatedAt is injected (not time.Now) so two runs over the
++// same suite + transcript produce a byte-identical RunResult — the reproducibility
++// contract export relies on. Each case's review artifacts are written under a temp
++// directory that is removed before the function returns; only the scored findings
++// flow into the result, so the temp path never affects output.
++func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*benchmark.RunResult, error) {
++	m, err := benchmark.Load(suitePath)
++	if err != nil {
++		return nil, err
++	}
++
++	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
++	if err != nil {
++		return nil, fmt.Errorf("creating benchmark work dir: %w", err)
++	}
++	defer func() { _ = os.RemoveAll(tmp) }()
++
++	// reviewerAcc accumulates one reviewer's outcomes across every case.
++	type reviewerAcc struct {
++		model     string
++		persona   string
++		cases     []benchmark.CaseScore
++		costUSD   float64
++		latencies []int64 // per-case wall-clock, recorded only when usage was reported
++	}
++	accs := map[string]*reviewerAcc{}
++	var order []string // reviewer names, sorted for deterministic aggregation
++
++	for i, c := range m.Cases {
++		diff, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
++		if err != nil {
++			return nil, fmt.Errorf("reading case %q diff: %w", c.ID, err)
++		}
++
++		// Range-less request writing to an isolated per-case dir: no git range, no
++		// .atcr/latest repoint (OutputDir suppresses it). The dir is keyed by case
++		// INDEX, not id, so two distinct ids that share a path basename (a case id
++		// may legally contain '/') can never collide and overwrite each other's
++		// review. The date/suffix only feed the review id, never the RunResult, so
++		// fixed values keep the run hermetic.
++		req := fanout.ReviewRequest{
++			Root:       tmp,
++			OutputDir:  filepath.Join(tmp, fmt.Sprintf("case-%d", i)),
++			Branch:     "benchmark",
++			Date:       "2026-01-01",
++			TimeSuffix: "000000",
++			StartedAt:  time.Unix(0, 0).UTC(),
++		}
++		prep, err := fanout.PrepareReviewFromDiff(ctx, cfg, req, string(diff))
++		if err != nil {
++			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
++		}
++		res, err := fanout.ExecuteReview(ctx, completer, prep)
++		if err != nil {
++			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
++		}
++
++		summary, err := fanout.ReadPoolSummary(res.Dir)
++		if err != nil {
++			return nil, fmt.Errorf("reading pool summary for case %q: %w", c.ID, err)
++		}
++		raisedByReviewer, err := readCaseFindings(res.Dir)
++		if err != nil {
++			return nil, fmt.Errorf("reading findings for case %q: %w", c.ID, err)
++		}
++
++		// Iterate the full agent roster (including failed agents, which raised
++		// nothing) so every reviewer is scored on every case — a missed case is
++		// recall 0, not an absent record.
++		for _, a := range summary.Agents {
++			acc := accs[a.Agent]
++			if acc == nil {
++				acc = &reviewerAcc{model: reviewerModel(cfg, a), persona: reviewerPersona(cfg, a.Agent)}
++				accs[a.Agent] = acc
++				order = append(order, a.Agent)
++			}
++			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raisedByReviewer[a.Agent]})
++			// Cost + latency are usage-gated: a completer that reports no token
++			// usage (the test stub) contributes neither, keeping the score
++			// deterministic. status.json only records Model/tokens when usage > 0.
++			if a.TokensIn > 0 || a.TokensOut > 0 {
++				acc.costUSD += llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
++				acc.latencies = append(acc.latencies, a.DurationMS)
++			}
++		}
++	}
++
++	sort.Strings(order)
++	reviewers := make([]benchmark.ReviewerScore, 0, len(order))
++	for _, name := range order {
++		acc := accs[name]
++		reviewers = append(reviewers, benchmark.ReviewerScore{
++			Model:        acc.model,
++			Persona:      acc.persona,
++			Cases:        acc.cases,
++			CostUSD:      acc.costUSD,
++			LatencyP50MS: medianInt64(acc.latencies),
++		})
++	}
++
++	return &benchmark.RunResult{
++		Suite:        m.Suite,
++		SuiteVersion: m.SuiteVersion,
++		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
++		Reviewers:    benchmark.Score(reviewers),
++	}, nil
++}
++
++// readCaseFindings parses the merged pool findings.txt for one review and groups
++// each finding's category by its REVIEWER (the agent name the engine stamped,
++// never a model-supplied value). A pool with no findings yields an empty map.
++func readCaseFindings(reviewDir string) (map[string][]string, error) {
++	path := filepath.Join(reviewDir, "sources", "pool", "findings.txt")
++	data, err := os.ReadFile(path)
++	if err != nil {
++		if os.IsNotExist(err) {
++			return map[string][]string{}, nil
++		}
++		return nil, err
++	}
++	parsed, err := stream.ParseSource(data)
++	if err != nil {
++		return nil, err
++	}
++	out := make(map[string][]string, len(parsed.Findings))
++	for _, f := range parsed.Findings {
++		out[f.Reviewer] = append(out[f.Reviewer], f.Category)
++	}
++	return out, nil
++}
++
++// reviewerModel resolves a reviewer's model id, preferring the usage-reported
++// value in the pool summary and falling back to the configured model when the
++// provider reported no usage (e.g. a stub completer leaves AgentStatus.Model empty).
++func reviewerModel(cfg *fanout.ReviewConfig, a fanout.AgentStatus) string {
++	if a.Model != "" {
++		return a.Model
++	}
++	return cfg.Registry.Agents[a.Agent].Model
++}
++
++// reviewerPersona resolves a reviewer's persona from the registry, falling back to
++// the agent name when no persona is configured.
++func reviewerPersona(cfg *fanout.ReviewConfig, agent string) string {
++	if p := cfg.Registry.Agents[agent].Persona; p != "" {
++		return p
++	}
++	return agent
++}
++
++// medianInt64 returns the p50 of vs; 0 for an empty slice, so a no-usage run
++// reports a deterministic 0 latency. It uses the SAME definition as
++// scorecard.medianInt64 (odd: the middle element; even: floor of the two middles)
++// so the shared public latency_p50_ms column is computed identically for benchmark
++// and production rows on the leaderboard. lo + (hi-lo)/2 is the overflow-safe form
++// of floor((lo+hi)/2).
++func medianInt64(vs []int64) int64 {
++	n := len(vs)
++	if n == 0 {
++		return 0
++	}
++	sorted := make([]int64, n)
++	copy(sorted, vs)
++	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
++	if n%2 == 1 {
++		return sorted[n/2]
++	}
++	lo, hi := sorted[n/2-1], sorted[n/2]
++	return lo + (hi-lo)/2
++}
+diff --git a/cmd/atcr/benchmark_run_test.go b/cmd/atcr/benchmark_run_test.go
+new file mode 100644
+index 0000000..86597f3
+--- /dev/null
++++ b/cmd/atcr/benchmark_run_test.go
+@@ -0,0 +1,162 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/fanout"
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func ptrF(f float64) *float64 { return &f }
++
++// suiteValidPath is the in-repo fixture suite (2 cases), relative to cmd/atcr.
++const suiteValidPath = "../../internal/benchmark/testdata/suite-valid"
++
++// benchCfg builds a minimal ReviewConfig (diff mode) from exported registry types
++// — the same shape fanout's own tests assemble — for an offline benchmark run. Each
++// pair is {agentName, model, persona}.
++func benchCfg(agents ...[3]string) *fanout.ReviewConfig {
++	regAgents := map[string]registry.AgentConfig{}
++	names := make([]string, 0, len(agents))
++	for _, a := range agents {
++		regAgents[a[0]] = registry.AgentConfig{Provider: "p", Model: a[1], Persona: a[2], Temperature: ptrF(0.7)}
++		names = append(names, a[0])
++	}
++	return &fanout.ReviewConfig{
++		Registry: &registry.Registry{
++			Providers: map[string]registry.Provider{"p": {APIKeyEnv: "ATCR_TEST_KEY", BaseURL: "http://unused"}},
++			Agents:    regAgents,
++		},
++		Project:     &registry.ProjectConfig{Agents: names},
++		Settings:    registry.Settings{PayloadMode: "diff", TimeoutSecs: 600},
++		PersonaDirs: registry.PersonaDirs{},
++	}
++}
++
++// stubCompleter raises a single "correctness" finding for every invocation, no
++// network. Against suite-valid that is discriminating:
++//
++//	case-01 expected {correctness}            -> recall 1.0
++//	case-02 expected {security, correctness}  -> recall 0.5 (security missed)
++//
++// so the macro-averaged corroboration_rate is 0.75 — proving per-case grouping.
++type stubCompleter struct{}
++
++func (stubCompleter) Complete(_ context.Context, _ llmclient.Invocation) (string, error) {
++	return "HIGH|x.go:1|planted defect|fix it|correctness|15|evidence", nil
++}
++
++// executeBenchmarkRun loads + validates the suite, executes each case's diff
++// through the review pipeline with the injected Completer, scores findings against
++// the case's expected categories, and aggregates per-reviewer PublicRecord into a
++// suite-tagged RunResult with the injected generatedAt.
++func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++
++	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	require.NoError(t, err)
++
++	assert.Equal(t, "fixture-mini", rr.Suite)
++	assert.Equal(t, "1.0.0", rr.SuiteVersion)
++	assert.Equal(t, "2026-06-25T12:00:00Z", rr.GeneratedAt, "GeneratedAt is the injected time, not time.Now")
++	require.Len(t, rr.Reviewers, 2)
++
++	// Reviewers sorted by (model, persona): m-greta < m-kai.
++	greta := rr.Reviewers[0]
++	assert.Equal(t, "m-greta", greta.Model)
++	assert.Equal(t, "greta", greta.Persona, "persona sourced from registry config, not blank")
++	assert.Equal(t, 2, greta.Runs, "one run per case")
++	assert.InDelta(t, 0.75, greta.CorroborationRate, 1e-9, "(1.0 + 0.5) / 2 category recall")
++	assert.InDelta(t, 1.0, greta.FindingsRaisedAvg, 1e-9, "one finding per case")
++	assert.InDelta(t, 0.0, greta.CostPerCorroboratedFindingUSD, 1e-9, "stub reports no usage")
++	assert.Equal(t, int64(0), greta.LatencyP50MS, "stub reports no usage -> deterministic 0")
++	assert.Equal(t, "m-kai", rr.Reviewers[1].Model)
++}
++
++// Two runs over the same suite + transcript are byte-identical (generatedAt is
++// injected, no time.Now, no wall-clock latency under the stub).
++func TestExecuteBenchmarkRun_Reproducible(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++
++	a, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	require.NoError(t, err)
++	b, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	require.NoError(t, err)
++
++	ja, err := json.Marshal(a)
++	require.NoError(t, err)
++	jb, err := json.Marshal(b)
++	require.NoError(t, err)
++	assert.JSONEq(t, string(ja), string(jb), "same suite + transcript -> byte-identical run-result")
++}
++
++// An invalid suite path fails before any review executes.
++func TestExecuteBenchmarkRun_InvalidSuiteErrors(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, "testdata/does-not-exist", time.Now())
++	require.Error(t, err)
++}
++
++// medianInt64 returns the lower-middle p50, and 0 for an empty slice (the
++// deterministic no-usage path), independent of input order.
++func TestMedianInt64(t *testing.T) {
++	assert.Equal(t, int64(0), medianInt64(nil))
++	assert.Equal(t, int64(5), medianInt64([]int64{5}))
++	assert.Equal(t, int64(20), medianInt64([]int64{30, 10, 20}))
++	assert.Equal(t, int64(15), medianInt64([]int64{20, 10}), "even count -> floor of two middles, matching scorecard")
++}
++
++// AC: the run-result written by `benchmark run` is consumed unchanged by
++// `benchmark export --in`, producing a valid suite-tagged Submission. This drives
++// the orchestrator with a stub Completer (no network) over the suite-valid fixture,
++// writes the run-result JSON exactly as `run --out` would, then feeds that file to
++// the real `benchmark export` command and asserts the round-trip.
++func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++
++	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	require.NoError(t, err)
++
++	data, err := json.MarshalIndent(rr, "", "  ")
++	require.NoError(t, err)
++	in := filepath.Join(t.TempDir(), "run-result.json")
++	require.NoError(t, os.WriteFile(in, data, 0o600))
++
++	// Feed the run output to the real export command — the AC's "consumed unchanged".
++	code, out := execCmdCapture(t, "benchmark", "export", "--in", in)
++	require.Equal(t, 0, code, out)
++
++	var sub struct {
++		SubmittedAt  string `json:"submitted_at"`
++		Source       string `json:"source"`
++		Suite        string `json:"suite"`
++		SuiteVersion string `json:"suite_version"`
++		Reviewers    []struct {
++			Persona           string  `json:"persona"`
++			Model             string  `json:"model"`
++			Runs              int     `json:"runs"`
++			CorroborationRate float64 `json:"corroboration_rate"`
++		} `json:"reviewers"`
++	}
++	require.NoError(t, json.Unmarshal([]byte(out), &sub), "export stdout must be valid JSON: %s", out)
++	require.Equal(t, "benchmark-suite", sub.Source, "only suite submissions are board-eligible")
++	require.Equal(t, "fixture-mini", sub.Suite)
++	require.Equal(t, "1.0.0", sub.SuiteVersion)
++	require.Equal(t, "2026-06-25T12:00:00Z", sub.SubmittedAt, "submitted_at uses the run-result's generated_at")
++	require.Len(t, sub.Reviewers, 1)
++	require.Equal(t, "greta", sub.Reviewers[0].Persona)
++	require.Equal(t, "m-greta", sub.Reviewers[0].Model)
++	require.Equal(t, 2, sub.Reviewers[0].Runs, "two cases scored")
++	require.InDelta(t, 0.75, sub.Reviewers[0].CorroborationRate, 1e-9, "category recall (1.0 + 0.5)/2")
++}
+diff --git a/internal/benchmark/benchmark.go b/internal/benchmark/benchmark.go
+index eac945f..551fc08 100644
+--- a/internal/benchmark/benchmark.go
++++ b/internal/benchmark/benchmark.go
+@@ -3,13 +3,14 @@
+ // planted-defect expected categories, a deterministic reproducibility hash over
+ // that content, and the suite-tagged public submission envelope.
+ //
+-// This package is the bounded in-repo half of `atcr benchmark`. It ships the
+-// CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission envelope, and
+-// the RunResult input contract that `atcr benchmark export` consumes. It does NOT
+-// execute reviews against the suite or score findings: live execution + scoring
+-// is Epic 10.1, and the curated standard-v1 suite CONTENT lives in the external
+-// atcr/benchmark-suite repo (Task 3). Keeping execution out keeps this package
+-// stdlib + scorecard-type only, with no live-LLM dependency.
++// This package is the in-repo contract + scorer half of `atcr benchmark`. It
++// ships the CONTRACT (Load/Validate/ReproHash), the suite-tagged Submission
++// envelope and the RunResult contract `atcr benchmark export` consumes, and the
++// scorer (Score, which folds per-case findings into the public reviewer schema).
++// It stays stdlib + scorecard-type only, with no live-LLM dependency: the suite
++// EXECUTION loop that drives each case's diff through the review pipeline lives in
++// cmd/atcr (the composition root that may import internal/fanout). The curated
++// standard-v1 suite CONTENT lives in the external atcr/benchmark-suite repo.
+ package benchmark
+ 
+ import (
+@@ -42,7 +43,7 @@ type Manifest struct {
+ // Case is one fixed-diff benchmark case. Diff is a path RELATIVE to the suite
+ // directory (never absolute, never escaping it — enforced by Validate).
+ // ExpectedCategories are the planted-defect categories a competent reviewer
+-// should surface; the scoring engine that consumes them is Epic 10.1.
++// should surface; Score matches findings against them (case-insensitively).
+ type Case struct {
+ 	ID                 string   `json:"id"`
+ 	Diff               string   `json:"diff"`
+@@ -223,14 +224,13 @@ func writeField(h io.Writer, s string) {
+ 
+ // RunResult is the input contract `atcr benchmark export` consumes: the
+ // model-eval aggregates produced by a suite run, tagged with the suite identity.
+-// Epic 10.0 ships this minimal shape (the fields export needs); Epic 10.1's
+-// `atcr benchmark run` produces conforming files (and may add scoring detail)
+-// under ~/.config/atcr/benchmark/<run-id>.json. Reviewers reuse the single
+-// public reviewer schema so benchmark and production submissions share columns.
++// `atcr benchmark run` (Run) produces conforming values; the Reviewers reuse the
++// single public reviewer schema so benchmark and production submissions share
++// columns.
+ //
+-// PRIVACY CONTRACT: Reviewers SHOULD already be anonymized by the producer (the
+-// scorecard aggregation that `atcr benchmark run` uses scrubs identity strings
+-// at source, exactly like `leaderboard --export`). As defense-in-depth — because
++// PRIVACY CONTRACT: Reviewers SHOULD already be anonymized by the producer (Score
++// scrubs identity strings at source via scorecard.ScrubPublicRecord, exactly like
++// `leaderboard --export`). As defense-in-depth — because
+ // `atcr benchmark export` consumes a hand-suppliable run-result file that never
+ // passed through the producer — BuildSubmission additionally re-scrubs each
+ // reviewer's identity fields via scorecard.ScrubPublicRecord, so a non-conforming
+diff --git a/internal/benchmark/score.go b/internal/benchmark/score.go
+new file mode 100644
+index 0000000..0114f3e
+--- /dev/null
++++ b/internal/benchmark/score.go
+@@ -0,0 +1,143 @@
++package benchmark
++
++import (
++	"sort"
++	"strings"
++
++	"github.com/samestrin/atcr/internal/scorecard"
++)
++
++// CaseScore is one reviewer's outcome on a single benchmark case: the case's
++// expected (planted-defect) categories and the category of every finding the
++// reviewer raised for that case. Raised carries one entry per finding (duplicates
++// allowed) so FindingsRaisedAvg counts findings, not distinct categories.
++type CaseScore struct {
++	Expected []string
++	Raised   []string
++}
++
++// ReviewerScore is the full per-reviewer input to Score: identity, recorded
++// usage, and per-case outcomes across the suite. CostUSD and LatencyP50MS are
++// sourced by the run orchestrator from the pool usage the providers reported; a
++// stub completer reports none, so both stay 0 and a no-usage run's score is
++// deterministic.
++type ReviewerScore struct {
++	Model        string
++	Persona      string
++	Cases        []CaseScore
++	CostUSD      float64
++	LatencyP50MS int64
++}
++
++// Score folds each reviewer's per-case category outcomes into the single public
++// reviewer schema. It does NOT modify the scorecard package: it emits
++// scorecard.PublicRecord values and re-scrubs each via scorecard.ScrubPublicRecord
++// (defense in depth — the same pass BuildSubmission applies — so identity PII can
++// never reach a public submission even from a non-conforming producer).
++//
++// CorroborationRate carries CATEGORY RECALL: the macro-average across the
++// reviewer's cases of (distinct expected categories the reviewer surfaced at least
++// one matching finding for) / (distinct expected categories). This repurposes the
++// only rate field the frozen PublicRecord carries as the benchmark proxy the risk
++// table sanctions ("consistent with 10.0's corroboration caveat"); the
++// source=="benchmark-suite" tag on the Submission disambiguates it from production
++// cross-reviewer corroboration. FindingsRaisedAvg is the mean findings per case and
++// Runs is the number of cases scored.
++//
++// Precision against expected_categories is intentionally NOT computed: the expected
++// set is the planted-defect SUBSET, not exhaustive ground truth, so a
++// precision-vs-planted metric would penalize a thorough reviewer that also surfaces
++// legitimate non-planted issues. Recall measures "did you catch the planted
++// defects"; FindingsRaisedAvg already exposes volume without that penalty.
++//
++// Records are returned sorted ascending by (model, persona), so the same input
++// always produces byte-identical output.
++func Score(reviewers []ReviewerScore) []scorecard.PublicRecord {
++	out := make([]scorecard.PublicRecord, 0, len(reviewers))
++	for _, r := range reviewers {
++		out = append(out, scorecard.ScrubPublicRecord(scoreOne(r)))
++	}
++	// Stable so that two reviewers sharing the same (model, persona) keep the
++	// orchestrator's deterministic input order — preserving the byte-identical
++	// output the reproducibility AC requires even on an identity tie.
++	sort.SliceStable(out, func(i, j int) bool {
++		if out[i].Model != out[j].Model {
++			return out[i].Model < out[j].Model
++		}
++		return out[i].Persona < out[j].Persona
++	})
++	return out
++}
++
++// scoreOne computes the public metrics for a single reviewer before scrubbing.
++func scoreOne(r ReviewerScore) scorecard.PublicRecord {
++	pr := scorecard.PublicRecord{
++		Model:        r.Model,
++		Persona:      r.Persona,
++		Runs:         len(r.Cases),
++		LatencyP50MS: r.LatencyP50MS,
++	}
++	if len(r.Cases) == 0 {
++		return pr
++	}
++
++	var totalFindings, matchedFindings int
++	var recallSum float64
++	for _, c := range r.Cases {
++		expected := normalizeSet(c.Expected)
++		raised := normalizeSet(c.Raised)
++		totalFindings += len(c.Raised)
++
++		if len(expected) > 0 {
++			hit := 0
++			for cat := range expected {
++				if raised[cat] {
++					hit++
++				}
++			}
++			recallSum += float64(hit) / float64(len(expected))
++		}
++		// Cost-per-corroborated denominator: every finding whose category matched
++		// an expected (planted) category. Counts findings, not distinct categories.
++		for _, cat := range c.Raised {
++			if expected[normalize(cat)] {
++				matchedFindings++
++			}
++		}
++	}
++
++	pr.FindingsRaisedAvg = float64(totalFindings) / float64(len(r.Cases))
++	pr.CorroborationRate = clamp01(recallSum / float64(len(r.Cases)))
++	if matchedFindings > 0 {
++		pr.CostPerCorroboratedFindingUSD = r.CostUSD / float64(matchedFindings)
++	}
++	return pr
++}
++
++// normalize lowercases and trims a category so matching is case-insensitive and
++// whitespace-insensitive, mirroring reconcile.ModalCategory.
++func normalize(cat string) string { return strings.ToLower(strings.TrimSpace(cat)) }
++
++// normalizeSet returns the distinct non-empty normalized categories in cats.
++func normalizeSet(cats []string) map[string]bool {
++	set := make(map[string]bool, len(cats))
++	for _, c := range cats {
++		if n := normalize(c); n != "" {
++			set[n] = true
++		}
++	}
++	return set
++}
++
++// clamp01 bounds a rate to [0,1]; a well-formed recall is already in range, this
++// guards a corrupt input from emitting an out-of-range public rate.
++func clamp01(f float64) float64 {
++	switch {
++	case f < 0:
++		return 0
++	case f > 1:
++		return 1
++	default:
++		return f
++	}
++}
+diff --git a/internal/benchmark/score_test.go b/internal/benchmark/score_test.go
+new file mode 100644
+index 0000000..d3ddff1
+--- /dev/null
++++ b/internal/benchmark/score_test.go
+@@ -0,0 +1,128 @@
++package benchmark
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// Score folds each reviewer's per-case category outcomes into the public reviewer
++// schema: CorroborationRate carries macro-averaged category recall, FindingsRaisedAvg
++// the mean findings per case, and Runs the number of cases scored.
++func TestScore_RecallAndVolume(t *testing.T) {
++	got := Score([]ReviewerScore{
++		{
++			Model:   "claude-sonnet-4-6",
++			Persona: "bruce",
++			Cases: []CaseScore{
++				// case A: all expected categories surfaced -> recall 1.0; 2 findings.
++				{Expected: []string{"correctness"}, Raised: []string{"correctness", "security"}},
++				// case B: 1 of 2 expected categories surfaced -> recall 0.5; 1 finding.
++				{Expected: []string{"security", "correctness"}, Raised: []string{"security"}},
++			},
++		},
++	})
++
++	require.Len(t, got, 1)
++	r := got[0]
++	assert.Equal(t, "claude-sonnet-4-6", r.Model)
++	assert.Equal(t, "bruce", r.Persona)
++	assert.Equal(t, 2, r.Runs, "runs == number of cases scored")
++	assert.InDelta(t, 1.5, r.FindingsRaisedAvg, 1e-9, "mean findings per case == 3/2")
++	assert.InDelta(t, 0.75, r.CorroborationRate, 1e-9, "macro-avg recall == (1.0 + 0.5) / 2")
++	assert.InDelta(t, 0.0, r.CostPerCorroboratedFindingUSD, 1e-9, "no usage -> 0 cost")
++	assert.Equal(t, int64(0), r.LatencyP50MS)
++	assert.Nil(t, r.SurvivedSkepticRate, "no skeptic verification in the benchmark path")
++}
++
++// Category matching is case-insensitive and whitespace-trimmed on both sides,
++// matching reconcile.ModalCategory normalization.
++func TestScore_CategoryMatchNormalized(t *testing.T) {
++	got := Score([]ReviewerScore{{
++		Model:   "m",
++		Persona: "p",
++		Cases:   []CaseScore{{Expected: []string{"Security"}, Raised: []string{"  security  "}}},
++	}})
++	require.Len(t, got, 1)
++	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9, "normalized categories match")
++}
++
++// Duplicate expected categories are deduplicated so recall denominator counts
++// DISTINCT expected categories; duplicate raised findings still inflate volume.
++func TestScore_DistinctExpectedDuplicateRaised(t *testing.T) {
++	got := Score([]ReviewerScore{{
++		Model:   "m",
++		Persona: "p",
++		Cases:   []CaseScore{{Expected: []string{"correctness", "correctness"}, Raised: []string{"correctness", "correctness", "correctness"}}},
++	}})
++	require.Len(t, got, 1)
++	assert.InDelta(t, 1.0, got[0].CorroborationRate, 1e-9, "1 distinct expected, surfaced -> recall 1.0")
++	assert.InDelta(t, 3.0, got[0].FindingsRaisedAvg, 1e-9, "3 findings over 1 case")
++}
++
++// Cost-per-corroborated divides recorded cost by the number of findings whose
++// category matched an expected (planted) category; 0 when nothing matched.
++func TestScore_CostPerCorroborated(t *testing.T) {
++	got := Score([]ReviewerScore{{
++		Model:   "m",
++		Persona: "p",
++		CostUSD: 0.12,
++		// 2 matched findings (correctness, security both expected), 1 unmatched (perf).
++		Cases: []CaseScore{{Expected: []string{"correctness", "security"}, Raised: []string{"correctness", "security", "perf"}}},
++	}})
++	require.Len(t, got, 1)
++	assert.InDelta(t, 0.06, got[0].CostPerCorroboratedFindingUSD, 1e-9, "0.12 / 2 matched findings")
++}
++
++// A reviewer that raised nothing scores recall 0 without dividing by zero, and a
++// reviewer with no cases is fully zeroed (Runs 0, no NaN).
++func TestScore_EmptyInputsNoPanic(t *testing.T) {
++	got := Score([]ReviewerScore{
++		{Model: "a", Persona: "p", Cases: []CaseScore{{Expected: []string{"correctness"}, Raised: nil}}},
++		{Model: "b", Persona: "p", Cases: nil},
++	})
++	require.Len(t, got, 2)
++	// sorted by (model, persona): "a" then "b".
++	assert.Equal(t, "a", got[0].Model)
++	assert.InDelta(t, 0.0, got[0].CorroborationRate, 1e-9)
++	assert.InDelta(t, 0.0, got[0].FindingsRaisedAvg, 1e-9)
++	assert.Equal(t, "b", got[1].Model)
++	assert.Equal(t, 0, got[1].Runs)
++	assert.InDelta(t, 0.0, got[1].FindingsRaisedAvg, 1e-9, "no cases -> 0, not NaN")
++}
++
++// Two reviewers sharing the same (model, persona) preserve the input order
++// across repeated Score calls — a stable sort keeps the output byte-identical
++// even on an identity tie (the reproducibility AC).
++func TestScore_StableOnIdentityTie(t *testing.T) {
++	in := []ReviewerScore{
++		{Model: "m", Persona: "p", Cases: []CaseScore{{Expected: []string{"a"}, Raised: []string{"a"}}}},
++		{Model: "m", Persona: "p", Cases: []CaseScore{{Expected: []string{"a"}, Raised: nil}}},
++	}
++	first := Score(in)
++	second := Score(in)
++	require.Len(t, first, 2)
++	// run-1 (recall 1.0) stays ahead of run-2 (recall 0.0), every time.
++	assert.InDelta(t, 1.0, first[0].CorroborationRate, 1e-9)
++	assert.InDelta(t, 0.0, first[1].CorroborationRate, 1e-9)
++	assert.Equal(t, first, second, "repeated scoring is byte-identical")
++}
++
++// Records are sorted deterministically by (model, persona) so the same input
++// always yields byte-identical output, and identity fields are re-scrubbed via
++// scorecard.ScrubPublicRecord (PII in an identity string is removed).
++func TestScore_SortedAndScrubbed(t *testing.T) {
++	got := Score([]ReviewerScore{
++		{Model: "zeta", Persona: "p", Cases: []CaseScore{{Expected: []string{"x"}, Raised: []string{"x"}}}},
++		{Model: "alpha", Persona: "p", Cases: []CaseScore{{Expected: []string{"x"}, Raised: []string{"x"}}}},
++		// PII embedded in the persona must be scrubbed on the way out.
++		{Model: "alpha", Persona: "bruce edward.estrin@gmail.com", Cases: []CaseScore{{Expected: []string{"x"}, Raised: []string{"x"}}}},
++	})
++	require.Len(t, got, 3)
++	assert.Equal(t, "alpha", got[0].Model)
++	assert.Equal(t, "alpha", got[1].Model)
++	assert.Equal(t, "zeta", got[2].Model)
++	// the email is gone; "bruce" survives.
++	assert.Equal(t, "bruce", got[0].Persona)
++}
+diff --git a/internal/benchmark/testdata/suite-valid/case-02.diff b/internal/benchmark/testdata/suite-valid/case-02.diff
+index c24a7f0..ee1440c 100644
+--- a/internal/benchmark/testdata/suite-valid/case-02.diff
++++ b/internal/benchmark/testdata/suite-valid/case-02.diff
+@@ -1,6 +1,6 @@
+ --- a/query.go
+ +++ b/query.go
+-@@ -1,2 +1,2 @@
++@@ -1,3 +1,3 @@
+  func lookup(db *sql.DB, name string) *Row {
+ -	return db.QueryRow("SELECT * FROM u WHERE n = $1", name)
+ +	return db.QueryRow("SELECT * FROM u WHERE n = '" + name + "'") // planted SQL-injection defect
