@@ -18,6 +18,7 @@ import (
 	"github.com/samestrin/atcr/internal/metrics"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/validation"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
@@ -43,6 +44,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
+	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
 	cmd.Flags().Bool("debate", false, "one-shot: chain a cross-examination stage (proposer/challenger/judge) after reconcile/verify, settling disputed findings")
 	cmd.Flags().Bool("single-model", false, "with --debate: allow the same-model persona fallback when fewer than 3 distinct models are available")
@@ -127,10 +129,25 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
 	// --min-severity here too, before any API calls, so a bad value fails fast.
 	verifyFlag, _ := cmd.Flags().GetBool("verify")
+	// --exec only has consumers in the verify stage (skeptics/repro); reject the
+	// silent no-op of `review --exec` without --verify (Epic 11.0).
+	if execFlag, _ := cmd.Flags().GetBool("exec"); execFlag && !verifyFlag {
+		return usageError(errors.New("--exec requires --verify (execution reproduction runs in the adversarial verify stage)"))
+	}
 	verifyMinSev := ""
+	// Resolve the --exec gate EARLY (before any review/reconcile API calls) so a
+	// misconfigured sandbox fails fast instead of after a paid-for review. The
+	// preflight (a real container spawn) runs here, once, and the resolved backend
+	// is threaded into the verify chain below.
+	var execBackend sandbox.Backend
+	var execTestCmd []string
+	var execTimeout time.Duration
 	if verifyFlag {
 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
 			return err
+		}
+		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd); err != nil {
+			return err // refuse-without-backend / preflight failure (exit 2)
 		}
 	}
 
@@ -305,6 +322,9 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				Thorough:          boolFlag(cmd, "thorough"),
 				MinSeverity:       verifyMinSev,
 				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
+				ExecBackend:       execBackend,
+				ExecTestCmd:       execTestCmd,
+				ExecTimeout:       execTimeout,
 			})
 			if verr != nil {
 				return verifyFailureError(verr)

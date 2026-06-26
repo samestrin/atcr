@@ -50,6 +50,9 @@ type ProjectConfig struct {
 	// so an explicit 0 (unbounded) survives default application; unset inherits
 	// the registry tier or the embedded DefaultCacheMaxBytes.
 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
+	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
+	// nil means execution is unconfigured and `--exec` is refused.
+	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
 }
 
 // DefaultProjectConfigPath returns .atcr/config.yaml under root.
@@ -133,6 +136,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 	if !payloadModeValid(cfg.PayloadMode) {
 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
+	}
+	if err := cfg.Sandbox.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", base, err)
 	}
 
 	// Absent optional fields stay unset here; embedded defaults are applied

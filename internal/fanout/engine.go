@@ -108,6 +108,13 @@ type Agent struct {
 	// lacks it degrades to single-shot regardless of the harness being wired.
 	SupportsFC bool
 
+	// Exec marks an execution-enabled agent (Epic 11.0). When true AND the
+	// dispatcher has a sandbox backend wired (EnableExecution), this agent is
+	// offered the run_tests/run_script tools so it can reproduce findings by
+	// running code. It is gated by the `--exec` opt-in and is false for every
+	// agent otherwise, preserving the read-only contract for the rest of the pool.
+	Exec bool
+
 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
 	// AgentConfig by buildAgent and carried onto the Result so findingsFor can
 	// enforce them. Scope is applied earlier (as soft prompt injection) and is

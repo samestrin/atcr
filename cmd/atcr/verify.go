@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/verify"
 	"github.com/spf13/cobra"
 )
@@ -31,7 +33,28 @@ func newVerifyCmd() *cobra.Command {
 	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
+	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
 	return cmd
+}
+
+// resolveExec implements the `--exec` opt-in gate (Epic 11.0) for both `verify`
+// and `review --verify`. When --exec is absent it is a no-op (nil backend). When
+// present it REQUIRES a configured sandbox backend that passes a preflight check;
+// any failure is a usage error (exit 2) so the command refuses without executing.
+func resolveExec(cmd *cobra.Command) (sandbox.Backend, []string, time.Duration, error) {
+	execFlag, _ := cmd.Flags().GetBool("exec")
+	if !execFlag {
+		return nil, nil, 0, nil
+	}
+	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
+	if err != nil {
+		return nil, nil, 0, usageError(err)
+	}
+	backend, testCmd, timeout, err := verify.ResolveExecBackend(cmd.Context(), true, proj.Sandbox)
+	if err != nil {
+		return nil, nil, 0, usageError(err)
+	}
+	return backend, testCmd, timeout, nil
 }
 
 func runVerify(cmd *cobra.Command, args []string) error {
@@ -56,6 +79,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return usageError(err) // missing/invalid registry → exit 2 (AC 04-01 Error Scenario 3)
 	}
 
+	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd)
+	if err != nil {
+		return err // refuse-without-backend / preflight failure (exit 2)
+	}
+
 	fresh, _ := cmd.Flags().GetBool("fresh")
 	thorough, _ := cmd.Flags().GetBool("thorough")
 	res, err := verify.Verify(cmd.Context(), ".", reviewDir, cfg.Registry, verify.Options{
@@ -63,6 +91,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		Thorough:          thorough,
 		MinSeverity:       minSev,
 		SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
+		ExecBackend:       execBackend,
+		ExecTestCmd:       execTestCmd,
+		ExecTimeout:       execTimeout,
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {

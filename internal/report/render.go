@@ -176,6 +176,11 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
 		if f.Verification != nil {
 			writeSkepticBlock(&b, f.Verification)
 		}
+		// Execution-reproduction badge (Epic 11.0): a finding carrying an
+		// evidence_exec block was demonstrated by running code in the sandbox.
+		if f.EvidenceExec != nil {
+			writeReproducedBlock(&b, f.EvidenceExec)
+		}
 	}
 	writeRefutedSection(&b, refuted)
 	_, err := w.Write(b.Bytes())
@@ -362,6 +367,19 @@ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
 // labelled "Judge" so it is not mistaken for a skeptic-produced verdict.
 // All free text is HTML-escaped and newline-flattened so reviewer-controlled
 // fields cannot inject markup or escape the section.
+// writeReproducedBlock renders the execution-reproduction evidence (Epic 11.0)
+// as a "Reproduced" badge: the command that was run, its exit code, and a
+// truncated output excerpt. It is rendered as a LABEL (not a new verdict tier) —
+// a reproduced finding is already VERIFIED via its confirmed verdict — so the
+// library Verification type stays unchanged. The output excerpt is escaped and
+// truncated like every other free-text field.
+func writeReproducedBlock(b *bytes.Buffer, e *reconcile.EvidenceExec) {
+	fmt.Fprintf(b, "  - ✅ Reproduced: `%s` (exit %d)\n", esc(e.Command), e.ExitCode)
+	if strings.TrimSpace(e.OutputExcerpt) != "" {
+		fmt.Fprintf(b, "    - Output: %s\n", escTrunc(e.OutputExcerpt))
+	}
+}
+
 func writeSkepticBlock(b *bytes.Buffer, v *reclib.Verification) {
 	annotation := ""
 	if canonicalize(v.Verdict) == canonicalize(reclib.VerdictUnverifiable) {

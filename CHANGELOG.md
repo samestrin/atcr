@@ -1,3 +1,19 @@
+## [11.0.0] - 2026-06-25
+
+### Added
+
+- Opt-in `--exec` execution-reproduction mode (`atcr verify --exec`, `atcr review --verify --exec`): lets adversarial skeptics reproduce findings by running tests/scripts inside a container-isolated sandbox. Off by default; refuses to run without a configured `[sandbox]` block in `.atcr/config.yaml` that passes a preflight check
+- `internal/sandbox`: a pluggable, Docker-backed executor that runs every command in an ephemeral container with no network, a read-only snapshot mounted at `/work`, all Linux capabilities dropped, `no-new-privileges`, a non-root user, memory/CPU/PID caps, a writable `/scratch` tmpfs, a per-run timeout, and a bound on concurrent container spawns
+- `run_tests` / `run_script` tools, offered only to execution-enabled agents (the read-only tool set is unchanged for every other agent)
+- `evidence_exec` block on findings (`command`, `exit_code`, `output_excerpt`) and a "Reproduced" badge in `report.md`; a reproduced finding is `VERIFIED` by the existing confidence/gate rules. Determinism is enforced by a two-run rule so flaky tests cannot poison evidence
+- `docs/execution.md` documenting the opt-in flow, sandbox guarantees, and security posture
+
+### Notes
+
+- This release ships the execution building blocks (sandbox, tools, `--exec` gate, `evidence_exec` data model, two-run determinism, badge renderer), all tested. The final wiring that automatically stamps `evidence_exec` from a live skeptic reproduction is gated behind the Epic 11.0 security review, since it executes untrusted, model-authored code
+
+*Shipped via /execute-epic (epic 11.0)*
+
 ## [Technical Debt] - 2026-06-25
 
 ### Fixed

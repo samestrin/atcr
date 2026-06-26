@@ -119,6 +119,20 @@ func TestVerifyCmd_Exists(t *testing.T) {
 	require.Contains(t, help, "--fresh")
 	require.Contains(t, help, "--thorough")
 	require.Contains(t, help, "--min-severity")
+	require.Contains(t, help, "--exec")
+}
+
+// TestVerifyCmd_ExecRefusesWithoutSandbox: `verify --exec` against a project with
+// no [sandbox] block hard-errors (exit 2) without running anything (Epic 11.0 SC-1).
+func TestVerifyCmd_ExecRefusesWithoutSandbox(t *testing.T) {
+	isolate(t)
+	writeVerifyRegistry(t) // writes .atcr/config.yaml with NO sandbox block
+	id := verifyFixture(t, "2026-06-25_exec", []reconcile.JSONFinding{
+		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"bruce"}},
+	})
+	code, out := execCmdCapture(t, "verify", id, "--exec")
+	require.Equal(t, 2, code, "--exec without a sandbox block must exit 2")
+	require.Contains(t, out, "sandbox")
 }
 
 // TestVerifyCmd_MissingReconciledFindings: a review without reconciled/findings.json

@@ -20,6 +20,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -57,6 +58,15 @@ type Options struct {
 	// inside ExecutorConfig.EffectiveExecutorTimeoutSecs, so a caller that cannot
 	// resolve Settings (e.g. the MCP path) still gets a bounded executor call.
 	SharedTimeoutSecs int
+
+	// Execution reproduction (Epic 11.0). When ExecBackend is non-nil, skeptics
+	// are offered the run_tests/run_script tools (wired into the dispatcher) and
+	// can prove a finding by reproducing it in the sandbox. nil keeps the
+	// read-only contract (the default). Resolved by ResolveExecBackend behind the
+	// `--exec` gate; the pipeline never enables execution implicitly.
+	ExecBackend sandbox.Backend
+	ExecTestCmd []string
+	ExecTimeout time.Duration
 }
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
@@ -101,7 +111,7 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
 	// of repoRoot at the review's head SHA. Built lazily (only when a skeptic will
 	// run) so a no-work or no-eligible-skeptic verify does no git/provider I/O.
 	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
-		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir)
+		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir, opts.ExecBackend, opts.ExecTestCmd, opts.ExecTimeout)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -229,7 +239,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		go func(idx int, jb job) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			ver, vr := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp)
+			ver, vr := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp, opts.ExecBackend != nil)
 			jobResults[idx] = jobResult{ver: ver, vr: vr}
 		}(i, j)
 	}
@@ -426,7 +436,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 // unavailable it records unverifiable/tool_harness_unavailable; otherwise it
 // drives every selected skeptic through invokeSkeptic and aggregates the votes.
 // It never returns an error — failure isolation is the stage's contract.
-func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher) (*reclib.Verification, VerificationResult) {
+func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, VerificationResult) {
 	base := VerificationResult{File: f.File, Line: f.Line, Problem: f.Problem}
 	// Initialize TrippedBudgets to empty slice to avoid null in JSON output.
 	base.TrippedBudgets = []string{}
@@ -447,7 +457,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	perSkeptic := make([]*reclib.Verification, 0, len(skeptics))
 	perTripped := make([][]string, 0, len(skeptics))
 	for _, sk := range skeptics {
-		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
+		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp, exec)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
 			// none can occur here, but log it so the impossible case is visible if it
@@ -568,7 +578,11 @@ func hasTrustedVerdict(v *reclib.Verification) bool {
 // dispatcher with the default limits. The returned cleanup removes the snapshot;
 // the caller defers it. Any failure (missing/headless manifest, snapshot or jail
 // error) is returned so the caller can degrade affected findings to unverifiable.
-func buildDispatcher(repoRoot, reviewDir string) (Dispatcher, func(), error) {
+// When execBackend is non-nil (Epic 11.0, `--exec`), the dispatcher additionally
+// gets the run_tests/run_script execution tools wired to that backend, with the
+// snapshot (jail root) mounted read-only into the sandbox. Without it the
+// dispatcher stays exactly the three read-only tools.
+func buildDispatcher(repoRoot, reviewDir string, execBackend sandbox.Backend, execTestCmd []string, execTimeout time.Duration) (Dispatcher, func(), error) {
 	head, err := readManifestHead(reviewDir)
 	if err != nil {
 		return nil, nil, err
@@ -585,7 +599,11 @@ func buildDispatcher(repoRoot, reviewDir string) (Dispatcher, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	return tools.NewDispatcher(jail, tools.DefaultLimits()), cleanup, nil
+	disp := tools.NewDispatcher(jail, tools.DefaultLimits())
+	if execBackend != nil {
+		disp.EnableExecution(execBackend, execTestCmd, execTimeout)
+	}
+	return disp, cleanup, nil
 }
 
 // readManifestHead reads reviewDir/manifest.json and returns its head SHA. A
