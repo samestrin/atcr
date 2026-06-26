@@ -78,6 +78,12 @@ var errCheckpointSuiteMismatch = errors.New("checkpoint suite identity changed s
 // different subsets of cases — mirroring fanout's ErrRosterChanged contract.
 var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed since it was written")
 
+// errCheckpointCorrupt reports that a checkpoint file parsed as JSON but failed
+// internal self-consistency checks (duplicate indices, out-of-range indices, or
+// empty case IDs). Resume fails closed so a hand-edited or damaged checkpoint
+// cannot silently drop completed cases.
+var errCheckpointCorrupt = errors.New("checkpoint is corrupt")
+
 // loadCheckpoint reads and parses a checkpoint file. A missing file returns
 // (nil, nil): it is the legitimate first-run case (start fresh), not an error. A
 // present-but-corrupt file surfaces a parse error rather than a guessed empty
@@ -94,7 +100,30 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 	if err := json.Unmarshal(data, &cp); err != nil {
 		return nil, fmt.Errorf("checkpoint %s is corrupt: %w", path, err)
 	}
+	if err := validateCheckpointIntegrity(&cp); err != nil {
+		return nil, fmt.Errorf("checkpoint %s is corrupt: %w", path, err)
+	}
 	return &cp, nil
+}
+
+// validateCheckpointIntegrity rejects malformed-but-parseable checkpoints before
+// they can silently corrupt replay. Duplicate indices are particularly dangerous:
+// doneIndex would last-write-win, dropping the earlier completed case.
+func validateCheckpointIntegrity(cp *runCheckpoint) error {
+	seen := make(map[int]struct{}, len(cp.Cases))
+	for i, c := range cp.Cases {
+		if c.Index < 0 {
+			return fmt.Errorf("%w: case %d has negative index %d", errCheckpointCorrupt, i, c.Index)
+		}
+		if c.CaseID == "" {
+			return fmt.Errorf("%w: case %d has empty case_id", errCheckpointCorrupt, i)
+		}
+		if _, ok := seen[c.Index]; ok {
+			return fmt.Errorf("%w: duplicate case index %d", errCheckpointCorrupt, c.Index)
+		}
+		seen[c.Index] = struct{}{}
+	}
+	return nil
 }
 
 // saveCheckpoint atomically writes the checkpoint to path (temp file + rename, via

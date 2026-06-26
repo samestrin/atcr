@@ -149,6 +149,7 @@ func TestLoadCheckpoint_IntegrityErrors(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, data, 0o600))
 			_, err = loadCheckpoint(path)
 			require.Error(t, err, "checkpoint with %s must be rejected", tc.name)
+			assert.ErrorIs(t, err, errCheckpointCorrupt)
 		})
 	}
 }
