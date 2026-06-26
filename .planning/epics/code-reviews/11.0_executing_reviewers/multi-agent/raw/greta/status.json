@@ -1,0 +1,6 @@
+{
+  "agent_name": "greta",
+  "model": "openai/qwen-3.6-plus",
+  "status": "ok",
+  "duration_ms": 140889
+}

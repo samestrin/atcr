@@ -1,0 +1,2 @@
+
+HIGH|internal/registry/sandbox.go:52|Undefined variable MaxTimeoutSecs in SandboxConfig.Validate|Define MaxTimeoutSecs as a constant|correctness|5|if s.TimeoutSecs != nil && (*s.TimeoutSecs <= 0 || *s.TimeoutSecs > MaxTimeoutSecs)|reviewer

@@ -1,0 +1,3 @@
+HIGH|internal/report/render.go:179|Reproduced badge shown for non-reproduced findings|Check verdict is confirmed before rendering badge|correctness|10|EvidenceExec attached even when exit=0 or verdict=unverifiable; badge says Reproduced incorrectly|bruce
+MEDIUM|internal/sandbox/docker.go:195|Preflight trivial container omits resource cap flags|Include --memory, --cpus, --pids-limit in preflight run|correctness|15|preflight run lacks --memory/--cpus/--pids-limit; invalid values pass preflight but fail on real runs|bruce
+MEDIUM|internal/tools/exec_tools.go:108|run_script timeout not capped to operator default|Cap user-specified timeout to execTimeout|security|5|model can set arbitrary timeout; e.g. 86400s keeps container running far beyond operator intent|bruce

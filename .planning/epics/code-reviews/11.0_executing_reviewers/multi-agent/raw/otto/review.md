@@ -1,0 +1,1 @@
+MEDIUM|internal/sandbox/docker.go:185|Potential shell injection via Script|Use a more secure way to pass scripts to the container|security|30|Script is passed via Stdin to `/bin/sh -s`, but if the shell image is compromised or the script contains specific escape sequences, it could be risky|otto

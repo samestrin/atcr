@@ -1,0 +1,6 @@
+{
+  "agent_name": "mira",
+  "model": "minimax-m3-mira",
+  "status": "ok",
+  "duration_ms": 285586
+}

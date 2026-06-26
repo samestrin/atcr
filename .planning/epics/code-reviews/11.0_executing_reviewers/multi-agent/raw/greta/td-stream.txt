@@ -1,0 +1,1 @@
+MEDIUM|internal/tools/exec_tools.go:82|Argument injection via unvalidated 'target' parameter|Validate target does not start with '-' or prepend '--'|security|10|cmd = append(cmd, t) passes LLM input directly to test runner|greta
