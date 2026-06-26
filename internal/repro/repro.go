@@ -88,23 +88,8 @@ func Stamp(f *reconcile.JSONFinding, verdict string, ev *reconcile.EvidenceExec)
 		f.Verification = &reclib.Verification{Verdict: verdict, Skeptic: ReproSkeptic}
 		return
 	}
-	if verdictRank(verdict) > verdictRank(f.Verification.Verdict) {
+	if reconcile.VerdictRank(verdict) > reconcile.VerdictRank(f.Verification.Verdict) {
 		f.Verification.Verdict = verdict
 		f.Verification.Skeptic = ReproSkeptic
-	}
-}
-
-// verdictRank mirrors internal/reconcile/merge.go precedence so Stamp never
-// downgrades a stronger prior verdict (confirmed > unverifiable > refuted).
-func verdictRank(verdict string) int {
-	switch verdict {
-	case reclib.VerdictConfirmed:
-		return 3
-	case reclib.VerdictUnverifiable:
-		return 2
-	case reclib.VerdictRefuted:
-		return 1
-	default:
-		return 0
 	}
 }
