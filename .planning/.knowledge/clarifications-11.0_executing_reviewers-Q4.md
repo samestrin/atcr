@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-25-b1bfeb
-question: "How should a new execution-stage evidence block be added to the findings JSON schema, and where does it land in the codebase?"
-created: 2026-06-25
+id: mem-2026-06-26-bc8f54
+question: "Should renderCommand embed the raw script body in evidence_exec.command, or redact/hash/truncate it?"
+created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [internal/reconcile/emit.go, reconcile/finding.go, reconcile/verification.go, reconcile/confidence.go, internal/reconcile/gate.go, internal/report/render.go, internal/verify/emit_findings.go]
-tags: [clarifications, epic-11.0_executing_reviewers, architecture, schema, findings-json, evidence-exec, JSONFinding, omitempty]
+files: [internal/sandbox/docker.go]
+tags: [clarifications, epic-11.0_executing_reviewers, design-intent, evidence_exec, command, script, truncation]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# How should a new execution-stage evidence block be added to 
+# Should renderCommand embed the raw script body in evidence_e
 
 ## Decision
 
-Use the same additive/omitempty pattern every prior epic has used. Add a *EvidenceExec struct field to JSONFinding in internal/reconcile/emit.go:62 with json:"evidence_exec,omitempty". The struct fields are: command string, exit_code int, output_excerpt string. Do NOT add to the public library reconcile/finding.go or reconcile/verification.go — ATCR-specific concerns all live in JSONFinding only (see PathValid, FixWarning, cluster_id as precedent). The "VERIFIED by definition" semantics already work: ConfidenceForVerdict at reconcile/confidence.go:18 promotes VerdictConfirmed to VERIFIED; the executor stamps both Verification.Verdict=confirmed,skeptic="repro" and the EvidenceExec block. No new confidence tier or gate predicate needed; IsFailing at internal/reconcile/gate.go:96 handles VERIFIED correctly today. Report badge ("Reproduced") = new branch in writeSkepticBlock at internal/report/render.go:365, keyed on f.EvidenceExec != nil. Three open design choices: (a) embedded vs top-level struct placement; (b) label vs enum for badge (strongly prefer label — new enum value changes the library Verification type); (c) output_excerpt length cap location.
+Leave as-is. The script is operator-authored — no confidentiality concern. T5 explicitly states the purpose is to show the operator the command, exit code, and output excerpt. Truncation applies only to OutputExcerpt per T2 (not to the Command field). docker.go:138-143 implementation is correct. The Command field is always short enough that a separate budget is unnecessary.
 
 ## Rationale
 
@@ -27,10 +27,4 @@ Use the same additive/omitempty pattern every prior epic has used. Add a *Eviden
 
 ## Code Reference
 
-- internal/reconcile/emit.go
-- reconcile/finding.go
-- reconcile/verification.go
-- reconcile/confidence.go
-- internal/reconcile/gate.go
-- internal/report/render.go
-- internal/verify/emit_findings.go
+- internal/sandbox/docker.go

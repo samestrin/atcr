@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-4d70ba
-question: "What is the concrete fix for Docker runtime exit codes (125+, 128+N) being masked as app exit in the sandbox backend?"
+id: mem-2026-06-26-98aa2b
+question: "What host-resource source should be used to validate Memory/CPUs/PidsLimit caps on macOS Docker (which runs in a VM)?"
 created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [internal/sandbox/docker.go, internal/sandbox/sandbox.go]
-tags: [clarifications, epic-11.0_executing_reviewers, implementation, docker, sandbox, exit-codes, signal-death]
+files: [internal/sandbox/docker.go, internal/sandbox/preflight.go]
+tags: [clarifications, epic-11.0_executing_reviewers, implementation, docker, sandbox, platform, macos, preflight]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# What is the concrete fix for Docker runtime exit codes (125+
+# What host-resource source should be used to validate Memory/
 
 ## Decision
 
-Extend the existing 125-127 guard at docker.go:203 to `ec >= 125`, treating all 128+N signal-death codes as backend faults. The timeout path (DeadlineExceeded → 137) is already caught first at docker.go:189-195, so any 137 that reaches the ExitError branch is an OOM-kill or daemon kill. In this hardened sandbox (--cap-drop ALL, --user 65534:65534, --network none), PID 1 cannot receive SIGKILL from the workload itself; every 128+N exit originates from the Docker daemon or kernel. Fix: change `if ec == 125 || ec == 126 || ec == 127` to `if ec >= 125`, and split the error message — add `if ec >= 128 { return res, fmt.Errorf("docker run: container killed by signal %d (OOM or daemon kill, exit %d): %w", ec-128, ec, runErr) }` before the 125-127 branch. The Backend.Run contract (sandbox.go:92-94) states err is reserved for backend faults; signal-death codes (128+N) belong in the error return, not in RunResult.ExitCode.
+Use docker info (MemTotal and NCPU) as the sole resource-validation source. On macOS, Docker runs inside a Linux VM (Docker Desktop or Colima), so /proc/meminfo and cgroup limits reflect VM allocation — but that VM allocation is exactly the ceiling the daemon can enforce. docker info returns the same VM-scoped numbers the daemon uses when enforcing --memory and --cpus, making it the only authoritative, cross-platform, daemon-aware source. Piggyback on the already-planned docker info call in Preflight() — parse MemTotal and NCPU from docker info --format '{{json .}}' and validate cfg.Memory <= MemTotal and cfg.CPUs <= NCPU.
 
 ## Rationale
 
@@ -28,4 +28,4 @@ Extend the existing 125-127 guard at docker.go:203 to `ec >= 125`, treating all 
 ## Code Reference
 
 - internal/sandbox/docker.go
-- internal/sandbox/sandbox.go
+- internal/sandbox/preflight.go

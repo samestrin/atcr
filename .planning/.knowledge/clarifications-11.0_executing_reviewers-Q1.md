@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-423367
-question: "What is the intended scope for unifying verdictRank with merge.go's precedence in the repro package?"
+id: mem-2026-06-26-c0f1f9
+question: "Should the repro package write-back (repro.Stamp) be wired into verify/pipeline.go, or deleted as out-of-scope?"
 created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [internal/repro/repro.go, internal/reconcile/merge.go]
-tags: [clarifications, epic-11.0_executing_reviewers, architecture, reconcile, repro, verdict-rank]
+files: [internal/repro/repro.go, internal/verify/invoke.go, internal/verify/pipeline.go, internal/reconcile/emit.go, internal/report/render.go]
+tags: [clarifications, epic-11.0_executing_reviewers, architecture, repro, evidence_exec, pipeline, SC-3, SC-4]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# What is the intended scope for unifying verdictRank with mer
+# Should the repro package write-back (repro.Stamp) be wired i
 
 ## Decision
 
-Export verdictRank as VerdictRank from internal/reconcile/merge.go — no new shared-constants package is needed. The repro package already imports internal/reconcile (repro.go:14), so the callers are one import hop apart. Two local copies currently diverge: merge.go:168 normalizes with strings.ToLower(strings.TrimSpace(verdict)) before the switch; repro.go:99 does not. Exporting from merge.go:167 unifies both call sites under the normalizing version. A separate constants package would duplicate what already lives in the public reclib library and is explicitly out of scope per the epic's "public library types NOT touched" constraint.
+Wire in — SC-3 and SC-4 are explicitly in-scope. invokeSkeptic (invoke.go:50) must be extended to return *reconcile.EvidenceExec; verifyFinding (pipeline.go:439) collects it per-skeptic; the runVerify post-loop (pipeline.go:261-269) calls repro.Stamp(findings[i], verdict, ev) when ev is non-nil. The repro package, emit.go schema, and render.go consumer are all complete — the only missing link is the EvidenceExec threading from invokeSkeptic back to the post-loop. Deleting would break the 'Reproduced' badge path (render.go:186) and schema field (emit.go:130) already shipped.
 
 ## Rationale
 
@@ -28,4 +28,7 @@ Export verdictRank as VerdictRank from internal/reconcile/merge.go — no new sh
 ## Code Reference
 
 - internal/repro/repro.go
-- internal/reconcile/merge.go
+- internal/verify/invoke.go
+- internal/verify/pipeline.go
+- internal/reconcile/emit.go
+- internal/report/render.go

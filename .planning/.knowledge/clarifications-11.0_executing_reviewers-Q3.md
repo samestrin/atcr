@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-802486
-question: "How should resolveExec be ordered relative to gitrange.Resolve and LoadReviewConfig in review.go, and should it accept the already-loaded project config?"
+id: mem-2026-06-26-ba2499
+question: "Should /scratch tmpfs use noexec or exec in the Docker sandbox, given Go run_tests writes and executes binaries from GOCACHE/GOTMPDIR there?"
 created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [cmd/atcr/review.go, cmd/atcr/verify.go, internal/fanout/review.go]
-tags: [clarifications, epic-11.0_executing_reviewers, implementation, review-cmd, resolveExec, config-loading]
+files: [internal/sandbox/docker.go]
+tags: [clarifications, epic-11.0_executing_reviewers, security, docker, sandbox, tmpfs, go-test]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# How should resolveExec be ordered relative to gitrange.Resol
+# Should /scratch tmpfs use noexec or exec in the Docker sandb
 
 ## Decision
 
-Move resolveExec to after LoadReviewConfig in review.go RunE, and refactor it to accept the already-loaded cfg.Project (*registry.ProjectConfig) instead of calling registry.LoadProjectConfig internally. gitrange.Resolve and LoadReviewConfig are fast local git/disk reads (not API calls), so placing resolveExec after them still achieves fail-fast before the expensive fanout. This eliminates the double-load of ProjectConfig (once inside resolveExec at verify.go:49, once inside LoadReviewConfig at fanout/review.go:120) and makes review.go consistent with the ordering already established in verify.go:77-82.
+Already resolved: docker.go:114 mounts /scratch with rw,exec. The decision was that noexec provides no meaningful defense given run_script already pipes arbitrary sh into the container — the actual containment comes from --network none, --cap-drop ALL, --security-opt no-new-privileges, and a read-only rootfs. A separate exec-enabled cache mount would add unnecessary complexity without a security gain. Document the rationale in a comment at that line.
 
 ## Rationale
 
@@ -27,6 +27,4 @@ Move resolveExec to after LoadReviewConfig in review.go RunE, and refactor it to
 
 ## Code Reference
 
-- cmd/atcr/review.go
-- cmd/atcr/verify.go
-- internal/fanout/review.go
+- internal/sandbox/docker.go
