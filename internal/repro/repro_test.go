@@ -184,3 +184,13 @@ func TestReproduce_EndToEnd_PlantedBug(t *testing.T) {
 	assert.Equal(t, "confirmed", verif["verdict"])
 	assert.Equal(t, "repro", verif["skeptic"])
 }
+
+func TestVerdictRank_CanonicalSourceInReconcile(t *testing.T) {
+	// The repro package must share the same rank function as the merge package so
+	// the two precedence orderings cannot drift. Exporting it from reconcile makes
+	// the dependency explicit and testable.
+	assert.Equal(t, 3, reconcile.VerdictRank(reclib.VerdictConfirmed))
+	assert.Equal(t, 2, reconcile.VerdictRank(reclib.VerdictUnverifiable))
+	assert.Equal(t, 1, reconcile.VerdictRank(reclib.VerdictRefuted))
+	assert.Equal(t, 0, reconcile.VerdictRank("unknown"))
+}
