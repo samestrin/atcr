@@ -76,10 +76,22 @@ func runTestsHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessag
 	}
 	cmd := append([]string(nil), d.execTestCmd...)
 	if t := strings.TrimSpace(a.Target); t != "" {
+		// Reject a flag-like target: appended verbatim to the test command, a value
+		// beginning with '-' would be parsed as an option (argument injection) rather
+		// than the package/path scope the parameter is documented to be.
+		if strings.HasPrefix(t, "-") {
+			return ToolResult{}, toolErrf("run_tests: target %q must not start with '-'", t)
+		}
 		cmd = append(cmd, t)
 	}
 	return d.runInSandbox(ctx, sandbox.RunSpec{Command: cmd, SnapshotDir: d.root, Timeout: d.execTimeout})
 }
+
+// maxScriptBytes caps the size of a model-supplied run_script body. It mirrors
+// the sandbox's default MaxOutputBytes (64 KiB): a reproduction script has no
+// legitimate need to be larger, and bounding it before dispatch keeps an
+// oversized body from being buffered host-side.
+const maxScriptBytes = 64 * 1024
 
 type runScriptArgs struct {
 	Content string `json:"content"`
@@ -93,6 +105,11 @@ func runScriptHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessa
 	}
 	if strings.TrimSpace(a.Content) == "" {
 		return ToolResult{}, toolErrf("run_script: content is required")
+	}
+	// Bound the script size before it ever reaches the sandbox: an unbounded
+	// model-supplied body is buffered host-side and could exhaust host memory.
+	if len(a.Content) > maxScriptBytes {
+		return ToolResult{}, toolErrf("run_script: content too large (%d bytes, max %d)", len(a.Content), maxScriptBytes)
 	}
 	timeout := d.execTimeout
 	if a.Timeout > 0 {
