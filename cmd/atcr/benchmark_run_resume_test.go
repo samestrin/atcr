@@ -167,9 +167,11 @@ func TestExecuteBenchmarkRun_PartialResumeExecutesOnlyRemainder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, int(resume.calls.Load()), "only the one unscored case's single agent is executed; case 0 is replayed")
 
-	jBaseline, _ := json.Marshal(baseline)
-	jResume, _ := json.Marshal(rr)
-	assert.JSONEq(t, string(jBaseline), string(jResume), "partial resume is byte-identical to uninterrupted (AC3)")
+	jBaseline, err := json.Marshal(baseline)
+	require.NoError(t, err)
+	jResume, err := json.Marshal(rr)
+	require.NoError(t, err)
+	assert.Equal(t, string(jBaseline), string(jResume), "partial resume is byte-identical to uninterrupted (AC3)")
 }
 
 // AC4: a checkpoint whose recorded suite identity differs from the current suite is
