@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,10 +20,10 @@ import (
 // countingCompleter wraps the stub's single-finding behavior and counts every
 // Complete call, so a resumed run can be asserted to make ZERO LLM calls for
 // already-checkpointed cases (AC2).
-type countingCompleter struct{ calls int }
+type countingCompleter struct{ calls atomic.Int32 }
 
 func (c *countingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
-	c.calls++
+	c.calls.Add(1)
 	return stubCompleter{}.Complete(ctx, inv)
 }
 
@@ -127,13 +128,13 @@ func TestExecuteBenchmarkRun_FullResumeIsZeroCostAndIdentical(t *testing.T) {
 	first := &countingCompleter{}
 	rr1, err := executeBenchmarkRun(context.Background(), cfg, first, suiteValidPath, gen, path)
 	require.NoError(t, err)
-	assert.Greater(t, first.calls, 0, "the first run actually executes the cases")
+	assert.Greater(t, int(first.calls.Load()), 0, "the first run actually executes the cases")
 
 	// Second run resumes entirely from the checkpoint.
 	second := &countingCompleter{}
 	rr2, err := executeBenchmarkRun(context.Background(), cfg, second, suiteValidPath, gen, path)
 	require.NoError(t, err)
-	assert.Equal(t, 0, second.calls, "a fully-checkpointed re-run makes zero Completer calls (AC2)")
+	assert.Equal(t, 0, int(second.calls.Load()), "a fully-checkpointed re-run makes zero Completer calls (AC2)")
 
 	jBaseline, _ := json.Marshal(baseline)
 	j1, _ := json.Marshal(rr1)
@@ -161,7 +162,7 @@ func TestExecuteBenchmarkRun_PartialResumeExecutesOnlyRemainder(t *testing.T) {
 	resume := &countingCompleter{}
 	rr, err := executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
 	require.NoError(t, err)
-	assert.Equal(t, 1, resume.calls, "only the one unscored case's single agent is executed; case 0 is replayed")
+	assert.Equal(t, 1, int(resume.calls.Load()), "only the one unscored case's single agent is executed; case 0 is replayed")
 
 	jBaseline, _ := json.Marshal(baseline)
 	jResume, _ := json.Marshal(rr)
@@ -211,7 +212,7 @@ func TestExecuteBenchmarkRun_RejectsRosterMembershipDrift(t *testing.T) {
 	_, err = executeBenchmarkRun(context.Background(), cfg2, resume, suiteValidPath, gen, path)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errCheckpointRosterMismatch, "a changed roster aborts the resume")
-	assert.Equal(t, 0, resume.calls, "the roster guard fires before any review executes")
+	assert.Equal(t, 0, int(resume.calls.Load()), "the roster guard fires before any review executes")
 }
 
 // AC4 (roster guard): a same-name reviewer whose configured model changed is also a
@@ -290,5 +291,5 @@ func TestExecuteBenchmarkRun_ResumeReportsReplayedCount(t *testing.T) {
 	out := buf.String()
 	assert.Contains(t, out, "Resuming")
 	assert.Contains(t, out, "replayed 2")
-	assert.Contains(t, out, "remaining 0")
+	assert.Contains(t, out, "0 remaining to execute")
 }
