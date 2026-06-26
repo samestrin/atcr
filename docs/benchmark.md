@@ -143,8 +143,9 @@ Category matching is case-insensitive and whitespace-trimmed on both sides.
 
 `run` stamps `generated_at` from the wall clock, but the **scoring is
 deterministic**: two runs over the same suite and the same transcript (reviewer
-outputs) produce a byte-identical run-result. Set the same `generated_at` (e.g. by
-reusing a captured run-result) to compare two runs field-for-field.
+outputs, usage, and latency) produce byte-identical scored metrics. Set the same `generated_at` (e.g.
+by reusing a captured run-result) to compare two runs field-for-field; otherwise,
+a resumed run on a later day differs only in `generated_at`.
 
 Behavior:
 - Invalid suite (missing `suite.json`, failing validation, missing diff) → error.

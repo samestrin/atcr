@@ -138,3 +138,13 @@ func TestBenchmarkExport_RequiresInput(t *testing.T) {
 	code, _ := execCmdCapture(t, "benchmark", "export")
 	require.NotEqual(t, 0, code, "export without --in is a usage error")
 }
+
+// The --checkpoint flag routes through writeExportFile, which replaces a symlink
+// at the target path rather than following it. That behavior must be documented
+// in the flag help for parity with --out/--output.
+func TestBenchmarkRunCmd_CheckpointHelpMentionsSymlink(t *testing.T) {
+	cmd := newBenchmarkRunCmd()
+	f := cmd.Flags().Lookup("checkpoint")
+	require.NotNil(t, f, "benchmark run exposes a --checkpoint flag")
+	require.Contains(t, f.Usage, "symlink", "checkpoint help must document symlink replace-not-follow behavior")
+}
