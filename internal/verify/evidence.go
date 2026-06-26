@@ -3,6 +3,8 @@ package verify
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/tools"
@@ -38,6 +40,34 @@ func (r *execEvidenceRecorder) Execute(ctx context.Context, name string, args js
 // It returns nil when the content does not match that shape (e.g. a tool error),
 // so a malformed or non-exec result simply yields no evidence.
 func parseExecEvidence(content string) *reconcile.EvidenceExec {
-	// Stubbed: real parsing lands in the GREEN step.
-	return nil
+	if !strings.HasPrefix(content, "$ ") {
+		return nil
+	}
+	// The command may span multiple lines: a run_script body renders as the
+	// heredoc `/bin/sh -s <<'EOF'\n<script>\nEOF`. Anchor on the first line that is
+	// exactly `exit code: <int>[ (timed out)]`; everything before it (minus the
+	// leading "$ ") is the command, everything after is the captured output.
+	lines := strings.Split(content, "\n")
+	exitIdx, code := -1, 0
+	for i := 1; i < len(lines); i++ {
+		if !strings.HasPrefix(lines[i], "exit code: ") {
+			continue
+		}
+		field := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(lines[i], "exit code: "), " (timed out)"))
+		n, err := strconv.Atoi(field)
+		if err != nil {
+			continue
+		}
+		exitIdx, code = i, n
+		break
+	}
+	if exitIdx == -1 {
+		return nil
+	}
+	cmdLines := append([]string{strings.TrimPrefix(lines[0], "$ ")}, lines[1:exitIdx]...)
+	return &reconcile.EvidenceExec{
+		Command:       strings.Join(cmdLines, "\n"),
+		ExitCode:      code,
+		OutputExcerpt: strings.Join(lines[exitIdx+1:], "\n"),
+	}
 }
