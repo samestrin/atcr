@@ -122,6 +122,26 @@ func (d *fakeDispatcher) count() int {
 	return d.calls
 }
 
+// sequencedDispatcher returns results in order (the last result repeats once the
+// sequence is exhausted), so a test can drive the skeptic's in-loop repro and the
+// T3 determinism re-runs with distinct exit codes — e.g. a flaky reproduction.
+type sequencedDispatcher struct {
+	mu      sync.Mutex
+	results []tools.ToolResult
+	calls   int
+}
+
+func (d *sequencedDispatcher) Execute(_ context.Context, _ string, _ json.RawMessage) (tools.ToolResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	i := d.calls
+	if i >= len(d.results) {
+		i = len(d.results) - 1
+	}
+	d.calls++
+	return d.results[i], nil
+}
+
 func (d *fakeDispatcher) toolNames() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()

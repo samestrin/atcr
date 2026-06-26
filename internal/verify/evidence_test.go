@@ -82,6 +82,32 @@ func TestVerifyFinding_ExecEvidenceStampedOnConfirm(t *testing.T) {
 	assert.Equal(t, verdictConfirmed, f.Verification.Verdict)
 }
 
+// TestVerifyFinding_ExecEvidenceRequiresDeterministicRepro is the live T3 gate:
+// a skeptic reproduces once (exit 1 → confirmed), but the two-run determinism
+// re-run is flaky (exit 1 then exit 0), so no execution evidence may be surfaced
+// — a non-deterministic reproduction must not earn a Reproduced badge.
+func TestVerifyFinding_ExecEvidenceRequiresDeterministicRepro(t *testing.T) {
+	t.Parallel()
+	fail := "$ /bin/sh -s <<'EOF'\n./repro.sh\nEOF\nexit code: 1\nassertion failed\n"
+	pass := "$ /bin/sh -s <<'EOF'\n./repro.sh\nEOF\nexit code: 0\nok\n"
+	cc := &fakeChatCompleter{turns: []chatTurn{
+		toolCallTurn("run_script"),
+		{content: `{"verdict":"confirmed","reasoning":"reproduced once"}`},
+	}}
+	// call 1 = skeptic's in-loop repro (fail); calls 2 & 3 = determinism re-runs
+	// (fail, then pass) → exit codes disagree → unverifiable → no evidence.
+	disp := &sequencedDispatcher{results: []tools.ToolResult{
+		{Content: fail, OriginalBytes: len(fail)},
+		{Content: fail, OriginalBytes: len(fail)},
+		{Content: pass, OriginalBytes: len(pass)},
+	}}
+	f := reconcile.JSONFinding{File: "calc.go", Line: 10, Problem: "off-by-one"}
+
+	ver, _, ev := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, cc, disp, true)
+	require.Equal(t, verdictConfirmed, ver.Verdict, "the skeptic's own vote still confirms")
+	assert.Nil(t, ev, "a non-deterministic repro must not surface execution evidence")
+}
+
 // TestVerifyFinding_NoEvidenceWhenRefuted verifies evidence is not surfaced for a
 // non-confirmed verdict even if a tool ran with a non-zero exit.
 func TestVerifyFinding_NoEvidenceWhenRefuted(t *testing.T) {
