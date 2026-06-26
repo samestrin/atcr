@@ -156,6 +156,16 @@ func TestLoadCheckpoint_IntegrityErrors(t *testing.T) {
 	}
 }
 
+// A checkpoint that records no reviewer roster (the field is absent -> nil; e.g.
+// written before the roster guard existed or hand-edited) cannot prove the panel
+// is unchanged. Resume must fail closed rather than treat a missing recorded roster
+// as a match (AC4 fail-closed) — sortedCopy(nil) would otherwise compare equal to
+// an empty configured roster.
+func TestValidateCheckpointRoster_NilRecordedRosterFailsClosed(t *testing.T) {
+	err := validateCheckpointRoster(&runCheckpoint{Roster: nil}, nil)
+	require.ErrorIs(t, err, errCheckpointRosterMismatch)
+}
+
 // saveCheckpoint must encode the checkpoint as compact JSON so the on-disk file
 // is small and fast to rewrite on every completed case.
 func TestSaveCheckpoint_WritesCompactJSON(t *testing.T) {

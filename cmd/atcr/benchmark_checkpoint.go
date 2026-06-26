@@ -204,6 +204,13 @@ func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string
 // irrelevant. Any added, removed, or model-changed reviewer returns
 // errCheckpointRosterMismatch so the caller aborts rather than mixing panels.
 func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
+	// A checkpoint with no recorded roster (the field is absent -> nil; e.g. one
+	// written before the roster guard existed, or hand-edited) cannot prove the
+	// panel is unchanged. Fail closed rather than let sortedCopy(nil) compare equal
+	// to an empty configured roster and silently resume a changed panel (AC4).
+	if cp.Roster == nil {
+		return fmt.Errorf("%w: checkpoint records no reviewer roster; remove the checkpoint to start fresh", errCheckpointRosterMismatch)
+	}
 	recorded := sortedCopy(cp.Roster)
 	current := sortedCopy(roster)
 	if !equalStrings(recorded, current) {
