@@ -110,6 +110,13 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 }
 
 func (l *toolLoop) run(ctx context.Context) Result {
+	// Carry this agent's exec eligibility into every dispatch the loop makes. The
+	// dispatcher's structural gate (Epic 11.1) admits run_tests/run_script only for
+	// an exec-enabled agent and refuses them for every read-only agent, even when
+	// the whole pool shares one exec-wired dispatcher. wireToolDefs(a.Exec) already
+	// gates the OFFERING; this gates the DISPATCH so the boundary is structural,
+	// not merely advisory.
+	ctx = tools.WithExecEligibility(ctx, l.agent.Exec)
 	for {
 		// Honor cancellation/deadline before each turn so a tripped clock halts
 		// the loop with the partial results gathered so far rather than firing
