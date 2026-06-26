@@ -328,6 +328,9 @@ func runReview(cmd *cobra.Command, _ []string) error {
 				ExecBackend:       execBackend,
 				ExecTestCmd:       execTestCmd,
 				ExecTimeout:       execTimeout,
+				// Scrub the same review secrets the log sink redacts from reproduced
+				// exec evidence before it is persisted into findings.json (Epic 11.0).
+				Redactor: log.NewRedactor(resolveRedactRoot(ctx, prep.Repo), secrets...),
 			})
 			if verr != nil {
 				return verifyFailureError(verr)

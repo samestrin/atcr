@@ -68,6 +68,13 @@ type Options struct {
 	ExecBackend sandbox.Backend
 	ExecTestCmd []string
 	ExecTimeout time.Duration
+
+	// Redactor scrubs configured secrets (and relativizes repo paths) from a
+	// reproduced run's captured output before it is persisted onto a finding's
+	// evidence_exec block. Exec evidence reaches findings.json as data, not a log
+	// line, so it bypasses the log sink's redactor (Epic 4.9) and must be scrubbed
+	// here. nil disables redaction (no review secrets / non-exec runs); the default.
+	Redactor *log.Redactor
 }
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
@@ -275,6 +282,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		// findings.json and the report's Reproduced badge. Stamp never downgrades the
 		// verdict, so the confirmed verdict (and its skeptic) is preserved.
 		if ev := evidences[key]; ev != nil {
+			redactEvidence(ev, opts.Redactor)
 			repro.Stamp(&findings[i], v.Verdict, ev)
 		}
 	}

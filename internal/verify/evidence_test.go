@@ -4,12 +4,35 @@ import (
 	"context"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/repro"
 	"github.com/samestrin/atcr/internal/tools"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestRedactEvidence covers the stamp-site scrub: a reproduced run's captured
+// output reaches findings.json as data (not a log line), so it bypasses the log
+// sink's redactor and must be scrubbed here before repro.Stamp persists it.
+func TestRedactEvidence(t *testing.T) {
+	t.Parallel()
+	secret := "sk-live-aaaaaaaaaaaaaaaa"
+	r := log.NewRedactor("", secret)
+
+	ev := &reconcile.EvidenceExec{Command: "go test", ExitCode: 1, OutputExcerpt: "echoed " + secret + " in output"}
+	redactEvidence(ev, r)
+	assert.NotContains(t, ev.OutputExcerpt, secret, "configured secret must be scrubbed from evidence output")
+	assert.Contains(t, ev.OutputExcerpt, "[redacted]")
+
+	// A nil redactor (no review secrets configured) is a no-op.
+	ev2 := &reconcile.EvidenceExec{OutputExcerpt: "untouched " + secret}
+	redactEvidence(ev2, nil)
+	assert.Contains(t, ev2.OutputExcerpt, secret)
+
+	// A nil evidence block must not panic.
+	redactEvidence(nil, r)
+}
 
 func TestParseExecEvidence(t *testing.T) {
 	t.Parallel()

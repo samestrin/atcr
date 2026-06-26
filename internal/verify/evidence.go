@@ -6,9 +6,23 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/tools"
 )
+
+// redactEvidence scrubs configured secrets from a reproduced run's captured
+// output before it is stamped onto a finding. The sandbox has no host env and no
+// network, but a reproduced test can echo secret-bearing repo content, and the
+// evidence_exec block lands in findings.json as data — bypassing the log sink's
+// redactor (Epic 4.9). A nil redactor (no review secrets configured) or nil
+// evidence is a no-op.
+func redactEvidence(ev *reconcile.EvidenceExec, r *log.Redactor) {
+	if ev == nil || r == nil {
+		return
+	}
+	ev.OutputExcerpt = r.Redact(ev.OutputExcerpt)
+}
 
 // execEvidenceRecorder wraps a Dispatcher and captures the last reproduced
 // (non-zero exit) run_tests/run_script result as an EvidenceExec block. A skeptic

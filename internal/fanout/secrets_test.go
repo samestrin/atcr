@@ -4,8 +4,31 @@ import (
 	"testing"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/registry"
 	"github.com/stretchr/testify/require"
 )
+
+// TestRegistrySecretValues resolves API key values from a registry's providers
+// for the verify-only entry points (atcr verify / atcr_verify) that hold a
+// resolved registry but never built a PreparedReview. Unset and below-floor
+// values are skipped; identical resolved values dedupe.
+func TestRegistrySecretValues(t *testing.T) {
+	t.Setenv("ATCR_RSV_A", "sk-registrykeyvalue-aaaa")
+	t.Setenv("ATCR_RSV_B", "sk-registrykeyvalue-bbbb")
+	t.Setenv("ATCR_RSV_SHORT", "tiny")
+
+	reg := &registry.Registry{Providers: map[string]registry.Provider{
+		"a":     {APIKeyEnv: "ATCR_RSV_A"},
+		"b":     {APIKeyEnv: "ATCR_RSV_B"},
+		"short": {APIKeyEnv: "ATCR_RSV_SHORT"},
+		"unset": {APIKeyEnv: "ATCR_RSV_UNSET"},
+	}}
+	got := RegistrySecretValues(reg)
+	require.ElementsMatch(t, []string{"sk-registrykeyvalue-aaaa", "sk-registrykeyvalue-bbbb"}, got,
+		"only set, at-or-above-floor provider key values are enumerated")
+
+	require.Nil(t, RegistrySecretValues(nil), "a nil registry yields no secrets")
+}
 
 // slotForKeys builds a one-slot chain whose primary + fallbacks read the given
 // env vars, mirroring cmd/atcr's slotWithKeys test helper.
