@@ -41,14 +41,13 @@ func newVerifyCmd() *cobra.Command {
 // and `review --verify`. When --exec is absent it is a no-op (nil backend). When
 // present it REQUIRES a configured sandbox backend that passes a preflight check;
 // any failure is a usage error (exit 2) so the command refuses without executing.
-func resolveExec(cmd *cobra.Command) (sandbox.Backend, []string, time.Duration, error) {
+func resolveExec(cmd *cobra.Command, proj *registry.ProjectConfig) (sandbox.Backend, []string, time.Duration, error) {
 	execFlag, _ := cmd.Flags().GetBool("exec")
 	if !execFlag {
 		return nil, nil, 0, nil
 	}
-	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
-	if err != nil {
-		return nil, nil, 0, usageError(err)
+	if proj == nil || proj.Sandbox == nil {
+		return nil, nil, 0, usageError(errors.New("--exec requires a project config with a sandbox block"))
 	}
 	backend, testCmd, timeout, err := verify.ResolveExecBackend(cmd.Context(), true, proj.Sandbox)
 	if err != nil {
@@ -79,7 +78,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 		return usageError(err) // missing/invalid registry → exit 2 (AC 04-01 Error Scenario 3)
 	}
 
-	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd)
+	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd, cfg.Project)
 	if err != nil {
 		return err // refuse-without-backend / preflight failure (exit 2)
 	}

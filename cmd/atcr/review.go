@@ -135,21 +135,18 @@ func runReview(cmd *cobra.Command, _ []string) error {
 		return usageError(errors.New("--exec requires --verify (execution reproduction runs in the adversarial verify stage)"))
 	}
 	verifyMinSev := ""
-	// Resolve the --exec gate EARLY (before any review/reconcile API calls) so a
-	// misconfigured sandbox fails fast instead of after a paid-for review. The
-	// preflight (a real container spawn) runs here, once, and the resolved backend
-	// is threaded into the verify chain below.
-	var execBackend sandbox.Backend
-	var execTestCmd []string
-	var execTimeout time.Duration
 	if verifyFlag {
 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
 			return err
 		}
-		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd); err != nil {
-			return err // refuse-without-backend / preflight failure (exit 2)
-		}
 	}
+	// execBackend is resolved AFTER gitrange.Resolve and LoadReviewConfig so that
+	// cheap local validation (bad range, invalid registry) fails fast without paying
+	// for a sandbox preflight container spawn. It is still resolved before any paid
+	// review API calls.
+	var execBackend sandbox.Backend
+	var execTestCmd []string
+	var execTimeout time.Duration
 
 	// --debate chains the cross-examination stage after reconcile (and verify, when
 	// present). It needs no extra validation: it runs on reconciled findings and is
@@ -196,6 +193,12 @@ func runReview(cmd *cobra.Command, _ []string) error {
 	}
 	if banner := cfg.Registry.ProjectProviderBanner(); banner != "" {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), banner)
+	}
+
+	if verifyFlag {
+		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd, cfg.Project); err != nil {
+			return err // refuse-without-backend / preflight failure (exit 2)
+		}
 	}
 
 	now := time.Now()
