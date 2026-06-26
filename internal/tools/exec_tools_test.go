@@ -159,6 +159,36 @@ func TestRunScript_Handler_RejectsOversizedContent(t *testing.T) {
 	assert.Empty(t, b.last.Script, "oversized content must not be dispatched to the backend")
 }
 
+func TestDispatcher_Execute_RefusesExecToolWithoutEligibility(t *testing.T) {
+	// AC1: the read-only boundary is STRUCTURAL at dispatch. Even on a shared
+	// dispatcher that HAS the exec tools registered (EnableExecution), a caller
+	// that was not granted exec eligibility (a bare, non-eligible context) must be
+	// refused — the call must never reach the sandbox backend.
+	for _, name := range []string{"run_tests", "run_script"} {
+		t.Run(name, func(t *testing.T) {
+			b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+			d := newExecDispatcher(t, b)
+			_, err := d.Execute(context.Background(), name, json.RawMessage(`{"content":"echo hi\n","target":"./x"}`))
+			require.Error(t, err, "an exec tool named by a non-eligible caller must be a tool error, not an execution")
+			var te *ToolError
+			assert.ErrorAs(t, err, &te, "refusal must be a non-fatal ToolError, never a panic")
+			assert.Empty(t, b.last.Command, "a refused exec call must never reach the backend")
+			assert.Empty(t, b.last.Script, "a refused exec call must never reach the backend")
+		})
+	}
+}
+
+func TestDispatcher_Execute_AllowsExecToolWithEligibility(t *testing.T) {
+	// Positive control: with eligibility granted in the context, the same call on
+	// the same dispatcher runs normally — the gate refuses only the non-eligible.
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+	ctx := WithExecEligibility(context.Background(), true)
+	_, err := d.Execute(ctx, "run_tests", json.RawMessage(`{}`))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"go", "test", "./..."}, b.last.Command)
+}
+
 func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
 	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
 	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
