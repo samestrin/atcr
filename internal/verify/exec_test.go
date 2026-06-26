@@ -37,8 +37,14 @@ func TestResolveExecBackend_RefusesWithoutBackend(t *testing.T) {
 
 func TestResolveExecBackend_BuildsAndPreflights(t *testing.T) {
 	sc := &registry.SandboxConfig{
-		Backend:     "docker",
-		DockerPath:  fakeDocker(t, "exit 0"), // version/inspect/run all succeed
+		Backend: "docker",
+		// version/inspect/run succeed; info reports a generous host so the cap-fit
+		// check passes.
+		DockerPath: fakeDocker(t, `if [ "$1" = "info" ]; then
+  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0
+fi
+exit 0`),
 		TestCommand: []string{"go", "test", "./..."},
 	}
 	b, cmd, _, err := ResolveExecBackend(context.Background(), true, sc)

@@ -1,6 +1,10 @@
 package fanout
 
-import "os"
+import (
+	"os"
+
+	"github.com/samestrin/atcr/internal/registry"
+)
 
 // minSecretLen is the floor a resolved API key value must meet before it is
 // added to a log Redactor's exact-value scrub list. It guards against
@@ -71,4 +75,32 @@ func (p *PreparedReview) SecretValues() (secrets []string, warnings []string) {
 		}
 	}
 	return secrets, warnings
+}
+
+// RegistrySecretValues resolves the distinct API key values configured across a
+// registry's providers, suitable for the variadic secrets of log.NewRedactor.
+// It mirrors (*PreparedReview).SecretValues for entry points that hold only a
+// resolved registry — `atcr verify` and the atcr_verify MCP tool — and never
+// built a PreparedReview: each provider names its key via APIKeyEnv, the value
+// is read from the environment here, deduped, and dropped below minSecretLen to
+// avoid over-redaction. Resolved values are never logged; they flow only into
+// the Redactor by value. A nil registry yields no secrets.
+func RegistrySecretValues(reg *registry.Registry) []string {
+	if reg == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var secrets []string
+	for _, prov := range reg.Providers {
+		v := os.Getenv(prov.APIKeyEnv)
+		if len(v) < minSecretLen {
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		secrets = append(secrets, v)
+	}
+	return secrets
 }

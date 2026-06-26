@@ -180,6 +180,11 @@ func (r Result) JSONFindings() []JSONFinding {
 			// FixWarning intentionally not copied: it is set by the verify fix phase
 			// (executor.go generateFixes) after reconcile, so the reconcile path owns
 			// only the pre-fix merged state.
+			// EvidenceExec intentionally not copied: the extracted library Finding does
+			// not carry this Epic 11.0 field, and derivation-time producers never hold
+			// it. It is preserved only on the cached path-stamped records produced by
+			// RunReconcile (which already stamped it via repro write-back before caching).
+			// If this derived path is ever used for a stamped finding, carry it here.
 		})
 	}
 	return out

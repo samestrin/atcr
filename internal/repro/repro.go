@@ -39,9 +39,19 @@ func Verdict(r1, r2 sandbox.RunResult) string {
 		return reclib.VerdictUnverifiable
 	}
 	if r1.ExitCode != 0 {
+		if isInfraExit(r1.ExitCode) {
+			return reclib.VerdictUnverifiable
+		}
 		return reclib.VerdictConfirmed
 	}
 	return reclib.VerdictUnverifiable
+}
+
+// isInfraExit reports whether code is a Docker-reserved infrastructure exit
+// code (125/126/127) or a signal death (128+n). These reflect environment
+// problems, not a reproduced defect, so they must not earn confirmed.
+func isInfraExit(code int) bool {
+	return code == 125 || code == 126 || code == 127 || code >= 129
 }
 
 // Reproduce runs spec twice on backend and returns the determinism verdict plus
@@ -78,23 +88,8 @@ func Stamp(f *reconcile.JSONFinding, verdict string, ev *reconcile.EvidenceExec)
 		f.Verification = &reclib.Verification{Verdict: verdict, Skeptic: ReproSkeptic}
 		return
 	}
-	if verdictRank(verdict) > verdictRank(f.Verification.Verdict) {
+	if reconcile.VerdictRank(verdict) > reconcile.VerdictRank(f.Verification.Verdict) {
 		f.Verification.Verdict = verdict
 		f.Verification.Skeptic = ReproSkeptic
-	}
-}
-
-// verdictRank mirrors internal/reconcile/merge.go precedence so Stamp never
-// downgrades a stronger prior verdict (confirmed > unverifiable > refuted).
-func verdictRank(verdict string) int {
-	switch verdict {
-	case reclib.VerdictConfirmed:
-		return 3
-	case reclib.VerdictUnverifiable:
-		return 2
-	case reclib.VerdictRefuted:
-		return 1
-	default:
-		return 0
 	}
 }

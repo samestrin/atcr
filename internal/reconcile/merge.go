@@ -161,10 +161,10 @@ func joinEvidence(group []JSONFinding) string {
 	return strings.Join(parts, " / ")
 }
 
-// verdictRank orders verify verdicts for the cluster-merge precedence in
+// VerdictRank orders verify verdicts for the cluster-merge precedence in
 // mergeVerification: confirmed (gate-blocking) outranks unverifiable, which
 // outranks refuted; an unknown/empty verdict ranks last.
-func verdictRank(verdict string) int {
+func VerdictRank(verdict string) int {
 	switch strings.ToLower(strings.TrimSpace(verdict)) {
 	case VerdictConfirmed:
 		return 3
@@ -201,7 +201,7 @@ func mergeVerification(group []JSONFinding) *Verification {
 				skeptics = append(skeptics, name)
 			}
 		}
-		if chosen == nil || verdictRank(v.Verdict) > verdictRank(chosen.Verdict) {
+		if chosen == nil || VerdictRank(v.Verdict) > VerdictRank(chosen.Verdict) {
 			chosen = v
 		}
 	}

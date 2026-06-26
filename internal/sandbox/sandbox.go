@@ -106,10 +106,16 @@ func truncate(s string, limit int) string {
 	if limit <= 0 || len(s) <= limit {
 		return s
 	}
-	marker := fmt.Sprintf("\n[...truncated %d bytes...]", len(s)-limit)
+	// Build the marker first so we can reserve its bytes in the budget.
 	keep := limit
+	marker := fmt.Sprintf("\n[...truncated %d bytes...]", len(s)-keep)
+	keep = limit - len(marker)
+	if keep < 0 {
+		return marker[:limit]
+	}
 	for keep > 0 && (s[keep]&0xC0) == 0x80 { // back up off a UTF-8 continuation byte
 		keep--
 	}
+	marker = fmt.Sprintf("\n[...truncated %d bytes...]", len(s)-keep)
 	return s[:keep] + marker
 }

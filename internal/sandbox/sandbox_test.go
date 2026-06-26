@@ -1,14 +1,18 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -160,8 +164,13 @@ func TestDockerBackend_Run_Timeout(t *testing.T) {
 }
 
 func TestDockerBackend_Preflight_OK(t *testing.T) {
-	// Fake docker that succeeds for version, image inspect, and the trivial run.
-	fake := writeFakeDocker(t, `exit 0`)
+	// Fake docker that succeeds for version, image inspect, info, and the trivial
+	// run. `info` reports a generous host so the cap-fit check passes.
+	fake := writeFakeDocker(t, `if [ "$1" = "info" ]; then
+  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0
+fi
+exit 0`)
 	cfg := DefaultDockerConfig()
 	cfg.DockerPath = fake
 	b := NewDockerBackend(cfg)
@@ -184,4 +193,38 @@ func TestDockerBackend_Preflight_MissingBinary(t *testing.T) {
 	cfg.DockerPath = "/nonexistent/docker-binary-xyz"
 	b := NewDockerBackend(cfg)
 	assert.Error(t, b.Preflight(context.Background()))
+}
+
+func TestTruncate_ReservesMarkerSpaceAndReportsCorrectDrop(t *testing.T) {
+	s := strings.Repeat("a", 100)
+	limit := 20
+	result := truncate(s, limit)
+	assert.LessOrEqual(t, len(result), limit, "truncated result must not exceed limit")
+	assert.Contains(t, result, "truncated")
+
+	// Multibyte rune at the boundary must not be split.
+	s2 := strings.Repeat("é", 50) // 2 bytes each
+	result2 := truncate(s2, 21)
+	assert.LessOrEqual(t, len(result2), 21)
+	assert.True(t, utf8.ValidString(result2), "result must be valid UTF-8")
+}
+
+func TestDockerBackendRun_EmitsAuditLog(t *testing.T) {
+	fake := writeFakeDocker(t, `echo "ok"; exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	ctx := log.NewContext(context.Background(), logger)
+
+	_, err := b.Run(ctx, RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "sandbox exec")
+	assert.Contains(t, out, "command=\"go test\"")
+	assert.Contains(t, out, "exit_code=0")
+	assert.Contains(t, out, "backend=docker")
 }

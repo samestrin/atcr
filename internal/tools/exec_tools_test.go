@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -104,10 +105,58 @@ func TestRunScript_Handler_PassesContentAndTimeout(t *testing.T) {
 	assert.Contains(t, res.Content, "boom")
 }
 
+func TestRunScript_Handler_ClampsTimeout(t *testing.T) {
+	// execTimeout is the operator's configured per-run budget (30s here). A
+	// model-supplied per-call timeout may only SHORTEN a run; an oversized or
+	// non-positive value must be floored/capped to execTimeout, never allowed to
+	// extend the run past the operator's validated budget.
+	for _, tc := range []struct {
+		name    string
+		timeout int
+		want    time.Duration
+	}{
+		{"oversized capped to execTimeout", 9999, 30 * time.Second},
+		{"in-range preserved", 5, 5 * time.Second},
+		{"zero floored to execTimeout", 0, 30 * time.Second},
+		{"negative floored to execTimeout", -1, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+			d := newExecDispatcher(t, b)
+			_, err := d.Execute(context.Background(), "run_script",
+				json.RawMessage(fmt.Sprintf(`{"content":"echo hi\n","timeout":%d}`, tc.timeout)))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, b.last.Timeout,
+				"per-call timeout must be clamped to the dispatcher's execTimeout")
+		})
+	}
+}
+
 func TestRunScript_Handler_RequiresContent(t *testing.T) {
 	d := newExecDispatcher(t, &stubBackend{})
 	_, err := d.Execute(context.Background(), "run_script", json.RawMessage(`{}`))
 	require.Error(t, err, "run_script with no content must be a tool error")
+}
+
+func TestRunTests_Handler_RejectsFlaglikeTarget(t *testing.T) {
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+	for _, target := range []string{"-v", "--output=/tmp/x", "-run=TestX"} {
+		_, err := d.Execute(context.Background(), "run_tests",
+			json.RawMessage(`{"target":"`+target+`"}`))
+		require.Error(t, err, "a target starting with '-' must be rejected as argument injection: %q", target)
+		assert.Empty(t, b.last.Command, "a rejected target must not be dispatched to the backend: %q", target)
+	}
+}
+
+func TestRunScript_Handler_RejectsOversizedContent(t *testing.T) {
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+	big := strings.Repeat("a", 64*1024+1)
+	_, err := d.Execute(context.Background(), "run_script",
+		json.RawMessage(`{"content":"`+big+`"}`))
+	require.Error(t, err, "run_script content over the size cap must be a tool error")
+	assert.Empty(t, b.last.Script, "oversized content must not be dispatched to the backend")
 }
 
 func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
@@ -115,4 +164,16 @@ func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
 	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
 	require.Error(t, err, "exec tools must be unknown until EnableExecution is called")
 	assert.Contains(t, err.Error(), "unknown tool")
+}
+
+func TestDispatcher_EnableExecution_ConcurrentWithExecute(t *testing.T) {
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+
+	go func() {
+		d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
+	}()
+
+	// Concurrent Execute must not race with EnableExecution's registration.
+	_, _ = d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
 }
