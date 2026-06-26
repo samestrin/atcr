@@ -86,6 +86,10 @@ func (d *Dispatcher) EnableExecution(backend sandbox.Backend, testCmd []string, 
 	d.execTimeout = timeout
 	d.mustRegister("run_tests", runTestsHandler, pathSpec{})
 	d.mustRegister("run_script", runScriptHandler, pathSpec{})
+	d.mu.Lock()
+	d.execTools["run_tests"] = true
+	d.execTools["run_script"] = true
+	d.mu.Unlock()
 }
 
 type runTestsArgs struct {
