@@ -180,6 +180,29 @@ func TestSaveCheckpoint_WritesCompactJSON(t *testing.T) {
 	assert.NotContains(t, string(data), "\n", "checkpoint JSON must be compact, not indented")
 }
 
+// loadCheckpoint must refuse a checkpoint larger than maxCheckpointBytes rather
+// than reading operator-supplied/untrusted JSON unbounded into memory, mirroring
+// fanout's readFileLimited / maxAgentFileBytes guard on the resume path.
+func TestLoadCheckpoint_RejectsOversizeFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	orig := maxCheckpointBytes
+	maxCheckpointBytes = 64
+	defer func() { maxCheckpointBytes = orig }()
+
+	// Valid JSON padded past the cap with trailing whitespace: without the size
+	// guard this parses cleanly, so the only thing that can reject it is the cap.
+	body := []byte(`{"suite":"s","suite_version":"1.0.0","cases":[]}`)
+	pad := make([]byte, maxCheckpointBytes)
+	for i := range pad {
+		pad[i] = ' '
+	}
+	require.NoError(t, os.WriteFile(path, append(body, pad...), 0o600))
+
+	_, err := loadCheckpoint(path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointTooLarge)
+}
+
 // saveCheckpoint must leave the previous valid checkpoint intact when the next
 // write fails (e.g., disk full / permissions). The temp-file + rename design
 // guarantees the on-disk file always reflects a whole number of cases (AC1).

@@ -86,6 +86,16 @@ var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed
 // cannot silently drop completed cases.
 var errCheckpointCorrupt = errors.New("checkpoint is corrupt")
 
+// maxCheckpointBytes caps a checkpoint read so an operator-supplied or crafted
+// checkpoint cannot exhaust memory on the resume path, mirroring fanout's
+// readFileLimited / maxAgentFileBytes precedent (the same 32 MiB ceiling). It is a
+// var (not const) so tests can shrink it.
+var maxCheckpointBytes int64 = 32 << 20 // 32 MiB
+
+// errCheckpointTooLarge reports a checkpoint file exceeding maxCheckpointBytes; the
+// load fails loudly rather than reading the untrusted file unbounded.
+var errCheckpointTooLarge = errors.New("checkpoint exceeds size limit")
+
 // errCheckpointCaseMismatch reports that a checkpoint entry's recorded case id
 // no longer matches the suite's case at the same index. ReproHash is
 // order-independent, so a reordered suite shares the hash but remaps indices;
@@ -98,6 +108,19 @@ var errCheckpointCaseMismatch = errors.New("checkpoint case id changed since it 
 // present-but-corrupt file surfaces a parse error rather than a guessed empty
 // state, so a damaged checkpoint can never cause a silent full re-run.
 func loadCheckpoint(path string) (*runCheckpoint, error) {
+	// Stat-and-cap before reading: the checkpoint is operator-supplied/untrusted
+	// JSON, so an oversize or crafted file must be rejected rather than read
+	// unbounded into memory (mirrors readFileLimited on the fanout resume path).
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading checkpoint %s: %w", path, err)
+	}
+	if fi.Size() > maxCheckpointBytes {
+		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errCheckpointTooLarge, path, fi.Size(), maxCheckpointBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
