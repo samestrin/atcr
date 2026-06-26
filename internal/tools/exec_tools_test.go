@@ -110,6 +110,27 @@ func TestRunScript_Handler_RequiresContent(t *testing.T) {
 	require.Error(t, err, "run_script with no content must be a tool error")
 }
 
+func TestRunTests_Handler_RejectsFlaglikeTarget(t *testing.T) {
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+	for _, target := range []string{"-v", "--output=/tmp/x", "-run=TestX"} {
+		_, err := d.Execute(context.Background(), "run_tests",
+			json.RawMessage(`{"target":"`+target+`"}`))
+		require.Error(t, err, "a target starting with '-' must be rejected as argument injection: %q", target)
+		assert.Empty(t, b.last.Command, "a rejected target must not be dispatched to the backend: %q", target)
+	}
+}
+
+func TestRunScript_Handler_RejectsOversizedContent(t *testing.T) {
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+	big := strings.Repeat("a", 64*1024+1)
+	_, err := d.Execute(context.Background(), "run_script",
+		json.RawMessage(`{"content":"`+big+`"}`))
+	require.Error(t, err, "run_script content over the size cap must be a tool error")
+	assert.Empty(t, b.last.Script, "oversized content must not be dispatched to the backend")
+}
+
 func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
 	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
 	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
