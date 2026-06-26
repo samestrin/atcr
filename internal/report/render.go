@@ -374,7 +374,7 @@ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
 // library Verification type stays unchanged. The output excerpt is escaped and
 // truncated like every other free-text field.
 func writeReproducedBlock(b *bytes.Buffer, e *reconcile.EvidenceExec) {
-	fmt.Fprintf(b, "  - ✅ Reproduced: `%s` (exit %d)\n", esc(e.Command), e.ExitCode)
+	fmt.Fprintf(b, "  - ✅ Reproduced: %s (exit %d)\n", codeSpanText(e.Command), e.ExitCode)
 	if strings.TrimSpace(e.OutputExcerpt) != "" {
 		fmt.Fprintf(b, "    - Output: %s\n", escTrunc(e.OutputExcerpt))
 	}
@@ -464,6 +464,16 @@ func codeSpan(file string, line int) string {
 		return esc(fmt.Sprintf("%s:%d", file, line))
 	}
 	return fmt.Sprintf("`%s:%d`", file, line)
+}
+
+// codeSpanText renders s inside a backtick code span, mirroring codeSpan. It
+// keeps the raw text for the common case and falls back to HTML-escaping only
+// when s contains a backtick or newline (which would break the span).
+func codeSpanText(s string) string {
+	if strings.ContainsRune(s, '`') || strings.ContainsAny(s, "\r\n") {
+		return esc(s)
+	}
+	return fmt.Sprintf("`%s`", s)
 }
 
 // joinReviewers joins reviewer names with ", " or returns "(none)". Reviewer
