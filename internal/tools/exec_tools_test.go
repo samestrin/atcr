@@ -46,6 +46,31 @@ func newExecDispatcher(t *testing.T, b sandbox.Backend) *Dispatcher {
 // handler-behavior tests must dispatch through one.
 func execCtx() context.Context { return WithExecEligibility(context.Background(), true) }
 
+// TestEnableExecution_EveryExecToolIsGated is the Epic 11.2 structural invariant:
+// every execution tool offered to agents (ExecutionTools) must, once wired by
+// EnableExecution, be BOTH present in the execTools gate map AND backed by a
+// registered handler — so no exec handler can reach runInSandbox/execBackend
+// ungated. It also asserts the converse: no execTools entry exists without a
+// backing handler (no orphan gates). A future exec tool added to ExecutionTools
+// but registered ungated (e.g. via mustRegister/RegisterTool instead of the
+// trusted registerExec path) would fail this test.
+func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
+	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+	d := newExecDispatcher(t, b)
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for _, def := range ExecutionTools() {
+		assert.True(t, d.execTools[def.Name], "exec tool %q must be gated in execTools", def.Name)
+		_, hasHandler := d.handlers[def.Name]
+		assert.True(t, hasHandler, "exec tool %q must have a registered handler", def.Name)
+	}
+	for name := range d.execTools {
+		_, hasHandler := d.handlers[name]
+		assert.True(t, hasHandler, "execTools gate %q has no backing handler (orphan gate)", name)
+	}
+}
+
 func TestExecutionTools_Defs(t *testing.T) {
 	defs := ExecutionTools()
 	names := map[string]ToolDef{}
