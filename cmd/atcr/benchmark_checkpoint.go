@@ -102,7 +102,7 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 // previous valid checkpoint intact — the on-disk file always reflects a whole
 // number of completed cases (AC1).
 func saveCheckpoint(path string, cp *runCheckpoint) error {
-	data, err := json.MarshalIndent(cp, "", "  ")
+	data, err := json.Marshal(cp)
 	if err != nil {
 		return fmt.Errorf("encoding checkpoint: %w", err)
 	}
