@@ -90,7 +90,7 @@ func newBenchmarkRunCmd() *cobra.Command {
 	}
 	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
 	cmd.Flags().String("out", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
-	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file. Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. Empty = no checkpointing (default).")
+	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file (atomically replaces the target; a symlink at the path is replaced, not followed). Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. The path must not be shared across concurrent benchmark run invocations. Empty = no checkpointing (default).")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }

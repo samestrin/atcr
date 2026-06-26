@@ -1,3 +1,15 @@
+## [Technical Debt] - 2026-06-25
+
+### Fixed
+
+- Hardened benchmark checkpoint resume against nil rosters, duplicate/out-of-range/empty case IDs, and oversized reads; integrity validation now fails closed on mismatch
+- Made resumed benchmark runs replay scored cases with zero additional LLM cost and produce byte-identical `RunResult` output compared to an uninterrupted run
+- Guarded checkpoint case-id drift with a dedicated sentinel and ensured no LLM calls are spent before the drift guard
+- Included persona and usage/latency details in the checkpoint roster signature so replay reproduces the original run conditions
+- Switched checkpoint serialization to compact JSON and made saves durable via atomic temp-file + rename
+- Fixed silent resume paths in `cmd/atcr/benchmark_run.go` and documented the no-shared-checkpoint-path constraint
+- Clarified `Score.Expected` non-empty requirement, `GeneratedAt` wall-clock behavior, and the accepted O(n²) checkpoint I/O trade-off
+
 ## [10.3.0] - 2026-06-25
 
 ### Added

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,13 +29,15 @@ func TestCheckpoint_RoundTrips(t *testing.T) {
 		ReproHash:    "abc123",
 		Suite:        "fixture-mini",
 		SuiteVersion: "1.0.0",
+		Roster:       []string{"greta=m-greta=greta"},
 		Cases: []checkpointCase{
 			{
-				Index:  0,
-				CaseID: "case-01",
+				Index:    0,
+				CaseID:   "case-01",
+				Expected: []string{"correctness"},
 				Reviewers: []checkpointReviewer{
 					{Agent: "greta", Model: "m-greta", Persona: "greta",
-						Expected: []string{"correctness"}, Raised: []string{"correctness"},
+						Raised:        []string{"correctness"},
 						UsageReported: true, CostUSD: 0.0125, LatencyMS: 1200},
 				},
 			},
@@ -97,4 +100,157 @@ func TestLoadCheckpoint_CorruptErrors(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
 	_, err := loadCheckpoint(path)
 	require.Error(t, err)
+}
+
+// loadCheckpoint must reject internally inconsistent checkpoints: duplicate
+// indices, out-of-range indices, or empty case IDs would silently corrupt replay
+// (last-write-wins in doneIndex), so they are treated as corrupt instead.
+func TestLoadCheckpoint_IntegrityErrors(t *testing.T) {
+	base := &runCheckpoint{
+		ReproHash:    "hash",
+		Suite:        "suite",
+		SuiteVersion: "1.0.0",
+	}
+	cases := []struct {
+		name string
+		cp   *runCheckpoint
+	}{
+		{
+			name: "duplicate index",
+			cp: func() *runCheckpoint {
+				c := *base
+				c.Cases = []checkpointCase{
+					{Index: 0, CaseID: "a"},
+					{Index: 0, CaseID: "b"},
+				}
+				return &c
+			}(),
+		},
+		{
+			name: "negative index",
+			cp: func() *runCheckpoint {
+				c := *base
+				c.Cases = []checkpointCase{{Index: -1, CaseID: "a"}}
+				return &c
+			}(),
+		},
+		{
+			name: "empty case id",
+			cp: func() *runCheckpoint {
+				c := *base
+				c.Cases = []checkpointCase{{Index: 0, CaseID: ""}}
+				return &c
+			}(),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ckpt.json")
+			data, err := json.Marshal(tc.cp)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+			_, err = loadCheckpoint(path)
+			require.Error(t, err, "checkpoint with %s must be rejected", tc.name)
+			assert.ErrorIs(t, err, errCheckpointCorrupt)
+		})
+	}
+}
+
+// A checkpoint that records no reviewer roster (the field is absent -> nil; e.g.
+// written before the roster guard existed or hand-edited) cannot prove the panel
+// is unchanged. Resume must fail closed rather than treat a missing recorded roster
+// as a match (AC4 fail-closed) — sortedCopy(nil) would otherwise compare equal to
+// an empty configured roster.
+func TestValidateCheckpointRoster_NilRecordedRosterFailsClosed(t *testing.T) {
+	err := validateCheckpointRoster(&runCheckpoint{Roster: nil}, nil)
+	require.ErrorIs(t, err, errCheckpointRosterMismatch)
+}
+
+// saveCheckpoint must encode the checkpoint as compact JSON so the on-disk file
+// is small and fast to rewrite on every completed case.
+func TestSaveCheckpoint_WritesCompactJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	cp := &runCheckpoint{
+		ReproHash:    "abc123",
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		Cases: []checkpointCase{
+			{
+				Index:  0,
+				CaseID: "case-01",
+				Reviewers: []checkpointReviewer{
+					{Agent: "greta", Model: "m-greta", Persona: "greta"},
+				},
+			},
+		},
+	}
+	require.NoError(t, saveCheckpoint(path, cp))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "\n", "checkpoint JSON must be compact, not indented")
+}
+
+// loadCheckpoint must refuse a checkpoint larger than maxCheckpointBytes rather
+// than reading operator-supplied/untrusted JSON unbounded into memory, mirroring
+// fanout's readFileLimited / maxAgentFileBytes guard on the resume path.
+func TestLoadCheckpoint_RejectsOversizeFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	orig := maxCheckpointBytes
+	maxCheckpointBytes = 64
+	defer func() { maxCheckpointBytes = orig }()
+
+	// Valid JSON padded past the cap with trailing whitespace: without the size
+	// guard this parses cleanly, so the only thing that can reject it is the cap.
+	body := []byte(`{"suite":"s","suite_version":"1.0.0","cases":[]}`)
+	pad := make([]byte, maxCheckpointBytes)
+	for i := range pad {
+		pad[i] = ' '
+	}
+	require.NoError(t, os.WriteFile(path, append(body, pad...), 0o600))
+
+	_, err := loadCheckpoint(path)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errCheckpointTooLarge)
+}
+
+// saveCheckpoint must leave the previous valid checkpoint intact when the next
+// write fails (e.g., disk full / permissions). The temp-file + rename design
+// guarantees the on-disk file always reflects a whole number of cases (AC1).
+func TestSaveCheckpoint_PreservesPriorOnWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ckpt.json")
+	first := &runCheckpoint{
+		ReproHash:    "abc123",
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		Cases: []checkpointCase{
+			{Index: 0, CaseID: "case-01"},
+		},
+	}
+	require.NoError(t, saveCheckpoint(path, first))
+
+	// Make the directory unwritable so the second save cannot create its temp file.
+	require.NoError(t, os.Chmod(dir, 0o000))
+	defer func() { require.NoError(t, os.Chmod(dir, 0o700)) }()
+
+	second := &runCheckpoint{
+		ReproHash:    "abc123",
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		Cases: []checkpointCase{
+			{Index: 0, CaseID: "case-01"},
+			{Index: 1, CaseID: "case-02"},
+		},
+	}
+	err := saveCheckpoint(path, second)
+	require.Error(t, err, "second save must fail when the output directory is unwritable")
+
+	// After restoring permissions, the prior checkpoint must still parse and hold
+	// exactly the first case.
+	require.NoError(t, os.Chmod(dir, 0o700))
+	cp, err := loadCheckpoint(path)
+	require.NoError(t, err)
+	require.NotNil(t, cp)
+	assert.Len(t, cp.Cases, 1, "prior valid checkpoint must survive a failed overwrite")
+	assert.Equal(t, "case-01", cp.Cases[0].CaseID)
 }

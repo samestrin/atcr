@@ -29,12 +29,12 @@ type runCheckpoint struct {
 	ReproHash    string `json:"repro_hash"`
 	Suite        string `json:"suite"`
 	SuiteVersion string `json:"suite_version"`
-	// Roster is the sorted "agent=model" signature of the reviewer panel that
-	// produced this checkpoint. ReproHash covers only suite CONTENT (cases + diffs),
-	// not the panel, so a roster/model change would otherwise resume silently —
-	// mixing stale checkpointed reviewers with freshly-executed ones. Recording the
-	// roster lets validateCheckpointRoster fail closed on drift, mirroring fanout's
-	// ErrRosterChanged precedent.
+	// Roster is the sorted "agent=model=persona" signature of the reviewer panel
+	// that produced this checkpoint. ReproHash covers only suite CONTENT (cases +
+	// diffs), not the panel, so a roster/model/persona change would otherwise resume
+	// silently — mixing stale checkpointed reviewers with freshly-executed ones.
+	// Recording the roster lets validateCheckpointRoster fail closed on drift,
+	// mirroring fanout's ErrRosterChanged precedent.
 	Roster []string         `json:"roster"`
 	Cases  []checkpointCase `json:"cases"`
 }
@@ -46,20 +46,22 @@ type runCheckpoint struct {
 type checkpointCase struct {
 	Index     int                  `json:"index"`
 	CaseID    string               `json:"case_id"`
+	Expected  []string             `json:"expected"`
 	Reviewers []checkpointReviewer `json:"reviewers"`
 }
 
 // checkpointReviewer captures exactly the per-reviewer fields the run loop folds
 // into a reviewerAcc for one case: identity (model/persona, locked at first
-// sighting), the case score (expected vs raised categories), and the usage-gated
-// cost/latency contribution. Storing the already-computed cost contribution (not the
-// raw tokens) and replaying it in case order keeps the float sum and latency median
-// byte-identical to an uninterrupted run.
+// sighting), the case score (raised categories), and the usage-gated cost/latency
+// contribution. Expected categories live on checkpointCase because they are
+// identical for every reviewer of a case and originate from the suite manifest.
+// Storing the already-computed cost contribution (not the raw tokens) and replaying
+// it in case order keeps the float sum and latency median byte-identical to an
+// uninterrupted run.
 type checkpointReviewer struct {
 	Agent         string   `json:"agent"`
 	Model         string   `json:"model"`
 	Persona       string   `json:"persona"`
-	Expected      []string `json:"expected"`
 	Raised        []string `json:"raised"`
 	UsageReported bool     `json:"usage_reported"`
 	CostUSD       float64  `json:"cost_usd"`
@@ -78,11 +80,47 @@ var errCheckpointSuiteMismatch = errors.New("checkpoint suite identity changed s
 // different subsets of cases — mirroring fanout's ErrRosterChanged contract.
 var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed since it was written")
 
+// errCheckpointCorrupt reports that a checkpoint file parsed as JSON but failed
+// internal self-consistency checks (duplicate indices, out-of-range indices, or
+// empty case IDs). Resume fails closed so a hand-edited or damaged checkpoint
+// cannot silently drop completed cases.
+var errCheckpointCorrupt = errors.New("checkpoint is corrupt")
+
+// maxCheckpointBytes caps a checkpoint read so an operator-supplied or crafted
+// checkpoint cannot exhaust memory on the resume path, mirroring fanout's
+// readFileLimited / maxAgentFileBytes precedent (the same 32 MiB ceiling). It is a
+// var (not const) so tests can shrink it.
+var maxCheckpointBytes int64 = 32 << 20 // 32 MiB
+
+// errCheckpointTooLarge reports a checkpoint file exceeding maxCheckpointBytes; the
+// load fails loudly rather than reading the untrusted file unbounded.
+var errCheckpointTooLarge = errors.New("checkpoint exceeds size limit")
+
+// errCheckpointCaseMismatch reports that a checkpoint entry's recorded case id
+// no longer matches the suite's case at the same index. ReproHash is
+// order-independent, so a reordered suite shares the hash but remaps indices;
+// this sentinel lets callers distinguish per-index drift from suite-identity
+// drift.
+var errCheckpointCaseMismatch = errors.New("checkpoint case id changed since it was written")
+
 // loadCheckpoint reads and parses a checkpoint file. A missing file returns
 // (nil, nil): it is the legitimate first-run case (start fresh), not an error. A
 // present-but-corrupt file surfaces a parse error rather than a guessed empty
 // state, so a damaged checkpoint can never cause a silent full re-run.
 func loadCheckpoint(path string) (*runCheckpoint, error) {
+	// Stat-and-cap before reading: the checkpoint is operator-supplied/untrusted
+	// JSON, so an oversize or crafted file must be rejected rather than read
+	// unbounded into memory (mirrors readFileLimited on the fanout resume path).
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading checkpoint %s: %w", path, err)
+	}
+	if fi.Size() > maxCheckpointBytes {
+		return nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", errCheckpointTooLarge, path, fi.Size(), maxCheckpointBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -94,15 +132,44 @@ func loadCheckpoint(path string) (*runCheckpoint, error) {
 	if err := json.Unmarshal(data, &cp); err != nil {
 		return nil, fmt.Errorf("checkpoint %s is corrupt: %w", path, err)
 	}
+	if err := validateCheckpointIntegrity(&cp); err != nil {
+		return nil, fmt.Errorf("checkpoint %s is corrupt: %w", path, err)
+	}
 	return &cp, nil
+}
+
+// validateCheckpointIntegrity rejects malformed-but-parseable checkpoints before
+// they can silently corrupt replay. Duplicate indices are particularly dangerous:
+// doneIndex would last-write-win, dropping the earlier completed case.
+func validateCheckpointIntegrity(cp *runCheckpoint) error {
+	seen := make(map[int]struct{}, len(cp.Cases))
+	for i, c := range cp.Cases {
+		if c.Index < 0 {
+			return fmt.Errorf("%w: case %d has negative index %d", errCheckpointCorrupt, i, c.Index)
+		}
+		if c.CaseID == "" {
+			return fmt.Errorf("%w: case %d has empty case_id", errCheckpointCorrupt, i)
+		}
+		if _, ok := seen[c.Index]; ok {
+			return fmt.Errorf("%w: duplicate case index %d", errCheckpointCorrupt, c.Index)
+		}
+		seen[c.Index] = struct{}{}
+	}
+	return nil
 }
 
 // saveCheckpoint atomically writes the checkpoint to path (temp file + rename, via
 // the shared writeExportFile helper), so a process killed mid-write leaves the
 // previous valid checkpoint intact — the on-disk file always reflects a whole
 // number of completed cases (AC1).
+//
+// The full file is rewritten after every scored case intentionally: serial LLM
+// latency dominates the runtime by orders of magnitude, and the atomic
+// temp-file+rename guarantee requires rewriting the whole checkpoint. An
+// append-friendly format would add parsing/dedup complexity without a measurable
+// win at realistic suite sizes.
 func saveCheckpoint(path string, cp *runCheckpoint) error {
-	data, err := json.MarshalIndent(cp, "", "  ")
+	data, err := json.Marshal(cp)
 	if err != nil {
 		return fmt.Errorf("encoding checkpoint: %w", err)
 	}
@@ -137,6 +204,13 @@ func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string
 // irrelevant. Any added, removed, or model-changed reviewer returns
 // errCheckpointRosterMismatch so the caller aborts rather than mixing panels.
 func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
+	// A checkpoint with no recorded roster (the field is absent -> nil; e.g. one
+	// written before the roster guard existed, or hand-edited) cannot prove the
+	// panel is unchanged. Fail closed rather than let sortedCopy(nil) compare equal
+	// to an empty configured roster and silently resume a changed panel (AC4).
+	if cp.Roster == nil {
+		return fmt.Errorf("%w: checkpoint records no reviewer roster; remove the checkpoint to start fresh", errCheckpointRosterMismatch)
+	}
 	recorded := sortedCopy(cp.Roster)
 	current := sortedCopy(roster)
 	if !equalStrings(recorded, current) {
