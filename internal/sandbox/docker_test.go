@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +190,37 @@ func TestDockerBackend_StructLiteral_AppliesConcurrencyCap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, b.sem, "a struct-literal backend must still enforce the concurrency cap, not fail open")
 	assert.Equal(t, cfg.MaxConcurrent, cap(b.sem), "the live cap must match the configured MaxConcurrent")
+}
+
+func TestDockerBackend_Run_TimeoutKillsContainer(t *testing.T) {
+	// exec.CommandContext only SIGKILLs the `docker run` CLI on timeout, not the
+	// container the daemon runs, so the run must additionally `docker kill` the
+	// named container to reclaim its caps. The fake records the kill target.
+	marker := filepath.Join(t.TempDir(), "killed")
+	t.Setenv("ATCR_KILL_MARKER", marker)
+	fake := writeFakeDocker(t, `if [ "$1" = "kill" ]; then
+  echo "$2" > "$ATCR_KILL_MARKER"
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  sleep 5
+fi
+exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	b := NewDockerBackend(cfg)
+
+	res, err := b.Run(context.Background(), RunSpec{
+		Command:     []string{"x"},
+		SnapshotDir: t.TempDir(),
+		Timeout:     150 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	require.True(t, res.TimedOut, "the over-budget run must be flagged TimedOut")
+
+	data, rerr := os.ReadFile(marker)
+	require.NoError(t, rerr, "docker kill must be invoked on timeout to reclaim the container")
+	assert.Contains(t, string(data), "atcr-sbx-", "kill must target the run's named container")
 }
 
 func TestDockerBackend_DockerCmd_ContextCancelNotTimeout(t *testing.T) {
