@@ -111,6 +111,11 @@ func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
 		"--memory", cfg.Memory,
 		"--cpus", cfg.CPUs,
 		"--pids-limit", strconv.Itoa(cfg.PidsLimit),
+		// /scratch is mounted exec (not noexec) on purpose: go test compiles and
+		// executes test binaries from GOCACHE/GOTMPDIR, which point here. noexec
+		// would be defense theater anyway — run_script already pipes arbitrary sh
+		// into the container, so the real containment is --network none, --cap-drop
+		// ALL, --security-opt no-new-privileges, and the read-only rootfs.
 		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
 		// Point HOME, temp, and common build caches at the writable scratch tmpfs so
 		// runners that need to write (go test's build cache, mktemp, pip, etc.) work
@@ -179,6 +184,9 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 
 	cmd := exec.CommandContext(runCtx, b.cfg.DockerPath, args...)
 	if spec.Script != "" {
+		// The script is delivered as stdin DATA to `sh -s` (see dockerRunArgs), never
+		// interpolated into argv or a `sh -c "..."` string, so there is no shell-
+		// injection vector: the script body IS the program source, not an argument.
 		cmd.Stdin = strings.NewReader(spec.Script)
 	}
 	var buf bytes.Buffer
