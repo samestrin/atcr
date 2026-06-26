@@ -101,7 +101,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			// replay a score against the wrong case.
 			if entry.CaseID != c.ID {
 				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
-					errCheckpointSuiteMismatch, i, entry.CaseID, c.ID)
+					errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
 			}
 			replayCheckpointCase(accs, &order, entry)
 			continue
