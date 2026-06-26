@@ -28,10 +28,12 @@ var allowedInternalImports = map[string][]string{
 	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
 	"stream":         {"metrics"},  // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle)
 	"gitrange":       {},
-	"log":            {},         // single diagnostic sink; stdlib-only (epic 4.0)
-	"errors":         {},         // error-classification taxonomy; stdlib-only (epic 4.0)
-	"registry":       {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
-	"tools":          {},
+	"log":            {},                                       // single diagnostic sink; stdlib-only (epic 4.0)
+	"errors":         {},                                       // error-classification taxonomy; stdlib-only (epic 4.0)
+	"registry":       {"stream"},                               // stream is the canonical zero-dependency severity leaf (epic 3.5)
+	"tools":          {"sandbox"},                              // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec)
+	"sandbox":        {},                                       // container-isolated executor for --exec reproduction; stdlib-only leaf (epic 11.0)
+	"repro":          {"reconcile", "sandbox"},                 // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
 	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
@@ -44,9 +46,9 @@ var allowedInternalImports = map[string][]string{
 	"scorecard":      {"llmclient", "reconcile", "fanout", "version"}, // version: atcr_version stamped into the public submission envelope (epic 10.0)
 	"personas":       {"registry", "payload"},                         // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
 	"report":         {"stream", "reconcile"},
-	"ghaction":       {"reconcile"},                                                                                                    // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
-	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper
-	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+	"ghaction":       {"reconcile"},                                                                                                               // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log", "sandbox"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper; sandbox: --exec backend resolution + dispatcher wiring (epic 11.0)
+	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"},            // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
 	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
 	// integration holds only end-to-end _test.go files (no production code).
