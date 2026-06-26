@@ -11,6 +11,7 @@ import (
 	"github.com/samestrin/atcr/internal/benchmark"
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/stream"
 )
 
@@ -72,6 +73,11 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
 		}
 		done = cp.doneIndex()
+		if existing != nil {
+			replayed := len(done)
+			remaining := len(m.Cases) - replayed
+			fmt.Fprintf(os.Stderr, "Resuming benchmark: replayed %d case(s), %d remaining to execute\n", replayed, remaining)
+		}
 	}
 
 	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
@@ -96,9 +102,9 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			// replay a score against the wrong case.
 			if entry.CaseID != c.ID {
 				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
-					errCheckpointSuiteMismatch, i, entry.CaseID, c.ID)
+					errCheckpointCaseMismatch, i, entry.CaseID, c.ID)
 			}
-			replayCheckpointCase(accs, &order, entry)
+			replayCheckpointCase(accs, &order, entry, c.ExpectedCategories)
 			continue
 		}
 
@@ -125,6 +131,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		if err != nil {
 			return nil, fmt.Errorf("preparing case %q: %w", c.ID, err)
 		}
+		log.FromContext(ctx).Info("benchmark case executing", "case", c.ID, "reviewers", len(cfg.Project.Agents))
 		res, err := fanout.ExecuteReview(ctx, completer, prep)
 		if err != nil {
 			return nil, fmt.Errorf("executing case %q: %w", c.ID, err)
@@ -165,7 +172,6 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 					Agent:         a.Agent,
 					Model:         model,
 					Persona:       persona,
-					Expected:      c.ExpectedCategories,
 					Raised:        raised,
 					UsageReported: usageReported,
 					CostUSD:       cost,
@@ -178,7 +184,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// atomic write means a process killed mid-suite leaves a checkpoint holding
 		// exactly the cases that completed.
 		if cp != nil {
-			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Reviewers: caseReviewers})
+			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Expected: c.ExpectedCategories, Reviewers: caseReviewers})
 			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
 				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
 			}
@@ -206,18 +212,20 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	}, nil
 }
 
-// rosterSignature builds the deterministic "agent=model" signature of the
-// configured reviewer panel, sorted by agent name. It uses the CONFIGURED model
-// (registry), not a runtime usage-reported one, so the same config always yields the
+// rosterSignature builds the deterministic "agent=model=persona" signature of the
+// configured reviewer panel, sorted by agent name. It uses the CONFIGURED values
+// (registry), not runtime usage-reported ones, so the same config always yields the
 // same signature — the stable identity a resume compares against to reject a changed
-// panel (AC4 roster guard). An agent with no configured model contributes an empty
-// model component, which still distinguishes it from a later-configured one.
+// panel (AC4 roster guard). Persona is included because it is a behavioral modifier
+// (system prompt) that can change reviewer outputs even when model stays the same.
+// An agent with no configured model or persona contributes an empty component,
+// which still distinguishes it from a later-configured one.
 func rosterSignature(cfg *fanout.ReviewConfig) []string {
 	names := append([]string(nil), cfg.Project.Agents...)
 	sort.Strings(names)
 	sig := make([]string, len(names))
 	for i, n := range names {
-		sig[i] = n + "=" + cfg.Registry.Agents[n].Model
+		sig[i] = n + "=" + cfg.Registry.Agents[n].Model + "=" + cfg.Registry.Agents[n].Persona
 	}
 	return sig
 }
@@ -254,10 +262,12 @@ func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, 
 
 // replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
 // back into the accumulator via the same applyReviewerOutcome path the fresh loop
-// uses — no review re-execution and no Completer call (AC2).
-func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase) {
+// uses — no review re-execution and no Completer call (AC2). Expected categories
+// are re-read from the suite manifest (passed in as expected) because they are
+// identical for every reviewer of a case and are not durable per-reviewer state.
+func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase, expected []string) {
 	for _, r := range entry.Reviewers {
-		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, r.Expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
 	}
 }
 

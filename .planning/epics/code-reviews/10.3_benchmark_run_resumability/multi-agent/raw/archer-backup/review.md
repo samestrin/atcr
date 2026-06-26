@@ -1,0 +1,2 @@
+MEDIUM|cmd/atcr/benchmark_run.go:215|rosterSignature omits persona; persona drift bypasses guard|Include persona in signature: n+"="+r.Model+"/"+r.Persona|correctness|15|Persona change passes roster guard; replayed persona differs from fresh, breaking AC3 byte-identical contract|bruce
+LOW|cmd/atcr/benchmark_checkpoint_test.go:30|Round-trip test omits Roster field|Add Roster field to want struct to verify serialization|maintainability|5|want.Roster is nil; Roster JSON tag not exercised in round-trip|bruce

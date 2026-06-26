@@ -1,0 +1,11 @@
+{
+  "suite": "fixture-one-case",
+  "suite_version": "1.0.0",
+  "cases": [
+    {
+      "id": "case-01-nil-deref",
+      "diff": "case-01.diff",
+      "expected_categories": ["correctness"]
+    }
+  ]
+}

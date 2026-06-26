@@ -1,0 +1,9 @@
+{
+  "agent_name": "archer-backup",
+  "model": "glm-5.1",
+  "status": "ok",
+  "duration_ms": 119383,
+  "fallback_used": true,
+  "fallback_from": "archer",
+  "original_error": "stream read failed: context deadline exceeded"
+}

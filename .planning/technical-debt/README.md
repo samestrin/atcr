@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 1 | 24 | 0 |
-| LOW | 7 | 22 | 0 |
+| MEDIUM | 0 | 24 | 0 |
+| LOW | 0 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 8 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 56
+**Last Modified:** 2026-06-25 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 48
 
 ## Directory Structure
 
@@ -33,24 +33,6 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
-
-### [2026-06-25] From Sprint: epic-10.3
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | MEDIUM | cmd/atcr/benchmark_run.go:73 | A resume is silent — nothing reports how many cases were replayed from the checkpoint vs executed, so an operator cannot distinguish a resumed run from a fresh one and a wrong/partial resume goes unnoticed | Emit a stderr/log line on resume reporting replayed-case and remaining-to-execute counts (user-facing messaging belongs in the cmd layer, no AC requires it) | OBSERVABILITY | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | cmd/atcr/benchmark_checkpoint.go:104 | saveCheckpoint rewrites the entire growing checkpoint file after every case, making checkpoint IO O(n^2) in case count; negligible against paid serial LLM work but a latent cost on large suites | Accept the tradeoff (LLM cost dominates) or switch to an append-friendly format if suites grow large | PERFORMANCE | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | cmd/atcr/benchmark_checkpoint.go:104 | Two concurrent benchmark runs pointed at the same --checkpoint path race on the temp+rename with no advisory lock; last-writer-wins can drop a completed case entry | Document that a checkpoint path must not be shared by concurrent runs, or take an advisory lock as the fanout resume marker does | EDGE_CASES | 30 | execute-epic-independent |
-| U | [ ] | LOW | docs/benchmark.md:141 | GeneratedAt is wall-clock per invocation, so a real resumed run on a later day produces a different GeneratedAt than the original; the byte-identical claim holds for scored metrics under a fixed GeneratedAt | Clarify in docs that GeneratedAt reflects the resuming run's wall-clock and byte-identity covers the scored metrics | DOCS | 15 | execute-epic-independent |
-
-### [2026-06-25] From Sprint: epic-10.2
-
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| U | [ ] | LOW | internal/benchmark/run.go:51 | benchmark run emits no per-case progress; a multi-case suite reviewed over the network is silent until the whole run completes | log a per-case progress line (case id + reviewer count) via log.FromContext before each ExecuteReview call | CROSS_CUTTING | 15 | execute-epic-cumulative |
-| U | [ ] | LOW | docs/benchmark.md:reproducibility | the byte-identical claim holds only under a fixed transcript (recorded reviewer outputs AND usage+latency); two live runs differ via wall-clock DurationMS and provider tokens | state reproducibility is conditioned on identical recorded usage+latency, not just the same suite + textual outputs | OBSERVABILITY | 10 | execute-epic-independent |
-| U | [ ] | LOW | cmd/atcr/benchmark_run.go:170 | reviewerModel/persona are pinned when a reviewer is first seen; if its first case failed (no usage, empty AgentStatus.Model) the model stays the config fallback even when a later case reports the provider id | prefer the provider-reported Model from any case that reported usage, or resolve identity after accumulating all cases | CORRECTNESS | 20 | execute-epic-independent |
-| U | [ ] | LOW | internal/benchmark/score.go:98 | scoreOne counts a case with empty Expected in the macro-average denominator while contributing 0 recall, silently lowering recall; the suite path is safe via Validate but Score is exported | skip cases with no expected categories from the recall denominator, or document that Score requires every CaseScore.Expected non-empty | EDGE_CASES | 15 | execute-epic-independent |
 
 ### [2026-06-23] From Sprint: 8.0_reconciler_library
 

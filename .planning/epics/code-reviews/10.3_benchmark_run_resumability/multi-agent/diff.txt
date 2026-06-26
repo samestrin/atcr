@@ -1,0 +1,830 @@
+diff --git a/cmd/atcr/benchmark.go b/cmd/atcr/benchmark.go
+index bc316dcc..a9452503 100644
+--- a/cmd/atcr/benchmark.go
++++ b/cmd/atcr/benchmark.go
+@@ -90,15 +90,17 @@ func newBenchmarkRunCmd() *cobra.Command {
+ 	}
+ 	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
+ 	cmd.Flags().String("out", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
++	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file. Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. Empty = no checkpointing (default).")
+ 	_ = cmd.MarkFlagRequired("suite-path")
+ 	return cmd
+ }
+ 
+ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
+-	// Cobra GetString errors are unreachable: both flags are registered above
++	// Cobra GetString errors are unreachable: all flags are registered above
+ 	// ("suite-path" is MarkFlagRequired). Project-wide convention.
+ 	suitePath, _ := cmd.Flags().GetString("suite-path")
+ 	out, _ := cmd.Flags().GetString("out")
++	checkpoint, _ := cmd.Flags().GetString("checkpoint")
+ 
+ 	// Discover config the same way `atcr review` does (registry + project config
+ 	// rooted at the cwd), so the benchmark roster is the project's reviewers.
+@@ -107,7 +109,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
+ 		return err
+ 	}
+ 
+-	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC())
++	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC(), checkpoint)
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/cmd/atcr/benchmark_checkpoint.go b/cmd/atcr/benchmark_checkpoint.go
+new file mode 100644
+index 00000000..e554bffb
+--- /dev/null
++++ b/cmd/atcr/benchmark_checkpoint.go
+@@ -0,0 +1,176 @@
++package main
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io/fs"
++	"os"
++	"sort"
++	"strings"
++)
++
++// runCheckpoint is the on-disk durable record of a benchmark run's completed,
++// already-scored cases (Epic 10.3). `atcr benchmark run --checkpoint <file>` writes
++// one entry per case as soon as it is scored — before the loop advances — so a run
++// killed mid-suite leaves a checkpoint containing exactly the completed cases. A
++// re-run over the same suite replays these entries into the score accumulator
++// instead of re-executing (and re-paying for) them.
++//
++// The suite-identity triple (ReproHash + Suite + SuiteVersion) guards resume:
++// validateCheckpoint fails closed if any of them drifted, so a checkpoint from a
++// different or changed suite is never silently mixed into a new run (AC4). The
++// format mirrors the fanout resume precedent (internal/fanout/resume.go) — a
++// recorded-identity header plus the completed units — rather than inventing a new
++// mechanism. The orchestration lives here in cmd/atcr (the composition root), not
++// internal/benchmark, keeping that package a live-LLM-free suite-contract + scorer
++// leaf.
++type runCheckpoint struct {
++	ReproHash    string `json:"repro_hash"`
++	Suite        string `json:"suite"`
++	SuiteVersion string `json:"suite_version"`
++	// Roster is the sorted "agent=model" signature of the reviewer panel that
++	// produced this checkpoint. ReproHash covers only suite CONTENT (cases + diffs),
++	// not the panel, so a roster/model change would otherwise resume silently —
++	// mixing stale checkpointed reviewers with freshly-executed ones. Recording the
++	// roster lets validateCheckpointRoster fail closed on drift, mirroring fanout's
++	// ErrRosterChanged precedent.
++	Roster []string         `json:"roster"`
++	Cases  []checkpointCase `json:"cases"`
++}
++
++// checkpointCase is one completed case's scored outcome, keyed by its index in the
++// suite's case list (the same index the run loop iterates), so replay folds it back
++// in the original case order — preserving the deterministic aggregation the
++// reproducibility contract depends on (AC3).
++type checkpointCase struct {
++	Index     int                  `json:"index"`
++	CaseID    string               `json:"case_id"`
++	Reviewers []checkpointReviewer `json:"reviewers"`
++}
++
++// checkpointReviewer captures exactly the per-reviewer fields the run loop folds
++// into a reviewerAcc for one case: identity (model/persona, locked at first
++// sighting), the case score (expected vs raised categories), and the usage-gated
++// cost/latency contribution. Storing the already-computed cost contribution (not the
++// raw tokens) and replaying it in case order keeps the float sum and latency median
++// byte-identical to an uninterrupted run.
++type checkpointReviewer struct {
++	Agent         string   `json:"agent"`
++	Model         string   `json:"model"`
++	Persona       string   `json:"persona"`
++	Expected      []string `json:"expected"`
++	Raised        []string `json:"raised"`
++	UsageReported bool     `json:"usage_reported"`
++	CostUSD       float64  `json:"cost_usd"`
++	LatencyMS     int64    `json:"latency_ms"`
++}
++
++// errCheckpointSuiteMismatch reports that a checkpoint's recorded suite identity
++// differs from the suite being run. Resume fails closed (the operator must remove
++// the stale checkpoint to start fresh) rather than silently discarding or mixing
++// it — mirroring fanout's ErrRangeChanged / ErrRosterChanged hard-abort contract.
++var errCheckpointSuiteMismatch = errors.New("checkpoint suite identity changed since it was written")
++
++// errCheckpointRosterMismatch reports that the configured reviewer roster (agent
++// set and/or per-agent model) differs from the roster the checkpoint recorded.
++// Resume fails closed rather than silently scoring different reviewers over
++// different subsets of cases — mirroring fanout's ErrRosterChanged contract.
++var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed since it was written")
++
++// loadCheckpoint reads and parses a checkpoint file. A missing file returns
++// (nil, nil): it is the legitimate first-run case (start fresh), not an error. A
++// present-but-corrupt file surfaces a parse error rather than a guessed empty
++// state, so a damaged checkpoint can never cause a silent full re-run.
++func loadCheckpoint(path string) (*runCheckpoint, error) {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		if errors.Is(err, fs.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, fmt.Errorf("reading checkpoint %s: %w", path, err)
++	}
++	var cp runCheckpoint
++	if err := json.Unmarshal(data, &cp); err != nil {
++		return nil, fmt.Errorf("checkpoint %s is corrupt: %w", path, err)
++	}
++	return &cp, nil
++}
++
++// saveCheckpoint atomically writes the checkpoint to path (temp file + rename, via
++// the shared writeExportFile helper), so a process killed mid-write leaves the
++// previous valid checkpoint intact — the on-disk file always reflects a whole
++// number of completed cases (AC1).
++func saveCheckpoint(path string, cp *runCheckpoint) error {
++	data, err := json.MarshalIndent(cp, "", "  ")
++	if err != nil {
++		return fmt.Errorf("encoding checkpoint: %w", err)
++	}
++	return writeExportFile(path, data)
++}
++
++// doneIndex maps each completed case's index to its recorded entry, so the run loop
++// can skip-and-replay a checkpointed case in O(1).
++func (cp *runCheckpoint) doneIndex() map[int]checkpointCase {
++	done := make(map[int]checkpointCase, len(cp.Cases))
++	for _, c := range cp.Cases {
++		done[c.Index] = c
++	}
++	return done
++}
++
++// validateCheckpoint enforces the suite-identity guard (AC4): the checkpoint may be
++// resumed only when its recorded ReproHash, Suite, and SuiteVersion all match the
++// suite currently being run. Any drift returns errCheckpointSuiteMismatch so the
++// caller aborts rather than mixing inconsistent work.
++func validateCheckpoint(cp *runCheckpoint, reproHash, suite, suiteVersion string) error {
++	if cp.ReproHash != reproHash || cp.Suite != suite || cp.SuiteVersion != suiteVersion {
++		return fmt.Errorf("%w: recorded suite %q version %q (hash %s), current suite %q version %q (hash %s); remove the checkpoint to start fresh",
++			errCheckpointSuiteMismatch, cp.Suite, cp.SuiteVersion, shortHash(cp.ReproHash), suite, suiteVersion, shortHash(reproHash))
++	}
++	return nil
++}
++
++// validateCheckpointRoster enforces the roster guard (AC4): the configured reviewer
++// panel must match the one recorded in the checkpoint. Both signatures are
++// "agent=model" entries; they are compared as sorted sets so declaration order is
++// irrelevant. Any added, removed, or model-changed reviewer returns
++// errCheckpointRosterMismatch so the caller aborts rather than mixing panels.
++func validateCheckpointRoster(cp *runCheckpoint, roster []string) error {
++	recorded := sortedCopy(cp.Roster)
++	current := sortedCopy(roster)
++	if !equalStrings(recorded, current) {
++		return fmt.Errorf("%w: recorded [%s], configured [%s]; remove the checkpoint to start fresh",
++			errCheckpointRosterMismatch, strings.Join(recorded, " "), strings.Join(current, " "))
++	}
++	return nil
++}
++
++// sortedCopy returns a sorted copy of s without mutating the input.
++func sortedCopy(s []string) []string {
++	out := append([]string(nil), s...)
++	sort.Strings(out)
++	return out
++}
++
++// equalStrings reports whether two string slices are element-wise equal.
++func equalStrings(a, b []string) bool {
++	if len(a) != len(b) {
++		return false
++	}
++	for i := range a {
++		if a[i] != b[i] {
++			return false
++		}
++	}
++	return true
++}
++
++// shortHash trims a repro hash to 12 chars for legible diagnostics, leaving shorter
++// values intact (mirrors fanout's shortRef).
++func shortHash(h string) string {
++	if len(h) > 12 {
++		return h[:12]
++	}
++	return h
++}
+diff --git a/cmd/atcr/benchmark_checkpoint_test.go b/cmd/atcr/benchmark_checkpoint_test.go
+new file mode 100644
+index 00000000..e584c12e
+--- /dev/null
++++ b/cmd/atcr/benchmark_checkpoint_test.go
+@@ -0,0 +1,100 @@
++package main
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// loadCheckpoint returns (nil, nil) when the file does not exist — the
++// first-run-of-a-fresh-checkpoint case, distinguished from a real read error so
++// the run starts cleanly rather than aborting.
++func TestLoadCheckpoint_MissingReturnsNil(t *testing.T) {
++	cp, err := loadCheckpoint(filepath.Join(t.TempDir(), "does-not-exist.json"))
++	require.NoError(t, err)
++	assert.Nil(t, cp, "a missing checkpoint is not an error; it means start fresh")
++}
++
++// saveCheckpoint then loadCheckpoint must round-trip the full record, including
++// per-reviewer usage-gated cost/latency, so a resumed run can fold the exact same
++// values back into the accumulator.
++func TestCheckpoint_RoundTrips(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "nested", "ckpt.json")
++	want := &runCheckpoint{
++		ReproHash:    "abc123",
++		Suite:        "fixture-mini",
++		SuiteVersion: "1.0.0",
++		Cases: []checkpointCase{
++			{
++				Index:  0,
++				CaseID: "case-01",
++				Reviewers: []checkpointReviewer{
++					{Agent: "greta", Model: "m-greta", Persona: "greta",
++						Expected: []string{"correctness"}, Raised: []string{"correctness"},
++						UsageReported: true, CostUSD: 0.0125, LatencyMS: 1200},
++				},
++			},
++		},
++	}
++
++	require.NoError(t, saveCheckpoint(path, want))
++
++	got, err := loadCheckpoint(path)
++	require.NoError(t, err)
++	require.NotNil(t, got)
++	assert.Equal(t, want, got, "checkpoint must round-trip byte-for-byte through save/load")
++}
++
++// doneIndex maps each completed case's index to its entry so the run loop can
++// skip-and-replay it in O(1).
++func TestRunCheckpoint_DoneIndex(t *testing.T) {
++	cp := &runCheckpoint{Cases: []checkpointCase{
++		{Index: 0, CaseID: "a"},
++		{Index: 2, CaseID: "c"},
++	}}
++	done := cp.doneIndex()
++	require.Len(t, done, 2)
++	assert.Equal(t, "a", done[0].CaseID)
++	assert.Equal(t, "c", done[2].CaseID)
++	_, ok := done[1]
++	assert.False(t, ok, "index 1 was never checkpointed")
++}
++
++// validateCheckpoint accepts a matching suite identity and rejects any drift in
++// repro_hash, suite, or suite_version with the ErrCheckpointSuiteMismatch sentinel
++// (AC4 — never silently mixed).
++func TestValidateCheckpoint(t *testing.T) {
++	cp := &runCheckpoint{ReproHash: "hash-1", Suite: "fixture-mini", SuiteVersion: "1.0.0"}
++
++	require.NoError(t, validateCheckpoint(cp, "hash-1", "fixture-mini", "1.0.0"),
++		"a matching suite identity resumes")
++
++	for _, tc := range []struct {
++		name                      string
++		hash, suite, suiteVersion string
++	}{
++		{"changed repro hash", "hash-2", "fixture-mini", "1.0.0"},
++		{"changed suite", "hash-1", "other-suite", "1.0.0"},
++		{"changed suite version", "hash-1", "fixture-mini", "2.0.0"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			err := validateCheckpoint(cp, tc.hash, tc.suite, tc.suiteVersion)
++			require.Error(t, err)
++			assert.True(t, errors.Is(err, errCheckpointSuiteMismatch),
++				"mismatch must surface the fail-closed sentinel")
++		})
++	}
++}
++
++// A present-but-corrupt checkpoint surfaces a parse error rather than a guessed
++// empty state (mirrors fanout ReadManifest's fail-loud-on-corruption contract).
++func TestLoadCheckpoint_CorruptErrors(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
++	_, err := loadCheckpoint(path)
++	require.Error(t, err)
++}
+diff --git a/cmd/atcr/benchmark_run.go b/cmd/atcr/benchmark_run.go
+index 8c401e6f..344dc664 100644
+--- a/cmd/atcr/benchmark_run.go
++++ b/cmd/atcr/benchmark_run.go
+@@ -34,30 +34,74 @@ import (
+ // contract export relies on. Each case's review artifacts are written under a temp
+ // directory that is removed before the function returns; only the scored findings
+ // flow into the result, so the temp path never affects output.
+-func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*benchmark.RunResult, error) {
++func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string) (*benchmark.RunResult, error) {
+ 	m, err := benchmark.Load(suitePath)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 
++	// Opt-in checkpointing (Epic 10.3): when checkpointPath is set, each scored case
++	// is persisted before the next begins so a transient failure does not forfeit the
++	// paid work of the cases that already completed. An empty path keeps the 10.2
++	// behavior verbatim (no read, no write).
++	var cp *runCheckpoint
++	var done map[int]checkpointCase
++	if checkpointPath != "" {
++		curHash, herr := benchmark.ReproHashManifest(m, suitePath)
++		if herr != nil {
++			return nil, fmt.Errorf("hashing suite for checkpoint: %w", herr)
++		}
++		existing, lerr := loadCheckpoint(checkpointPath)
++		if lerr != nil {
++			return nil, lerr
++		}
++		roster := rosterSignature(cfg)
++		if existing != nil {
++			// Suite-identity guard (AC4): a checkpoint from a different or changed
++			// suite is rejected, never silently mixed into this run. The roster guard
++			// catches a changed reviewer panel — orthogonal to ReproHash, which hashes
++			// only suite content.
++			if verr := validateCheckpoint(existing, curHash, m.Suite, m.SuiteVersion); verr != nil {
++				return nil, verr
++			}
++			if verr := validateCheckpointRoster(existing, roster); verr != nil {
++				return nil, verr
++			}
++			cp = existing
++		} else {
++			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
++		}
++		done = cp.doneIndex()
++	}
++
+ 	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
+ 	if err != nil {
+ 		return nil, fmt.Errorf("creating benchmark work dir: %w", err)
+ 	}
+ 	defer func() { _ = os.RemoveAll(tmp) }()
+ 
+-	// reviewerAcc accumulates one reviewer's outcomes across every case.
+-	type reviewerAcc struct {
+-		model     string
+-		persona   string
+-		cases     []benchmark.CaseScore
+-		costUSD   float64
+-		latencies []int64 // per-case wall-clock, recorded only when usage was reported
+-	}
+ 	accs := map[string]*reviewerAcc{}
+ 	var order []string // reviewer names, sorted for deterministic aggregation
+ 
+ 	for i, c := range m.Cases {
++		// Resume: a case already in the checkpoint is replayed into the accumulator
++		// without re-executing (and re-paying for) it (AC2). Replaying in case-index
++		// order preserves the deterministic aggregation the reproducibility contract
++		// depends on (AC3).
++		if entry, ok := done[i]; ok {
++			// ReproHash is order-independent (it sorts cases by id), so a reordered
++			// suite shares the hash but remaps indices. Guard the per-index identity
++			// too: a checkpoint entry whose recorded id no longer matches the suite's
++			// case at this index means the suite changed — fail closed rather than
++			// replay a score against the wrong case.
++			if entry.CaseID != c.ID {
++				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
++					errCheckpointSuiteMismatch, i, entry.CaseID, c.ID)
++			}
++			replayCheckpointCase(accs, &order, entry)
++			continue
++		}
++
+ 		diff, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
+ 		if err != nil {
+ 			return nil, fmt.Errorf("reading case %q diff: %w", c.ID, err)
+@@ -98,20 +142,45 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
+ 		// Iterate the full agent roster (including failed agents, which raised
+ 		// nothing) so every reviewer is scored on every case — a missed case is
+ 		// recall 0, not an absent record.
++		var caseReviewers []checkpointReviewer
+ 		for _, a := range summary.Agents {
+-			acc := accs[a.Agent]
+-			if acc == nil {
+-				acc = &reviewerAcc{model: reviewerModel(cfg, a), persona: reviewerPersona(cfg, a.Agent)}
+-				accs[a.Agent] = acc
+-				order = append(order, a.Agent)
+-			}
+-			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raisedByReviewer[a.Agent]})
++			model := reviewerModel(cfg, a)
++			persona := reviewerPersona(cfg, a.Agent)
++			raised := raisedByReviewer[a.Agent]
+ 			// Cost + latency are usage-gated: a completer that reports no token
+ 			// usage (the test stub) contributes neither, keeping the score
+ 			// deterministic. status.json only records Model/tokens when usage > 0.
+-			if a.TokensIn > 0 || a.TokensOut > 0 {
+-				acc.costUSD += llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
+-				acc.latencies = append(acc.latencies, a.DurationMS)
++			usageReported := a.TokensIn > 0 || a.TokensOut > 0
++			var cost float64
++			var latency int64
++			if usageReported {
++				cost = llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
++				latency = a.DurationMS
++			}
++
++			applyReviewerOutcome(accs, &order, a.Agent, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
++
++			if cp != nil {
++				caseReviewers = append(caseReviewers, checkpointReviewer{
++					Agent:         a.Agent,
++					Model:         model,
++					Persona:       persona,
++					Expected:      c.ExpectedCategories,
++					Raised:        raised,
++					UsageReported: usageReported,
++					CostUSD:       cost,
++					LatencyMS:     latency,
++				})
++			}
++		}
++
++		// Checkpoint the scored case before the loop advances to case i+1 (AC1): the
++		// atomic write means a process killed mid-suite leaves a checkpoint holding
++		// exactly the cases that completed.
++		if cp != nil {
++			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Reviewers: caseReviewers})
++			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
++				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
+ 			}
+ 		}
+ 	}
+@@ -137,6 +206,61 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
+ 	}, nil
+ }
+ 
++// rosterSignature builds the deterministic "agent=model" signature of the
++// configured reviewer panel, sorted by agent name. It uses the CONFIGURED model
++// (registry), not a runtime usage-reported one, so the same config always yields the
++// same signature — the stable identity a resume compares against to reject a changed
++// panel (AC4 roster guard). An agent with no configured model contributes an empty
++// model component, which still distinguishes it from a later-configured one.
++func rosterSignature(cfg *fanout.ReviewConfig) []string {
++	names := append([]string(nil), cfg.Project.Agents...)
++	sort.Strings(names)
++	sig := make([]string, len(names))
++	for i, n := range names {
++		sig[i] = n + "=" + cfg.Registry.Agents[n].Model
++	}
++	return sig
++}
++
++// reviewerAcc accumulates one reviewer's outcomes across every case.
++type reviewerAcc struct {
++	model     string
++	persona   string
++	cases     []benchmark.CaseScore
++	costUSD   float64
++	latencies []int64 // per-case wall-clock, recorded only when usage was reported
++}
++
++// applyReviewerOutcome folds one reviewer's single-case outcome into the
++// accumulator, creating the accumulator (and registering the reviewer in order) on
++// first sighting. It is the SINGLE fold path shared by fresh execution and
++// checkpoint replay, so a resumed run reconstructs accs identically to an
++// uninterrupted one (AC3): model/persona are locked at first sighting (matching the
++// original first-case-wins behavior), and the usage-gated cost/latency are added in
++// the same case order, keeping the float sum and latency median byte-identical.
++func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
++	acc := accs[agent]
++	if acc == nil {
++		acc = &reviewerAcc{model: model, persona: persona}
++		accs[agent] = acc
++		*order = append(*order, agent)
++	}
++	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: expected, Raised: raised})
++	if usageReported {
++		acc.costUSD += costUSD
++		acc.latencies = append(acc.latencies, latencyMS)
++	}
++}
++
++// replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
++// back into the accumulator via the same applyReviewerOutcome path the fresh loop
++// uses — no review re-execution and no Completer call (AC2).
++func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase) {
++	for _, r := range entry.Reviewers {
++		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, r.Expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
++	}
++}
++
+ // readCaseFindings parses the merged pool findings.txt for one review and groups
+ // each finding's category by its REVIEWER (the agent name the engine stamped,
+ // never a model-supplied value). A pool with no findings yields an empty map.
+diff --git a/cmd/atcr/benchmark_run_resume_test.go b/cmd/atcr/benchmark_run_resume_test.go
+new file mode 100644
+index 00000000..95284d2e
+--- /dev/null
++++ b/cmd/atcr/benchmark_run_resume_test.go
+@@ -0,0 +1,255 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/llmclient"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// countingCompleter wraps the stub's single-finding behavior and counts every
++// Complete call, so a resumed run can be asserted to make ZERO LLM calls for
++// already-checkpointed cases (AC2).
++type countingCompleter struct{ calls int }
++
++func (c *countingCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
++	c.calls++
++	return stubCompleter{}.Complete(ctx, inv)
++}
++
++// failAfterCompleter succeeds for the first ok calls then errors on every call
++// after, simulating a transient mid-suite failure. With a single-agent roster, ok=1
++// lets case 0 complete (and checkpoint) while case 1's only agent fails — driving
++// the total-roster abort so the checkpoint is asserted to hold exactly the completed
++// cases (AC1).
++type failAfterCompleter struct {
++	ok    int
++	calls int
++}
++
++func (c *failAfterCompleter) Complete(ctx context.Context, inv llmclient.Invocation) (string, error) {
++	c.calls++
++	if c.calls > c.ok {
++		return "", fmt.Errorf("simulated transient failure on call %d", c.calls)
++	}
++	return stubCompleter{}.Complete(ctx, inv)
++}
++
++// AC1: a checkpoint entry is written for each case immediately after it is scored.
++func TestExecuteBenchmarkRun_WritesCheckpointPerCase(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
++	require.NoError(t, err)
++	require.Len(t, rr.Reviewers, 1)
++
++	cp, err := loadCheckpoint(path)
++	require.NoError(t, err)
++	require.NotNil(t, cp)
++
++	assert.Equal(t, "fixture-mini", cp.Suite)
++	assert.Equal(t, "1.0.0", cp.SuiteVersion)
++	assert.NotEmpty(t, cp.ReproHash, "suite-identity guard key is recorded")
++
++	require.Len(t, cp.Cases, 2, "one checkpoint entry per scored case")
++	assert.Equal(t, 0, cp.Cases[0].Index)
++	assert.Equal(t, "case-01-nil-deref", cp.Cases[0].CaseID)
++	require.Len(t, cp.Cases[0].Reviewers, 1)
++	assert.Equal(t, "greta", cp.Cases[0].Reviewers[0].Agent)
++	assert.Equal(t, "m-greta", cp.Cases[0].Reviewers[0].Model)
++	assert.Equal(t, []string{"correctness"}, cp.Cases[0].Reviewers[0].Expected)
++	assert.Equal(t, []string{"correctness"}, cp.Cases[0].Reviewers[0].Raised)
++
++	assert.Equal(t, 1, cp.Cases[1].Index)
++	assert.Equal(t, "case-02-sql-injection", cp.Cases[1].CaseID)
++	assert.Equal(t, []string{"security", "correctness"}, cp.Cases[1].Reviewers[0].Expected)
++}
++
++// AC1: a run aborted mid-suite leaves a checkpoint containing exactly the completed
++// cases — not the in-flight one, and not a corrupt partial.
++func TestExecuteBenchmarkRun_CheckpointHoldsOnlyCompletedCasesOnFailure(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	// ok=1: case 0's single agent succeeds (case scored + checkpointed); case 1's
++	// agent fails, triggering the total-roster abort before case 1 is checkpointed.
++	_, err := executeBenchmarkRun(context.Background(), cfg, &failAfterCompleter{ok: 1}, suiteValidPath, gen, path)
++	require.Error(t, err, "a total-roster case failure still aborts the run (10.2 semantics intact)")
++
++	cp, err := loadCheckpoint(path)
++	require.NoError(t, err)
++	require.NotNil(t, cp)
++	require.Len(t, cp.Cases, 1, "only the case that completed before the failure is checkpointed")
++	assert.Equal(t, 0, cp.Cases[0].Index)
++	assert.Equal(t, "case-01-nil-deref", cp.Cases[0].CaseID)
++}
++
++// AC5: with no checkpoint path, no checkpoint file is written and behavior is the
++// 10.2 default (the existing reproducibility tests cover the result itself).
++func TestExecuteBenchmarkRun_NoCheckpointPathWritesNothing(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	dir := t.TempDir()
++
++	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
++	require.NoError(t, err)
++
++	entries, err := os.ReadDir(dir)
++	require.NoError(t, err)
++	assert.Empty(t, entries, "empty checkpoint path writes nothing")
++}
++
++// AC2 + AC3: re-running the same suite against an existing checkpoint replays every
++// checkpointed case (zero Completer calls) and produces a RunResult byte-identical
++// to an uninterrupted run.
++func TestExecuteBenchmarkRun_FullResumeIsZeroCostAndIdentical(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	// Uninterrupted baseline (no checkpoint).
++	baseline, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
++	require.NoError(t, err)
++
++	// First checkpointed run fully populates the checkpoint.
++	first := &countingCompleter{}
++	rr1, err := executeBenchmarkRun(context.Background(), cfg, first, suiteValidPath, gen, path)
++	require.NoError(t, err)
++	assert.Greater(t, first.calls, 0, "the first run actually executes the cases")
++
++	// Second run resumes entirely from the checkpoint.
++	second := &countingCompleter{}
++	rr2, err := executeBenchmarkRun(context.Background(), cfg, second, suiteValidPath, gen, path)
++	require.NoError(t, err)
++	assert.Equal(t, 0, second.calls, "a fully-checkpointed re-run makes zero Completer calls (AC2)")
++
++	jBaseline, _ := json.Marshal(baseline)
++	j1, _ := json.Marshal(rr1)
++	j2, _ := json.Marshal(rr2)
++	assert.JSONEq(t, string(jBaseline), string(j1), "checkpointed run == uninterrupted run")
++	assert.JSONEq(t, string(jBaseline), string(j2), "resumed run is byte-identical to uninterrupted (AC3)")
++}
++
++// AC2 + AC3 (partial): a run that completed only case 0 before failing resumes by
++// replaying case 0 (zero calls for it) and executing only case 1, yielding a result
++// identical to an uninterrupted run.
++func TestExecuteBenchmarkRun_PartialResumeExecutesOnlyRemainder(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	baseline, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
++	require.NoError(t, err)
++
++	// First attempt completes case 0 then fails on case 1.
++	_, err = executeBenchmarkRun(context.Background(), cfg, &failAfterCompleter{ok: 1}, suiteValidPath, gen, path)
++	require.Error(t, err)
++
++	// Resume: case 0 replayed (no call), only case 1's single agent executes.
++	resume := &countingCompleter{}
++	rr, err := executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
++	require.NoError(t, err)
++	assert.Equal(t, 1, resume.calls, "only the one unscored case's single agent is executed; case 0 is replayed")
++
++	jBaseline, _ := json.Marshal(baseline)
++	jResume, _ := json.Marshal(rr)
++	assert.JSONEq(t, string(jBaseline), string(jResume), "partial resume is byte-identical to uninterrupted (AC3)")
++}
++
++// AC4: a checkpoint whose recorded suite identity differs from the current suite is
++// rejected (fail-closed), never silently mixed into the new run.
++func TestExecuteBenchmarkRun_RejectsMismatchedCheckpoint(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	// Hand-write a checkpoint with a stale repro hash but the right suite/version.
++	stale := &runCheckpoint{ReproHash: "deadbeefdeadbeef", Suite: "fixture-mini", SuiteVersion: "1.0.0"}
++	require.NoError(t, saveCheckpoint(path, stale))
++
++	_, err := executeBenchmarkRun(context.Background(), cfg, &countingCompleter{}, suiteValidPath, gen, path)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, errCheckpointSuiteMismatch, "a changed suite identity aborts the resume (AC4)")
++}
++
++// AC5: `benchmark run` exposes an opt-in --checkpoint flag whose default is empty
++// (off) — present behavior is unchanged unless the operator passes a path.
++func TestBenchmarkRunCmd_HasOptionalCheckpointFlag(t *testing.T) {
++	cmd := newBenchmarkRunCmd()
++	f := cmd.Flags().Lookup("checkpoint")
++	require.NotNil(t, f, "benchmark run exposes a --checkpoint flag")
++	assert.Equal(t, "", f.DefValue, "checkpoint is opt-in: default empty = off")
++}
++
++// AC4 (roster guard): ReproHash covers only suite content, NOT the reviewer roster.
++// A roster change (added/removed reviewer) across a resume would silently mix stale
++// checkpointed reviewers with freshly-executed ones, so a roster-set drift must fail
++// closed — mirroring fanout's ErrRosterChanged precedent.
++func TestExecuteBenchmarkRun_RejectsRosterMembershipDrift(t *testing.T) {
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	cfg1 := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
++	_, err := executeBenchmarkRun(context.Background(), cfg1, stubCompleter{}, suiteValidPath, gen, path)
++	require.NoError(t, err)
++
++	// Resume with kai swapped for zara — same suite, changed roster.
++	cfg2 := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"zara", "m-zara", "zara"})
++	resume := &countingCompleter{}
++	_, err = executeBenchmarkRun(context.Background(), cfg2, resume, suiteValidPath, gen, path)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, errCheckpointRosterMismatch, "a changed roster aborts the resume")
++	assert.Equal(t, 0, resume.calls, "the roster guard fires before any review executes")
++}
++
++// AC4 (roster guard): a same-name reviewer whose configured model changed is also a
++// roster drift — the checkpoint's recorded model would otherwise be replayed against
++// new cases run with the new model.
++func TestExecuteBenchmarkRun_RejectsRosterModelDrift(t *testing.T) {
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	cfg1 := benchCfg([3]string{"greta", "m-greta", "greta"})
++	_, err := executeBenchmarkRun(context.Background(), cfg1, stubCompleter{}, suiteValidPath, gen, path)
++	require.NoError(t, err)
++
++	cfg2 := benchCfg([3]string{"greta", "m-greta-v2", "greta"}) // same agent, new model
++	_, err = executeBenchmarkRun(context.Background(), cfg2, &countingCompleter{}, suiteValidPath, gen, path)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, errCheckpointRosterMismatch, "a changed model aborts the resume")
++}
++
++// AC4 (defense in depth): ReproHash is order-independent, so a suite whose cases are
++// merely reordered shares the same hash but a different index->case mapping. The
++// per-index CaseID guard catches that drift and fails closed rather than silently
++// replaying a checkpointed case's score against a different case at the same index.
++func TestExecuteBenchmarkRun_RejectsCheckpointCaseIDDrift(t *testing.T) {
++	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
++	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
++	path := filepath.Join(t.TempDir(), "ckpt.json")
++
++	// Produce a valid checkpoint (correct repro hash / suite / version).
++	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, path)
++	require.NoError(t, err)
++
++	// Tamper only the recorded CaseID at index 0 — hash/suite/version stay valid, so
++	// validateCheckpoint passes and the per-index id guard is what must fire.
++	cp, err := loadCheckpoint(path)
++	require.NoError(t, err)
++	cp.Cases[0].CaseID = "some-other-case"
++	require.NoError(t, saveCheckpoint(path, cp))
++
++	_, err = executeBenchmarkRun(context.Background(), cfg, &countingCompleter{}, suiteValidPath, gen, path)
++	require.Error(t, err)
++	assert.ErrorIs(t, err, errCheckpointSuiteMismatch, "a per-index case-id drift aborts the resume")
++}
+diff --git a/cmd/atcr/benchmark_run_test.go b/cmd/atcr/benchmark_run_test.go
+index 86597f37..2d571cae 100644
+--- a/cmd/atcr/benchmark_run_test.go
++++ b/cmd/atcr/benchmark_run_test.go
+@@ -62,7 +62,7 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
+ 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
+ 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+ 
+-	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+ 
+ 	assert.Equal(t, "fixture-mini", rr.Suite)
+@@ -88,9 +88,9 @@ func TestExecuteBenchmarkRun_Reproducible(t *testing.T) {
+ 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+ 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+ 
+-	a, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	a, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+-	b, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	b, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+ 
+ 	ja, err := json.Marshal(a)
+@@ -103,7 +103,7 @@ func TestExecuteBenchmarkRun_Reproducible(t *testing.T) {
+ // An invalid suite path fails before any review executes.
+ func TestExecuteBenchmarkRun_InvalidSuiteErrors(t *testing.T) {
+ 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+-	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, "testdata/does-not-exist", time.Now())
++	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, "testdata/does-not-exist", time.Now(), "")
+ 	require.Error(t, err)
+ }
+ 
+@@ -125,7 +125,7 @@ func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
+ 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
+ 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+ 
+-	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
++	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
+ 	require.NoError(t, err)
+ 
+ 	data, err := json.MarshalIndent(rr, "", "  ")
