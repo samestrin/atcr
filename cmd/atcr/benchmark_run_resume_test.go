@@ -104,12 +104,12 @@ func TestExecuteBenchmarkRun_NoCheckpointPathWritesNothing(t *testing.T) {
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
 
+	candidate := filepath.Join(dir, "ckpt.json")
 	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
 	require.NoError(t, err)
 
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	assert.Empty(t, entries, "empty checkpoint path writes nothing")
+	_, err = os.Stat(candidate)
+	assert.True(t, os.IsNotExist(err), "empty checkpoint path must not write a file at the candidate location")
 }
 
 // AC2 + AC3: re-running the same suite against an existing checkpoint replays every
