@@ -117,10 +117,22 @@ func (d *Dispatcher) RegisteredTools() []string {
 // security boundary — it is a redundant lint to surface obvious mistakes early.
 var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif", "update", "append", "patch"}
 
+// execToolPatterns are common English fragments that appear in code-executing
+// tool names. The public RegisterTool API rejects them so an exec-capable handler
+// can never be registered through it ungated (Epic 11.2): the ONLY sanctioned way
+// to add an exec tool is EnableExecution, which routes through registerExec and
+// atomically co-sets the execTools gate. Like writeToolPatterns this is a
+// secondary lint, not the security boundary — the boundary is that execTools is
+// written solely by registerExec, and Execute refuses any execTools entry without
+// per-call eligibility. The built-in run_tests/run_script names DO match these
+// fragments and so bypass this guard deliberately, via registerExec.
+var execToolPatterns = []string{"run", "exec", "eval", "shell"}
+
 // RegisterTool adds a handler after running a best-effort name check against
-// common write-tool fragments. The check is a secondary lint, not a security
-// boundary — see writeToolPatterns. The real read-only guarantee is the
-// registration set enforced by NewDispatcher and the O_RDONLY open path.
+// common write- and exec-tool fragments. The check is a secondary lint, not a
+// security boundary — see writeToolPatterns/execToolPatterns. The real read-only
+// guarantee is the registration set enforced by NewDispatcher, the O_RDONLY open
+// path, and the registerExec-only writes to execTools.
 func (d *Dispatcher) RegisterTool(name string, h handlerFunc) error {
 	if err := guardToolName(name); err != nil {
 		return err
@@ -138,7 +150,29 @@ func guardToolName(name string) error {
 			return fmt.Errorf("tool registry: write tools are not allowed: %s", name)
 		}
 	}
+	for _, p := range execToolPatterns {
+		if strings.Contains(lower, p) {
+			return fmt.Errorf("tool registry: execution tools must be registered via EnableExecution, not RegisterTool: %s", name)
+		}
+	}
 	return nil
+}
+
+// registerExec is the single, trusted path that registers an execution-gated
+// handler. It atomically publishes the exec-gate flag, the (empty) path spec, AND
+// the handler under one write lock, so a concurrent Execute can never observe the
+// handler without its gate already in place — the read-only boundary cannot fail
+// open. This atomicity supersedes the gate-first ordering that separate locks
+// required: under one Lock, a reader holding RLock sees either the whole set or
+// none. registerExec is the ONLY writer of execTools and it deliberately bypasses
+// the public RegisterTool name guard (run_tests/run_script match execToolPatterns),
+// because keeping those names out of the public API is precisely that guard's job.
+func (d *Dispatcher) registerExec(name string, h handlerFunc) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.execTools[name] = true
+	d.pathArgs[name] = pathSpec{}
+	d.handlers[name] = h
 }
 
 func (d *Dispatcher) mustRegister(name string, h handlerFunc, ps pathSpec) {
