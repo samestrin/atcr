@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fakeDockerExitBody returns a shell body for writeFakeDocker that exits with
@@ -44,6 +47,25 @@ func TestDockerBackendRun_RuntimeExitCodesAreBackendErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDockerBackend_Preflight_CatchesInvalidCPUs(t *testing.T) {
+	// Fake docker that fails the `run` subcommand only when it sees `--cpus abc`.
+	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
+  found=0
+  for arg in "$@"; do
+    if [ "$arg" = "--cpus" ]; then found=1; fi
+    if [ "$found" = "1" ] && [ "$arg" = "abc" ]; then exit 1; fi
+  done
+fi
+exit 0`)
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fake
+	cfg.CPUs = "abc"
+	b := NewDockerBackend(cfg)
+	err := b.Preflight(context.Background())
+	require.Error(t, err, "preflight must exercise the real docker run args so invalid caps fail fast")
+	assert.Contains(t, err.Error(), "preflight")
 }
 
 func TestDockerBackendRun_WorkloadExitCodesAreResults(t *testing.T) {
