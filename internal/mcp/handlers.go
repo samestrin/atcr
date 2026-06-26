@@ -559,6 +559,10 @@ func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		return nil, VerifyResult{}, err
 	}
 
+	verifyRoot := e.root
+	if abs, aerr := filepath.Abs(verifyRoot); aerr == nil {
+		verifyRoot = abs
+	}
 	res, err := verify.Verify(ctx, e.root, dir, reg, verify.Options{
 		Fresh:       in.Fresh,
 		Thorough:    in.Thorough,
@@ -567,6 +571,10 @@ func (e *engine) handleVerify(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 		// shared timeout at 0; EffectiveExecutorTimeoutSecs falls back to the 600s
 		// default, keeping the executor call bounded.
 		SharedTimeoutSecs: 0,
+		// Scrub configured registry secrets from reproduced exec evidence before it
+		// is persisted into findings.json (Epic 11.0), mirroring reviewContext's
+		// log-sink redactor for the data artifact the sink never sees.
+		Redactor: log.NewRedactor(verifyRoot, fanout.RegistrySecretValues(reg)...),
 	})
 	if err != nil {
 		if errors.Is(err, verify.ErrNoReconciledFindings) {

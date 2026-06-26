@@ -1,0 +1,3 @@
+MEDIUM|internal/sandbox/docker.go:226|Docker runtime errors (exit 125+) masked as app exit|Return error for docker exit >= 125 or check stderr|correctness|15|docker run failure (exit 125) treated as app exit, may false-confirm|bruce
+MEDIUM|internal/tools/exec_tools.go:100|LLM-provided timeout unbounded, overriding config limits|Cap timeout to config default or MaxTimeoutSecs|performance|5|timeout = time.Duration(a.Timeout) * time.Second allows arbitrary long runs|bruce
+LOW|internal/sandbox/docker.go:208|Output buffer grows unbounded before truncation|Wrap stdout with io.LimitedReader or cap buffer|performance|10|cmd.Stdout = &buf reads all output into host memory before truncation|bruce

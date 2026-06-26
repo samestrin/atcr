@@ -1,3 +1,19 @@
+## [Technical Debt] - 2026-06-26
+
+### Fixed
+
+- Redacted `evidence_exec` output at the stamp site and wired the `Redactor` at all verify entry points
+- Gated `evidence_exec` on deterministic two-run reproduction before surfacing execution evidence
+- Parsed skeptic exec results and stamped `evidence_exec` into findings via repro write-back
+- Clamped `run_script` per-call timeout to `execTimeout` and rejected flag-like `run_tests` targets
+- Capped `run_script` content size to prevent unbounded input
+- Validated sandbox `Memory`/`CPUs` fields in registry loading
+- Validated memory/CPU caps against host resources via `docker info` in Preflight
+- Named each container and ran `docker kill` on timeout to reclaim caps and avoid orphaned containers
+- Lazily initialized the DockerBackend concurrency semaphore so struct literals cannot fail open
+- Gated the `Reproduced` badge on a confirmed verdict and non-zero exit code
+- Reordered `resolveExec` after `LoadReviewConfig` and accepted the loaded `ProjectConfig`
+
 ## [11.0.0] - 2026-06-25
 
 ### Added

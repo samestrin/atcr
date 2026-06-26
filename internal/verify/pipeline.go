@@ -20,6 +20,7 @@ import (
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/reconcile"
 	"github.com/samestrin/atcr/internal/registry"
+	"github.com/samestrin/atcr/internal/repro"
 	"github.com/samestrin/atcr/internal/sandbox"
 	"github.com/samestrin/atcr/internal/tools"
 )
@@ -67,6 +68,13 @@ type Options struct {
 	ExecBackend sandbox.Backend
 	ExecTestCmd []string
 	ExecTimeout time.Duration
+
+	// Redactor scrubs configured secrets (and relativizes repo paths) from a
+	// reproduced run's captured output before it is persisted onto a finding's
+	// evidence_exec block. Exec evidence reaches findings.json as data, not a log
+	// line, so it bypasses the log sink's redactor (Epic 4.9) and must be scrubbed
+	// here. nil disables redaction (no review secrets / non-exec runs); the default.
+	Redactor *log.Redactor
 }
 
 // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
@@ -218,6 +226,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 	type jobResult struct {
 		ver *reclib.Verification
 		vr  VerificationResult
+		ev  *reconcile.EvidenceExec
 	}
 	jobResults := make([]jobResult, len(jobs))
 
@@ -239,17 +248,19 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		go func(idx int, jb job) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			ver, vr := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp, opts.ExecBackend != nil)
-			jobResults[idx] = jobResult{ver: ver, vr: vr}
+			ver, vr, ev := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp, opts.ExecBackend != nil)
+			jobResults[idx] = jobResult{ver: ver, vr: vr, ev: ev}
 		}(i, j)
 	}
 	wg.Wait()
 
 	verdicts := make(map[FindingKey]*reclib.Verification, len(jobs))
 	rich := make(map[FindingKey]VerificationResult, len(jobs))
+	evidences := make(map[FindingKey]*reconcile.EvidenceExec, len(jobs))
 	for i, j := range jobs {
 		verdicts[j.key] = jobResults[i].ver
 		rich[j.key] = jobResults[i].vr
+		evidences[j.key] = jobResults[i].ev
 	}
 
 	// Apply the VERIFIED guard then mutate findings in-memory: update verdicts and
@@ -266,6 +277,14 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 		}
 		findings[i].Verification = v
 		findings[i].Confidence = confidenceV2(findings[i].Confidence, v.Verdict)
+		// Repro write-back (Epic 11.0 SC-3/SC-4): when an --exec skeptic reproduced
+		// this finding, stamp the execution evidence onto it so evidence_exec reaches
+		// findings.json and the report's Reproduced badge. Stamp never downgrades the
+		// verdict, so the confirmed verdict (and its skeptic) is preserved.
+		if ev := evidences[key]; ev != nil {
+			redactEvidence(ev, opts.Redactor)
+			repro.Stamp(&findings[i], v.Verdict, ev)
+		}
 	}
 
 	// Fix-generation phase (Epic 7.0): once confidence is final, ask the single
@@ -436,7 +455,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
 // unavailable it records unverifiable/tool_harness_unavailable; otherwise it
 // drives every selected skeptic through invokeSkeptic and aggregates the votes.
 // It never returns an error — failure isolation is the stage's contract.
-func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, VerificationResult) {
+func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, VerificationResult, *reconcile.EvidenceExec) {
 	base := VerificationResult{File: f.File, Line: f.Line, Problem: f.Problem}
 	// Initialize TrippedBudgets to empty slice to avoid null in JSON output.
 	base.TrippedBudgets = []string{}
@@ -444,20 +463,25 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	if len(skeptics) == 0 {
 		v := &reclib.Verification{Verdict: verdictUnverifiable, Notes: "no_eligible_skeptic"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
-		return v, base
+		return v, base, nil
 	}
 	if disp == nil {
 		v := &reclib.Verification{Verdict: verdictUnverifiable, Notes: "tool_harness_unavailable"}
 		base.Verdict, base.Reasoning = v.Verdict, v.Notes
-		return v, base
+		return v, base, nil
 	}
 
 	prompt := buildSkepticPrompt(f, nil) // nil entries: the skeptic reads code via the tool loop
 	start := time.Now()
 	perSkeptic := make([]*reclib.Verification, 0, len(skeptics))
 	perTripped := make([][]string, 0, len(skeptics))
+	perRec := make([]*execEvidenceRecorder, 0, len(skeptics))
 	for _, sk := range skeptics {
-		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp, exec)
+		// Wrap the dispatcher per skeptic so each skeptic's reproduced run_tests/
+		// run_script result is captured as execution evidence without changing the
+		// invokeSkeptic contract.
+		rec := &execEvidenceRecorder{inner: disp}
+		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, rec, exec)
 		if ierr != nil {
 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
 			// none can occur here, but log it so the impossible case is visible if it
@@ -469,8 +493,28 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 		}
 		perSkeptic = append(perSkeptic, v)
 		perTripped = append(perTripped, tripped)
+		perRec = append(perRec, rec)
 	}
 	ver := aggregateVerdicts(perSkeptic)
+
+	// Surface reproduction evidence only for a confirmed verdict (SC-3: evidence_exec
+	// accompanies a confirmed verdict) AND only when the reproduction is DETERMINISTIC
+	// (Epic 11.0 T3): the confirming skeptic's repro is re-run twice more and evidence
+	// is surfaced only if the failure reproduces with a stable non-zero exit. A flaky
+	// repro (exit codes disagree, a timeout, or a pass) yields no evidence, so the
+	// Reproduced badge a downstream report renders cannot outrun a non-deterministic
+	// reproduction. The pass runs on exec runs only (a non-exec skeptic made no call).
+	var ev *reconcile.EvidenceExec
+	if exec && ver.Verdict == verdictConfirmed {
+		for i, sv := range perSkeptic {
+			if sv != nil && sv.Verdict == verdictConfirmed && perRec[i] != nil && perRec[i].lastName != "" {
+				if rv, rev := perRec[i].reproduceAgain(ctx); rv == verdictConfirmed {
+					ev = rev
+				}
+				break
+			}
+		}
+	}
 
 	base.Verdict = ver.Verdict
 	base.Skeptic = ver.Skeptic
@@ -483,7 +527,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 		base.TrippedBudgets = []string{}
 	}
 	base.DurationMs = int(time.Since(start).Milliseconds())
-	return ver, base
+	return ver, base, ev
 }
 
 // winningAttribution derives the audit Model and TrippedBudgets for a finding

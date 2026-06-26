@@ -1,0 +1,3 @@
+HIGH|internal/sandbox/docker.go:196|Unbounded output buffer before truncation risks host OOM|Use a capped writer during cmd.Run instead of buffering all output|security|15|cmd.Stdout=&buf buffers full output before truncate|bruce
+HIGH|internal/tools/exec_tools.go:118|Model can bypass configured timeout ceiling via run_script|Clamp user timeout to d.execTimeout maximum|security|5|model timeout argument has no upper bound|bruce
+MEDIUM|internal/sandbox/docker.go:225|Context cancellation reported as timeout in dockerCmd|Check cctx.Err()==context.DeadlineExceeded explicitly|error-handling|2|cctx.Err()!=nil misreports cancellation as timeout|bruce

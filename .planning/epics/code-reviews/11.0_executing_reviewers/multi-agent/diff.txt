@@ -1,0 +1,2190 @@
+diff --git a/README.md b/README.md
+index f3c7a78e..2087d9fc 100644
+--- a/README.md
++++ b/README.md
+@@ -181,6 +181,7 @@ atcr speaks to any OpenAI-compatible `/chat/completions` endpoint directly — n
+ - [docs/registry.md](docs/registry.md) — providers, personas, agents, fallbacks, lanes, precedence
+ - [docs/payload-modes.md](docs/payload-modes.md) — blocks vs. diff vs. files, token guidance
+ - [docs/findings-format.md](docs/findings-format.md) — the versioned `atcr-findings/v1` contract
++- [docs/execution.md](docs/execution.md) — opt-in `--exec` sandboxed reproduction, the `evidence_exec` block, and the security posture
+ - [docs/disagreement-radar.md](docs/disagreement-radar.md) — the disagreement radar, `--disagreements` view, and `disagreements.json` handoff schema
+ - [docs/ci-integration.md](docs/ci-integration.md) — exit codes and PR gates
+ - [docs/skill-usage.md](docs/skill-usage.md) — installing and running the Agent Skill
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 9dc3af9d..87c21029 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -18,6 +18,7 @@ import (
+ 	"github.com/samestrin/atcr/internal/metrics"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/sandbox"
+ 	"github.com/samestrin/atcr/internal/validation"
+ 	"github.com/samestrin/atcr/internal/verify"
+ 	"github.com/spf13/cobra"
+@@ -43,6 +44,7 @@ func newReviewCmd() *cobra.Command {
+ 	cmd.Flags().Bool("require-verified", false, "with --verify and --fail-on: gate counts only skeptic-confirmed (VERIFIED) findings — the strictest gate")
+ 	cmd.Flags().Bool("fresh", false, "with --verify: re-verify findings that already carry a verdict")
+ 	cmd.Flags().Bool("thorough", false, "with --verify: use 3 skeptics per finding with majority rule")
++	cmd.Flags().Bool("exec", false, "with --verify: let skeptics reproduce findings in a sandbox (requires a [sandbox] block in .atcr/config.yaml that passes preflight); refuses otherwise")
+ 	cmd.Flags().String("min-severity", "", "with --verify: skip findings below this severity floor (default MEDIUM)")
+ 	cmd.Flags().Bool("debate", false, "one-shot: chain a cross-examination stage (proposer/challenger/judge) after reconcile/verify, settling disputed findings")
+ 	cmd.Flags().Bool("single-model", false, "with --debate: allow the same-model persona fallback when fewer than 3 distinct models are available")
+@@ -127,11 +129,26 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 	// --verify chains review -> reconcile -> verify (AC 04-02). Validate its
+ 	// --min-severity here too, before any API calls, so a bad value fails fast.
+ 	verifyFlag, _ := cmd.Flags().GetBool("verify")
++	// --exec only has consumers in the verify stage (skeptics/repro); reject the
++	// silent no-op of `review --exec` without --verify (Epic 11.0).
++	if execFlag, _ := cmd.Flags().GetBool("exec"); execFlag && !verifyFlag {
++		return usageError(errors.New("--exec requires --verify (execution reproduction runs in the adversarial verify stage)"))
++	}
+ 	verifyMinSev := ""
++	// Resolve the --exec gate EARLY (before any review/reconcile API calls) so a
++	// misconfigured sandbox fails fast instead of after a paid-for review. The
++	// preflight (a real container spawn) runs here, once, and the resolved backend
++	// is threaded into the verify chain below.
++	var execBackend sandbox.Backend
++	var execTestCmd []string
++	var execTimeout time.Duration
+ 	if verifyFlag {
+ 		if verifyMinSev, err = verifyMinSeverity(cmd); err != nil {
+ 			return err
+ 		}
++		if execBackend, execTestCmd, execTimeout, err = resolveExec(cmd); err != nil {
++			return err // refuse-without-backend / preflight failure (exit 2)
++		}
+ 	}
+ 
+ 	// --debate chains the cross-examination stage after reconcile (and verify, when
+@@ -305,6 +322,9 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 				Thorough:          boolFlag(cmd, "thorough"),
+ 				MinSeverity:       verifyMinSev,
+ 				SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
++				ExecBackend:       execBackend,
++				ExecTestCmd:       execTestCmd,
++				ExecTimeout:       execTimeout,
+ 			})
+ 			if verr != nil {
+ 				return verifyFailureError(verr)
+diff --git a/cmd/atcr/verify.go b/cmd/atcr/verify.go
+index c170cdee..633ef4d5 100644
+--- a/cmd/atcr/verify.go
++++ b/cmd/atcr/verify.go
+@@ -5,10 +5,12 @@ import (
+ 	"fmt"
+ 	"path/filepath"
+ 	"strings"
++	"time"
+ 
+ 	"github.com/samestrin/atcr/internal/fanout"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/sandbox"
+ 	"github.com/samestrin/atcr/internal/verify"
+ 	"github.com/spf13/cobra"
+ )
+@@ -31,9 +33,30 @@ func newVerifyCmd() *cobra.Command {
+ 	cmd.Flags().Bool("fresh", false, "re-verify findings that already carry a verdict")
+ 	cmd.Flags().Bool("thorough", false, "use 3 skeptics per finding with majority rule (default 1)")
+ 	cmd.Flags().String("min-severity", "", "skip findings below this severity floor: CRITICAL, HIGH, MEDIUM, LOW (default MEDIUM)")
++	cmd.Flags().Bool("exec", false, "opt-in: let skeptics reproduce findings by running tests/scripts in a sandbox; refuses without a configured [sandbox] block in .atcr/config.yaml that passes a preflight check")
+ 	return cmd
+ }
+ 
++// resolveExec implements the `--exec` opt-in gate (Epic 11.0) for both `verify`
++// and `review --verify`. When --exec is absent it is a no-op (nil backend). When
++// present it REQUIRES a configured sandbox backend that passes a preflight check;
++// any failure is a usage error (exit 2) so the command refuses without executing.
++func resolveExec(cmd *cobra.Command) (sandbox.Backend, []string, time.Duration, error) {
++	execFlag, _ := cmd.Flags().GetBool("exec")
++	if !execFlag {
++		return nil, nil, 0, nil
++	}
++	proj, err := registry.LoadProjectConfig(registry.DefaultProjectConfigPath("."))
++	if err != nil {
++		return nil, nil, 0, usageError(err)
++	}
++	backend, testCmd, timeout, err := verify.ResolveExecBackend(cmd.Context(), true, proj.Sandbox)
++	if err != nil {
++		return nil, nil, 0, usageError(err)
++	}
++	return backend, testCmd, timeout, nil
++}
++
+ func runVerify(cmd *cobra.Command, args []string) error {
+ 	// Validate --min-severity against the closed enum BEFORE any I/O so a bad
+ 	// value fails fast as a usage error (exit 2), per AC 04-01 Error Scenario 2.
+@@ -56,6 +79,11 @@ func runVerify(cmd *cobra.Command, args []string) error {
+ 		return usageError(err) // missing/invalid registry → exit 2 (AC 04-01 Error Scenario 3)
+ 	}
+ 
++	execBackend, execTestCmd, execTimeout, err := resolveExec(cmd)
++	if err != nil {
++		return err // refuse-without-backend / preflight failure (exit 2)
++	}
++
+ 	fresh, _ := cmd.Flags().GetBool("fresh")
+ 	thorough, _ := cmd.Flags().GetBool("thorough")
+ 	res, err := verify.Verify(cmd.Context(), ".", reviewDir, cfg.Registry, verify.Options{
+@@ -63,6 +91,9 @@ func runVerify(cmd *cobra.Command, args []string) error {
+ 		Thorough:          thorough,
+ 		MinSeverity:       minSev,
+ 		SharedTimeoutSecs: cfg.Settings.TimeoutSecs,
++		ExecBackend:       execBackend,
++		ExecTestCmd:       execTestCmd,
++		ExecTimeout:       execTimeout,
+ 	})
+ 	if err != nil {
+ 		if errors.Is(err, verify.ErrNoReconciledFindings) {
+diff --git a/cmd/atcr/verify_test.go b/cmd/atcr/verify_test.go
+index fe359526..ffc0940a 100644
+--- a/cmd/atcr/verify_test.go
++++ b/cmd/atcr/verify_test.go
+@@ -119,6 +119,20 @@ func TestVerifyCmd_Exists(t *testing.T) {
+ 	require.Contains(t, help, "--fresh")
+ 	require.Contains(t, help, "--thorough")
+ 	require.Contains(t, help, "--min-severity")
++	require.Contains(t, help, "--exec")
++}
++
++// TestVerifyCmd_ExecRefusesWithoutSandbox: `verify --exec` against a project with
++// no [sandbox] block hard-errors (exit 2) without running anything (Epic 11.0 SC-1).
++func TestVerifyCmd_ExecRefusesWithoutSandbox(t *testing.T) {
++	isolate(t)
++	writeVerifyRegistry(t) // writes .atcr/config.yaml with NO sandbox block
++	id := verifyFixture(t, "2026-06-25_exec", []reconcile.JSONFinding{
++		{Severity: "HIGH", File: "a.go", Line: 1, Problem: "boom", Confidence: "MEDIUM", Reviewers: []string{"bruce"}},
++	})
++	code, out := execCmdCapture(t, "verify", id, "--exec")
++	require.Equal(t, 2, code, "--exec without a sandbox block must exit 2")
++	require.Contains(t, out, "sandbox")
+ }
+ 
+ // TestVerifyCmd_MissingReconciledFindings: a review without reconciled/findings.json
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 6ec3d51a..e631d8a9 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -28,10 +28,12 @@ var allowedInternalImports = map[string][]string{
+ 	"cache":          {"atomicfs"}, // diff cache leaf; atomicfs for atomic entry writes (epic 5.2)
+ 	"stream":         {"metrics"},  // metrics: observability counters for a git-unavailable file index and indeterminate/unresolvable path validation (stdlib-only leaf, no cycle)
+ 	"gitrange":       {},
+-	"log":            {},         // single diagnostic sink; stdlib-only (epic 4.0)
+-	"errors":         {},         // error-classification taxonomy; stdlib-only (epic 4.0)
+-	"registry":       {"stream"}, // stream is the canonical zero-dependency severity leaf (epic 3.5)
+-	"tools":          {},
++	"log":            {},                                       // single diagnostic sink; stdlib-only (epic 4.0)
++	"errors":         {},                                       // error-classification taxonomy; stdlib-only (epic 4.0)
++	"registry":       {"stream"},                               // stream is the canonical zero-dependency severity leaf (epic 3.5)
++	"tools":          {"sandbox"},                              // sandbox: run_tests/run_script execute in the container backend (epic 11.0, opt-in --exec)
++	"sandbox":        {"log"},                                  // container-isolated executor for --exec reproduction; log: structured audit line per sandbox run (epic 11.0)
++	"repro":          {"reconcile", "sandbox"},                 // 2-run determinism + evidence_exec write-back: runs the sandbox, stamps reconcile findings (epic 11.0)
+ 	"metrics":        {},                                       // in-process metrics collector; stdlib-only leaf (epic 4.4)
+ 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
+ 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+@@ -44,9 +46,9 @@ var allowedInternalImports = map[string][]string{
+ 	"scorecard":      {"llmclient", "reconcile", "fanout", "version"}, // version: atcr_version stamped into the public submission envelope (epic 10.0)
+ 	"personas":       {"registry", "payload"},                         // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
+ 	"report":         {"stream", "reconcile"},
+-	"ghaction":       {"reconcile"},                                                                                                    // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+-	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper
+-	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"}, // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
++	"ghaction":       {"reconcile"},                                                                                                               // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
++	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log", "sandbox"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper; sandbox: --exec backend resolution + dispatcher wiring (epic 11.0)
++	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"},            // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+ 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
+ 	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
+ 	// integration holds only end-to-end _test.go files (no production code).
+diff --git a/internal/fanout/engine.go b/internal/fanout/engine.go
+index a4a61d58..3ecd0f65 100644
+--- a/internal/fanout/engine.go
++++ b/internal/fanout/engine.go
+@@ -108,6 +108,13 @@ type Agent struct {
+ 	// lacks it degrades to single-shot regardless of the harness being wired.
+ 	SupportsFC bool
+ 
++	// Exec marks an execution-enabled agent (Epic 11.0). When true AND the
++	// dispatcher has a sandbox backend wired (EnableExecution), this agent is
++	// offered the run_tests/run_script tools so it can reproduce findings by
++	// running code. It is gated by the `--exec` opt-in and is false for every
++	// agent otherwise, preserving the read-only contract for the rest of the pool.
++	Exec bool
++
+ 	// Review-constraint guardrails (Epic 2.2), threaded from the resolved
+ 	// AgentConfig by buildAgent and carried onto the Result so findingsFor can
+ 	// enforce them. Scope is applied earlier (as soft prompt injection) and is
+diff --git a/internal/fanout/exec_gating_test.go b/internal/fanout/exec_gating_test.go
+new file mode 100644
+index 00000000..012666cf
+--- /dev/null
++++ b/internal/fanout/exec_gating_test.go
+@@ -0,0 +1,30 @@
++package fanout
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++)
++
++func TestWireToolDefs_ExecGating(t *testing.T) {
++	readOnly := wireToolDefs(false)
++	names := map[string]bool{}
++	for _, d := range readOnly {
++		names[d.Name] = true
++	}
++	// The default read-only set never exposes execution tools.
++	assert.False(t, names["run_tests"], "non-exec agent must not see run_tests")
++	assert.False(t, names["run_script"], "non-exec agent must not see run_script")
++	assert.True(t, names["read_file"], "read-only tools are always present")
++
++	exec := wireToolDefs(true)
++	execNames := map[string]bool{}
++	for _, d := range exec {
++		execNames[d.Name] = true
++	}
++	// An execution-enabled agent gets the read-only set PLUS the exec tools.
++	assert.True(t, execNames["read_file"])
++	assert.True(t, execNames["run_tests"], "exec agent must see run_tests")
++	assert.True(t, execNames["run_script"], "exec agent must see run_script")
++	assert.Greater(t, len(exec), len(readOnly))
++}
+diff --git a/internal/fanout/loop.go b/internal/fanout/loop.go
+index 7081c675..09068047 100644
+--- a/internal/fanout/loop.go
++++ b/internal/fanout/loop.go
+@@ -35,9 +35,15 @@ const (
+ 
+ // wireToolDefs converts the harness tool definitions into the llmclient wire
+ // type once per loop. The harness owns the canonical definitions (internal/tools);
+-// the generic client never imports them, so the engine bridges the two.
+-func wireToolDefs() []llmclient.ToolDef {
++// the generic client never imports them, so the engine bridges the two. When exec
++// is true (an execution-enabled agent, Epic 11.0), the run_tests/run_script
++// definitions are appended so only that agent is told it may execute code; every
++// other agent sees the read-only set unchanged.
++func wireToolDefs(exec bool) []llmclient.ToolDef {
+ 	defs := tools.Tools()
++	if exec {
++		defs = append(defs, tools.ExecutionTools()...)
++	}
+ 	out := make([]llmclient.ToolDef, len(defs))
+ 	for i, d := range defs {
+ 		out[i] = llmclient.ToolDef{Name: d.Name, Description: d.Description, Parameters: d.Parameters}
+@@ -93,7 +99,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter,
+ 		cc:         cc,
+ 		disp:       disp,
+ 		maxTurns:   maxTurns,
+-		toolDefs:   wireToolDefs(),
++		toolDefs:   wireToolDefs(a.Exec),
+ 		messages:   []llmclient.Message{{Role: "user", Content: &prompt}},
+ 		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, MinSeverity: a.MinSeverity, MaxFindings: a.MaxFindings, Tools: true, ToolsRequested: true, Model: a.Invocation.Model},
+ 		start:      time.Now(),
+diff --git a/internal/reconcile/emit.go b/internal/reconcile/emit.go
+index c7344f10..0e7e8d5a 100644
+--- a/internal/reconcile/emit.go
++++ b/internal/reconcile/emit.go
+@@ -121,6 +121,26 @@ type JSONFinding struct {
+ 	// fix-generation warning byte-identical to pre-7.0 findings.json; reconcile-time
+ 	// producers MUST leave it empty (it is set only by the verify fix phase).
+ 	FixWarning string `json:"fix_warning,omitempty"`
++	// EvidenceExec carries the execution-reproduction block (Epic 11.0): the
++	// command a repro/skeptic agent ran in the sandbox, its exit code, and a
++	// truncated output excerpt. It is set ONLY by the repro write-back (a
++	// reproduced finding also gets Verification.Verdict=confirmed, skeptic="repro"),
++	// never by any reconcile-time path. omitempty keeps every non-reproduced record
++	// byte-identical to pre-11.0 findings.json.
++	EvidenceExec *EvidenceExec `json:"evidence_exec,omitempty"`
++}
++
++// EvidenceExec is the executable-evidence block attached to a finding that was
++// reproduced by running code in the sandbox (Epic 11.0). It is the categorical
++// upgrade from asserted to demonstrated: a finding carrying it cannot be a
++// hallucination, and it hands the resolver a failing command to start from.
++type EvidenceExec struct {
++	// Command is the human-readable command that was executed.
++	Command string `json:"command"`
++	// ExitCode is the command's exit status (non-zero == reproduced failure).
++	ExitCode int `json:"exit_code"`
++	// OutputExcerpt is the captured combined output, truncated to a budget.
++	OutputExcerpt string `json:"output_excerpt"`
+ }
+ 
+ // JSONFindings converts the merged findings to their JSON schema records.
+diff --git a/internal/reconcile/emit_test.go b/internal/reconcile/emit_test.go
+index abc6a8c8..1205bc80 100644
+--- a/internal/reconcile/emit_test.go
++++ b/internal/reconcile/emit_test.go
+@@ -345,6 +345,8 @@ func TestJSONFindings_PopulatesEveryFieldExceptDownstreamOnly(t *testing.T) {
+ 	downstreamOnly := map[string]bool{
+ 		"FixWarning": true, "ClusterMerged": true, "ClusterID": true,
+ 		"PathValid": true, "PathWarning": true, "PathSuggestion": true,
++		// EvidenceExec is stamped by the repro write-back (Epic 11.0), never by reconcile.
++		"EvidenceExec": true,
+ 	}
+ 	m := Merged{
+ 		Finding: Finding{
+diff --git a/internal/registry/project.go b/internal/registry/project.go
+index 58030eb5..82633ab9 100644
+--- a/internal/registry/project.go
++++ b/internal/registry/project.go
+@@ -50,6 +50,9 @@ type ProjectConfig struct {
+ 	// so an explicit 0 (unbounded) survives default application; unset inherits
+ 	// the registry tier or the embedded DefaultCacheMaxBytes.
+ 	CacheMaxBytes *int64 `yaml:"cache_max_bytes,omitempty"`
++	// Sandbox is the optional execution-reproduction backend block (Epic 11.0).
++	// nil means execution is unconfigured and `--exec` is refused.
++	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+ }
+ 
+ // DefaultProjectConfigPath returns .atcr/config.yaml under root.
+@@ -134,6 +137,9 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
+ 	if !payloadModeValid(cfg.PayloadMode) {
+ 		return nil, fmt.Errorf("invalid payload_mode '%s': must be one of diff, blocks, files", strings.TrimSpace(cfg.PayloadMode))
+ 	}
++	if err := cfg.Sandbox.Validate(); err != nil {
++		return nil, fmt.Errorf("%s: %w", base, err)
++	}
+ 
+ 	// Absent optional fields stay unset here; embedded defaults are applied
+ 	// by ResolveSettings so the precedence chain can see what each tier
+diff --git a/internal/registry/sandbox.go b/internal/registry/sandbox.go
+new file mode 100644
+index 00000000..86661784
+--- /dev/null
++++ b/internal/registry/sandbox.go
+@@ -0,0 +1,67 @@
++package registry
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++)
++
++// SandboxBackendDocker is the only sandbox backend supported in Epic 11.0. The
++// field is validated against this set so an unsupported backend fails at config
++// load rather than at execution time.
++const SandboxBackendDocker = "docker"
++
++// SandboxConfig is the optional `sandbox:` block in .atcr/config.yaml that
++// enables `--exec` reproduction (Epic 11.0). Its mere presence does NOT enable
++// execution — `--exec` must also be passed and the backend must pass a preflight
++// check (verify.ResolveExecBackend). A nil block means execution is unconfigured
++// and `--exec` is refused.
++type SandboxConfig struct {
++	// Backend selects the executor; only "docker" is supported today.
++	Backend string `yaml:"backend,omitempty"`
++	// Image is the base container image (must be present locally; runs are
++	// network-isolated so it cannot be pulled on demand).
++	Image string `yaml:"image,omitempty"`
++	// TestCommand is the project's test command run by the run_tests tool, as an
++	// argv (e.g. [go, test, ./...]). Required when the block is present.
++	TestCommand []string `yaml:"test_command,omitempty"`
++	// DockerPath overrides the docker binary location (e.g. a Homebrew install
++	// not on the default PATH). Empty resolves "docker" on PATH.
++	DockerPath string `yaml:"docker_path,omitempty"`
++	// Resource caps. Empty fields inherit the hardened defaults.
++	Memory    string `yaml:"memory,omitempty"`
++	CPUs      string `yaml:"cpus,omitempty"`
++	PidsLimit *int   `yaml:"pids_limit,omitempty"`
++	// TimeoutSecs is the default per-run wall-clock budget.
++	TimeoutSecs *int `yaml:"timeout_secs,omitempty"`
++}
++
++// Validate checks the sandbox block. A nil block is valid (execution simply
++// unconfigured). When present, the backend must be supported and a non-empty
++// test command is required (run_tests has nothing to run otherwise).
++func (s *SandboxConfig) Validate() error {
++	if s == nil {
++		return nil
++	}
++	if b := strings.TrimSpace(s.Backend); b != "" && b != SandboxBackendDocker {
++		return fmt.Errorf("sandbox.backend %q is unsupported (only %q)", s.Backend, SandboxBackendDocker)
++	}
++	if strings.TrimSpace(s.Image) == "" {
++		return errors.New("sandbox.image is required when a sandbox block is present (a base image carrying the toolchain your test_command needs)")
++	}
++	if len(s.TestCommand) == 0 {
++		return errors.New("sandbox.test_command is required when a sandbox block is present")
++	}
++	for _, tok := range s.TestCommand {
++		if strings.TrimSpace(tok) == "" {
++			return errors.New("sandbox.test_command must not contain empty tokens")
++		}
++	}
++	if s.PidsLimit != nil && *s.PidsLimit <= 0 {
++		return errors.New("sandbox.pids_limit must be positive")
++	}
++	if s.TimeoutSecs != nil && (*s.TimeoutSecs <= 0 || *s.TimeoutSecs > MaxTimeoutSecs) {
++		return fmt.Errorf("sandbox.timeout_secs must be within 1..%d", MaxTimeoutSecs)
++	}
++	return nil
++}
+diff --git a/internal/registry/sandbox_test.go b/internal/registry/sandbox_test.go
+new file mode 100644
+index 00000000..8411d279
+--- /dev/null
++++ b/internal/registry/sandbox_test.go
+@@ -0,0 +1,36 @@
++package registry
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestSandboxConfig_Validate(t *testing.T) {
++	pid := 0
++	cases := []struct {
++		name string
++		cfg  *SandboxConfig
++		ok   bool
++	}{
++		{"nil is valid (unconfigured)", nil, true},
++		{"docker + image + test command", &SandboxConfig{Backend: "docker", Image: "golang:1.25", TestCommand: []string{"go", "test", "./..."}}, true},
++		{"default backend + image + test command", &SandboxConfig{Image: "python:3.12", TestCommand: []string{"make", "test"}}, true},
++		{"unsupported backend", &SandboxConfig{Backend: "podman", Image: "img", TestCommand: []string{"go", "test"}}, false},
++		{"missing image", &SandboxConfig{Backend: "docker", TestCommand: []string{"go", "test"}}, false},
++		{"missing test command", &SandboxConfig{Backend: "docker", Image: "img"}, false},
++		{"empty test token", &SandboxConfig{Image: "img", TestCommand: []string{"go", ""}}, false},
++		{"non-positive pids", &SandboxConfig{Image: "img", TestCommand: []string{"go", "test"}, PidsLimit: &pid}, false},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			err := tc.cfg.Validate()
++			if tc.ok {
++				assert.NoError(t, err)
++			} else {
++				require.Error(t, err)
++			}
++		})
++	}
++}
+diff --git a/internal/report/render.go b/internal/report/render.go
+index d05a807f..25959729 100644
+--- a/internal/report/render.go
++++ b/internal/report/render.go
+@@ -176,6 +176,11 @@ func renderMarkdownFull(w io.Writer, findings []reconcile.JSONFinding, df reconc
+ 		if f.Verification != nil {
+ 			writeSkepticBlock(&b, f.Verification)
+ 		}
++		// Execution-reproduction badge (Epic 11.0): a finding carrying an
++		// evidence_exec block was demonstrated by running code in the sandbox.
++		if f.EvidenceExec != nil {
++			writeReproducedBlock(&b, f.EvidenceExec)
++		}
+ 	}
+ 	writeRefutedSection(&b, refuted)
+ 	_, err := w.Write(b.Bytes())
+@@ -362,6 +367,19 @@ func writePathWarning(b *bytes.Buffer, f reconcile.JSONFinding) {
+ // labelled "Judge" so it is not mistaken for a skeptic-produced verdict.
+ // All free text is HTML-escaped and newline-flattened so reviewer-controlled
+ // fields cannot inject markup or escape the section.
++// writeReproducedBlock renders the execution-reproduction evidence (Epic 11.0)
++// as a "Reproduced" badge: the command that was run, its exit code, and a
++// truncated output excerpt. It is rendered as a LABEL (not a new verdict tier) —
++// a reproduced finding is already VERIFIED via its confirmed verdict — so the
++// library Verification type stays unchanged. The output excerpt is escaped and
++// truncated like every other free-text field.
++func writeReproducedBlock(b *bytes.Buffer, e *reconcile.EvidenceExec) {
++	fmt.Fprintf(b, "  - ✅ Reproduced: `%s` (exit %d)\n", esc(e.Command), e.ExitCode)
++	if strings.TrimSpace(e.OutputExcerpt) != "" {
++		fmt.Fprintf(b, "    - Output: %s\n", escTrunc(e.OutputExcerpt))
++	}
++}
++
+ func writeSkepticBlock(b *bytes.Buffer, v *reclib.Verification) {
+ 	annotation := ""
+ 	if canonicalize(v.Verdict) == canonicalize(reclib.VerdictUnverifiable) {
+diff --git a/internal/report/render_evidence_test.go b/internal/report/render_evidence_test.go
+new file mode 100644
+index 00000000..7d1006e7
+--- /dev/null
++++ b/internal/report/render_evidence_test.go
+@@ -0,0 +1,48 @@
++package report
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	reclib "github.com/samestrin/atcr/reconcile"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestRender_ReproducedBadge(t *testing.T) {
++	findings := []reconcile.JSONFinding{{
++		Severity: "HIGH", File: "calc.go", Line: 10, Problem: "off-by-one", Confidence: "VERIFIED",
++		Reviewers:    []string{"greta"},
++		Verification: &reclib.Verification{Verdict: "confirmed", Skeptic: "repro"},
++		EvidenceExec: &reconcile.EvidenceExec{Command: "go test ./calc", ExitCode: 1, OutputExcerpt: "FAIL: want 4 got 5"},
++	}}
++	var b strings.Builder
++	require.NoError(t, Render(&b, findings, FormatMarkdown))
++	out := b.String()
++	assert.Contains(t, out, "Reproduced", "a finding with evidence_exec must show a Reproduced badge")
++	assert.Contains(t, out, "go test ./calc", "the reproduced command must be rendered")
++	assert.Contains(t, out, "exit 1", "the exit code must be rendered")
++	assert.Contains(t, out, "FAIL: want 4 got 5", "the output excerpt must be rendered")
++}
++
++func TestRender_NoBadgeWithoutEvidenceExec(t *testing.T) {
++	findings := []reconcile.JSONFinding{{
++		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "HIGH", Reviewers: []string{"r"},
++	}}
++	var b strings.Builder
++	require.NoError(t, Render(&b, findings, FormatMarkdown))
++	assert.NotContains(t, b.String(), "Reproduced", "a finding without evidence_exec must not show the badge")
++}
++
++func TestRender_ReproducedBadge_EmptyOutputOmitsLine(t *testing.T) {
++	findings := []reconcile.JSONFinding{{
++		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED", Reviewers: []string{"r"},
++		EvidenceExec: &reconcile.EvidenceExec{Command: "true", ExitCode: 0, OutputExcerpt: ""},
++	}}
++	var b strings.Builder
++	require.NoError(t, Render(&b, findings, FormatMarkdown))
++	out := b.String()
++	assert.Contains(t, out, "Reproduced")
++	assert.NotContains(t, out, "Output:", "an empty output excerpt must not render an Output line")
++}
+diff --git a/internal/repro/repro.go b/internal/repro/repro.go
+new file mode 100644
+index 00000000..4a51973c
+--- /dev/null
++++ b/internal/repro/repro.go
+@@ -0,0 +1,100 @@
++// Package repro turns a sandboxed execution into adversarial-verification
++// evidence (Epic 11.0). A repro/skeptic agent proposes a command or script that
++// should reproduce a finding; this package runs it under the determinism rule
++// and, when the failure reproduces deterministically, stamps the finding as
++// confirmed (VERIFIED) and attaches an executable-evidence block.
++//
++// A reproduced finding is a categorically stronger deliverable: it cannot be a
++// hallucination, and it hands the resolver a failing command to start from.
++package repro
++
++import (
++	"context"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/sandbox"
++	reclib "github.com/samestrin/atcr/reconcile"
++)
++
++// ReproSkeptic is the skeptic name stamped on a finding confirmed by execution.
++const ReproSkeptic = "repro"
++
++// Verdict applies the two-run determinism rule to a pair of runs of the SAME
++// repro:
++//
++//   - either run timed out            => unverifiable (no clean signal)
++//   - exit codes disagree             => unverifiable (flaky; evidence poisoned)
++//   - both non-zero with equal code   => confirmed   (the failure reproduces)
++//   - both zero                       => unverifiable (deterministic pass: the
++//     failure did NOT reproduce — but a weak repro must not bury the finding,
++//     so prior confidence is preserved, not refuted)
++//
++// Only a deterministic, reproduced FAILURE earns confirmed. This is the gate
++// against flaky tests poisoning execution evidence (Risks: flaky => unverifiable).
++func Verdict(r1, r2 sandbox.RunResult) string {
++	if r1.TimedOut || r2.TimedOut {
++		return reclib.VerdictUnverifiable
++	}
++	if r1.ExitCode != r2.ExitCode {
++		return reclib.VerdictUnverifiable
++	}
++	if r1.ExitCode != 0 {
++		return reclib.VerdictConfirmed
++	}
++	return reclib.VerdictUnverifiable
++}
++
++// Reproduce runs spec twice on backend and returns the determinism verdict plus
++// the executable-evidence block built from the (second, confirming) run. A
++// backend fault on either run is returned as an error; a non-zero program exit
++// is not an error (it is the signal).
++func Reproduce(ctx context.Context, backend sandbox.Backend, spec sandbox.RunSpec) (verdict string, ev *reconcile.EvidenceExec, err error) {
++	r1, err := backend.Run(ctx, spec)
++	if err != nil {
++		return "", nil, err
++	}
++	r2, err := backend.Run(ctx, spec)
++	if err != nil {
++		return "", nil, err
++	}
++	verdict = Verdict(r1, r2)
++	ev = &reconcile.EvidenceExec{
++		Command:       r2.Command,
++		ExitCode:      r2.ExitCode,
++		OutputExcerpt: r2.Output,
++	}
++	return verdict, ev, nil
++}
++
++// Stamp attaches the execution evidence to f and records the repro verdict. The
++// evidence block is always attached (the run happened); the verdict is applied
++// only when it does not DOWNGRADE an existing one — a prior skeptic's confirmed
++// verdict is authoritative and is never weakened by a repro that merely could
++// not reproduce. A reproduced (confirmed) verdict always wins, since confirmed
++// is the top of the merge precedence (confirmed > unverifiable > refuted).
++func Stamp(f *reconcile.JSONFinding, verdict string, ev *reconcile.EvidenceExec) {
++	f.EvidenceExec = ev
++	if f.Verification == nil {
++		f.Verification = &reclib.Verification{Verdict: verdict, Skeptic: ReproSkeptic}
++		return
++	}
++	if verdictRank(verdict) > verdictRank(f.Verification.Verdict) {
++		f.Verification.Verdict = verdict
++		f.Verification.Skeptic = ReproSkeptic
++	}
++}
++
++// verdictRank mirrors internal/reconcile/merge.go precedence so Stamp never
++// downgrades a stronger prior verdict (confirmed > unverifiable > refuted).
++func verdictRank(verdict string) int {
++	switch verdict {
++	case reclib.VerdictConfirmed:
++		return 3
++	case reclib.VerdictUnverifiable:
++		return 2
++	case reclib.VerdictRefuted:
++		return 1
++	default:
++		return 0
++	}
++}
+diff --git a/internal/repro/repro_test.go b/internal/repro/repro_test.go
+new file mode 100644
+index 00000000..5da86392
+--- /dev/null
++++ b/internal/repro/repro_test.go
+@@ -0,0 +1,166 @@
++package repro
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"runtime"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/reconcile"
++	"github.com/samestrin/atcr/internal/sandbox"
++	reclib "github.com/samestrin/atcr/reconcile"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// fakeBackend returns a queued sequence of results, one per Run call.
++type fakeBackend struct {
++	results []sandbox.RunResult
++	calls   int
++}
++
++func (b *fakeBackend) Name() string                    { return "fake" }
++func (b *fakeBackend) Preflight(context.Context) error { return nil }
++func (b *fakeBackend) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
++	r := b.results[b.calls%len(b.results)]
++	b.calls++
++	return r, nil
++}
++
++func TestVerdict_TwoRunRule(t *testing.T) {
++	cases := []struct {
++		name     string
++		r1, r2   sandbox.RunResult
++		expected string
++	}{
++		{"deterministic non-zero => confirmed", rr(1, false), rr(1, false), reclib.VerdictConfirmed},
++		{"deterministic zero => unverifiable (not reproduced)", rr(0, false), rr(0, false), reclib.VerdictUnverifiable},
++		{"exit codes disagree => unverifiable (flaky)", rr(1, false), rr(2, false), reclib.VerdictUnverifiable},
++		{"first timed out => unverifiable", rr(124, true), rr(1, false), reclib.VerdictUnverifiable},
++		{"both timed out => unverifiable", rr(124, true), rr(124, true), reclib.VerdictUnverifiable},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			assert.Equal(t, tc.expected, Verdict(tc.r1, tc.r2))
++		})
++	}
++}
++
++func rr(code int, timedOut bool) sandbox.RunResult {
++	return sandbox.RunResult{Command: "repro", ExitCode: code, Output: "out", TimedOut: timedOut}
++}
++
++func TestReproduce_RunsTwiceAndBuildsEvidence(t *testing.T) {
++	b := &fakeBackend{results: []sandbox.RunResult{
++		{Command: "go test ./x", ExitCode: 1, Output: "FAIL"},
++		{Command: "go test ./x", ExitCode: 1, Output: "FAIL"},
++	}}
++	verdict, ev, err := Reproduce(context.Background(), b, sandbox.RunSpec{Command: []string{"go", "test"}, SnapshotDir: "/snap"})
++	require.NoError(t, err)
++	assert.Equal(t, 2, b.calls, "the determinism rule requires exactly two runs")
++	assert.Equal(t, reclib.VerdictConfirmed, verdict)
++	require.NotNil(t, ev)
++	assert.Equal(t, 1, ev.ExitCode)
++	assert.Equal(t, "go test ./x", ev.Command)
++	assert.Contains(t, ev.OutputExcerpt, "FAIL")
++}
++
++// errBackend fails on the Nth run (1-based), succeeding before that.
++type errBackend struct {
++	failOn int
++	calls  int
++}
++
++func (b *errBackend) Name() string                    { return "err" }
++func (b *errBackend) Preflight(context.Context) error { return nil }
++func (b *errBackend) Run(context.Context, sandbox.RunSpec) (sandbox.RunResult, error) {
++	b.calls++
++	if b.calls == b.failOn {
++		return sandbox.RunResult{}, assertErr
++	}
++	return sandbox.RunResult{ExitCode: 1, Output: "out"}, nil
++}
++
++var assertErr = errBackendErr("docker spawn failed")
++
++type errBackendErr string
++
++func (e errBackendErr) Error() string { return string(e) }
++
++func TestReproduce_BackendFaultIsReturned(t *testing.T) {
++	for _, failOn := range []int{1, 2} {
++		b := &errBackend{failOn: failOn}
++		_, _, err := Reproduce(context.Background(), b, sandbox.RunSpec{Command: []string{"x"}, SnapshotDir: "/s"})
++		require.Error(t, err, "a backend fault on run %d must surface", failOn)
++	}
++}
++
++func TestStamp_NoPriorVerdictUnverifiableStillRecords(t *testing.T) {
++	f := &reconcile.JSONFinding{}
++	Stamp(f, reclib.VerdictUnverifiable, &reconcile.EvidenceExec{Command: "x", ExitCode: 0})
++	require.NotNil(t, f.Verification)
++	assert.Equal(t, reclib.VerdictUnverifiable, f.Verification.Verdict)
++	assert.Equal(t, "repro", f.Verification.Skeptic)
++}
++
++func TestStamp_ConfirmedSetsVerdictAndEvidence(t *testing.T) {
++	f := &reconcile.JSONFinding{Severity: "HIGH", Confidence: "MEDIUM"}
++	ev := &reconcile.EvidenceExec{Command: "go test ./x", ExitCode: 1, OutputExcerpt: "FAIL"}
++	Stamp(f, reclib.VerdictConfirmed, ev)
++
++	require.NotNil(t, f.Verification)
++	assert.Equal(t, reclib.VerdictConfirmed, f.Verification.Verdict)
++	assert.Equal(t, "repro", f.Verification.Skeptic)
++	require.NotNil(t, f.EvidenceExec)
++	// A reproduced finding is VERIFIED by definition (gate/confidence reuse).
++	assert.Equal(t, reclib.ConfidenceVerified, reclib.ConfidenceForVerdict(f.Confidence, f.Verification.Verdict))
++}
++
++func TestStamp_DoesNotDowngradeExistingConfirmed(t *testing.T) {
++	f := &reconcile.JSONFinding{Verification: &reconcile.Verification{Verdict: reclib.VerdictConfirmed, Skeptic: "otto"}}
++	ev := &reconcile.EvidenceExec{Command: "x", ExitCode: 0, OutputExcerpt: ""}
++	Stamp(f, reclib.VerdictUnverifiable, ev)
++	// Evidence is attached, but an existing confirmed verdict is never downgraded.
++	assert.Equal(t, reclib.VerdictConfirmed, f.Verification.Verdict)
++	require.NotNil(t, f.EvidenceExec)
++}
++
++// TestReproduce_EndToEnd_PlantedBug is the SC-3 fixture: a planted failing repro
++// runs in the (fake-docker) sandbox, is confirmed by the two-run rule, stamped,
++// and serializes into findings.json with an evidence_exec block (Reproduced).
++func TestReproduce_EndToEnd_PlantedBug(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("fake-docker shell shim is POSIX-only")
++	}
++	// Fake docker that reproduces a deterministic failure (exit 1) every run.
++	dir := t.TempDir()
++	fake := filepath.Join(dir, "docker")
++	require.NoError(t, os.WriteFile(fake, []byte("#!/bin/sh\necho 'assertion failed: want 4 got 5'\nexit 1\n"), 0o755))
++
++	cfg := sandbox.DefaultDockerConfig()
++	cfg.DockerPath = fake
++	backend := sandbox.NewDockerBackend(cfg)
++
++	verdict, ev, err := Reproduce(context.Background(), backend,
++		sandbox.RunSpec{Script: "go test ./...", SnapshotDir: dir})
++	require.NoError(t, err)
++	require.Equal(t, reclib.VerdictConfirmed, verdict, "a deterministic failing repro must be confirmed")
++
++	f := reconcile.JSONFinding{Severity: "HIGH", File: "calc.go", Line: 10, Problem: "off-by-one", Confidence: "MEDIUM"}
++	Stamp(&f, verdict, ev)
++
++	data, err := json.Marshal(f)
++	require.NoError(t, err)
++	var decoded map[string]any
++	require.NoError(t, json.Unmarshal(data, &decoded))
++
++	require.Contains(t, decoded, "evidence_exec", "reproduced finding must carry an evidence_exec block")
++	exec := decoded["evidence_exec"].(map[string]any)
++	assert.Equal(t, float64(1), exec["exit_code"])
++	assert.Contains(t, exec["output_excerpt"], "assertion failed")
++	verif := decoded["verification"].(map[string]any)
++	assert.Equal(t, "confirmed", verif["verdict"])
++	assert.Equal(t, "repro", verif["skeptic"])
++}
+diff --git a/internal/sandbox/docker.go b/internal/sandbox/docker.go
+new file mode 100644
+index 00000000..23f45ca5
+--- /dev/null
++++ b/internal/sandbox/docker.go
+@@ -0,0 +1,241 @@
++package sandbox
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"fmt"
++	"os/exec"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/log"
++)
++
++// DockerConfig parameterizes the Docker backend. Zero values are not safe; use
++// DefaultDockerConfig and override fields as needed.
++type DockerConfig struct {
++	// DockerPath is the docker binary to invoke. "docker" is resolved on PATH;
++	// tests inject a fake shim here.
++	DockerPath string
++	// Image is the base image runs execute in. It must already be present
++	// locally (Preflight verifies this) and must carry whatever toolchain
++	// run_tests needs.
++	Image string
++	// Memory, CPUs, PidsLimit are the resource caps (docker --memory/--cpus/
++	// --pids-limit).
++	Memory    string
++	CPUs      string
++	PidsLimit int
++	// User is the non-root uid:gid the container runs as (docker --user).
++	User string
++	// ScratchSize bounds the writable tmpfs scratch overlay (docker --tmpfs size).
++	ScratchSize string
++	// Timeout is the default per-run wall-clock budget when RunSpec.Timeout is 0.
++	Timeout time.Duration
++	// MaxOutputBytes truncates captured combined stdout+stderr.
++	MaxOutputBytes int
++	// MaxConcurrent bounds the number of containers running at once across this
++	// backend. A review verifies findings concurrently and each skeptic may run
++	// many tools, so without this cap a large finding set could fork enough
++	// containers to exhaust the host (the Critical-rated resource-abuse risk).
++	MaxConcurrent int
++}
++
++// DefaultDockerConfig returns a hardened, conservative default configuration.
++func DefaultDockerConfig() DockerConfig {
++	return DockerConfig{
++		DockerPath:     "docker",
++		Image:          "alpine:3.20",
++		Memory:         "512m",
++		CPUs:           "1.0",
++		PidsLimit:      256,
++		User:           "65534:65534", // nobody:nogroup
++		ScratchSize:    "64m",
++		Timeout:        60 * time.Second,
++		MaxOutputBytes: 64 * 1024,
++		MaxConcurrent:  4,
++	}
++}
++
++// DockerBackend runs commands and scripts inside an ephemeral, network-isolated,
++// resource-capped, non-root container with the snapshot mounted read-only.
++type DockerBackend struct {
++	cfg DockerConfig
++	// sem bounds concurrent container spawns to cfg.MaxConcurrent (buffered slots).
++	sem chan struct{}
++}
++
++// NewDockerBackend constructs a Docker backend from cfg.
++func NewDockerBackend(cfg DockerConfig) *DockerBackend {
++	if cfg.DockerPath == "" {
++		cfg.DockerPath = "docker"
++	}
++	if cfg.MaxOutputBytes <= 0 {
++		cfg.MaxOutputBytes = 64 * 1024
++	}
++	if cfg.Timeout <= 0 {
++		cfg.Timeout = 60 * time.Second
++	}
++	if cfg.MaxConcurrent <= 0 {
++		cfg.MaxConcurrent = 4
++	}
++	return &DockerBackend{cfg: cfg, sem: make(chan struct{}, cfg.MaxConcurrent)}
++}
++
++// Name implements Backend.
++func (b *DockerBackend) Name() string { return "docker" }
++
++// dockerRunArgs builds the `docker run` argv for spec. It is pure (no I/O) so the
++// hardening flags can be asserted in a unit test without a daemon. The script
++// body is NOT included here: it is streamed over stdin to `sh -s` by Run.
++func dockerRunArgs(cfg DockerConfig, spec RunSpec) ([]string, error) {
++	if err := spec.validate(); err != nil {
++		return nil, err
++	}
++	args := []string{
++		"run", "--rm",
++		"--network", "none",
++		"--read-only",
++		"--cap-drop", "ALL",
++		"--security-opt", "no-new-privileges",
++		"--user", cfg.User,
++		"--memory", cfg.Memory,
++		"--cpus", cfg.CPUs,
++		"--pids-limit", strconv.Itoa(cfg.PidsLimit),
++		"--tmpfs", "/scratch:rw,exec,size=" + cfg.ScratchSize,
++		// Point HOME, temp, and common build caches at the writable scratch tmpfs so
++		// runners that need to write (go test's build cache, mktemp, pip, etc.) work
++		// under the read-only rootfs + read-only /work. Harmless for runners that
++		// ignore them (e.g. pytest).
++		"-e", "HOME=/scratch",
++		"-e", "TMPDIR=/scratch",
++		"-e", "XDG_CACHE_HOME=/scratch/.cache",
++		"-e", "GOCACHE=/scratch/.gocache",
++		"-e", "GOTMPDIR=/scratch",
++		"--workdir", "/work",
++		"-v", spec.SnapshotDir + ":/work:ro",
++	}
++	if spec.Script != "" {
++		// Feed the script over stdin: `docker run -i <image> /bin/sh -s`.
++		args = append(args, "-i", cfg.Image, "/bin/sh", "-s")
++	} else {
++		args = append(args, cfg.Image)
++		args = append(args, spec.Command...)
++	}
++	return args, nil
++}
++
++// renderCommand produces the human-readable command string stored as evidence.
++func renderCommand(spec RunSpec) string {
++	if spec.Script != "" {
++		return "/bin/sh -s <<'EOF'\n" + spec.Script + "\nEOF"
++	}
++	return strings.Join(spec.Command, " ")
++}
++
++// Run implements Backend.
++func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
++	args, err := dockerRunArgs(b.cfg, spec)
++	if err != nil {
++		return RunResult{}, err
++	}
++	// Bound concurrent container spawns; block until a slot frees or ctx is done.
++	if b.sem != nil {
++		select {
++		case b.sem <- struct{}{}:
++			defer func() { <-b.sem }()
++		case <-ctx.Done():
++			return RunResult{}, ctx.Err()
++		}
++	}
++	timeout := spec.Timeout
++	if timeout <= 0 {
++		timeout = b.cfg.Timeout
++	}
++	logger := log.FromContext(ctx)
++	cmdStr := renderCommand(spec)
++	logger.Info("sandbox exec start", "backend", "docker", "command", cmdStr)
++	runCtx, cancel := context.WithTimeout(ctx, timeout)
++	defer cancel()
++
++	cmd := exec.CommandContext(runCtx, b.cfg.DockerPath, args...)
++	if spec.Script != "" {
++		cmd.Stdin = strings.NewReader(spec.Script)
++	}
++	var buf bytes.Buffer
++	cmd.Stdout = &buf
++	cmd.Stderr = &buf
++
++	runErr := cmd.Run()
++	res := RunResult{
++		Command: cmdStr,
++		Output:  truncate(buf.String(), b.cfg.MaxOutputBytes),
++	}
++
++	// Distinguish a timeout (deadline exceeded) from a real program exit.
++	if runCtx.Err() == context.DeadlineExceeded {
++		res.TimedOut = true
++		res.ExitCode = timeoutExitCode
++		logger.Warn("sandbox exec timed out", "backend", "docker", "command", cmdStr, "timeout", timeout)
++		return res, nil
++	}
++	if runErr != nil {
++		var ee *exec.ExitError
++		if errors.As(runErr, &ee) {
++			res.ExitCode = ee.ExitCode()
++			logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
++			return res, nil
++		}
++		// Not an exit status: spawn failure, binary missing, etc. — a backend fault.
++		logger.Error("sandbox exec backend fault", "backend", "docker", "command", cmdStr, "error", runErr)
++		return res, fmt.Errorf("docker run: %w", runErr)
++	}
++	logger.Info("sandbox exec done", "backend", "docker", "command", cmdStr, "exit_code", res.ExitCode)
++	return res, nil
++}
++
++// Preflight implements Backend. It verifies, in order: the docker binary is
++// runnable, the daemon is reachable, the base image is present, and a trivial
++// network-isolated container runs to completion.
++func (b *DockerBackend) Preflight(ctx context.Context) error {
++	// 1. Daemon reachable (also proves the binary runs). `docker version` talks
++	//    to the daemon; a non-zero status means it is down or unreachable.
++	if err := b.dockerCmd(ctx, 15*time.Second, "version"); err != nil {
++		return fmt.Errorf("sandbox preflight: docker daemon unreachable (is Docker running?): %w", err)
++	}
++	// 2. Base image present locally (runs are network-isolated, so the image
++	//    cannot be pulled on demand).
++	if err := b.dockerCmd(ctx, 15*time.Second, "image", "inspect", b.cfg.Image); err != nil {
++		return fmt.Errorf("sandbox preflight: base image %q not found locally — run `docker pull %s`: %w", b.cfg.Image, b.cfg.Image, err)
++	}
++	// 3. A trivial hardened container actually runs.
++	if err := b.dockerCmd(ctx, 30*time.Second,
++		"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
++		"--security-opt", "no-new-privileges", "--user", b.cfg.User, b.cfg.Image, "true",
++	); err != nil {
++		return fmt.Errorf("sandbox preflight: trivial container failed to run: %w", err)
++	}
++	return nil
++}
++
++// dockerCmd runs a docker subcommand with a timeout, discarding output and
++// returning a wrapped error on failure.
++func (b *DockerBackend) dockerCmd(ctx context.Context, timeout time.Duration, args ...string) error {
++	cctx, cancel := context.WithTimeout(ctx, timeout)
++	defer cancel()
++	cmd := exec.CommandContext(cctx, b.cfg.DockerPath, args...)
++	var errOut bytes.Buffer
++	cmd.Stderr = &errOut
++	if err := cmd.Run(); err != nil {
++		if cctx.Err() != nil {
++			return fmt.Errorf("%s timed out: %w", strings.Join(args, " "), cctx.Err())
++		}
++		if msg := strings.TrimSpace(errOut.String()); msg != "" {
++			return fmt.Errorf("%w: %s", err, msg)
++		}
++		return err
++	}
++	return nil
++}
+diff --git a/internal/sandbox/sandbox.go b/internal/sandbox/sandbox.go
+new file mode 100644
+index 00000000..d3f05f1c
+--- /dev/null
++++ b/internal/sandbox/sandbox.go
+@@ -0,0 +1,115 @@
++// Package sandbox provides an opt-in, container-isolated executor for running
++// untrusted, model-authored commands and scripts during a review (Epic 11.0).
++//
++// Execution is the last and most dangerous rung of the review ladder: it runs
++// code an LLM wrote on the operator's machine. Containment is therefore not a
++// feature but the precondition. Every Backend MUST guarantee, for every Run:
++//
++//   - no network (the run cannot exfiltrate or call out),
++//   - a read-only view of the snapshot (the run cannot mutate the work tree),
++//   - resource caps (memory, CPU, PIDs) so a run cannot exhaust the host,
++//   - non-root, dropped capabilities, and no-new-privileges.
++//
++// The package never enables itself: callers opt in via `--exec` and a backend
++// that passes Preflight. Bare-metal execution is intentionally unsupported.
++package sandbox
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"path/filepath"
++	"strings"
++	"time"
++)
++
++// RunSpec describes a single sandboxed execution request. Exactly one of Command
++// or Script must be set.
++type RunSpec struct {
++	// Command is an argv executed directly inside the sandbox. No shell
++	// interpolation is performed. Mutually exclusive with Script.
++	Command []string
++	// Script is a shell script body fed to `/bin/sh -s` over stdin and executed
++	// in the writable scratch overlay. It is never interpolated into argv.
++	// Mutually exclusive with Command.
++	Script string
++	// Timeout bounds the wall-clock duration of the run. Zero uses the backend
++	// default.
++	Timeout time.Duration
++	// SnapshotDir is the host directory mounted read-only as the working tree.
++	SnapshotDir string
++}
++
++func (s RunSpec) validate() error {
++	hasCmd := len(s.Command) > 0
++	hasScript := s.Script != ""
++	switch {
++	case hasCmd && hasScript:
++		return errors.New("sandbox: RunSpec must set exactly one of Command or Script, not both")
++	case !hasCmd && !hasScript:
++		return errors.New("sandbox: RunSpec must set one of Command or Script")
++	}
++	if s.SnapshotDir == "" {
++		return errors.New("sandbox: RunSpec.SnapshotDir is required")
++	}
++	// The snapshot dir is interpolated into the `-v <dir>:/work:ro` mount spec.
++	// A path containing ':' could inject extra mount options (e.g. strip :ro), so
++	// reject it; require an absolute path so the mount source is unambiguous.
++	if !filepath.IsAbs(s.SnapshotDir) {
++		return fmt.Errorf("sandbox: RunSpec.SnapshotDir must be absolute, got %q", s.SnapshotDir)
++	}
++	if strings.ContainsRune(s.SnapshotDir, ':') {
++		return fmt.Errorf("sandbox: RunSpec.SnapshotDir must not contain ':' (mount-spec injection), got %q", s.SnapshotDir)
++	}
++	return nil
++}
++
++// RunResult is the captured outcome of a sandboxed execution. A non-zero program
++// exit is reported via ExitCode, never as a Go error.
++type RunResult struct {
++	// Command is a human-readable rendering of what was executed, suitable for
++	// the evidence_exec block and the report.
++	Command string
++	// ExitCode is the container's exit status (the program's, since the entry
++	// process is the program). 124 is the conventional timeout code.
++	ExitCode int
++	// Output is the combined stdout+stderr, truncated to the backend budget.
++	Output string
++	// TimedOut is true when the run exceeded its deadline and was killed.
++	TimedOut bool
++}
++
++// Backend is a pluggable sandbox executor. Docker is the only implementation in
++// Epic 11.0; the interface keeps Podman (or a remote runner) a drop-in later.
++type Backend interface {
++	// Name identifies the backend for diagnostics and the evidence trail.
++	Name() string
++	// Preflight verifies the backend is usable: runtime installed, daemon
++	// reachable, base image present, and a trivial container runs to completion.
++	// It MUST pass before Run is used; the CLI refuses `--exec` otherwise.
++	Preflight(ctx context.Context) error
++	// Run executes spec in isolation and returns the captured result. err is
++	// reserved for backend faults (spawn failure, malformed spec); a non-zero
++	// program exit is NOT an error.
++	Run(ctx context.Context, spec RunSpec) (RunResult, error)
++}
++
++// timeoutExitCode is the conventional exit status for a killed-on-timeout run,
++// matching coreutils `timeout`.
++const timeoutExitCode = 124
++
++var _ Backend = (*DockerBackend)(nil)
++
++// truncate shortens s to at most limit bytes (without splitting a UTF-8 rune),
++// appending a marker when it cut anything.
++func truncate(s string, limit int) string {
++	if limit <= 0 || len(s) <= limit {
++		return s
++	}
++	marker := fmt.Sprintf("\n[...truncated %d bytes...]", len(s)-limit)
++	keep := limit
++	for keep > 0 && (s[keep]&0xC0) == 0x80 { // back up off a UTF-8 continuation byte
++		keep--
++	}
++	return s[:keep] + marker
++}
+diff --git a/internal/sandbox/sandbox_test.go b/internal/sandbox/sandbox_test.go
+new file mode 100644
+index 00000000..3fd8f7fc
+--- /dev/null
++++ b/internal/sandbox/sandbox_test.go
+@@ -0,0 +1,187 @@
++package sandbox
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// writeFakeDocker writes an executable shell script that impersonates the docker
++// CLI so Run/Preflight can be exercised deterministically without a real daemon.
++// The script's behavior is driven by the first non-flag argument it sees after
++// "run"/"image"/"version" and by env vars the test sets.
++func writeFakeDocker(t *testing.T, body string) string {
++	t.Helper()
++	if runtime.GOOS == "windows" {
++		t.Skip("fake-docker shell shim is POSIX-only")
++	}
++	dir := t.TempDir()
++	p := filepath.Join(dir, "docker")
++	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
++	return p
++}
++
++func TestDockerRunArgs_HardeningFlagsPresent(t *testing.T) {
++	cfg := DefaultDockerConfig()
++	spec := RunSpec{Command: []string{"go", "test", "./..."}, SnapshotDir: "/tmp/snap"}
++
++	args, err := dockerRunArgs(cfg, spec)
++	require.NoError(t, err)
++	joined := strings.Join(args, " ")
++
++	// Network isolation, read-only rootfs, dropped caps, no-new-privileges.
++	assert.Contains(t, joined, "--network none", "must isolate network")
++	assert.Contains(t, joined, "--read-only", "rootfs must be read-only")
++	assert.Contains(t, joined, "--cap-drop ALL", "all capabilities must be dropped")
++	assert.Contains(t, joined, "--security-opt no-new-privileges")
++	// Non-root.
++	assert.Contains(t, joined, "--user "+cfg.User)
++	// Resource caps.
++	assert.Contains(t, joined, "--memory "+cfg.Memory)
++	assert.Contains(t, joined, "--cpus "+cfg.CPUs)
++	assert.Contains(t, joined, "--pids-limit")
++	// Snapshot mounted READ-ONLY at /work.
++	assert.Contains(t, joined, "/tmp/snap:/work:ro", "snapshot must be a read-only mount")
++	// Writable scratch is a tmpfs, not a host mount.
++	assert.Contains(t, joined, "--tmpfs /scratch")
++	// Ephemeral container.
++	assert.Contains(t, joined, "run --rm")
++	// The argv command is passed through verbatim after the image.
++	assert.Contains(t, joined, "go test ./...")
++}
++
++func TestDockerRunArgs_WritableTempEnv(t *testing.T) {
++	// go test (and most runners) must be able to write a build cache / temp under
++	// the read-only rootfs; these env vars point them at the writable /scratch.
++	args, err := dockerRunArgs(DefaultDockerConfig(), RunSpec{Command: []string{"go", "test"}, SnapshotDir: "/tmp/snap"})
++	require.NoError(t, err)
++	joined := strings.Join(args, " ")
++	assert.Contains(t, joined, "HOME=/scratch")
++	assert.Contains(t, joined, "TMPDIR=/scratch")
++	assert.Contains(t, joined, "GOCACHE=/scratch")
++}
++
++func TestNewDockerBackend_ConcurrencyCap(t *testing.T) {
++	cfg := DefaultDockerConfig()
++	cfg.MaxConcurrent = 3
++	assert.Equal(t, 3, cap(NewDockerBackend(cfg).sem), "the semaphore must bound concurrency to MaxConcurrent")
++	// An unset/zero MaxConcurrent gets a positive default (never an unbounded backend).
++	assert.Positive(t, cap(NewDockerBackend(DockerConfig{}).sem))
++}
++
++func TestDockerRunArgs_ScriptUsesStdinShell(t *testing.T) {
++	cfg := DefaultDockerConfig()
++	args, err := dockerRunArgs(cfg, RunSpec{Script: "echo hi\nexit 3\n", SnapshotDir: "/tmp/snap"})
++	require.NoError(t, err)
++	joined := strings.Join(args, " ")
++	// A script body is fed over stdin to `sh -s` — never interpolated into argv.
++	assert.Contains(t, joined, "-i")
++	assert.Contains(t, joined, "/bin/sh -s")
++	assert.NotContains(t, joined, "echo hi", "script body must not appear in argv")
++}
++
++func TestRunSpec_Validate(t *testing.T) {
++	cases := []struct {
++		name string
++		spec RunSpec
++		ok   bool
++	}{
++		{"command only", RunSpec{Command: []string{"true"}, SnapshotDir: "/s"}, true},
++		{"script only", RunSpec{Script: "true", SnapshotDir: "/s"}, true},
++		{"neither", RunSpec{SnapshotDir: "/s"}, false},
++		{"both", RunSpec{Command: []string{"true"}, Script: "true", SnapshotDir: "/s"}, false},
++		{"no snapshot", RunSpec{Command: []string{"true"}}, false},
++		{"relative snapshot", RunSpec{Command: []string{"true"}, SnapshotDir: "rel/dir"}, false},
++		{"colon in snapshot (mount injection)", RunSpec{Command: []string{"true"}, SnapshotDir: "/s:ro,z"}, false},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			err := tc.spec.validate()
++			if tc.ok {
++				assert.NoError(t, err)
++			} else {
++				assert.Error(t, err)
++			}
++		})
++	}
++}
++
++func TestDockerBackend_Name(t *testing.T) {
++	b := NewDockerBackend(DefaultDockerConfig())
++	assert.Equal(t, "docker", b.Name())
++}
++
++func TestDockerBackend_Run_CapturesExitCodeAndOutput(t *testing.T) {
++	// Fake docker: print the marker then exit with the code encoded in an env var.
++	fake := writeFakeDocker(t, `echo "sandbox-stdout-marker"; exit ${FAKE_EXIT:-0}`)
++	cfg := DefaultDockerConfig()
++	cfg.DockerPath = fake
++
++	t.Setenv("FAKE_EXIT", "7")
++	b := NewDockerBackend(cfg)
++	res, err := b.Run(context.Background(), RunSpec{Command: []string{"go", "test"}, SnapshotDir: t.TempDir()})
++	require.NoError(t, err, "a non-zero program exit is NOT a backend error")
++	assert.Equal(t, 7, res.ExitCode)
++	assert.Contains(t, res.Output, "sandbox-stdout-marker")
++	assert.False(t, res.TimedOut)
++}
++
++func TestDockerBackend_Run_TruncatesOutput(t *testing.T) {
++	fake := writeFakeDocker(t, `head -c 100000 /dev/zero | tr '\0' 'x'; exit 0`)
++	cfg := DefaultDockerConfig()
++	cfg.DockerPath = fake
++	cfg.MaxOutputBytes = 1024
++	b := NewDockerBackend(cfg)
++	res, err := b.Run(context.Background(), RunSpec{Command: []string{"x"}, SnapshotDir: t.TempDir()})
++	require.NoError(t, err)
++	assert.LessOrEqual(t, len(res.Output), 1024+64, "output must be truncated to the budget")
++	assert.Contains(t, res.Output, "truncated")
++}
++
++func TestDockerBackend_Run_Timeout(t *testing.T) {
++	fake := writeFakeDocker(t, `sleep 5; exit 0`)
++	cfg := DefaultDockerConfig()
++	cfg.DockerPath = fake
++	b := NewDockerBackend(cfg)
++	res, err := b.Run(context.Background(), RunSpec{
++		Command:     []string{"x"},
++		SnapshotDir: t.TempDir(),
++		Timeout:     150 * time.Millisecond,
++	})
++	require.NoError(t, err)
++	assert.True(t, res.TimedOut, "an over-budget run must be flagged TimedOut")
++}
++
++func TestDockerBackend_Preflight_OK(t *testing.T) {
++	// Fake docker that succeeds for version, image inspect, and the trivial run.
++	fake := writeFakeDocker(t, `exit 0`)
++	cfg := DefaultDockerConfig()
++	cfg.DockerPath = fake
++	b := NewDockerBackend(cfg)
++	assert.NoError(t, b.Preflight(context.Background()))
++}
++
++func TestDockerBackend_Preflight_DaemonDown(t *testing.T) {
++	// Fake docker whose `version`/`info` call fails => daemon unreachable.
++	fake := writeFakeDocker(t, `case "$1" in version|info) exit 1;; esac; exit 0`)
++	cfg := DefaultDockerConfig()
++	cfg.DockerPath = fake
++	b := NewDockerBackend(cfg)
++	err := b.Preflight(context.Background())
++	require.Error(t, err)
++	assert.Contains(t, strings.ToLower(err.Error()), "daemon")
++}
++
++func TestDockerBackend_Preflight_MissingBinary(t *testing.T) {
++	cfg := DefaultDockerConfig()
++	cfg.DockerPath = "/nonexistent/docker-binary-xyz"
++	b := NewDockerBackend(cfg)
++	assert.Error(t, b.Preflight(context.Background()))
++}
+diff --git a/internal/tools/dispatch.go b/internal/tools/dispatch.go
+index 353b5f34..5f496821 100644
+--- a/internal/tools/dispatch.go
++++ b/internal/tools/dispatch.go
+@@ -7,7 +7,10 @@ import (
+ 	"fmt"
+ 	"path/filepath"
+ 	"strings"
++	"time"
+ 	"unicode/utf8"
++
++	"github.com/samestrin/atcr/internal/sandbox"
+ )
+ 
+ // truncMarker is appended to any result content shortened by a byte cap.
+@@ -57,6 +60,14 @@ type Dispatcher struct {
+ 	limits   Limits
+ 	handlers map[string]handlerFunc
+ 	pathArgs map[string]pathSpec
++
++	// Execution backend (Epic 11.0), nil unless EnableExecution was called. When
++	// set, the run_tests/run_script tools are registered and execute inside the
++	// sandbox with the snapshot (jail root) mounted read-only. This is the ONLY
++	// path by which model-authored code runs, and it is opt-in (`atcr --exec`).
++	execBackend sandbox.Backend
++	execTestCmd []string
++	execTimeout time.Duration
+ }
+ 
+ // NewDispatcher builds a dispatcher over the three built-in read-only tools.
+diff --git a/internal/tools/exec_tools.go b/internal/tools/exec_tools.go
+new file mode 100644
+index 00000000..3d273ab7
+--- /dev/null
++++ b/internal/tools/exec_tools.go
+@@ -0,0 +1,135 @@
++package tools
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/samestrin/atcr/internal/sandbox"
++)
++
++// ExecutionTools returns the execution-only tool definitions (Epic 11.0). They
++// are NOT part of Tools(): they are offered solely to execution-enabled agents
++// (see fanout.wireToolDefs) and only execute when a dispatcher has an exec
++// backend wired via EnableExecution. Keeping them out of the default set
++// preserves the read-only guarantee of the v1 tool harness for every other agent.
++func ExecutionTools() []ToolDef {
++	return []ToolDef{runTestsDef(), runScriptDef()}
++}
++
++func runTestsDef() ToolDef {
++	return ToolDef{
++		Name: "run_tests",
++		Description: "Run the project's test suite inside the sandbox (network-isolated, read-only snapshot) " +
++			"and return the exit code and output. Optional target scopes the run (e.g. a package path). " +
++			"Use this to PROVE a finding by reproducing a failure.",
++		Parameters: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"target": map[string]any{"type": "string", "description": "Optional package/path to scope the test run."},
++			},
++			"required": []string{},
++		},
++	}
++}
++
++func runScriptDef() ToolDef {
++	return ToolDef{
++		Name: "run_script",
++		Description: "Run a short shell script inside the sandbox (network-isolated, read-only snapshot, writable " +
++			"/scratch) and return the exit code and output. Use this to write a minimal reproduction of a bug.",
++		Parameters: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"content": map[string]any{"type": "string", "description": "The shell script body to execute with /bin/sh."},
++				"timeout": map[string]any{"type": "integer", "description": "Optional per-run timeout in seconds."},
++			},
++			"required": []string{"content"},
++		},
++	}
++}
++
++// EnableExecution wires a sandbox backend into the dispatcher and registers the
++// run_tests/run_script tools. testCmd is the project's test command (from
++// config); timeout is the default per-run budget. It is called once, during
++// construction, only when the operator opted into `--exec` with a backend that
++// passed Preflight — so the dispatcher's default (no-exec) build keeps exactly
++// the three read-only tools.
++func (d *Dispatcher) EnableExecution(backend sandbox.Backend, testCmd []string, timeout time.Duration) {
++	d.execBackend = backend
++	d.execTestCmd = append([]string(nil), testCmd...)
++	d.execTimeout = timeout
++	d.mustRegister("run_tests", runTestsHandler, pathSpec{})
++	d.mustRegister("run_script", runScriptHandler, pathSpec{})
++}
++
++type runTestsArgs struct {
++	Target string `json:"target"`
++}
++
++func runTestsHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, _ string) (ToolResult, error) {
++	var a runTestsArgs
++	if err := unmarshalToolArgs(argsJSON, &a); err != nil {
++		return ToolResult{}, toolErrf("run_tests: invalid arguments: %v", err)
++	}
++	cmd := append([]string(nil), d.execTestCmd...)
++	if t := strings.TrimSpace(a.Target); t != "" {
++		cmd = append(cmd, t)
++	}
++	return d.runInSandbox(ctx, sandbox.RunSpec{Command: cmd, SnapshotDir: d.root, Timeout: d.execTimeout})
++}
++
++type runScriptArgs struct {
++	Content string `json:"content"`
++	Timeout int    `json:"timeout"`
++}
++
++func runScriptHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, _ string) (ToolResult, error) {
++	var a runScriptArgs
++	if err := unmarshalToolArgs(argsJSON, &a); err != nil {
++		return ToolResult{}, toolErrf("run_script: invalid arguments: %v", err)
++	}
++	if strings.TrimSpace(a.Content) == "" {
++		return ToolResult{}, toolErrf("run_script: content is required")
++	}
++	timeout := d.execTimeout
++	if a.Timeout > 0 {
++		timeout = time.Duration(a.Timeout) * time.Second
++	}
++	return d.runInSandbox(ctx, sandbox.RunSpec{Script: a.Content, SnapshotDir: d.root, Timeout: timeout})
++}
++
++// runInSandbox executes spec on the wired backend and renders the result into a
++// model-facing tool message: the command, the exit code (with a timeout marker),
++// then the captured output. A nil backend is a programming error (handlers are
++// only registered by EnableExecution), surfaced as a tool error rather than a panic.
++func (d *Dispatcher) runInSandbox(ctx context.Context, spec sandbox.RunSpec) (ToolResult, error) {
++	if d.execBackend == nil {
++		return ToolResult{}, toolErrf("execution backend not configured")
++	}
++	res, err := d.execBackend.Run(ctx, spec)
++	if err != nil {
++		return ToolResult{}, toolErrf("sandbox run failed: %v", err)
++	}
++	var b strings.Builder
++	fmt.Fprintf(&b, "$ %s\n", res.Command)
++	if res.TimedOut {
++		fmt.Fprintf(&b, "exit code: %d (timed out)\n", res.ExitCode)
++	} else {
++		fmt.Fprintf(&b, "exit code: %d\n", res.ExitCode)
++	}
++	b.WriteString(res.Output)
++	return ToolResult{Content: b.String()}, nil
++}
++
++// unmarshalToolArgs unmarshals tool arguments, tolerating empty/whitespace input
++// as an empty object so optional-only tools accept a bare call.
++func unmarshalToolArgs(argsJSON json.RawMessage, v any) error {
++	trimmed := strings.TrimSpace(string(argsJSON))
++	if trimmed == "" || trimmed == "{}" {
++		return nil
++	}
++	return json.Unmarshal([]byte(trimmed), v)
++}
+diff --git a/internal/tools/exec_tools_test.go b/internal/tools/exec_tools_test.go
+new file mode 100644
+index 00000000..3a71b658
+--- /dev/null
++++ b/internal/tools/exec_tools_test.go
+@@ -0,0 +1,118 @@
++package tools
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/sandbox"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// stubResolver is a minimal jail that resolves nothing (exec tools take no path
++// args) and reports a fixed root.
++type stubResolver struct{ root string }
++
++func (s stubResolver) Resolve(string) (string, error) { return s.root, nil }
++func (s stubResolver) Root() string                   { return s.root }
++
++// stubBackend records the last RunSpec it saw and returns a canned result.
++type stubBackend struct {
++	last   sandbox.RunSpec
++	result sandbox.RunResult
++	runErr error
++}
++
++func (b *stubBackend) Name() string                    { return "stub" }
++func (b *stubBackend) Preflight(context.Context) error { return nil }
++func (b *stubBackend) Run(_ context.Context, s sandbox.RunSpec) (sandbox.RunResult, error) {
++	b.last = s
++	return b.result, b.runErr
++}
++
++func newExecDispatcher(t *testing.T, b sandbox.Backend) *Dispatcher {
++	t.Helper()
++	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
++	d.EnableExecution(b, []string{"go", "test", "./..."}, 30*time.Second)
++	return d
++}
++
++func TestExecutionTools_Defs(t *testing.T) {
++	defs := ExecutionTools()
++	names := map[string]ToolDef{}
++	for _, d := range defs {
++		names[d.Name] = d
++	}
++	require.Contains(t, names, "run_tests")
++	require.Contains(t, names, "run_script")
++	// run_script must require a content arg.
++	req, _ := names["run_script"].Parameters["required"].([]string)
++	assert.Contains(t, req, "content")
++}
++
++func TestDispatcher_NoExecToolsByDefault(t *testing.T) {
++	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
++	got := strings.Join(d.RegisteredTools(), ",")
++	assert.NotContains(t, got, "run_tests")
++	assert.NotContains(t, got, "run_script")
++}
++
++func TestDispatcher_EnableExecution_RegistersTools(t *testing.T) {
++	d := newExecDispatcher(t, &stubBackend{})
++	got := strings.Join(d.RegisteredTools(), ",")
++	assert.Contains(t, got, "run_tests")
++	assert.Contains(t, got, "run_script")
++}
++
++func TestRunTests_Handler_ScopesTargetAndReportsExit(t *testing.T) {
++	b := &stubBackend{result: sandbox.RunResult{Command: "go test ./internal/x", ExitCode: 1, Output: "FAIL: x"}}
++	d := newExecDispatcher(t, b)
++
++	res, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{"target":"./internal/x"}`))
++	require.NoError(t, err)
++	// The project test command is taken from config and the target is appended.
++	assert.Equal(t, []string{"go", "test", "./...", "./internal/x"}, b.last.Command)
++	// The snapshot root is mounted read-only as the work tree.
++	assert.Equal(t, "/snap", b.last.SnapshotDir)
++	// The result surfaces the exit code so the model sees pass/fail.
++	assert.Contains(t, res.Content, "exit")
++	assert.Contains(t, res.Content, "1")
++	assert.Contains(t, res.Content, "FAIL: x")
++}
++
++func TestRunTests_Handler_NoTargetRunsFullSuite(t *testing.T) {
++	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
++	d := newExecDispatcher(t, b)
++	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
++	require.NoError(t, err)
++	assert.Equal(t, []string{"go", "test", "./..."}, b.last.Command)
++}
++
++func TestRunScript_Handler_PassesContentAndTimeout(t *testing.T) {
++	b := &stubBackend{result: sandbox.RunResult{ExitCode: 2, Output: "boom"}}
++	d := newExecDispatcher(t, b)
++
++	res, err := d.Execute(context.Background(), "run_script",
++		json.RawMessage(`{"content":"echo hi\nexit 2\n","timeout":5}`))
++	require.NoError(t, err)
++	assert.Equal(t, "echo hi\nexit 2\n", b.last.Script)
++	assert.Equal(t, 5*time.Second, b.last.Timeout)
++	assert.Contains(t, res.Content, "2")
++	assert.Contains(t, res.Content, "boom")
++}
++
++func TestRunScript_Handler_RequiresContent(t *testing.T) {
++	d := newExecDispatcher(t, &stubBackend{})
++	_, err := d.Execute(context.Background(), "run_script", json.RawMessage(`{}`))
++	require.Error(t, err, "run_script with no content must be a tool error")
++}
++
++func TestExecTools_DisabledWhenNotEnabled(t *testing.T) {
++	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
++	_, err := d.Execute(context.Background(), "run_tests", json.RawMessage(`{}`))
++	require.Error(t, err, "exec tools must be unknown until EnableExecution is called")
++	assert.Contains(t, err.Error(), "unknown tool")
++}
+diff --git a/internal/verify/exec.go b/internal/verify/exec.go
+new file mode 100644
+index 00000000..bc378283
+--- /dev/null
++++ b/internal/verify/exec.go
+@@ -0,0 +1,57 @@
++package verify
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"time"
++
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/sandbox"
++)
++
++// ErrExecNoBackend is returned when `--exec` is requested but no sandbox backend
++// is configured. It is the refuse-without-backend gate (Epic 11.0 SC-1): the
++// command must hard-error without executing anything.
++var ErrExecNoBackend = errors.New("--exec requires a [sandbox] block in .atcr/config.yaml (backend, image, test_command); none is configured")
++
++// ResolveExecBackend implements the execution gate. When execEnabled is false it
++// returns nil (execution off — the normal path). When true it REQUIRES a
++// configured sandbox backend that passes a preflight check; any failure is an
++// error so the caller refuses the run. It never enables execution implicitly.
++//
++// Returns the ready backend, the resolved test command, and the per-run timeout.
++func ResolveExecBackend(ctx context.Context, execEnabled bool, sc *registry.SandboxConfig) (sandbox.Backend, []string, time.Duration, error) {
++	if !execEnabled {
++		return nil, nil, 0, nil
++	}
++	if sc == nil {
++		return nil, nil, 0, ErrExecNoBackend
++	}
++	cfg := sandbox.DefaultDockerConfig()
++	if sc.DockerPath != "" {
++		cfg.DockerPath = sc.DockerPath
++	}
++	if sc.Image != "" {
++		cfg.Image = sc.Image
++	}
++	if sc.Memory != "" {
++		cfg.Memory = sc.Memory
++	}
++	if sc.CPUs != "" {
++		cfg.CPUs = sc.CPUs
++	}
++	if sc.PidsLimit != nil {
++		cfg.PidsLimit = *sc.PidsLimit
++	}
++	timeout := cfg.Timeout
++	if sc.TimeoutSecs != nil {
++		timeout = time.Duration(*sc.TimeoutSecs) * time.Second
++		cfg.Timeout = timeout
++	}
++	backend := sandbox.NewDockerBackend(cfg)
++	if err := backend.Preflight(ctx); err != nil {
++		return nil, nil, 0, fmt.Errorf("--exec preflight failed: %w", err)
++	}
++	return backend, sc.TestCommand, timeout, nil
++}
+diff --git a/internal/verify/exec_test.go b/internal/verify/exec_test.go
+new file mode 100644
+index 00000000..cce00acf
+--- /dev/null
++++ b/internal/verify/exec_test.go
+@@ -0,0 +1,59 @@
++package verify
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"runtime"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/registry"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func fakeDocker(t *testing.T, body string) string {
++	t.Helper()
++	if runtime.GOOS == "windows" {
++		t.Skip("fake-docker shim is POSIX-only")
++	}
++	p := filepath.Join(t.TempDir(), "docker")
++	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755))
++	return p
++}
++
++func TestResolveExecBackend_DisabledIsNoOp(t *testing.T) {
++	b, cmd, _, err := ResolveExecBackend(context.Background(), false, &registry.SandboxConfig{TestCommand: []string{"go", "test"}})
++	require.NoError(t, err)
++	assert.Nil(t, b, "execution off must return a nil backend")
++	assert.Nil(t, cmd)
++}
++
++func TestResolveExecBackend_RefusesWithoutBackend(t *testing.T) {
++	// SC-1: --exec with no sandbox block hard-errors without executing anything.
++	_, _, _, err := ResolveExecBackend(context.Background(), true, nil)
++	require.ErrorIs(t, err, ErrExecNoBackend)
++}
++
++func TestResolveExecBackend_BuildsAndPreflights(t *testing.T) {
++	sc := &registry.SandboxConfig{
++		Backend:     "docker",
++		DockerPath:  fakeDocker(t, "exit 0"), // version/inspect/run all succeed
++		TestCommand: []string{"go", "test", "./..."},
++	}
++	b, cmd, _, err := ResolveExecBackend(context.Background(), true, sc)
++	require.NoError(t, err)
++	require.NotNil(t, b)
++	assert.Equal(t, "docker", b.Name())
++	assert.Equal(t, []string{"go", "test", "./..."}, cmd)
++}
++
++func TestResolveExecBackend_PreflightFailureRefuses(t *testing.T) {
++	sc := &registry.SandboxConfig{
++		DockerPath:  fakeDocker(t, "exit 1"), // daemon unreachable
++		TestCommand: []string{"go", "test"},
++	}
++	_, _, _, err := ResolveExecBackend(context.Background(), true, sc)
++	require.Error(t, err, "a failed preflight must refuse the run")
++	assert.Contains(t, err.Error(), "preflight")
++}
+diff --git a/internal/verify/invoke.go b/internal/verify/invoke.go
+index 1ae30dab..20b9a86e 100644
+--- a/internal/verify/invoke.go
++++ b/internal/verify/invoke.go
+@@ -47,7 +47,7 @@ type Dispatcher interface {
+ // Read-only contract: callers must not mutate the returned tripped-budget slice.
+ // It aliases the fanout.Result's backing memory; mutating it corrupts the engine
+ // result for any subsequent inspection.
+-func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reclib.Verification, []string, error) {
++func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, []string, error) {
+ 	if ctx == nil {
+ 		return nil, nil, errors.New("invokeSkeptic: nil context")
+ 	}
+@@ -59,7 +59,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
+ 	}
+ 
+ 	logger := log.FromContext(ctx)
+-	agent := buildSkepticAgent(skeptic, prompt)
++	agent := buildSkepticAgent(skeptic, prompt, exec)
+ 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
+ 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
+ 	// Engine.Run returns one Result per slot in input order, so one slot yields
+@@ -99,14 +99,18 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
+ // only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
+ // Invocation so llmclient.Chat can route the call (without them a production
+ // skeptic would hit an empty endpoint with no key).
+-func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
++func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
+ 	c := skeptic.Config
+ 	return fanout.Agent{
+-		Name:            skeptic.Name,
+-		Provider:        c.Provider,
+-		Prompt:          prompt,
+-		TimeoutSecs:     derefInt(c.TimeoutSecs),
+-		Tools:           true,
++		Name:        skeptic.Name,
++		Provider:    c.Provider,
++		Prompt:      prompt,
++		TimeoutSecs: derefInt(c.TimeoutSecs),
++		Tools:       true,
++		// Exec (Epic 11.0): in an --exec run, the skeptic is offered the
++		// run_tests/run_script tools so it can reproduce a finding by executing
++		// code. False keeps the read-only tool set (the default).
++		Exec:            exec,
+ 		SupportsFC:      c.SupportsFC,
+ 		MaxTurns:        derefInt(c.MaxTurns),
+ 		ToolBudgetBytes: derefInt64(c.ToolBudgetBytes),
+diff --git a/internal/verify/invoke_test.go b/internal/verify/invoke_test.go
+index 10f93a25..a6f963a5 100644
+--- a/internal/verify/invoke_test.go
++++ b/internal/verify/invoke_test.go
+@@ -37,7 +37,7 @@ func TestInvokeSkeptic_DegradesWhenNotFC(t *testing.T) {
+ 	sk := testSkeptic()
+ 	sk.Config.SupportsFC = false
+ 	disp := okDispatcher()
+-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), disp)
++	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", finalChat(`{"verdict":"confirmed"}`), disp, false)
+ 	require.NoError(t, err)
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, "confirmed", v.Verdict, "degrade path should return the single-shot verdict, not unverifiable")
+@@ -55,7 +55,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
+ 	sk.Config.TimeoutSecs = intPtr(30)
+ 	sk.Config.MaxRetries = intPtr(4)
+ 	sk.Config.InitialBackoffMs = intPtr(200)
+-	a := buildSkepticAgent(sk, "the prompt")
++	a := buildSkepticAgent(sk, "the prompt", false)
+ 	assert.True(t, a.Tools)
+ 	assert.True(t, a.SupportsFC)
+ 	assert.Equal(t, 7, a.MaxTurns)
+@@ -72,7 +72,7 @@ func TestBuildSkepticAgent_ForwardsProviderAndBudgets(t *testing.T) {
+ func TestInvokeSkeptic_Confirms(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat(`{"verdict": "confirmed", "reasoning": "evidence valid"}`)
+-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, verdictConfirmed, v.Verdict)
+@@ -83,7 +83,7 @@ func TestInvokeSkeptic_Confirms(t *testing.T) {
+ func TestInvokeSkeptic_Refutes(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat(`{"verdict": "refuted", "reasoning": "false positive"}`)
+-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictRefuted, v.Verdict)
+ 	assert.Equal(t, "skeptic-1", v.Skeptic)
+@@ -96,7 +96,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
+ 		{content: `{"verdict": "confirmed", "reasoning": "verified via file read"}`},
+ 	}}
+ 	disp := okDispatcher()
+-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp)
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, disp, false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictConfirmed, v.Verdict)
+ 	assert.Equal(t, "verified via file read", v.Notes)
+@@ -106,7 +106,7 @@ func TestInvokeSkeptic_UsesToolsThenConcludes(t *testing.T) {
+ func TestInvokeSkeptic_ProviderError(t *testing.T) {
+ 	t.Parallel()
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
+-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err) // runtime failure NOT propagated
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+@@ -124,7 +124,7 @@ func TestInvokeSkeptic_UsesLogger(t *testing.T) {
+ 	ctx := log.NewContext(context.Background(), logger)
+ 
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{err: errors.New("rate limit exceeded")}}}
+-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	require.Equal(t, verdictUnverifiable, v.Verdict)
+ 
+@@ -140,7 +140,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
+ 	ctx, cancel := context.WithCancel(context.Background())
+ 	cancel() // already cancelled before the first turn
+ 	cc := &fakeChatCompleter{turns: []chatTurn{{content: `{"verdict":"confirmed"}`}}}
+-	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(ctx, testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Equal(t, "skeptic-1", v.Skeptic)
+@@ -149,7 +149,7 @@ func TestInvokeSkeptic_ContextCancelled(t *testing.T) {
+ func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat("I don't know")
+-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "malformed_output")
+@@ -159,7 +159,7 @@ func TestInvokeSkeptic_MalformedOutput(t *testing.T) {
+ func TestInvokeSkeptic_EmptyResponse(t *testing.T) {
+ 	t.Parallel()
+ 	cc := finalChat("")
+-	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "empty_response")
+@@ -170,7 +170,7 @@ func TestInvokeSkeptic_BudgetTripMaxTurns(t *testing.T) {
+ 	sk := testSkeptic()
+ 	sk.Config.MaxTurns = intPtr(2)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+-	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
++	v, _, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "max_turns")
+@@ -182,7 +182,7 @@ func TestInvokeSkeptic_BudgetTripToolBytes(t *testing.T) {
+ 	sk.Config.ToolBudgetBytes = int64Ptr(10)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file")}}
+ 	disp := &fakeDispatcher{result: tools.ToolResult{Content: "this content is definitely more than ten bytes", OriginalBytes: 46}}
+-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp)
++	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, disp, false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, v.Notes, "tool_budget_bytes")
+@@ -194,7 +194,7 @@ func TestInvokeSkeptic_BudgetTripTimeout(t *testing.T) {
+ 	sk := testSkeptic()
+ 	sk.Config.TimeoutSecs = intPtr(1)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), {delay: 2 * time.Second, content: `{"verdict":"confirmed"}`}}}
+-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
++	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+ 	assert.Contains(t, tripped, "timeout_secs", "timeout budget trip must be surfaced structurally")
+@@ -208,7 +208,7 @@ func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
+ 	sk := testSkeptic()
+ 	sk.Config.MaxTurns = intPtr(2)
+ 	cc := &fakeChatCompleter{turns: []chatTurn{toolCallTurn("read_file"), toolCallTurn("read_file")}}
+-	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher())
++	v, tripped, err := invokeSkeptic(context.Background(), sk, "prompt", cc, okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	require.NotNil(t, v)
+ 	assert.Equal(t, verdictUnverifiable, v.Verdict)
+@@ -220,7 +220,7 @@ func TestInvokeSkeptic_SurfacesTrippedBudgets(t *testing.T) {
+ func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
+ 	t.Parallel()
+ 	v, tripped, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt",
+-		finalChat(`{"verdict":"confirmed","reasoning":"ok"}`), okDispatcher())
++		finalChat(`{"verdict":"confirmed","reasoning":"ok"}`), okDispatcher(), false)
+ 	require.NoError(t, err)
+ 	assert.Equal(t, verdictConfirmed, v.Verdict)
+ 	assert.Empty(t, tripped, "a clean verdict trips no budgets")
+@@ -228,18 +228,18 @@ func TestInvokeSkeptic_NoTrippedBudgetsOnCleanVerdict(t *testing.T) {
+ 
+ func TestInvokeSkeptic_NilContext(t *testing.T) {
+ 	t.Parallel()
+-	_, _, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher()) //nolint:staticcheck // intentional nil-ctx guard test
++	_, _, err := invokeSkeptic(nil, testSkeptic(), "prompt", finalChat("{}"), okDispatcher(), false) //nolint:staticcheck // intentional nil-ctx guard test
+ 	require.Error(t, err)
+ }
+ 
+ func TestInvokeSkeptic_NilChatCompleter(t *testing.T) {
+ 	t.Parallel()
+-	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher())
++	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", nil, okDispatcher(), false)
+ 	require.Error(t, err)
+ }
+ 
+ func TestInvokeSkeptic_NilDispatcher(t *testing.T) {
+ 	t.Parallel()
+-	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil)
++	_, _, err := invokeSkeptic(context.Background(), testSkeptic(), "prompt", finalChat("{}"), nil, false)
+ 	require.Error(t, err)
+ }
+diff --git a/internal/verify/pipeline.go b/internal/verify/pipeline.go
+index cef3893d..f357c57d 100644
+--- a/internal/verify/pipeline.go
++++ b/internal/verify/pipeline.go
+@@ -20,6 +20,7 @@ import (
+ 	"github.com/samestrin/atcr/internal/payload"
+ 	"github.com/samestrin/atcr/internal/reconcile"
+ 	"github.com/samestrin/atcr/internal/registry"
++	"github.com/samestrin/atcr/internal/sandbox"
+ 	"github.com/samestrin/atcr/internal/tools"
+ )
+ 
+@@ -57,6 +58,15 @@ type Options struct {
+ 	// inside ExecutorConfig.EffectiveExecutorTimeoutSecs, so a caller that cannot
+ 	// resolve Settings (e.g. the MCP path) still gets a bounded executor call.
+ 	SharedTimeoutSecs int
++
++	// Execution reproduction (Epic 11.0). When ExecBackend is non-nil, skeptics
++	// are offered the run_tests/run_script tools (wired into the dispatcher) and
++	// can prove a finding by reproducing it in the sandbox. nil keeps the
++	// read-only contract (the default). Resolved by ResolveExecBackend behind the
++	// `--exec` gate; the pipeline never enables execution implicitly.
++	ExecBackend sandbox.Backend
++	ExecTestCmd []string
++	ExecTimeout time.Duration
+ }
+ 
+ // Result is the verify-stage outcome the CLI and MCP render. VerdictCounts is
+@@ -101,7 +111,7 @@ func Verify(ctx context.Context, repoRoot, reviewDir string, reg *registry.Regis
+ 	// of repoRoot at the review's head SHA. Built lazily (only when a skeptic will
+ 	// run) so a no-work or no-eligible-skeptic verify does no git/provider I/O.
+ 	harness := func() (fanout.ChatCompleter, Dispatcher, func(), error) {
+-		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir)
++		disp, cleanup, err := buildDispatcher(repoRoot, reviewDir, opts.ExecBackend, opts.ExecTestCmd, opts.ExecTimeout)
+ 		if err != nil {
+ 			return nil, nil, nil, err
+ 		}
+@@ -229,7 +239,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ 		go func(idx int, jb job) {
+ 			defer wg.Done()
+ 			defer func() { <-sem }()
+-			ver, vr := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp)
++			ver, vr := verifyFinding(ctx, jb.finding, jb.skeptics, cc, disp, opts.ExecBackend != nil)
+ 			jobResults[idx] = jobResult{ver: ver, vr: vr}
+ 		}(i, j)
+ 	}
+@@ -426,7 +436,7 @@ func runVerify(ctx context.Context, reviewDir string, reg *registry.Registry, op
+ // unavailable it records unverifiable/tool_harness_unavailable; otherwise it
+ // drives every selected skeptic through invokeSkeptic and aggregates the votes.
+ // It never returns an error — failure isolation is the stage's contract.
+-func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher) (*reclib.Verification, VerificationResult) {
++func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skeptic, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, VerificationResult) {
+ 	base := VerificationResult{File: f.File, Line: f.Line, Problem: f.Problem}
+ 	// Initialize TrippedBudgets to empty slice to avoid null in JSON output.
+ 	base.TrippedBudgets = []string{}
+@@ -447,7 +457,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
+ 	perSkeptic := make([]*reclib.Verification, 0, len(skeptics))
+ 	perTripped := make([][]string, 0, len(skeptics))
+ 	for _, sk := range skeptics {
+-		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp)
++		v, tripped, ierr := invokeSkeptic(ctx, sk, prompt, cc, disp, exec)
+ 		if ierr != nil {
+ 			// invokeSkeptic errors only on programming faults (nil ctx/cc/disp);
+ 			// none can occur here, but log it so the impossible case is visible if it
+@@ -568,7 +578,11 @@ func hasTrustedVerdict(v *reclib.Verification) bool {
+ // dispatcher with the default limits. The returned cleanup removes the snapshot;
+ // the caller defers it. Any failure (missing/headless manifest, snapshot or jail
+ // error) is returned so the caller can degrade affected findings to unverifiable.
+-func buildDispatcher(repoRoot, reviewDir string) (Dispatcher, func(), error) {
++// When execBackend is non-nil (Epic 11.0, `--exec`), the dispatcher additionally
++// gets the run_tests/run_script execution tools wired to that backend, with the
++// snapshot (jail root) mounted read-only into the sandbox. Without it the
++// dispatcher stays exactly the three read-only tools.
++func buildDispatcher(repoRoot, reviewDir string, execBackend sandbox.Backend, execTestCmd []string, execTimeout time.Duration) (Dispatcher, func(), error) {
+ 	head, err := readManifestHead(reviewDir)
+ 	if err != nil {
+ 		return nil, nil, err
+@@ -585,7 +599,11 @@ func buildDispatcher(repoRoot, reviewDir string) (Dispatcher, func(), error) {
+ 		cleanup()
+ 		return nil, nil, err
+ 	}
+-	return tools.NewDispatcher(jail, tools.DefaultLimits()), cleanup, nil
++	disp := tools.NewDispatcher(jail, tools.DefaultLimits())
++	if execBackend != nil {
++		disp.EnableExecution(execBackend, execTestCmd, execTimeout)
++	}
++	return disp, cleanup, nil
+ }
+ 
+ // readManifestHead reads reviewDir/manifest.json and returns its head SHA. A
+diff --git a/internal/verify/pipeline_test.go b/internal/verify/pipeline_test.go
+index 9d155f53..6d5fb58f 100644
+--- a/internal/verify/pipeline_test.go
++++ b/internal/verify/pipeline_test.go
+@@ -337,13 +337,13 @@ func TestVerifyFinding_EarlyReturnsRecordEmptyModel(t *testing.T) {
+ 	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
+ 
+ 	// no_eligible_skeptic: no skeptics at all.
+-	_, vr := verifyFinding(context.Background(), f, nil, finalChat("{}"), okDispatcher())
++	_, vr := verifyFinding(context.Background(), f, nil, finalChat("{}"), okDispatcher(), false)
+ 	assert.Equal(t, "unverifiable", vr.Verdict)
+ 	assert.Equal(t, "no_eligible_skeptic", vr.Reasoning)
+ 	assert.Empty(t, vr.Model, "no skeptic ran → no model attributed")
+ 
+ 	// tool_harness_unavailable: skeptics eligible but the dispatcher never built.
+-	_, vr = verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, finalChat("{}"), nil)
++	_, vr = verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, finalChat("{}"), nil, false)
+ 	assert.Equal(t, "unverifiable", vr.Verdict)
+ 	assert.Equal(t, "tool_harness_unavailable", vr.Reasoning)
+ 	assert.Empty(t, vr.Model, "skeptics selected but none executed → no model attributed")
+@@ -702,7 +702,7 @@ func TestBuildDispatcher(t *testing.T) {
+ 	require.NoError(t, os.MkdirAll(rev, 0o755))
+ 	require.NoError(t, os.WriteFile(filepath.Join(rev, manifestFile),
+ 		[]byte(`{"base":"a","head":"`+sha+`","stages":["review"]}`), 0o644))
+-	disp, cleanup, err := buildDispatcher(repo, rev)
++	disp, cleanup, err := buildDispatcher(repo, rev, nil, nil, 0)
+ 	require.NoError(t, err)
+ 	require.NotNil(t, disp)
+ 	require.NotNil(t, cleanup)
+@@ -713,11 +713,11 @@ func TestBuildDispatcher(t *testing.T) {
+ 	require.NoError(t, os.MkdirAll(rev2, 0o755))
+ 	require.NoError(t, os.WriteFile(filepath.Join(rev2, manifestFile),
+ 		[]byte(`{"base":"a","head":"","stages":["review"]}`), 0o644))
+-	_, _, err = buildDispatcher(repo, rev2)
++	_, _, err = buildDispatcher(repo, rev2, nil, nil, 0)
+ 	assert.Error(t, err)
+ 
+ 	// Error: no manifest at all.
+-	_, _, err = buildDispatcher(repo, t.TempDir())
++	_, _, err = buildDispatcher(repo, t.TempDir(), nil, nil, 0)
+ 	assert.Error(t, err)
+ }
+ 
+@@ -792,7 +792,7 @@ func TestVerifyFinding_TrippedBudgetsNeverNil(t *testing.T) {
+ 	t.Parallel()
+ 	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
+ 	_, vr := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()},
+-		finalChat(`{"verdict":"confirmed"}`), okDispatcher())
++		finalChat(`{"verdict":"confirmed"}`), okDispatcher(), false)
+ 	assert.NotNil(t, vr.TrippedBudgets, "TrippedBudgets must be [] not nil")
+ }
+ 
+@@ -833,7 +833,7 @@ func TestVerifyFinding_ProgrammingFaultLogged(t *testing.T) {
+ 	// into its nil-ChatCompleter programming-fault return inside the vote loop.
+ 	_, vr := verifyFinding(ctx,
+ 		reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"},
+-		[]Skeptic{testSkeptic()}, nil, okDispatcher())
++		[]Skeptic{testSkeptic()}, nil, okDispatcher(), false)
+ 
+ 	out := buf.String()
+ 	assert.Equal(t, "unverifiable", vr.Verdict, "a programming fault still yields an unverifiable verdict")
+diff --git a/internal/verify/verify_e2e_test.go b/internal/verify/verify_e2e_test.go
+index 911ff6ff..42e0ca45 100644
+--- a/internal/verify/verify_e2e_test.go
++++ b/internal/verify/verify_e2e_test.go
+@@ -70,7 +70,7 @@ func TestVerifyE2E_PlantedFindings(t *testing.T) {
+ 
+ 			// Phase 2: invocation with a scripted mock skeptic (no real LLM / network).
+ 			cc := finalChat(tc.skepticReply)
+-			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), prompt, cc, okDispatcher())
++			v, _, err := invokeSkeptic(context.Background(), testSkeptic(), prompt, cc, okDispatcher(), false)
+ 			require.NoError(t, err, "runtime failures collapse to unverifiable, never an error")
+ 			require.NotNil(t, v)
+ 

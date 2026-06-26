@@ -1,0 +1,6 @@
+{
+  "agent_name": "bob2",
+  "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+  "status": "ok",
+  "duration_ms": 87696
+}
