@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,33 @@ func TestRunScript_Handler_PassesContentAndTimeout(t *testing.T) {
 	assert.Equal(t, 5*time.Second, b.last.Timeout)
 	assert.Contains(t, res.Content, "2")
 	assert.Contains(t, res.Content, "boom")
+}
+
+func TestRunScript_Handler_ClampsTimeout(t *testing.T) {
+	// execTimeout is the operator's configured per-run budget (30s here). A
+	// model-supplied per-call timeout may only SHORTEN a run; an oversized or
+	// non-positive value must be floored/capped to execTimeout, never allowed to
+	// extend the run past the operator's validated budget.
+	for _, tc := range []struct {
+		name    string
+		timeout int
+		want    time.Duration
+	}{
+		{"oversized capped to execTimeout", 9999, 30 * time.Second},
+		{"in-range preserved", 5, 5 * time.Second},
+		{"zero floored to execTimeout", 0, 30 * time.Second},
+		{"negative floored to execTimeout", -1, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
+			d := newExecDispatcher(t, b)
+			_, err := d.Execute(context.Background(), "run_script",
+				json.RawMessage(fmt.Sprintf(`{"content":"echo hi\n","timeout":%d}`, tc.timeout)))
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, b.last.Timeout,
+				"per-call timeout must be clamped to the dispatcher's execTimeout")
+		})
+	}
 }
 
 func TestRunScript_Handler_RequiresContent(t *testing.T) {
