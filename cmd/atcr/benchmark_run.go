@@ -34,10 +34,23 @@ import (
 // contract export relies on. Each case's review artifacts are written under a temp
 // directory that is removed before the function returns; only the scored findings
 // flow into the result, so the temp path never affects output.
-func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*benchmark.RunResult, error) {
+func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string) (*benchmark.RunResult, error) {
 	m, err := benchmark.Load(suitePath)
 	if err != nil {
 		return nil, err
+	}
+
+	// Opt-in checkpointing (Epic 10.3): when checkpointPath is set, each scored case
+	// is persisted before the next begins so a transient failure does not forfeit the
+	// paid work of the cases that already completed. An empty path keeps the 10.2
+	// behavior verbatim (no read, no write).
+	var cp *runCheckpoint
+	if checkpointPath != "" {
+		curHash, herr := benchmark.ReproHashManifest(m, suitePath)
+		if herr != nil {
+			return nil, fmt.Errorf("hashing suite for checkpoint: %w", herr)
+		}
+		cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion}
 	}
 
 	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
@@ -98,20 +111,55 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// Iterate the full agent roster (including failed agents, which raised
 		// nothing) so every reviewer is scored on every case — a missed case is
 		// recall 0, not an absent record.
+		var caseReviewers []checkpointReviewer
 		for _, a := range summary.Agents {
-			acc := accs[a.Agent]
-			if acc == nil {
-				acc = &reviewerAcc{model: reviewerModel(cfg, a), persona: reviewerPersona(cfg, a.Agent)}
-				accs[a.Agent] = acc
-				order = append(order, a.Agent)
-			}
-			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raisedByReviewer[a.Agent]})
+			model := reviewerModel(cfg, a)
+			persona := reviewerPersona(cfg, a.Agent)
+			raised := raisedByReviewer[a.Agent]
 			// Cost + latency are usage-gated: a completer that reports no token
 			// usage (the test stub) contributes neither, keeping the score
 			// deterministic. status.json only records Model/tokens when usage > 0.
-			if a.TokensIn > 0 || a.TokensOut > 0 {
-				acc.costUSD += llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
-				acc.latencies = append(acc.latencies, a.DurationMS)
+			usageReported := a.TokensIn > 0 || a.TokensOut > 0
+			var cost float64
+			var latency int64
+			if usageReported {
+				cost = llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
+				latency = a.DurationMS
+			}
+
+			acc := accs[a.Agent]
+			if acc == nil {
+				acc = &reviewerAcc{model: model, persona: persona}
+				accs[a.Agent] = acc
+				order = append(order, a.Agent)
+			}
+			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raised})
+			if usageReported {
+				acc.costUSD += cost
+				acc.latencies = append(acc.latencies, latency)
+			}
+
+			if cp != nil {
+				caseReviewers = append(caseReviewers, checkpointReviewer{
+					Agent:         a.Agent,
+					Model:         model,
+					Persona:       persona,
+					Expected:      c.ExpectedCategories,
+					Raised:        raised,
+					UsageReported: usageReported,
+					CostUSD:       cost,
+					LatencyMS:     latency,
+				})
+			}
+		}
+
+		// Checkpoint the scored case before the loop advances to case i+1 (AC1): the
+		// atomic write means a process killed mid-suite leaves a checkpoint holding
+		// exactly the cases that completed.
+		if cp != nil {
+			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Reviewers: caseReviewers})
+			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
+				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
 			}
 		}
 	}
