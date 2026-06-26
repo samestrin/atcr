@@ -475,7 +475,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	start := time.Now()
 	perSkeptic := make([]*reclib.Verification, 0, len(skeptics))
 	perTripped := make([][]string, 0, len(skeptics))
-	perEv := make([]*reconcile.EvidenceExec, 0, len(skeptics))
+	perRec := make([]*execEvidenceRecorder, 0, len(skeptics))
 	for _, sk := range skeptics {
 		// Wrap the dispatcher per skeptic so each skeptic's reproduced run_tests/
 		// run_script result is captured as execution evidence without changing the
@@ -493,18 +493,24 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 		}
 		perSkeptic = append(perSkeptic, v)
 		perTripped = append(perTripped, tripped)
-		perEv = append(perEv, rec.last)
+		perRec = append(perRec, rec)
 	}
 	ver := aggregateVerdicts(perSkeptic)
 
 	// Surface reproduction evidence only for a confirmed verdict (SC-3: evidence_exec
-	// accompanies a confirmed verdict), drawn from a skeptic that both confirmed and
-	// reproduced — so the badge a downstream report renders cannot outrun the verdict.
+	// accompanies a confirmed verdict) AND only when the reproduction is DETERMINISTIC
+	// (Epic 11.0 T3): the confirming skeptic's repro is re-run twice more and evidence
+	// is surfaced only if the failure reproduces with a stable non-zero exit. A flaky
+	// repro (exit codes disagree, a timeout, or a pass) yields no evidence, so the
+	// Reproduced badge a downstream report renders cannot outrun a non-deterministic
+	// reproduction. The pass runs on exec runs only (a non-exec skeptic made no call).
 	var ev *reconcile.EvidenceExec
-	if ver.Verdict == verdictConfirmed {
+	if exec && ver.Verdict == verdictConfirmed {
 		for i, sv := range perSkeptic {
-			if sv != nil && sv.Verdict == verdictConfirmed && perEv[i] != nil {
-				ev = perEv[i]
+			if sv != nil && sv.Verdict == verdictConfirmed && perRec[i] != nil && perRec[i].lastName != "" {
+				if rv, rev := perRec[i].reproduceAgain(ctx); rv == verdictConfirmed {
+					ev = rev
+				}
 				break
 			}
 		}
