@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 24 | 0 |
-| LOW | 0 | 22 | 0 |
+| MEDIUM | 1 | 24 | 0 |
+| LOW | 4 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 0 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 48
+**Last Modified:** 2026-06-25 | **Open Items:** 5 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 53
 
 ## Directory Structure
 
@@ -33,6 +33,16 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-25] From Sprint: epic-11.0
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | internal/tools/exec_tools.go:69 | Execution tools are gated per-agent only at the definition level (wireToolDefs); the shared per-run dispatcher will execute a run_tests/run_script call from any agent once EnableExecution is wired. The sandbox isolates every run identically so this is not a containment gap, but a non-designated agent could still incur execution cost. | Thread agent exec-eligibility into the dispatcher (or add a per-call guard) so only designated agents execute, for precise cost attribution. | SECURITY | 30 | execute-epic-stage3 |
+| U | [ ] | LOW | internal/repro/repro.go:62 | EvidenceExec.OutputExcerpt stores sandbox stdout/stderr verbatim into findings.json; if a reproduced test echoes secret-bearing repo content it is persisted unredacted. Sandbox has no host env and no network so exposure is narrow, but evidence output bypasses the Epic 4.9 log redactor. | When the review has configured secrets, run the log.Redactor over EvidenceExec.OutputExcerpt before stamping (thread redactor through the exec pipeline wiring). | SECURITY | 30 | execute-epic-stage3 |
+| U | [ ] | MEDIUM | internal/verify/pipeline.go:429 | Exec skeptics are offered run_tests/run_script (T2) and the repro 2-run determinism + evidence_exec stamping (T3 repro.Reproduce/Stamp) is built and e2e-tested, but the live verify pipeline does not yet invoke a dedicated repro pass that captures a skeptic's chosen repro command, runs it through repro.Reproduce, and Stamps evidence_exec onto the finding. The data model, isolation, tools, gate, and determinism are all in place; only the production activation in the live loop remains. | Add a repro pass in verifyFinding (exec runs only): for eligible high-severity findings, obtain a repro command/script, run repro.Reproduce, and Stamp the verdict+evidence; cover with a scripted-completer integration test. Activate behind the AC-SECURITY human review. | INTEGRATION | 60 | execute-epic-stage3 |
+| U | [ ] | LOW | internal/tools/exec_tools.go:110 | A sandboxed code-execution event (run_tests/run_script) is recorded only in the agent transcript, not as a structured slog audit line. For a security-sensitive opt-in feature, an operator scanning logs cannot see that model-authored code was executed, the command, or its exit code. | Emit a structured log line (slog, via log.FromContext) on each sandbox run in runInSandbox: backend name, command, exit code, timed-out — so execution is auditable from logs, not just the transcript. | OBSERVABILITY | 20 | execute-epic-cumulative |
+| U | [ ] | LOW | internal/sandbox/docker.go:160 | Preflight runs a trivial container WITHOUT the real Run resource caps (memory/cpus/pids-limit/tmpfs), so a malformed Memory/CPUs/ScratchSize value passes preflight but faults on every actual Run. | Validate Memory/CPUs/ScratchSize format in SandboxConfig.Validate, or exercise the full cap set in the preflight trivial run. | ERROR_HANDLING | 20 | execute-epic-independent |
 
 ### [2026-06-23] From Sprint: 8.0_reconciler_library
 

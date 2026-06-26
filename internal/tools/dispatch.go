@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/samestrin/atcr/internal/sandbox"
 )
 
 // truncMarker is appended to any result content shortened by a byte cap.
@@ -57,6 +60,14 @@ type Dispatcher struct {
 	limits   Limits
 	handlers map[string]handlerFunc
 	pathArgs map[string]pathSpec
+
+	// Execution backend (Epic 11.0), nil unless EnableExecution was called. When
+	// set, the run_tests/run_script tools are registered and execute inside the
+	// sandbox with the snapshot (jail root) mounted read-only. This is the ONLY
+	// path by which model-authored code runs, and it is opt-in (`atcr --exec`).
+	execBackend sandbox.Backend
+	execTestCmd []string
+	execTimeout time.Duration
 }
 
 // NewDispatcher builds a dispatcher over the three built-in read-only tools.

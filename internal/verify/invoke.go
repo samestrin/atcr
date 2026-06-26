@@ -47,7 +47,7 @@ type Dispatcher interface {
 // Read-only contract: callers must not mutate the returned tripped-budget slice.
 // It aliases the fanout.Result's backing memory; mutating it corrupts the engine
 // result for any subsequent inspection.
-func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher) (*reclib.Verification, []string, error) {
+func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanout.ChatCompleter, disp Dispatcher, exec bool) (*reclib.Verification, []string, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("invokeSkeptic: nil context")
 	}
@@ -59,7 +59,7 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 	}
 
 	logger := log.FromContext(ctx)
-	agent := buildSkepticAgent(skeptic, prompt)
+	agent := buildSkepticAgent(skeptic, prompt, exec)
 	engine := fanout.NewEngine(cc, fanout.WithDispatcher(disp), fanout.WithLogger(logger))
 	results := engine.Run(ctx, []fanout.Slot{{Primary: agent}})
 	// Engine.Run returns one Result per slot in input order, so one slot yields
@@ -99,14 +99,18 @@ func invokeSkeptic(ctx context.Context, skeptic Skeptic, prompt string, cc fanou
 // only" (TimeoutSecs→0). The provider's BaseURL/APIKeyEnv are threaded onto the
 // Invocation so llmclient.Chat can route the call (without them a production
 // skeptic would hit an empty endpoint with no key).
-func buildSkepticAgent(skeptic Skeptic, prompt string) fanout.Agent {
+func buildSkepticAgent(skeptic Skeptic, prompt string, exec bool) fanout.Agent {
 	c := skeptic.Config
 	return fanout.Agent{
-		Name:            skeptic.Name,
-		Provider:        c.Provider,
-		Prompt:          prompt,
-		TimeoutSecs:     derefInt(c.TimeoutSecs),
-		Tools:           true,
+		Name:        skeptic.Name,
+		Provider:    c.Provider,
+		Prompt:      prompt,
+		TimeoutSecs: derefInt(c.TimeoutSecs),
+		Tools:       true,
+		// Exec (Epic 11.0): in an --exec run, the skeptic is offered the
+		// run_tests/run_script tools so it can reproduce a finding by executing
+		// code. False keeps the read-only tool set (the default).
+		Exec:            exec,
 		SupportsFC:      c.SupportsFC,
 		MaxTurns:        derefInt(c.MaxTurns),
 		ToolBudgetBytes: derefInt64(c.ToolBudgetBytes),
