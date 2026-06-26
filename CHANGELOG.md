@@ -1,3 +1,13 @@
+## [10.3.0] - 2026-06-25
+
+### Added
+
+- `atcr benchmark run --checkpoint <path>`: opt-in run checkpointing — each case's scored outcome is durably recorded (atomic temp-file + rename) before the next case begins, so a transient mid-suite failure no longer forfeits the completed, already-paid-for work of earlier cases
+- Re-running the same suite with the same `--checkpoint` resumes from the first unscored case: already-scored cases are replayed from the checkpoint with zero additional LLM cost, and the resumed run produces a byte-identical run-result to an uninterrupted one
+- Resume is guarded by suite identity (reproducibility hash + suite + version) and reviewer-roster identity (each agent and its configured model); any drift fails closed rather than silently mixing inconsistent work into a new run
+
+*Shipped via /execute-epic (epic 10.3)*
+
 ## [10.2.0] - 2026-06-25
 
 ### Added
