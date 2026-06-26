@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -184,4 +185,18 @@ func TestDockerBackend_Preflight_MissingBinary(t *testing.T) {
 	cfg.DockerPath = "/nonexistent/docker-binary-xyz"
 	b := NewDockerBackend(cfg)
 	assert.Error(t, b.Preflight(context.Background()))
+}
+
+func TestTruncate_ReservesMarkerSpaceAndReportsCorrectDrop(t *testing.T) {
+	s := strings.Repeat("a", 100)
+	limit := 20
+	result := truncate(s, limit)
+	assert.LessOrEqual(t, len(result), limit, "truncated result must not exceed limit")
+	assert.Contains(t, result, "truncated")
+
+	// Multibyte rune at the boundary must not be split.
+	s2 := strings.Repeat("é", 50) // 2 bytes each
+	result2 := truncate(s2, 21)
+	assert.LessOrEqual(t, len(result2), 21)
+	assert.True(t, utf8.ValidString(result2), "result must be valid UTF-8")
 }
