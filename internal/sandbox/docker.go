@@ -274,8 +274,11 @@ func (b *DockerBackend) dockerCmd(ctx context.Context, timeout time.Duration, ar
 	var errOut bytes.Buffer
 	cmd.Stderr = &errOut
 	if err := cmd.Run(); err != nil {
-		if cctx.Err() != nil {
+		if cctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("%s timed out: %w", strings.Join(args, " "), cctx.Err())
+		}
+		if cctx.Err() != nil {
+			return fmt.Errorf("%s canceled: %w", strings.Join(args, " "), cctx.Err())
 		}
 		if msg := strings.TrimSpace(errOut.String()); msg != "" {
 			return fmt.Errorf("%w: %s", err, msg)
