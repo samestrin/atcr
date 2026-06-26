@@ -39,9 +39,19 @@ func Verdict(r1, r2 sandbox.RunResult) string {
 		return reclib.VerdictUnverifiable
 	}
 	if r1.ExitCode != 0 {
+		if isInfraExit(r1.ExitCode) {
+			return reclib.VerdictUnverifiable
+		}
 		return reclib.VerdictConfirmed
 	}
 	return reclib.VerdictUnverifiable
+}
+
+// isInfraExit reports whether code is a Docker-reserved infrastructure exit
+// code (125/126/127) or a signal death (128+n). These reflect environment
+// problems, not a reproduced defect, so they must not earn confirmed.
+func isInfraExit(code int) bool {
+	return code == 125 || code == 126 || code == 127 || code >= 129
 }
 
 // Reproduce runs spec twice on backend and returns the determinism verdict plus
