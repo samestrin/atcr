@@ -72,6 +72,11 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
 		}
 		done = cp.doneIndex()
+		if existing != nil {
+			replayed := len(done)
+			remaining := len(m.Cases) - replayed
+			fmt.Fprintf(os.Stderr, "Resuming benchmark: replayed %d case(s), %d remaining to execute\n", replayed, remaining)
+		}
 	}
 
 	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
