@@ -35,9 +35,15 @@ const (
 
 // wireToolDefs converts the harness tool definitions into the llmclient wire
 // type once per loop. The harness owns the canonical definitions (internal/tools);
-// the generic client never imports them, so the engine bridges the two.
-func wireToolDefs() []llmclient.ToolDef {
+// the generic client never imports them, so the engine bridges the two. When exec
+// is true (an execution-enabled agent, Epic 11.0), the run_tests/run_script
+// definitions are appended so only that agent is told it may execute code; every
+// other agent sees the read-only set unchanged.
+func wireToolDefs(exec bool) []llmclient.ToolDef {
 	defs := tools.Tools()
+	if exec {
+		defs = append(defs, tools.ExecutionTools()...)
+	}
 	out := make([]llmclient.ToolDef, len(defs))
 	for i, d := range defs {
 		out[i] = llmclient.ToolDef{Name: d.Name, Description: d.Description, Parameters: d.Parameters}
@@ -93,7 +99,7 @@ func (e *Engine) invokeToolLoop(ctx context.Context, a Agent, cc ChatCompleter, 
 		cc:         cc,
 		disp:       disp,
 		maxTurns:   maxTurns,
-		toolDefs:   wireToolDefs(),
+		toolDefs:   wireToolDefs(a.Exec),
 		messages:   []llmclient.Message{{Role: "user", Content: &prompt}},
 		res:        &Result{Agent: a.Name, PayloadMode: a.PayloadMode, Truncation: a.Truncation, MinSeverity: a.MinSeverity, MaxFindings: a.MaxFindings, Tools: true, ToolsRequested: true, Model: a.Invocation.Model},
 		start:      time.Now(),
