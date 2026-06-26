@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-c0f1f9
-question: "Should the repro package write-back (repro.Stamp) be wired into verify/pipeline.go, or deleted as out-of-scope?"
+id: mem-2026-06-26-64c8d5
+question: "Should the TD row citing exec_tools.go per-agent execution gating be deferred to Epic 11.1 or fixed with a minimal guard in 11.0?"
 created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [internal/repro/repro.go, internal/verify/invoke.go, internal/verify/pipeline.go, internal/reconcile/emit.go, internal/report/render.go]
-tags: [clarifications, epic-11.0_executing_reviewers, architecture, repro, evidence_exec, pipeline, SC-3, SC-4]
+files: [internal/tools/exec_tools.go, internal/tools/dispatch.go]
+tags: [clarifications, epic-11.0_executing_reviewers, scope, deferral, dispatcher, exec-gating, 11.1]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# Should the repro package write-back (repro.Stamp) be wired i
+# Should the TD row citing exec_tools.go per-agent execution g
 
 ## Decision
 
-Wire in — SC-3 and SC-4 are explicitly in-scope. invokeSkeptic (invoke.go:50) must be extended to return *reconcile.EvidenceExec; verifyFinding (pipeline.go:439) collects it per-skeptic; the runVerify post-loop (pipeline.go:261-269) calls repro.Stamp(findings[i], verdict, ev) when ev is non-nil. The repro package, emit.go schema, and render.go consumer are all complete — the only missing link is the EvidenceExec threading from invokeSkeptic back to the post-loop. Deleting would break the 'Reproduced' badge path (render.go:186) and schema field (emit.go:130) already shipped.
+Defer to Epic 11.1 (dispatcher-structural-gating). exec_tools.go:69 is a plain argument struct (type runTestsArgs), not a gating point. The offering-layer gate is already fully structural: EnableExecution (exec_tools.go:60-66) only registers run_tests/run_script when explicitly called, so a non-exec Dispatcher never exposes those tools. A per-call guard would require threading agent exec-eligibility as a runtime parameter through Dispatcher/fanout — exactly the multi-file signature change deferred to 11.1. Epic 11.1 plan exists at .planning/epics/active/11.1_dispatcher-structural-gating.md.
 
 ## Rationale
 
@@ -27,8 +27,5 @@ Wire in — SC-3 and SC-4 are explicitly in-scope. invokeSkeptic (invoke.go:50) 
 
 ## Code Reference
 
-- internal/repro/repro.go
-- internal/verify/invoke.go
-- internal/verify/pipeline.go
-- internal/reconcile/emit.go
-- internal/report/render.go
+- internal/tools/exec_tools.go
+- internal/tools/dispatch.go

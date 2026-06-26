@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-ba2499
-question: "Should /scratch tmpfs use noexec or exec in the Docker sandbox, given Go run_tests writes and executes binaries from GOCACHE/GOTMPDIR there?"
+id: mem-2026-06-26-418ac8
+question: "Is the two-run repro.Reproduce determinism pass still required, and which findings qualify as eligible?"
 created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [internal/sandbox/docker.go]
-tags: [clarifications, epic-11.0_executing_reviewers, security, docker, sandbox, tmpfs, go-test]
+files: [internal/verify/pipeline.go, internal/repro/repro.go]
+tags: [clarifications, epic-11.0_executing_reviewers, implementation, repro, determinism, two-run, pipeline, T3, SC-3]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# Should /scratch tmpfs use noexec or exec in the Docker sandb
+# Is the two-run repro.Reproduce determinism pass still requir
 
 ## Decision
 
-Already resolved: docker.go:114 mounts /scratch with rw,exec. The decision was that noexec provides no meaningful defense given run_script already pipes arbitrary sh into the container — the actual containment comes from --network none, --cap-drop ALL, --security-opt no-new-privileges, and a read-only rootfs. A separate exec-enabled cache mount would add unnecessary complexity without a security gain. Document the rationale in a comment at that line.
+Yes — still required and still missing. The current wiring (execEvidenceRecorder + repro.Stamp at pipeline.go:278) captures evidence from a single exec-skeptic call but never calls repro.Reproduce, so T3's determinism check is not performed. Eligible findings are those that cleared meetsSeverityFloor (pipeline.go:170) AND had an exec skeptic propose a repro command — no additional high-severity filter beyond the configured severity floor. Call repro.Reproduce(ctx, backend, cmd) after the exec skeptic runs, apply repro.Verdict() to set confirmed/unverifiable, then call repro.Stamp. repro.Verdict (repro.go:34) handles all edge cases correctly; only the pipeline call site is absent.
 
 ## Rationale
 
@@ -27,4 +27,5 @@ Already resolved: docker.go:114 mounts /scratch with rw,exec. The decision was t
 
 ## Code Reference
 
-- internal/sandbox/docker.go
+- internal/verify/pipeline.go
+- internal/repro/repro.go

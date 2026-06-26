@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-98aa2b
-question: "What host-resource source should be used to validate Memory/CPUs/PidsLimit caps on macOS Docker (which runs in a VM)?"
+id: mem-2026-06-26-819f46
+question: "Where should log.Redactor be wired to scrub EvidenceExec.OutputExcerpt — inside repro.Reproduce or at the Stamp call site in pipeline.go?"
 created: 2026-06-26
 last_retrieved: ""
 sprints: []
-files: [internal/sandbox/docker.go, internal/sandbox/preflight.go]
-tags: [clarifications, epic-11.0_executing_reviewers, implementation, docker, sandbox, platform, macos, preflight]
+files: [internal/repro/repro.go, internal/verify/pipeline.go, internal/mcp/handlers.go, internal/log/redact.go]
+tags: [clarifications, epic-11.0_executing_reviewers, architecture, redaction, evidence_exec, pipeline, log-redactor]
 retrievals: 0
 status: active
 type: clarifications
 ---
 
-# What host-resource source should be used to validate Memory/
+# Where should log.Redactor be wired to scrub EvidenceExec.Out
 
 ## Decision
 
-Use docker info (MemTotal and NCPU) as the sole resource-validation source. On macOS, Docker runs inside a Linux VM (Docker Desktop or Colima), so /proc/meminfo and cgroup limits reflect VM allocation — but that VM allocation is exactly the ceiling the daemon can enforce. docker info returns the same VM-scoped numbers the daemon uses when enforcing --memory and --cpus, making it the only authoritative, cross-platform, daemon-aware source. Piggyback on the already-planned docker info call in Preflight() — parse MemTotal and NCPU from docker info --format '{{json .}}' and validate cfg.Memory <= MemTotal and cfg.CPUs <= NCPU.
+Redact at the Stamp site in pipeline.go (lines 277-279), not inside Reproduce. Reproduce is a pure sandbox-execution function with no business knowing about secrets. Apply ev.OutputExcerpt = redactor.Redact(ev.OutputExcerpt) just before the repro.Stamp call. The Redactor (constructed at internal/mcp/handlers.go:104 from review-configured secrets) is threaded into the pipeline top-level function as a single parameter addition — zero signature changes to Reproduce, Stamp, or verifyFinding. Redactor.Redact(string) string is callable directly (internal/log/redact.go:86).
 
 ## Rationale
 
@@ -27,5 +27,7 @@ Use docker info (MemTotal and NCPU) as the sole resource-validation source. On m
 
 ## Code Reference
 
-- internal/sandbox/docker.go
-- internal/sandbox/preflight.go
+- internal/repro/repro.go
+- internal/verify/pipeline.go
+- internal/mcp/handlers.go
+- internal/log/redact.go

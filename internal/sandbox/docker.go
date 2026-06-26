@@ -293,7 +293,7 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: cannot create throwaway snapshot dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 	args, err := dockerRunArgs(b.cfg, RunSpec{Command: []string{"true"}, SnapshotDir: tmpDir})
 	if err != nil {
 		return fmt.Errorf("sandbox preflight: cannot build run args: %w", err)
