@@ -46,7 +46,7 @@ func newRealExecDispatcher(b sandbox.Backend) *tools.Dispatcher {
 // --exec keeps executing for exec agents).
 func TestLoop_ThreadsExecEligibility_AllowsExecAgent(t *testing.T) {
 	cc := &scriptedChat{turns: []chatTurn{
-		{toolCalls: []llmclient.ToolCall{toolCall("c1", "run_tests", `{}`)}},
+		{toolCalls: []llmclient.ToolCall{toolCall("c1", "run_tests", `{"target":"./..."}`)}},
 		{content: "done"},
 	}}
 	b := &gateStubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
@@ -61,12 +61,12 @@ func TestLoop_ThreadsExecEligibility_AllowsExecAgent(t *testing.T) {
 }
 
 // TestLoop_ThreadsExecEligibility_RefusesNonExecAgent proves the structural gate
-// (Epic 11.1) holds end-to-end: a NON-exec agent that names run_tests on the SAME
+// (Epic 11.1) holds end-to-end: a NON-exec agent that names run_script on the SAME
 // shared exec-wired dispatcher is refused at dispatch — the call never reaches the
 // backend and the model receives the refusal as a tool result (AC1, integration).
 func TestLoop_ThreadsExecEligibility_RefusesNonExecAgent(t *testing.T) {
 	cc := &scriptedChat{turns: []chatTurn{
-		{toolCalls: []llmclient.ToolCall{toolCall("c1", "run_tests", `{}`)}},
+		{toolCalls: []llmclient.ToolCall{toolCall("c1", "run_script", `{"content":"echo test\n"}`)}},
 		{content: "done"},
 	}}
 	b := &gateStubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
@@ -82,7 +82,7 @@ func TestLoop_ThreadsExecEligibility_RefusesNonExecAgent(t *testing.T) {
 	require.GreaterOrEqual(t, len(cc.msgsSeen), 2)
 	var sawRefusal bool
 	for _, m := range cc.msgsSeen[1] {
-		if m.Role == "tool" && m.Content != nil && strings.Contains(*m.Content, "execution eligibility") {
+		if m.Role == "tool" && m.Content != nil && strings.Contains(*m.Content, tools.ExecEligibilityRequiredMsg) {
 			sawRefusal = true
 		}
 	}
