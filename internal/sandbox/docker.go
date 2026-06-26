@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -223,11 +224,19 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 	if err := b.dockerCmd(ctx, 15*time.Second, "image", "inspect", b.cfg.Image); err != nil {
 		return fmt.Errorf("sandbox preflight: base image %q not found locally — run `docker pull %s`: %w", b.cfg.Image, b.cfg.Image, err)
 	}
-	// 3. A trivial hardened container actually runs.
-	if err := b.dockerCmd(ctx, 30*time.Second,
-		"run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges", "--user", b.cfg.User, b.cfg.Image, "true",
-	); err != nil {
+	// 3. A trivial hardened container actually runs, using the SAME docker run
+	//    args as real executions so malformed caps (memory/cpus/pids-limit) are
+	//    caught here instead of failing mid-review.
+	tmpDir, err := os.MkdirTemp("", "atcr-preflight-*")
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: cannot create throwaway snapshot dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	args, err := dockerRunArgs(b.cfg, RunSpec{Command: []string{"true"}, SnapshotDir: tmpDir})
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: cannot build run args: %w", err)
+	}
+	if err := b.dockerCmd(ctx, 30*time.Second, args...); err != nil {
 		return fmt.Errorf("sandbox preflight: trivial container failed to run: %w", err)
 	}
 	return nil
