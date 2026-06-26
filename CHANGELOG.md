@@ -1,3 +1,16 @@
+## [11.2.0] - 2026-06-26
+
+### Changed
+
+- Closed the registration-side gap in the structural exec boundary: the public `Dispatcher.RegisterTool` API now rejects execution-verb tool names (run/exec/eval/shell), so a code-executing handler can no longer be registered ungated — Epic 11.1 had hardened only the dispatch-time gate
+- Routed `EnableExecution` through a single trusted `registerExec` path that atomically co-sets each exec handler with its `execTools` gate under one lock, superseding the prior gate-first ordering with strict atomicity (no fail-open window)
+
+### Added
+
+- Invariant test asserting every execution tool is gated with no orphan gates, plus a behavioral test that an exec-named handler offered to the public API is refused, never silently ungated
+
+*Shipped via /execute-epic (epic 11.2)*
+
 ## [11.1.0] - 2026-06-26
 
 ### Changed
