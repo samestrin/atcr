@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -258,6 +259,14 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 	if err := b.dockerCmd(ctx, 15*time.Second, "image", "inspect", b.cfg.Image); err != nil {
 		return fmt.Errorf("sandbox preflight: base image %q not found locally — run `docker pull %s`: %w", b.cfg.Image, b.cfg.Image, err)
 	}
+	// 2.5. Resource caps must fit the host the daemon enforces against. `docker
+	//      info` reports MemTotal/NCPU in the daemon's own units (VM-scoped on
+	//      macOS, where Docker runs in a Linux VM) — the exact ceiling --memory and
+	//      --cpus are enforced against — so validate the configured caps here,
+	//      before any container spawn, to fail fast instead of OOM-killing the host.
+	if err := b.validateHostCaps(ctx); err != nil {
+		return err
+	}
 	// 3. A trivial hardened container actually runs, using the SAME docker run
 	//    args as real executions so malformed caps (memory/cpus/pids-limit) are
 	//    caught here instead of failing mid-review.
@@ -297,6 +306,83 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 	n, err := lw.w.Write(p)
 	lw.n -= int64(n)
 	return n, err
+}
+
+// validateHostCaps fails preflight when the configured memory/cpu caps exceed
+// what the docker daemon reports for the host (MemTotal/NCPU). A non-numeric cap
+// value is left for the trivial-run step to reject — this check is only the
+// fits-the-host comparison. A daemon that reports zero/unknown for a field skips
+// that field's check rather than guessing.
+func (b *DockerBackend) validateHostCaps(ctx context.Context) error {
+	out, err := b.dockerOutput(ctx, 15*time.Second, "info", "--format", "{{json .}}")
+	if err != nil {
+		return fmt.Errorf("sandbox preflight: cannot query docker info: %w", err)
+	}
+	var info struct {
+		MemTotal int64 `json:"MemTotal"`
+		NCPU     int   `json:"NCPU"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &info); err != nil {
+		return fmt.Errorf("sandbox preflight: cannot parse docker info: %w", err)
+	}
+	if b.cfg.Memory != "" && info.MemTotal > 0 {
+		if want, perr := parseDockerMemory(b.cfg.Memory); perr == nil && want > info.MemTotal {
+			return fmt.Errorf("sandbox preflight: configured memory %s (%d bytes) exceeds host MemTotal (%d bytes)", b.cfg.Memory, want, info.MemTotal)
+		}
+	}
+	if b.cfg.CPUs != "" && info.NCPU > 0 {
+		if want, perr := strconv.ParseFloat(b.cfg.CPUs, 64); perr == nil && want > float64(info.NCPU) {
+			return fmt.Errorf("sandbox preflight: configured cpus %s exceeds host NCPU (%d)", b.cfg.CPUs, info.NCPU)
+		}
+	}
+	return nil
+}
+
+// parseDockerMemory parses a docker --memory value (a positive integer with an
+// optional b/k/m/g suffix, 1024-based) into bytes. An empty string is 0 bytes.
+func parseDockerMemory(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	mult := int64(1)
+	numPart := s
+	switch s[len(s)-1] {
+	case 'b', 'B':
+		numPart = s[:len(s)-1]
+	case 'k', 'K':
+		mult, numPart = 1024, s[:len(s)-1]
+	case 'm', 'M':
+		mult, numPart = 1024*1024, s[:len(s)-1]
+	case 'g', 'G':
+		mult, numPart = 1024*1024*1024, s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(numPart), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid memory value %q: %w", s, err)
+	}
+	return n * mult, nil
+}
+
+// dockerOutput runs a docker subcommand with a timeout and returns its captured
+// stdout, wrapping a failure (with stderr context) as an error.
+func (b *DockerBackend) dockerOutput(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, b.cfg.DockerPath, args...)
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		if cctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("%s timed out: %w", strings.Join(args, " "), cctx.Err())
+		}
+		if msg := strings.TrimSpace(errOut.String()); msg != "" {
+			return "", fmt.Errorf("%w: %s", err, msg)
+		}
+		return "", err
+	}
+	return out.String(), nil
 }
 
 // dockerCmd runs a docker subcommand with a timeout, discarding output and

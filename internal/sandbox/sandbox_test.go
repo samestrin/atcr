@@ -164,8 +164,13 @@ func TestDockerBackend_Run_Timeout(t *testing.T) {
 }
 
 func TestDockerBackend_Preflight_OK(t *testing.T) {
-	// Fake docker that succeeds for version, image inspect, and the trivial run.
-	fake := writeFakeDocker(t, `exit 0`)
+	// Fake docker that succeeds for version, image inspect, info, and the trivial
+	// run. `info` reports a generous host so the cap-fit check passes.
+	fake := writeFakeDocker(t, `if [ "$1" = "info" ]; then
+  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0
+fi
+exit 0`)
 	cfg := DefaultDockerConfig()
 	cfg.DockerPath = fake
 	b := NewDockerBackend(cfg)

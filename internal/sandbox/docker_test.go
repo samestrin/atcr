@@ -52,7 +52,13 @@ func TestDockerBackendRun_RuntimeExitCodesAreBackendErrors(t *testing.T) {
 
 func TestDockerBackend_Preflight_CatchesInvalidCPUs(t *testing.T) {
 	// Fake docker that fails the `run` subcommand only when it sees `--cpus abc`.
-	fake := writeFakeDocker(t, `if [ "$1" = "run" ]; then
+	// It answers `info` with a generous host so the cap-fit check (which skips the
+	// non-numeric "abc" value) passes and the run step is the one that rejects it.
+	fake := writeFakeDocker(t, `if [ "$1" = "info" ]; then
+  echo '{"MemTotal": 8589934592, "NCPU": 8}'
+  exit 0
+fi
+if [ "$1" = "run" ]; then
   found=0
   for arg in "$@"; do
     if [ "$arg" = "--cpus" ]; then found=1; fi
