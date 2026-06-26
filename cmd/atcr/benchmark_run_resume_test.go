@@ -260,7 +260,7 @@ func TestExecuteBenchmarkRun_RejectsCheckpointCaseIDDrift(t *testing.T) {
 	resume := &countingCompleter{}
 	_, err = executeBenchmarkRun(context.Background(), cfg, resume, suiteValidPath, gen, path)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, errCheckpointSuiteMismatch, "a per-index case-id drift aborts the resume")
+	assert.ErrorIs(t, err, errCheckpointCaseMismatch, "a per-index case-id drift aborts the resume")
 	assert.Equal(t, 0, int(resume.calls.Load()), "per-index guard fires before any LLM call")
 }
 

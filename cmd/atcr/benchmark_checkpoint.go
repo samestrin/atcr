@@ -84,6 +84,13 @@ var errCheckpointRosterMismatch = errors.New("checkpoint reviewer roster changed
 // cannot silently drop completed cases.
 var errCheckpointCorrupt = errors.New("checkpoint is corrupt")
 
+// errCheckpointCaseMismatch reports that a checkpoint entry's recorded case id
+// no longer matches the suite's case at the same index. ReproHash is
+// order-independent, so a reordered suite shares the hash but remaps indices;
+// this sentinel lets callers distinguish per-index drift from suite-identity
+// drift.
+var errCheckpointCaseMismatch = errors.New("checkpoint case id changed since it was written")
+
 // loadCheckpoint reads and parses a checkpoint file. A missing file returns
 // (nil, nil): it is the legitimate first-run case (start fresh), not an error. A
 // present-but-corrupt file surfaces a parse error rather than a guessed empty
