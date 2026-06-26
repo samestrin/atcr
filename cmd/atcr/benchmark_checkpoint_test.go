@@ -98,3 +98,27 @@ func TestLoadCheckpoint_CorruptErrors(t *testing.T) {
 	_, err := loadCheckpoint(path)
 	require.Error(t, err)
 }
+
+// saveCheckpoint must encode the checkpoint as compact JSON so the on-disk file
+// is small and fast to rewrite on every completed case.
+func TestSaveCheckpoint_WritesCompactJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ckpt.json")
+	cp := &runCheckpoint{
+		ReproHash:    "abc123",
+		Suite:        "fixture-mini",
+		SuiteVersion: "1.0.0",
+		Cases: []checkpointCase{
+			{
+				Index:  0,
+				CaseID: "case-01",
+				Reviewers: []checkpointReviewer{
+					{Agent: "greta", Model: "m-greta", Persona: "greta"},
+				},
+			},
+		},
+	}
+	require.NoError(t, saveCheckpoint(path, cp))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "\n", "checkpoint JSON must be compact, not indented")
+}
