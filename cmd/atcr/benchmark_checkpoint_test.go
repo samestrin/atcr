@@ -29,6 +29,7 @@ func TestCheckpoint_RoundTrips(t *testing.T) {
 		ReproHash:    "abc123",
 		Suite:        "fixture-mini",
 		SuiteVersion: "1.0.0",
+		Roster:       []string{"greta=m-greta"},
 		Cases: []checkpointCase{
 			{
 				Index:  0,
