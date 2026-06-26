@@ -45,12 +45,27 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	// paid work of the cases that already completed. An empty path keeps the 10.2
 	// behavior verbatim (no read, no write).
 	var cp *runCheckpoint
+	var done map[int]checkpointCase
 	if checkpointPath != "" {
 		curHash, herr := benchmark.ReproHashManifest(m, suitePath)
 		if herr != nil {
 			return nil, fmt.Errorf("hashing suite for checkpoint: %w", herr)
 		}
-		cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion}
+		existing, lerr := loadCheckpoint(checkpointPath)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if existing != nil {
+			// Suite-identity guard (AC4): a checkpoint from a different or changed
+			// suite is rejected, never silently mixed into this run.
+			if verr := validateCheckpoint(existing, curHash, m.Suite, m.SuiteVersion); verr != nil {
+				return nil, verr
+			}
+			cp = existing
+		} else {
+			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion}
+		}
+		done = cp.doneIndex()
 	}
 
 	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
@@ -59,18 +74,28 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	// reviewerAcc accumulates one reviewer's outcomes across every case.
-	type reviewerAcc struct {
-		model     string
-		persona   string
-		cases     []benchmark.CaseScore
-		costUSD   float64
-		latencies []int64 // per-case wall-clock, recorded only when usage was reported
-	}
 	accs := map[string]*reviewerAcc{}
 	var order []string // reviewer names, sorted for deterministic aggregation
 
 	for i, c := range m.Cases {
+		// Resume: a case already in the checkpoint is replayed into the accumulator
+		// without re-executing (and re-paying for) it (AC2). Replaying in case-index
+		// order preserves the deterministic aggregation the reproducibility contract
+		// depends on (AC3).
+		if entry, ok := done[i]; ok {
+			// ReproHash is order-independent (it sorts cases by id), so a reordered
+			// suite shares the hash but remaps indices. Guard the per-index identity
+			// too: a checkpoint entry whose recorded id no longer matches the suite's
+			// case at this index means the suite changed — fail closed rather than
+			// replay a score against the wrong case.
+			if entry.CaseID != c.ID {
+				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
+					errCheckpointSuiteMismatch, i, entry.CaseID, c.ID)
+			}
+			replayCheckpointCase(accs, &order, entry)
+			continue
+		}
+
 		diff, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
 		if err != nil {
 			return nil, fmt.Errorf("reading case %q diff: %w", c.ID, err)
@@ -127,17 +152,7 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 				latency = a.DurationMS
 			}
 
-			acc := accs[a.Agent]
-			if acc == nil {
-				acc = &reviewerAcc{model: model, persona: persona}
-				accs[a.Agent] = acc
-				order = append(order, a.Agent)
-			}
-			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raised})
-			if usageReported {
-				acc.costUSD += cost
-				acc.latencies = append(acc.latencies, latency)
-			}
+			applyReviewerOutcome(accs, &order, a.Agent, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
 
 			if cp != nil {
 				caseReviewers = append(caseReviewers, checkpointReviewer{
@@ -183,6 +198,45 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
 		Reviewers:    benchmark.Score(reviewers),
 	}, nil
+}
+
+// reviewerAcc accumulates one reviewer's outcomes across every case.
+type reviewerAcc struct {
+	model     string
+	persona   string
+	cases     []benchmark.CaseScore
+	costUSD   float64
+	latencies []int64 // per-case wall-clock, recorded only when usage was reported
+}
+
+// applyReviewerOutcome folds one reviewer's single-case outcome into the
+// accumulator, creating the accumulator (and registering the reviewer in order) on
+// first sighting. It is the SINGLE fold path shared by fresh execution and
+// checkpoint replay, so a resumed run reconstructs accs identically to an
+// uninterrupted one (AC3): model/persona are locked at first sighting (matching the
+// original first-case-wins behavior), and the usage-gated cost/latency are added in
+// the same case order, keeping the float sum and latency median byte-identical.
+func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
+	acc := accs[agent]
+	if acc == nil {
+		acc = &reviewerAcc{model: model, persona: persona}
+		accs[agent] = acc
+		*order = append(*order, agent)
+	}
+	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: expected, Raised: raised})
+	if usageReported {
+		acc.costUSD += costUSD
+		acc.latencies = append(acc.latencies, latencyMS)
+	}
+}
+
+// replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
+// back into the accumulator via the same applyReviewerOutcome path the fresh loop
+// uses — no review re-execution and no Completer call (AC2).
+func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase) {
+	for _, r := range entry.Reviewers {
+		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, r.Expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+	}
 }
 
 // readCaseFindings parses the merged pool findings.txt for one review and groups
