@@ -110,11 +110,12 @@ func (d *Dispatcher) RegisteredTools() []string {
 
 // writeToolPatterns are common English fragments that appear in mutating tool
 // names. This check is a SECONDARY lint — it catches obvious write-named tools
-// but is bypassable (e.g. "edit", "exec", "run", "rename"). The PRIMARY
-// read-only guarantee is STRUCTURAL: only read_file, grep, and list_files are
+// but is bypassable (e.g. "edit", "rename", "touch"). The PRIMARY read-only
+// guarantee is STRUCTURAL: only read_file, grep, and list_files are
 // registered by NewDispatcher (enforced by TestDispatcher_RegisteredToolsAreTheThreeBuiltins),
 // and every handler opens files O_RDONLY+O_NOFOLLOW. Do not treat this list as a
 // security boundary — it is a redundant lint to surface obvious mistakes early.
+// (Execution-verb names are handled separately by execToolPatterns below.)
 var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif", "update", "append", "patch"}
 
 // execToolPatterns are common English fragments that appear in code-executing
