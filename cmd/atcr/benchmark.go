@@ -90,15 +90,17 @@ func newBenchmarkRunCmd() *cobra.Command {
 	}
 	cmd.Flags().String("suite-path", "", "path to the suite directory (containing suite.json)")
 	cmd.Flags().String("out", "", "write the run-result JSON to this file instead of stdout (atomically replaces the target; a symlink at the path is replaced, not followed)")
+	cmd.Flags().String("checkpoint", "", "opt-in: path to a run checkpoint file. Each scored case is durably recorded here before the next begins; re-running the same suite resumes from the first unscored case instead of restarting (and re-paying for) the whole run. Empty = no checkpointing (default).")
 	_ = cmd.MarkFlagRequired("suite-path")
 	return cmd
 }
 
 func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
-	// Cobra GetString errors are unreachable: both flags are registered above
+	// Cobra GetString errors are unreachable: all flags are registered above
 	// ("suite-path" is MarkFlagRequired). Project-wide convention.
 	suitePath, _ := cmd.Flags().GetString("suite-path")
 	out, _ := cmd.Flags().GetString("out")
+	checkpoint, _ := cmd.Flags().GetString("checkpoint")
 
 	// Discover config the same way `atcr review` does (registry + project config
 	// rooted at the cwd), so the benchmark roster is the project's reviewers.
@@ -107,7 +109,7 @@ func runBenchmarkRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC(), "")
+	rr, err := executeBenchmarkRun(cmd.Context(), cfg, llmclient.New(), suitePath, time.Now().UTC(), checkpoint)
 	if err != nil {
 		return err
 	}

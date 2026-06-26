@@ -182,6 +182,15 @@ func TestExecuteBenchmarkRun_RejectsMismatchedCheckpoint(t *testing.T) {
 	assert.ErrorIs(t, err, errCheckpointSuiteMismatch, "a changed suite identity aborts the resume (AC4)")
 }
 
+// AC5: `benchmark run` exposes an opt-in --checkpoint flag whose default is empty
+// (off) — present behavior is unchanged unless the operator passes a path.
+func TestBenchmarkRunCmd_HasOptionalCheckpointFlag(t *testing.T) {
+	cmd := newBenchmarkRunCmd()
+	f := cmd.Flags().Lookup("checkpoint")
+	require.NotNil(t, f, "benchmark run exposes a --checkpoint flag")
+	assert.Equal(t, "", f.DefValue, "checkpoint is opt-in: default empty = off")
+}
+
 // AC4 (defense in depth): ReproHash is order-independent, so a suite whose cases are
 // merely reordered shares the same hash but a different index->case mapping. The
 // per-index CaseID guard catches that drift and fails closed rather than silently
