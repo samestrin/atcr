@@ -46,3 +46,16 @@ func TestRender_ReproducedBadge_EmptyOutputOmitsLine(t *testing.T) {
 	assert.Contains(t, out, "Reproduced")
 	assert.NotContains(t, out, "Output:", "an empty output excerpt must not render an Output line")
 }
+
+func TestRender_ReproducedBadge_CommandNotEntityMangled(t *testing.T) {
+	findings := []reconcile.JSONFinding{{
+		Severity: "HIGH", File: "a.go", Line: 1, Problem: "p", Confidence: "VERIFIED", Reviewers: []string{"r"},
+		EvidenceExec: &reconcile.EvidenceExec{Command: `echo "<foo>" && bar`, ExitCode: 1, OutputExcerpt: "FAIL"},
+	}}
+	var b strings.Builder
+	require.NoError(t, Render(&b, findings, FormatMarkdown))
+	out := b.String()
+	assert.Contains(t, out, "`echo \"<foo>\" && bar`", "command inside code span must stay raw")
+	assert.NotContains(t, out, "&lt;", "HTML entity encoding must not leak into code span")
+	assert.NotContains(t, out, "&quot;")
+}
