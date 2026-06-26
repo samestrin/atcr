@@ -37,6 +37,12 @@ type ToolError struct{ Message string }
 
 func (e *ToolError) Error() string { return e.Message }
 
+// ExecEligibilityRequiredMsg is the stable substring every exec-eligibility
+// refusal carries. Tests assert against this constant instead of hard-coding the
+// prose, so the refusal wording can change without silently breaking the
+// integration coverage that proves a non-exec agent is refused at dispatch.
+const ExecEligibilityRequiredMsg = "requires execution eligibility"
+
 func toolErrf(format string, a ...any) *ToolError {
 	return &ToolError{Message: fmt.Sprintf(format, a...)}
 }
@@ -56,13 +62,16 @@ type pathSpec struct {
 // through the jail and enforcing a per-call byte cap. It is the sole path by
 // which handlers are invoked.
 type Dispatcher struct {
-	jail      Resolver
-	root      string
-	limits    Limits
-	handlers  map[string]handlerFunc
-	pathArgs  map[string]pathSpec
-	execTools map[string]bool // names gated behind per-call exec eligibility
-	mu        sync.RWMutex    // guards handlers, pathArgs, and execTools
+	jail     Resolver
+	root     string
+	limits   Limits
+	handlers map[string]handlerFunc
+	pathArgs map[string]pathSpec
+	// execTools marks the handlers that require per-call exec eligibility. It is
+	// read under d.mu.RLock by Execute and written under d.mu.Lock solely by
+	// registerExec (which co-sets the gate with the handler atomically).
+	execTools map[string]bool
+	mu        sync.RWMutex // guards handlers, pathArgs, execTools, limits, and the exec backend fields below
 
 	// Execution backend (Epic 11.0), nil unless EnableExecution was called. When
 	// set, the run_tests/run_script tools are registered and execute inside the
@@ -92,10 +101,13 @@ func NewDispatcher(jail Resolver, limits Limits) *Dispatcher {
 	return d
 }
 
-// SetLimits replaces the result caps. It is not safe for concurrent use: call
-// it during construction/tuning before any goroutine invokes Execute. Execute
-// itself is safe to call concurrently.
-func (d *Dispatcher) SetLimits(l Limits) { d.limits = l }
+// SetLimits replaces the result caps. It is safe for concurrent use; Execute
+// remains safe to call concurrently.
+func (d *Dispatcher) SetLimits(l Limits) {
+	d.mu.Lock()
+	d.limits = l
+	d.mu.Unlock()
+}
 
 // RegisteredTools returns the names of all registered tools.
 func (d *Dispatcher) RegisteredTools() []string {
@@ -208,7 +220,14 @@ func (d *Dispatcher) Execute(ctx context.Context, name string, argsJSON json.Raw
 	// boundary fail-closed; a ToolError (never a panic) lets the agent loop relay
 	// the refusal as a normal tool result.
 	if execGated && !execEligible(ctx) {
-		return ToolResult{}, toolErrf("tool %q requires execution eligibility, which was not granted to this agent", name)
+		// Surface the refusal operator-side via the injected sink (nil = no-op): without
+		// it the refusal reaches only the model as a tool result, so an operator cannot
+		// see that a non-exec agent attempted run_tests/run_script. The sink is injected
+		// by the wiring layer, keeping the log dependency out of the tools package.
+		if logRefusal := refusalLogger(ctx); logRefusal != nil {
+			logRefusal(name)
+		}
+		return ToolResult{}, toolErrf("tool %q %s, which was not granted to this agent", name, ExecEligibilityRequiredMsg)
 	}
 
 	defer func() {
@@ -255,7 +274,9 @@ func (d *Dispatcher) Execute(ctx context.Context, name string, argsJSON json.Raw
 // capResult applies the dispatcher-level byte cap as a final safety net,
 // preserving any truncation a handler already recorded.
 func (d *Dispatcher) capResult(res ToolResult) ToolResult {
+	d.mu.RLock()
 	limit := d.limits.MaxResultBytes
+	d.mu.RUnlock()
 	if limit > 0 && len(res.Content) > limit {
 		full := len(res.Content)
 		res.Content = truncate(res.Content, limit)
