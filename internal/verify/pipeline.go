@@ -508,7 +508,7 @@ func verifyFinding(ctx context.Context, f reconcile.JSONFinding, skeptics []Skep
 	if exec && ver.Verdict == verdictConfirmed {
 		for i, sv := range perSkeptic {
 			if sv != nil && sv.Verdict == verdictConfirmed && perRec[i] != nil && perRec[i].lastName != "" {
-				if rv, rev := perRec[i].reproduceAgain(ctx); rv == verdictConfirmed {
+				if rv, rev := perRec[i].reproduceAgain(ctx, exec); rv == verdictConfirmed {
 					ev = rev
 				}
 				break

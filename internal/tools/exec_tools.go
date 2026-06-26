@@ -51,10 +51,18 @@ func runScriptDef() ToolDef {
 	}
 }
 
-// execEligibilityKey is the context key under which a caller's exec eligibility
-// is carried. Its unexported type prevents collision with any other package's
-// context values.
-type execEligibilityKey struct{}
+// ctxKey is the private context-key type for this package. Distinct named-constant
+// values cannot alias one another, unlike separate &struct{}{} zero-size keys — Go
+// may give two zero-size variables the SAME address, so two such keys would collide.
+// The type is unexported, so callers cannot collide with or override these keys.
+type ctxKey int
+
+const (
+	// execEligibilityKey carries a caller's exec eligibility (a bool).
+	execEligibilityKey ctxKey = iota
+	// refusalLogKey carries the injected RefusalLogger sink.
+	refusalLogKey
+)
 
 // WithExecEligibility returns a context that grants (allowed=true) or denies the
 // caller permission to invoke execution-gated tools (run_tests/run_script).
@@ -63,14 +71,46 @@ type execEligibilityKey struct{}
 // Eligibility is FAIL-CLOSED — a context without this value (or with false)
 // cannot reach an exec tool, so a caller that does not affirmatively grant
 // eligibility can never escalate to execution.
+//
+// No nil-ctx guard: context.WithValue panics on a nil parent by design, and this
+// is the WRITE path, where a nil ctx means a mis-wired caller, not a deny case.
+// Fail-closed behaviour lives on the READ path (execEligible returns false on
+// nil), where a deny IS legitimate.
 func WithExecEligibility(ctx context.Context, allowed bool) context.Context {
-	return context.WithValue(ctx, execEligibilityKey{}, allowed)
+	return context.WithValue(ctx, execEligibilityKey, allowed)
+}
+
+// RefusalLogger records an exec-eligibility refusal operator-side, naming the tool
+// a non-eligible caller attempted. It is injected via context by the wiring layer
+// (fanout/verify) — which may import internal/log — so the tools package, pinned to
+// import only sandbox by internal/boundaries_test.go, needs no log dependency of its
+// own. It mirrors the WithExecEligibility context-key pattern. Absent sink = no-op.
+type RefusalLogger func(tool string)
+
+// WithRefusalLogger returns a context carrying f, which Dispatcher.Execute invokes
+// when it refuses an exec-gated tool for a non-eligible caller.
+func WithRefusalLogger(ctx context.Context, f RefusalLogger) context.Context {
+	return context.WithValue(ctx, refusalLogKey, f)
+}
+
+// refusalLogger returns the sink carried by ctx, or nil when none was injected.
+func refusalLogger(ctx context.Context) RefusalLogger {
+	if ctx == nil {
+		return nil
+	}
+	f, _ := ctx.Value(refusalLogKey).(RefusalLogger)
+	return f
 }
 
 // execEligible reports whether ctx was granted exec eligibility. Absent value =
 // not eligible (default-deny).
 func execEligible(ctx context.Context) bool {
-	allowed, _ := ctx.Value(execEligibilityKey{}).(bool)
+	// A nil context carries no eligibility: fail closed rather than panic on the
+	// security gate's read path (default-deny is the whole point of the boundary).
+	if ctx == nil {
+		return false
+	}
+	allowed, _ := ctx.Value(execEligibilityKey).(bool)
 	return allowed
 }
 
@@ -81,9 +121,18 @@ func execEligible(ctx context.Context) bool {
 // passed Preflight — so the dispatcher's default (no-exec) build keeps exactly
 // the three read-only tools.
 func (d *Dispatcher) EnableExecution(backend sandbox.Backend, testCmd []string, timeout time.Duration) {
+	// Publish the backend fields under the same mutex that guards execTools and
+	// handlers. Every reader (the run_tests/run_script handlers, runInSandbox)
+	// reaches these fields only after RLock'ing d.mu for the handler lookup in
+	// Execute, so the locked write gives each pool goroutine a happens-before edge
+	// to these fields — closing a data race a concurrent eligible Execute could
+	// otherwise open. The lock is released before registerExec (which re-locks)
+	// since sync.Mutex is non-reentrant.
+	d.mu.Lock()
 	d.execBackend = backend
 	d.execTestCmd = append([]string(nil), testCmd...)
 	d.execTimeout = timeout
+	d.mu.Unlock()
 	// registerExec is the single trusted exec-registration path: it atomically
 	// co-sets each handler with its execTools gate under one lock, so a concurrent
 	// Execute can never observe an exec handler without its gate (no fail-OPEN
@@ -99,6 +148,9 @@ type runTestsArgs struct {
 }
 
 func runTestsHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessage, _ string) (ToolResult, error) {
+	if len(d.execTestCmd) == 0 {
+		return ToolResult{}, toolErrf("run_tests: test command not configured")
+	}
 	var a runTestsArgs
 	if err := unmarshalToolArgs(argsJSON, &a); err != nil {
 		return ToolResult{}, toolErrf("run_tests: invalid arguments: %v", err)
@@ -160,6 +212,9 @@ func runScriptHandler(ctx context.Context, d *Dispatcher, argsJSON json.RawMessa
 func (d *Dispatcher) runInSandbox(ctx context.Context, spec sandbox.RunSpec) (ToolResult, error) {
 	if d.execBackend == nil {
 		return ToolResult{}, toolErrf("execution backend not configured")
+	}
+	if spec.Timeout <= 0 {
+		return ToolResult{}, toolErrf("execution timeout not configured")
 	}
 	res, err := d.execBackend.Run(ctx, spec)
 	if err != nil {

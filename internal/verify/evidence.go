@@ -63,19 +63,31 @@ func (r *execEvidenceRecorder) Execute(ctx context.Context, name string, args js
 // Dispatcher (not a sandbox.Backend + RunSpec), so the determinism re-runs go
 // through the dispatcher the skeptic used rather than repro.Reproduce's direct
 // backend.Run; the guarantee is identical (two independent executions, compared
-// exit codes). Evidence (built from the confirming second run) is returned ONLY
-// for a confirmed verdict; a flaky reproduction (exit codes disagree, a timeout,
-// or a deterministic pass), an errored re-run, an unparseable result, or no exec
-// call yields (unverifiable, nil) — a non-deterministic repro never earns a badge.
-func (r *execEvidenceRecorder) reproduceAgain(ctx context.Context) (string, *reconcile.EvidenceExec) {
+// exit codes). Because the re-runs bypass the tool loop that normally grants exec
+// eligibility, reproduceAgain grants it past the structural gate (Epic 11.1) — but
+// ONLY from the caller's exec flag, never minted from whatever ctx arrives. The
+// exec parameter makes the invariant structural at the function boundary: a non-exec
+// flow yields (unverifiable, nil) before any context is granted, so the dispatch
+// gate stays the single chokepoint and a second caller cannot silently re-introduce
+// a non-exec → exec escalation. Evidence (built from the confirming second run) is
+// returned ONLY for a confirmed verdict; a flaky reproduction (exit codes disagree, a
+// timeout, or a deterministic pass), an errored re-run, an unparseable result, or no
+// exec call yields (unverifiable, nil) — a non-deterministic repro never earns a badge.
+func (r *execEvidenceRecorder) reproduceAgain(ctx context.Context, exec bool) (string, *reconcile.EvidenceExec) {
 	if r.lastName == "" {
+		return reclib.VerdictUnverifiable, nil
+	}
+	// Refuse to grant eligibility outside an --exec flow: the grant comes from the
+	// caller's exec flag, not from the incoming ctx. This is the structural boundary
+	// that keeps the determinism re-runs from escalating a non-exec run to execution.
+	if !exec {
 		return reclib.VerdictUnverifiable, nil
 	}
 	// The determinism re-runs go straight to the dispatcher (not through the tool
 	// loop that would otherwise grant eligibility), so carry exec eligibility
-	// explicitly past the structural gate (Epic 11.1). This path is reached ONLY
-	// in an --exec run (callers guard it with `if exec`), and it re-executes the
-	// skeptic's own run_tests/run_script call, so the agent was already exec-eligible.
+	// explicitly past the structural gate (Epic 11.1). exec is true here, and the path
+	// re-executes the skeptic's own run_tests/run_script call, so the agent was already
+	// exec-eligible.
 	ctx = tools.WithExecEligibility(ctx, true)
 	res1, err1 := r.inner.Execute(ctx, r.lastName, r.lastArgs)
 	res2, err2 := r.inner.Execute(ctx, r.lastName, r.lastArgs)

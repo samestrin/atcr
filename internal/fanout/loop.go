@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/llmclient"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/tools"
 )
 
@@ -116,7 +117,23 @@ func (l *toolLoop) run(ctx context.Context) Result {
 	// the whole pool shares one exec-wired dispatcher. wireToolDefs(a.Exec) already
 	// gates the OFFERING; this gates the DISPATCH so the boundary is structural,
 	// not merely advisory.
+	//
+	// l.agent.Exec is fixed for the loop's lifetime: it is set once when the
+	// toolLoop is constructed (invokeToolLoop) and never mutated thereafter, so
+	// eligibility is derived once here — before the loop — rather than re-read on
+	// each iteration. Every turn deliberately shares this one eligibility value;
+	// this is an immutability invariant, not a per-iteration computation.
 	ctx = tools.WithExecEligibility(ctx, l.agent.Exec)
+	// Inject an operator-side refusal sink: when the dispatcher refuses an exec-gated
+	// tool a read-only agent named, the refusal otherwise reaches only the model as a
+	// tool result. The sink is wired here — fanout may import internal/log, the tools
+	// package may not — following the WithExecEligibility context-key pattern. The
+	// logger is snapshotted so the closure does not capture the reassigned ctx.
+	refusalLog, refusalAgent := log.FromContext(ctx), l.agent.Name
+	ctx = tools.WithRefusalLogger(ctx, func(tool string) {
+		refusalLog.Warn("exec tool refused: execution eligibility not granted to this agent",
+			"tool", tool, "agent", refusalAgent)
+	})
 	for {
 		// Honor cancellation/deadline before each turn so a tripped clock halts
 		// the loop with the partial results gathered so far rather than firing
