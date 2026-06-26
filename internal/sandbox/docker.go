@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -165,8 +166,12 @@ func (b *DockerBackend) Run(ctx context.Context, spec RunSpec) (RunResult, error
 		cmd.Stdin = strings.NewReader(spec.Script)
 	}
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
+	// Cap the captured buffer so a chatty workload cannot exhaust host memory
+	// before truncation. Allow a small headroom for rune-boundary backup.
+	maxBuf := int64(b.cfg.MaxOutputBytes) + 4096
+	lw := &limitedWriter{w: &buf, n: maxBuf}
+	cmd.Stdout = lw
+	cmd.Stderr = lw
 
 	runErr := cmd.Run()
 	res := RunResult{
@@ -226,6 +231,29 @@ func (b *DockerBackend) Preflight(ctx context.Context) error {
 		return fmt.Errorf("sandbox preflight: trivial container failed to run: %w", err)
 	}
 	return nil
+}
+
+// limitedWriter wraps w and discards writes after n bytes. It bounds the
+// memory a single sandbox run can consume while capturing output.
+type limitedWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (lw *limitedWriter) Write(p []byte) (int, error) {
+	if lw.n <= 0 {
+		return len(p), nil
+	}
+	if int64(len(p)) > lw.n {
+		if _, err := lw.w.Write(p[:lw.n]); err != nil {
+			return 0, err
+		}
+		lw.n = 0
+		return len(p), nil
+	}
+	n, err := lw.w.Write(p)
+	lw.n -= int64(n)
+	return n, err
 }
 
 // dockerCmd runs a docker subcommand with a timeout, discarding output and
