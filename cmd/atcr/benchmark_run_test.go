@@ -62,7 +62,7 @@ func TestExecuteBenchmarkRun_ScoresSuite(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"}, [3]string{"kai", "m-kai", "kai"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
-	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
 	require.NoError(t, err)
 
 	assert.Equal(t, "fixture-mini", rr.Suite)
@@ -88,9 +88,9 @@ func TestExecuteBenchmarkRun_Reproducible(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
-	a, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
+	a, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
 	require.NoError(t, err)
-	b, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
+	b, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
 	require.NoError(t, err)
 
 	ja, err := json.Marshal(a)
@@ -103,7 +103,7 @@ func TestExecuteBenchmarkRun_Reproducible(t *testing.T) {
 // An invalid suite path fails before any review executes.
 func TestExecuteBenchmarkRun_InvalidSuiteErrors(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
-	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, "testdata/does-not-exist", time.Now())
+	_, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, "testdata/does-not-exist", time.Now(), "")
 	require.Error(t, err)
 }
 
@@ -125,7 +125,7 @@ func TestBenchmarkRun_RoundTripsThroughExport(t *testing.T) {
 	cfg := benchCfg([3]string{"greta", "m-greta", "greta"})
 	gen := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 
-	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen)
+	rr, err := executeBenchmarkRun(context.Background(), cfg, stubCompleter{}, suiteValidPath, gen, "")
 	require.NoError(t, err)
 
 	data, err := json.MarshalIndent(rr, "", "  ")

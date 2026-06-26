@@ -34,10 +34,44 @@ import (
 // contract export relies on. Each case's review artifacts are written under a temp
 // directory that is removed before the function returns; only the scored findings
 // flow into the result, so the temp path never affects output.
-func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time) (*benchmark.RunResult, error) {
+func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, completer fanout.Completer, suitePath string, generatedAt time.Time, checkpointPath string) (*benchmark.RunResult, error) {
 	m, err := benchmark.Load(suitePath)
 	if err != nil {
 		return nil, err
+	}
+
+	// Opt-in checkpointing (Epic 10.3): when checkpointPath is set, each scored case
+	// is persisted before the next begins so a transient failure does not forfeit the
+	// paid work of the cases that already completed. An empty path keeps the 10.2
+	// behavior verbatim (no read, no write).
+	var cp *runCheckpoint
+	var done map[int]checkpointCase
+	if checkpointPath != "" {
+		curHash, herr := benchmark.ReproHashManifest(m, suitePath)
+		if herr != nil {
+			return nil, fmt.Errorf("hashing suite for checkpoint: %w", herr)
+		}
+		existing, lerr := loadCheckpoint(checkpointPath)
+		if lerr != nil {
+			return nil, lerr
+		}
+		roster := rosterSignature(cfg)
+		if existing != nil {
+			// Suite-identity guard (AC4): a checkpoint from a different or changed
+			// suite is rejected, never silently mixed into this run. The roster guard
+			// catches a changed reviewer panel — orthogonal to ReproHash, which hashes
+			// only suite content.
+			if verr := validateCheckpoint(existing, curHash, m.Suite, m.SuiteVersion); verr != nil {
+				return nil, verr
+			}
+			if verr := validateCheckpointRoster(existing, roster); verr != nil {
+				return nil, verr
+			}
+			cp = existing
+		} else {
+			cp = &runCheckpoint{ReproHash: curHash, Suite: m.Suite, SuiteVersion: m.SuiteVersion, Roster: roster}
+		}
+		done = cp.doneIndex()
 	}
 
 	tmp, err := os.MkdirTemp("", "atcr-benchmark-")
@@ -46,18 +80,28 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
-	// reviewerAcc accumulates one reviewer's outcomes across every case.
-	type reviewerAcc struct {
-		model     string
-		persona   string
-		cases     []benchmark.CaseScore
-		costUSD   float64
-		latencies []int64 // per-case wall-clock, recorded only when usage was reported
-	}
 	accs := map[string]*reviewerAcc{}
 	var order []string // reviewer names, sorted for deterministic aggregation
 
 	for i, c := range m.Cases {
+		// Resume: a case already in the checkpoint is replayed into the accumulator
+		// without re-executing (and re-paying for) it (AC2). Replaying in case-index
+		// order preserves the deterministic aggregation the reproducibility contract
+		// depends on (AC3).
+		if entry, ok := done[i]; ok {
+			// ReproHash is order-independent (it sorts cases by id), so a reordered
+			// suite shares the hash but remaps indices. Guard the per-index identity
+			// too: a checkpoint entry whose recorded id no longer matches the suite's
+			// case at this index means the suite changed — fail closed rather than
+			// replay a score against the wrong case.
+			if entry.CaseID != c.ID {
+				return nil, fmt.Errorf("%w: checkpoint case at index %d is %q but the suite has %q there; remove the checkpoint to start fresh",
+					errCheckpointSuiteMismatch, i, entry.CaseID, c.ID)
+			}
+			replayCheckpointCase(accs, &order, entry)
+			continue
+		}
+
 		diff, err := os.ReadFile(filepath.Join(suitePath, c.Diff))
 		if err != nil {
 			return nil, fmt.Errorf("reading case %q diff: %w", c.ID, err)
@@ -98,20 +142,45 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		// Iterate the full agent roster (including failed agents, which raised
 		// nothing) so every reviewer is scored on every case — a missed case is
 		// recall 0, not an absent record.
+		var caseReviewers []checkpointReviewer
 		for _, a := range summary.Agents {
-			acc := accs[a.Agent]
-			if acc == nil {
-				acc = &reviewerAcc{model: reviewerModel(cfg, a), persona: reviewerPersona(cfg, a.Agent)}
-				accs[a.Agent] = acc
-				order = append(order, a.Agent)
-			}
-			acc.cases = append(acc.cases, benchmark.CaseScore{Expected: c.ExpectedCategories, Raised: raisedByReviewer[a.Agent]})
+			model := reviewerModel(cfg, a)
+			persona := reviewerPersona(cfg, a.Agent)
+			raised := raisedByReviewer[a.Agent]
 			// Cost + latency are usage-gated: a completer that reports no token
 			// usage (the test stub) contributes neither, keeping the score
 			// deterministic. status.json only records Model/tokens when usage > 0.
-			if a.TokensIn > 0 || a.TokensOut > 0 {
-				acc.costUSD += llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
-				acc.latencies = append(acc.latencies, a.DurationMS)
+			usageReported := a.TokensIn > 0 || a.TokensOut > 0
+			var cost float64
+			var latency int64
+			if usageReported {
+				cost = llmclient.ComputeCostUSD(a.Model, a.TokensIn, a.TokensOut)
+				latency = a.DurationMS
+			}
+
+			applyReviewerOutcome(accs, &order, a.Agent, model, persona, c.ExpectedCategories, raised, usageReported, cost, latency)
+
+			if cp != nil {
+				caseReviewers = append(caseReviewers, checkpointReviewer{
+					Agent:         a.Agent,
+					Model:         model,
+					Persona:       persona,
+					Expected:      c.ExpectedCategories,
+					Raised:        raised,
+					UsageReported: usageReported,
+					CostUSD:       cost,
+					LatencyMS:     latency,
+				})
+			}
+		}
+
+		// Checkpoint the scored case before the loop advances to case i+1 (AC1): the
+		// atomic write means a process killed mid-suite leaves a checkpoint holding
+		// exactly the cases that completed.
+		if cp != nil {
+			cp.Cases = append(cp.Cases, checkpointCase{Index: i, CaseID: c.ID, Reviewers: caseReviewers})
+			if werr := saveCheckpoint(checkpointPath, cp); werr != nil {
+				return nil, fmt.Errorf("writing checkpoint for case %q: %w", c.ID, werr)
 			}
 		}
 	}
@@ -135,6 +204,61 @@ func executeBenchmarkRun(ctx context.Context, cfg *fanout.ReviewConfig, complete
 		GeneratedAt:  generatedAt.UTC().Format(time.RFC3339),
 		Reviewers:    benchmark.Score(reviewers),
 	}, nil
+}
+
+// rosterSignature builds the deterministic "agent=model" signature of the
+// configured reviewer panel, sorted by agent name. It uses the CONFIGURED model
+// (registry), not a runtime usage-reported one, so the same config always yields the
+// same signature — the stable identity a resume compares against to reject a changed
+// panel (AC4 roster guard). An agent with no configured model contributes an empty
+// model component, which still distinguishes it from a later-configured one.
+func rosterSignature(cfg *fanout.ReviewConfig) []string {
+	names := append([]string(nil), cfg.Project.Agents...)
+	sort.Strings(names)
+	sig := make([]string, len(names))
+	for i, n := range names {
+		sig[i] = n + "=" + cfg.Registry.Agents[n].Model
+	}
+	return sig
+}
+
+// reviewerAcc accumulates one reviewer's outcomes across every case.
+type reviewerAcc struct {
+	model     string
+	persona   string
+	cases     []benchmark.CaseScore
+	costUSD   float64
+	latencies []int64 // per-case wall-clock, recorded only when usage was reported
+}
+
+// applyReviewerOutcome folds one reviewer's single-case outcome into the
+// accumulator, creating the accumulator (and registering the reviewer in order) on
+// first sighting. It is the SINGLE fold path shared by fresh execution and
+// checkpoint replay, so a resumed run reconstructs accs identically to an
+// uninterrupted one (AC3): model/persona are locked at first sighting (matching the
+// original first-case-wins behavior), and the usage-gated cost/latency are added in
+// the same case order, keeping the float sum and latency median byte-identical.
+func applyReviewerOutcome(accs map[string]*reviewerAcc, order *[]string, agent, model, persona string, expected, raised []string, usageReported bool, costUSD float64, latencyMS int64) {
+	acc := accs[agent]
+	if acc == nil {
+		acc = &reviewerAcc{model: model, persona: persona}
+		accs[agent] = acc
+		*order = append(*order, agent)
+	}
+	acc.cases = append(acc.cases, benchmark.CaseScore{Expected: expected, Raised: raised})
+	if usageReported {
+		acc.costUSD += costUSD
+		acc.latencies = append(acc.latencies, latencyMS)
+	}
+}
+
+// replayCheckpointCase folds a checkpointed case's recorded per-reviewer outcomes
+// back into the accumulator via the same applyReviewerOutcome path the fresh loop
+// uses — no review re-execution and no Completer call (AC2).
+func replayCheckpointCase(accs map[string]*reviewerAcc, order *[]string, entry checkpointCase) {
+	for _, r := range entry.Reviewers {
+		applyReviewerOutcome(accs, order, r.Agent, r.Model, r.Persona, r.Expected, r.Raised, r.UsageReported, r.CostUSD, r.LatencyMS)
+	}
 }
 
 // readCaseFindings parses the merged pool findings.txt for one review and groups

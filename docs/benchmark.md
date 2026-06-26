@@ -98,13 +98,14 @@ Behavior:
 
 ---
 
-## `atcr benchmark run --suite-path <dir> [--out <path>]`
+## `atcr benchmark run --suite-path <dir> [--out <path>] [--checkpoint <path>]`
 
 Execute a suite through the **review pipeline** and write a scored run-result.
 
 ```bash
 atcr benchmark run --suite-path ./my-suite --out run.json
 atcr benchmark run --suite-path ./my-suite          # run-result to stdout
+atcr benchmark run --suite-path ./my-suite --checkpoint run.ckpt.json   # resumable
 ```
 
 For each case, `run` ingests the case's diff through the same diff-file ingestion
@@ -152,6 +153,36 @@ Behavior:
   that case.
 - `--suite-path` is required. `--out` writes the JSON to a file (atomic, parents
   created) instead of stdout.
+
+### Resumability (`--checkpoint`)
+
+A benchmark over a real suite is many cases × many reviewers of **paid** LLM work,
+run serially. Because a single transient failure on case *N* (a total-roster case
+failure, a network blip, a rate-limit) aborts the whole run, the completed,
+already-paid-for work of cases `1..N-1` would otherwise be lost.
+
+`--checkpoint <path>` makes the run **resumable**:
+
+- After each case is scored — and *before* the next case begins — its scored outcome
+  is durably written to the checkpoint file (an atomic temp-file + rename, so a
+  process killed mid-suite leaves a checkpoint holding exactly the completed cases).
+- Re-running the same suite with the same `--checkpoint` path **resumes** from the
+  first unscored case: already-scored cases are replayed from the checkpoint (no
+  re-execution, no further LLM cost) and only the remainder is executed.
+- A resumed run produces a **byte-identical** run-result to an uninterrupted run over
+  the same suite + transcript — the reproducibility contract holds across the resume
+  boundary.
+- Resume is guarded by **suite identity** and **roster identity**: the checkpoint
+  records the suite's reproducibility hash (see `verify`), name, and version, plus the
+  reviewer panel (each agent and its configured model). If the suite content changed,
+  or the roster changed (a reviewer added/removed, or a model swapped), the run
+  **fails closed** with a clear message (remove the checkpoint to start fresh) rather
+  than silently mixing inconsistent work into a new run. The roster check is separate
+  because the reproducibility hash covers only suite content, not the panel.
+
+Checkpointing is **opt-in**: without `--checkpoint`, behavior is unchanged — a
+total-roster case failure still aborts the run (a transient infrastructure failure
+is never scored as a genuine missed defect).
 
 ---
 
