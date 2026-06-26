@@ -1,0 +1,1 @@
+LOW|cmd/atcr/benchmark_checkpoint.go:89|loadCheckpoint returns nil on missing file, but caller may treat nil as valid empty state|Document that nil means "no checkpoint" vs "empty checkpoint" in function comment|maintainability|5|"return nil, nil" on fs.ErrNotExist; caller checks `if existing != nil` but semantic distinction is implicit|bruce

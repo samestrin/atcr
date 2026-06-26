@@ -1,0 +1,7 @@
+{
+  "agent_name": "otto",
+  "model": "gemma-4-31b",
+  "status": "timeout",
+  "duration_ms": 300001,
+  "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+}

@@ -1,0 +1,6 @@
+MEDIUM|cmd/atcr/benchmark_run_resume_test.go:18|countingCompleter has unprotected int field|Use sync/atomic or mutex for calls counter|correctness|5|fanout may invoke Complete concurrently causing data races|bruce
+MEDIUM|cmd/atcr/benchmark_run_resume_test.go:159|JSONEq does not assert byte-identical output|Use assert.Equal on marshaled byte slices|correctness|5|AC3 requires byte-identicality but JSONEq ignores field order and whitespace|bruce
+MEDIUM|cmd/atcr/benchmark_run_resume_test.go:191|JSONEq does not assert byte-identical output|Use assert.Equal on marshaled byte slices|correctness|5|AC3 requires byte-identicality but JSONEq ignores field order and whitespace|bruce
+LOW|cmd/atcr/benchmark_run_resume_test.go:124|Vacuous test checks unrelated directory|Assert no checkpoint write to cwd or mock saveCheckpoint|maintainability|10|empty checkpoint path test scans unrelated temp dir proving nothing|bruce
+LOW|cmd/atcr/benchmark_run_resume_test.go:156|Ignored json.Marshal error in test|Add require.NoError for marshal calls|error-handling|2|marshal errors silently ignored causing opaque test failures|bruce
+LOW|cmd/atcr/benchmark_run_resume_test.go:189|Ignored json.Marshal error in test|Add require.NoError for marshal calls|error-handling|2|marshal errors silently ignored causing opaque test failures|bruce

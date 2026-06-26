@@ -1,0 +1,2 @@
+MEDIUM|cmd/atcr/benchmark_run.go:214|rosterSignature assumes cfg.Registry.Agents[n] is non-nil|Add existence check before accessing .Model field|correctness|5|sig[i] = n + "=" + cfg.Registry.Agents[n].Model|bruce
+LOW|cmd/atcr/benchmark_checkpoint.go:100|MarshalIndent inflates checkpoint file size|Use json.Marshal for compact storage and faster serialization|performance|5|json.MarshalIndent(cp, "", "  ")|bruce
