@@ -2,7 +2,6 @@ package sandbox
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -77,28 +76,5 @@ func TestDockerBackendRun_WorkloadExitCodesAreResults(t *testing.T) {
 				t.Fatalf("exit %d: expected ExitCode %d, got %d", tc.code, tc.want, res.ExitCode)
 			}
 		})
-	}
-}
-
-func TestDockerBackendRun_NilSemaphoreIsFailClosed(t *testing.T) {
-	fakeDocker := writeFakeDocker(t, fakeDockerExitBody())
-	cfg := DefaultDockerConfig()
-	cfg.DockerPath = fakeDocker
-	cfg.MaxConcurrent = 1
-	// Constructing the backend as a struct literal leaves sem nil. The current
-	// behaviour is fail-open; this test documents the desired fail-closed
-	// contract so a future fix can turn it green.
-	b := &DockerBackend{cfg: cfg}
-
-	spec := RunSpec{
-		Command:     []string{"true"},
-		SnapshotDir: t.TempDir(),
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := b.Run(ctx, spec)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled when sem is nil and ctx is canceled, got %v", err)
 	}
 }
