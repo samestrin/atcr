@@ -69,6 +69,32 @@ exit 0`)
 	assert.Contains(t, err.Error(), "preflight")
 }
 
+func TestDockerBackendRun_SignalDeathsAreBackendErrors(t *testing.T) {
+	fakeDocker := writeFakeDocker(t, fakeDockerExitBody())
+	cfg := DefaultDockerConfig()
+	cfg.DockerPath = fakeDocker
+	cfg.MaxConcurrent = 1
+	b := NewDockerBackend(cfg)
+
+	spec := RunSpec{
+		Command:     []string{"true"},
+		SnapshotDir: t.TempDir(),
+	}
+
+	for _, code := range []int{137, 139} {
+		t.Run(fmt.Sprintf("exit-%d", code), func(t *testing.T) {
+			t.Setenv("DOCKER_EXIT_CODE", fmt.Sprintf("%d", code))
+			_, err := b.Run(context.Background(), spec)
+			if err == nil {
+				t.Fatalf("exit %d: expected backend error, got nil", code)
+			}
+			if !strings.Contains(err.Error(), "killed by signal") {
+				t.Fatalf("exit %d: expected error to mention signal death, got %q", code, err.Error())
+			}
+		})
+	}
+}
+
 func TestDockerBackendRun_WorkloadExitCodesAreResults(t *testing.T) {
 	fakeDocker := writeFakeDocker(t, fakeDockerExitBody())
 	cfg := DefaultDockerConfig()
