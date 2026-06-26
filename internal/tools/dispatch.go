@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -60,6 +61,7 @@ type Dispatcher struct {
 	limits   Limits
 	handlers map[string]handlerFunc
 	pathArgs map[string]pathSpec
+	mu       sync.RWMutex // guards handlers and pathArgs
 
 	// Execution backend (Epic 11.0), nil unless EnableExecution was called. When
 	// set, the run_tests/run_script tools are registered and execute inside the
@@ -95,6 +97,8 @@ func (d *Dispatcher) SetLimits(l Limits) { d.limits = l }
 
 // RegisteredTools returns the names of all registered tools.
 func (d *Dispatcher) RegisteredTools() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	names := make([]string, 0, len(d.handlers))
 	for name := range d.handlers {
 		names = append(names, name)
@@ -119,6 +123,8 @@ func (d *Dispatcher) RegisterTool(name string, h handlerFunc) error {
 	if err := guardToolName(name); err != nil {
 		return err
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.handlers[name] = h
 	return nil
 }
@@ -137,14 +143,19 @@ func (d *Dispatcher) mustRegister(name string, h handlerFunc, ps pathSpec) {
 	if err := d.RegisterTool(name, h); err != nil {
 		panic(err) // built-in names are read-only by construction
 	}
+	d.mu.Lock()
 	d.pathArgs[name] = ps
+	d.mu.Unlock()
 }
 
 // Execute routes a single tool call. It returns a *ToolError (never panics) for
 // unknown tools, malformed arguments, jail violations, and handler failures, so
 // the agent loop can feed the message back to the model as a tool result.
 func (d *Dispatcher) Execute(ctx context.Context, name string, argsJSON json.RawMessage) (res ToolResult, err error) {
+	d.mu.RLock()
 	h, ok := d.handlers[name]
+	spec := d.pathArgs[name]
+	d.mu.RUnlock()
 	if !ok {
 		return ToolResult{}, toolErrf("unknown tool: %s", name)
 	}
@@ -164,7 +175,7 @@ func (d *Dispatcher) Execute(ctx context.Context, name string, argsJSON json.Raw
 	}
 
 	absPath := d.root
-	if spec, ok := d.pathArgs[name]; ok && spec.name != "" {
+	if spec.name != "" {
 		rel, present, perr := stringArg(raw, spec.name)
 		if perr != nil {
 			return ToolResult{}, toolErrf("%s: invalid arguments: %v", name, perr)

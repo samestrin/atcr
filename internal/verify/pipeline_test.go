@@ -337,13 +337,13 @@ func TestVerifyFinding_EarlyReturnsRecordEmptyModel(t *testing.T) {
 	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
 
 	// no_eligible_skeptic: no skeptics at all.
-	_, vr := verifyFinding(context.Background(), f, nil, finalChat("{}"), okDispatcher(), false)
+	_, vr, _ := verifyFinding(context.Background(), f, nil, finalChat("{}"), okDispatcher(), false)
 	assert.Equal(t, "unverifiable", vr.Verdict)
 	assert.Equal(t, "no_eligible_skeptic", vr.Reasoning)
 	assert.Empty(t, vr.Model, "no skeptic ran → no model attributed")
 
 	// tool_harness_unavailable: skeptics eligible but the dispatcher never built.
-	_, vr = verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, finalChat("{}"), nil, false)
+	_, vr, _ = verifyFinding(context.Background(), f, []Skeptic{testSkeptic()}, finalChat("{}"), nil, false)
 	assert.Equal(t, "unverifiable", vr.Verdict)
 	assert.Equal(t, "tool_harness_unavailable", vr.Reasoning)
 	assert.Empty(t, vr.Model, "skeptics selected but none executed → no model attributed")
@@ -791,7 +791,7 @@ func TestRunVerify_CancelledContextSkipsCompleter(t *testing.T) {
 func TestVerifyFinding_TrippedBudgetsNeverNil(t *testing.T) {
 	t.Parallel()
 	f := reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"}
-	_, vr := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()},
+	_, vr, _ := verifyFinding(context.Background(), f, []Skeptic{testSkeptic()},
 		finalChat(`{"verdict":"confirmed"}`), okDispatcher(), false)
 	assert.NotNil(t, vr.TrippedBudgets, "TrippedBudgets must be [] not nil")
 }
@@ -831,7 +831,7 @@ func TestVerifyFinding_ProgrammingFaultLogged(t *testing.T) {
 
 	// cc=nil with a non-nil dispatcher and an eligible skeptic drives invokeSkeptic
 	// into its nil-ChatCompleter programming-fault return inside the vote loop.
-	_, vr := verifyFinding(ctx,
+	_, vr, _ := verifyFinding(ctx,
 		reconcile.JSONFinding{File: "a.go", Line: 1, Problem: "boom"},
 		[]Skeptic{testSkeptic()}, nil, okDispatcher(), false)
 
