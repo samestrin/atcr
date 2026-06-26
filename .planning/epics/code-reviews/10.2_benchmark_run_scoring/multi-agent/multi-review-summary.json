@@ -1,0 +1,98 @@
+{
+  "reviewers": [
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 9661,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 92690,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 101803,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 156396,
+      "tdLineCount": 3
+    },
+    {
+      "agent": "dax-local",
+      "model": "llm-large",
+      "status": "ok",
+      "durationMs": 6422,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 163404,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 208531,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "timeout",
+      "durationMs": 300002,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "timeout",
+      "durationMs": 323045,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 399773,
+      "tdLineCount": 5
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "ok",
+      "durationMs": 577129,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "timeout",
+      "durationMs": 600000,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded"
+    }
+  ],
+  "totalFindings": 16,
+  "partial": true,
+  "totalDurationMs": 600001,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-25T15:54:55-07:00"
+}

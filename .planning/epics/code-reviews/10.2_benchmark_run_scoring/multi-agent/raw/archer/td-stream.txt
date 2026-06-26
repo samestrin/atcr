@@ -1,0 +1,1 @@
+MEDIUM|cmd/atcr/benchmark_run.go:38|Missing Validate call after Load|Add m.Validate() after benchmark.Load to enforce path safety and category constraints|correctness|5|Case.Diff path safety is "enforced by Validate" per comment; only Load is called|bruce

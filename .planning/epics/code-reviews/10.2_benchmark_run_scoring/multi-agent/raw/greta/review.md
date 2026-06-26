@@ -1,0 +1,3 @@
+MEDIUM|cmd/atcr/benchmark.go:95|Non-deterministic GeneratedAt breaks reproducibility contract|Inject time from CLI flag or use constant|correctness|5|time.Now().UTC() passed instead of injectable param|greta
+MEDIUM|cmd/atcr/benchmark_run.go:58|Potential path traversal if suite manifest Diff field contains ../|Validate c.Diff is relative and does not escape suitePath before ReadFile|security|10|filepath.Join(suitePath, c.Diff) used without local validation|greta
+MEDIUM|cmd/atcr/benchmark_run.go:66|Duplicate agent entries in summary cause skewed reviewer scores|Deduplicate agents before accumulating or use map for order|correctness|10|order slice appends duplicate agent names from summary|greta

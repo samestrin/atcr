@@ -1,0 +1,1 @@
+HIGH|cmd/atcr/benchmark_run.go:136|Map access without existence check|Check if key exists before accessing map value|correctness|5|cfg.Registry.Agents[a.Agent] may panic if agent not in registry|code-reviewer

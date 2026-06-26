@@ -1,0 +1,1 @@
+LOW|cmd/atcr/benchmark_run_test.go:100|assert.JSONEq does not enforce byte identity|Use assert.Equal or bytes.Equal for strict byte comparison|correctness|2|JSONEq checks logical equality, not byte-level identity|base

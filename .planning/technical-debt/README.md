@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 24 | 0 |
-| LOW | 4 | 22 | 0 |
+| MEDIUM | 1 | 24 | 0 |
+| LOW | 7 | 22 | 0 |
 
-**Last Modified:** 2026-06-25 | **Open Items:** 4 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 52
+**Last Modified:** 2026-06-25 | **Open Items:** 8 | **Deferred Items:** 48 | **Resolved Items:** 0 | **Total Items:** 56
 
 ## Directory Structure
 
@@ -33,6 +33,15 @@ technical-debt/
 4. **After resolution**: Move items from active to completed
 
 
+
+### [2026-06-25] From Sprint: epic-10.3
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | MEDIUM | cmd/atcr/benchmark_run.go:73 | A resume is silent — nothing reports how many cases were replayed from the checkpoint vs executed, so an operator cannot distinguish a resumed run from a fresh one and a wrong/partial resume goes unnoticed | Emit a stderr/log line on resume reporting replayed-case and remaining-to-execute counts (user-facing messaging belongs in the cmd layer, no AC requires it) | OBSERVABILITY | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/benchmark_checkpoint.go:104 | saveCheckpoint rewrites the entire growing checkpoint file after every case, making checkpoint IO O(n^2) in case count; negligible against paid serial LLM work but a latent cost on large suites | Accept the tradeoff (LLM cost dominates) or switch to an append-friendly format if suites grow large | PERFORMANCE | 30 | execute-epic-independent |
+| 1 | [ ] | LOW | cmd/atcr/benchmark_checkpoint.go:104 | Two concurrent benchmark runs pointed at the same --checkpoint path race on the temp+rename with no advisory lock; last-writer-wins can drop a completed case entry | Document that a checkpoint path must not be shared by concurrent runs, or take an advisory lock as the fanout resume marker does | EDGE_CASES | 30 | execute-epic-independent |
+| U | [ ] | LOW | docs/benchmark.md:141 | GeneratedAt is wall-clock per invocation, so a real resumed run on a later day produces a different GeneratedAt than the original; the byte-identical claim holds for scored metrics under a fixed GeneratedAt | Clarify in docs that GeneratedAt reflects the resuming run's wall-clock and byte-identity covers the scored metrics | DOCS | 15 | execute-epic-independent |
 
 ### [2026-06-25] From Sprint: epic-10.2
 
