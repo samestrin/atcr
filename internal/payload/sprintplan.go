@@ -90,11 +90,11 @@ func ScopeConstraint(content string) (block string, truncated bool) {
 	return b.String(), truncated
 }
 
-// capUTF8 truncates s to at most max bytes without splitting a multibyte rune,
-// reporting whether a truncation occurred. When s exceeds max it backs the cut
-// off to the nearest preceding rune boundary, so the result is always valid
-// UTF-8 even if that drops a few bytes below max.
+// capUTF8 scrubs invalid UTF-8 bytes from s, then truncates it to at most max bytes without splitting a multibyte rune,
+// reporting whether a truncation occurred. The returned string is always valid
+// UTF-8.
 func capUTF8(s string, max int) (string, bool) {
+	s = strings.ToValidUTF8(s, "")
 	if len(s) <= max {
 		return s, false
 	}
