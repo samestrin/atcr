@@ -77,9 +77,11 @@ func ReadSprintPlan(path string) (string, error) {
 // keys, so an edit that changes only content beyond the cap will not invalidate
 // cached review results. Keeping plans under the cap is the recommended fix.
 //
-// Like ScopeFocus, content is concatenated verbatim with no per-entry escaping:
-// the plan is trusted operator input, and the payload is injected as template
-// data (never re-parsed), so plan text containing template syntax is inert.
+// Like ScopeFocus, the plan is trusted operator input and template syntax is
+// inert (payload is injected as data, never re-parsed). As a defense-in-depth
+// measure, any BEGIN/END framing markers found in the plan body are neutralized
+// before embedding so that machine-generated plan content crossing an untrusted
+// boundary cannot close the framing block early and inject instructions.
 func ScopeConstraint(content string) (block string, truncated bool) {
 	plan := strings.TrimSpace(content)
 	if plan == "" {
