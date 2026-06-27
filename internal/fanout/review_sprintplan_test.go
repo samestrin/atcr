@@ -168,3 +168,29 @@ func TestPrepareReviewFromDiff_WritesConstraintArtifact(t *testing.T) {
 	require.Contains(t, string(data), "SCOPE CONSTRAINT")
 	require.Contains(t, string(data), "only auth changes")
 }
+
+// TestPrepareResume_PreservesSprintPlanConstraint asserts that PrepareResume
+// re-injects the SCOPE CONSTRAINT into every resumed slot so reviewers that
+// pick up from an interrupted run still receive the sprint plan scope
+// (Epic 12.2 AC4.3 / resume.go regression: line 287 passed "" for scopeConstraint).
+func TestPrepareResume_PreservesSprintPlanConstraint(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
+	req := reviewReq(repo, repo, base, head)
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, req)
+	require.NoError(t, err)
+	require.NotEmpty(t, rprep.Slots)
+
+	for _, s := range rprep.Slots {
+		require.Contains(t, s.Primary.Prompt, "SCOPE CONSTRAINT",
+			"resumed slot must carry the injected scope constraint")
+		require.Contains(t, s.Primary.Prompt, "only auth changes")
+	}
+}
