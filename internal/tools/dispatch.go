@@ -139,6 +139,9 @@ var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif",
 // written solely by registerExec, and Execute refuses any execTools entry without
 // per-call eligibility. The built-in run_tests/run_script names DO match these
 // fragments and so bypass this guard deliberately, via registerExec.
+// The list is intentionally not exhaustive: the true boundary is the
+// unexported execBackend, which is only wired by EnableExecution/registerExec;
+// this name guard is defense-in-depth only.
 var execToolPatterns = []string{"run", "exec", "eval", "shell"}
 
 // RegisterTool adds a handler after running a best-effort name check against
