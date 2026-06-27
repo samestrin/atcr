@@ -60,7 +60,14 @@ func ParseREADME(content string) ([]Shard, error) {
 			return nil, fmt.Errorf("line %d: malformed section header (missing Sprint|Review label?): %q",
 				n+1, strings.TrimSpace(line))
 		}
-		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
+		trimmed := strings.TrimSpace(line)
+		if cur == nil || !strings.HasPrefix(trimmed, "|") {
+			// Inside an active section, a line that contains pipes but lacks a
+			// leading pipe is a likely data row with a dropped delimiter — hard
+			// error to satisfy the zero-data-loss mandate.
+			if cur != nil && strings.Contains(trimmed, "|") {
+				return nil, fmt.Errorf("line %d: data row missing leading pipe: %q", n+1, trimmed)
+			}
 			continue
 		}
 		cells := splitRow(line)
