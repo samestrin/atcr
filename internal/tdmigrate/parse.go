@@ -30,17 +30,25 @@ var unknownHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From `)
 func ParseREADME(content string) ([]Shard, error) {
 	var shards []Shard
 	var cur *Shard
+	var curLine int
 
-	flush := func() {
-		if cur != nil && len(cur.Items) > 0 {
-			shards = append(shards, *cur)
+	flush := func() error {
+		if cur == nil {
+			return nil
 		}
-		cur = nil
+		if len(cur.Items) == 0 {
+			return fmt.Errorf("line %d: section %q has no parseable items", curLine, cur.Label)
+		}
+		shards = append(shards, *cur)
+		return nil
 	}
 
 	for n, line := range strings.Split(content, "\n") {
 		if m := sectionHeader.FindStringSubmatch(line); m != nil {
-			flush()
+			if err := flush(); err != nil {
+				return nil, err
+			}
+			curLine = n + 1
 			cur = &Shard{Date: m[1], SourceType: m[2], Label: strings.TrimSpace(m[3])}
 			continue
 		}
@@ -65,7 +73,9 @@ func ParseREADME(content string) ([]Shard, error) {
 		}
 		cur.Items = append(cur.Items, it)
 	}
-	flush()
+	if err := flush(); err != nil {
+		return nil, err
+	}
 	return shards, nil
 }
 
