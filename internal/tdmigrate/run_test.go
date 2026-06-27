@@ -156,6 +156,32 @@ func TestRun_SubcommandHelpReturnsZero(t *testing.T) {
 	}
 }
 
+func TestRun_GenerateWarnsOnNotesDropped(t *testing.T) {
+	dir := t.TempDir()
+	readme := writeREADME(t, dir)
+	items := filepath.Join(dir, "items")
+
+	if code, _, errb := run(t, "migrate", "--readme", readme, "--items", items); code != 0 {
+		t.Fatalf("migrate failed: code=%d err=%q", code, errb)
+	}
+	shards, err := LoadShards(items)
+	if err != nil {
+		t.Fatalf("load shards: %v", err)
+	}
+	shards[0].Items[0].Notes = "hand-edited note"
+	if _, err := WriteShards(items, shards); err != nil {
+		t.Fatalf("write shards with notes: %v", err)
+	}
+
+	code, _, errb := run(t, "generate", "--items", items)
+	if code != 0 {
+		t.Fatalf("generate failed: code=%d err=%q", code, errb)
+	}
+	if !strings.Contains(errb, "note") {
+		t.Errorf("generate should warn about dropped notes, got stderr=%q", errb)
+	}
+}
+
 func TestRun_ValidateCatchesBadShard(t *testing.T) {
 	items := t.TempDir()
 	// Unknown field -> strict-load rejection.
