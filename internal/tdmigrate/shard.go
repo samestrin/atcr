@@ -73,6 +73,14 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 		return nil, err
 	}
 	for _, f := range existing {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Contains(data, []byte("date:")) {
+			// Not a shard file — leave it alone.
+			continue
+		}
 		if err := os.Remove(f); err != nil {
 			return nil, err
 		}
