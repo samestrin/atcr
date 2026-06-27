@@ -144,6 +144,18 @@ func TestGenerateFlagsRejectReadme(t *testing.T) {
 	}
 }
 
+func TestRun_SubcommandHelpReturnsZero(t *testing.T) {
+	for _, sub := range []string{"migrate", "generate", "validate"} {
+		code, out, errb := run(t, sub, "-h")
+		if code != 0 {
+			t.Errorf("%s -h: want exit 0, got %d (err=%q)", sub, code, errb)
+		}
+		if out == "" {
+			t.Errorf("%s -h: help should be written to stdout", sub)
+		}
+	}
+}
+
 func TestRun_ValidateCatchesBadShard(t *testing.T) {
 	items := t.TempDir()
 	// Unknown field -> strict-load rejection.
