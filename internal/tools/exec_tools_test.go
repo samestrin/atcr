@@ -52,9 +52,10 @@ func execCtx() context.Context { return WithExecEligibility(context.Background()
 // EnableExecution, be BOTH present in the execTools gate map AND backed by a
 // registered handler — so no exec handler can reach runInSandbox/execBackend
 // ungated. It also asserts the converse: no execTools entry exists without a
-// backing handler (no orphan gates). A future exec tool added to ExecutionTools
-// but registered ungated (e.g. via mustRegister/RegisterTool instead of the
-// trusted registerExec path) would fail this test.
+// backing handler (no orphan gates), and that execTools contains ONLY tools
+// declared by ExecutionTools(). ExecutionTools() is therefore the authoritative
+// exec-tool registry; any future sandbox-reaching handler must be added there
+// AND registered via the trusted registerExec path.
 func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
