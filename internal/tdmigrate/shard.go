@@ -64,10 +64,54 @@ func MarshalShard(s Shard) ([]byte, error) {
 // prunes its own prior output (every *.yaml already in dir) before writing, so
 // re-running migrate never leaves orphaned shards from a previous run. dir is
 // owned entirely by this tool, so the prune is safe.
+//
+// The write is atomic-on-failure: all shards are marshaled in memory and staged
+// to dir/.shards-staging before any existing shards are removed, so a mid-write
+// error leaves dir intact (the README remains authoritative for re-running migrate).
 func WriteShards(dir string, shards []Shard) ([]string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
+
+	// Marshal all shards in memory first; a failure here leaves dir untouched.
+	used := map[string]bool{}
+	type pending struct {
+		name string
+		data []byte
+	}
+	todo := make([]pending, 0, len(shards))
+	for _, s := range shards {
+		data, err := MarshalShard(s)
+		if err != nil {
+			return nil, fmt.Errorf("marshal shard %s/%s: %w", s.Date, s.Label, err)
+		}
+		todo = append(todo, pending{ShardFilename(s, used), data})
+	}
+
+	// Prepare a staging directory inside dir (same filesystem → rename is atomic).
+	// A leftover staging dir from a previous crash is safe to remove; a file at
+	// that path indicates an unexpected collision and is treated as an error.
+	staging := filepath.Join(dir, ".shards-staging")
+	if info, err := os.Stat(staging); err == nil {
+		if !info.IsDir() {
+			return nil, fmt.Errorf("staging path %s exists but is not a directory", staging)
+		}
+		if err := os.RemoveAll(staging); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.Mkdir(staging, 0o755); err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(staging)
+
+	for _, p := range todo {
+		if err := os.WriteFile(filepath.Join(staging, p.name), p.data, 0o644); err != nil {
+			return nil, err
+		}
+	}
+
+	// All staging writes succeeded — prune old shards, then move new ones into place.
 	existing, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return nil, err
@@ -78,26 +122,21 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 			return nil, err
 		}
 		if !bytes.Contains(data, []byte("date:")) {
-			// Not a shard file — leave it alone.
 			continue
 		}
 		if err := os.Remove(f); err != nil {
 			return nil, err
 		}
 	}
-	used := map[string]bool{}
-	var written []string
-	for _, s := range shards {
-		data, err := MarshalShard(s)
-		if err != nil {
-			return nil, fmt.Errorf("marshal shard %s/%s: %w", s.Date, s.Label, err)
-		}
-		name := ShardFilename(s, used)
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+	for _, p := range todo {
+		if err := os.Rename(filepath.Join(staging, p.name), filepath.Join(dir, p.name)); err != nil {
 			return nil, err
 		}
-		written = append(written, name)
+	}
+
+	var written []string
+	for _, p := range todo {
+		written = append(written, p.name)
 	}
 	sort.Strings(written)
 	return written, nil
