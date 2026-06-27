@@ -48,13 +48,14 @@ func newExecDispatcher(t *testing.T, b sandbox.Backend) *Dispatcher {
 func execCtx() context.Context { return WithExecEligibility(context.Background(), true) }
 
 // TestEnableExecution_EveryExecToolIsGated is the Epic 11.2 structural invariant:
-// every execution tool offered to agents (ExecutionTools) must, once wired by
-// EnableExecution, be BOTH present in the execTools gate map AND backed by a
-// registered handler — so no exec handler can reach runInSandbox/execBackend
-// ungated. It also asserts the converse: no execTools entry exists without a
-// backing handler (no orphan gates). A future exec tool added to ExecutionTools
-// but registered ungated (e.g. via mustRegister/RegisterTool instead of the
-// trusted registerExec path) would fail this test.
+// ExecutionTools() is the authoritative registry of sandbox-reaching tools.
+// Every execution tool offered to agents must, once wired by EnableExecution,
+// be BOTH present in the execTools gate map AND backed by a registered handler
+// — so no exec handler can reach runInSandbox/execBackend ungated. It also
+// asserts the converse: no execTools entry exists without a backing handler
+// (no orphan gates), and every execTools entry is listed in ExecutionTools().
+// A future exec tool added to ExecutionTools but registered ungated, or a
+// sandbox-reaching handler added outside ExecutionTools(), would fail this test.
 func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
@@ -69,6 +70,14 @@ func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	for name := range d.execTools {
 		_, hasHandler := d.handlers[name]
 		assert.True(t, hasHandler, "execTools gate %q has no backing handler (orphan gate)", name)
+		found := false
+		for _, def := range ExecutionTools() {
+			if def.Name == name {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "execTools gate %q must be listed in ExecutionTools()", name)
 	}
 }
 
