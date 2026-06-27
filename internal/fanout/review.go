@@ -236,7 +236,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if empty {
 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "")
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +420,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	payloads := map[string]modePayload{
 		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode)
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, "")
 	if err != nil {
 		return nil, err
 	}
@@ -663,12 +663,12 @@ func neededModes(cfg *ReviewConfig) []string {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode string) ([]Slot, map[string]string, error) {
+func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
 	perAgentMode := map[string]string{}
 	var slots []Slot
 
 	add := func(name string, serial bool) error {
-		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode)
+		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode, scopeConstraint)
 		if err != nil {
 			return err
 		}
@@ -749,7 +749,7 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
 
 // buildAgent resolves an agent's persona, renders its prompt against the payload
 // it sees, and assembles the invocation. It returns the agent and its mode.
-func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode string) (Agent, string, error) {
+func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
 	ac, ok := cfg.Registry.Agents[name]
 	if !ok {
 		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
