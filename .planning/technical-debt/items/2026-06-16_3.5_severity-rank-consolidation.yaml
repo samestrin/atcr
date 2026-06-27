@@ -1,0 +1,40 @@
+date: "2026-06-16"
+source_type: Sprint
+label: 3.5_severity-rank-consolidation
+items:
+  - group: "4"
+    status: deferred
+    severity: LOW
+    file: internal/reconcile/severity_consolidation_test.go:18
+    problem: 'Test name too long (Won''t fix: rejected by maintainer — breaks file''s TestSubject_Behavior naming convention)'
+    fix: Shorten to TestMergeNormalizesMixedCase
+    category: maintainancy
+    est_minutes: 2
+    source: code-review
+    reviewers:
+      - Reviewer
+    confidence: MEDIUM
+  - group: "4"
+    status: deferred
+    severity: LOW
+    file: internal/reconcile/severity_consolidation_test.go:30
+    problem: 'Test name too long (Won''t fix: rejected by maintainer — breaks file''s TestSubject_Behavior naming convention)'
+    fix: Shorten to TestGrayZoneNormalizesMixedCase
+    category: maintainancy
+    est_minutes: 2
+    source: code-review
+    reviewers:
+      - Reviewer
+    confidence: MEDIUM
+  - group: "4"
+    status: deferred
+    severity: LOW
+    file: internal/reconcile/severity_consolidation_test.go:42
+    problem: 'Test name too long (Won''t fix: rejected by maintainer — breaks file''s TestSubject_Behavior naming convention)'
+    fix: Shorten to TestMergeNoDisagreementOnCase
+    category: maintainancy
+    est_minutes: 2
+    source: code-review
+    reviewers:
+      - Reviewer
+    confidence: MEDIUM

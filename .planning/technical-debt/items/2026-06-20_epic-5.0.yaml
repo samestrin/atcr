@@ -1,0 +1,22 @@
+date: "2026-06-20"
+source_type: Sprint
+label: epic-5.0
+items:
+  - group: U
+    status: deferred
+    severity: LOW
+    file: internal/report/render.go:317
+    problem: The "File not found" warning format string is duplicated across internal/reconcile/emit.go (writeFindingsList) and internal/report/render.go (writePathWarning) in separate packages
+    fix: 'Extract a shared constant/helper only if a common low-level rendering package emerges; a cross-package dependency is not justified for one format string today (Won''t-fix 2026-06-21: two independent format strings across packages with no shared dependency; the recorded fix confirms extraction is not justified at this scope)'
+    category: CROSS_CUTTING
+    est_minutes: 15
+    source: execute-epic-cumulative
+  - group: U
+    status: deferred
+    severity: MEDIUM
+    file: internal/reconcile/reconcile.go:26
+    problem: Validation root is hardcoded to "." at every call site, so "atcr reconcile <path>" for a review of another repo, or running from a non-repo-root CWD, falsely flags every finding as "file not found"
+    fix: 'Thread the reviewed repo root explicitly or add a --repo flag, applied consistently with the verify stage which uses the same "." convention (Deferred 2026-06-21: the narrow Root: os.Getwd() variant is a no-op — filepath.Abs(".") already equals the CWD, so it would not fix the non-repo-root / other-repo case; the real fix is to plumb the reviewed-repo path explicitly via a --repo flag threaded through the reconcile and verify call sites, est 60)'
+    category: EDGE_CASES
+    est_minutes: 60
+    source: execute-epic-independent

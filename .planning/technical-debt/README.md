@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 25 | 0 |
-| LOW | 5 | 23 | 0 |
+| LOW | 8 | 23 | 0 |
 
-**Last Modified:** 2026-06-26 | **Open Items:** 5 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 55
+**Last Modified:** 2026-06-26 | **Open Items:** 8 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 58
 
 ## Directory Structure
 
@@ -32,7 +32,43 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+## Sharded Storage Format (`items/`) — additive, Epic 12.1
 
+As of Epic 12.1, every item in the dated table below is **also** stored as a
+structured YAML file under [`items/`](items/), **sharded by source** — one file
+per `### [date] From <Sprint|Review>: <label>` section (e.g.
+`items/2026-06-26_epic-11.2.yaml`). A single review producing 50–100 findings is
+therefore **one** shard file, not 50–100, and two concurrent review/sprint runs
+each write their own new file, so they never merge-conflict on TD storage.
+
+This is **additive and not yet canonical**:
+
+- **The Markdown table below remains authoritative.** All existing tooling (the
+  `td_*` MCP binaries and the TD skills) reads/writes this table unchanged. The
+  shards are generated *alongside* it and are not yet machine-read by any tool.
+- The cutover that makes the shards canonical (and updates the binaries/skills)
+  is deferred to a follow-on epic (18.0 / 12.3). No tooling changed in 12.1.
+
+**Tooling** — `cmd/td-migrate` (logic in `internal/tdmigrate/`):
+
+| Command | Effect |
+|---------|--------|
+| `go run ./cmd/td-migrate migrate`  | Parse this README table → (re)write the shards under `items/`. Idempotent: prunes its own prior `*.yaml` output. |
+| `go run ./cmd/td-migrate generate` | Read the shards → print a regenerated ToC table to **stdout** (never overwrites this README). |
+| `go run ./cmd/td-migrate validate` | Strict-load + schema-check every shard; a malformed shard fails **loudly** (non-zero exit). |
+
+The shard schema, field semantics, and the YAML-safety guarantees are documented
+in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
+table with zero data loss) is proven by the Go test suite in
+`internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-26] From Sprint: epic-12.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 2 | [ ] | LOW | internal/tdmigrate/run.go:60 | generate and validate subcommands register a --readme flag via the shared newFlags helper but never read it, so `td-migrate generate --readme X` is silently accepted and ignored | Give generate/validate their own flag setup that registers only --items, or document that --readme is migrate-only | UNDER_ENGINEERING | 15 | execute-epic-cumulative |
+| 2 | [ ] | LOW | internal/tdmigrate/generate.go:39 | Item.Notes has no table column so GenerateTable drops it from the ToC summary; acceptable by design (shards keep notes) but the generated table is not lossless for notes | Add a delimited notes cell to the ToC or emit a warning when a non-empty notes field is summarized away | UNDER_ENGINEERING | 30 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/tdmigrate/shard.go:75 | WriteShards removes all existing *.yaml before writing the new set, so a failure mid-loop can leave items/ partially wiped (recoverable by re-running migrate since the README stays authoritative) | Write to temp files/dir and atomically swap into place only after all shards marshal and write successfully | ERROR_PATHS | 45 | execute-epic-independent |
 
 ### [2026-06-26] From Sprint: epic-11.2
 

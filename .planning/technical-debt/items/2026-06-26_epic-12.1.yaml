@@ -1,0 +1,31 @@
+date: "2026-06-26"
+source_type: Sprint
+label: epic-12.1
+items:
+  - group: "2"
+    status: open
+    severity: LOW
+    file: internal/tdmigrate/run.go:60
+    problem: generate and validate subcommands register a --readme flag via the shared newFlags helper but never read it, so `td-migrate generate --readme X` is silently accepted and ignored
+    fix: Give generate/validate their own flag setup that registers only --items, or document that --readme is migrate-only
+    category: UNDER_ENGINEERING
+    est_minutes: 15
+    source: execute-epic-cumulative
+  - group: "2"
+    status: open
+    severity: LOW
+    file: internal/tdmigrate/generate.go:39
+    problem: Item.Notes has no table column so GenerateTable drops it from the ToC summary; acceptable by design (shards keep notes) but the generated table is not lossless for notes
+    fix: Add a delimited notes cell to the ToC or emit a warning when a non-empty notes field is summarized away
+    category: UNDER_ENGINEERING
+    est_minutes: 30
+    source: execute-epic-independent
+  - group: "2"
+    status: open
+    severity: LOW
+    file: internal/tdmigrate/shard.go:75
+    problem: WriteShards removes all existing *.yaml before writing the new set, so a failure mid-loop can leave items/ partially wiped (recoverable by re-running migrate since the README stays authoritative)
+    fix: Write to temp files/dir and atomically swap into place only after all shards marshal and write successfully
+    category: ERROR_PATHS
+    est_minutes: 45
+    source: execute-epic-independent
