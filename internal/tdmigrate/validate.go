@@ -48,6 +48,9 @@ func (e *ValidationError) Error() string {
 // ValidateDir strict-loads and schema-checks every *.yaml shard in dir. It
 // returns a *ValidationError listing each failure, or nil if all shards pass.
 func ValidateDir(dir string) (int, error) {
+	if _, err := os.Stat(dir); err != nil {
+		return 0, fmt.Errorf("validate dir: %w", err)
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return 0, err

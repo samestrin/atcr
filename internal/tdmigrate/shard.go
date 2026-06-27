@@ -106,6 +106,9 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 // LoadShards strict-loads every *.yaml shard in dir (unknown fields rejected,
 // schema validated) and returns them sorted by filename for determinism.
 func LoadShards(dir string) ([]Shard, error) {
+	if _, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("load shards: %w", err)
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return nil, err
