@@ -133,6 +133,9 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "generate: load shards: %v\n", err)
 		return 1
 	}
+	if n := countItemsWithNotes(shards); n > 0 {
+		_, _ = fmt.Fprintf(stderr, "generate: warning: %d item(s) have notes that are dropped from the generated table (shards remain lossless)\n", n)
+	}
 	table, err := GenerateTable(shards)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "generate: render table: %v\n", err)

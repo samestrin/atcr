@@ -72,6 +72,21 @@ func cell(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// countItemsWithNotes returns the number of items across all shards that carry
+// a non-empty Notes field. GenerateTable has no Notes column, so notes are
+// silently dropped in the generated ToC; callers can use this to warn.
+func countItemsWithNotes(shards []Shard) int {
+	n := 0
+	for _, s := range shards {
+		for _, it := range s.Items {
+			if it.Notes != "" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 func sectionHasReviewers(s Shard) bool {
 	for _, it := range s.Items {
 		if len(it.Reviewers) > 0 || it.Confidence != "" {
