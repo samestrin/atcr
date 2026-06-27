@@ -68,7 +68,8 @@ func TestFilename_IDAndSlug(t *testing.T) {
 	assert.True(t, strings.HasPrefix(name, "TD-0001-"), "filename starts with id: %s", name)
 	assert.True(t, strings.HasSuffix(name, ".md"), "filename ends with .md: %s", name)
 	assert.NotContains(t, name, " ", "slug must not contain spaces: %s", name)
-	assert.Equal(t, strings.ToLower(name), name, "filename must be lowercase: %s", name)
+	slug := strings.TrimSuffix(strings.TrimPrefix(name, "TD-0001-"), ".md")
+	assert.Equal(t, strings.ToLower(slug), slug, "slug must be lowercase: %s", slug)
 }
 
 func TestFilename_EmptyProblemFallsBackToID(t *testing.T) {
