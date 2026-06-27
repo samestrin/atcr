@@ -117,6 +117,23 @@ func TestWriteShards_StagingPathBlockedByFile(t *testing.T) {
 	}
 }
 
+func TestWriteShards_InvalidDateRejected(t *testing.T) {
+	// A shard whose Date contains a path separator (e.g. from a corrupted merge)
+	// must be rejected before ShardFilename composes a directory-escaping path.
+	dir := t.TempDir()
+	bad := []Shard{{
+		Date: "../../evil", SourceType: "Sprint", Label: "x",
+		Items: []Item{{
+			Group: "1", Status: StatusOpen, Severity: "LOW",
+			File: "f.go:1", Problem: "p", Fix: "f", Category: "c",
+			EstMinutes: 5, Source: "src",
+		}},
+	}}
+	if _, err := WriteShards(dir, bad); err == nil {
+		t.Error("WriteShards should reject a shard with an invalid date format, got nil error")
+	}
+}
+
 func TestMarshalShard_MultilineBlockScalar(t *testing.T) {
 	s := Shard{
 		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
