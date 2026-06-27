@@ -48,14 +48,18 @@ func newExecDispatcher(t *testing.T, b sandbox.Backend) *Dispatcher {
 func execCtx() context.Context { return WithExecEligibility(context.Background(), true) }
 
 // TestEnableExecution_EveryExecToolIsGated is the Epic 11.2 structural invariant:
+// TestEnableExecution_EveryExecToolIsGated is the Epic 11.2 structural invariant:
 // ExecutionTools() is the authoritative registry of sandbox-reaching tools.
-// Every execution tool offered to agents must, once wired by EnableExecution,
-// be BOTH present in the execTools gate map AND backed by a registered handler
-// — so no exec handler can reach runInSandbox/execBackend ungated. It also
-// asserts the converse: no execTools entry exists without a backing handler
-// (no orphan gates), and every execTools entry is listed in ExecutionTools().
-// A future exec tool added to ExecutionTools but registered ungated, or a
-// sandbox-reaching handler added outside ExecutionTools(), would fail this test.
+// The enforcement is already structural in three layers: (1) Execute()
+// (dispatch.go:225) refuses any execGated tool unless execEligible(ctx) is true;
+// (2) registerExec (dispatch.go:186-192) is the sole writer of the unexported
+// execTools map; (3) runInSandbox/execBackend (exec_tools.go:212,
+// dispatch.go:80) are unexported, so no handler registered through the public
+// API can reach the sandbox. Every execution tool offered to agents must,
+// once wired by EnableExecution, be present in execTools AND backed by a
+// registered handler. The test asserts the converse too: no execTools entry
+// exists without a backing handler (no orphan gates), and every execTools
+// entry is listed in ExecutionTools().
 func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
