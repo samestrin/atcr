@@ -32,7 +32,35 @@ technical-debt/
 3. **During sprint planning**: Move items from pending to active
 4. **After resolution**: Move items from active to completed
 
+## Sharded Storage Format (`items/`) — additive, Epic 12.1
 
+As of Epic 12.1, every item in the dated table below is **also** stored as a
+structured YAML file under [`items/`](items/), **sharded by source** — one file
+per `### [date] From <Sprint|Review>: <label>` section (e.g.
+`items/2026-06-26_epic-11.2.yaml`). A single review producing 50–100 findings is
+therefore **one** shard file, not 50–100, and two concurrent review/sprint runs
+each write their own new file, so they never merge-conflict on TD storage.
+
+This is **additive and not yet canonical**:
+
+- **The Markdown table below remains authoritative.** All existing tooling (the
+  `td_*` MCP binaries and the TD skills) reads/writes this table unchanged. The
+  shards are generated *alongside* it and are not yet machine-read by any tool.
+- The cutover that makes the shards canonical (and updates the binaries/skills)
+  is deferred to a follow-on epic (18.0 / 12.3). No tooling changed in 12.1.
+
+**Tooling** — `cmd/td-migrate` (logic in `internal/tdmigrate/`):
+
+| Command | Effect |
+|---------|--------|
+| `go run ./cmd/td-migrate migrate`  | Parse this README table → (re)write the shards under `items/`. Idempotent: prunes its own prior `*.yaml` output. |
+| `go run ./cmd/td-migrate generate` | Read the shards → print a regenerated ToC table to **stdout** (never overwrites this README). |
+| `go run ./cmd/td-migrate validate` | Strict-load + schema-check every shard; a malformed shard fails **loudly** (non-zero exit). |
+
+The shard schema, field semantics, and the YAML-safety guarantees are documented
+in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
+table with zero data loss) is proven by the Go test suite in
+`internal/tdmigrate/`, not by a committed generated artifact.
 
 ### [2026-06-26] From Sprint: epic-11.2
 
