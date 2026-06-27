@@ -298,6 +298,29 @@ func TestReviewCmd_NoCacheFlagRegistered(t *testing.T) {
 	require.False(t, v, "--no-cache defaults to false (caching active)")
 }
 
+// TestReviewCmd_SprintPlanFlagRegistered verifies the --sprint-plan flag exists
+// on the review command and defaults to empty (diff-wide review when unset), per
+// Epic 12.2 AC1.
+func TestReviewCmd_SprintPlanFlagRegistered(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NotNil(t, cmd.Flags().Lookup("sprint-plan"), "review must define --sprint-plan")
+	v, err := cmd.Flags().GetString("sprint-plan")
+	require.NoError(t, err)
+	require.Equal(t, "", v, "--sprint-plan defaults to empty (diff-wide review)")
+}
+
+// TestSprintPlanPath_MapsFlag verifies the flag value is read (and trimmed) so it
+// can populate ReviewRequest.SprintPlanPath; an unset flag yields empty.
+func TestSprintPlanPath_MapsFlag(t *testing.T) {
+	cmd := newReviewCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--sprint-plan", "  plans/sprint.md  "}))
+	require.Equal(t, "plans/sprint.md", sprintPlanPath(cmd), "value is read and trimmed")
+
+	cmd2 := newReviewCmd()
+	require.NoError(t, cmd2.ParseFlags(nil))
+	require.Equal(t, "", sprintPlanPath(cmd2), "unset flag yields empty")
+}
+
 // TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
 // --resume and --force is a usage error (exit 2) regardless of a git repo,
 // because the guard fires at the resume branch before any range resolution.

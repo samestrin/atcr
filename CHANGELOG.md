@@ -1,3 +1,13 @@
+## [12.2.0] - 2026-06-27
+
+### Added
+
+- **Sprint-plan scoping (epic 12.2):** `atcr review --sprint-plan <path>` accepts a markdown sprint/epic plan and injects it as a `SCOPE CONSTRAINT` block immediately before the diff in every reviewer's prompt, so reviewer personas suppress findings for changes unrelated to the plan's active work items (dependency bumps, formatter-only reformatting, mechanical refactors). The constraint is a soft scope — genuinely critical out-of-scope issues are still reported. Restores the capability dropped in epic 12.0.
+- The plan is read once per review and capped at 16 KiB on a UTF-8 boundary before injection, so it cannot inflate agent prompts past the payload byte budget. A missing or empty plan is ignored (the review proceeds diff-wide); an unreadable plan warns on stderr and proceeds. Because the constraint is part of the rendered prompt, the diff cache key invalidates automatically when the plan changes.
+- The ingestion path (`PrepareReviewFromDiff`) honors `--sprint-plan` too; `ReviewRequest.SprintPlanPath` exposes the field to library and MCP callers.
+
+*Shipped via /execute-epic (epic 12.2)*
+
 ## [12.1.0] - 2026-06-26
 
 ### Added

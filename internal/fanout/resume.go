@@ -284,7 +284,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	slots, _, err := buildSlots(cfg, payloads, req.Range, "")
+	slots, _, err := buildSlots(cfg, payloads, req.Range, "", "")
 	if err != nil {
 		return nil, nil, err
 	}
