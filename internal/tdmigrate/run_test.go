@@ -122,6 +122,14 @@ func TestRun_MigrateRefusesEmptyWipe(t *testing.T) {
 	}
 }
 
+func TestNewFlags_DoesNotTakeArgs(t *testing.T) {
+	var stderr bytes.Buffer
+	fs, _, _ := newFlags("migrate", &stderr)
+	if err := fs.Parse([]string{"--readme", "/dev/null"}); err != nil {
+		t.Errorf("parse failed: %v", err)
+	}
+}
+
 func TestRun_ValidateCatchesBadShard(t *testing.T) {
 	items := t.TempDir()
 	// Unknown field -> strict-load rejection.
