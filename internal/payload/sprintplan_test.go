@@ -153,6 +153,20 @@ func embeddedPlan(t *testing.T, block string) string {
 	return rest[:j]
 }
 
+// ScopeConstraint must scrub interior invalid UTF-8 bytes before embedding the
+// plan, so a non-text or binary plan cannot inject malformed UTF-8 into prompts.
+func TestScopeConstraint_ScrubsInvalidUTF8(t *testing.T) {
+	invalid := "hello\xff\xfeworld"
+	block, _ := ScopeConstraint(invalid)
+	if !utf8.ValidString(block) {
+		t.Fatalf("ScopeConstraint produced invalid UTF-8: %q", block)
+	}
+	// The invalid bytes must not survive inside the embedded segment.
+	if strings.Contains(embeddedPlan(t, block), "\xff") {
+		t.Fatalf("embedded plan still contains invalid byte")
+	}
+}
+
 // The byte cap must not split a multibyte UTF-8 rune: truncating mid-rune would
 // emit invalid UTF-8 into every agent prompt.
 func TestScopeConstraint_TruncatesOnRuneBoundary(t *testing.T) {
