@@ -1,3 +1,12 @@
+## [Tooling] - 2026-06-26
+
+### Added
+
+- Added `atcr --version` flag and `atcr version` subcommand (both report the same string, derived from ldflags, the installed module version, or the VCS revision) — previously `atcr --version` exited 2 with "unknown flag", which broke downstream pre-flight checks that probe the binary that way
+- Added `docs/code-review-backend.md` documenting the `--output-dir` contract for driving atcr as the reviewer backend of a separate code-review skill or pipeline (invocation, output tree, 8-column pool vs 9-column reconciled streams, partial-run and finding-count behavior)
+
+*Tooling and documentation; no behavioral change to review/reconcile*
+
 ## [Technical Debt] - 2026-06-26
 
 ### Fixed

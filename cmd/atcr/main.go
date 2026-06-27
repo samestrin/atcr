@@ -129,6 +129,11 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "atcr",
 		Short: "Agent Team Code Review — a review panel, not a reviewer",
+		// Setting Version makes cobra auto-register the --version flag, which
+		// short-circuits before PersistentPreRunE (matching the comments on that
+		// hook below). A peer `version` subcommand is also registered for the
+		// `atcr version` convention; both render the same string.
+		Version: atcrVersion(),
 		Long: "atcr fans a code change out to a panel of heterogeneous LLM reviewer personas,\n" +
 			"then deterministically reconciles their findings into a single deduplicated,\n" +
 			"confidence-scored deliverable.\n\n" +
@@ -188,6 +193,7 @@ func newRootCmd() *cobra.Command {
 		newLeaderboardCmd(),
 		newBenchmarkCmd(),
 		newPersonasCmd(),
+		newVersionCmd(),
 	)
 	return root
 }
