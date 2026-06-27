@@ -34,6 +34,21 @@ func TestReadSprintPlan(t *testing.T) {
 		t.Fatalf("ReadSprintPlan(valid) = (%q, %v), want (%q, nil)", got, err, body)
 	}
 
+	// An empty file is readable but carries no plan: ReadSprintPlan returns its
+	// (empty) content with no error, and ScopeConstraint then yields no block, so
+	// the review proceeds diff-wide (Epic 12.2 AC2, "empty file is ignored").
+	emptyPath := filepath.Join(dir, "empty.md")
+	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadSprintPlan(emptyPath)
+	if err != nil || got != "" {
+		t.Fatalf("ReadSprintPlan(empty file) = (%q, %v), want (\"\", nil)", got, err)
+	}
+	if block, _ := ScopeConstraint(got); block != "" {
+		t.Fatalf("ScopeConstraint(empty file content) = %q, want \"\"", block)
+	}
+
 	// An unreadable path (a directory) returns an error so the caller can warn on
 	// stderr without crashing the review (AC3).
 	if _, err := ReadSprintPlan(dir); err == nil {
