@@ -107,7 +107,7 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 	if err := os.Mkdir(staging, 0o755); err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(staging)
+	defer func() { _ = os.RemoveAll(staging) }()
 
 	for _, p := range todo {
 		if err := os.WriteFile(filepath.Join(staging, p.name), p.data, 0o644); err != nil {
