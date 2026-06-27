@@ -51,6 +51,15 @@ func TestResolveScopeConstraint(t *testing.T) {
 	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: big})
 	require.Contains(t, c, "SCOPE CONSTRAINT")
 	require.NotEmpty(t, w, "an oversized plan must warn that it was truncated")
+	// Tightened: verify the embedded plan length is exactly at the byte cap.
+	// ASCII-only input means no rune-boundary adjustment, so the count is exact.
+	beginIdx := strings.Index(c, "----- BEGIN SPRINT PLAN -----\n")
+	endIdx := strings.Index(c, "\n----- END SPRINT PLAN -----")
+	require.GreaterOrEqual(t, beginIdx, 0, "constraint must have BEGIN marker")
+	require.GreaterOrEqual(t, endIdx, 0, "constraint must have END marker")
+	embeddedLen := endIdx - (beginIdx + len("----- BEGIN SPRINT PLAN -----\n"))
+	require.Equal(t, int(payload.MaxSprintPlanBytes), embeddedLen,
+		"embedded plan must be exactly MaxSprintPlanBytes bytes for ASCII-only input")
 }
 
 // End-to-end: a ReviewRequest carrying a SprintPlanPath must make PrepareReviewFromDiff
