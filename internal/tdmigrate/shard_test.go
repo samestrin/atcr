@@ -94,6 +94,29 @@ func TestWriteShards_SkipsUnrelatedYAML(t *testing.T) {
 	}
 }
 
+func TestWriteShards_StagingPathBlockedByFile(t *testing.T) {
+	dir := t.TempDir()
+	// Populate with old shards so we can verify they survive.
+	if _, err := WriteShards(dir, sampleShards(t)); err != nil {
+		t.Fatal(err)
+	}
+	// Block the staging path with a regular file. The new atomic implementation
+	// detects this and returns an error without touching existing shards.
+	staging := filepath.Join(dir, ".shards-staging")
+	if err := os.WriteFile(staging, []byte("block"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := WriteShards(dir, sampleShards(t))
+	if err == nil {
+		t.Error("WriteShards should fail when staging path is a file, not a directory")
+	}
+	// Existing shards must be intact after the failure.
+	after, _ := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if len(after) == 0 {
+		t.Error("existing shards were wiped even though WriteShards failed")
+	}
+}
+
 func TestMarshalShard_MultilineBlockScalar(t *testing.T) {
 	s := Shard{
 		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
