@@ -115,6 +115,23 @@ func TestParseREADME_ColonlessHeaderFailsLoudly(t *testing.T) {
 	}
 }
 
+func TestParseREADME_EmptySectionFailsLoudly(t *testing.T) {
+	empty := `### [2026-06-26] From Sprint: x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+
+### [2026-06-27] From Sprint: y
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(empty); err == nil {
+		t.Error("expected hard error for empty section, got nil")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
