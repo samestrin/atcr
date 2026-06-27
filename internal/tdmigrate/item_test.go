@@ -77,6 +77,20 @@ func TestFilename_EmptyProblemFallsBackToID(t *testing.T) {
 	assert.Equal(t, "TD-0002.md", it.Filename())
 }
 
+func TestRenderParseItemFile_ProblemContainingFixHeadingText(t *testing.T) {
+	in := sampleItem()
+	// Problem text mentions "## Fix" mid-stream; it must not split the body early.
+	in.Problem = "The caller suggested writing a `## Fix` heading here, but that is prose.\nSecond line still part of the problem."
+
+	rendered, err := RenderItemFile(in)
+	require.NoError(t, err)
+
+	out, err := ParseItemFile(rendered)
+	require.NoError(t, err)
+	assert.Equal(t, in.Problem, out.Problem)
+	assert.Equal(t, in.Fix, out.Fix)
+}
+
 func TestParseItemFile_RejectsMissingFrontmatter(t *testing.T) {
 	_, err := ParseItemFile("no frontmatter here\n## Problem\n\nx\n")
 	require.Error(t, err)

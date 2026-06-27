@@ -138,17 +138,24 @@ func ParseItemFile(content string) (Item, error) {
 }
 
 // splitBody extracts the Problem and Fix sections from an item Markdown body.
+// Headings are matched only at line boundaries so that free-form Problem text
+// containing the literal string "## Fix" is not mistaken for the Fix heading.
 func splitBody(body string) (problem, fix string, err error) {
-	pIdx := strings.Index(body, problemHeading)
+	// Prepend a newline so a heading on the very first line is still anchored.
+	anchored := "\n" + body
+	pMarker := "\n" + problemHeading + "\n"
+	fMarker := "\n" + fixHeading + "\n"
+
+	pIdx := strings.Index(anchored, pMarker)
 	if pIdx < 0 {
 		return "", "", fmt.Errorf("missing %q section", problemHeading)
 	}
-	fIdx := strings.Index(body, fixHeading)
+	fIdx := strings.Index(anchored, fMarker)
 	if fIdx < 0 || fIdx < pIdx {
 		return "", "", fmt.Errorf("missing %q section", fixHeading)
 	}
-	problem = strings.TrimSpace(body[pIdx+len(problemHeading) : fIdx])
-	fix = strings.TrimSpace(body[fIdx+len(fixHeading):])
+	problem = strings.TrimSpace(anchored[pIdx+len(pMarker) : fIdx])
+	fix = strings.TrimSpace(anchored[fIdx+len(fMarker):])
 	return problem, fix, nil
 }
 
