@@ -1,0 +1,13 @@
+date: "2026-06-20"
+source_type: Sprint
+label: epic-5.2
+items:
+  - group: U
+    status: deferred
+    severity: LOW
+    file: internal/cache/store.go:115
+    problem: 'Eviction does a full ReadDir+Stat of the cache dir on every Put even when under the cap; O(n) per write scales poorly if the cache accumulates thousands of entries (Won''t-fix 2026-06-21: scan runs serially under the store mutex and LLM calls dominate latency; no Epic 5.2 perf criterion requires O(1) Put — added state not justified at LOW)'
+    fix: Maintain a running total-size counter and skip the directory scan when it is under the cap, or evict only on a periodic/threshold basis
+    category: PERFORMANCE
+    est_minutes: 30
+    source: execute-epic-cumulative

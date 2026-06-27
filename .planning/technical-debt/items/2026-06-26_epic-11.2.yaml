@@ -1,0 +1,31 @@
+date: "2026-06-26"
+source_type: Sprint
+label: epic-11.2
+items:
+  - group: "1"
+    status: open
+    severity: LOW
+    file: internal/tools/dispatch.go:123
+    problem: execToolPatterns uses substring matching so "run"/"eval" reject legitimate read-only names (e.g. prune_* or *retrieval*); harmless today but constrains future read-only tool naming
+    fix: Match on _-split token boundaries instead of strings.Contains, or document the accepted false-positive set
+    category: REGRESSION_RISK
+    est_minutes: 30
+    source: execute-epic-independent
+  - group: "1"
+    status: open
+    severity: LOW
+    file: internal/tools/dispatch.go:123
+    problem: exec-verb list omits common execution verbs (spawn/invoke/launch/system/cmd/fork/popen/subprocess) so an exec-named handler using one slips past the name lint; mitigated since external handlers cannot reach the unexported execBackend
+    fix: Expand the fragment list or add a comment stating the true boundary is the unexported execBackend (name guard is defense-in-depth only)
+    category: EDGE_CASES
+    est_minutes: 15
+    source: execute-epic-independent
+  - group: "1"
+    status: open
+    severity: LOW
+    file: internal/tools/exec_tools_test.go:49
+    problem: TestEnableExecution_EveryExecToolIsGated keys off ExecutionTools() rather than handlers whose bodies reach runInSandbox, so a future in-package sandbox-reaching handler not added to ExecutionTools() escapes this invariant
+    fix: Assert any sandbox-reaching handler is registered only via registerExec, or document ExecutionTools() as the authoritative exec-tool registry the test relies on
+    category: UNDER_ENGINEERING
+    est_minutes: 30
+    source: execute-epic-independent
