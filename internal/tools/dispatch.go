@@ -130,15 +130,19 @@ func (d *Dispatcher) RegisteredTools() []string {
 // (Execution-verb names are handled separately by execToolPatterns below.)
 var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif", "update", "append", "patch"}
 
-// execToolPatterns are common English fragments that appear in code-executing
-// tool names. The public RegisterTool API rejects them so an exec-capable handler
-// can never be registered through it ungated (Epic 11.2): the ONLY sanctioned way
-// to add an exec tool is EnableExecution, which routes through registerExec and
-// atomically co-sets the execTools gate. Like writeToolPatterns this is a
+// execToolPatterns are common English fragments that appear at the START of a
+// `_`-separated token in code-executing tool names. The public RegisterTool API
+// rejects them so an exec-capable handler can never be registered through it
+// ungated (Epic 11.2): the ONLY sanctioned way to add an exec tool is
+// EnableExecution, which routes through registerExec and atomically co-sets the
+// execTools gate. Matching is token-boundary (each `_`-split token is checked
+// with strings.HasPrefix) rather than substring, so legitimate read-only names
+// like "prune_results" ("run" inside "prune") or "data_retrieval" ("eval" inside
+// "retrieval") are not incorrectly rejected. Like writeToolPatterns this is a
 // secondary lint, not the security boundary — the boundary is that execTools is
 // written solely by registerExec, and Execute refuses any execTools entry without
 // per-call eligibility. The built-in run_tests/run_script names DO match these
-// fragments and so bypass this guard deliberately, via registerExec.
+// patterns and so bypass this guard deliberately, via registerExec.
 // The list is intentionally not exhaustive: the true boundary is the
 // unexported execBackend, which is only wired by EnableExecution/registerExec;
 // this name guard is defense-in-depth only.
@@ -166,9 +170,16 @@ func guardToolName(name string) error {
 			return fmt.Errorf("tool registry: write tools are not allowed: %s", name)
 		}
 	}
-	for _, p := range execToolPatterns {
-		if strings.Contains(lower, p) {
-			return fmt.Errorf("tool registry: execution tools must be registered via EnableExecution, not RegisterTool: %s", name)
+	// Token-boundary check: split on "_" so that a pattern fragment embedded
+	// inside a longer word (e.g. "run" in "prune") does not produce a false
+	// positive. A token matches if it begins with the pattern — which catches
+	// bare pattern words ("run") and exec-prefixed compounds ("runner", "execctl").
+	tokens := strings.Split(lower, "_")
+	for _, tok := range tokens {
+		for _, p := range execToolPatterns {
+			if strings.HasPrefix(tok, p) {
+				return fmt.Errorf("tool registry: execution tools must be registered via EnableExecution, not RegisterTool: %s", name)
+			}
 		}
 	}
 	return nil
