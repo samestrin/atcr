@@ -1,0 +1,24 @@
+---
+id: TD-0046
+order: 46
+section: '[2026-06-15] From Sprint: 3.3_per-run_scorecard'
+date: "2026-06-15"
+group: U
+status: deferred
+severity: LOW
+file: internal/scorecard/store.go (FindByRunID adjacent-month notice; ReadRecords malformed-line notice); internal/scorecard/scorecard.go (Emit notices)
+category: ops
+est_minutes: "0"
+source: execute-sprint
+reviewers: execute-sprint
+confidence: MEDIUM
+has_review_cols: true
+---
+
+## Problem
+
+Store/emit diagnostics ("skipping malformed record", "run spans adjacent month files", "write failed") are written directly to the process-global `os.Stderr` rather than to a writer threaded from the cobra command (`cmd.ErrOrStderr()`). (Deferred: Epic Plan 3.4)
+
+## Fix
+
+accept an `io.Writer` (or logger) on the store/emit entry points and have the CLI pass `cmd.ErrOrStderr()`, so warnings are capturable and redirectable.

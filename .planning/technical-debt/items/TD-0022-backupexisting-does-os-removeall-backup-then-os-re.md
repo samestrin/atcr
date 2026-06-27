@@ -1,0 +1,24 @@
+---
+id: TD-0022
+order: 22
+section: '[2026-06-19] From Sprint: 4.7_idempotency'
+date: "2026-06-19"
+group: "3"
+status: deferred
+severity: MEDIUM
+file: internal/fanout/reviewdir.go:284
+category: correctness
+est_minutes: "120"
+source: code-review
+reviewers: code-reviewer, claude
+confidence: HIGH
+has_review_cols: true
+---
+
+## Problem
+
+backupExisting() does os.RemoveAll(backup) then os.Rename(path, backup); BackupToDotBak() does os.RemoveAll(bak) then copyTree. If the rename/copy fails (cross-filesystem EXDEV when --output-dir and its .bak sibling are on different mounts, disk-full mid-copy, or SIGKILL), the single prior backup generation is already destroyed while the new backup is absent or partial. The live/original tree is preserved (good), but the one recoverable prior .bak is lost for no benefit — counter to the safe-to-retry goal. (disagreement: LOW vs MEDIUM) (Deferred: Epic Plan 4.7.1)
+
+## Fix
+
+Stage the new backup first: copy/rename into <path>.bak.new (or rename old .bak aside to .bak.old), confirm it is complete, then swap and only then remove the old generation. For backupExisting, attempt os.Rename before RemoveAll so a failed rename leaves the old .bak intact; detect EXDEV and fall back to copy+remove. Add a fault-injection test asserting the prior .bak survives a failed swap.
