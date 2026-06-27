@@ -16,6 +16,12 @@ var sectionHeader = regexp.MustCompile(`^### \[(\d{4}-\d{2}-\d{2})\] From (Sprin
 // (loud-failure mandate) rather than silently skipped.
 var driftHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From ([^:]+):`)
 
+// unknownHeader catches any remaining `### [date] From ...` shape that did not
+// match sectionHeader or driftHeader (e.g., a colonless provenance line). This
+// prevents items beneath it from being silently re-attributed to the previous
+// shard.
+var unknownHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From `)
+
 // ParseREADME parses the technical-debt README table into per-source shards.
 // Anything before the first section header (title, Stats table, How-to-Use) is
 // ignored. A data row that does not split into exactly 9 or 11 cells, or whose
@@ -41,6 +47,10 @@ func ParseREADME(content string) ([]Shard, error) {
 		if dm := driftHeader.FindStringSubmatch(line); dm != nil {
 			return nil, fmt.Errorf("line %d: unrecognized section source type %q (want Sprint|Review): %q",
 				n+1, strings.TrimSpace(dm[1]), strings.TrimSpace(line))
+		}
+		if unknownHeader.MatchString(line) {
+			return nil, fmt.Errorf("line %d: malformed section header (missing Sprint|Review label?): %q",
+				n+1, strings.TrimSpace(line))
 		}
 		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
 			continue
