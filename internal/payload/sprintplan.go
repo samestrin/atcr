@@ -13,7 +13,10 @@ import (
 // payload build, before render), so an uncapped plan would inflate every agent
 // prompt past payload_byte_budget. At 16 KiB it is ~3% of the 512 KiB default
 // budget — large enough for any real sprint/epic plan, small enough that the
-// extra bytes cannot meaningfully bloat a prompt (Epic 12.2 AC6).
+// extra bytes cannot meaningfully bloat a prompt. Because the constraint is
+// added after budget accounting, a prompt already near payload_byte_budget can
+// still exceed it; the cap bounds the inflation rather than preventing overflow
+// (Epic 12.2 AC6).
 const MaxSprintPlanBytes int64 = 16384
 
 // ReadSprintPlan loads the sprint-plan file at path, returning its raw content.
