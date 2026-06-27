@@ -67,6 +67,13 @@ func ReadSprintPlan(path string) (string, error) {
 // changes but explicitly preserves an escape hatch for genuinely critical
 // out-of-scope issues, so a real security/data-loss bug is never silently lost.
 //
+// Cache-invalidation limitation for oversized plans: only the first
+// MaxSprintPlanBytes of the plan are reflected in the rendered prompt (and
+// therefore in the diff-cache key). Two distinct plans that share the same
+// leading bytes produce identical SCOPE CONSTRAINT blocks and identical cache
+// keys, so an edit that changes only content beyond the cap will not invalidate
+// cached review results. Keeping plans under the cap is the recommended fix.
+//
 // Like ScopeFocus, content is concatenated verbatim with no per-entry escaping:
 // the plan is trusted operator input, and the payload is injected as template
 // data (never re-parsed), so plan text containing template syntax is inert.
