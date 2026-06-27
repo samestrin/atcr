@@ -80,10 +80,32 @@ func TestScopeConstraint(t *testing.T) {
 	if !truncated {
 		t.Fatalf("ScopeConstraint(oversized) truncated=false, want true")
 	}
-	// The run of plan content embedded in the block must be capped to the ceiling.
-	if n := strings.Count(capped, "x"); int64(n) > MaxSprintPlanBytes {
+	// The plan content embedded between the markers must be capped to the ceiling,
+	// so the block cannot inflate every agent prompt past payload_byte_budget (AC6).
+	// Measure the embedded segment directly rather than counting a character that
+	// also appears in the wrapper prose.
+	if n := int64(len(embeddedPlan(t, capped))); n > MaxSprintPlanBytes {
 		t.Fatalf("ScopeConstraint embedded %d plan bytes, want <= %d", n, MaxSprintPlanBytes)
 	}
+}
+
+// embeddedPlan extracts the plan content a ScopeConstraint block wraps between
+// its BEGIN/END markers, so a test can measure the embedded segment precisely
+// without being fooled by characters in the wrapper prose.
+func embeddedPlan(t *testing.T, block string) string {
+	t.Helper()
+	const begin = "----- BEGIN SPRINT PLAN -----\n"
+	const end = "\n----- END SPRINT PLAN -----"
+	i := strings.Index(block, begin)
+	if i < 0 {
+		t.Fatalf("block missing BEGIN marker: %q", block)
+	}
+	rest := block[i+len(begin):]
+	j := strings.Index(rest, end)
+	if j < 0 {
+		t.Fatalf("block missing END marker: %q", block)
+	}
+	return rest[:j]
 }
 
 // The byte cap must not split a multibyte UTF-8 rune: truncating mid-rune would
