@@ -1,3 +1,15 @@
+## [12.1.0] - 2026-06-26
+
+### Added
+
+- **Technical-debt storage sharded by source (epic 12.1):** every item in `.planning/technical-debt/README.md` is now also stored as a structured YAML file under `.planning/technical-debt/items/`, one shard per `### [date] From <Sprint|Review>:` section. A 50–100 finding review is one shard file (not 50–100), and concurrent review/sprint runs each write their own file, so they no longer merge-conflict on TD storage. Each item supports unconstrained multi-line `problem`/`fix`/`notes`.
+- Added `cmd/td-migrate` (logic in `internal/tdmigrate/`): `migrate` (README table → shards), `generate` (shards → regenerated ToC table to stdout), and `validate` (strict-load + schema-check; a malformed shard fails loudly). Migration of the live corpus is lossless (28 sections / 55 items round-tripped), proven by the Go test suite including an adversarial YAML footgun corpus.
+- Documented the sharded format additively in the TD README and added `items/SCHEMA.md` (shard schema, file naming, YAML-safety guarantees).
+
+*Additive and not yet canonical: the README Markdown table remains authoritative and machine-read by all existing tooling; the shards are generated alongside it. The canonical cutover is deferred to a follow-on epic.*
+
+*Shipped via /execute-epic (epic 12.1)*
+
 ## [12.0.0] - 2026-06-26
 
 ### Added

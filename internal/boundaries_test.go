@@ -38,6 +38,7 @@ var allowedInternalImports = map[string][]string{
 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
 	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
+	"tdmigrate":      {},                                       // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
 	"doctor":         {"llmclient", "registry"},
