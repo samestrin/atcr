@@ -111,3 +111,39 @@ func TestPrepareReviewFromDiff_LogsScopeWarningToContextLogger(t *testing.T) {
 	require.Contains(t, logs, "scope constraint warning", "context logger should carry the warning")
 	require.Contains(t, logs, "truncated", "warning should mention truncation")
 }
+
+// TestPrepareReviewFromDiff_ConstraintRespectsByteBudget asserts that the plan
+// body embedded in the SCOPE CONSTRAINT is capped to budget/8 bytes when a
+// PayloadByteBudget is configured, preventing the prepended constraint from
+// inflating the rendered prompt well past the configured budget (Epic 12.2 AC4.2).
+func TestPrepareReviewFromDiff_ConstraintRespectsByteBudget(t *testing.T) {
+	const budget int64 = 4096
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = budget
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	// Plan exceeds MaxSprintPlanBytes so the existing cap fires first; the
+	// budget/8 cap must then reduce it further to ≤ budget/8 bytes.
+	require.NoError(t, os.WriteFile(planPath,
+		bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	for _, s := range prep.Slots {
+		p := s.Primary.Prompt
+		require.Contains(t, p, "SCOPE CONSTRAINT")
+		start := strings.Index(p, beginMark)
+		end := strings.Index(p, endMark)
+		require.GreaterOrEqual(t, start, 0, "prompt must contain BEGIN marker")
+		require.GreaterOrEqual(t, end, 0, "prompt must contain END marker")
+		embedded := p[start+len(beginMark) : end]
+		require.LessOrEqual(t, len(embedded), int(budget/8),
+			"scope constraint plan content must not exceed budget/8 bytes")
+	}
+}
