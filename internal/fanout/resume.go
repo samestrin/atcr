@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/samestrin/atcr/internal/cache"
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/samestrin/atcr/internal/stream"
 )
@@ -284,7 +285,11 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	slots, _, err := buildSlots(cfg, payloads, req.Range, "", "")
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	if scopeWarn != "" {
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
+	}
+	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
 	if err != nil {
 		return nil, nil, err
 	}
