@@ -25,7 +25,7 @@ const (
 // always writes the regenerated table to stdout for inspection.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, usage)
+		_, _ = fmt.Fprintln(stderr, usage)
 		return 2
 	}
 	switch args[0] {
@@ -36,10 +36,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
-		fmt.Fprintln(stdout, usage)
+		_, _ = fmt.Fprintln(stdout, usage)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "unknown subcommand %q\n%s\n", args[0], usage)
+		_, _ = fmt.Fprintf(stderr, "unknown subcommand %q\n%s\n", args[0], usage)
 		return 2
 	}
 }
@@ -66,30 +66,30 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 	}
 	data, err := os.ReadFile(*readme)
 	if err != nil {
-		fmt.Fprintf(stderr, "migrate: read README: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "migrate: read README: %v\n", err)
 		return 1
 	}
 	shards, err := ParseREADME(string(data))
 	if err != nil {
-		fmt.Fprintf(stderr, "migrate: parse README: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "migrate: parse README: %v\n", err)
 		return 1
 	}
 	for _, s := range shards {
 		if err := s.Validate(); err != nil {
-			fmt.Fprintf(stderr, "migrate: refusing to write invalid shard %s/%s: %v\n", s.Date, s.Label, err)
+			_, _ = fmt.Fprintf(stderr, "migrate: refusing to write invalid shard %s/%s: %v\n", s.Date, s.Label, err)
 			return 1
 		}
 	}
 	written, err := WriteShards(*items, shards)
 	if err != nil {
-		fmt.Fprintf(stderr, "migrate: write shards: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "migrate: write shards: %v\n", err)
 		return 1
 	}
 	itemCount := 0
 	for _, s := range shards {
 		itemCount += len(s.Items)
 	}
-	fmt.Fprintf(stdout, "migrate: wrote %d shard(s), %d item(s) to %s\n", len(written), itemCount, *items)
+	_, _ = fmt.Fprintf(stdout, "migrate: wrote %d shard(s), %d item(s) to %s\n", len(written), itemCount, *items)
 	return 0
 }
 
@@ -100,15 +100,15 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	}
 	shards, err := LoadShards(*items)
 	if err != nil {
-		fmt.Fprintf(stderr, "generate: load shards: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "generate: load shards: %v\n", err)
 		return 1
 	}
 	table, err := GenerateTable(shards)
 	if err != nil {
-		fmt.Fprintf(stderr, "generate: render table: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "generate: render table: %v\n", err)
 		return 1
 	}
-	fmt.Fprint(stdout, table)
+	_, _ = fmt.Fprint(stdout, table)
 	return 0
 }
 
@@ -119,9 +119,9 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	}
 	count, err := ValidateDir(*items)
 	if err != nil {
-		fmt.Fprintf(stderr, "validate: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "validate: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "validate: %d shard(s) OK\n", count)
+	_, _ = fmt.Fprintf(stdout, "validate: %d shard(s) OK\n", count)
 	return 0
 }
