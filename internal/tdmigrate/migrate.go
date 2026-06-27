@@ -94,7 +94,7 @@ Usage:
 // Main is the testable CLI entry point. It returns a process exit code.
 func Main(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
+		_, _ = fmt.Fprint(stderr, usage)
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -110,10 +110,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 		n, err := Migrate(*readme, *items)
 		if err != nil {
-			fmt.Fprintf(stderr, "migrate: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "migrate: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "Wrote %d item file(s) to %s\n", n, *items)
+		_, _ = fmt.Fprintf(stdout, "Wrote %d item file(s) to %s\n", n, *items)
 		return 0
 
 	case "generate":
@@ -124,17 +124,17 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		if err := Generate(*items, stdout); err != nil {
-			fmt.Fprintf(stderr, "generate: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "generate: %v\n", err)
 			return 1
 		}
 		return 0
 
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usage)
+		_, _ = fmt.Fprint(stdout, usage)
 		return 0
 
 	default:
-		fmt.Fprintf(stderr, "unknown subcommand %q\n\n%s", sub, usage)
+		_, _ = fmt.Fprintf(stderr, "unknown subcommand %q\n\n%s", sub, usage)
 		return 2
 	}
 }
