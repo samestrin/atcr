@@ -79,6 +79,21 @@ func TestWriteShards_IdempotentPrune(t *testing.T) {
 	}
 }
 
+func TestWriteShards_SkipsUnrelatedYAML(t *testing.T) {
+	dir := t.TempDir()
+	// A non-shard YAML file (e.g., user config) must not be pruned.
+	unrelated := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(unrelated, []byte("server: localhost\nport: 8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteShards(dir, sampleShards(t)); err != nil {
+		t.Fatalf("WriteShards: %v", err)
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Errorf("unrelated YAML was pruned: %v", err)
+	}
+}
+
 func TestMarshalShard_MultilineBlockScalar(t *testing.T) {
 	s := Shard{
 		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
