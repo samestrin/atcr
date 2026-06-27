@@ -130,6 +130,12 @@ func TestNewFlags_DoesNotTakeArgs(t *testing.T) {
 	}
 }
 
+func TestUsageDocumentsAllowEmpty(t *testing.T) {
+	if !strings.Contains(usage, "--allow-empty") {
+		t.Error("usage text should document --allow-empty for migrate")
+	}
+}
+
 func TestRun_ValidateCatchesBadShard(t *testing.T) {
 	items := t.TempDir()
 	// Unknown field -> strict-load rejection.
