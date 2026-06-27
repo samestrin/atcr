@@ -86,6 +86,9 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
 	return abs, nil
 }
 
+// sprintPlanPath is a stub pending GREEN implementation.
+func sprintPlanPath(cmd *cobra.Command) string { return "" }
+
 // runReview resolves the range, loads config, and runs the full review flow.
 // Range/config problems are usage errors (exit 2); an all-agents-failed review
 // is a plain failure (exit 1) with the artifacts preserved on disk.
