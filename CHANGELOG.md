@@ -1,3 +1,17 @@
+## [12.1.0] - 2026-06-26
+
+### Added
+
+- **Technical-debt per-item format (epic 12.1):** migrated the flat `.planning/technical-debt/README.md` table into a directory of one Markdown-with-YAML-frontmatter file per item under `technical-debt/items/` (all 55 items, zero data loss verified by full round-trip), giving each item unconstrained multi-line `## Problem` / `## Fix` prose.
+- Added a one-off `td-migrate` tool (`cmd/td-migrate`, logic in `internal/tdmigrate`) with `migrate` (table → per-item files, idempotent) and `generate` (per-item files → table) modes.
+- Added `technical-debt/items/README.md` documenting the per-item schema and regeneration workflow.
+
+### Changed
+
+- Documented the per-item format and the additive coexistence model in the technical-debt README — the flat table remains the authoritative source all existing tooling reads/writes, while `items/` is a generated snapshot; the cutover that makes `items/` canonical is deferred to the follow-on epic.
+
+*Shipped via /execute-epic (epic 12.1)*
+
 ## [12.0.0] - 2026-06-26
 
 ### Added
