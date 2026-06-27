@@ -43,9 +43,9 @@ func TestRootCmd_HelpListsAllSubcommands(t *testing.T) {
 	}
 }
 
-func TestRootCmd_HasExactlySixteenSubcommands(t *testing.T) {
-	// The fifteen prior commands plus `benchmark` (epic 10.0), the standard
-	// benchmark-suite tooling (verify/export) feeding the public leaderboard.
+func TestRootCmd_HasExactlySeventeenSubcommands(t *testing.T) {
+	// The sixteen prior commands plus `version`, which reports the binary
+	// version for the `atcr version` convention (peer to the --version flag).
 	root := newRootCmd()
 	names := map[string]bool{}
 	for _, c := range root.Commands() {
@@ -54,10 +54,24 @@ func TestRootCmd_HasExactlySixteenSubcommands(t *testing.T) {
 		}
 		names[c.Name()] = true
 	}
-	assert.Len(t, names, 16)
-	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas"} {
+	assert.Len(t, names, 17)
+	for _, sub := range []string{"review", "reconcile", "verify", "debate", "report", "github", "range", "status", "init", "serve", "doctor", "trust", "scorecard", "leaderboard", "benchmark", "personas", "version"} {
 		assert.True(t, names[sub], "subcommand %q must be registered", sub)
 	}
+}
+
+func TestVersion_FlagAndSubcommandAgree(t *testing.T) {
+	// The --version flag (cobra, from root.Version) and the version subcommand
+	// must report the same non-empty string so tooling can use either form.
+	flagOut, err := execute(t, "--version")
+	require.NoError(t, err)
+	assert.Contains(t, flagOut, atcrVersion())
+
+	subOut, err := execute(t, "version")
+	require.NoError(t, err)
+	assert.Equal(t, "atcr version "+atcrVersion()+"\n", subOut)
+
+	assert.NotEmpty(t, atcrVersion())
 }
 
 func TestRootCmd_UnknownSubcommandErrors(t *testing.T) {
