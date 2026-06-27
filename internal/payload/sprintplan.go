@@ -1,6 +1,7 @@
 package payload
 
 import (
+	"io"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -32,7 +33,7 @@ func ReadSprintPlan(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", nil
 	}
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		// A missing file is "no plan", not an error: the review proceeds diff-wide
 		// (AC2). Any other read failure (permission, directory, IO) is surfaced so
@@ -40,6 +41,15 @@ func ReadSprintPlan(path string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
+		return "", err
+	}
+	defer f.Close()
+
+	// Bound memory use even if the path points at a huge or non-regular file: only
+	// MaxSprintPlanBytes+1 bytes are ever buffered. The extra byte lets
+	// ScopeConstraint detect that the source was oversized and surface truncation.
+	b, err := io.ReadAll(io.LimitReader(f, MaxSprintPlanBytes+1))
+	if err != nil {
 		return "", err
 	}
 	return string(b), nil
