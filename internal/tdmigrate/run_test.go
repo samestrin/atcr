@@ -124,7 +124,7 @@ func TestRun_MigrateRefusesEmptyWipe(t *testing.T) {
 
 func TestNewFlags_DoesNotTakeArgs(t *testing.T) {
 	var stderr bytes.Buffer
-	fs, _, _ := newFlags("migrate", &stderr)
+	fs, _, _ := newFlags("migrate", &stderr, true)
 	if err := fs.Parse([]string{"--readme", "/dev/null"}); err != nil {
 		t.Errorf("parse failed: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestUsageDocumentsAllowEmpty(t *testing.T) {
 
 func TestGenerateFlagsRejectReadme(t *testing.T) {
 	var stderr bytes.Buffer
-	fs, _, _ := newFlags("generate", &stderr)
+	fs, _, _ := newFlags("generate", &stderr, false)
 	if err := fs.Parse([]string{"--readme", "/dev/null"}); err == nil {
 		t.Error("generate should not accept --readme")
 	}

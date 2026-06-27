@@ -51,16 +51,19 @@ Usage:
   td-migrate generate [--items DIR]                                   shards -> regenerated ToC table (stdout)
   td-migrate validate [--items DIR]                                   strict-load + schema-check shards`
 
-func newFlags(name string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
+func newFlags(name string, stderr io.Writer, withReadme bool) (*flag.FlagSet, *string, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	readme := fs.String("readme", defaultREADME, "path to the technical-debt README.md")
+	var readme *string
+	if withReadme {
+		readme = fs.String("readme", defaultREADME, "path to the technical-debt README.md")
+	}
 	items := fs.String("items", defaultItems, "path to the shard directory")
 	return fs, readme, items
 }
 
 func runMigrate(args []string, stdout, stderr io.Writer) int {
-	fs, readme, items := newFlags("migrate", stderr)
+	fs, readme, items := newFlags("migrate", stderr, true)
 	allowEmpty := fs.Bool("allow-empty", false, "permit writing when the README parses to zero sections (wipes the shard store)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -99,7 +102,7 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 }
 
 func runGenerate(args []string, stdout, stderr io.Writer) int {
-	fs, _, items := newFlags("generate", stderr)
+	fs, _, items := newFlags("generate", stderr, false)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -118,7 +121,7 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 }
 
 func runValidate(args []string, stdout, stderr io.Writer) int {
-	fs, _, items := newFlags("validate", stderr)
+	fs, _, items := newFlags("validate", stderr, false)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
