@@ -241,7 +241,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// or oversized plan warns but never aborts the review.
 	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
 	if scopeWarn != "" {
-		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
 	if err != nil {
@@ -432,7 +432,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	// oversized plan warns but never aborts the review.
 	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
 	if scopeWarn != "" {
-		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint)
 	if err != nil {
