@@ -3,11 +3,13 @@ package fanout
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
 )
@@ -83,4 +85,29 @@ func TestPrepareReviewFromDiff_InjectsSprintPlanConstraint(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, prepNoPlan.Slots)
 	require.NotContains(t, prepNoPlan.Slots[0].Primary.Prompt, "SCOPE CONSTRAINT")
+}
+
+// PrepareReviewFromDiff must route sprint-plan warnings through the contextual
+// logger (not the global os.Stderr) so callers can capture them and so the
+// warning is consistent with the diff-truncation warning.
+func TestPrepareReviewFromDiff_LogsScopeWarningToContextLogger(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+
+	big := filepath.Join(t.TempDir(), "big.md")
+	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
+	req.SprintPlanPath = big
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	prep, err := PrepareReviewFromDiff(ctx, cfg, req, looseDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+
+	logs := buf.String()
+	require.Contains(t, logs, "scope constraint warning", "context logger should carry the warning")
+	require.Contains(t, logs, "truncated", "warning should mention truncation")
 }
