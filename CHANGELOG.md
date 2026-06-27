@@ -1,11 +1,12 @@
-## [Tooling] - 2026-06-26
+## [12.0.0] - 2026-06-26
 
 ### Added
 
-- Added `atcr --version` flag and `atcr version` subcommand (both report the same string, derived from ldflags, the installed module version, or the VCS revision) — previously `atcr --version` exited 2 with "unknown flag", which broke downstream pre-flight checks that probe the binary that way
-- Added `docs/code-review-backend.md` documenting the `--output-dir` contract for driving atcr as the reviewer backend of a separate code-review skill or pipeline (invocation, output tree, 8-column pool vs 9-column reconciled streams, partial-run and finding-count behavior)
+- **Code-review skill integration (epic 12.0):** atcr is now the multi-agent reviewer backend for the external `execute-code-review` skill, replacing the legacy `llm-support` backend. The skill drives `atcr review --output-dir` + `atcr reconcile`; its reconcile step consumes the 8-column per-source pool stream directly. Validated end-to-end against a live sprint review (real fan-out → reconcile → cross-source REVIEWERS/CONFIDENCE merge into the technical-debt store).
+- Added `atcr --version` flag and `atcr version` subcommand (both report the same string, derived from ldflags, the installed module version, or the VCS revision) — previously `atcr --version` exited 2 with "unknown flag", which broke downstream pre-flight checks that probe the binary that way.
+- Added `docs/code-review-backend.md` documenting the `--output-dir` contract for driving atcr as the reviewer backend of a separate code-review skill or pipeline (invocation, output tree, 8-column pool vs 9-column reconciled streams, partial-run and finding-count behavior).
 
-*Tooling and documentation; no behavioral change to review/reconcile*
+*Skill backend integration (epic 12.0) — atcr-side enablers and documentation; no behavioral change to review/reconcile.*
 
 ## [Technical Debt] - 2026-06-26
 
