@@ -181,11 +181,17 @@ func guardToolName(name string) error {
 // the public RegisterTool name guard (run_tests/run_script match execToolPatterns),
 // because keeping those names out of the public API is precisely that guard's job.
 func (d *Dispatcher) registerExec(name string, h handlerFunc) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.execTools[name] = true
-	d.pathArgs[name] = pathSpec{}
-	d.handlers[name] = h
+	for _, def := range ExecutionTools() {
+		if def.Name == name {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			d.execTools[name] = true
+			d.pathArgs[name] = pathSpec{}
+			d.handlers[name] = h
+			return
+		}
+	}
+	panic(fmt.Sprintf("registerExec: %q is not declared in ExecutionTools()", name))
 }
 
 func (d *Dispatcher) mustRegister(name string, h handlerFunc, ps pathSpec) {
