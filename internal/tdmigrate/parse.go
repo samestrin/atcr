@@ -80,6 +80,8 @@ func ParseREADME(content string) ([]Shard, error) {
 }
 
 // splitRow strips the outer pipes and trims each cell of a Markdown table row.
+// Literal | inside cells is prevented at generate-time by cell() in generate.go,
+// so this simple split is sufficient for all toolchain-produced rows.
 func splitRow(line string) []string {
 	line = strings.TrimSpace(line)
 	line = strings.TrimPrefix(line, "|")
