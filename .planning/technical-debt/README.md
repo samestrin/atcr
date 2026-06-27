@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 25 | 0 |
-| LOW | 5 | 23 | 0 |
+| LOW | 8 | 23 | 0 |
 
-**Last Modified:** 2026-06-26 | **Open Items:** 5 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 55
+**Last Modified:** 2026-06-26 | **Open Items:** 8 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 58
 
 ## Directory Structure
 
@@ -57,6 +57,14 @@ Regenerate or reverse the snapshot with the one-off tool:
 go run ./cmd/td-migrate migrate    # this README table  -> items/*.md
 go run ./cmd/td-migrate generate   # items/*.md          -> README table (stdout)
 ```
+
+### [2026-06-26] From Sprint: epic-12.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 2 | [ ] | LOW | internal/tdmigrate/migrate.go:31 | Re-running `migrate` after a source Problem text changes leaves an orphaned TD-*.md (old slug) beside the new file because Migrate writes by filename and never prunes stale items | Prune TD-*.md not in the freshly-parsed ID set before writing, or document that migrate expects a clean items dir (one-off tool, low risk today) | EDGE_CASES | 15 | execute-epic-stage3 |
+| 2 | [ ] | LOW | internal/tdmigrate/readme.go:102 | RenderTable's sepRow11 uses a 10-dash Confidence column vs the live README's 12-dash separator and appends a trailing blank line, so generate output is not byte-identical to the source table for reviewer-column sections (renders identically; only matters if diffed for fidelity) | Match canonical separator dash widths and trim the trailing newline, or normalize both sides before any byte-level fidelity comparison | CORRECTNESS | 15 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/tdmigrate/migrate.go:42 | Migrate writes item files incrementally; a mid-run render/write error returns the partial count with no cleanup, leaving a half-populated items/ dir (non-atomic). Acceptable for a one-off tool but undocumented | Write into a temp dir and rename on success, or document the non-atomic partial-write behavior in the command help | OBSERVABILITY | 30 | execute-epic-independent |
 
 ### [2026-06-26] From Sprint: epic-11.2
 
