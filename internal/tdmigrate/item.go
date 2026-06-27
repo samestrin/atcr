@@ -8,6 +8,7 @@ package tdmigrate
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -34,6 +35,11 @@ var validStatuses = map[string]bool{
 	StatusDeferred: true,
 	StatusResolved: true,
 }
+
+// fileLinePattern requires the File field to end with a :<line> suffix. The path
+// portion is intentionally permissive (any non-empty string) because File is
+// primarily a human-readable pointer, not a filesystem locator.
+var fileLinePattern = regexp.MustCompile(`^.+:\d+$`)
 
 // Item is one technical-debt entry. Long-form fields (Problem, Fix, Notes) are
 // emitted as YAML block scalars by yaml.v3 Marshal, which quotes/escapes by
@@ -117,6 +123,17 @@ func (it Item) Validate() error {
 	}
 	if it.EstMinutes < 0 {
 		return fmt.Errorf("est_minutes must be >= 0, got %d", it.EstMinutes)
+	}
+	return nil
+}
+
+// ValidateFileFormat is an optional, stricter check that the File field matches
+// the conventional path:line format. The default Validate only requires File to
+// be non-empty because the table historically stores ranges, multiple files,
+// and free-text pointers; callers that need the stricter contract can call this.
+func (it Item) ValidateFileFormat() error {
+	if !fileLinePattern.MatchString(it.File) {
+		return fmt.Errorf("file %q must match path:line format", it.File)
 	}
 	return nil
 }

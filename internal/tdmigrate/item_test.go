@@ -76,16 +76,15 @@ func TestItemValidate_OK(t *testing.T) {
 
 func TestItemValidate_Rejections(t *testing.T) {
 	mutators := map[string]func(*Item){
-		"bad severity":    func(i *Item) { i.Severity = "URGENT" },
-		"bad status":      func(i *Item) { i.Status = "wip" },
-		"empty file":      func(i *Item) { i.File = "" },
-		"empty problem":   func(i *Item) { i.Problem = "" },
-		"empty fix":       func(i *Item) { i.Fix = "" },
-		"empty category":  func(i *Item) { i.Category = "" },
-		"empty source":    func(i *Item) { i.Source = "" },
-		"empty group":     func(i *Item) { i.Group = "" },
-		"negative est":    func(i *Item) { i.EstMinutes = -1 },
-		"bad file format": func(i *Item) { i.File = "just-a-path" },
+		"bad severity":   func(i *Item) { i.Severity = "URGENT" },
+		"bad status":     func(i *Item) { i.Status = "wip" },
+		"empty file":     func(i *Item) { i.File = "" },
+		"empty problem":  func(i *Item) { i.Problem = "" },
+		"empty fix":      func(i *Item) { i.Fix = "" },
+		"empty category": func(i *Item) { i.Category = "" },
+		"empty source":   func(i *Item) { i.Source = "" },
+		"empty group":    func(i *Item) { i.Group = "" },
+		"negative est":   func(i *Item) { i.EstMinutes = -1 },
 	}
 	for name, mut := range mutators {
 		it := validItem()
@@ -93,6 +92,19 @@ func TestItemValidate_Rejections(t *testing.T) {
 		if err := it.Validate(); err == nil {
 			t.Errorf("%s: expected validation error, got nil", name)
 		}
+	}
+}
+
+func TestItemValidateFileFormat(t *testing.T) {
+	valid := validItem()
+	if err := valid.ValidateFileFormat(); err != nil {
+		t.Errorf("valid file rejected: %v", err)
+	}
+
+	bad := validItem()
+	bad.File = "just-a-path"
+	if err := bad.ValidateFileFormat(); err == nil {
+		t.Error("expected error for file without :line suffix")
 	}
 }
 
