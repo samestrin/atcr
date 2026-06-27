@@ -48,7 +48,6 @@ func newExecDispatcher(t *testing.T, b sandbox.Backend) *Dispatcher {
 func execCtx() context.Context { return WithExecEligibility(context.Background(), true) }
 
 // TestEnableExecution_EveryExecToolIsGated is the Epic 11.2 structural invariant:
-// TestEnableExecution_EveryExecToolIsGated is the Epic 11.2 structural invariant:
 // ExecutionTools() is the authoritative registry of sandbox-reaching tools.
 // The enforcement is already structural in three layers: (1) Execute()
 // (dispatch.go:225) refuses any execGated tool unless execEligible(ctx) is true;
