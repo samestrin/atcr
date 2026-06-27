@@ -61,6 +61,12 @@ func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+
+	execNames := make(map[string]bool, len(ExecutionTools()))
+	for _, def := range ExecutionTools() {
+		execNames[def.Name] = true
+	}
+
 	for _, def := range ExecutionTools() {
 		assert.True(t, d.execTools[def.Name], "exec tool %q must be gated in execTools", def.Name)
 		_, hasHandler := d.handlers[def.Name]
@@ -69,6 +75,7 @@ func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	for name := range d.execTools {
 		_, hasHandler := d.handlers[name]
 		assert.True(t, hasHandler, "execTools gate %q has no backing handler (orphan gate)", name)
+		assert.True(t, execNames[name], "execTools gate %q is not declared in ExecutionTools(); any sandbox-reaching handler must be added to ExecutionTools() and registered via registerExec", name)
 	}
 }
 
