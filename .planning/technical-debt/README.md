@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 25 | 0 |
-| LOW | 8 | 23 | 0 |
+| MEDIUM | 1 | 25 | 0 |
+| LOW | 13 | 23 | 0 |
 
-**Last Modified:** 2026-06-26 | **Open Items:** 8 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 58
+**Last Modified:** 2026-06-27 | **Open Items:** 14 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 64
 
 ## Directory Structure
 
@@ -61,6 +61,17 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-27] From Sprint: epic-12.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 3 | [ ] | LOW | internal/payload/sprintplan.go:33 | ReadSprintPlan uses os.ReadFile which loads the entire target file into memory before ScopeConstraint caps it at 16 KiB, so an accidental huge or binary --sprint-plan path is read in full even though only 16 KiB is used | Read with an io.LimitReader bounded to MaxSprintPlanBytes+1 and set truncated when the limit is reached | EDGE_CASES | 15 | execute-epic-independent |
+| 3 | [ ] | LOW | internal/payload/sprintplan.go:88 | capUTF8 only rune-aligns the cut boundary; interior invalid UTF-8 bytes from a non-text or binary plan file pass through verbatim into every agent prompt | Scrub to valid UTF-8 via strings.ToValidUTF8 before embedding since the bytes go into LLM prompts | EDGE_CASES | 15 | execute-epic-independent |
+| 3 | [ ] | LOW | internal/payload/sprintplan.go:60 | Two distinct oversized plans sharing the same first 16 KiB produce an identical constraint and identical cache key, so editing a plan only beyond the cap will not invalidate the diff cache (AC5 edge gap) | Mix a hash of the full pre-truncation plan into the block or document the cache-invalidation limitation for oversized plans | CORRECTNESS | 30 | execute-epic-independent |
+| 3 | [ ] | LOW | internal/payload/sprintplan.go:12 | AC6 claims the cap ensures the block cannot inflate prompts past payload_byte_budget, but the constraint is added uncounted after ApplyByteBudget, so a prompt already near budget is still pushed ~16.6 KiB over — the cap bounds but does not prevent overflow | Count the injected constraint in the byte budget or relax the AC wording to bounds rather than prevents overflow | CORRECTNESS | 30 | execute-epic-independent |
+| U | [ ] | LOW | internal/fanout/resume.go:287 | atcr review --resume takes a separate CLI branch that never reads --sprint-plan, so the flag is silently ignored on resume runs | Document the limitation or thread SprintPlanPath into the resume request once cache-key consistency with the original run is settled | CROSS_CUTTING | 30 | execute-epic-cumulative |
+| U | [ ] | MEDIUM | internal/fanout/resume.go:287 | PrepareResume hardcodes an empty scopeConstraint and runResume never sets SprintPlanPath, so resuming a review started with --sprint-plan runs pending agents diff-wide while completed agents were scoped, producing a mixed panel | Thread req.SprintPlanPath through PrepareResume into buildSlots via resolveScopeConstraint and accept --sprint-plan on resume (or persist/read it from the manifest for consistency) | INTEGRATION | 60 | execute-epic-independent |
 
 ### [2026-06-26] From Sprint: epic-12.1
 

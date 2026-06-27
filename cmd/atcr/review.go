@@ -51,6 +51,7 @@ func newReviewCmd() *cobra.Command {
 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
+	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
 	addRangeFlags(cmd)
 	return cmd
 }
@@ -84,6 +85,16 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
 		return "", usageError(err)
 	}
 	return abs, nil
+}
+
+// sprintPlanPath returns the --sprint-plan flag value (trimmed). Empty when the
+// flag is unset, which leaves the review diff-wide (Epic 12.2). The path is
+// passed through verbatim (relative paths resolve against CWD when the engine
+// reads the file); a missing/unreadable plan is handled in the engine, not here,
+// so a bad path never blocks flag parsing.
+func sprintPlanPath(cmd *cobra.Command) string {
+	v, _ := cmd.Flags().GetString("sprint-plan")
+	return strings.TrimSpace(v)
 }
 
 // runReview resolves the range, loads config, and runs the full review flow.
@@ -212,14 +223,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
 			DefaultBranch: res.DefaultBranch,
 			CommitCount:   res.CommitCount,
 		},
-		Branch:     gitrange.CurrentBranch(ctx, "."),
-		Date:       now.Format("2006-01-02"),
-		TimeSuffix: now.Format("150405"),
-		StartedAt:  now,
-		IDOverride: idOverride,
-		OutputDir:  outputDir,
-		Force:      boolFlag(cmd, "force"),
-		NoCache:    boolFlag(cmd, "no-cache"),
+		Branch:         gitrange.CurrentBranch(ctx, "."),
+		Date:           now.Format("2006-01-02"),
+		TimeSuffix:     now.Format("150405"),
+		StartedAt:      now,
+		IDOverride:     idOverride,
+		OutputDir:      outputDir,
+		Force:          boolFlag(cmd, "force"),
+		NoCache:        boolFlag(cmd, "no-cache"),
+		SprintPlanPath: sprintPlanPath(cmd),
 	}
 
 	// Run the two review phases separately so build-phase failures (persona
