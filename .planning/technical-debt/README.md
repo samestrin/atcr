@@ -34,6 +34,30 @@ technical-debt/
 
 
 
+## Per-Item Format (Preview — Epic 12.1)
+
+A per-item representation of the table below now also lives in
+[`items/`](items/) — one Markdown file per technical-debt item, with structured
+metadata in YAML frontmatter and unconstrained multi-line `## Problem` / `## Fix`
+prose in the body. See [`items/README.md`](items/README.md) for the schema.
+
+**This table is still the authoritative source.** Under the additive coexistence
+model adopted in 12.1, every existing tool and skill (`group_td`, `td_stats`,
+`td_filter`, `td_dedupe`, `td_clean`, `td_validate`, `/resolve-td`,
+`/promote-tech-debt`, `/reconcile-code-review`, `/execute-*`) continues to read
+and write **this README table** unchanged. The `items/` directory is a
+point-in-time snapshot generated from the table; it may drift once new rows are
+appended, and is not yet machine-read by any tool. The cutover that makes
+`items/` canonical (and updates the binaries/skills) is deferred to the
+follow-on epic.
+
+Regenerate or reverse the snapshot with the one-off tool:
+
+```
+go run ./cmd/td-migrate migrate    # this README table  -> items/*.md
+go run ./cmd/td-migrate generate   # items/*.md          -> README table (stdout)
+```
+
 ### [2026-06-26] From Sprint: epic-11.2
 
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
