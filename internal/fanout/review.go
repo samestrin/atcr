@@ -94,6 +94,17 @@ type ReviewRequest struct {
 	// entries and every subsequent run benefits. Defaulting false keeps caching
 	// fully active for callers that do not opt out (e.g. the MCP handler).
 	NoCache bool
+	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
+	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
+	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
+	// review to the plan's active work items so reviewers suppress findings for
+	// unrelated changes in the diff. A missing or empty file is ignored (the
+	// review proceeds diff-wide); an unreadable file warns on stderr but does not
+	// abort. The constraint becomes part of the rendered prompt, so the diff-cache
+	// key invalidates correctly when the plan changes. Defaulting empty preserves
+	// the unconstrained, diff-wide review for callers that do not set it (e.g. the
+	// MCP handler).
+	SprintPlanPath string
 }
 
 // ReviewResult is the outcome of a completed review run.
