@@ -86,6 +86,12 @@ func ScopeConstraint(content string) (block string, truncated bool) {
 		return "", false
 	}
 	plan, truncated = capUTF8(plan, int(MaxSprintPlanBytes))
+	// Defense-in-depth: neutralize any marker lines that could close the framing
+	// block early and inject instructions to the reviewer model. Sprint plans are
+	// increasingly machine-generated from issue/PR text that crosses an untrusted
+	// boundary (Epic 12.2 Security Considerations).
+	plan = strings.ReplaceAll(plan, "----- BEGIN SPRINT PLAN -----", "-- BEGIN SPRINT PLAN --")
+	plan = strings.ReplaceAll(plan, "----- END SPRINT PLAN -----", "-- END SPRINT PLAN --")
 	var b strings.Builder
 	b.WriteString("## SCOPE CONSTRAINT\n")
 	b.WriteString("The sprint/epic plan below defines the active work items for this review. ")
