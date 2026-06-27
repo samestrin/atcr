@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 25 | 0 |
-| LOW | 5 | 23 | 0 |
+| LOW | 8 | 23 | 0 |
 
-**Last Modified:** 2026-06-26 | **Open Items:** 5 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 55
+**Last Modified:** 2026-06-26 | **Open Items:** 8 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 58
 
 ## Directory Structure
 
@@ -61,6 +61,14 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-26] From Sprint: epic-12.1
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 2 | [ ] | LOW | internal/tdmigrate/run.go:60 | generate and validate subcommands register a --readme flag via the shared newFlags helper but never read it, so `td-migrate generate --readme X` is silently accepted and ignored | Give generate/validate their own flag setup that registers only --items, or document that --readme is migrate-only | UNDER_ENGINEERING | 15 | execute-epic-cumulative |
+| 2 | [ ] | LOW | internal/tdmigrate/generate.go:39 | Item.Notes has no table column so GenerateTable drops it from the ToC summary; acceptable by design (shards keep notes) but the generated table is not lossless for notes | Add a delimited notes cell to the ToC or emit a warning when a non-empty notes field is summarized away | UNDER_ENGINEERING | 30 | execute-epic-independent |
+| 2 | [ ] | LOW | internal/tdmigrate/shard.go:75 | WriteShards removes all existing *.yaml before writing the new set, so a failure mid-loop can leave items/ partially wiped (recoverable by re-running migrate since the README stays authoritative) | Write to temp files/dir and atomically swap into place only after all shards marshal and write successfully | ERROR_PATHS | 45 | execute-epic-independent |
 
 ### [2026-06-26] From Sprint: epic-11.2
 
