@@ -97,6 +97,24 @@ func TestParseREADME_DriftHeaderFailsLoudly(t *testing.T) {
 	}
 }
 
+func TestParseREADME_ColonlessHeaderFailsLoudly(t *testing.T) {
+	drift := `### [2026-06-26] From Sprint: first
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+
+### [2026-06-27] From Standup
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 2 | [ ] | LOW | f.go:2 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(drift); err == nil {
+		t.Error("expected hard error for colonless section header, got nil (items would be mis-attributed)")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
