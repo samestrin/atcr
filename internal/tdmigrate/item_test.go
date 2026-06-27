@@ -76,15 +76,16 @@ func TestItemValidate_OK(t *testing.T) {
 
 func TestItemValidate_Rejections(t *testing.T) {
 	mutators := map[string]func(*Item){
-		"bad severity":   func(i *Item) { i.Severity = "URGENT" },
-		"bad status":     func(i *Item) { i.Status = "wip" },
-		"empty file":     func(i *Item) { i.File = "" },
-		"empty problem":  func(i *Item) { i.Problem = "" },
-		"empty fix":      func(i *Item) { i.Fix = "" },
-		"empty category": func(i *Item) { i.Category = "" },
-		"empty source":   func(i *Item) { i.Source = "" },
-		"empty group":    func(i *Item) { i.Group = "" },
-		"negative est":   func(i *Item) { i.EstMinutes = -1 },
+		"bad severity":    func(i *Item) { i.Severity = "URGENT" },
+		"bad status":      func(i *Item) { i.Status = "wip" },
+		"empty file":      func(i *Item) { i.File = "" },
+		"empty problem":   func(i *Item) { i.Problem = "" },
+		"empty fix":       func(i *Item) { i.Fix = "" },
+		"empty category":  func(i *Item) { i.Category = "" },
+		"empty source":    func(i *Item) { i.Source = "" },
+		"empty group":     func(i *Item) { i.Group = "" },
+		"negative est":    func(i *Item) { i.EstMinutes = -1 },
+		"bad file format": func(i *Item) { i.File = "just-a-path" },
 	}
 	for name, mut := range mutators {
 		it := validItem()
