@@ -1,6 +1,7 @@
 package tdmigrate
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -44,7 +45,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-const usage = `td-migrate — migrate technical-debt storage to shard-by-source YAML (additive)
+func hasHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+const usage = `td-migrate — migrate technical-debt storage to shard-by-source YAML (additive
 
 Usage:
   td-migrate migrate  [--readme PATH] [--items DIR] [--allow-empty]   parse README table -> write shards (--allow-empty permits a zero-section wipe)
@@ -65,7 +75,13 @@ func newFlags(name string, stderr io.Writer, withReadme bool) (*flag.FlagSet, *s
 func runMigrate(args []string, stdout, stderr io.Writer) int {
 	fs, readme, items := newFlags("migrate", stderr, true)
 	allowEmpty := fs.Bool("allow-empty", false, "permit writing when the README parses to zero sections (wipes the shard store)")
+	if hasHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	data, err := os.ReadFile(*readme)
@@ -103,7 +119,13 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 
 func runGenerate(args []string, stdout, stderr io.Writer) int {
 	fs, _, items := newFlags("generate", stderr, false)
+	if hasHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	shards, err := LoadShards(*items)
@@ -122,7 +144,13 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs, _, items := newFlags("validate", stderr, false)
+	if hasHelp(args) {
+		fs.SetOutput(stdout)
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	count, err := ValidateDir(*items)
