@@ -136,6 +136,14 @@ func TestUsageDocumentsAllowEmpty(t *testing.T) {
 	}
 }
 
+func TestGenerateFlagsRejectReadme(t *testing.T) {
+	var stderr bytes.Buffer
+	fs, _, _ := newFlags("generate", &stderr)
+	if err := fs.Parse([]string{"--readme", "/dev/null"}); err == nil {
+		t.Error("generate should not accept --readme")
+	}
+}
+
 func TestRun_ValidateCatchesBadShard(t *testing.T) {
 	items := t.TempDir()
 	// Unknown field -> strict-load rejection.
