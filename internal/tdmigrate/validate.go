@@ -2,7 +2,9 @@ package tdmigrate
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +26,10 @@ func DecodeShardStrict(data []byte) (Shard, error) {
 	}
 	if err := s.Validate(); err != nil {
 		return Shard{}, fmt.Errorf("schema: %w", err)
+	}
+	var throwaway interface{}
+	if err := dec.Decode(&throwaway); !errors.Is(err, io.EOF) {
+		return Shard{}, fmt.Errorf("trailing yaml content after first document")
 	}
 	return s, nil
 }
