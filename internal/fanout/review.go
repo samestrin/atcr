@@ -671,12 +671,6 @@ func neededModes(cfg *ReviewConfig) []string {
 	return modes
 }
 
-// buildSlots assembles the roster into ordered slots (parallel lane first, then
-// serial) and returns the per-agent payload-mode map for the manifest. A
-// build-time failure (unknown agent/provider, persona resolution, prompt render)
-// aborts the whole run fail-fast: these are configuration errors the user must
-// fix, not transient per-agent outcomes, so there is nothing useful to preserve
-// — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
 // resolveScopeConstraint reads the sprint/epic plan named by req.SprintPlanPath
 // and returns the formatted SCOPE CONSTRAINT block to prepend to every reviewer's
 // payload (Epic 12.2), plus an optional human-readable warning the caller surfaces
@@ -705,6 +699,12 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
 	return block, warning
 }
 
+// buildSlots assembles the roster into ordered slots (parallel lane first, then
+// serial) and returns the per-agent payload-mode map for the manifest. A
+// build-time failure (unknown agent/provider, persona resolution, prompt render)
+// aborts the whole run fail-fast: these are configuration errors the user must
+// fix, not transient per-agent outcomes, so there is nothing useful to preserve
+// — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
 	perAgentMode := map[string]string{}
 	var slots []Slot
