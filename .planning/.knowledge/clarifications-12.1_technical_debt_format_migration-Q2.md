@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-26-eb0038
-question: "For migration round-trip tests, is semantic equivalence (same item set + field values) sufficient, or is byte-identity required?"
-created: 2026-06-26
+id: mem-2026-06-27-ccab1f
+question: "Does the registerExec / ExecutionTools() invariant (sandbox-reaching handlers registered only via registerExec) need a production-code guard, or is documenting ExecutionTools() as the authoritative registry sufficient?"
+created: 2026-06-27
 last_retrieved: ""
 sprints: []
-files: [.planning/epics/active/12.1_technical_debt_format_migration.md]
-tags: [clarifications, epic-12.1_technical_debt_format_migration, testing, migration, round-trip]
+files: [internal/tools/exec_tools_test.go, internal/tools/dispatch.go]
+tags: [clarifications, epic-12.1_technical_debt_format_migration, architecture, security boundary, execution tools, registerExec, ExecutionTools]
 retrievals: 0
 status: active
-type: clarifications
+type: clarifications/epic-12.1
 ---
 
-# For migration round-trip tests, is semantic equivalence (sam
+# Does the registerExec / ExecutionTools() invariant (sandbox-
 
 ## Decision
 
-Semantic equivalence is the correct bar — byte-identity is neither achievable nor meaningful for migration round-trips where the generator normalizes presentation (e.g., re-clusters by path theme). A Go round-trip test asserting the same item set and field values is sufficient. No committed artifact (e.g., README.generated.md) is required — it would become stale noise and adds no gate the test does not already enforce. If a one-time human-inspectable diff is useful during a migration run, a --dry-run stdout flag on the generate command is preferable to a committed file. Evidence: AC2 in 12.1 specifies "verified by full round-trip: table → shards → table" (the mechanism, not the artifact); the generate command "may group by path theme for presentation," confirming byte-identity is impossible. The adversarial fixture corpus already guards against silent data corruption.
+No production-code guard is needed — the enforcement is already structural and complete via three interlocking layers: (1) the Execute() gate at dispatch.go:225 checks execGated && !execEligible(ctx) and fails closed; (2) registerExec is the only unexported writer of execTools (dispatch.go:186-192), the field itself unexported (dispatch.go:73), so no external package can set it; (3) runInSandbox and execBackend are unexported (dispatch.go:80, dispatch.go:212), making it structurally impossible for a public-API-registered handler to reach the sandbox. The test TestEnableExecution_EveryExecToolIsGated (exec_tools_test.go:59-82) already verifies the invariant in all three directions. Documenting ExecutionTools() as the authoritative registry is sufficient because the structural enforcement is already in place. A test-only fix that asserts the invariant without anchoring assertions to the three existing production-side enforcement points is incomplete — the correct fix updates the test to reference dispatch.go:225, dispatch.go:186-192, and dispatch.go:80/212, with no production-code change required.
 
 ## Rationale
 
@@ -27,4 +27,5 @@ Semantic equivalence is the correct bar — byte-identity is neither achievable 
 
 ## Code Reference
 
-- .planning/epics/active/12.1_technical_debt_format_migration.md
+- internal/tools/exec_tools_test.go
+- internal/tools/dispatch.go

@@ -1,0 +1,2 @@
+MEDIUM|internal/tdmigrate/parse.go:43|Section header regex fails on CRLF line endings due to trailing \r|Strip \r from lines before regex matching or update regex to allow \r|correctness|5|FindStringSubmatch(line) fails if line ends with \r|greta
+MEDIUM|internal/tdmigrate/shard.go:75|Unconditional deletion of all *.yaml in target directory risks data loss|Restrict deletion to files matching a specific prefix or pattern owned by the tool|correctness|10|os.Remove(f) for all *.yaml in dir|greta

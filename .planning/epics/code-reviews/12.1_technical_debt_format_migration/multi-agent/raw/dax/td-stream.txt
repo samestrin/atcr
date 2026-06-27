@@ -1,0 +1,3 @@
+MEDIUM|internal/tdmigrate/run.go:66|migrate validates shards but doesn't validate items before writing|Add item-level validation call before WriteShards|correctness|10|Item validation exists but isn't called in the migrate path|bruce
+MEDIUM|internal/tdmigrate/run.go:96|migrate validates shards but doesn't validate items before writing|Add item-level validation call before WriteShards|correctness|10|Item validation exists but isn't called in the migrate path|bruce
+MEDIUM|internal/tdmigrate/shard.go:91|WriteShards prunes *.yaml files without confirming they're shard files|Check file content prefix before deletion|correctness|15|Glob removes all *.yaml in dir; non-shard YAML files would be silently deleted|bruce

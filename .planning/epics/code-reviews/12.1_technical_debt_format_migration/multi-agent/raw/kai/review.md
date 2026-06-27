@@ -1,0 +1,3 @@
+MEDIUM|internal/tdmigrate/parse.go:39|Section regexes fail on trailing whitespace or CRLF|Trim lines before regex matching|correctness|5|Regex `$` fails on `\r` or trailing spaces, mis-routing table rows|base
+LOW|internal/tdmigrate/item.go:120|Validate iterates over map for required fields|Use an ordered slice of structs instead|maintainability|3|Map range order is randomized, causing flaky error messages|base
+LOW|internal/tdmigrate/parse.go:16|Drift regex misses malformed headers without colon|Add catch-all for any `### [date] From` line|correctness|5|Missing colon bypasses detection and silently drops rows|base

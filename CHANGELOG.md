@@ -1,3 +1,18 @@
+## [Technical Debt] - 2026-06-27
+
+### Fixed
+
+- Fixed `guardToolName` to use token-boundary matching for `execToolPatterns`, preventing false positives on legitimate read-only tool names
+- Documented and enforced authorized callers for `WithExecEligibility`
+- Fixed `WriteShards` to reject shards with non-`YYYY-MM-DD` dates before composing the output path
+- Added hard error for in-section data rows missing a leading pipe
+- Fixed `WriteShards` to stage to `.shards-staging` before pruning the target directory, preventing partial-write data loss
+- Added warning when `generate` drops item notes from ToC output
+- Fixed `ValidateDir` and `LoadShards` to error on missing directories instead of silently returning empty results
+- Rejected multi-document (trailing YAML) shards to prevent silent data truncation
+- Fixed `WriteShards` prune to skip unrelated YAML files in the output directory
+- Fixed subcommand `-h` to write to stdout and exit 0; made flag sets subcommand-specific so `generate`/`validate` reject unknown flags
+
 ## [12.1.0] - 2026-06-26
 
 ### Added

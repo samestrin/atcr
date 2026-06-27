@@ -1,0 +1,1475 @@
+diff --git a/cmd/td-migrate/main.go b/cmd/td-migrate/main.go
+new file mode 100644
+index 00000000..747c5a71
+--- /dev/null
++++ b/cmd/td-migrate/main.go
+@@ -0,0 +1,16 @@
++// Command td-migrate is a one-off entry point for the technical-debt storage
++// migration (Epic 12.1). All logic lives in internal/tdmigrate so it is unit-
++// testable; this shim only wires os.Args/streams to tdmigrate.Run. It is
++// removable after the canonical cutover (Epic 18.0 / 12.3) and is deliberately
++// named outside the planned `atcr debt` namespace.
++package main
++
++import (
++	"os"
++
++	"github.com/samestrin/atcr/internal/tdmigrate"
++)
++
++func main() {
++	os.Exit(tdmigrate.Run(os.Args[1:], os.Stdout, os.Stderr))
++}
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index 39ee1374..94035d34 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -38,6 +38,7 @@ var allowedInternalImports = map[string][]string{
+ 	"version":        {},                                       // build-version holder (atcr_version in the leaderboard submission); stdlib-only leaf, no imports (epic 10.0)
+ 	"circuitbreaker": {"metrics"},                              // per-provider breaker; pushes state to the metrics gauge (epic 4.5)
+ 	"validation":     {},                                       // user-input validators; stdlib-only leaf (epic 4.3)
++	"tdmigrate":      {},                                       // technical-debt storage migrator; yaml.v3 + stdlib only, imports no internal package (epic 12.1)
+ 	"payload":        {"gitrange", "atomicfs", "log"},          // log: single diagnostic sink, injected via context (epic 4.0 phase 4.1)
+ 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+ 	"doctor":         {"llmclient", "registry"},
+diff --git a/internal/tdmigrate/fixtures_test.go b/internal/tdmigrate/fixtures_test.go
+new file mode 100644
+index 00000000..615ebee9
+--- /dev/null
++++ b/internal/tdmigrate/fixtures_test.go
+@@ -0,0 +1,116 @@
++package tdmigrate
++
++import (
++	"strings"
++	"testing"
++)
++
++// footgunItem builds a valid item whose long-form fields carry a YAML footgun
++// value, so a marshal -> strict-decode round-trip proves the value survives as
++// a string (yaml.v3 quotes/escapes by construction).
++func footgunItem(problem, fix, category string) Item {
++	return Item{
++		Group: "1", Status: StatusDeferred, Severity: "LOW",
++		File: "internal/foo.go:1", Problem: problem, Fix: fix,
++		Category: category, EstMinutes: 5, Source: "code-review",
++	}
++}
++
++func roundTripItem(t *testing.T, it Item) Item {
++	t.Helper()
++	s := Shard{Date: "2026-06-26", SourceType: "Sprint", Label: "footgun", Items: []Item{it}}
++	data, err := MarshalShard(s)
++	if err != nil {
++		t.Fatalf("marshal: %v", err)
++	}
++	got, err := DecodeShardStrict(data)
++	if err != nil {
++		t.Fatalf("strict decode failed for marshaled output:\n%s\nerr=%v", data, err)
++	}
++	if len(got.Items) != 1 {
++		t.Fatalf("expected 1 item, got %d", len(got.Items))
++	}
++	return got.Items[0]
++}
++
++// TestFootguns_RoundTripAsStrings covers the adversarial YAML corpus from the
++// epic: every value that *looks* like a non-string YAML type must survive a
++// marshal -> strict-load round-trip unchanged.
++func TestFootguns_RoundTripAsStrings(t *testing.T) {
++	cases := map[string]struct{ problem, fix, category string }{
++		"norway-no":        {"no", "yes", "on"},                    // bool-ish words
++		"norway-off":       {"off", "true", "false"},               // more bool-ish words
++		"version-float":    {"version 1.10 ships", "1.20", "v2.0"}, // float-ish
++		"leading-zeros":    {"id 007 failed", "00755", "0x1F"},     // octal/hex/zero-pad
++		"colon-in-value":   {"key: value here", "a:b:c", "x: y"},   // mapping-looking
++		"leading-dash":     {"- item one", "-5 things", "--flag"},  // seq/scalar-looking
++		"unicode":          {"café ☃ 你好 €", "naïve fix", "tëst"},   // non-ASCII
++		"numeric-string":   {"42", "3.14159", "1e10"},              // pure numbers
++		"null-ish":         {"null", "~", "NULL"},                  // null tokens
++		"empty-ish-braces": {"{not a map}", "[not a seq]", "&anchor"},
++	}
++	for name, c := range cases {
++		t.Run(name, func(t *testing.T) {
++			in := footgunItem(c.problem, c.fix, c.category)
++			out := roundTripItem(t, in)
++			if out.Problem != c.problem {
++				t.Errorf("problem drifted: %q -> %q", c.problem, out.Problem)
++			}
++			if out.Fix != c.fix {
++				t.Errorf("fix drifted: %q -> %q", c.fix, out.Fix)
++			}
++			if out.Category != c.category {
++				t.Errorf("category drifted: %q -> %q", c.category, out.Category)
++			}
++		})
++	}
++}
++
++// TestFootgun_MultilineBlockScalar proves multi-line text survives round-trip.
++func TestFootgun_MultilineBlockScalar(t *testing.T) {
++	multi := "first line\nsecond line\n\nfourth after blank\n  indented detail"
++	out := roundTripItem(t, footgunItem(multi, "single", "correctness"))
++	if out.Problem != multi {
++		t.Errorf("multi-line problem drifted:\nwant %q\ngot  %q", multi, out.Problem)
++	}
++}
++
++// TestFootgun_EstMinutesZeroStaysInt guards the "0"-string-vs-int trap: a literal
++// est_minutes 0 must decode as the int 0, not be coerced into or out of a string.
++func TestFootgun_EstMinutesZeroStaysInt(t *testing.T) {
++	it := footgunItem("p", "f", "c")
++	it.EstMinutes = 0
++	out := roundTripItem(t, it)
++	if out.EstMinutes != 0 {
++		t.Errorf("est_minutes 0 drifted to %d", out.EstMinutes)
++	}
++}
++
++// TestStrictLoad_RejectsTabIndentation proves the strict gate rejects a tab in
++// indentation (a classic YAML malformation), failing loudly.
++func TestStrictLoad_RejectsTabIndentation(t *testing.T) {
++	// The items list is indented with a hard tab — invalid YAML.
++	withTab := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n\t- group: \"1\"\n"
++	if _, err := DecodeShardStrict([]byte(withTab)); err == nil {
++		t.Error("expected strict decode to reject tab-indented YAML")
++	}
++}
++
++// TestStrictLoad_RejectsUnknownField proves KnownFields(true) rejects a typo'd or
++// extraneous field rather than silently ignoring it.
++func TestStrictLoad_RejectsUnknownField(t *testing.T) {
++	withUnknown := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nseverity_typo: LOW\nitems: []\n"
++	err := func() error { _, e := DecodeShardStrict([]byte(withUnknown)); return e }()
++	if err == nil || !strings.Contains(err.Error(), "field") {
++		t.Errorf("expected unknown-field rejection, got %v", err)
++	}
++}
++
++// TestStrictLoad_RejectsSchemaViolation proves a well-formed YAML that violates
++// the schema (bad enum) is rejected by the gate.
++func TestStrictLoad_RejectsSchemaViolation(t *testing.T) {
++	badEnum := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n  - group: \"1\"\n    status: deferred\n    severity: SPICY\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n"
++	if _, err := DecodeShardStrict([]byte(badEnum)); err == nil {
++		t.Error("expected schema rejection for invalid severity enum")
++	}
++}
+diff --git a/internal/tdmigrate/generate.go b/internal/tdmigrate/generate.go
+new file mode 100644
+index 00000000..27800d4c
+--- /dev/null
++++ b/internal/tdmigrate/generate.go
+@@ -0,0 +1,79 @@
++package tdmigrate
++
++import (
++	"fmt"
++	"sort"
++	"strconv"
++	"strings"
++)
++
++// GenerateTable renders shards back into the README technical-debt ToC table.
++// Sections are emitted newest-date-first (then by label) for a stable, human-
++// readable ordering; the per-item data is preserved verbatim so a parse of the
++// output is semantically equal to the parse of the original (AC2 round-trip).
++//
++// A section that carries any reviewer/confidence data is rendered with the
++// 11-column reconciled layout; otherwise the 9-column layout is used — matching
++// how the original table distinguishes reconciled from plain sections.
++func GenerateTable(shards []Shard) (string, error) {
++	ordered := make([]Shard, len(shards))
++	copy(ordered, shards)
++	sort.SliceStable(ordered, func(i, j int) bool {
++		if ordered[i].Date != ordered[j].Date {
++			return ordered[i].Date > ordered[j].Date // newest first
++		}
++		return ordered[i].Label < ordered[j].Label
++	})
++
++	var b strings.Builder
++	for _, s := range ordered {
++		fmt.Fprintf(&b, "### [%s] From %s: %s\n\n", s.Date, s.SourceType, s.Label)
++		wide := sectionHasReviewers(s)
++		if wide {
++			b.WriteString("| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |\n")
++			b.WriteString("|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|\n")
++		} else {
++			b.WriteString("| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |\n")
++			b.WriteString("|-------|---|----------|------|---------|-----|----------|-------------|--------|\n")
++		}
++		for _, it := range s.Items {
++			box, err := StatusToCheckbox(it.Status)
++			if err != nil {
++				return "", fmt.Errorf("shard %s/%s: %w", s.Date, s.Label, err)
++			}
++			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |",
++				cell(it.Group), box, cell(it.Severity), cell(it.File), cell(it.Problem), cell(it.Fix),
++				cell(it.Category), strconv.Itoa(it.EstMinutes), cell(it.Source))
++			if wide {
++				fmt.Fprintf(&b, " %s | %s |", cell(strings.Join(it.Reviewers, ", ")), cell(it.Confidence))
++			}
++			b.WriteString("\n")
++		}
++		b.WriteString("\n")
++	}
++	return b.String(), nil
++}
++
++// cell makes a value safe to place in a single Markdown table cell. The TD table
++// (a one-line-per-item ToC summary) cannot represent a literal `|` or a newline,
++// so — matching the canonical TD-table contract used elsewhere in the repo — a
++// pipe is replaced with `/` and newlines are collapsed to spaces. This keeps the
++// regenerated table structurally valid (no phantom columns) rather than silently
++// corrupting it. The shards under items/ remain the lossless source of truth;
++// only the generated ToC summary is single-lined.
++func cell(s string) string {
++	s = strings.ReplaceAll(s, "\r\n", " ")
++	s = strings.ReplaceAll(s, "\n", " ")
++	s = strings.ReplaceAll(s, "\r", " ")
++	s = strings.ReplaceAll(s, "|", "/")
++	return strings.TrimSpace(s)
++}
++
++func sectionHasReviewers(s Shard) bool {
++	for _, it := range s.Items {
++		if len(it.Reviewers) > 0 || it.Confidence != "" {
++			return true
++		}
++	}
++	return false
++}
+diff --git a/internal/tdmigrate/item.go b/internal/tdmigrate/item.go
+new file mode 100644
+index 00000000..b0f4589c
+--- /dev/null
++++ b/internal/tdmigrate/item.go
+@@ -0,0 +1,144 @@
++// Package tdmigrate migrates technical-debt storage from the single Markdown
++// table at .planning/technical-debt/README.md to YAML files sharded by source
++// under .planning/technical-debt/items/, and regenerates the README table-of-
++// contents from those shards (round-trip). It is additive: no existing tooling
++// reads the shards yet, and the README table stays authoritative. See
++// .planning/epics/active/12.1_technical_debt_format_migration.md.
++package tdmigrate
++
++import (
++	"fmt"
++	"strings"
++)
++
++// Status values map 1:1 to the README checkbox tokens.
++const (
++	StatusOpen     = "open"     // [ ]
++	StatusDeferred = "deferred" // [/]
++	StatusResolved = "resolved" // [x]
++
++	// SourceTypeSprint and SourceTypeReview are the two `From <...>:` variants.
++	SourceTypeSprint = "Sprint"
++	SourceTypeReview = "Review"
++)
++
++var validSeverities = map[string]bool{
++	"CRITICAL": true,
++	"HIGH":     true,
++	"MEDIUM":   true,
++	"LOW":      true,
++}
++
++var validStatuses = map[string]bool{
++	StatusOpen:     true,
++	StatusDeferred: true,
++	StatusResolved: true,
++}
++
++// Item is one technical-debt entry. Long-form fields (Problem, Fix, Notes) are
++// emitted as YAML block scalars by yaml.v3 Marshal, which quotes/escapes by
++// construction so values that look like other YAML types stay strings.
++type Item struct {
++	Group      string   `yaml:"group"`                // positional group label from the table ("U" or a number)
++	Status     string   `yaml:"status"`               // open | deferred | resolved
++	Severity   string   `yaml:"severity"`             // CRITICAL | HIGH | MEDIUM | LOW
++	File       string   `yaml:"file"`                 // file:line (or range, or free text)
++	Problem    string   `yaml:"problem"`              // long-form, multi-line allowed
++	Fix        string   `yaml:"fix"`                  // long-form, multi-line allowed
++	Category   string   `yaml:"category"`             // free-form label (correctness, security, ...)
++	EstMinutes int      `yaml:"est_minutes"`          // best-guess effort, >= 0
++	Source     string   `yaml:"source"`               // capture origin (code-review, execute-epic-*, ...)
++	Reviewers  []string `yaml:"reviewers,omitempty"`  // reconciled sections only
++	Confidence string   `yaml:"confidence,omitempty"` // reconciled sections only
++	Notes      string   `yaml:"notes,omitempty"`      // optional long-form, for hand-editing
++}
++
++// Shard is one source section: every item captured from a single
++// `### [date] From <Sprint|Review>: <label>` provenance unit.
++type Shard struct {
++	Date       string `yaml:"date"`        // YYYY-MM-DD
++	SourceType string `yaml:"source_type"` // Sprint | Review
++	Label      string `yaml:"label"`       // e.g. epic-11.2
++	Items      []Item `yaml:"items"`
++}
++
++// NormalizeSeverity upper-cases and trims a severity token.
++func NormalizeSeverity(s string) string {
++	return strings.ToUpper(strings.TrimSpace(s))
++}
++
++// CheckboxToStatus maps a README checkbox token to a status enum.
++func CheckboxToStatus(box string) (string, error) {
++	switch strings.TrimSpace(box) {
++	case "[ ]":
++		return StatusOpen, nil
++	case "[/]":
++		return StatusDeferred, nil
++	case "[x]", "[X]":
++		return StatusResolved, nil
++	default:
++		return "", fmt.Errorf("unknown checkbox token %q", box)
++	}
++}
++
++// StatusToCheckbox maps a status enum back to its README checkbox token.
++func StatusToCheckbox(status string) (string, error) {
++	switch status {
++	case StatusOpen:
++		return "[ ]", nil
++	case StatusDeferred:
++		return "[/]", nil
++	case StatusResolved:
++		return "[x]", nil
++	default:
++		return "", fmt.Errorf("unknown status %q", status)
++	}
++}
++
++// Validate schema-checks a single item: required fields present, enums valid.
++func (it Item) Validate() error {
++	if !validSeverities[it.Severity] {
++		return fmt.Errorf("invalid severity %q (want CRITICAL|HIGH|MEDIUM|LOW)", it.Severity)
++	}
++	if !validStatuses[it.Status] {
++		return fmt.Errorf("invalid status %q (want open|deferred|resolved)", it.Status)
++	}
++	for field, val := range map[string]string{
++		"group":    it.Group,
++		"file":     it.File,
++		"problem":  it.Problem,
++		"fix":      it.Fix,
++		"category": it.Category,
++		"source":   it.Source,
++	} {
++		if strings.TrimSpace(val) == "" {
++			return fmt.Errorf("%s is required", field)
++		}
++	}
++	if it.EstMinutes < 0 {
++		return fmt.Errorf("est_minutes must be >= 0, got %d", it.EstMinutes)
++	}
++	return nil
++}
++
++// Validate schema-checks a shard and every item it contains.
++func (s Shard) Validate() error {
++	if strings.TrimSpace(s.Date) == "" {
++		return fmt.Errorf("date is required")
++	}
++	if s.SourceType != SourceTypeSprint && s.SourceType != SourceTypeReview {
++		return fmt.Errorf("invalid source_type %q (want Sprint|Review)", s.SourceType)
++	}
++	if strings.TrimSpace(s.Label) == "" {
++		return fmt.Errorf("label is required")
++	}
++	if len(s.Items) == 0 {
++		return fmt.Errorf("shard has no items")
++	}
++	for i, it := range s.Items {
++		if err := it.Validate(); err != nil {
++			return fmt.Errorf("item %d: %w", i, err)
++		}
++	}
++	return nil
++}
+diff --git a/internal/tdmigrate/item_test.go b/internal/tdmigrate/item_test.go
+new file mode 100644
+index 00000000..c77ce683
+--- /dev/null
++++ b/internal/tdmigrate/item_test.go
+@@ -0,0 +1,123 @@
++package tdmigrate
++
++import "testing"
++
++func TestCheckboxToStatus_KnownTokens(t *testing.T) {
++	cases := map[string]string{
++		"[ ]": StatusOpen,
++		"[/]": StatusDeferred,
++		"[x]": StatusResolved,
++		"[X]": StatusResolved,
++	}
++	for box, want := range cases {
++		got, err := CheckboxToStatus(box)
++		if err != nil {
++			t.Fatalf("CheckboxToStatus(%q) unexpected error: %v", box, err)
++		}
++		if got != want {
++			t.Errorf("CheckboxToStatus(%q) = %q, want %q", box, got, want)
++		}
++	}
++}
++
++func TestCheckboxToStatus_Unknown(t *testing.T) {
++	if _, err := CheckboxToStatus("[?]"); err == nil {
++		t.Error("expected error for unknown checkbox token")
++	}
++}
++
++func TestStatusToCheckbox_RoundTrip(t *testing.T) {
++	for _, status := range []string{StatusOpen, StatusDeferred, StatusResolved} {
++		box, err := StatusToCheckbox(status)
++		if err != nil {
++			t.Fatalf("StatusToCheckbox(%q) error: %v", status, err)
++		}
++		got, err := CheckboxToStatus(box)
++		if err != nil {
++			t.Fatalf("CheckboxToStatus(%q) error: %v", box, err)
++		}
++		if got != status {
++			t.Errorf("round-trip status %q -> %q -> %q", status, box, got)
++		}
++	}
++}
++
++func TestStatusToCheckbox_Unknown(t *testing.T) {
++	if _, err := StatusToCheckbox("bogus"); err == nil {
++		t.Error("expected error for unknown status")
++	}
++}
++
++func TestNormalizeSeverity(t *testing.T) {
++	if got := NormalizeSeverity("  low "); got != "LOW" {
++		t.Errorf("NormalizeSeverity = %q, want LOW", got)
++	}
++}
++
++func validItem() Item {
++	return Item{
++		Group:      "1",
++		Status:     StatusDeferred,
++		Severity:   "LOW",
++		File:       "internal/foo.go:10",
++		Problem:    "something is off",
++		Fix:        "fix it",
++		Category:   "correctness",
++		EstMinutes: 30,
++		Source:     "code-review",
++	}
++}
++
++func TestItemValidate_OK(t *testing.T) {
++	if err := validItem().Validate(); err != nil {
++		t.Fatalf("valid item rejected: %v", err)
++	}
++}
++
++func TestItemValidate_Rejections(t *testing.T) {
++	mutators := map[string]func(*Item){
++		"bad severity":   func(i *Item) { i.Severity = "URGENT" },
++		"bad status":     func(i *Item) { i.Status = "wip" },
++		"empty file":     func(i *Item) { i.File = "" },
++		"empty problem":  func(i *Item) { i.Problem = "" },
++		"empty fix":      func(i *Item) { i.Fix = "" },
++		"empty category": func(i *Item) { i.Category = "" },
++		"empty source":   func(i *Item) { i.Source = "" },
++		"empty group":    func(i *Item) { i.Group = "" },
++		"negative est":   func(i *Item) { i.EstMinutes = -1 },
++	}
++	for name, mut := range mutators {
++		it := validItem()
++		mut(&it)
++		if err := it.Validate(); err == nil {
++			t.Errorf("%s: expected validation error, got nil", name)
++		}
++	}
++}
++
++func TestShardValidate_OK(t *testing.T) {
++	s := Shard{Date: "2026-06-26", SourceType: "Sprint", Label: "epic-1.0", Items: []Item{validItem()}}
++	if err := s.Validate(); err != nil {
++		t.Fatalf("valid shard rejected: %v", err)
++	}
++}
++
++func TestShardValidate_Rejections(t *testing.T) {
++	base := func() Shard {
++		return Shard{Date: "2026-06-26", SourceType: "Review", Label: "x", Items: []Item{validItem()}}
++	}
++	mutators := map[string]func(*Shard){
++		"empty date":      func(s *Shard) { s.Date = "" },
++		"bad source type": func(s *Shard) { s.SourceType = "Cron" },
++		"empty label":     func(s *Shard) { s.Label = "" },
++		"no items":        func(s *Shard) { s.Items = nil },
++		"bad nested item": func(s *Shard) { s.Items[0].Severity = "nope" },
++	}
++	for name, mut := range mutators {
++		s := base()
++		mut(&s)
++		if err := s.Validate(); err == nil {
++			t.Errorf("%s: expected validation error, got nil", name)
++		}
++	}
++}
+diff --git a/internal/tdmigrate/parse.go b/internal/tdmigrate/parse.go
+new file mode 100644
+index 00000000..fdd035b3
+--- /dev/null
++++ b/internal/tdmigrate/parse.go
+@@ -0,0 +1,137 @@
++package tdmigrate
++
++import (
++	"fmt"
++	"regexp"
++	"strconv"
++	"strings"
++)
++
++// sectionHeader matches `### [YYYY-MM-DD] From <Sprint|Review>: <label>`.
++var sectionHeader = regexp.MustCompile(`^### \[(\d{4}-\d{2}-\d{2})\] From (Sprint|Review): (.+)$`)
++
++// driftHeader matches a dated `From <type>:` header whose type is NOT a
++// recognized Sprint|Review variant. Such a header would otherwise be ignored and
++// every item beneath it silently dropped, so it is treated as a hard error
++// (loud-failure mandate) rather than silently skipped.
++var driftHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From ([^:]+):`)
++
++// ParseREADME parses the technical-debt README table into per-source shards.
++// Anything before the first section header (title, Stats table, How-to-Use) is
++// ignored. A data row that does not split into exactly 9 or 11 cells, or whose
++// checkbox/est_minutes cannot be parsed, is a hard error (zero-data-loss: a
++// malformed row must fail loudly, never be silently dropped).
++func ParseREADME(content string) ([]Shard, error) {
++	var shards []Shard
++	var cur *Shard
++
++	flush := func() {
++		if cur != nil && len(cur.Items) > 0 {
++			shards = append(shards, *cur)
++		}
++		cur = nil
++	}
++
++	for n, line := range strings.Split(content, "\n") {
++		if m := sectionHeader.FindStringSubmatch(line); m != nil {
++			flush()
++			cur = &Shard{Date: m[1], SourceType: m[2], Label: strings.TrimSpace(m[3])}
++			continue
++		}
++		if dm := driftHeader.FindStringSubmatch(line); dm != nil {
++			return nil, fmt.Errorf("line %d: unrecognized section source type %q (want Sprint|Review): %q",
++				n+1, strings.TrimSpace(dm[1]), strings.TrimSpace(line))
++		}
++		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
++			continue
++		}
++		cells := splitRow(line)
++		if isHeaderRow(cells) || isSeparatorRow(cells) {
++			continue
++		}
++		it, err := rowToItem(cells)
++		if err != nil {
++			return nil, fmt.Errorf("line %d (%q): %w", n+1, strings.TrimSpace(line), err)
++		}
++		cur.Items = append(cur.Items, it)
++	}
++	flush()
++	return shards, nil
++}
++
++// splitRow strips the outer pipes and trims each cell of a Markdown table row.
++func splitRow(line string) []string {
++	line = strings.TrimSpace(line)
++	line = strings.TrimPrefix(line, "|")
++	line = strings.TrimSuffix(line, "|")
++	parts := strings.Split(line, "|")
++	for i := range parts {
++		parts[i] = strings.TrimSpace(parts[i])
++	}
++	return parts
++}
++
++func isHeaderRow(cells []string) bool {
++	return len(cells) > 0 && cells[0] == "Group"
++}
++
++var sepCell = regexp.MustCompile(`^:?-+:?$`)
++
++func isSeparatorRow(cells []string) bool {
++	if len(cells) == 0 {
++		return false
++	}
++	for _, c := range cells {
++		if c != "" && !sepCell.MatchString(c) {
++			return false
++		}
++	}
++	return true
++}
++
++func rowToItem(cells []string) (Item, error) {
++	if len(cells) != 9 && len(cells) != 11 {
++		return Item{}, fmt.Errorf("expected 9 or 11 cells, got %d", len(cells))
++	}
++	status, err := CheckboxToStatus(cells[1])
++	if err != nil {
++		return Item{}, err
++	}
++	est := 0
++	if e := strings.TrimSpace(cells[7]); e != "" {
++		v, err := strconv.Atoi(e)
++		if err != nil {
++			return Item{}, fmt.Errorf("est_minutes %q is not an integer", cells[7])
++		}
++		est = v
++	}
++	it := Item{
++		Group:      cells[0],
++		Status:     status,
++		Severity:   NormalizeSeverity(cells[2]),
++		File:       cells[3],
++		Problem:    cells[4],
++		Fix:        cells[5],
++		Category:   cells[6],
++		EstMinutes: est,
++		Source:     cells[8],
++	}
++	if len(cells) == 11 {
++		it.Reviewers = splitReviewers(cells[9])
++		it.Confidence = cells[10]
++	}
++	return it, nil
++}
++
++// splitReviewers parses a comma-separated reviewer cell into a trimmed slice,
++// returning nil (not an empty slice) when the cell is empty so that round-trips
++// against 9-column sections compare equal.
++func splitReviewers(cell string) []string {
++	var out []string
++	for _, r := range strings.Split(cell, ",") {
++		if r = strings.TrimSpace(r); r != "" {
++			out = append(out, r)
++		}
++	}
++	return out
++}
+diff --git a/internal/tdmigrate/parse_test.go b/internal/tdmigrate/parse_test.go
+new file mode 100644
+index 00000000..89b54973
+--- /dev/null
++++ b/internal/tdmigrate/parse_test.go
+@@ -0,0 +1,225 @@
++package tdmigrate
++
++import (
++	"os"
++	"path/filepath"
++	"reflect"
++	"sort"
++	"testing"
++)
++
++const sample9Col = `# Technical Debt Tracking
++
++## Stats
++
++| Severity | Open | Deferred | Resolved |
++|----------|------|----------|----------|
++| LOW | 1 | 0 | 0 |
++
++### [2026-06-26] From Sprint: epic-11.2
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|
++| 1 | [ ] | LOW | internal/tools/dispatch.go:123 | substring matching rejects legit names | match on token boundaries | REGRESSION_RISK | 30 | execute-epic-independent |
++| U | [/] | MEDIUM | internal/foo.go:5 | a deferred thing | do the thing | correctness | 0 | execute-sprint |
++`
++
++const sample11Col = `### [2026-06-23] From Sprint: 8.0_reconciler_library
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
++|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
++| 2 | [/] | HIGH | internal/reconcile/discover.go:25 | type drift | convert in adapter | correctness | 0 | execute-sprint | code-reviewer, claude | HIGH |
++`
++
++func TestParseREADME_9Col(t *testing.T) {
++	shards, err := ParseREADME(sample9Col)
++	if err != nil {
++		t.Fatalf("ParseREADME error: %v", err)
++	}
++	if len(shards) != 1 {
++		t.Fatalf("want 1 shard, got %d", len(shards))
++	}
++	s := shards[0]
++	if s.Date != "2026-06-26" || s.SourceType != "Sprint" || s.Label != "epic-11.2" {
++		t.Errorf("bad shard meta: %+v", s)
++	}
++	if len(s.Items) != 2 {
++		t.Fatalf("want 2 items, got %d", len(s.Items))
++	}
++	i0 := s.Items[0]
++	if i0.Group != "1" || i0.Status != StatusOpen || i0.Severity != "LOW" ||
++		i0.EstMinutes != 30 || i0.Source != "execute-epic-independent" {
++		t.Errorf("bad item0: %+v", i0)
++	}
++	if i0.Reviewers != nil || i0.Confidence != "" {
++		t.Errorf("9-col item should have no reviewers/confidence: %+v", i0)
++	}
++	if s.Items[1].Status != StatusDeferred || s.Items[1].EstMinutes != 0 {
++		t.Errorf("bad item1: %+v", s.Items[1])
++	}
++}
++
++func TestParseREADME_11Col(t *testing.T) {
++	shards, err := ParseREADME(sample11Col)
++	if err != nil {
++		t.Fatalf("ParseREADME error: %v", err)
++	}
++	it := shards[0].Items[0]
++	if !reflect.DeepEqual(it.Reviewers, []string{"code-reviewer", "claude"}) {
++		t.Errorf("bad reviewers: %#v", it.Reviewers)
++	}
++	if it.Confidence != "HIGH" {
++		t.Errorf("bad confidence: %q", it.Confidence)
++	}
++}
++
++func TestParseREADME_BadFieldCount(t *testing.T) {
++	bad := `### [2026-06-26] From Sprint: x
++
++| Group | | Severity |
++|---|---|---|
++| 1 | [ ] | LOW |
++`
++	if _, err := ParseREADME(bad); err == nil {
++		t.Error("expected error for non-9/11 column data row")
++	}
++}
++
++func TestParseREADME_DriftHeaderFailsLoudly(t *testing.T) {
++	drift := `### [2026-06-26] From Epic: x
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|---|---|---|---|---|---|---|---|---|
++| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
++`
++	if _, err := ParseREADME(drift); err == nil {
++		t.Error("expected hard error for unrecognized section source type, got nil (rows would be silently dropped)")
++	}
++}
++
++func TestParseREADME_BlankEstIsZero(t *testing.T) {
++	blank := `### [2026-06-26] From Sprint: x
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|---|---|---|---|---|---|---|---|---|
++| 1 | [ ] | LOW | f.go:1 | p | fix | cat |  | src |
++`
++	shards, err := ParseREADME(blank)
++	if err != nil {
++		t.Fatalf("blank est should parse as 0, got error: %v", err)
++	}
++	if shards[0].Items[0].EstMinutes != 0 {
++		t.Errorf("blank est_minutes = %d, want 0", shards[0].Items[0].EstMinutes)
++	}
++}
++
++func TestGenerateTable_SanitizesPipesAndNewlines(t *testing.T) {
++	shards := []Shard{{
++		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
++		Items: []Item{{
++			Group: "1", Status: StatusOpen, Severity: "LOW",
++			File: "f.go:1", Problem: "a | b\nsecond line", Fix: "do it",
++			Category: "correctness", EstMinutes: 5, Source: "a | b | c",
++		}},
++	}}
++	table, err := GenerateTable(shards)
++	if err != nil {
++		t.Fatalf("generate: %v", err)
++	}
++	// The regenerated table must remain structurally valid: every data row parses
++	// back to exactly one item (no phantom columns from unescaped pipes/newlines).
++	reparsed, err := ParseREADME(table)
++	if err != nil {
++		t.Fatalf("regenerated table not parseable (structural corruption): %v\n%s", err, table)
++	}
++	if len(reparsed) != 1 || len(reparsed[0].Items) != 1 {
++		t.Fatalf("want 1 shard / 1 item, got %d shards", len(reparsed))
++	}
++	if got := reparsed[0].Items[0]; got.Reviewers != nil || got.Confidence != "" {
++		t.Errorf("pipe in source leaked into phantom reviewers/confidence: %+v", got)
++	}
++}
++
++func TestParseREADME_BadEst(t *testing.T) {
++	bad := `### [2026-06-26] From Sprint: x
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|---|---|---|---|---|---|---|---|---|
++| 1 | [ ] | LOW | f.go:1 | p | fix | cat | notanumber | src |
++`
++	if _, err := ParseREADME(bad); err == nil {
++		t.Error("expected error for non-integer est_minutes")
++	}
++}
++
++// canonicalize sorts shards (and ignores ordering) so two parses can be compared
++// for SEMANTIC equality regardless of section ordering.
++func canonicalize(shards []Shard) []Shard {
++	out := make([]Shard, len(shards))
++	copy(out, shards)
++	sort.Slice(out, func(i, j int) bool {
++		if out[i].Date != out[j].Date {
++			return out[i].Date < out[j].Date
++		}
++		if out[i].Label != out[j].Label {
++			return out[i].Label < out[j].Label
++		}
++		return out[i].SourceType < out[j].SourceType
++	})
++	return out
++}
++
++func TestGenerateTable_SemanticRoundTrip(t *testing.T) {
++	orig, err := ParseREADME(sample9Col + "\n" + sample11Col)
++	if err != nil {
++		t.Fatalf("parse orig: %v", err)
++	}
++	table, err := GenerateTable(orig)
++	if err != nil {
++		t.Fatalf("generate: %v", err)
++	}
++	reparsed, err := ParseREADME(table)
++	if err != nil {
++		t.Fatalf("parse regenerated: %v", err)
++	}
++	if !reflect.DeepEqual(canonicalize(orig), canonicalize(reparsed)) {
++		t.Errorf("round-trip mismatch:\norig=%+v\nreparsed=%+v", canonicalize(orig), canonicalize(reparsed))
++	}
++}
++
++// liveREADME proves the migration against the real corpus (AC2): the live table
++// must survive table -> shards (in-memory) -> regenerated table -> shards with
++// zero data loss.
++func TestLiveREADME_SemanticRoundTrip(t *testing.T) {
++	path := filepath.Join("..", "..", ".planning", "technical-debt", "README.md")
++	data, err := os.ReadFile(path)
++	if err != nil {
++		t.Skipf("live README not readable: %v", err)
++	}
++	orig, err := ParseREADME(string(data))
++	if err != nil {
++		t.Fatalf("parse live README: %v", err)
++	}
++	if len(orig) == 0 {
++		t.Fatal("parsed zero shards from live README")
++	}
++	total := 0
++	for _, s := range orig {
++		total += len(s.Items)
++		if err := s.Validate(); err != nil {
++			t.Errorf("live shard %s/%s invalid: %v", s.Date, s.Label, err)
++		}
++	}
++	table, err := GenerateTable(orig)
++	if err != nil {
++		t.Fatalf("generate from live: %v", err)
++	}
++	reparsed, err := ParseREADME(table)
++	if err != nil {
++		t.Fatalf("re-parse generated: %v", err)
++	}
++	if !reflect.DeepEqual(canonicalize(orig), canonicalize(reparsed)) {
++		t.Error("live README round-trip lost or altered data")
++	}
++	t.Logf("live README: %d shards, %d items round-tripped", len(orig), total)
++}
+diff --git a/internal/tdmigrate/run.go b/internal/tdmigrate/run.go
+new file mode 100644
+index 00000000..aadd530f
+--- /dev/null
++++ b/internal/tdmigrate/run.go
+@@ -0,0 +1,132 @@
++package tdmigrate
++
++import (
++	"flag"
++	"fmt"
++	"io"
++	"os"
++)
++
++const (
++	defaultREADME = ".planning/technical-debt/README.md"
++	defaultItems  = ".planning/technical-debt/items"
++)
++
++// Run is the CLI entry point, kept in the package (not in cmd/) so the whole
++// dispatch surface is unit-testable. cmd/td-migrate is a one-line shim over it.
++//
++// Subcommands:
++//
++//	migrate  [--readme PATH] [--items DIR]   parse the README table -> write shards
++//	generate [--items DIR]                   read shards -> print regenerated ToC to stdout
++//	validate [--items DIR]                   strict-load + schema-check every shard
++//
++// generate NEVER overwrites the README (additive/proven-only this epic); it
++// always writes the regenerated table to stdout for inspection.
++func Run(args []string, stdout, stderr io.Writer) int {
++	if len(args) == 0 {
++		_, _ = fmt.Fprintln(stderr, usage)
++		return 2
++	}
++	switch args[0] {
++	case "migrate":
++		return runMigrate(args[1:], stdout, stderr)
++	case "generate":
++		return runGenerate(args[1:], stdout, stderr)
++	case "validate":
++		return runValidate(args[1:], stdout, stderr)
++	case "-h", "--help", "help":
++		_, _ = fmt.Fprintln(stdout, usage)
++		return 0
++	default:
++		_, _ = fmt.Fprintf(stderr, "unknown subcommand %q\n%s\n", args[0], usage)
++		return 2
++	}
++}
++
++const usage = `td-migrate — migrate technical-debt storage to shard-by-source YAML (additive)
++
++Usage:
++  td-migrate migrate  [--readme PATH] [--items DIR]   parse README table -> write shards
++  td-migrate generate [--items DIR]                   shards -> regenerated ToC table (stdout)
++  td-migrate validate [--items DIR]                   strict-load + schema-check shards`
++
++func newFlags(name string, args []string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
++	fs := flag.NewFlagSet(name, flag.ContinueOnError)
++	fs.SetOutput(stderr)
++	readme := fs.String("readme", defaultREADME, "path to the technical-debt README.md")
++	items := fs.String("items", defaultItems, "path to the shard directory")
++	return fs, readme, items
++}
++
++func runMigrate(args []string, stdout, stderr io.Writer) int {
++	fs, readme, items := newFlags("migrate", args, stderr)
++	allowEmpty := fs.Bool("allow-empty", false, "permit writing when the README parses to zero sections (wipes the shard store)")
++	if err := fs.Parse(args); err != nil {
++		return 2
++	}
++	data, err := os.ReadFile(*readme)
++	if err != nil {
++		_, _ = fmt.Fprintf(stderr, "migrate: read README: %v\n", err)
++		return 1
++	}
++	shards, err := ParseREADME(string(data))
++	if err != nil {
++		_, _ = fmt.Fprintf(stderr, "migrate: parse README: %v\n", err)
++		return 1
++	}
++	if len(shards) == 0 && !*allowEmpty {
++		_, _ = fmt.Fprintln(stderr, "migrate: parsed 0 sections; refusing to wipe the shard store (pass --allow-empty to override)")
++		return 1
++	}
++	for _, s := range shards {
++		if err := s.Validate(); err != nil {
++			_, _ = fmt.Fprintf(stderr, "migrate: refusing to write invalid shard %s/%s: %v\n", s.Date, s.Label, err)
++			return 1
++		}
++	}
++	written, err := WriteShards(*items, shards)
++	if err != nil {
++		_, _ = fmt.Fprintf(stderr, "migrate: write shards: %v\n", err)
++		return 1
++	}
++	itemCount := 0
++	for _, s := range shards {
++		itemCount += len(s.Items)
++	}
++	_, _ = fmt.Fprintf(stdout, "migrate: wrote %d shard(s), %d item(s) to %s\n", len(written), itemCount, *items)
++	return 0
++}
++
++func runGenerate(args []string, stdout, stderr io.Writer) int {
++	fs, _, items := newFlags("generate", args, stderr)
++	if err := fs.Parse(args); err != nil {
++		return 2
++	}
++	shards, err := LoadShards(*items)
++	if err != nil {
++		_, _ = fmt.Fprintf(stderr, "generate: load shards: %v\n", err)
++		return 1
++	}
++	table, err := GenerateTable(shards)
++	if err != nil {
++		_, _ = fmt.Fprintf(stderr, "generate: render table: %v\n", err)
++		return 1
++	}
++	_, _ = fmt.Fprint(stdout, table)
++	return 0
++}
++
++func runValidate(args []string, stdout, stderr io.Writer) int {
++	fs, _, items := newFlags("validate", args, stderr)
++	if err := fs.Parse(args); err != nil {
++		return 2
++	}
++	count, err := ValidateDir(*items)
++	if err != nil {
++		_, _ = fmt.Fprintf(stderr, "validate: %v\n", err)
++		return 1
++	}
++	_, _ = fmt.Fprintf(stdout, "validate: %d shard(s) OK\n", count)
++	return 0
++}
+diff --git a/internal/tdmigrate/run_test.go b/internal/tdmigrate/run_test.go
+new file mode 100644
+index 00000000..052d9b64
+--- /dev/null
++++ b/internal/tdmigrate/run_test.go
+@@ -0,0 +1,135 @@
++package tdmigrate
++
++import (
++	"bytes"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func run(t *testing.T, args ...string) (int, string, string) {
++	t.Helper()
++	var out, errb bytes.Buffer
++	code := Run(args, &out, &errb)
++	return code, out.String(), errb.String()
++}
++
++func TestRun_NoArgsAndUnknown(t *testing.T) {
++	if code, _, _ := run(t); code != 2 {
++		t.Errorf("no args: want exit 2, got %d", code)
++	}
++	if code, _, errb := run(t, "frobnicate"); code != 2 || !strings.Contains(errb, "unknown subcommand") {
++		t.Errorf("unknown: got code=%d err=%q", code, errb)
++	}
++	if code, out, _ := run(t, "--help"); code != 0 || !strings.Contains(out, "td-migrate") {
++		t.Errorf("help: got code=%d out=%q", code, out)
++	}
++}
++
++// writeREADME drops a minimal valid README into a temp dir for CLI tests.
++func writeREADME(t *testing.T, dir string) string {
++	t.Helper()
++	path := filepath.Join(dir, "README.md")
++	if err := os.WriteFile(path, []byte(sample9Col+"\n"+sample11Col), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	return path
++}
++
++func TestRun_MigrateGenerateValidate_EndToEnd(t *testing.T) {
++	dir := t.TempDir()
++	readme := writeREADME(t, dir)
++	items := filepath.Join(dir, "items")
++
++	code, out, errb := run(t, "migrate", "--readme", readme, "--items", items)
++	if code != 0 {
++		t.Fatalf("migrate failed: code=%d err=%q", code, errb)
++	}
++	if !strings.Contains(out, "shard(s)") {
++		t.Errorf("migrate output unexpected: %q", out)
++	}
++
++	code, _, errb = run(t, "validate", "--items", items)
++	if code != 0 {
++		t.Fatalf("validate failed: code=%d err=%q", code, errb)
++	}
++
++	code, gen, errb := run(t, "generate", "--items", items)
++	if code != 0 {
++		t.Fatalf("generate failed: code=%d err=%q", code, errb)
++	}
++	// generate emits the regenerated ToC to stdout and must be re-parseable.
++	if _, err := ParseREADME(gen); err != nil {
++		t.Errorf("generated table not parseable: %v", err)
++	}
++	if !strings.Contains(gen, "From Sprint: epic-11.2") {
++		t.Errorf("generated table missing section: %q", gen)
++	}
++}
++
++func TestRun_MigrateMissingREADME(t *testing.T) {
++	if code, _, _ := run(t, "migrate", "--readme", "/no/such/readme.md", "--items", t.TempDir()); code != 1 {
++		t.Errorf("want exit 1 for missing README, got %d", code)
++	}
++}
++
++func TestRun_MigrateRefusesInvalidData(t *testing.T) {
++	dir := t.TempDir()
++	// An unknown severity normalizes to "MED" which fails the enum check; migrate
++	// must refuse loudly rather than write a schema-invalid shard.
++	bad := `### [2026-06-26] From Sprint: x
++
++| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
++|---|---|---|---|---|---|---|---|---|
++| 1 | [ ] | Med | f.go:1 | p | fix | cat | 5 | src |
++`
++	readme := filepath.Join(dir, "README.md")
++	if err := os.WriteFile(readme, []byte(bad), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	items := filepath.Join(dir, "items")
++	if code, _, errb := run(t, "migrate", "--readme", readme, "--items", items); code != 1 || !strings.Contains(errb, "invalid shard") {
++		t.Errorf("want exit 1 refusing invalid data, got code=%d err=%q", code, errb)
++	}
++}
++
++func TestRun_MigrateRefusesEmptyWipe(t *testing.T) {
++	dir := t.TempDir()
++	// A README with no recognized sections must not silently wipe the store.
++	readme := filepath.Join(dir, "README.md")
++	if err := os.WriteFile(readme, []byte("# Technical Debt\n\nNo sections here.\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	items := filepath.Join(dir, "items")
++	if err := os.MkdirAll(items, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	keep := filepath.Join(items, "2026-01-01_keep.yaml")
++	if err := os.WriteFile(keep, []byte("date: x\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	code, _, errb := run(t, "migrate", "--readme", readme, "--items", items)
++	if code != 1 || !strings.Contains(errb, "refusing to wipe") {
++		t.Errorf("want exit 1 refusing empty wipe, got code=%d err=%q", code, errb)
++	}
++	if _, err := os.Stat(keep); err != nil {
++		t.Errorf("existing shard was wiped despite refusal: %v", err)
++	}
++	// --allow-empty overrides the guard.
++	if code, _, _ := run(t, "migrate", "--readme", readme, "--items", items, "--allow-empty"); code != 0 {
++		t.Errorf("--allow-empty should permit empty migrate, got code=%d", code)
++	}
++}
++
++func TestRun_ValidateCatchesBadShard(t *testing.T) {
++	items := t.TempDir()
++	// Unknown field -> strict-load rejection.
++	bad := "date: 2026-06-26\nsource_type: Sprint\nlabel: x\nbogus_field: nope\nitems: []\n"
++	if err := os.WriteFile(filepath.Join(items, "bad.yaml"), []byte(bad), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if code, _, errb := run(t, "validate", "--items", items); code != 1 || !strings.Contains(errb, "validate:") {
++		t.Errorf("want exit 1 with validate error, got code=%d err=%q", code, errb)
++	}
++}
+diff --git a/internal/tdmigrate/shard.go b/internal/tdmigrate/shard.go
+new file mode 100644
+index 00000000..4b91d8b0
+--- /dev/null
++++ b/internal/tdmigrate/shard.go
+@@ -0,0 +1,119 @@
++package tdmigrate
++
++import (
++	"bytes"
++	"fmt"
++	"os"
++	"path/filepath"
++	"regexp"
++	"sort"
++	"strings"
++
++	"gopkg.in/yaml.v3"
++)
++
++var (
++	nonSlugChars = regexp.MustCompile(`[^a-z0-9._-]+`)
++	dashRuns     = regexp.MustCompile(`-{2,}`)
++)
++
++// sanitizeLabel turns a free-text section label into a filesystem-safe slug.
++// The original label is preserved verbatim in the shard's `label` field; this
++// only affects the filename.
++func sanitizeLabel(label string) string {
++	s := strings.ToLower(strings.TrimSpace(label))
++	s = nonSlugChars.ReplaceAllString(s, "-")
++	s = dashRuns.ReplaceAllString(s, "-")
++	s = strings.Trim(s, "-")
++	if s == "" {
++		s = "section"
++	}
++	return s
++}
++
++// ShardFilename returns a deterministic, collision-free filename for a shard.
++// used tracks names already chosen in this run so two same-date/same-label
++// sections never clobber one another.
++func ShardFilename(s Shard, used map[string]bool) string {
++	base := fmt.Sprintf("%s_%s", s.Date, sanitizeLabel(s.Label))
++	name := base + ".yaml"
++	for i := 2; used[name]; i++ {
++		name = fmt.Sprintf("%s-%d.yaml", base, i)
++	}
++	used[name] = true
++	return name
++}
++
++// MarshalShard renders a shard as a YAML document. yaml.v3 emits valid,
++// correctly-quoted YAML by construction, which is the first line of the
++// YAML-safety plan (generate, do not hand-author the risky parts).
++func MarshalShard(s Shard) ([]byte, error) {
++	var buf bytes.Buffer
++	enc := yaml.NewEncoder(&buf)
++	enc.SetIndent(2)
++	if err := enc.Encode(s); err != nil {
++		return nil, err
++	}
++	if err := enc.Close(); err != nil {
++		return nil, err
++	}
++	return buf.Bytes(), nil
++}
++
++// WriteShards writes one YAML file per shard into dir. It is idempotent: it
++// prunes its own prior output (every *.yaml already in dir) before writing, so
++// re-running migrate never leaves orphaned shards from a previous run. dir is
++// owned entirely by this tool, so the prune is safe.
++func WriteShards(dir string, shards []Shard) ([]string, error) {
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		return nil, err
++	}
++	existing, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
++	if err != nil {
++		return nil, err
++	}
++	for _, f := range existing {
++		if err := os.Remove(f); err != nil {
++			return nil, err
++		}
++	}
++	used := map[string]bool{}
++	var written []string
++	for _, s := range shards {
++		data, err := MarshalShard(s)
++		if err != nil {
++			return nil, fmt.Errorf("marshal shard %s/%s: %w", s.Date, s.Label, err)
++		}
++		name := ShardFilename(s, used)
++		path := filepath.Join(dir, name)
++		if err := os.WriteFile(path, data, 0o644); err != nil {
++			return nil, err
++		}
++		written = append(written, name)
++	}
++	sort.Strings(written)
++	return written, nil
++}
++
++// LoadShards strict-loads every *.yaml shard in dir (unknown fields rejected,
++// schema validated) and returns them sorted by filename for determinism.
++func LoadShards(dir string) ([]Shard, error) {
++	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
++	if err != nil {
++		return nil, err
++	}
++	sort.Strings(files)
++	var shards []Shard
++	for _, f := range files {
++		data, err := os.ReadFile(f)
++		if err != nil {
++			return nil, err
++		}
++		s, err := DecodeShardStrict(data)
++		if err != nil {
++			return nil, fmt.Errorf("%s: %w", filepath.Base(f), err)
++		}
++		shards = append(shards, s)
++	}
++	return shards, nil
++}
+diff --git a/internal/tdmigrate/shard_test.go b/internal/tdmigrate/shard_test.go
+new file mode 100644
+index 00000000..17bf57ca
+--- /dev/null
++++ b/internal/tdmigrate/shard_test.go
+@@ -0,0 +1,100 @@
++package tdmigrate
++
++import (
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++)
++
++func TestSanitizeLabel(t *testing.T) {
++	cases := map[string]string{
++		"epic-11.2":                "epic-11.2",
++		"11.0_executing_reviewers": "11.0_executing_reviewers",
++		"llmclient OpenAI-compatible tool handling": "llmclient-openai-compatible-tool-handling",
++		"  ///  ": "section",
++	}
++	for in, want := range cases {
++		if got := sanitizeLabel(in); got != want {
++			t.Errorf("sanitizeLabel(%q) = %q, want %q", in, got, want)
++		}
++	}
++}
++
++func TestShardFilename_CollisionDisambiguates(t *testing.T) {
++	used := map[string]bool{}
++	a := Shard{Date: "2026-06-26", Label: "x"}
++	b := Shard{Date: "2026-06-26", Label: "x"}
++	n1 := ShardFilename(a, used)
++	n2 := ShardFilename(b, used)
++	if n1 == n2 {
++		t.Fatalf("collision not disambiguated: both %q", n1)
++	}
++	if n1 != "2026-06-26_x.yaml" || n2 != "2026-06-26_x-2.yaml" {
++		t.Errorf("unexpected names: %q, %q", n1, n2)
++	}
++}
++
++func sampleShards(t *testing.T) []Shard {
++	t.Helper()
++	shards, err := ParseREADME(sample9Col + "\n" + sample11Col)
++	if err != nil {
++		t.Fatalf("parse: %v", err)
++	}
++	return shards
++}
++
++func TestWriteAndLoadShards_RoundTrip(t *testing.T) {
++	dir := t.TempDir()
++	orig := sampleShards(t)
++	written, err := WriteShards(dir, orig)
++	if err != nil {
++		t.Fatalf("WriteShards: %v", err)
++	}
++	if len(written) != len(orig) {
++		t.Fatalf("wrote %d files, want %d", len(written), len(orig))
++	}
++	loaded, err := LoadShards(dir)
++	if err != nil {
++		t.Fatalf("LoadShards: %v", err)
++	}
++	if !reflect.DeepEqual(canonicalize(orig), canonicalize(loaded)) {
++		t.Errorf("disk round-trip mismatch:\norig=%+v\nloaded=%+v", orig, loaded)
++	}
++}
++
++func TestWriteShards_IdempotentPrune(t *testing.T) {
++	dir := t.TempDir()
++	// A stale shard from a hypothetical prior run must be pruned.
++	stale := filepath.Join(dir, "9999-01-01_stale.yaml")
++	if err := os.WriteFile(stale, []byte("date: x\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := WriteShards(dir, sampleShards(t)); err != nil {
++		t.Fatalf("WriteShards: %v", err)
++	}
++	if _, err := os.Stat(stale); !os.IsNotExist(err) {
++		t.Errorf("stale shard not pruned: %v", err)
++	}
++}
++
++func TestMarshalShard_MultilineBlockScalar(t *testing.T) {
++	s := Shard{
++		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
++		Items: []Item{{
++			Group: "1", Status: StatusOpen, Severity: "LOW",
++			File: "f.go:1", Problem: "line one\nline two", Fix: "do it",
++			Category: "correctness", EstMinutes: 5, Source: "src",
++		}},
++	}
++	data, err := MarshalShard(s)
++	if err != nil {
++		t.Fatalf("MarshalShard: %v", err)
++	}
++	// A multi-line value should be emitted as a block scalar, not a quoted blob
++	// with literal \n escapes.
++	if !strings.Contains(string(data), "problem: |-") && !strings.Contains(string(data), "problem: |") {
++		t.Errorf("multi-line problem not a block scalar:\n%s", data)
++	}
++}
+diff --git a/internal/tdmigrate/validate.go b/internal/tdmigrate/validate.go
+new file mode 100644
+index 00000000..839bb3c8
+--- /dev/null
++++ b/internal/tdmigrate/validate.go
+@@ -0,0 +1,65 @@
++package tdmigrate
++
++import (
++	"bytes"
++	"fmt"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++
++	"gopkg.in/yaml.v3"
++)
++
++// DecodeShardStrict decodes a single YAML shard document with strict-load
++// semantics: unknown fields are rejected (KnownFields), tabs in indentation and
++// other malformed YAML surface as decode errors, and the decoded shard is
++// schema-validated. This converts "silent bad YAML" into a loud error.
++func DecodeShardStrict(data []byte) (Shard, error) {
++	dec := yaml.NewDecoder(bytes.NewReader(data))
++	dec.KnownFields(true)
++	var s Shard
++	if err := dec.Decode(&s); err != nil {
++		return Shard{}, fmt.Errorf("yaml decode: %w", err)
++	}
++	if err := s.Validate(); err != nil {
++		return Shard{}, fmt.Errorf("schema: %w", err)
++	}
++	return s, nil
++}
++
++// ValidationError aggregates per-file validation failures so the gate reports
++// every bad shard in one pass rather than stopping at the first.
++type ValidationError struct {
++	Failures []string
++}
++
++func (e *ValidationError) Error() string {
++	return fmt.Sprintf("%d invalid shard(s):\n  %s",
++		len(e.Failures), strings.Join(e.Failures, "\n  "))
++}
++
++// ValidateDir strict-loads and schema-checks every *.yaml shard in dir. It
++// returns a *ValidationError listing each failure, or nil if all shards pass.
++func ValidateDir(dir string) (int, error) {
++	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
++	if err != nil {
++		return 0, err
++	}
++	sort.Strings(files)
++	var failures []string
++	for _, f := range files {
++		data, err := os.ReadFile(f)
++		if err != nil {
++			failures = append(failures, fmt.Sprintf("%s: %v", filepath.Base(f), err))
++			continue
++		}
++		if _, err := DecodeShardStrict(data); err != nil {
++			failures = append(failures, fmt.Sprintf("%s: %v", filepath.Base(f), err))
++		}
++	}
++	if len(failures) > 0 {
++		return len(files), &ValidationError{Failures: failures}
++	}
++	return len(files), nil
++}

@@ -1,0 +1,1 @@
+LOW|internal/tdmigrate/generate.go:45|Potential column misalignment in Markdown table|Use a consistent number of spaces or a dedicated table library for alignment|maintainability|15|The wide table has 11 columns but the loop uses a fixed format string that may not align visually|otto

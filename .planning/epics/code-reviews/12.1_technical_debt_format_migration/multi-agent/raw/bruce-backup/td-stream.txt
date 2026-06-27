@@ -1,0 +1,2 @@
+MEDIUM|internal/tdmigrate/shard.go:67|Prite ALL YAML files in dir, including manually created shards|Only delete files written by this tool; use a marker file or track written names|correctness|15|WriteShards uses Glob *.yaml and RemoveAll; manual shards are silently deleted|patricia
+MEDIUM|internal/tdmigrate/fixtures_test.go:96|Test expects tabs rejected but yaml.v3 allows tab indentation|Add custom tab-checking before decode, or configure decoder to reject tabs|correctness|5|TestStrictLoad_RejectsTabIndentation will fail - yaml.v3 permits tabs by default|patricia

@@ -1,0 +1,3 @@
+MEDIUM|internal/tdmigrate/shard.go:76|WriteShards blindly deletes all *.yaml files in target dir|Restrict deletion to tool-managed filenames or verify dir ownership|correctness|10|filepath.Glob("*.yaml") then os.Remove(f) wipes unrelated files|bruce
+LOW|internal/tdmigrate/parse.go:48|splitRow ignores escaped pipes \| which breaks column count|Handle \| escaping or use a markdown table parser|correctness|15|strings.Split(line, "|") splits on \| corrupting cell count|bruce
+LOW|internal/tdmigrate/run.go:59|newFlags defines --readme for generate/validate where unused|Use subcommand-specific flag sets to avoid confusion|maintainability|5|fs.String("readme", ...) defined but ignored by generate/validate|bruce

@@ -1,0 +1,2 @@
+MEDIUM|internal/tdmigrate/validate.go:44|Missing directory existence check|Add os.Stat check before Glob; error if dir missing|error-handling|10|filepath.Glob on missing dir returns nil; ValidateDir reports "0 shard(s) OK"|bruce
+LOW|internal/tdmigrate/run.go:42|Unused args parameter in newFlags|Remove args parameter from function signature|maintainability|3|args string parameter never referenced in body|bruce
