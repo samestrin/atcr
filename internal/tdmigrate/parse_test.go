@@ -132,6 +132,21 @@ func TestParseREADME_EmptySectionFailsLoudly(t *testing.T) {
 	}
 }
 
+func TestParseREADME_MissingLeadingPipeFailsLoudly(t *testing.T) {
+	// A section with one valid row and one row missing its leading pipe must
+	// error loudly — not silently drop the pipeless row (zero-data-loss mandate).
+	input := `### [2026-06-26] From Sprint: x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+2 | [ ] | LOW | f.go:2 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(input); err == nil {
+		t.Error("expected hard error for in-section row missing leading pipe, got nil")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
