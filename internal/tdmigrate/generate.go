@@ -9,8 +9,11 @@ import (
 
 // GenerateTable renders shards back into the README technical-debt ToC table.
 // Sections are emitted newest-date-first (then by label) for a stable, human-
-// readable ordering; the per-item data is preserved verbatim so a parse of the
-// output is semantically equal to the parse of the original (AC2 round-trip).
+// readable ordering; shard-level data is preserved, but per-item table cells are
+// intentionally lossy single-line summaries (e.g., pipe → slash, newline → space)
+// so the regenerated table stays structurally valid. Round-trip equality holds at
+// the shard layer (table → shards → table), not at the verbatim table-cell level;
+// SCHEMA.md documents the canonical shard schema.
 //
 // A section that carries any reviewer/confidence data is rendered with the
 // 11-column reconciled layout; otherwise the 9-column layout is used — matching
