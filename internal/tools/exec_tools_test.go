@@ -80,6 +80,20 @@ func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	}
 }
 
+// TestRegisterExec_OnlyAllowsExecutionToolsNames guards the trusted exec
+// registration path: any name published through registerExec must be declared in
+// ExecutionTools(). This makes ExecutionTools() authoritative by construction and
+// prevents a future sandbox-reaching handler from being registered via registerExec
+// without appearing in the tool registry offered to agents.
+func TestRegisterExec_OnlyAllowsExecutionToolsNames(t *testing.T) {
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	assert.Panics(t, func() {
+		d.registerExec("not_an_exec_tool", func(_ context.Context, _ *Dispatcher, _ json.RawMessage, _ string) (ToolResult, error) {
+			return ToolResult{}, nil
+		})
+	}, "registerExec must reject names not declared in ExecutionTools()")
+}
+
 func TestExecutionTools_Defs(t *testing.T) {
 	defs := ExecutionTools()
 	names := map[string]ToolDef{}
