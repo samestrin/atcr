@@ -328,6 +328,18 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	if err := writePayloadArtifacts(dir, payloads); err != nil {
 		return nil, err
 	}
+	// Epic 12.2 provenance: write the resolved scope constraint to
+	// payload/scope-constraint.txt so the on-disk artifact reflects what
+	// each reviewer received. resolveScopeConstraint is called again here
+	// (second read) rather than threading the result through the function
+	// signature of finalizePreparedReview.
+	if req.SprintPlanPath != "" {
+		if sc, _ := resolveScopeConstraint(req); sc != "" {
+			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
+				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
+			}
+		}
+	}
 
 	m := &payload.Manifest{
 		Base:            req.Range.Base,
