@@ -663,6 +663,9 @@ func neededModes(cfg *ReviewConfig) []string {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
+// resolveScopeConstraint is a stub pending GREEN implementation.
+func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) { return "", "" }
+
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
 	perAgentMode := map[string]string{}
 	var slots []Slot
