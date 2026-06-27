@@ -1,9 +1,13 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -360,4 +364,60 @@ func TestDispatcher_SetLimits_RaceWithCapResult(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// TestWithExecEligibility_AuthorizedCallersOnly asserts that WithExecEligibility
+// is called only from the packages in the authorized set below. Any new call site
+// widens the exec-eligibility trust surface; add it to the map only after a
+// deliberate security review (and update the godoc in exec_tools.go accordingly).
+func TestWithExecEligibility_AuthorizedCallersOnly(t *testing.T) {
+	authorized := map[string]bool{
+		"internal/tools":  true, // declaration + package-internal tests
+		"internal/fanout": true,
+		"internal/verify": true,
+	}
+	root := moduleRoot(t)
+	var violations []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		if strings.Contains(filepath.ToSlash(path), "/vendor/") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !bytes.Contains(data, []byte("WithExecEligibility(")) {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, filepath.Dir(path))
+		rel = filepath.ToSlash(rel)
+		if !authorized[rel] {
+			violations = append(violations, rel)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	if len(violations) > 0 {
+		t.Errorf("WithExecEligibility called from unauthorized package(s) — update authorized map only after security review:\n%s",
+			strings.Join(violations, "\n"))
+	}
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("module root not found: no go.mod in any ancestor directory")
+		}
+		dir = parent
+	}
 }

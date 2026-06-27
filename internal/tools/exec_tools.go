@@ -72,6 +72,13 @@ const (
 // cannot reach an exec tool, so a caller that does not affirmatively grant
 // eligibility can never escalate to execution.
 //
+// Authorized callers (closed set — expand only after deliberate security review):
+//   - internal/fanout  (fanout.loop — gates exec on the agent's Exec flag)
+//   - internal/verify  (verify.evidence — grants eligibility unconditionally for repro runs)
+//
+// TestWithExecEligibility_AuthorizedCallersOnly (exec_tools_test.go) enforces
+// this constraint by scanning source.
+//
 // No nil-ctx guard: context.WithValue panics on a nil parent by design, and this
 // is the WRITE path, where a nil ctx means a mis-wired caller, not a deny case.
 // Fail-closed behaviour lives on the READ path (execEligible returns false on
