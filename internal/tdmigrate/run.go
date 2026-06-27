@@ -47,9 +47,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 const usage = `td-migrate — migrate technical-debt storage to shard-by-source YAML (additive)
 
 Usage:
-  td-migrate migrate  [--readme PATH] [--items DIR]   parse README table -> write shards
-  td-migrate generate [--items DIR]                   shards -> regenerated ToC table (stdout)
-  td-migrate validate [--items DIR]                   strict-load + schema-check shards`
+  td-migrate migrate  [--readme PATH] [--items DIR] [--allow-empty]   parse README table -> write shards (--allow-empty permits a zero-section wipe)
+  td-migrate generate [--items DIR]                                   shards -> regenerated ToC table (stdout)
+  td-migrate validate [--items DIR]                                   strict-load + schema-check shards`
 
 func newFlags(name string, stderr io.Writer) (*flag.FlagSet, *string, *string) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
