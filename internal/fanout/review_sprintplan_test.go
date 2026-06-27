@@ -147,3 +147,24 @@ func TestPrepareReviewFromDiff_ConstraintRespectsByteBudget(t *testing.T) {
 			"scope constraint plan content must not exceed budget/8 bytes")
 	}
 }
+
+// TestPrepareReviewFromDiff_WritesConstraintArtifact asserts that
+// PrepareReviewFromDiff writes the resolved SCOPE CONSTRAINT block to
+// payload/scope-constraint.txt so the on-disk artifact reflects what each
+// reviewer actually received (Epic 12.2 AC5 provenance).
+func TestPrepareReviewFromDiff_WritesConstraintArtifact(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "scope-constraint.txt"))
+	require.NoError(t, err, "payload/scope-constraint.txt must be written for a scoped review")
+	require.Contains(t, string(data), "SCOPE CONSTRAINT")
+	require.Contains(t, string(data), "only auth changes")
+}
