@@ -56,6 +56,36 @@ func TestReadSprintPlan(t *testing.T) {
 	}
 }
 
+// ReadSprintPlan must never buffer more than a few bytes past MaxSprintPlanBytes,
+// even if the path points at a huge file. It should read at most MaxSprintPlanBytes+1
+// bytes so ScopeConstraint can still detect truncation while bounding memory use.
+func TestReadSprintPlan_LimitsReadSize(t *testing.T) {
+	dir := t.TempDir()
+	hugePath := filepath.Join(dir, "huge.md")
+	// Create a file significantly larger than the ceiling.
+	huge := strings.Repeat("x", int(MaxSprintPlanBytes)+5000)
+	if err := os.WriteFile(hugePath, []byte(huge), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadSprintPlan(hugePath)
+	if err != nil {
+		t.Fatalf("ReadSprintPlan(huge) = (%q, %v), want nil error", got, err)
+	}
+	if int64(len(got)) > MaxSprintPlanBytes+1 {
+		t.Fatalf("ReadSprintPlan buffered %d bytes, want <= %d", len(got), MaxSprintPlanBytes+1)
+	}
+	// The returned prefix must match the original file.
+	if !strings.HasPrefix(huge, got) {
+		t.Fatalf("ReadSprintPlan(huge) lost prefix bytes")
+	}
+	// ScopeConstraint should still report truncation because the source was oversized.
+	_, truncated := ScopeConstraint(got)
+	if !truncated {
+		t.Fatalf("ScopeConstraint did not detect truncation after limited read")
+	}
+}
+
 // ScopeConstraint formats the SCOPE CONSTRAINT block. Empty/whitespace-only
 // content yields "" (no block, review proceeds unconstrained); valid content is
 // wrapped with the constraint instructions; oversized content is capped at
