@@ -236,7 +236,14 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	if empty {
 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", "")
+	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
+	// SCOPE CONSTRAINT to every reviewer's payload via buildSlots. An unreadable
+	// or oversized plan warns but never aborts the review.
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	if scopeWarn != "" {
+		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
+	}
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +427,14 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	payloads := map[string]modePayload{
 		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
 	}
-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, "")
+	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
+	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
+	// oversized plan warns but never aborts the review.
+	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
+	if scopeWarn != "" {
+		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
+	}
+	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint)
 	if err != nil {
 		return nil, err
 	}
@@ -663,8 +677,33 @@ func neededModes(cfg *ReviewConfig) []string {
 // aborts the whole run fail-fast: these are configuration errors the user must
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
-// resolveScopeConstraint is a stub pending GREEN implementation.
-func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) { return "", "" }
+// resolveScopeConstraint reads the sprint/epic plan named by req.SprintPlanPath
+// and returns the formatted SCOPE CONSTRAINT block to prepend to every reviewer's
+// payload (Epic 12.2), plus an optional human-readable warning the caller surfaces
+// on stderr. The three dispositions:
+//
+//   - no plan (empty path, missing, or empty/whitespace-only file) → ("", ""):
+//     the review proceeds diff-wide, silently (AC2).
+//   - unreadable plan (permission error, a directory, IO error) → ("", warning):
+//     the review proceeds unconstrained rather than aborting, after the caller
+//     warns (AC3).
+//   - oversized plan → (capped block, warning): the content is capped at
+//     payload.MaxSprintPlanBytes before injection so it cannot inflate every agent
+//     prompt past payload_byte_budget, and the truncation is surfaced (AC6).
+//
+// It is pure (no I/O beyond the file read) and returns the warning rather than
+// printing it, so the two prepare entry points can route it to their own stderr.
+func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
+	raw, err := payload.ReadSprintPlan(req.SprintPlanPath)
+	if err != nil {
+		return "", fmt.Sprintf("sprint plan %q is unreadable; proceeding with a diff-wide review: %v", req.SprintPlanPath, err)
+	}
+	block, truncated := payload.ScopeConstraint(raw)
+	if truncated {
+		warning = fmt.Sprintf("sprint plan %q exceeded %d bytes and was truncated before injection", req.SprintPlanPath, payload.MaxSprintPlanBytes)
+	}
+	return block, warning
+}
 
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
 	perAgentMode := map[string]string{}
