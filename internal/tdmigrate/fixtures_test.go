@@ -106,6 +106,16 @@ func TestStrictLoad_RejectsUnknownField(t *testing.T) {
 	}
 }
 
+// TestStrictLoad_RejectsMultipleDocuments proves a shard containing more than
+// one YAML document is rejected, rather than silently discarding the tail.
+func TestStrictLoad_RejectsMultipleDocuments(t *testing.T) {
+	item := "  - group: \"1\"\n    status: open\n    severity: LOW\n    file: f.go:1\n    problem: p\n    fix: f\n    category: c\n    est_minutes: 5\n    source: s\n"
+	multi := "date: \"2026-06-26\"\nsource_type: Sprint\nlabel: x\nitems:\n" + item + "---\ndate: \"2026-06-27\"\nsource_type: Sprint\nlabel: y\nitems:\n" + item
+	if _, err := DecodeShardStrict([]byte(multi)); err == nil {
+		t.Error("expected strict decode to reject a multi-document shard")
+	}
+}
+
 // TestStrictLoad_RejectsSchemaViolation proves a well-formed YAML that violates
 // the schema (bad enum) is rejected by the gate.
 func TestStrictLoad_RejectsSchemaViolation(t *testing.T) {
