@@ -50,3 +50,5 @@ Everything lands under `.atcr/reviews/<id>/`:
 - `reconciled/report.md` — the human report (also `findings.txt`, `findings.json`, `summary.json`, `ambiguous.json`).
 
 See [findings-format.md](findings-format.md) for the versioned findings stream contract and [providers.md](providers.md) for configuring the reviewer pool.
+
+To drive atcr as the reviewer backend for a separate code-review skill or pipeline (invoking `atcr review --output-dir` as a subprocess and owning the downstream merge), see [code-review-backend.md](code-review-backend.md).
