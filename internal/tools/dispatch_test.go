@@ -166,6 +166,19 @@ func TestNewDispatcher_ZeroLimitsNormalizedToDefaults(t *testing.T) {
 		"NewDispatcher must normalize zero Limits fields to DefaultLimits()")
 }
 
+// TestGuardToolName_ExecPatternFalsePositivesAllowed verifies that token-boundary
+// matching does not reject legitimate read-only tool names that happen to contain
+// an exec-pattern fragment as a substring of a longer word.
+// "prune" contains the substring "run"; "retrieval" contains "eval". Both are
+// valid read-only names that the current strings.Contains check incorrectly rejects.
+func TestGuardToolName_ExecPatternFalsePositivesAllowed(t *testing.T) {
+	for _, name := range []string{"prune_results", "data_retrieval"} {
+		if err := guardToolName(name); err != nil {
+			t.Errorf("guardToolName(%q) incorrectly rejected a non-exec tool name: %v", name, err)
+		}
+	}
+}
+
 // TestTruncate_LimitSmallerThanMarker verifies that truncate never returns a
 // string longer than limit, even when limit < len(truncMarker).
 func TestTruncate_LimitSmallerThanMarker(t *testing.T) {
