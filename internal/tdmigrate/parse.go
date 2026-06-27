@@ -118,36 +118,56 @@ func isSeparatorRow(cells []string) bool {
 	return true
 }
 
+// Column indices for the 9-column and 11-column TD table layouts.
+// These constants are the single source of truth for the parse side; generate.go
+// must emit columns in the same order (verified by TestGenerateTable_SemanticRoundTrip).
+const (
+	colGroup      = 0
+	colCheckbox   = 1
+	colSeverity   = 2
+	colFile       = 3
+	colProblem    = 4
+	colFix        = 5
+	colCategory   = 6
+	colEstMinutes = 7
+	colSource     = 8
+	col9Count     = 9 // expected cell count for a base section row
+
+	colReviewers  = 9
+	colConfidence = 10
+	col11Count    = 11 // expected cell count for a reconciled section row
+)
+
 func rowToItem(cells []string) (Item, error) {
-	if len(cells) != 9 && len(cells) != 11 {
-		return Item{}, fmt.Errorf("expected 9 or 11 cells, got %d", len(cells))
+	if len(cells) != col9Count && len(cells) != col11Count {
+		return Item{}, fmt.Errorf("expected %d or %d cells, got %d", col9Count, col11Count, len(cells))
 	}
-	status, err := CheckboxToStatus(cells[1])
+	status, err := CheckboxToStatus(cells[colCheckbox])
 	if err != nil {
 		return Item{}, err
 	}
 	est := 0
-	if e := strings.TrimSpace(cells[7]); e != "" {
+	if e := strings.TrimSpace(cells[colEstMinutes]); e != "" {
 		v, err := strconv.Atoi(e)
 		if err != nil {
-			return Item{}, fmt.Errorf("est_minutes %q is not an integer", cells[7])
+			return Item{}, fmt.Errorf("est_minutes %q is not an integer", cells[colEstMinutes])
 		}
 		est = v
 	}
 	it := Item{
-		Group:      cells[0],
+		Group:      cells[colGroup],
 		Status:     status,
-		Severity:   NormalizeSeverity(cells[2]),
-		File:       cells[3],
-		Problem:    cells[4],
-		Fix:        cells[5],
-		Category:   cells[6],
+		Severity:   NormalizeSeverity(cells[colSeverity]),
+		File:       cells[colFile],
+		Problem:    cells[colProblem],
+		Fix:        cells[colFix],
+		Category:   cells[colCategory],
 		EstMinutes: est,
-		Source:     cells[8],
+		Source:     cells[colSource],
 	}
-	if len(cells) == 11 {
-		it.Reviewers = splitReviewers(cells[9])
-		it.Confidence = cells[10]
+	if len(cells) == col11Count {
+		it.Reviewers = splitReviewers(cells[colReviewers])
+		it.Confidence = cells[colConfidence]
 	}
 	return it, nil
 }

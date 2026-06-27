@@ -147,6 +147,20 @@ func TestParseREADME_MissingLeadingPipeFailsLoudly(t *testing.T) {
 	}
 }
 
+func TestColumnLayoutConstants(t *testing.T) {
+	// Column-index constants must exist and match the 9-col and 11-col layouts.
+	// If either parse.go or generate.go drifts, the round-trip test catches it;
+	// this test documents the expected indices explicitly.
+	if colGroup != 0 || colCheckbox != 1 || colSeverity != 2 || colFile != 3 ||
+		colProblem != 4 || colFix != 5 || colCategory != 6 || colEstMinutes != 7 ||
+		colSource != 8 || col9Count != 9 {
+		t.Error("column-index constants do not match 9-column layout")
+	}
+	if colReviewers != 9 || colConfidence != 10 || col11Count != 11 {
+		t.Error("column-index constants do not match 11-column layout")
+	}
+}
+
 func TestParseREADME_BlankEstIsZero(t *testing.T) {
 	blank := `### [2026-06-26] From Sprint: x
 
