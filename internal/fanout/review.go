@@ -774,13 +774,21 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
 	if err != nil {
 		return Agent{}, "", err
 	}
+	// Sprint-plan SCOPE CONSTRAINT (Epic 12.2): prepend the formatted constraint
+	// to the payload so it lands in EVERY persona — every reviewer renders
+	// {{.Payload}} (it carries the diff), so prepending guarantees delivery
+	// regardless of the persona template, and places the constraint immediately
+	// before the diff (the NFR). Empty when no --sprint-plan was given, leaving the
+	// payload unchanged for a diff-wide review. Because the constraint becomes part
+	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
+	// invalidates correctly when the plan changes (AC5).
 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
 		AgentName:    name,
 		BaseRef:      rng.Base,
 		HeadRef:      rng.Head,
 		PayloadMode:  mode,
 		FileCount:    mp.FileCount,
-		Payload:      mp.Text,
+		Payload:      scopeConstraint + mp.Text,
 		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
 		ToolsEnabled: ac.Tools,
 	})
