@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	nonSlugChars = regexp.MustCompile(`[^a-z0-9._-]+`)
-	dashRuns     = regexp.MustCompile(`-{2,}`)
+	nonSlugChars    = regexp.MustCompile(`[^a-z0-9._-]+`)
+	dashRuns        = regexp.MustCompile(`-{2,}`)
+	shardDateFormat = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
 // sanitizeLabel turns a free-text section label into a filesystem-safe slug.
@@ -81,6 +82,9 @@ func WriteShards(dir string, shards []Shard) ([]string, error) {
 	}
 	todo := make([]pending, 0, len(shards))
 	for _, s := range shards {
+		if !shardDateFormat.MatchString(s.Date) {
+			return nil, fmt.Errorf("shard %q: date %q does not match YYYY-MM-DD format", s.Label, s.Date)
+		}
 		data, err := MarshalShard(s)
 		if err != nil {
 			return nil, fmt.Errorf("marshal shard %s/%s: %w", s.Date, s.Label, err)
