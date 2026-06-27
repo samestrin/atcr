@@ -85,6 +85,61 @@ func TestParseREADME_BadFieldCount(t *testing.T) {
 	}
 }
 
+func TestParseREADME_DriftHeaderFailsLoudly(t *testing.T) {
+	drift := `### [2026-06-26] From Epic: x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat | 5 | src |
+`
+	if _, err := ParseREADME(drift); err == nil {
+		t.Error("expected hard error for unrecognized section source type, got nil (rows would be silently dropped)")
+	}
+}
+
+func TestParseREADME_BlankEstIsZero(t *testing.T) {
+	blank := `### [2026-06-26] From Sprint: x
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | [ ] | LOW | f.go:1 | p | fix | cat |  | src |
+`
+	shards, err := ParseREADME(blank)
+	if err != nil {
+		t.Fatalf("blank est should parse as 0, got error: %v", err)
+	}
+	if shards[0].Items[0].EstMinutes != 0 {
+		t.Errorf("blank est_minutes = %d, want 0", shards[0].Items[0].EstMinutes)
+	}
+}
+
+func TestGenerateTable_SanitizesPipesAndNewlines(t *testing.T) {
+	shards := []Shard{{
+		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
+		Items: []Item{{
+			Group: "1", Status: StatusOpen, Severity: "LOW",
+			File: "f.go:1", Problem: "a | b\nsecond line", Fix: "do it",
+			Category: "correctness", EstMinutes: 5, Source: "a | b | c",
+		}},
+	}}
+	table, err := GenerateTable(shards)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	// The regenerated table must remain structurally valid: every data row parses
+	// back to exactly one item (no phantom columns from unescaped pipes/newlines).
+	reparsed, err := ParseREADME(table)
+	if err != nil {
+		t.Fatalf("regenerated table not parseable (structural corruption): %v\n%s", err, table)
+	}
+	if len(reparsed) != 1 || len(reparsed[0].Items) != 1 {
+		t.Fatalf("want 1 shard / 1 item, got %d shards", len(reparsed))
+	}
+	if got := reparsed[0].Items[0]; got.Reviewers != nil || got.Confidence != "" {
+		t.Errorf("pipe in source leaked into phantom reviewers/confidence: %+v", got)
+	}
+}
+
 func TestParseREADME_BadEst(t *testing.T) {
 	bad := `### [2026-06-26] From Sprint: x
 

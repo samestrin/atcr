@@ -61,6 +61,7 @@ func newFlags(name string, args []string, stderr io.Writer) (*flag.FlagSet, *str
 
 func runMigrate(args []string, stdout, stderr io.Writer) int {
 	fs, readme, items := newFlags("migrate", args, stderr)
+	allowEmpty := fs.Bool("allow-empty", false, "permit writing when the README parses to zero sections (wipes the shard store)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -72,6 +73,10 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 	shards, err := ParseREADME(string(data))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "migrate: parse README: %v\n", err)
+		return 1
+	}
+	if len(shards) == 0 && !*allowEmpty {
+		_, _ = fmt.Fprintln(stderr, "migrate: parsed 0 sections; refusing to wipe the shard store (pass --allow-empty to override)")
 		return 1
 	}
 	for _, s := range shards {

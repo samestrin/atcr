@@ -94,6 +94,34 @@ func TestRun_MigrateRefusesInvalidData(t *testing.T) {
 	}
 }
 
+func TestRun_MigrateRefusesEmptyWipe(t *testing.T) {
+	dir := t.TempDir()
+	// A README with no recognized sections must not silently wipe the store.
+	readme := filepath.Join(dir, "README.md")
+	if err := os.WriteFile(readme, []byte("# Technical Debt\n\nNo sections here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items := filepath.Join(dir, "items")
+	if err := os.MkdirAll(items, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(items, "2026-01-01_keep.yaml")
+	if err := os.WriteFile(keep, []byte("date: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errb := run(t, "migrate", "--readme", readme, "--items", items)
+	if code != 1 || !strings.Contains(errb, "refusing to wipe") {
+		t.Errorf("want exit 1 refusing empty wipe, got code=%d err=%q", code, errb)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("existing shard was wiped despite refusal: %v", err)
+	}
+	// --allow-empty overrides the guard.
+	if code, _, _ := run(t, "migrate", "--readme", readme, "--items", items, "--allow-empty"); code != 0 {
+		t.Errorf("--allow-empty should permit empty migrate, got code=%d", code)
+	}
+}
+
 func TestRun_ValidateCatchesBadShard(t *testing.T) {
 	items := t.TempDir()
 	// Unknown field -> strict-load rejection.

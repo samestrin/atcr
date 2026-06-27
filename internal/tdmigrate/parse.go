@@ -10,6 +10,12 @@ import (
 // sectionHeader matches `### [YYYY-MM-DD] From <Sprint|Review>: <label>`.
 var sectionHeader = regexp.MustCompile(`^### \[(\d{4}-\d{2}-\d{2})\] From (Sprint|Review): (.+)$`)
 
+// driftHeader matches a dated `From <type>:` header whose type is NOT a
+// recognized Sprint|Review variant. Such a header would otherwise be ignored and
+// every item beneath it silently dropped, so it is treated as a hard error
+// (loud-failure mandate) rather than silently skipped.
+var driftHeader = regexp.MustCompile(`^### \[\d{4}-\d{2}-\d{2}\] From ([^:]+):`)
+
 // ParseREADME parses the technical-debt README table into per-source shards.
 // Anything before the first section header (title, Stats table, How-to-Use) is
 // ignored. A data row that does not split into exactly 9 or 11 cells, or whose
@@ -31,6 +37,10 @@ func ParseREADME(content string) ([]Shard, error) {
 			flush()
 			cur = &Shard{Date: m[1], SourceType: m[2], Label: strings.TrimSpace(m[3])}
 			continue
+		}
+		if dm := driftHeader.FindStringSubmatch(line); dm != nil {
+			return nil, fmt.Errorf("line %d: unrecognized section source type %q (want Sprint|Review): %q",
+				n+1, strings.TrimSpace(dm[1]), strings.TrimSpace(line))
 		}
 		if cur == nil || !strings.HasPrefix(strings.TrimSpace(line), "|") {
 			continue
@@ -87,9 +97,13 @@ func rowToItem(cells []string) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	est, err := strconv.Atoi(cells[7])
-	if err != nil {
-		return Item{}, fmt.Errorf("est_minutes %q is not an integer", cells[7])
+	est := 0
+	if e := strings.TrimSpace(cells[7]); e != "" {
+		v, err := strconv.Atoi(e)
+		if err != nil {
+			return Item{}, fmt.Errorf("est_minutes %q is not an integer", cells[7])
+		}
+		est = v
 	}
 	it := Item{
 		Group:      cells[0],

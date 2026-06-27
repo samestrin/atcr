@@ -74,3 +74,10 @@ Hand-edits are allowed but must keep the file valid: run
 multi-line `problem` / `fix` / `notes`. Re-running `td-migrate migrate`
 regenerates every shard from the README table and will overwrite hand-edits, so
 edit the README table (still authoritative) when both are intended to agree.
+
+**Round-trip note:** the shards are the lossless store. `td-migrate generate`
+emits a one-line-per-item **ToC summary**, so when it renders a cell it collapses
+newlines to spaces and replaces any literal `|` with `/` (the canonical TD-table
+contract), and the `notes` field has no table column. Multi-line / pipe content
+and notes therefore survive in the shard but are summarized (not byte-preserved)
+in the generated ToC — by design, since the table is a summary view.

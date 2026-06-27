@@ -42,16 +42,31 @@ func GenerateTable(shards []Shard) (string, error) {
 				return "", fmt.Errorf("shard %s/%s: %w", s.Date, s.Label, err)
 			}
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |",
-				it.Group, box, it.Severity, it.File, it.Problem, it.Fix,
-				it.Category, strconv.Itoa(it.EstMinutes), it.Source)
+				cell(it.Group), box, cell(it.Severity), cell(it.File), cell(it.Problem), cell(it.Fix),
+				cell(it.Category), strconv.Itoa(it.EstMinutes), cell(it.Source))
 			if wide {
-				fmt.Fprintf(&b, " %s | %s |", strings.Join(it.Reviewers, ", "), it.Confidence)
+				fmt.Fprintf(&b, " %s | %s |", cell(strings.Join(it.Reviewers, ", ")), cell(it.Confidence))
 			}
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
 	}
 	return b.String(), nil
+}
+
+// cell makes a value safe to place in a single Markdown table cell. The TD table
+// (a one-line-per-item ToC summary) cannot represent a literal `|` or a newline,
+// so — matching the canonical TD-table contract used elsewhere in the repo — a
+// pipe is replaced with `/` and newlines are collapsed to spaces. This keeps the
+// regenerated table structurally valid (no phantom columns) rather than silently
+// corrupting it. The shards under items/ remain the lossless source of truth;
+// only the generated ToC summary is single-lined.
+func cell(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "|", "/")
+	return strings.TrimSpace(s)
 }
 
 func sectionHasReviewers(s Shard) bool {
