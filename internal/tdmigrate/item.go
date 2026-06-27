@@ -109,16 +109,18 @@ func (it Item) Validate() error {
 	if !validStatuses[it.Status] {
 		return fmt.Errorf("invalid status %q (want open|deferred|resolved)", it.Status)
 	}
-	for field, val := range map[string]string{
-		"group":    it.Group,
-		"file":     it.File,
-		"problem":  it.Problem,
-		"fix":      it.Fix,
-		"category": it.Category,
-		"source":   it.Source,
+	for _, req := range []struct {
+		field, val string
+	}{
+		{"group", it.Group},
+		{"file", it.File},
+		{"problem", it.Problem},
+		{"fix", it.Fix},
+		{"category", it.Category},
+		{"source", it.Source},
 	} {
-		if strings.TrimSpace(val) == "" {
-			return fmt.Errorf("%s is required", field)
+		if strings.TrimSpace(req.val) == "" {
+			return fmt.Errorf("%s is required", req.field)
 		}
 	}
 	if it.EstMinutes < 0 {

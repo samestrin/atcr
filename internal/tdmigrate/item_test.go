@@ -108,6 +108,26 @@ func TestItemValidateFileFormat(t *testing.T) {
 	}
 }
 
+func TestItemValidate_RequiredFieldOrderIsDeterministic(t *testing.T) {
+	base := validItem()
+	base.File = ""
+	base.Problem = ""
+
+	var first string
+	for i := 0; i < 20; i++ {
+		err := base.Validate()
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		msg := err.Error()
+		if i == 0 {
+			first = msg
+		} else if msg != first {
+			t.Fatalf("required-field validation order is non-deterministic: %q vs %q", first, msg)
+		}
+	}
+}
+
 func TestShardValidate_OK(t *testing.T) {
 	s := Shard{Date: "2026-06-26", SourceType: "Sprint", Label: "epic-1.0", Items: []Item{validItem()}}
 	if err := s.Validate(); err != nil {
