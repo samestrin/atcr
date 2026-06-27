@@ -91,6 +91,34 @@ func TestRenderParseItemFile_ProblemContainingFixHeadingText(t *testing.T) {
 	assert.Equal(t, in.Fix, out.Fix)
 }
 
+func TestRenderItemFile_RejectsStandaloneReservedHeadingInBody(t *testing.T) {
+	// A standalone "## Fix" line in the Problem text would break the round-trip;
+	// render must reject it rather than emit a silently-corruptible file.
+	bad := sampleItem()
+	bad.Problem = "Some context.\n\n## Fix\n\nthis line is actually still problem text"
+	_, err := RenderItemFile(bad)
+	require.Error(t, err)
+
+	bad2 := sampleItem()
+	bad2.Fix = "## Problem\nnope"
+	_, err = RenderItemFile(bad2)
+	require.Error(t, err)
+}
+
+func TestRenderParseItemFile_MultiParagraphBodyRoundTrips(t *testing.T) {
+	// Multi-paragraph bodies (the feature's promise) must round-trip; only
+	// standalone reserved-heading lines are disallowed.
+	in := sampleItem()
+	in.Problem = "Para one.\n\nPara two with a list:\n- a\n- b\n\nPara three."
+	in.Fix = "Fix para one.\n\nFix para two."
+	rendered, err := RenderItemFile(in)
+	require.NoError(t, err)
+	out, err := ParseItemFile(rendered)
+	require.NoError(t, err)
+	assert.Equal(t, in.Problem, out.Problem)
+	assert.Equal(t, in.Fix, out.Fix)
+}
+
 func TestParseItemFile_RejectsMissingFrontmatter(t *testing.T) {
 	_, err := ParseItemFile("no frontmatter here\n## Problem\n\nx\n")
 	require.Error(t, err)

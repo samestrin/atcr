@@ -78,6 +78,16 @@ func RenderItemFile(it Item) (string, error) {
 		Confidence:    it.Confidence,
 		HasReviewCols: it.HasReviewCols,
 	}
+	// A standalone "## Problem"/"## Fix" heading line inside the free-form text
+	// is ambiguous with the body's own section headings and would break the
+	// round-trip. Reject it here so a corruptible file is never generated.
+	if line := reservedHeadingLine(it.Problem); line != "" {
+		return "", fmt.Errorf("problem text contains reserved heading line %q (would break round-trip)", line)
+	}
+	if line := reservedHeadingLine(it.Fix); line != "" {
+		return "", fmt.Errorf("fix text contains reserved heading line %q (would break round-trip)", line)
+	}
+
 	front, err := yaml.Marshal(meta)
 	if err != nil {
 		return "", fmt.Errorf("marshal frontmatter: %w", err)
@@ -137,9 +147,25 @@ func ParseItemFile(content string) (Item, error) {
 	}, nil
 }
 
+// reservedHeadingLine returns the first line of s that is a standalone
+// "## Problem"/"## Fix" heading (trailing whitespace ignored), or "" if none.
+// Such a line would collide with the body's own section headings.
+func reservedHeadingLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		switch strings.TrimRight(line, " \t") {
+		case problemHeading, fixHeading:
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
 // splitBody extracts the Problem and Fix sections from an item Markdown body.
-// Headings are matched only at line boundaries so that free-form Problem text
-// containing the literal string "## Fix" is not mistaken for the Fix heading.
+// Headings are matched only at line boundaries, so inline mentions of "## Fix"
+// in prose are safe. A body whose Problem or Fix text contains a *standalone*
+// "## Problem"/"## Fix" heading line is ambiguous and is rejected at render time
+// by RenderItemFile (see reservedHeadingLine), so generated files always
+// round-trip losslessly.
 func splitBody(body string) (problem, fix string, err error) {
 	// Prepend a newline so a heading on the very first line is still anchored.
 	anchored := "\n" + body

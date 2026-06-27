@@ -96,3 +96,35 @@ func TestGenerate_EmptyDirProducesNoOutput(t *testing.T) {
 	require.NoError(t, Generate(t.TempDir(), &out))
 	assert.Empty(t, out.String())
 }
+
+func TestMigrate_PrunesStaleItemsButKeepsOtherFiles(t *testing.T) {
+	readmePath, itemsDir := writeFixture(t)
+	_, err := Migrate(readmePath, itemsDir)
+	require.NoError(t, err)
+
+	// Plant a stale tool-owned file and a non-tool file.
+	stale := filepath.Join(itemsDir, "TD-9999-orphan.md")
+	require.NoError(t, os.WriteFile(stale, []byte("old"), 0o644))
+	keep := filepath.Join(itemsDir, "README.md")
+	require.NoError(t, os.WriteFile(keep, []byte("schema doc"), 0o644))
+
+	n, err := Migrate(readmePath, itemsDir)
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+	assert.NoFileExists(t, stale, "stale TD-*.md must be pruned on re-migrate")
+	assert.FileExists(t, keep, "non-tool files must be preserved")
+}
+
+func TestLoadItems_ErrorsOnDuplicateOrder(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"TD-0001-a.md", "TD-0002-b.md"} {
+		it := sampleItem()
+		it.Order = 5 // force a collision
+		content, err := RenderItemFile(it)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+	}
+	_, err := LoadItems(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate order")
+}

@@ -32,6 +32,20 @@ func Migrate(readmePath, itemsDir string) (int, error) {
 		return 0, fmt.Errorf("create items dir: %w", err)
 	}
 
+	// Regenerate idempotently: remove tool-owned TD-*.md from a prior run so a
+	// changed slug/order cannot leave an orphan that generate would then emit as
+	// a duplicate row. Only the tool's own naming pattern is touched; any other
+	// file in itemsDir (e.g. README.md) is left alone.
+	stale, gerr := filepath.Glob(filepath.Join(itemsDir, "TD-*.md"))
+	if gerr != nil {
+		return 0, fmt.Errorf("scan stale items: %w", gerr)
+	}
+	for _, p := range stale {
+		if rerr := os.Remove(p); rerr != nil {
+			return 0, fmt.Errorf("remove stale item %s: %w", p, rerr)
+		}
+	}
+
 	written := 0
 	for _, it := range items {
 		content, rerr := RenderItemFile(it)
@@ -80,6 +94,17 @@ func LoadItems(itemsDir string) ([]Item, error) {
 		}
 		items = append(items, it)
 	}
+
+	// Defense-in-depth: a duplicate Order means orphaned/colliding files are
+	// present; fail loud rather than let Generate emit silent duplicate rows.
+	byOrder := make(map[int]string, len(items))
+	for i, it := range items {
+		if prev, ok := byOrder[it.Order]; ok {
+			return nil, fmt.Errorf("duplicate order %d across %q and %q (clean the items dir and re-migrate)", it.Order, prev, matches[i])
+		}
+		byOrder[it.Order] = matches[i]
+	}
+
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Order < items[j].Order })
 	return items, nil
 }

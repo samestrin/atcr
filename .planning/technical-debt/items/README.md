@@ -23,7 +23,7 @@ YAML frontmatter (structured metadata) followed by a Markdown body
 
 ```markdown
 ---
-id: TD-0006                 # stable item id (TD-NNNN)
+id: TD-0006                 # sequence id (TD-NNNN); positional, reassigned on every regeneration — not a durable cross-reference
 order: 6                    # 1-based position in document order
 section: '[2026-06-26] From Sprint: 11.0_executing_reviewers'  # verbatim source section header
 date: "2026-06-26"          # date parsed from the section header
@@ -58,5 +58,6 @@ go run ./cmd/td-migrate migrate    # ../README.md table -> items/*.md (this dir)
 go run ./cmd/td-migrate generate   # items/*.md -> table markdown on stdout
 ```
 
-`migrate` writes by filename and does not prune; regenerate into a clean
-directory if source Problem text (and therefore a slug) has changed.
+`migrate` is idempotent: it removes its own prior `TD-*.md` output from the
+target directory before writing the fresh set (other files, like this README,
+are left untouched), so a changed slug or order never leaves an orphan.
