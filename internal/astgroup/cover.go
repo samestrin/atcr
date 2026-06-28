@@ -47,6 +47,10 @@ func CoveringBlock(root Node, line int) (block Node, addr string, ok bool) {
 // covering block, and the address of that chain relative to n. It descends
 // through non-block nodes (e.g. an expression statement wrapping a function
 // literal) to reach nested blocks. The returned chain excludes n itself.
+//
+// Invariant: a node's children are assumed to have non-overlapping line ranges.
+// The function returns the first covering child it finds; overlapping children
+// would break the uniqueness guarantee of the returned address.
 func coveringChain(n Node, line int) (chain []Node, addr string) {
 	blockIdx := 0
 	for i := range n.Children {
