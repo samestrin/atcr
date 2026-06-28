@@ -284,7 +284,16 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 	if err != nil {
 		return nil, nil, err
 	}
-	slots, _, err := buildSlots(cfg, payloads, req.Range, "", "")
+	// Recover the SCOPE CONSTRAINT from the review's persisted artifact rather than
+	// re-deriving it from req.SprintPlanPath: the resume entry point does not thread
+	// that flag, so the scope is locked to on-disk review state exactly as the range
+	// and roster are — guaranteeing pending agents review under the same constraint
+	// the completed agents did (Epic 12.2 AC4.3).
+	scopeConstraint, err := readScopeConstraintArtifact(reviewDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	slots, _, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -319,6 +328,24 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
 		cacheNoRead: req.NoCache,
 	}
 	return p, info, nil
+}
+
+// readScopeConstraintArtifact recovers the SCOPE CONSTRAINT block a scoped review
+// (Epic 12.2) persisted to payload/scope-constraint.txt, so a resumed run injects
+// the same scope the completed agents reviewed under. A diff-wide review writes no
+// artifact, so a missing file yields ("", nil): the resume proceeds diff-wide,
+// matching the original run. Any other read error is surfaced so a resume fails
+// closed (exit 2 at the caller) rather than silently dropping the scope the
+// completed agents had — the exact regression this guards against.
+func readScopeConstraintArtifact(reviewDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(reviewDir, "payload", "scope-constraint.txt"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading scope constraint artifact: %w", err)
+	}
+	return string(data), nil
 }
 
 // ExecuteResume runs the pending slots, persists their per-agent artifacts (the

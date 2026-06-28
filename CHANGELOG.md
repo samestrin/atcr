@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-27
+
+### Fixed
+
+- Documented the closed caller set for `WithExecEligibility` and restricted lint references to `fanout`/`verify` only
+- Made exec-name lint match whole tokens instead of substrings, and documented the non-exhaustive verb list
+- Made `WriteShards` stage shard writes to temp files and atomically swap, preventing partial wipes of `items/` on failure
+- Added a warning when `Item.Notes` are dropped from a regenerated ToC
+- Made `generate`/`validate` reject migrate-only `--readme` via the items-only flag set
+- Made `sprintPlanPath` assert `--sprint-plan` flag existence in `cmd/atcr/review.go`
+- Made resume recover the scope constraint from the persisted artifact
+- Called `resolveScopeConstraint` in `PrepareResume` so the scope constraint is preserved on resume
+- Wrote `scope-constraint.txt` artifact in `finalizePreparedReview` for scoped reviews
+- Capped `SCOPE CONSTRAINT` plan body relative to `PayloadByteBudget`
+- Neutralized `BEGIN`/`END` markers in `ScopeConstraint` to prevent delimiter-collision injection
+- Made `registerExec` reject tool names not in `ExecutionTools` instead of panicking
+
 ## [12.2.0] - 2026-06-27
 
 ### Added

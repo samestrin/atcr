@@ -93,7 +93,10 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
 // reads the file); a missing/unreadable plan is handled in the engine, not here,
 // so a bad path never blocks flag parsing.
 func sprintPlanPath(cmd *cobra.Command) string {
-	v, _ := cmd.Flags().GetString("sprint-plan")
+	v, err := cmd.Flags().GetString("sprint-plan")
+	if err != nil {
+		panic(fmt.Sprintf("sprintPlanPath: undefined flag %q: %v", "sprint-plan", err))
+	}
 	return strings.TrimSpace(v)
 }
 

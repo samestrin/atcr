@@ -3,11 +3,13 @@ package fanout
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/samestrin/atcr/internal/log"
 	"github.com/samestrin/atcr/internal/payload"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +51,15 @@ func TestResolveScopeConstraint(t *testing.T) {
 	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: big})
 	require.Contains(t, c, "SCOPE CONSTRAINT")
 	require.NotEmpty(t, w, "an oversized plan must warn that it was truncated")
+	// Tightened: verify the embedded plan length is exactly at the byte cap.
+	// ASCII-only input means no rune-boundary adjustment, so the count is exact.
+	beginIdx := strings.Index(c, "----- BEGIN SPRINT PLAN -----\n")
+	endIdx := strings.Index(c, "\n----- END SPRINT PLAN -----")
+	require.GreaterOrEqual(t, beginIdx, 0, "constraint must have BEGIN marker")
+	require.GreaterOrEqual(t, endIdx, 0, "constraint must have END marker")
+	embeddedLen := endIdx - (beginIdx + len("----- BEGIN SPRINT PLAN -----\n"))
+	require.Equal(t, int(payload.MaxSprintPlanBytes), embeddedLen,
+		"embedded plan must be exactly MaxSprintPlanBytes bytes for ASCII-only input")
 }
 
 // End-to-end: a ReviewRequest carrying a SprintPlanPath must make PrepareReviewFromDiff
@@ -83,4 +94,147 @@ func TestPrepareReviewFromDiff_InjectsSprintPlanConstraint(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, prepNoPlan.Slots)
 	require.NotContains(t, prepNoPlan.Slots[0].Primary.Prompt, "SCOPE CONSTRAINT")
+}
+
+// PrepareReviewFromDiff must route sprint-plan warnings through the contextual
+// logger (not the global os.Stderr) so callers can capture them and so the
+// warning is consistent with the diff-truncation warning.
+func TestPrepareReviewFromDiff_LogsScopeWarningToContextLogger(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+
+	big := filepath.Join(t.TempDir(), "big.md")
+	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
+	req.SprintPlanPath = big
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	ctx := log.NewContext(context.Background(), logger)
+
+	prep, err := PrepareReviewFromDiff(ctx, cfg, req, looseDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+
+	logs := buf.String()
+	require.Contains(t, logs, "scope constraint warning", "context logger should carry the warning")
+	require.Contains(t, logs, "truncated", "warning should mention truncation")
+}
+
+// TestPrepareReviewFromDiff_ConstraintRespectsByteBudget asserts that the plan
+// body embedded in the SCOPE CONSTRAINT is capped to budget/8 bytes when a
+// PayloadByteBudget is configured, preventing the prepended constraint from
+// inflating the rendered prompt well past the configured budget (Epic 12.2 AC4.2).
+func TestPrepareReviewFromDiff_ConstraintRespectsByteBudget(t *testing.T) {
+	const budget int64 = 4096
+	cfg := twoAgentConfig("http://unused")
+	cfg.Settings.PayloadByteBudget = budget
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	// Plan exceeds MaxSprintPlanBytes so the existing cap fires first; the
+	// budget/8 cap must then reduce it further to ≤ budget/8 bytes.
+	require.NoError(t, os.WriteFile(planPath,
+		bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.Slots)
+
+	const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+	const endMark = "\n----- END SPRINT PLAN -----"
+	for _, s := range prep.Slots {
+		p := s.Primary.Prompt
+		require.Contains(t, p, "SCOPE CONSTRAINT")
+		start := strings.Index(p, beginMark)
+		end := strings.Index(p, endMark)
+		require.GreaterOrEqual(t, start, 0, "prompt must contain BEGIN marker")
+		require.GreaterOrEqual(t, end, 0, "prompt must contain END marker")
+		embedded := p[start+len(beginMark) : end]
+		require.LessOrEqual(t, len(embedded), int(budget/8),
+			"scope constraint plan content must not exceed budget/8 bytes")
+	}
+}
+
+// TestPrepareReviewFromDiff_WritesConstraintArtifact asserts that
+// PrepareReviewFromDiff writes the resolved SCOPE CONSTRAINT block to
+// payload/scope-constraint.txt so the on-disk artifact reflects what each
+// reviewer actually received (Epic 12.2 AC5 provenance).
+func TestPrepareReviewFromDiff_WritesConstraintArtifact(t *testing.T) {
+	cfg := twoAgentConfig("http://unused")
+	out := filepath.Join(t.TempDir(), "ext-review")
+	req := diffReq(t.TempDir(), out)
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(prep.Dir, "payload", "scope-constraint.txt"))
+	require.NoError(t, err, "payload/scope-constraint.txt must be written for a scoped review")
+	require.Contains(t, string(data), "SCOPE CONSTRAINT")
+	require.Contains(t, string(data), "only auth changes")
+}
+
+// TestPrepareResume_PreservesSprintPlanConstraint asserts that PrepareResume
+// re-injects the SCOPE CONSTRAINT into every resumed slot so reviewers that
+// pick up from an interrupted run still receive the sprint plan scope
+// (Epic 12.2 AC4.3 / resume.go regression: line 287 passed "" for scopeConstraint).
+func TestPrepareResume_PreservesSprintPlanConstraint(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
+	req := reviewReq(repo, repo, base, head)
+	req.SprintPlanPath = planPath
+
+	prep, err := PrepareReview(context.Background(), cfg, req)
+	require.NoError(t, err)
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, req)
+	require.NoError(t, err)
+	require.NotEmpty(t, rprep.Slots)
+
+	for _, s := range rprep.Slots {
+		require.Contains(t, s.Primary.Prompt, "SCOPE CONSTRAINT",
+			"resumed slot must carry the injected scope constraint")
+		require.Contains(t, s.Primary.Prompt, "only auth changes")
+	}
+}
+
+// TestPrepareResume_RecoversScopeFromArtifact asserts that PrepareResume recovers
+// the SCOPE CONSTRAINT from the persisted payload/scope-constraint.txt artifact —
+// NOT from req.SprintPlanPath — so a resume launched by `atcr review --resume`
+// (whose ReviewRequest carries no SprintPlanPath) still injects the same scope the
+// completed agents reviewed under. This is the production regression the inert
+// resolveScopeConstraint(req) call masked: the resume entry point (cmd/atcr/
+// resume.go) never threads SprintPlanPath, so scope must be locked from on-disk
+// review state like the range and roster (Epic 12.2 AC4.3).
+func TestPrepareResume_RecoversScopeFromArtifact(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
+
+	scopedReq := reviewReq(repo, repo, base, head)
+	scopedReq.SprintPlanPath = planPath
+	prep, err := PrepareReview(context.Background(), cfg, scopedReq)
+	require.NoError(t, err)
+
+	// The resume entry point builds its ReviewRequest without a SprintPlanPath, so
+	// the scope can only come from the persisted artifact.
+	resumeReq := reviewReq(repo, repo, base, head)
+	require.Empty(t, resumeReq.SprintPlanPath, "resume request must not carry a sprint plan path")
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, resumeReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, rprep.Slots)
+
+	for _, s := range rprep.Slots {
+		require.Contains(t, s.Primary.Prompt, "SCOPE CONSTRAINT",
+			"resumed slot must recover the scope constraint from the artifact")
+		require.Contains(t, s.Primary.Prompt, "only auth changes")
+	}
 }

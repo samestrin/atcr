@@ -117,6 +117,56 @@ func internalImports(t *testing.T, root, name string) []string {
 	return out
 }
 
+// TestExecEligibility_GrantedOnlyByFanoutAndVerify locks the closed caller set
+// for tools.WithExecEligibility (Epic 11 exec gate). The function must stay
+// exported (context-key pattern, like WithRefusalLogger), but granting exec
+// eligibility is a trust-surface decision: only the fan-out loop and the verify
+// evidence stage are authorized to call it. Any other production package
+// referencing it widens the surface the structural exec gate aims to narrow and
+// must be reviewed before this allowlist is extended.
+func TestExecEligibility_GrantedOnlyByFanoutAndVerify(t *testing.T) {
+	root := repoRoot(t)
+	const ident = "WithExecEligibility"
+	authorized := []string{
+		filepath.Join("internal", "fanout"),
+		filepath.Join("internal", "verify"),
+	}
+	toolsPkg := filepath.Join("internal", "tools") // defines the function; not a caller
+	var offenders []string
+
+	for _, base := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
+			require.NoError(t, err)
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, rerr := filepath.Rel(root, path)
+			require.NoError(t, rerr)
+			dir := filepath.Dir(rel)
+			if dir == toolsPkg || strings.HasPrefix(dir, toolsPkg+string(filepath.Separator)) {
+				return nil
+			}
+			data, rerr := os.ReadFile(path)
+			require.NoError(t, rerr)
+			if !strings.Contains(string(data), ident) {
+				return nil
+			}
+			for _, auth := range authorized {
+				if dir == auth || strings.HasPrefix(dir, auth+string(filepath.Separator)) {
+					return nil
+				}
+			}
+			offenders = append(offenders, rel)
+			return nil
+		})
+		require.NoError(t, err)
+	}
+
+	assert.Empty(t, offenders,
+		"tools.WithExecEligibility may only be referenced by internal/fanout and internal/verify; "+
+			"a new caller widens the exec trust surface and must be reviewed: %v", offenders)
+}
+
 func TestInternalPackages_AllowlistIsComplete(t *testing.T) {
 	root := repoRoot(t)
 	entries, err := os.ReadDir(filepath.Join(root, "internal"))

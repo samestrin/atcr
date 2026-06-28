@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/samestrin/atcr/internal/sandbox"
@@ -130,16 +131,35 @@ func (d *Dispatcher) RegisteredTools() []string {
 // (Execution-verb names are handled separately by execToolPatterns below.)
 var writeToolPatterns = []string{"write", "create", "delete", "remove", "modif", "update", "append", "patch"}
 
-// execToolPatterns are common English fragments that appear in code-executing
-// tool names. The public RegisterTool API rejects them so an exec-capable handler
-// can never be registered through it ungated (Epic 11.2): the ONLY sanctioned way
-// to add an exec tool is EnableExecution, which routes through registerExec and
-// atomically co-sets the execTools gate. Like writeToolPatterns this is a
-// secondary lint, not the security boundary — the boundary is that execTools is
-// written solely by registerExec, and Execute refuses any execTools entry without
-// per-call eligibility. The built-in run_tests/run_script names DO match these
-// fragments and so bypass this guard deliberately, via registerExec.
+// execToolPatterns are execution verbs that, appearing as a whole token in a tool
+// name, mark it as code-executing. The public RegisterTool API rejects such names
+// so an exec-capable handler can never be registered through it ungated (Epic
+// 11.2): the ONLY sanctioned way to add an exec tool is EnableExecution, which
+// routes through registerExec and atomically co-sets the execTools gate.
+//
+// Matching is on token boundaries (see nameTokens), NOT strings.Contains, so a
+// read-only name that merely embeds a verb as a substring — "prune" (contains
+// "run"), "retrieval" (contains "eval"), "preshell" — is not falsely rejected.
+//
+// This list is intentionally NON-EXHAUSTIVE: it omits verbs like spawn/invoke/
+// launch/system/cmd/fork/popen/subprocess, so an exec-named handler using one
+// would slip past this name lint. That is acceptable because this is a secondary,
+// defense-in-depth lint — NOT the security boundary. The true boundary is
+// structural: execTools is written solely by the unexported registerExec, and
+// Execute refuses any execTools entry without per-call eligibility, so a handler
+// the name lint misses still cannot reach the unexported execBackend. The
+// built-in run_tests/run_script names DO match these verbs and so bypass this
+// guard deliberately, via registerExec.
 var execToolPatterns = []string{"run", "exec", "eval", "shell"}
+
+// nameTokens splits a tool name into lowercase tokens on any non-alphanumeric
+// boundary (_, -, ., spaces, etc.), so the exec name lint can match whole verbs
+// rather than substrings.
+func nameTokens(name string) []string {
+	return strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
 
 // RegisterTool adds a handler after running a best-effort name check against
 // common write- and exec-tool fragments. The check is a secondary lint, not a
@@ -158,14 +178,21 @@ func (d *Dispatcher) RegisterTool(name string, h handlerFunc) error {
 
 func guardToolName(name string) error {
 	lower := strings.ToLower(name)
+	// writeToolPatterns are word fragments (e.g. "modif" for modify/modification),
+	// so they match by substring.
 	for _, p := range writeToolPatterns {
 		if strings.Contains(lower, p) {
 			return fmt.Errorf("tool registry: write tools are not allowed: %s", name)
 		}
 	}
+	// execToolPatterns are whole verbs, matched on token boundaries so a substring
+	// like "run" inside "prune" does not falsely reject a read-only tool.
+	tokens := nameTokens(name)
 	for _, p := range execToolPatterns {
-		if strings.Contains(lower, p) {
-			return fmt.Errorf("tool registry: execution tools must be registered via EnableExecution, not RegisterTool: %s", name)
+		for _, tok := range tokens {
+			if tok == p {
+				return fmt.Errorf("tool registry: execution tools must be registered via EnableExecution, not RegisterTool: %s", name)
+			}
 		}
 	}
 	return nil
@@ -181,11 +208,17 @@ func guardToolName(name string) error {
 // the public RegisterTool name guard (run_tests/run_script match execToolPatterns),
 // because keeping those names out of the public API is precisely that guard's job.
 func (d *Dispatcher) registerExec(name string, h handlerFunc) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.execTools[name] = true
-	d.pathArgs[name] = pathSpec{}
-	d.handlers[name] = h
+	for _, def := range ExecutionTools() {
+		if def.Name == name {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			d.execTools[name] = true
+			d.pathArgs[name] = pathSpec{}
+			d.handlers[name] = h
+			return
+		}
+	}
+	panic(fmt.Sprintf("registerExec: %q is not declared in ExecutionTools()", name))
 }
 
 func (d *Dispatcher) mustRegister(name string, h handlerFunc, ps pathSpec) {
