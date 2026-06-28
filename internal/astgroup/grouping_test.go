@@ -1,7 +1,9 @@
 package astgroup
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -183,6 +185,27 @@ func TestGrouper_EmptyKeyTriggersFallback(t *testing.T) {
 	require.Empty(t, g.GroupKey(reconcile.Finding{File: "README.md", Line: 5}))
 	// Missing file.
 	require.Empty(t, g.GroupKey(reconcile.Finding{File: "nope.go", Line: 5}))
+}
+
+// TestGrouper_LogsDegradation verifies that a swallowed grouping failure is no
+// longer silent: when a finding's source cannot be read (so AST grouping
+// degrades to proximity), the grouper emits a warning instead of degrading
+// invisibly.
+func TestGrouper_LogsDegradation(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(old)
+
+	g := NewGrouper(t.TempDir())
+	defer func() { _ = g.Close() }()
+
+	// Missing file under a valid root → permanent read error → proximity fallback.
+	require.Empty(t, g.GroupKey(reconcile.Finding{File: "missing.go", Line: 3}))
+
+	out := buf.String()
+	require.Contains(t, out, "WARN", "degradation must be logged at warn level")
+	require.Contains(t, out, "astgroup", "warning must identify the astgroup grouper")
 }
 
 func TestGrouper_RefusesPathOutsideRoot(t *testing.T) {
