@@ -203,3 +203,38 @@ func TestPrepareResume_PreservesSprintPlanConstraint(t *testing.T) {
 		require.Contains(t, s.Primary.Prompt, "only auth changes")
 	}
 }
+
+// TestPrepareResume_RecoversScopeFromArtifact asserts that PrepareResume recovers
+// the SCOPE CONSTRAINT from the persisted payload/scope-constraint.txt artifact —
+// NOT from req.SprintPlanPath — so a resume launched by `atcr review --resume`
+// (whose ReviewRequest carries no SprintPlanPath) still injects the same scope the
+// completed agents reviewed under. This is the production regression the inert
+// resolveScopeConstraint(req) call masked: the resume entry point (cmd/atcr/
+// resume.go) never threads SprintPlanPath, so scope must be locked from on-disk
+// review state like the range and roster (Epic 12.2 AC4.3).
+func TestPrepareResume_RecoversScopeFromArtifact(t *testing.T) {
+	repo, base, head := initRepo(t)
+	cfg := twoAgentConfig("http://unused")
+	planPath := filepath.Join(t.TempDir(), "sprint.md")
+	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
+
+	scopedReq := reviewReq(repo, repo, base, head)
+	scopedReq.SprintPlanPath = planPath
+	prep, err := PrepareReview(context.Background(), cfg, scopedReq)
+	require.NoError(t, err)
+
+	// The resume entry point builds its ReviewRequest without a SprintPlanPath, so
+	// the scope can only come from the persisted artifact.
+	resumeReq := reviewReq(repo, repo, base, head)
+	require.Empty(t, resumeReq.SprintPlanPath, "resume request must not carry a sprint plan path")
+
+	rprep, _, err := PrepareResume(context.Background(), cfg, prep.Dir, resumeReq)
+	require.NoError(t, err)
+	require.NotEmpty(t, rprep.Slots)
+
+	for _, s := range rprep.Slots {
+		require.Contains(t, s.Primary.Prompt, "SCOPE CONSTRAINT",
+			"resumed slot must recover the scope constraint from the artifact")
+		require.Contains(t, s.Primary.Prompt, "only auth changes")
+	}
+}
