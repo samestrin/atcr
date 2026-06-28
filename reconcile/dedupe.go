@@ -73,6 +73,19 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	if len(keys) != n {
 		panic(fmt.Sprintf("dedupeCluster: len(keys)=%d must equal len(cluster)=%d", len(keys), n))
 	}
+	if n > maxClusterSize {
+		// DoS safety valve: a location cluster this large is adversarial (real
+		// clusters are a handful of findings). Skip the O(n^2) distance matrix and
+		// the pairwise matching/DBSCAN/gray passes entirely; pass every finding
+		// through as its own singleton group — bounded O(n) work, no dedup, no
+		// ambiguous/noise sidecar. Bounding here also keeps every downstream
+		// Hungarian problem within its size limit.
+		out := make([][]Finding, n)
+		for i := range cluster {
+			out[i] = []Finding{cluster[i]}
+		}
+		return out, nil
+	}
 	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
 		tokens[i] = tokenize(f.Problem)
