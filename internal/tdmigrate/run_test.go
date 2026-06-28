@@ -68,6 +68,18 @@ func TestRun_MigrateGenerateValidate_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestRun_GenerateValidateRejectReadmeFlag locks that --readme is migrate-only:
+// generate and validate operate on shards, so accepting (and silently ignoring)
+// --readme misleads callers. Passing it must be a usage error (exit 2).
+func TestRun_GenerateValidateRejectReadmeFlag(t *testing.T) {
+	items := filepath.Join(t.TempDir(), "items")
+	for _, sub := range []string{"generate", "validate"} {
+		if code, _, errb := run(t, sub, "--readme", "x", "--items", items); code != 2 {
+			t.Errorf("%s --readme: want exit 2 (flag is migrate-only), got code=%d err=%q", sub, code, errb)
+		}
+	}
+}
+
 func TestRun_MigrateMissingREADME(t *testing.T) {
 	if code, _, _ := run(t, "migrate", "--readme", "/no/such/readme.md", "--items", t.TempDir()); code != 1 {
 		t.Errorf("want exit 1 for missing README, got %d", code)
