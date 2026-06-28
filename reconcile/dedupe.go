@@ -1,45 +1,29 @@
 package reconcile
 
 import (
-	"bytes"
+	"regexp"
 	"strings"
 )
 
-// Fixed v1 NCD thresholds (not configurable). Findings in a location cluster
-// whose normalized text has a Normalized Compression Distance at or below
-// MergeMaxNCD are duplicates; above GrayMaxNCD they are distinct; in the gray
-// zone (MergeMaxNCD, GrayMaxNCD] they are ambiguous — recorded for adjudication
-// and left unmerged (conservative default).
-//
-// NCD is a DISTANCE (0 = identical, ~1 = unrelated), so these comparisons are
-// inverted from the Jaccard token-set similarity they replaced. The cutoffs are
-// expressed as integer per-mille values because the gate in classify compares
-// them by integer cross-multiplication (num*1000 vs cutoff*max) — exact and
-// deterministic, never dependent on float rounding, exactly as the prior Jaccard
-// cross-multiply was. Calibrated against testdata/ncd_corpus (see
-// ncd_corpus_test.go).
+// Fixed v1 similarity thresholds (not configurable). Findings in a location
+// cluster whose normalized PROBLEM texts have token-set Jaccard similarity at or
+// above MergeThreshold are duplicates; below GrayLow they are distinct; in the
+// gray zone [GrayLow, MergeThreshold) they are ambiguous — recorded for
+// adjudication and left unmerged (conservative default).
 const (
-	ncdMergeMaxMille = 550 // NCD <= 0.550 → duplicates (merge)
-	ncdGrayMaxMille  = 750 // 0.550 < NCD <= 0.750 → ambiguous (gray); above → distinct
+	MergeThreshold = 0.7
+	GrayLow        = 0.4
 )
 
-// MergeThreshold and GrayLow are the advisory similarity-space (1 - NCD)
-// equivalents of the authoritative integer cutoffs above, retained as part of the
-// package's public surface. They are display/reference values only — the gate in
-// classify never consults them, so they cannot reintroduce float rounding into
-// the deterministic decision.
-const (
-	MergeThreshold = 0.450 // 1 - 0.550
-	GrayLow        = 0.250 // 1 - 0.750
-)
+// tokenSplit splits normalized text on any run of non-alphanumeric characters.
+var tokenSplit = regexp.MustCompile(`[^a-z0-9]+`)
 
-// AmbiguousCluster is a same-location pair whose NCD fell in the gray zone. It is
-// serialized to the ambiguous sidecar so a host (or a human) can adjudicate; the
-// two findings remain unmerged in the reconciled output. ID is the stable
-// content-addressed handle referenced across runs. Line is the lower-indexed
-// finding's line (the pair may span the ±3 window); each finding's own line is in
-// Findings. Similarity is the advisory display score (1 - NCD): ~1 for
-// near-identical, ~0 for unrelated.
+// AmbiguousCluster is a same-location pair whose PROBLEM similarity fell in the
+// gray zone. It is serialized to the ambiguous sidecar so a host (or a human) can
+// adjudicate; the two findings remain unmerged in the reconciled output. ID is
+// the stable content-addressed handle referenced across runs. Line is the
+// lower-indexed finding's line (the pair may span the ±3 window); each finding's
+// own line is in Findings.
 type AmbiguousCluster struct {
 	ID         string    `json:"id"`
 	File       string    `json:"file"`
@@ -55,45 +39,27 @@ func DedupeCluster(cluster []Finding) ([][]Finding, []AmbiguousCluster) {
 }
 
 // dedupeCluster partitions one location cluster into merge groups and records
-// ambiguous pairs. Findings linked by NCD <= MergeMaxNCD (single-linkage,
-// transitively) form a merge group to be collapsed downstream; everything else
-// stays in its own singleton group. Every pair scoring in the gray zone is
-// recorded as an AmbiguousCluster but is NOT merged — UNLESS its content id is
-// present in adjudicatedMerges, in which case the pair is unioned (merged) and
-// not re-recorded as ambiguous. Group order follows first appearance for
-// determinism. Each finding's normalized text is compressed once (not per pair)
-// so the O(n^2) pair loop only pays for the concatenation compression.
+// ambiguous pairs. Findings linked by similarity >= MergeThreshold (single-
+// linkage, transitively) form a merge group to be collapsed downstream;
+// everything else stays in its own singleton group. Every pair scoring in
+// [GrayLow, MergeThreshold) is recorded as an AmbiguousCluster but is NOT merged
+// — UNLESS its content id is present in adjudicatedMerges, in which case the pair
+// is unioned (merged) and not re-recorded as ambiguous. Group order follows first
+// appearance for determinism. Token sets are computed once per finding (not per
+// pair) so the O(n^2) pair loop stays cheap.
 func dedupeCluster(cluster []Finding, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
 	n := len(cluster)
-	enc := ncdEncoder()
-	scratch := make([]byte, 0, 4096) // reused compression destination
-	texts := make([][]byte, n)
-	csz := make([]int, n)
+	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
-		texts[i] = ncdText(f)
-		csz[i] = csize(enc, texts[i], scratch)
+		tokens[i] = tokenize(f.Problem)
 	}
-	cat := make([]byte, 0, 8192) // reused concatenation buffer
 
 	uf := newUnionFind(n)
 	var ambiguous []AmbiguousCluster
 	var ambiguousPairs [][2]int // index pair behind each ambiguous entry, for the post-loop root check
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			var rel relation
-			var sim float64
-			if bytes.Equal(texts[i], texts[j]) {
-				// Byte-identical normalized text is unconditionally a duplicate,
-				// independent of the compressor — this also covers two empty
-				// findings (both merge) deterministically.
-				rel, sim = relMerge, 1.0
-			} else {
-				// concatSize is order-independent (min of both concatenation
-				// orders), so the advisory Similarity is a pure function of the
-				// two findings, not their position in the cluster.
-				cab := concatSize(enc, texts[i], texts[j], cat, scratch)
-				rel, sim = classify(cab, csz[i], csz[j])
-			}
+			rel, sim := classify(tokens[i], tokens[j])
 			switch rel {
 			case relMerge:
 				uf.union(i, j)
@@ -153,63 +119,57 @@ const (
 	relMerge
 )
 
-// classify decides merge/gray/distinct from the three compressed sizes of a pair
-// (cab = C(concat), ca = C(a), cb = C(b)), returning the advisory display
-// similarity (1 - NCD) alongside.
-//
-// The threshold comparisons use integer cross-multiplication (num*1000 vs
-// cutoff*max) so the fixed 0.55/0.75 NCD boundaries are exact and never depend on
-// float rounding — critical for a deterministic gate. The returned similarity is
-// advisory only (display/tests) and MUST NOT drive the decision: a float NCD
-// comparison would reintroduce the rounding nondeterminism the deterministic gate
-// forbids.
-//
-// num = max(0, cab - min(ca,cb)) and max = max(ca,cb), mirroring the NCD numerator
-// and denominator. max == 0 is unreachable for real input (zstd always emits a
-// frame header) but is treated as identical (merge) defensively.
-func classify(cab, ca, cb int) (relation, float64) {
-	lo, hi := ca, cb
-	if hi < lo {
-		lo, hi = hi, lo
-	}
-	num := cab - lo
-	if num < 0 {
-		num = 0
-	}
-	if hi == 0 {
+// classify decides merge/gray/distinct from two token sets, returning the
+// display similarity alongside. The threshold comparisons use integer
+// cross-multiplication (inter*10 vs union*N) so the fixed 0.7/0.4 boundaries are
+// exact and never depend on float rounding — critical for a deterministic gate.
+// Two empty problem texts are identical (merge); one empty side is distinct
+// (nothing to compare).
+func classify(a, b map[string]struct{}) (relation, float64) {
+	if len(a) == 0 && len(b) == 0 {
 		return relMerge, 1.0
 	}
-	sim := 1.0 - float64(num)/float64(hi)
-	if sim < 0 {
-		sim = 0
+	if len(a) == 0 || len(b) == 0 {
+		return relDistinct, 0.0
 	}
-	if sim > 1 {
-		sim = 1
+	inter := 0
+	for t := range a {
+		if _, ok := b[t]; ok {
+			inter++
+		}
 	}
+	union := len(a) + len(b) - inter
+	sim := float64(inter) / float64(union)
+	// The integer cross-multiply below is the AUTHORITATIVE threshold boundary —
+	// it is exact and deterministic. `sim` is advisory only (display/tests) and
+	// MUST NOT replace the cross-multiply: a `sim >= 0.7` float comparison would
+	// reintroduce rounding nondeterminism the deterministic gate forbids.
+	//
+	// `sim` is serialized into AmbiguousCluster.Similarity and hashed via
+	// AmbiguousHash. That byte-identity holds because IEEE-754 division of the
+	// same two integers produces the same bits on every supported Go platform,
+	// and encoding/json emits those bits deterministically. A future schema
+	// version may replace the float with an integer ratio, but that is a
+	// breaking change that retires the current golden fixtures.
 	switch {
-	case num*1000 <= ncdMergeMaxMille*hi: // NCD <= 0.550
+	case inter*10 >= union*7: // >= 0.7
 		return relMerge, sim
-	case num*1000 <= ncdGrayMaxMille*hi: // NCD <= 0.750
+	case inter*10 >= union*4: // >= 0.4
 		return relGray, sim
 	default:
 		return relDistinct, sim
 	}
 }
 
-// ncdText returns the normalized bytes used for NCD scoring: the finding's
-// Problem, Fix, and Evidence lowercased and newline-joined. Concatenating all
-// three text columns gives the compressor enough material (typically 50-150 words
-// for a real finding) to expose the cross-finding redundancy that a one-line
-// Problem alone is too short to reveal — the regime where NCD reliably separates
-// duplicates from distinct findings.
-func ncdText(f Finding) []byte {
-	var b strings.Builder
-	b.WriteString(strings.ToLower(f.Problem))
-	b.WriteByte('\n')
-	b.WriteString(strings.ToLower(f.Fix))
-	b.WriteByte('\n')
-	b.WriteString(strings.ToLower(f.Evidence))
-	return []byte(b.String())
+// tokenize lowercases s and returns its set of alphanumeric word tokens.
+func tokenize(s string) map[string]struct{} {
+	set := map[string]struct{}{}
+	for _, tok := range tokenSplit.Split(strings.ToLower(s), -1) {
+		if tok != "" {
+			set[tok] = struct{}{}
+		}
+	}
+	return set
 }
 
 // unionFind is a tiny disjoint-set for single-linkage grouping within a cluster.
