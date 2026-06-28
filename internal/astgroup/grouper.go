@@ -117,7 +117,13 @@ func (g *Grouper) canonicalPath(file string) (string, bool) {
 	}
 
 	rel, err := filepath.Rel(root, real)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil {
+		return "", false
+	}
+	// Normalize to forward slashes so the escape check is identical on Windows
+	// (where filepath.Rel yields backslash-separated paths) and Unix.
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
 		return "", false
 	}
 	return real, true
