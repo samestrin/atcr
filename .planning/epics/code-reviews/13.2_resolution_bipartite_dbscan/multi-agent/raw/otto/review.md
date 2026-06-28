@@ -1,0 +1,1 @@
+MEDIUM|reconcile/bipartite.go:165|Potential infinite loop in Hungarian algorithm|The `for` loop at line 165 (`for j0 != 0`) modifies `j0` using `way[j0]`, but if `way` contains a cycle or `j0` never reaches 0, it will hang.|Add a safety iteration limit or verify the shortest-augmenting-path properties|correctness|30|`for j0 != 0 { j1 := way[j0]; p[j0] = p[j1]; j0 = j1 }`|otto

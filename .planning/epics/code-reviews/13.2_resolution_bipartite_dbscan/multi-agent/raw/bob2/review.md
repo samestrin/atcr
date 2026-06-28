@@ -1,0 +1,3 @@
+
+
+MAINTAINABILITY|internal/reconcile/ac3_isolation_test.go:1|Incorrect package declaration; the file should be in the reconcile package and directory to access the code under test.|Move the file to reconcile/ac3_isolation_test.go and change the package to reconcile (or keep the package as reconcile and move the file).|maintainability|5|package reconcile in file internal/reconcile/ac3_isolation_test.go|ai

@@ -1,0 +1,5 @@
+MEDIUM|reconcile/bipartite.go:44|Potential integer overflow in loop index|Use int64 for large n or add bounds check|correctness|10|for i := 1; i <= n; i++ with n from len(cost)|bruce
+MEDIUM|reconcile/dedupe.go:89|Anonymous source key uses index only, not stable ID|Include file+line+problem hash in key|correctness|15|"\x00anon\x00" + strconv.Itoa(i) changes if order shifts|bruce
+MEDIUM|reconcile/dedupe.go:156|DBSCAN noise ID uses same-problem twice|Use finding ID or include reviewer|maintainability|5|AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[i].Problem)|bruce
+LOW|reconcile/dbscan.go:44|Neighbor search is O(n²) per point|Precompute neighbor lists or use spatial index|performance|30|for q := 0; q < n; q++ inside loop for every p|bruce
+LOW|reconcile/bipartite.go:89|noMatchSentinel hardcoded as 2.0|Derive from max possible cost|maintainability|5|const noMatchSentinel = 2.0 vs dynamic max|bruce

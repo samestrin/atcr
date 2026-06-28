@@ -1,0 +1,1 @@
+MEDIUM|reconcile/dedupe.go:136|AmbiguousID collision for noise vs gray pairs|Use distinct ID scheme for noise|correctness|15|AmbiguousID(a,b) for noise equals gray pair ID|bruce
