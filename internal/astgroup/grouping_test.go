@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/samestrin/atcr/reconcile"
 	"github.com/stretchr/testify/require"
@@ -262,6 +264,58 @@ func TestGrouper_RetriesTransientReadErrors(t *testing.T) {
 	// Second call retries and produces a structural key.
 	require.NotEmpty(t, g.GroupKey(reconcile.Finding{File: "code.go", Line: 4}))
 	require.Equal(t, 2, calls, "second GroupKey should retry the read")
+}
+
+// TestGrouper_ParsesDistinctFilesConcurrently proves that parsing one file does
+// not block parsing another: treeFor must not hold the grouper mutex across the
+// slow read+parse. An instrumented readFile blocks until BOTH reads are in
+// flight; if parsing were serialized under one mutex the second read could never
+// start while the first holds the lock, and the test times out.
+func TestGrouper_ParsesDistinctFilesConcurrently(t *testing.T) {
+	dir := t.TempDir()
+	srcA := "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\n"
+	srcB := "package q\n\nfunc B() {\n\ty := 2\n\t_ = y\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "a.go"), []byte(srcA), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "b.go"), []byte(srcB), 0o644))
+
+	g := NewGrouper(dir)
+	defer func() { _ = g.Close() }()
+
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseAll()
+
+	g.readFile = func(name string) ([]byte, error) {
+		entered <- struct{}{}
+		<-release
+		return os.ReadFile(name)
+	}
+
+	done := make(chan string, 2)
+	go func() { done <- g.GroupKey(reconcile.Finding{File: "a.go", Line: 4}) }()
+	go func() { done <- g.GroupKey(reconcile.Finding{File: "b.go", Line: 4}) }()
+
+	// Both reads must be in flight concurrently within a short window.
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			releaseAll()
+			t.Fatal("reads were serialized: second file's read never started while the first held the lock")
+		}
+	}
+	releaseAll()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case k := <-done:
+			require.NotEmpty(t, k)
+		case <-time.After(5 * time.Second):
+			t.Fatal("GroupKey did not complete")
+		}
+	}
 }
 
 // TestGrouper_SatisfiesReconcileInterface is a compile-time assertion that the
