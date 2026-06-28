@@ -234,6 +234,16 @@ func (h *Host) Close() error {
 // wasmParser wraps one instantiated parser plugin. A wasm module instance is not
 // safe for concurrent calls, so every Parse is serialized by mu. It holds a
 // reference to its Host so Parse can participate in Host.Close draining.
+//
+// Same-language parses are serialized by this mutex; this is accepted for the
+// PoC. Distinct files already parse concurrently (the Grouper releases its mutex
+// before Parse — see grouper.go treeFor), the epic's only concurrency NFR is
+// <10ms instantiation overhead (no parse-throughput target), and the realistic
+// per-parse bound is the 5s timeout / 8 MiB source cap, not lock contention. If
+// profiling later shows real same-language contention, the remedy is a
+// per-language pool of instances sized to GOMAXPROCS, round-robined per call —
+// deferred until measurement justifies the extra instances against the per-
+// instance memory cap.
 type wasmParser struct {
 	ctx            context.Context
 	mod            api.Module
