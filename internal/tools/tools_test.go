@@ -76,6 +76,21 @@ func TestRegisterTool_RejectsExecNames(t *testing.T) {
 	}
 }
 
+// TestRegisterTool_AllowsExecFragmentSubstrings locks the fix for the substring
+// false-positive: the exec name lint matches on token boundaries (_-split, etc.),
+// not strings.Contains, so legitimate read-only names that merely embed an exec
+// verb as a substring are not falsely rejected ("prune" contains "run",
+// "retrieval" contains "eval", "preshell" contains "shell").
+func TestRegisterTool_AllowsExecFragmentSubstrings(t *testing.T) {
+	d := NewDispatcher(prefixResolver{t.TempDir()}, DefaultLimits())
+	noop := func(_ context.Context, _ *Dispatcher, _ json.RawMessage, _ string) (ToolResult, error) {
+		return ToolResult{}, nil
+	}
+	for _, name := range []string{"prune_cache", "retrieval", "rerun_blame", "preshell"} {
+		assert.NoError(t, d.RegisterTool(name, noop), name)
+	}
+}
+
 // TestRegisterTool_ExecVerbNeverSilentlyUngated is the behavioral guard for the
 // Epic 11.2 acceptance criterion: an exec-capable handler offered to the PUBLIC
 // API must be refused outright — never registered ungated. After a rejected

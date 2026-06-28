@@ -72,6 +72,16 @@ const (
 // cannot reach an exec tool, so a caller that does not affirmatively grant
 // eligibility can never escalate to execution.
 //
+// AUTHORIZED CALLERS — closed set. Granting exec eligibility is a trust-surface
+// decision, so only two production sites may call this: the fan-out loop
+// (internal/fanout, gating on the agent's Exec flag) and the verify evidence
+// stage (internal/verify). The function stays exported because the context-key
+// pattern requires it (callers live in other packages, mirroring
+// WithRefusalLogger), NOT as an invitation for new callers. Any new caller
+// widens the surface the structural gate aims to narrow and must be reviewed;
+// TestExecEligibility_GrantedOnlyByFanoutAndVerify (internal/boundaries_test.go)
+// fails the build if a third package starts referencing it.
+//
 // No nil-ctx guard: context.WithValue panics on a nil parent by design, and this
 // is the WRITE path, where a nil ctx means a mis-wired caller, not a deny case.
 // Fail-closed behaviour lives on the READ path (execEligible returns false on

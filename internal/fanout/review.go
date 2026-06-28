@@ -241,7 +241,7 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
 	// or oversized plan warns but never aborts the review.
 	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
 	if scopeWarn != "" {
-		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
 	if err != nil {
@@ -327,6 +327,18 @@ func finalizePreparedReview(ctx context.Context, cfg *ReviewConfig, req ReviewRe
 	}
 	if err := writePayloadArtifacts(dir, payloads); err != nil {
 		return nil, err
+	}
+	// Epic 12.2 provenance: write the resolved scope constraint to
+	// payload/scope-constraint.txt so the on-disk artifact reflects what
+	// each reviewer received. resolveScopeConstraint is called again here
+	// (second read) rather than threading the result through the function
+	// signature of finalizePreparedReview.
+	if req.SprintPlanPath != "" {
+		if sc, _ := resolveScopeConstraint(req); sc != "" {
+			if err := atomicWriteFile(filepath.Join(dir, "payload", "scope-constraint.txt"), []byte(sc)); err != nil {
+				return nil, fmt.Errorf("writing scope constraint artifact: %w", err)
+			}
+		}
 	}
 
 	m := &payload.Manifest{
@@ -432,7 +444,7 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
 	// oversized plan warns but never aborts the review.
 	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
 	if scopeWarn != "" {
-		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
+		log.FromContext(ctx).Warn("scope constraint warning", "warn", scopeWarn)
 	}
 	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint)
 	if err != nil {
@@ -706,6 +718,29 @@ func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
 // fix, not transient per-agent outcomes, so there is nothing useful to preserve
 // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
 func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
+	// Budget-aware plan content cap: scopeConstraint is prepended uncounted in
+	// buildAgent (Payload: scopeConstraint + mp.Text), so a small PayloadByteBudget
+	// causes the constraint alone to inflate the rendered prompt past the budget.
+	// Truncate only the plan body (between the BEGIN/END markers) to
+	// min(MaxSprintPlanBytes, budget/8), preserving the wrapper instruction text.
+	if budget := cfg.Settings.PayloadByteBudget; budget > 0 && len(scopeConstraint) > 0 {
+		const beginMark = "----- BEGIN SPRINT PLAN -----\n"
+		const endMark = "\n----- END SPRINT PLAN -----"
+		if bs := strings.Index(scopeConstraint, beginMark); bs >= 0 {
+			planStart := bs + len(beginMark)
+			if rest := strings.Index(scopeConstraint[planStart:], endMark); rest >= 0 {
+				planEnd := planStart + rest
+				maxPlan := int(min(payload.MaxSprintPlanBytes, budget/8))
+				if planEnd-planStart > maxPlan {
+					cut := planStart + maxPlan
+					for cut > planStart && scopeConstraint[cut]&0xC0 == 0x80 {
+						cut--
+					}
+					scopeConstraint = scopeConstraint[:cut] + scopeConstraint[planEnd:]
+				}
+			}
+		}
+	}
 	perAgentMode := map[string]string{}
 	var slots []Slot
 

@@ -59,6 +59,17 @@ func newFlags(name string, args []string, stderr io.Writer) (*flag.FlagSet, *str
 	return fs, readme, items
 }
 
+// newItemsFlags builds an items-only flag set for the shard-consuming
+// subcommands (generate, validate). --readme is migrate-only: registering it
+// here too would silently accept and ignore it, so these subcommands omit it and
+// reject it as an unknown flag (exit 2) instead.
+func newItemsFlags(name string, stderr io.Writer) (*flag.FlagSet, *string) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	items := fs.String("items", defaultItems, "path to the shard directory")
+	return fs, items
+}
+
 func runMigrate(args []string, stdout, stderr io.Writer) int {
 	fs, readme, items := newFlags("migrate", args, stderr)
 	allowEmpty := fs.Bool("allow-empty", false, "permit writing when the README parses to zero sections (wipes the shard store)")
@@ -99,7 +110,7 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 }
 
 func runGenerate(args []string, stdout, stderr io.Writer) int {
-	fs, _, items := newFlags("generate", args, stderr)
+	fs, items := newItemsFlags("generate", stderr)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -114,11 +125,16 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	_, _ = fmt.Fprint(stdout, table)
+	// The ToC has no Notes column (AC2 round-trip); warn so a non-empty note is
+	// not silently absent from the regenerated table.
+	for _, w := range droppedNotesWarnings(shards) {
+		_, _ = fmt.Fprintf(stderr, "generate: %s\n", w)
+	}
 	return 0
 }
 
 func runValidate(args []string, stdout, stderr io.Writer) int {
-	fs, _, items := newFlags("validate", args, stderr)
+	fs, items := newItemsFlags("validate", stderr)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
