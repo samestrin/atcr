@@ -69,6 +69,11 @@ func cell(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// droppedNotesWarnings is implemented in the GREEN step.
+func droppedNotesWarnings(shards []Shard) []string {
+	return nil
+}
+
 func sectionHasReviewers(s Shard) bool {
 	for _, it := range s.Items {
 		if len(it.Reviewers) > 0 || it.Confidence != "" {

@@ -68,6 +68,30 @@ func TestRun_MigrateGenerateValidate_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestDroppedNotesWarnings verifies that a non-empty Notes field — which the ToC
+// table has no column for (kept round-trip-equal to the source README, AC2) — is
+// surfaced as a warning rather than silently dropped, one message per item, with
+// the shard reference so the note can be found in items/.
+func TestDroppedNotesWarnings(t *testing.T) {
+	shards := []Shard{{
+		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
+		Items: []Item{
+			{Group: "1", Status: StatusOpen, Severity: "LOW", File: "f.go:1", Problem: "p", Fix: "fix", Category: "correctness", EstMinutes: 5, Source: "s", Notes: "remember the edge case"},
+			{Group: "1", Status: StatusOpen, Severity: "LOW", File: "g.go:2", Problem: "p", Fix: "fix", Category: "correctness", EstMinutes: 5, Source: "s"},
+		},
+	}}
+	warns := droppedNotesWarnings(shards)
+	if len(warns) != 1 {
+		t.Fatalf("want 1 warning (only one item has notes), got %d: %v", len(warns), warns)
+	}
+	if !strings.Contains(warns[0], "remember the edge case") || !strings.Contains(warns[0], "2026-06-26/x") {
+		t.Errorf("warning missing note text or shard ref: %q", warns[0])
+	}
+	if len(droppedNotesWarnings(nil)) != 0 {
+		t.Error("no shards must yield no warnings")
+	}
+}
+
 // TestRun_GenerateValidateRejectReadmeFlag locks that --readme is migrate-only:
 // generate and validate operate on shards, so accepting (and silently ignoring)
 // --readme misleads callers. Passing it must be a usage error (exit 2).
