@@ -47,7 +47,10 @@ func hungarian(cost [][]float64) []int {
 		for j := 0; j <= n; j++ {
 			minv[j] = inf
 		}
-		for {
+		for iter := 0; ; iter++ {
+			if iter > n {
+				panic("hungarian: exceeded maximum shortest-augmenting-path iterations")
+			}
 			used[j0] = true
 			i0 := p[j0]
 			delta := inf
