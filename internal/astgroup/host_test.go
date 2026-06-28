@@ -120,6 +120,18 @@ func TestHost_MaxSourceBytesConfigurable(t *testing.T) {
 	require.Contains(t, err.Error(), "source too large")
 }
 
+func TestHost_MaxSourceBytesZeroRejects(t *testing.T) {
+	h := NewHost(WithMaxSourceBytes(0))
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	// A zero byte limit must not be bypassed by the empty-source alloc(1) path.
+	_, err = p.Parse(nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "maxSourceBytes must be positive")
+}
+
 func TestHost_ParserCachedAndReused(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()

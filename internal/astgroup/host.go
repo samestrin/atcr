@@ -208,6 +208,9 @@ const defaultMaxSourceBytes = 1 << 23 // 8 MiB
 var parseTimeout = 5 * time.Second
 
 func (p *wasmParser) Parse(src []byte) (Node, error) {
+	if p.maxSourceBytes <= 0 {
+		return Node{}, fmt.Errorf("astgroup: maxSourceBytes must be positive")
+	}
 	if len(src) > p.maxSourceBytes {
 		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), p.maxSourceBytes)
 	}
