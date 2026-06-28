@@ -89,10 +89,10 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 		return ""
 	}
 	// Key = file + structural address of the covering block + its Merkle hash.
-	// The address (drift-invariant, sibling-distinguishing) prevents two
-	// identically-shaped blocks in different scopes from colliding; the Merkle
-	// hash folds in the block's full structure per the epic's design. File-scoped
-	// so identical structures in different files never collide.
+	// The address (drift-invariant, sibling-distinguishing) already uniquely
+	// identifies the node within the file, so the Merkle hash is a defensive
+	// cross-check of the address scheme rather than load-bearing for grouping.
+	// File-scoped so identical structures in different files never collide.
 	return file + "\x00" + addr + "\x00" + MerkleHash(block)
 }
 
