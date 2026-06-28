@@ -38,31 +38,9 @@ func TestPairDistance_OneEmptyKeyIsNotAMatch(t *testing.T) {
 	eq(t, d2, 1.0, "disjoint text via Jaccard despite one key present")
 }
 
-func TestDistanceMatrix_SymmetricZeroDiagonal(t *testing.T) {
-	cluster := []Finding{
-		fnd("a.go", 1, "token never expires", "greta"),
-		fnd("a.go", 1, "token never expires", "kai"),         // identical → d 0
-		fnd("a.go", 1, "completely unrelated thing", "mira"), // disjoint → d 1
-	}
-	keys := []string{"", "", ""}
-	d := distanceMatrix(cluster, keys)
-	length(t, d, 3, "3x3 matrix")
-	for i := 0; i < 3; i++ {
-		eq(t, d[i][i], 0.0, "zero diagonal")
-		for j := 0; j < 3; j++ {
-			eq(t, d[i][j], d[j][i], "symmetric")
-		}
-	}
-	eq(t, d[0][1], 0.0, "identical pair → 0")
-	eq(t, d[0][2], 1.0, "disjoint pair → 1")
-}
-
-func TestDistanceMatrix_ASTKeyOverridesText(t *testing.T) {
-	cluster := []Finding{
-		fnd("a.go", 1, "alpha beta", "greta"),
-		fnd("a.go", 9, "gamma delta", "kai"), // disjoint text but same AST key
-	}
-	keys := []string{"a.go\x00H", "a.go\x00H"}
-	d := distanceMatrix(cluster, keys)
-	eq(t, d[0][1], 0.0, "shared AST key → 0 despite disjoint text")
+func TestPairDistance_Symmetric(t *testing.T) {
+	tokA, tokB := tokenize("alpha beta gamma"), tokenize("alpha beta delta")
+	d1 := pairDistance("", "", tokA, tokB)
+	d2 := pairDistance("", "", tokB, tokA)
+	eq(t, d1, d2, "distance is symmetric in its arguments")
 }

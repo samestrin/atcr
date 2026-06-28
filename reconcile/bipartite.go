@@ -150,18 +150,23 @@ func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
 // candidate seeds a new singleton group, so a group holds at most one finding per
 // source — one consensus issue across reviewers.
 //
+// Sources are identified by srcKeys[i] (the finding's source-partition key, see
+// dedupeCluster: a non-empty Reviewer, else a per-finding unique key so an
+// unattributed finding is its own source and can still match others rather than
+// collapsing every unattributed finding into one non-matchable pseudo-source).
+//
 // Determinism: sources are processed in sorted order; within a source, findings
 // keep cluster order; the returned groups are normalized — members ascending,
 // groups ordered by their lowest member index — so the merge representative
 // (group[0]) is the lowest-index finding regardless of source processing order.
-func bipartiteGroups(cluster []Finding, dist [][]float64, mergeable func(a, b int) bool) [][]int {
+func bipartiteGroups(srcKeys []string, dist [][]float64, mergeable func(a, b int) bool) [][]int {
 	bySource := map[string][]int{}
 	var order []string
-	for i, f := range cluster {
-		if _, seen := bySource[f.Reviewer]; !seen {
-			order = append(order, f.Reviewer)
+	for i, key := range srcKeys {
+		if _, seen := bySource[key]; !seen {
+			order = append(order, key)
 		}
-		bySource[f.Reviewer] = append(bySource[f.Reviewer], i)
+		bySource[key] = append(bySource[key], i)
 	}
 	sort.Strings(order)
 

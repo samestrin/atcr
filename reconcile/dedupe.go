@@ -3,6 +3,7 @@ package reconcile
 import (
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -75,6 +76,21 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 		}
 	}
 
+	// srcKeys identifies each finding's source for matching. A non-empty Reviewer
+	// is the source; an empty Reviewer (unattributed finding) gets a per-finding
+	// unique key so it is treated as its own source — otherwise every unattributed
+	// finding would collapse into one pseudo-source and nothing would ever match,
+	// silently disabling dedup. NUL-prefixing cannot collide with a stream-column
+	// reviewer value.
+	srcKeys := make([]string, n)
+	for i, f := range cluster {
+		if f.Reviewer != "" {
+			srcKeys[i] = f.Reviewer
+		} else {
+			srcKeys[i] = "\x00anon\x00" + strconv.Itoa(i)
+		}
+	}
+
 	// mergeable is the integer-exact duplicate predicate: a shared non-empty AST
 	// key, or token-set Jaccard at/above MergeThreshold (classify's cross-multiply
 	// boundary, never the float distance). It gates bipartite acceptance so the
@@ -87,7 +103,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 		return rel == relMerge
 	}
 
-	groups := bipartiteGroups(cluster, dist, mergeable)
+	groups := bipartiteGroups(srcKeys, dist, mergeable)
 	groupOf := make([]int, n)
 	for gi, g := range groups {
 		for _, idx := range g {
@@ -167,14 +183,17 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	}
 
 	// DBSCAN over the same location cluster isolates uncorroborated noise. The
-	// eps-neighborhood is the exact merge predicate, so a "dense" point is one with
-	// a true duplicate. Noise is isolated ONLY when a dense cluster also exists in
-	// this location (a finding standing alone where others corroborate each other is
-	// a likely single-model hallucination; a finding whose location no one else
-	// touched is just an uncorroborated report and stays in the output), and only
-	// when the finding is genuinely alone — not gray-paired and not merged into any
-	// group — so it is never represented in both the output and the sidecar.
-	labels, dense := dbscanLabels(n, dbscanMinPts, mergeable)
+	// eps-neighborhood is a CROSS-SOURCE merge: density must come from two distinct
+	// sources agreeing (real corroboration), not one source repeating itself — a
+	// self-duplicate is not evidence that a different source's finding is noise.
+	// Noise is isolated ONLY when such a dense cluster also exists in this location
+	// (a finding standing alone where others corroborate each other is a likely
+	// single-model hallucination; a finding whose location no one else touched is
+	// just an uncorroborated report and stays in the output), and only when the
+	// finding is genuinely alone — not gray-paired and not merged into any group —
+	// so it is never represented in both the output and the sidecar.
+	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && srcKeys[a] != srcKeys[b] }
+	labels, dense := dbscanLabels(n, dbscanMinPts, denseNeighbor)
 	noiseIdx := map[int]bool{}
 	var noise []AmbiguousCluster
 	if dense {

@@ -32,27 +32,3 @@ func pairDistance(keyA, keyB string, tokA, tokB map[string]struct{}) float64 {
 	_, sim := classify(tokA, tokB)
 	return distanceCeiling - sim
 }
-
-// distanceMatrix builds the symmetric composite-distance matrix for one location
-// cluster. keys[i] is finding i's AST group key (empty when the grouper supplied
-// none); it must be the same length as cluster. The diagonal is 0 and d[i][j] ==
-// d[j][i] by construction.
-func distanceMatrix(cluster []Finding, keys []string) [][]float64 {
-	n := len(cluster)
-	tokens := make([]map[string]struct{}, n)
-	for i, f := range cluster {
-		tokens[i] = tokenize(f.Problem)
-	}
-	d := make([][]float64, n)
-	for i := range d {
-		d[i] = make([]float64, n)
-	}
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			dist := pairDistance(keys[i], keys[j], tokens[i], tokens[j])
-			d[i][j] = dist
-			d[j][i] = dist
-		}
-	}
-	return d
-}

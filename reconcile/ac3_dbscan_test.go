@@ -93,3 +93,49 @@ func TestAC3_AdjudicatedMergeNotDoubleCountedAsNoise(t *testing.T) {
 	}
 	length(t, amb, 0, "no noise singletons: A and B were merged, not isolated")
 }
+
+func TestAC3_SelfDuplicateIsNotCorroboration(t *testing.T) {
+	// Density must require TWO distinct sources. One reviewer (greta) repeating
+	// itself is NOT corroboration, so it must NOT manufacture the dense-context
+	// that would banish a different reviewer's legitimate uncorroborated finding.
+	groups, amb := DedupeCluster([]Finding{
+		fnd("a.go", 1, "token never expires unchecked here", "greta"),
+		fnd("a.go", 1, "token never expires unchecked here", "greta"), // SAME source self-dup
+		fnd("a.go", 1, "an entirely different real issue", "host"),    // host's lone finding
+	})
+	// No cross-source agreement exists, so nothing is isolated; host's finding
+	// stays in the output rather than being wrongly removed to the sidecar.
+	length(t, amb, 0, "a self-duplicate is not corroboration → no isolation")
+	stillPresent := false
+	for _, g := range groups {
+		for _, f := range g {
+			if f.Reviewer == "host" {
+				stillPresent = true
+			}
+		}
+	}
+	isTrue(t, stillPresent, "host's uncorroborated finding stays in the consensus output")
+}
+
+func TestDedupeCluster_SameSourceDuplicatesDoNotMerge(t *testing.T) {
+	// Documented behavior of the cross-source matching model: two identical
+	// findings from the SAME reviewer are not merged with each other (matching is
+	// 1:1 across sources, never within a source). They remain separate findings.
+	groups, _ := DedupeCluster([]Finding{
+		fnd("a.go", 1, "token never expires unchecked", "greta"),
+		fnd("a.go", 1, "token never expires unchecked", "greta"),
+	})
+	length(t, groups, 2, "same-source duplicates stay as separate findings")
+}
+
+func TestDedupeCluster_UnattributedDuplicatesStillMerge(t *testing.T) {
+	// Findings with no Reviewer are each treated as their own source, so genuine
+	// duplicates still merge instead of collapsing into one non-matchable
+	// pseudo-source (which would silently disable dedup).
+	groups, _ := DedupeCluster([]Finding{
+		fnd("a.go", 1, "token never expires unchecked", ""),
+		fnd("a.go", 1, "token never expires unchecked", ""),
+	})
+	length(t, groups, 1, "unattributed duplicates merge")
+	length(t, groups[0], 2, "both members")
+}
