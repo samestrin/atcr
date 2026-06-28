@@ -18,6 +18,14 @@ const (
 	GrayLow        = 0.4
 )
 
+// maxClusterSize bounds the findings in one location cluster that dedupeCluster
+// will fully process. Beyond it the cluster is adversarial — real clusters are a
+// handful of findings — so the O(n^2) distance matrix and the pairwise
+// matching/DBSCAN/gray passes are skipped to avoid a memory/CPU DoS. It matches
+// the Hungarian solver's own size limit (see hungarian in bipartite.go) so the
+// matching pass is never asked to exceed its bound.
+const maxClusterSize = 500
+
 // tokenSplit splits normalized text on any run of non-alphanumeric characters.
 var tokenSplit = regexp.MustCompile(`[^a-z0-9]+`)
 

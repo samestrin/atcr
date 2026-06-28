@@ -167,6 +167,27 @@ func TestDedupeCluster_SharedASTKeyNotGray(t *testing.T) {
 	length(t, amb, 0, "shared AST key is not gray")
 }
 
+func TestDedupeCluster_OversizedClusterDegradesToSingletons(t *testing.T) {
+	// Defense against an O(n^2)-memory / O(n^2)-CPU DoS: a location cluster larger
+	// than maxClusterSize skips the distance-matrix allocation and the pairwise
+	// matching/DBSCAN/gray passes entirely, degrading to one singleton group per
+	// finding (every finding preserved, no merge attempted). The identical text
+	// below would all collapse into ONE group if processed, so a result of n
+	// singletons proves the degraded path ran. maxClusterSize is far above any real
+	// cluster, so only adversarial input reaches this.
+	n := maxClusterSize + 50
+	cluster := make([]Finding, n)
+	for i := range cluster {
+		cluster[i] = fnd("a.go", 1, "identical duplicated problem text", "")
+	}
+	groups, amb := DedupeCluster(cluster)
+	length(t, groups, n, "oversized cluster degrades to one singleton per finding")
+	for _, g := range groups {
+		length(t, g, 1, "each finding stands alone")
+	}
+	length(t, amb, 0, "no ambiguous/noise computed for an oversized cluster")
+}
+
 func TestDedupeCluster_MismatchedKeysLengthPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
