@@ -167,6 +167,21 @@ func TestDedupeCluster_SharedASTKeyNotGray(t *testing.T) {
 	length(t, amb, 0, "shared AST key is not gray")
 }
 
+func TestDedupeCluster_CraftedReviewerCannotSpoofAnonKey(t *testing.T) {
+	// Security: an unattributed finding's per-finding anonymous source key must live
+	// in a namespace an attacker-controlled Reviewer string cannot forge. A Reviewer
+	// crafted to equal a genuine finding's anon key would otherwise collide — the
+	// two would be treated as the SAME source and silently dropped from 1:1
+	// cross-source matching (dedup disabled). They are distinct sources, so their
+	// identical findings must merge into one group.
+	groups, _ := DedupeCluster([]Finding{
+		fnd("a.go", 1, "token never expires unchecked", ""),              // genuine unattributed → anon key for index 0
+		fnd("a.go", 1, "token never expires unchecked", "\x00anon\x000"), // crafted to collide with the index-0 anon key
+	})
+	length(t, groups, 1, "distinct sources with identical text merge; the crafted reviewer cannot spoof the anon key")
+	length(t, groups[0], 2, "both findings")
+}
+
 func TestDedupeCluster_OversizedClusterDegradesToSingletons(t *testing.T) {
 	// Defense against an O(n^2)-memory / O(n^2)-CPU DoS: a location cluster larger
 	// than maxClusterSize skips the distance-matrix allocation and the pairwise
