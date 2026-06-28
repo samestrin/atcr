@@ -21,4 +21,12 @@ build() {
 
 build go goparser
 build python pyparser
+
+# Refresh the checksum manifest so the committed binaries stay verifiable from a
+# committed hash. TestEmbeddedParsersMatchManifest (go test ./...) fails in CI if
+# the .wasm files and SHA256SUMS drift, catching a tampered or stale binary
+# without needing a Wasm toolchain in the pipeline. Commit SHA256SUMS with the
+# regenerated .wasm files.
+( cd "${here}" && sha256sum go.wasm python.wasm > SHA256SUMS )
+echo "wrote SHA256SUMS"
 echo "done"
