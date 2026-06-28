@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -72,6 +73,25 @@ func NewHost(opts ...Option) *Host {
 		opt(h)
 	}
 	return h
+}
+
+var (
+	sharedHostOnce sync.Once
+	sharedHost     *Host
+)
+
+// SharedHost returns the process-lifetime Host: a single wazero runtime whose
+// compiled-and-instantiated parser plugins are amortized across every reconcile in
+// a long-lived process (e.g. the MCP server), instead of paying full WASI plus
+// per-language CompileModule/InstantiateModule on each RunReconcile call. It is
+// constructed lazily on first use, so a process that never groups a parseable
+// finding never instantiates the runtime. Host is safe for concurrent use, so the
+// singleton may back concurrent Groupers. It is intentionally never closed — its
+// lifetime is the process's, and the OS reclaims the runtime on exit; closing it
+// would discard the compiled-module cache this singleton exists to preserve.
+func SharedHost() *Host {
+	sharedHostOnce.Do(func() { sharedHost = NewHost() })
+	return sharedHost
 }
 
 // safeLang reports whether lang is a safe parser id: a non-empty run of
@@ -217,6 +237,7 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 		return Node{}, fmt.Errorf("astgroup: maxSourceBytes must be positive")
 	}
 	if len(src) > p.maxSourceBytes {
+		slog.Warn("astgroup: source too large, falling back to proximity grouping", "size", len(src), "max", p.maxSourceBytes)
 		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), p.maxSourceBytes)
 	}
 

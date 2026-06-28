@@ -24,6 +24,7 @@ type Grouper struct {
 	host     *Host
 	root     string
 	readFile func(string) ([]byte, error)
+	ownsHost bool
 
 	mu    sync.Mutex
 	cache map[string]*parsedFile // keyed by finding.File
@@ -53,14 +54,37 @@ func isPermanentReadError(err error) bool {
 }
 
 // NewGrouper builds a Grouper rooted at root: relative finding paths are resolved
-// against root before reading. Pass the reconcile Options.Root. Call Close to
-// release the underlying wazero runtime.
-func NewGrouper(root string) *Grouper {
-	return &Grouper{host: NewHost(), root: root, readFile: os.ReadFile, cache: map[string]*parsedFile{}}
+// against root before reading. Pass the reconcile Options.Root.
+//
+// If a Host is supplied it is borrowed (not closed by this Grouper); callers
+// typically pass SharedHost() so parser instances are reused across reconciles.
+// If no Host is supplied, a fresh Host is created and owned by this Grouper, and
+// Close releases it. This backward-compatible default keeps existing tests and
+// callers working without change.
+func NewGrouper(root string, host ...*Host) *Grouper {
+	h := SharedHost()
+	owns := false
+	if len(host) > 0 && host[0] != nil {
+		h = host[0]
+	} else {
+		h = NewHost()
+		owns = true
+	}
+	return &Grouper{host: h, root: root, readFile: os.ReadFile, ownsHost: owns, cache: map[string]*parsedFile{}}
 }
 
-// Close releases the wazero runtime.
-func (g *Grouper) Close() error { return g.host.Close() }
+// Close releases this Grouper's resources. If the Grouper owns its Host, the
+// underlying wazero runtime is closed; borrowed Hosts are left open so their
+// compiled-parser cache can be reused across reconciles.
+func (g *Grouper) Close() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cache = nil
+	if g.ownsHost {
+		return g.host.Close()
+	}
+	return nil
+}
 
 // canonicalPath returns the symlink-resolved, root-contained on-disk path for
 // file. It collapses relative/absolute spellings and symlinks that point to the
