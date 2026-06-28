@@ -274,7 +274,8 @@ func tokenize(s string) map[string]struct{} {
 	return set
 }
 
-// unionFind is a tiny disjoint-set for single-linkage grouping within a cluster.
+// unionFind is a tiny disjoint-set used to fold adjudicated gray-pair merges over
+// the bipartite group ids within a cluster.
 type unionFind struct{ parent []int }
 
 func newUnionFind(n int) *unionFind {
