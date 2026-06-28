@@ -155,3 +155,15 @@ func TestDedupeCluster_SingletonClusterNoAmbiguous(t *testing.T) {
 	length(t, groups[0], 1, "one member")
 	length(t, amb, 0, "no ambiguous")
 }
+
+func TestDedupeCluster_MismatchedKeysLengthPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for mismatched keys length")
+		}
+	}()
+	dedupeCluster([]Finding{
+		fnd("a.go", 1, "alpha", "greta"),
+		fnd("a.go", 1, "beta", "kai"),
+	}, []string{""}, nil)
+}
