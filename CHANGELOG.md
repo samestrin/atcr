@@ -1,3 +1,19 @@
+## [13.1.0] - 2026-06-27
+
+AST plugin architecture for the reconciler: findings that refer to the same logical code block now group together even when their reported line numbers drift, using language parsers compiled to WebAssembly and run on a zero-CGO wazero host.
+
+### Added
+
+- AST-isomorphism grouping for reconciler findings: a finding's line is mapped to its smallest covering AST block and a structural Merkle hash of that block becomes the grouping key, so whitespace/blank-line/model line-skew no longer splits duplicate findings
+- WebAssembly parser plugins for Go and Python, vendored and embedded via `go:embed` and executed on a pure-Go wazero runtime (no CGO; the binary still cross-compiles to every target out of the box)
+- A runtime parser-override directory so new languages can be enabled by dropping in a `.wasm` file, and an `ATCR_DISABLE_AST_GROUPING` env opt-out that reverts to the legacy line-proximity behavior
+
+### Changed
+
+- The reconciler now uses AST block identity as the primary clustering signal, with ±3 line proximity as the fallback when no parser is available for a finding's language (benchmark: AST recall 1.00 / precision 1.00 vs line-proximity recall ~0.79 with false merges of adjacent-but-different blocks)
+
+*Shipped via /execute-epic (epic 13.1)*
+
 ## [Technical Debt] - 2026-06-27
 
 ### Fixed
