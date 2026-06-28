@@ -156,6 +156,17 @@ func TestDedupeCluster_SingletonClusterNoAmbiguous(t *testing.T) {
 	length(t, amb, 0, "no ambiguous")
 }
 
+func TestDedupeCluster_SharedASTKeyNotGray(t *testing.T) {
+	// Two same-source findings with a shared non-empty AST key are structurally
+	// identical per the 13.1 signal. They cannot merge because of the 1:1
+	// cross-source constraint, but they must NOT be recorded as a gray pair.
+	_, amb := dedupeCluster([]Finding{
+		fnd("a.go", 1, "alpha beta gamma", "greta"),
+		fnd("a.go", 1, "delta epsilon zeta", "greta"),
+	}, []string{"a.go\x00H", "a.go\x00H"}, nil)
+	length(t, amb, 0, "shared AST key is not gray")
+}
+
 func TestDedupeCluster_MismatchedKeysLengthPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
