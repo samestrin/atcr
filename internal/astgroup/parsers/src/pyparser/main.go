@@ -1,0 +1,198 @@
+// Command pyparser is the Python-language structural parser plugin, compiled to
+// a WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and
+// loaded by the reconcile/astgroup wazero host.
+//
+// It is a lightweight indentation + keyword block-structure parser, NOT a full
+// Python grammar: enough to recover the nesting of defs, classes, and compound
+// statements so a finding's line can be mapped to its smallest covering block.
+// It emits the same kind/name/start_line/end_line/children JSON contract as the
+// Go plugin, so the host stays language-agnostic. Structure (kinds, names,
+// nesting) — not physical line text — drives the host's Merkle hash, so blank
+// lines and reindentation that shift line numbers do not change the hash.
+//
+// Memory protocol matches the goparser plugin and the astgroup host.
+// Regenerate the vendored .wasm via reconcile/astgroup/parsers/build.sh.
+package main
+
+import (
+	"encoding/json"
+	"strings"
+	"unsafe"
+)
+
+type node struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name,omitempty"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	Children  []node `json:"children,omitempty"`
+}
+
+var pins = map[int32][]byte{}
+
+//go:wasmexport alloc
+func alloc(n int32) int32 {
+	if n <= 0 {
+		n = 1
+	}
+	b := make([]byte, n)
+	p := int32(uintptr(unsafe.Pointer(&b[0])))
+	pins[p] = b
+	return p
+}
+
+//go:wasmexport free
+func free(p int32) { delete(pins, p) }
+
+//go:wasmexport parse
+func parse(ptr int32, n int32) int64 {
+	buf, ok := pins[ptr]
+	if !ok || int(n) > len(buf) {
+		return emit(node{Kind: "error", Name: "bad pointer"})
+	}
+	src := string(buf[:n])
+
+	lines := significantLines(src)
+	root := node{Kind: "module", StartLine: 1, EndLine: 1}
+	if len(lines) > 0 {
+		kids, _ := build(lines, 0, lines[0].indent)
+		root.Children = kids
+		root.EndLine = lines[len(lines)-1].lineno
+	}
+	return emit(root)
+}
+
+type pline struct {
+	indent int
+	lineno int
+	text   string // stripped of leading whitespace and trailing inline comment
+}
+
+// significantLines returns non-blank, non-comment-only lines with their
+// indentation (tabs expanded to 8) and 1-based line number.
+func significantLines(src string) []pline {
+	var out []pline
+	for i, raw := range strings.Split(src, "\n") {
+		indent := 0
+		j := 0
+		for ; j < len(raw); j++ {
+			switch raw[j] {
+			case ' ':
+				indent++
+			case '\t':
+				indent += 8
+			default:
+				goto done
+			}
+		}
+	done:
+		body := strings.TrimRight(raw[j:], " \t\r")
+		if body == "" || strings.HasPrefix(body, "#") {
+			continue
+		}
+		out = append(out, pline{indent: indent, lineno: i + 1, text: body})
+	}
+	return out
+}
+
+// build consumes consecutive lines at exactly `indent` and returns their nodes.
+func build(lines []pline, i, indent int) ([]node, int) {
+	var out []node
+	for i < len(lines) {
+		cur := lines[i]
+		if cur.indent < indent {
+			break
+		}
+		if cur.indent > indent {
+			// Defensive: a deeper line without a header (continuation or
+			// inconsistent indent). Attach as a leaf at this level.
+			out = append(out, node{Kind: "stmt", StartLine: cur.lineno, EndLine: cur.lineno})
+			i++
+			continue
+		}
+		kind, name := classify(cur.text)
+		n := node{Kind: kind, Name: name, StartLine: cur.lineno, EndLine: cur.lineno}
+		i++
+		if isHeader(cur.text) && i < len(lines) && lines[i].indent > indent {
+			kids, ni := build(lines, i, lines[i].indent)
+			n.Children = kids
+			i = ni
+			n.EndLine = maxEnd(n)
+		}
+		out = append(out, n)
+	}
+	return out, i
+}
+
+func maxEnd(n node) int {
+	m := n.EndLine
+	for _, c := range n.Children {
+		if e := maxEnd(c); e > m {
+			m = e
+		}
+	}
+	return m
+}
+
+// isHeader reports whether a line opens a nested block (ends with ':').
+func isHeader(text string) bool {
+	t := stripComment(text)
+	t = strings.TrimRight(t, " \t")
+	return strings.HasSuffix(t, ":")
+}
+
+var compoundKeywords = []string{"def", "class", "if", "elif", "else", "for", "while", "with", "try", "except", "finally"}
+
+func classify(text string) (kind, name string) {
+	t := strings.TrimSpace(text)
+	if strings.HasPrefix(t, "async ") {
+		t = strings.TrimSpace(t[len("async "):])
+	}
+	for _, kw := range compoundKeywords {
+		if t == kw || strings.HasPrefix(t, kw+" ") || strings.HasPrefix(t, kw+":") || strings.HasPrefix(t, kw+"(") {
+			switch kw {
+			case "def":
+				return "func", identAfter(t, "def")
+			case "class":
+				return "class", identAfter(t, "class")
+			case "elif":
+				return "if", ""
+			default:
+				return kw, ""
+			}
+		}
+	}
+	return "stmt", ""
+}
+
+// identAfter returns the identifier following keyword kw (up to '(' or ':').
+func identAfter(t, kw string) string {
+	rest := strings.TrimSpace(t[len(kw):])
+	end := len(rest)
+	for i, r := range rest {
+		if r == '(' || r == ':' || r == ' ' {
+			end = i
+			break
+		}
+	}
+	return rest[:end]
+}
+
+func stripComment(text string) string {
+	if i := strings.IndexByte(text, '#'); i >= 0 {
+		return text[:i]
+	}
+	return text
+}
+
+func emit(n node) int64 {
+	b, err := json.Marshal(n)
+	if err != nil {
+		b = []byte(`{"kind":"error","name":"marshal"}`)
+	}
+	p := alloc(int32(len(b)))
+	copy(pins[p], b)
+	return (int64(p) << 32) | int64(len(b))
+}
+
+func main() {}
