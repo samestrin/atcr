@@ -17,9 +17,9 @@ import (
 // source, so a third finding cannot drag two non-duplicates into one group.
 
 // noMatchSentinel is the cost charged to padded (virtual) cells when squaring a
-// rectangular cost matrix. It exceeds any real composite distance (≤ 1) so the
+// rectangular cost matrix. It exceeds any real composite distance so the
 // assignment never prefers a virtual cell over a feasible real one.
-const noMatchSentinel = 2.0
+const noMatchSentinel = distanceCeiling + 1.0
 
 // hungarian solves the minimum-cost assignment problem for a square cost matrix
 // and returns assign where assign[r] is the column matched to row r (a
