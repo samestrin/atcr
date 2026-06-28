@@ -1,24 +1,26 @@
 package reconcile
 
 import (
+	"fmt"
 	"math"
 	"sort"
 )
 
 // Bipartite matching for Epic 13.2. The greedy union-find dedup (single-linkage
-// over a similarity threshold) is replaced by optimal assignment: within a
-// location cluster, findings from different sources are matched 1:1 by the
-// Kuhn-Munkres (Hungarian) algorithm using the composite edge-weight distance
-// (see distance.go). The 1:1 constraint is the structural fix for the greedy
-// failure mode — single-linkage transitively chains A-B-C even when A and B are
-// only weakly similar; optimal matching pairs each finding with at most one
-// counterpart per other source, so a third finding cannot drag two non-duplicates
-// into one group.
+// over a similarity threshold) is replaced by greedy incremental pairwise
+// matching: within a location cluster, findings from different sources are
+// matched 1:1 by the Kuhn-Munkres (Hungarian) algorithm using the composite
+// edge-weight distance (see distance.go). Each pairwise step is optimal, but the
+// N-way result depends on the order in which sources are processed (bounded for
+// small N). The 1:1 constraint is the structural fix for the greedy failure mode
+// — single-linkage transitively chains A-B-C even when A and B are only weakly
+// similar; matching pairs each finding with at most one counterpart per other
+// source, so a third finding cannot drag two non-duplicates into one group.
 
 // noMatchSentinel is the cost charged to padded (virtual) cells when squaring a
-// rectangular cost matrix. It exceeds any real composite distance (≤ 1) so the
+// rectangular cost matrix. It exceeds any real composite distance so the
 // assignment never prefers a virtual cell over a feasible real one.
-const noMatchSentinel = 2.0
+const noMatchSentinel = distanceCeiling + 1.0
 
 // hungarian solves the minimum-cost assignment problem for a square cost matrix
 // and returns assign where assign[r] is the column matched to row r (a
@@ -30,6 +32,10 @@ func hungarian(cost [][]float64) []int {
 	n := len(cost)
 	if n == 0 {
 		return nil
+	}
+	const maxHungarianN = 500
+	if n > maxHungarianN {
+		panic(fmt.Sprintf("hungarian: matrix size %d exceeds maximum %d", n, maxHungarianN))
 	}
 	const inf = math.MaxFloat64
 	// 1-indexed potentials/state per the canonical formulation; p[j] is the row
@@ -46,7 +52,10 @@ func hungarian(cost [][]float64) []int {
 		for j := 0; j <= n; j++ {
 			minv[j] = inf
 		}
-		for {
+		for iter := 0; ; iter++ {
+			if iter > n {
+				panic("hungarian: exceeded maximum shortest-augmenting-path iterations")
+			}
 			used[j0] = true
 			i0 := p[j0]
 			delta := inf
@@ -109,6 +118,34 @@ func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
 	if rows == 0 || cols == 0 {
 		return assign
 	}
+	// Degenerate single-row / single-column shapes don't need the full O(n^3)
+	// Hungarian over a padded square — the optimum is a plain argmin. The
+	// unattributed-source path makes every finding its own source, so
+	// bipartiteGroups calls this with a single candidate (cols==1) on every step;
+	// short-circuiting keeps that step linear instead of O(group^3) (overall
+	// ~O(n^4) across the cluster). The argmin reproduces the padded Hungarian's
+	// assignment exactly, including its lowest-index tie-break (strict `<` keeps
+	// the first minimal column/row).
+	if rows == 1 {
+		best, bestC := cost(0, 0), 0
+		for c := 1; c < cols; c++ {
+			if v := cost(0, c); v < best {
+				best, bestC = v, c
+			}
+		}
+		assign[0] = bestC
+		return assign
+	}
+	if cols == 1 {
+		best, bestR := cost(0, 0), 0
+		for r := 1; r < rows; r++ {
+			if v := cost(r, 0); v < best {
+				best, bestR = v, r
+			}
+		}
+		assign[bestR] = 0
+		return assign
+	}
 	n := rows
 	if cols > n {
 		n = cols
@@ -135,20 +172,26 @@ func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
 
 // bipartiteGroups partitions a location cluster into merge groups using the
 // incremental pairwise reduction of N-way matching: findings are split by source
-// (Reviewer), then each source's findings are optimally matched against the
-// groups accumulated so far. The group↔candidate cost is the single-linkage
-// (minimum) composite distance to the group's members, so the assignment prefers
-// pairing a candidate with the group it most resembles, while the 1:1 constraint
-// forbids one candidate from collapsing two distinct groups (the structural fix
-// for greedy single-linkage over-merge).
+// (Reviewer), then each source's findings are greedily matched against the
+// groups accumulated so far. Each pairwise step is optimal, but the overall
+// N-way result is order-dependent because a candidate matched early locks a
+// group that a later better-fitting candidate is then excluded from by the 1:1
+// constraint. The group↔candidate cost is the single-linkage (minimum) composite
+// distance to the group's members, so the assignment prefers pairing a candidate
+// with the group it most resembles, while the 1:1 constraint forbids one
+// candidate from collapsing two distinct groups (the structural fix for greedy
+// single-linkage over-merge).
 //
 // Acceptance is gated by mergeable, NOT by the float cost: a candidate joins the
 // group it was optimally assigned to only when mergeable(member, candidate) holds
-// for some member — an integer-exact predicate (AST key match, or classify ==
-// relMerge) that keeps the duplicate boundary deterministic and free of the
-// floating-point rounding the cost matrix carries. An unaccepted or unmatched
-// candidate seeds a new singleton group, so a group holds at most one finding per
-// source — one consensus issue across reviewers.
+// for EVERY current member (complete-linkage) — an integer-exact predicate (AST
+// key match, or classify == relMerge) that keeps the duplicate boundary
+// deterministic and free of the floating-point rounding the cost matrix carries.
+// Complete-linkage (rather than single-linkage "some member") is what stops two
+// merge-strength links from chaining non-duplicate endpoints through a bridge
+// finding. An unaccepted or unmatched candidate seeds a new singleton group, so a
+// group holds at most one finding per source — one consensus issue across
+// reviewers.
 //
 // Sources are identified by srcKeys[i] (the finding's source-partition key, see
 // dedupeCluster: a non-empty Reviewer, else a per-finding unique key so an
@@ -194,10 +237,16 @@ func bipartiteGroups(srcKeys []string, dist [][]float64, mergeable func(a, b int
 				continue
 			}
 			cand := cands[c]
-			accept := false
+			// Complete-linkage acceptance: the candidate joins the group it was
+			// optimally assigned to only when it is mergeable with EVERY current
+			// member, not merely one (single-linkage). Single-linkage lets two
+			// merge-strength links (a~b, b~c) chain non-duplicate endpoints (a~c
+			// below the merge boundary) into one group via the bridge; requiring all
+			// members to be duplicates of the candidate forbids that chain.
+			accept := true
 			for _, gi := range groups[r] {
-				if mergeable(gi, cand) {
-					accept = true
+				if !mergeable(gi, cand) {
+					accept = false
 					break
 				}
 			}

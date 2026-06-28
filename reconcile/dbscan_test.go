@@ -47,6 +47,30 @@ func TestDBSCAN_MinPtsThreeLeavesPairAsNoise(t *testing.T) {
 	eq(t, labels[1], dbscanNoise, "1 noise")
 }
 
+func TestDBSCAN_NeighborComputedOncePerPair(t *testing.T) {
+	// Single-pass invariant: each point's eps-neighborhood is computed exactly
+	// once, so the predicate is evaluated n*(n-1) times total (once per ordered
+	// pair) regardless of cluster topology — never re-scanned during expansion.
+	// This is the inherent O(n^2) cost of naive DBSCAN; there is no repeated scan
+	// to cache away, and an explicit adjacency list would only add O(n^2) resident
+	// memory for no CPU win. Guards against a regression that re-scans a point.
+	for _, tc := range []struct {
+		name  string
+		edges [][2]int
+	}{
+		{"chain", [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}}},
+		{"star", [][2]int{{0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}}},
+		{"isolated", nil},
+	} {
+		const n = 6
+		base := adjacency(tc.edges)
+		calls := 0
+		counting := func(i, j int) bool { calls++; return base(i, j) }
+		dbscanLabels(n, 2, counting)
+		eq(t, calls, n*(n-1), tc.name+": neighbor predicate evaluated exactly once per ordered pair")
+	}
+}
+
 func TestDBSCAN_Deterministic(t *testing.T) {
 	edges := [][2]int{{0, 1}, {2, 3}, {3, 4}}
 	l1, _ := dbscanLabels(6, 2, adjacency(edges))

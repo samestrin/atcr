@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 // totalCost sums the chosen assignment's costs for validation.
 func totalCost(cost [][]float64, assign []int) float64 {
@@ -90,4 +93,64 @@ func TestHungarianAssign_RealColumnPreferredOverPadding(t *testing.T) {
 	assign := hungarianAssign(2, 1, cost)
 	eq(t, assign[1], 0, "cheaper row1 takes the real col")
 	eq(t, assign[0], -1, "row0 to padding")
+}
+
+func TestHungarianAssign_SingleRowMatchesArgmin(t *testing.T) {
+	// The short-circuited single-row path must reproduce the padded Hungarian's
+	// assignment exactly, including the lowest-index tie-break on equal costs.
+	cost := func(r, c int) float64 { return []float64{0.4, 0.1, 0.1, 0.3}[c] }
+	assign := hungarianAssign(1, 4, cost)
+	eq(t, assign[0], 1, "lowest-index minimum column wins the tie (col1 == col2 == 0.1)")
+}
+
+func TestHungarianAssign_SingleColMatchesArgmin(t *testing.T) {
+	// The short-circuited single-column path must pick the cheapest row, lowest
+	// index first, and leave every other row matched to padding (-1).
+	cost := func(r, c int) float64 { return []float64{0.3, 0.1, 0.1, 0.4}[r] }
+	assign := hungarianAssign(4, 1, cost)
+	eq(t, assign[1], 0, "lowest-index cheapest row takes the only column")
+	eq(t, assign[0], -1, "row0 to padding")
+	eq(t, assign[2], -1, "row2 to padding")
+	eq(t, assign[3], -1, "row3 to padding")
+}
+
+// BenchmarkBipartiteGroups_UnattributedSingleLocation exercises the worst-case
+// path the short-circuit targets: N unattributed findings at one location, each
+// its own source and none mergeable, so bipartiteGroups matches a single
+// candidate (cols==1) against an ever-growing group set on every step. Without
+// the hungarianAssign short-circuit each step is O(group^3), making the whole
+// cluster ~O(n^4); with it each step is O(group), keeping the cluster ~O(n^2).
+func BenchmarkBipartiteGroups_UnattributedSingleLocation(b *testing.B) {
+	const n = 200
+	srcKeys := make([]string, n)
+	for i := range srcKeys {
+		srcKeys[i] = "\x00anon\x00" + strconv.Itoa(i)
+	}
+	dist := make([][]float64, n)
+	for i := range dist {
+		dist[i] = make([]float64, n)
+		for j := range dist[i] {
+			if i != j {
+				dist[i][j] = 1.0
+			}
+		}
+	}
+	mergeable := func(a, c int) bool { return false } // all distinct → groups grow to n
+	b.ResetTimer()
+	for k := 0; k < b.N; k++ {
+		bipartiteGroups(srcKeys, dist, mergeable)
+	}
+}
+
+func TestHungarian_RejectsOversizedMatrix(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for oversized matrix")
+		}
+	}()
+	cost := make([][]float64, 501)
+	for i := range cost {
+		cost[i] = make([]float64, 501)
+	}
+	hungarian(cost)
 }

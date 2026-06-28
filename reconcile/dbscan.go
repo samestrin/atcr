@@ -25,11 +25,20 @@ const (
 // Determinism: points are visited in index order; a cluster's seed set is grown
 // as a FIFO with each expansion's neighbors appended in ascending index order, so
 // the labeling is identical on every run and platform.
+//
+// Single pass: each point's neighborhood is computed exactly once. A point pulled
+// into a cluster by expansion is labeled before the outer loop reaches it (and a
+// noise point is labeled before any expansion can re-enqueue it), so neighbor is
+// evaluated once per ordered pair — n*(n-1) total. That is the inherent O(n^2)
+// cost of naive DBSCAN with no spatial index; there is no repeated scan, so an
+// explicit precomputed adjacency list would only add O(n^2) resident memory for
+// no CPU reduction (see TestDBSCAN_NeighborComputedOncePerPair).
 func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, dense bool) {
 	labels = make([]int, n)
 	for i := range labels {
 		labels[i] = dbscanUnvisited
 	}
+	queued := make([]bool, n)
 	neighborsOf := func(p int) []int {
 		var out []int
 		for q := 0; q < n; q++ {
@@ -51,6 +60,9 @@ func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, de
 		}
 		labels[p] = cluster
 		seeds := append([]int(nil), nb...)
+		for _, q := range seeds {
+			queued[q] = true
+		}
 		for k := 0; k < len(seeds); k++ {
 			q := seeds[k]
 			if labels[q] == dbscanNoise {
@@ -62,7 +74,12 @@ func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, de
 			labels[q] = cluster
 			qn := neighborsOf(q)
 			if len(qn)+1 >= minPts {
-				seeds = append(seeds, qn...)
+				for _, r := range qn {
+					if labels[r] == dbscanUnvisited && !queued[r] {
+						queued[r] = true
+						seeds = append(seeds, r)
+					}
+				}
 			}
 		}
 		cluster++

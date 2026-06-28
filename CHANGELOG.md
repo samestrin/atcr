@@ -1,3 +1,23 @@
+## [Technical Debt] - 2026-06-28
+
+### Fixed
+
+- Cached per-cluster relation and similarity matrix once and read it from all three sites in `reconcile/dedupe.go`
+- Collapsed unattributed findings to one density source so duplicate hallucinations no longer self-corroborate
+- Namespaced real versus anonymous source keys disjointly to block reviewer spoofing
+- Capped location clusters at `maxClusterSize`, degrading to singletons to prevent unbounded memory growth
+- Locked DBSCAN single-pass neighbor invariant and documented why no adjacency cache is needed
+- Added complete-linkage acceptance to `bipartiteGroups` to prevent merge-strength chain over-merges
+- Short-circuited `hungarianAssign` single-row/column paths to an O(n) argmin
+- Added a maximum matrix size guard to the Hungarian algorithm
+- Added `AmbiguousCount` and `NoiseCount` fields to the reconciler summary
+- Skipped gray recording for findings that share an AST key
+- Validated key length in `dedupeCluster`
+- Deduplicated the DBSCAN seed queue to avoid O(n²) growth
+- Added a safety iteration limit to the Hungarian algorithm
+- Derived `noMatchSentinel` from the distance ceiling
+- Resolved documentation accuracy for bipartite matching
+
 ## [13.2.0] - 2026-06-28
 
 The reconciler now deduplicates findings with optimal bipartite matching instead of greedy clustering, and deterministically isolates uncorroborated single-model noise into the ambiguity sidecar — so consensus findings stay trustworthy and the sidecar can be trusted as strictly uncorroborated noise.
