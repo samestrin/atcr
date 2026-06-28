@@ -248,6 +248,19 @@ func TestGrouper_LogsDegradation(t *testing.T) {
 	require.Contains(t, out, "astgroup", "warning must identify the astgroup grouper")
 }
 
+// TestGrouper_EmptyRootHardDisables verifies that an empty root (the
+// MCP-server-without-a-checked-out-tree case) hard-disables file reads and falls
+// back to proximity, rather than silently resolving relative finding paths
+// against the process cwd — which would key findings off unrelated same-named
+// files. node.go exists relative to the test's cwd (the package dir), so the old
+// ""→"." behavior would have produced a non-empty key for it.
+func TestGrouper_EmptyRootHardDisables(t *testing.T) {
+	g := NewGrouper("")
+	defer func() { _ = g.Close() }()
+	require.Empty(t, g.GroupKey(reconcile.Finding{File: "node.go", Line: 24}),
+		"empty root must hard-disable reads, not resolve against cwd")
+}
+
 func TestGrouper_RefusesPathOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	// A real Go file outside root that a traversal would otherwise reach.
