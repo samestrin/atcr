@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 5 | 2 | 5 |
 | MEDIUM | 8 | 25 | 23 |
-| LOW | 15 | 23 | 13 |
+| LOW | 14 | 23 | 14 |
 
-**Last Modified:** 2026-06-27 | **Open Items:** 28 | **Deferred Items:** 50 | **Resolved Items:** 41 | **Total Items:** 119
+**Last Modified:** 2026-06-27 | **Open Items:** 27 | **Deferred Items:** 50 | **Resolved Items:** 42 | **Total Items:** 119
 
 ## Directory Structure
 
@@ -132,7 +132,7 @@ table with zero data loss) is proven by the Go test suite in
 | Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
 |-------|---|----------|------|---------|-----|----------|-------------|--------|
 | 1 | [x] | MEDIUM | internal/astgroup/host.go:1 | wazero parser calls have no per-parse execution timeout; a pathological source could hang a parser instance | Set RuntimeConfig WithCloseOnContextDone(true) and call parse with a context.WithTimeout deadline (accept that a timed-out instance is closed and the language falls back to proximity) | DETERMINISM | 30 | execute-epic-stage3 |
-| 1 | [ ] | LOW | internal/astgroup/parsers/src/pyparser/main.go:178 | Heuristic Python parser misparses multi-line def/class headers (those not ending in ':' on the first line) into wrong blocks | Detect open-paren continuation in headers and join physical lines until the ':' terminator, or move to a real Python grammar | CORRECTNESS | 45 | execute-epic-independent |
+| 1 | [x] | LOW | internal/astgroup/parsers/src/pyparser/main.go:178 | Heuristic Python parser misparses multi-line def/class headers (those not ending in ':' on the first line) into wrong blocks | Detect open-paren continuation in headers and join physical lines until the ':' terminator, or move to a real Python grammar | CORRECTNESS | 45 | execute-epic-independent |
 | 1 | [x] | LOW | internal/astgroup/grouper.go:89 | GroupKey appends MerkleHash(block) but the file-scoped structural address already uniquely identifies the node within the file, so the Merkle term is redundant for grouping (nominal not load-bearing) | Either drop the MerkleHash term and rely on the address, or document that the hash is a defensive cross-check of the address scheme | OVER_ENGINEERING | 20 | execute-epic-independent |
 | 1 | [x] | LOW | internal/astgroup/grouper.go:60 | resolvePath checks containment with Clean+Rel but does not resolve symlinks, so a symlink inside root pointing outside it passes the guard and is read | Use filepath.EvalSymlinks or os.Root before the containment check when untrusted trees are in scope | SECURITY | 30 | execute-epic-independent |
 | u | [ ] | LOW | internal/astgroup/host.go:197 | On a guest parse trap the result-pointer free defer is never installed and the guest pin map may be left inconsistent, so a trapped instance leaks guest memory and may be unsafe to reuse | Discard and lazily re-instantiate the parser after a parse trap so its memory/pin map start clean | ERROR_HANDLING | 30 | execute-epic-independent |
