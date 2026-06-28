@@ -207,6 +207,11 @@ const defaultMaxSourceBytes = 1 << 23 // 8 MiB
 // a var, not a const, only so a test can shrink it to force the timeout path.
 var parseTimeout = 5 * time.Second
 
+// maxResultBytes caps the JSON a guest parser may return. This prevents a
+// hostile or buggy plugin from claiming a multi-gigabyte result length and
+// driving the host out of memory while reading wasm memory.
+const maxResultBytes = 1 << 26 // 64 MiB
+
 func (p *wasmParser) Parse(src []byte) (Node, error) {
 	if p.maxSourceBytes <= 0 {
 		return Node{}, fmt.Errorf("astgroup: maxSourceBytes must be positive")
@@ -234,6 +239,9 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	if err != nil {
 		return Node{}, fmt.Errorf("astgroup: alloc: %w", err)
 	}
+	if len(res) == 0 {
+		return Node{}, fmt.Errorf("astgroup: alloc returned no results")
+	}
 	ptr := uint32(res[0])
 	defer func() { _, _ = p.free.Call(ctx, uint64(ptr)) }()
 
@@ -247,9 +255,15 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	if err != nil {
 		return Node{}, fmt.Errorf("astgroup: parse call: %w", err)
 	}
+	if len(pr) == 0 {
+		return Node{}, fmt.Errorf("astgroup: parse returned no results")
+	}
 	packed := pr[0]
 	rptr := uint32(packed >> 32)
 	rlen := uint32(packed)
+	if rlen > maxResultBytes {
+		return Node{}, fmt.Errorf("astgroup: parser result too large (%d bytes > %d)", rlen, maxResultBytes)
+	}
 	defer func() { _, _ = p.free.Call(ctx, uint64(rptr)) }()
 
 	out, ok := p.memory.Read(rptr, rlen)
