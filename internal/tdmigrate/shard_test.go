@@ -90,8 +90,13 @@ func TestWriteShards_PreservesExistingOnFailure(t *testing.T) {
 	if err := os.WriteFile(keep, []byte("date: keep\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A directory at the shard's temp path makes its staging WriteFile fail.
-	if err := os.Mkdir(filepath.Join(dir, "2026-06-26_x.yaml.tmp"), 0o755); err != nil {
+	// A non-empty directory at the shard's temp path makes its staging WriteFile
+	// fail (and cannot be cleared by the stale-temp os.Remove sweep).
+	blocker := filepath.Join(dir, "2026-06-26_x.yaml.tmp")
+	if err := os.Mkdir(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocker, "occupied"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	shards := []Shard{{

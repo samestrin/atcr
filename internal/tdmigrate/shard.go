@@ -64,33 +64,72 @@ func MarshalShard(s Shard) ([]byte, error) {
 // prunes its own prior output (every *.yaml already in dir) before writing, so
 // re-running migrate never leaves orphaned shards from a previous run. dir is
 // owned entirely by this tool, so the prune is safe.
+//
+// The write is staged-then-swapped so a mid-run failure cannot half-wipe items/:
+// every shard is marshaled and written to a sibling .yaml.tmp file first, and
+// only once all shards are staged successfully does it prune the prior *.yaml set
+// and rename the staged files into place. A marshal or staging-write failure
+// aborts with the existing shards untouched (any partial .tmp output is removed).
 func WriteShards(dir string, shards []Shard) ([]string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	existing, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
-	if err != nil {
-		return nil, err
-	}
-	for _, f := range existing {
-		if err := os.Remove(f); err != nil {
-			return nil, err
+
+	// Clear any .tmp files left by a previously interrupted run so stale staging
+	// output never lingers or collides with this run's renames.
+	if stale, err := filepath.Glob(filepath.Join(dir, "*.yaml.tmp")); err == nil {
+		for _, f := range stale {
+			_ = os.Remove(f)
 		}
 	}
+
+	type staged struct{ tmp, final string }
+	var stages []staged
+	cleanup := func() {
+		for _, s := range stages {
+			_ = os.Remove(s.tmp)
+		}
+	}
+
 	used := map[string]bool{}
 	var written []string
 	for _, s := range shards {
 		data, err := MarshalShard(s)
 		if err != nil {
+			cleanup()
 			return nil, fmt.Errorf("marshal shard %s/%s: %w", s.Date, s.Label, err)
 		}
 		name := ShardFilename(s, used)
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		final := filepath.Join(dir, name)
+		tmp := final + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o644); err != nil {
+			cleanup()
 			return nil, err
 		}
+		stages = append(stages, staged{tmp: tmp, final: final})
 		written = append(written, name)
 	}
+
+	// All shards staged. Prune the prior output, then swap staged files into
+	// place. Renames are within dir (atomic, near-instant), so the destructive
+	// window is minimal and only opens after every shard is known-good on disk.
+	existing, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	for _, f := range existing {
+		if err := os.Remove(f); err != nil {
+			cleanup()
+			return nil, err
+		}
+	}
+	for _, s := range stages {
+		if err := os.Rename(s.tmp, s.final); err != nil {
+			return nil, err
+		}
+	}
+
 	sort.Strings(written)
 	return written, nil
 }
