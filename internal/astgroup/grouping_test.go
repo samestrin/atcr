@@ -124,6 +124,32 @@ func TestGrouper_RefusesPathOutsideRoot(t *testing.T) {
 	require.Empty(t, g.GroupKey(reconcile.Finding{File: secret, Line: 2}))
 }
 
+// TestGrouper_CanonicalPathDeduplicatesSpellings verifies that relative,
+// absolute, and symlinked spellings of the same on-disk file share one parsed
+// tree cache entry and produce the same group key.
+func TestGrouper_CanonicalPathDeduplicatesSpellings(t *testing.T) {
+	root := t.TempDir()
+	src := "package p\n\nfunc F() {\n\tx := 1\n}\n"
+	real := filepath.Join(root, "real.go")
+	require.NoError(t, os.WriteFile(real, []byte(src), 0o644))
+	link := filepath.Join(root, "link.go")
+	require.NoError(t, os.Symlink(real, link))
+
+	g := NewGrouper(root)
+	defer func() { _ = g.Close() }()
+
+	kRel := g.GroupKey(reconcile.Finding{File: "real.go", Line: 4})
+	kAbs := g.GroupKey(reconcile.Finding{File: real, Line: 4})
+	kLink := g.GroupKey(reconcile.Finding{File: "link.go", Line: 4})
+
+	require.NotEmpty(t, kRel)
+	require.Equal(t, kRel, kAbs, "relative and absolute spellings must share a group key")
+	require.Equal(t, kRel, kLink, "symlink spelling must share a group key")
+
+	// Only one parse should have been performed despite three GroupKey calls.
+	require.Equal(t, 1, len(g.cache), "canonical path should deduplicate cache entries")
+}
+
 // TestGrouper_SatisfiesReconcileInterface is a compile-time assertion that the
 // astgroup grouper plugs into the reconcile seam.
 func TestGrouper_SatisfiesReconcileInterface(t *testing.T) {

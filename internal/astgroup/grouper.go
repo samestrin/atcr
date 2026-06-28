@@ -42,18 +42,22 @@ func NewGrouper(root string) *Grouper {
 // Close releases the wazero runtime.
 func (g *Grouper) Close() error { return g.host.Close() }
 
-// resolvePath maps a finding's File to an on-disk path and confirms it stays
-// within root. It refuses paths that escape root — via "../" or an absolute path
-// outside it — so a hostile finding.File cannot turn the grouper into a
-// file-existence oracle for arbitrary locations. An empty root is treated as the
-// current working directory rather than disabling the guard, so containment
-// always applies. ok is false when the path is rejected.
-func (g *Grouper) resolvePath(file string) (string, bool) {
+// canonicalPath returns the symlink-resolved, root-contained on-disk path for
+// file. It collapses relative/absolute spellings and symlinks that point to the
+// same real file so they share a single cache entry and group key, while still
+// rejecting any path that escapes root (including a symlink that points outside
+// it). Root itself is symlink-resolved so a root like /tmp on macOS (/private/tmp)
+// does not falsely reject contained files.
+func (g *Grouper) canonicalPath(file string) (string, bool) {
 	root := g.root
 	if root == "" {
 		root = "."
 	}
 	root = filepath.Clean(root)
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err == nil {
+		root = rootReal
+	}
 
 	p := file
 	if !filepath.IsAbs(p) {
@@ -61,11 +65,18 @@ func (g *Grouper) resolvePath(file string) (string, bool) {
 	}
 	p = filepath.Clean(p)
 
-	rel, err := filepath.Rel(root, p)
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		// If the symlink cannot be resolved, fall back to the lexically
+		// resolved path rather than silently returning an empty key.
+		real = p
+	}
+
+	rel, err := filepath.Rel(root, real)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
-	return p, true
+	return real, true
 }
 
 // GroupKey returns the AST-isomorphism key for f, or "" to fall back to proximity.
@@ -80,7 +91,11 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	if lang == "" {
 		return ""
 	}
-	pf := g.treeFor(file, lang)
+	path, ok := g.canonicalPath(file)
+	if !ok {
+		return ""
+	}
+	pf := g.treeFor(path, lang)
 	if !pf.ok {
 		return ""
 	}
@@ -88,12 +103,13 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	if !ok {
 		return ""
 	}
-	// Key = file + structural address of the covering block + its Merkle hash.
-	// The address (drift-invariant, sibling-distinguishing) already uniquely
-	// identifies the node within the file, so the Merkle hash is a defensive
-	// cross-check of the address scheme rather than load-bearing for grouping.
-	// File-scoped so identical structures in different files never collide.
-	return file + "\x00" + addr + "\x00" + MerkleHash(block)
+	// Key = canonical file path + structural address of the covering block + its
+	// Merkle hash. The address (drift-invariant, sibling-distinguishing) already
+	// uniquely identifies the node within the file, so the Merkle hash is a
+	// defensive cross-check of the address scheme rather than load-bearing for
+	// grouping. File-scoped so identical structures in different files never
+	// collide; canonical path collapses symlinks and spelling variants.
+	return path + "\x00" + addr + "\x00" + MerkleHash(block)
 }
 
 // treeFor returns the parsed tree for file, parsing+caching on first use. A parse
@@ -110,7 +126,7 @@ func (g *Grouper) treeFor(file, lang string) *parsedFile {
 	pf := &parsedFile{}
 	g.cache[file] = pf // cache the (initially negative) result; updated below on success
 
-	path, ok := g.resolvePath(file)
+	path, ok := g.canonicalPath(file)
 	if !ok {
 		return pf // path escapes root: refuse to read, fall back to proximity
 	}
