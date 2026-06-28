@@ -150,6 +150,32 @@ func TestHost_ParseHonorsTimeout(t *testing.T) {
 	require.Error(t, err, "Parse must enforce parseTimeout and abort the guest call")
 }
 
+func TestHost_ParserDiscardedAfterParseTrap(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	// Force a guest trap via an impossibly small per-parse budget.
+	old := parseTimeout
+	parseTimeout = time.Nanosecond
+	_, err = p.Parse([]byte("package p\nfunc A() {}\n"))
+	parseTimeout = old
+	require.Error(t, err)
+
+	// A trapped instance may have an inconsistent pin map / linear memory, so it
+	// must be discarded: its module is closed and the next Parser call returns a
+	// fresh, usable instance rather than reusing the poisoned one.
+	require.True(t, p.(*wasmParser).mod.IsClosed(), "trapped parser module must be closed")
+
+	p2, err := h.Parser("go")
+	require.NoError(t, err)
+	require.NotSame(t, p.(*wasmParser), p2.(*wasmParser), "a fresh instance must replace the trapped parser")
+	root, err := p2.Parse([]byte("package p\nfunc A() {}\n"))
+	require.NoError(t, err)
+	require.Equal(t, "file", root.Kind)
+}
+
 func TestHost_MaxSourceBytesConfigurable(t *testing.T) {
 	h := NewHost(WithMaxSourceBytes(16))
 	defer func() { _ = h.Close() }()

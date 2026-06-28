@@ -282,6 +282,14 @@ var parseTimeout = 5 * time.Second
 // driving the host out of memory while reading wasm memory.
 const maxResultBytes = 1 << 26 // 64 MiB
 
+// discardOnTrap closes the parser's module after a guest-call trap so Host.Parser
+// re-instantiates a clean instance on the next call instead of reusing one whose
+// pin map / linear memory may be inconsistent. Idempotent: a timeout trap already
+// closes the module via wazero's context cancellation, so Close is a no-op there;
+// it matters for a non-timeout guest panic that would otherwise leave the module
+// open and cached.
+func (p *wasmParser) discardOnTrap() { _ = p.mod.Close(p.ctx) }
+
 func (p *wasmParser) Parse(src []byte) (Node, error) {
 	if p.maxSourceBytes <= 0 {
 		return Node{}, fmt.Errorf("astgroup: maxSourceBytes must be positive")
@@ -317,6 +325,7 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 
 	res, err := p.alloc.Call(ctx, uint64(n))
 	if err != nil {
+		p.discardOnTrap() // poisoned guest state: force re-instantiation next call
 		return Node{}, fmt.Errorf("astgroup: alloc: %w", err)
 	}
 	if len(res) == 0 {
@@ -333,6 +342,12 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 
 	pr, err := p.parse.Call(ctx, uint64(ptr), uint64(len(src)))
 	if err != nil {
+		// A guest trap can leave the pin map / linear memory inconsistent and the
+		// result-pointer free below is never reached. Discard the instance so
+		// Host.Parser re-instantiates a clean one next call rather than reusing a
+		// poisoned instance. (A timeout trap already closes the module via wazero's
+		// context cancellation; this also covers a non-timeout guest panic.)
+		p.discardOnTrap()
 		return Node{}, fmt.Errorf("astgroup: parse call: %w", err)
 	}
 	if len(pr) == 0 {
