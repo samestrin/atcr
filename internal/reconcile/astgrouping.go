@@ -2,6 +2,9 @@ package reconcile
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 
 	"github.com/samestrin/atcr/internal/astgroup"
 	reclib "github.com/samestrin/atcr/reconcile"
@@ -15,18 +18,57 @@ import (
 // legacy ±3 behavior without a code change.
 const astGroupingDisabledEnv = "ATCR_DISABLE_AST_GROUPING"
 
+// lazyGrouper wraps an astgroup.Grouper and constructs its underlying wazero
+// runtime only when the first finding with a supported language extension is
+// seen. This avoids paying the WASI instantiation cost on reconciles whose
+// findings do not target a parsed language.
+type lazyGrouper struct {
+	root       string
+	newGrouper func(string) *astgroup.Grouper
+	once       sync.Once
+	g          *astgroup.Grouper
+}
+
+func newLazyGrouper(root string) *lazyGrouper {
+	return &lazyGrouper{root: root, newGrouper: astgroup.NewGrouper}
+}
+
+// GroupKey returns the AST-isomorphism key for f, or "" to fall back to
+// proximity. It short-circuits for files whose extension has no parser,
+// avoiding runtime construction entirely on those files.
+func (lg *lazyGrouper) GroupKey(f reclib.Finding) string {
+	if lang := astgroup.LanguageForExt(strings.ToLower(filepath.Ext(f.File))); lang == "" {
+		return ""
+	}
+	lg.once.Do(func() { lg.g = lg.newGrouper(lg.root) })
+	if lg.g == nil {
+		return ""
+	}
+	return lg.g.GroupKey(f)
+}
+
+// Close releases the wazero runtime if the grouper was constructed.
+func (lg *lazyGrouper) Close() error {
+	if lg.g != nil {
+		return lg.g.Close()
+	}
+	return nil
+}
+
 // astGrouperFor builds the AST-isomorphism grouper rooted at root (relative
 // finding paths resolve against it), or returns a nil grouper — proximity-only —
 // when the env opt-out is set. The returned cleanup is always safe to call.
 //
-// Construction never fails. If a language's .wasm parser cannot load at group
-// time, or the source file is absent (e.g. an MCP reconcile without a checked-out
-// tree), GroupKey returns "" and that finding falls back to proximity grouping —
-// so enabling AST grouping can only refine clustering, never break a reconcile.
+// Construction is lazy: if no finding maps to a supported language extension,
+// the underlying wazero runtime is never created. If a language's .wasm parser
+// cannot load at group time, or the source file is absent (e.g. an MCP reconcile
+// without a checked-out tree), GroupKey returns "" and that finding falls back
+// to proximity grouping — so enabling AST grouping can only refine clustering,
+// never break a reconcile.
 func astGrouperFor(root string) (reclib.Grouper, func()) {
 	if os.Getenv(astGroupingDisabledEnv) != "" {
 		return nil, func() {}
 	}
-	g := astgroup.NewGrouper(root)
-	return g, func() { _ = g.Close() }
+	lg := newLazyGrouper(root)
+	return lg, func() { _ = lg.Close() }
 }
