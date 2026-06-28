@@ -28,6 +28,12 @@ type node struct {
 	Children  []node `json:"children,omitempty"`
 }
 
+// pins / alloc / free / emit form the guest ABI duplicated (~29 lines) in the
+// goparser plugin. Extracting it into a shared guest package is the correct remedy
+// ONCE the parser count grows beyond the two PoC plugins (Go + Python); at two
+// parsers the duplication is below the threshold that justifies a cross-module
+// shared package. See goparser/main.go for the non-moving-GC assumption it relies
+// on.
 var pins = map[int32][]byte{}
 
 //go:wasmexport alloc

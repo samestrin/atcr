@@ -43,6 +43,12 @@ type node struct {
 // pinned slice's first-element pointer is a stable guest offset. This assumes
 // the wasm-targeting Go GC remains non-moving (true for Go 1.21+ wasip1/wasm);
 // review this assumption before upgrading the toolchain.
+//
+// This alloc/free/emit/pins ABI (~29 lines) is duplicated in the pyparser plugin.
+// Extracting it into a shared guest package is the correct remedy ONCE the parser
+// count grows beyond the two PoC plugins (Go + Python); at two parsers the
+// duplication is below the threshold that justifies a cross-module shared package
+// with build.sh replace-directive coordination.
 var pins = map[int32][]byte{}
 
 //go:wasmexport alloc
