@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -32,6 +33,7 @@ type Host struct {
 	initErr     error // non-nil if WASI init failed; Parser then errors instead of panicking
 
 	mu      sync.Mutex
+	closed  bool
 	parsers map[string]*wasmParser
 }
 
@@ -53,7 +55,8 @@ func WithOverrideDir(dir string) Option {
 // crashing the reconcile.
 func NewHost(opts ...Option) *Host {
 	ctx := context.Background()
-	rt := wazero.NewRuntime(ctx)
+	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
+	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
 	h := &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
@@ -113,6 +116,9 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if h.closed {
+		return nil, fmt.Errorf("astgroup: host is closed")
+	}
 	if h.initErr != nil {
 		return nil, h.initErr
 	}
@@ -151,10 +157,16 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	return p, nil
 }
 
-// Close releases the wazero runtime and all instantiated parsers.
+// Close releases the wazero runtime and all instantiated parsers. It is safe
+// to call multiple times; subsequent calls return nil.
 func (h *Host) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return nil
+	}
+	h.closed = true
+	h.parsers = nil
 	return h.runtime.Close(h.ctx)
 }
 
@@ -177,6 +189,13 @@ type wasmParser struct {
 // full execution-timeout watchdog.
 const maxSourceBytes = 1 << 23 // 8 MiB
 
+// parseTimeout bounds a single guest parse call. Paired with the runtime's
+// WithCloseOnContextDone, an exceeded deadline aborts and closes the offending
+// instance; the caller (Grouper) then falls back to line-proximity grouping for
+// that language rather than hanging the reconcile on a pathological source. It is
+// a var, not a const, only so a test can shrink it to force the timeout path.
+var parseTimeout = 5 * time.Second
+
 func (p *wasmParser) Parse(src []byte) (Node, error) {
 	if len(src) > maxSourceBytes {
 		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), maxSourceBytes)
@@ -185,17 +204,20 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	ctx, cancel := context.WithTimeout(p.ctx, parseTimeout)
+	defer cancel()
+
 	n := uint32(len(src))
 	if n == 0 {
 		n = 1 // alloc rejects zero; an empty source still yields a root node
 	}
 
-	res, err := p.alloc.Call(p.ctx, uint64(n))
+	res, err := p.alloc.Call(ctx, uint64(n))
 	if err != nil {
 		return Node{}, fmt.Errorf("astgroup: alloc: %w", err)
 	}
 	ptr := uint32(res[0])
-	defer func() { _, _ = p.free.Call(p.ctx, uint64(ptr)) }()
+	defer func() { _, _ = p.free.Call(ctx, uint64(ptr)) }()
 
 	if len(src) > 0 {
 		if !p.memory.Write(ptr, src) {
@@ -203,14 +225,14 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 		}
 	}
 
-	pr, err := p.parse.Call(p.ctx, uint64(ptr), uint64(len(src)))
+	pr, err := p.parse.Call(ctx, uint64(ptr), uint64(len(src)))
 	if err != nil {
 		return Node{}, fmt.Errorf("astgroup: parse call: %w", err)
 	}
 	packed := pr[0]
 	rptr := uint32(packed >> 32)
 	rlen := uint32(packed)
-	defer func() { _, _ = p.free.Call(p.ctx, uint64(rptr)) }()
+	defer func() { _, _ = p.free.Call(ctx, uint64(rptr)) }()
 
 	out, ok := p.memory.Read(rptr, rlen)
 	if !ok {

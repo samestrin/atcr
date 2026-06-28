@@ -2,6 +2,7 @@ package astgroup
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -86,6 +87,23 @@ func TestHost_UnknownLanguage(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestHost_ParseHonorsTimeout(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	// A pathological source must not be able to hang a parser indefinitely: with
+	// an impossibly small per-parse budget, Parse must surface a timeout error
+	// instead of running the guest to completion.
+	old := parseTimeout
+	parseTimeout = time.Nanosecond
+	defer func() { parseTimeout = old }()
+
+	_, err = p.Parse([]byte("package p\nfunc A() {}\n"))
+	require.Error(t, err, "Parse must enforce parseTimeout and abort the guest call")
+}
+
 func TestHost_ParserCachedAndReused(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()
@@ -104,4 +122,20 @@ func TestHost_ParserCachedAndReused(t *testing.T) {
 		collectFuncNames(root, &names)
 		require.Equal(t, []string{"Z"}, names)
 	}
+}
+
+func TestHost_ParserAfterClose(t *testing.T) {
+	h := NewHost()
+	_, err := h.Parser("go")
+	require.NoError(t, err)
+	require.NoError(t, h.Close())
+
+	// A second Close must be safe (idempotent).
+	require.NoError(t, h.Close())
+
+	// Parser calls after Close must return a clear error instead of a closed
+	// module that fails opaquely inside parse.Call.
+	_, err = h.Parser("go")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "closed")
 }
