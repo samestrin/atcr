@@ -17,7 +17,7 @@ func collectFuncNames(n Node, out *[]string) {
 
 func TestHost_ParseGo(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	p, err := h.Parser("go")
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestHost_ParseGo(t *testing.T) {
 
 func TestHost_ParsePython(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	p, err := h.Parser("python")
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestLanguageForExt(t *testing.T) {
 
 func TestHost_ParseInvalidGoReturnsError(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 	p, err := h.Parser("go")
 	require.NoError(t, err)
 
@@ -69,7 +69,7 @@ func TestHost_ParseInvalidGoReturnsError(t *testing.T) {
 
 func TestHost_ParseEmptySource(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 	p, err := h.Parser("python")
 	require.NoError(t, err)
 
@@ -80,7 +80,7 @@ func TestHost_ParseEmptySource(t *testing.T) {
 
 func TestHost_UnknownLanguage(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	_, err := h.Parser("cobol")
 	require.Error(t, err)
@@ -88,7 +88,7 @@ func TestHost_UnknownLanguage(t *testing.T) {
 
 func TestHost_ParserCachedAndReused(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	p1, err := h.Parser("go")
 	require.NoError(t, err)

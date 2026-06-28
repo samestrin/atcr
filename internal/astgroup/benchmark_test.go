@@ -45,7 +45,7 @@ func TestBenchmark_ASTGroupingAccuracy(t *testing.T) {
 
 	dir := t.TempDir()
 	g := NewGrouper(dir)
-	defer g.Close()
+	defer func() { _ = g.Close() }()
 
 	var (
 		positives, negatives                     int

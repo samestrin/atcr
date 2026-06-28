@@ -186,7 +186,7 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 		return Node{}, fmt.Errorf("astgroup: alloc: %w", err)
 	}
 	ptr := uint32(res[0])
-	defer p.free.Call(p.ctx, uint64(ptr))
+	defer func() { _, _ = p.free.Call(p.ctx, uint64(ptr)) }()
 
 	if len(src) > 0 {
 		if !p.memory.Write(ptr, src) {
@@ -201,7 +201,7 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	packed := pr[0]
 	rptr := uint32(packed >> 32)
 	rlen := uint32(packed)
-	defer p.free.Call(p.ctx, uint64(rptr))
+	defer func() { _, _ = p.free.Call(p.ctx, uint64(rptr)) }()
 
 	out, ok := p.memory.Read(rptr, rlen)
 	if !ok {

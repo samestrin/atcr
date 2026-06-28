@@ -15,7 +15,7 @@ import (
 // reuse the live instance.
 func TestHost_RepeatParseUnder10ms(t *testing.T) {
 	h := NewHost()
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	p, err := h.Parser("go")
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestHost_RuntimeOverrideNewLanguage(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "golike.wasm"), wasm, 0o644))
 
 	h := NewHost(WithOverrideDir(dir))
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	// Not registered as a builtin — only loadable via the override dir.
 	_, err = h.Parser("golike")
@@ -63,7 +63,7 @@ func TestHost_RuntimeOverrideNewLanguage(t *testing.T) {
 // no matching file, the embedded plugin is still used.
 func TestHost_OverrideFallsBackToEmbedded(t *testing.T) {
 	h := NewHost(WithOverrideDir(t.TempDir()))
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	_, err := h.Parser("go") // no go.wasm in override dir → embedded
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestHost_OverrideFallsBackToEmbedded(t *testing.T) {
 
 func TestHost_RejectsUnsafeLanguageId(t *testing.T) {
 	h := NewHost(WithOverrideDir(t.TempDir()))
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 	for _, bad := range []string{"../etc/passwd", "a/b", "..", "Go!"} {
 		_, err := h.Parser(bad)
 		require.Error(t, err, "lang %q must be rejected", bad)

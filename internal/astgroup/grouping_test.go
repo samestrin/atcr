@@ -81,7 +81,7 @@ func Other() {
 	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
 
 	g := NewGrouper(dir)
-	defer g.Close()
+	defer func() { _ = g.Close() }()
 
 	// Two findings inside Target() at different lines.
 	k1 := g.GroupKey(reconcile.Finding{File: "code.go", Line: 4})
@@ -97,7 +97,7 @@ func Other() {
 
 func TestGrouper_EmptyKeyTriggersFallback(t *testing.T) {
 	g := NewGrouper(t.TempDir())
-	defer g.Close()
+	defer func() { _ = g.Close() }()
 
 	// File-level finding (Line <= 0): no structural key.
 	require.Empty(t, g.GroupKey(reconcile.Finding{File: "code.go", Line: 0}))
@@ -113,10 +113,10 @@ func TestGrouper_RefusesPathOutsideRoot(t *testing.T) {
 	outside := filepath.Dir(root)
 	secret := filepath.Join(outside, "secret.go")
 	require.NoError(t, os.WriteFile(secret, []byte("package p\nfunc S() {}\n"), 0o644))
-	defer os.Remove(secret)
+	defer func() { _ = os.Remove(secret) }()
 
 	g := NewGrouper(root)
-	defer g.Close()
+	defer func() { _ = g.Close() }()
 
 	// "../secret.go" escapes root → refused → empty key (proximity fallback).
 	require.Empty(t, g.GroupKey(reconcile.Finding{File: "../secret.go", Line: 2}))
