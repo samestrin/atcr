@@ -109,7 +109,11 @@ func (g *Grouper) Close() error {
 func (g *Grouper) canonicalPath(file string) (string, bool) {
 	root := g.root
 	if root == "" {
-		root = "."
+		// An empty root signals "no checked-out tree" (e.g. an MCP server with no
+		// source checkout). Hard-disable file reads and fall back to proximity
+		// instead of resolving against the process cwd, where a coincidentally
+		// same-named file would silently key findings off unrelated code.
+		return "", false
 	}
 	root = filepath.Clean(root)
 	rootReal, err := filepath.EvalSymlinks(root)
