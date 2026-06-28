@@ -132,6 +132,33 @@ func TestHost_MaxSourceBytesZeroRejects(t *testing.T) {
 	require.Contains(t, err.Error(), "maxSourceBytes must be positive")
 }
 
+func TestHost_MemoryLimitFailsGracefully(t *testing.T) {
+	// A tiny memory limit must make the parser fail gracefully — a returned error
+	// at instantiate or parse time — rather than panicking or letting the guest
+	// balloon host memory. One page (64 KiB) is far below a Go wasm runtime's need.
+	h := NewHost(WithMaxMemoryPages(1))
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("go")
+	if err != nil {
+		// Instantiation refused under the limit: graceful.
+		return
+	}
+	_, err = p.Parse([]byte("package p\nfunc A() {}\n"))
+	require.Error(t, err, "parse under an unsatisfiable memory limit must error, not OOM/panic")
+}
+
+func TestHost_MemoryLimitAllowsNormalParse(t *testing.T) {
+	// The default memory limit must not interfere with ordinary parsing.
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+	root, err := p.Parse([]byte("package p\nfunc A() {}\nfunc B() {}\n"))
+	require.NoError(t, err)
+	require.Equal(t, "file", root.Kind)
+}
+
 func TestHost_ParserCachedAndReused(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()

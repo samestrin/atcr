@@ -32,6 +32,7 @@ type Host struct {
 	runtime        wazero.Runtime
 	overrideDir    string
 	maxSourceBytes int
+	maxMemoryPages uint32
 	initErr        error // non-nil if WASI init failed; Parser then errors instead of panicking
 
 	mu      sync.RWMutex
@@ -57,6 +58,14 @@ func WithMaxSourceBytes(n int) Option {
 	return func(h *Host) { h.maxSourceBytes = n }
 }
 
+// WithMaxMemoryPages caps the wasm linear memory (in 64 KiB pages) any parser
+// instance may grow to. It bounds host RSS so a hostile or buggy plugin —
+// especially an override-loaded one — cannot balloon toward wazero's multi-
+// hundred-MiB/4 GiB default ceiling. The default is defaultMaxMemoryPages.
+func WithMaxMemoryPages(pages uint32) Option {
+	return func(h *Host) { h.maxMemoryPages = pages }
+}
+
 // NewHost creates a Host with a fresh wazero runtime (pure Go, zero CGO) and WASI
 // preview1 imports instantiated. Call Close to release it. A WASI-init failure is
 // recorded rather than panicked: Parser then returns that error, so a host wired
@@ -64,14 +73,17 @@ func WithMaxSourceBytes(n int) Option {
 // crashing the reconcile.
 func NewHost(opts ...Option) *Host {
 	ctx := context.Background()
-	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
-	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
-	h := &Host{ctx: ctx, runtime: rt, maxSourceBytes: defaultMaxSourceBytes, parsers: map[string]*wasmParser{}}
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
-		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
-	}
+	h := &Host{ctx: ctx, maxSourceBytes: defaultMaxSourceBytes, maxMemoryPages: defaultMaxMemoryPages, parsers: map[string]*wasmParser{}}
+	// Apply options before building the runtime so memory limits configured via
+	// WithMaxMemoryPages take effect on the runtime config itself.
 	for _, opt := range opts {
 		opt(h)
+	}
+	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true).WithMemoryLimitPages(h.maxMemoryPages)
+	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
+	h.runtime = rt
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
+		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
 	}
 	return h
 }
@@ -240,6 +252,13 @@ type wasmParser struct {
 // falls back to line-proximity grouping) caps guest memory and parse time without
 // needing a full execution-timeout watchdog.
 const defaultMaxSourceBytes = 1 << 23 // 8 MiB
+
+// defaultMaxMemoryPages caps each parser instance's wasm linear memory. 4096
+// pages × 64 KiB = 256 MiB: ample for any source small enough to parse within
+// parseTimeout (a 2 MiB source already exhausts the time budget first), yet 16×
+// below wazero's ~4 GiB default ceiling so a runaway plugin cannot exhaust host
+// memory.
+const defaultMaxMemoryPages uint32 = 1 << 12 // 4096 pages = 256 MiB
 
 // parseTimeout bounds a single guest parse call. Paired with the runtime's
 // WithCloseOnContextDone, an exceeded deadline aborts and closes the offending
