@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/tetratelabs/wazero"
@@ -24,20 +26,78 @@ type Parser interface {
 // <10ms repeat-parse NFR) and reused for every subsequent parse. Host is safe
 // for concurrent use.
 type Host struct {
-	ctx     context.Context
-	runtime wazero.Runtime
+	ctx         context.Context
+	runtime     wazero.Runtime
+	overrideDir string
 
 	mu      sync.Mutex
 	parsers map[string]*wasmParser
 }
 
+// Option configures a Host at construction.
+type Option func(*Host)
+
+// WithOverrideDir makes the Host consult dir for a "<lang>.wasm" plugin before
+// falling back to the embedded set. This is the runtime "drop in a new .wasm
+// file" mechanism: a file placed in dir enables a language that need not be in
+// the embedded registry, and shadows an embedded plugin of the same id.
+func WithOverrideDir(dir string) Option {
+	return func(h *Host) { h.overrideDir = dir }
+}
+
 // NewHost creates a Host with a fresh wazero runtime (pure Go, zero CGO) and WASI
 // preview1 imports instantiated. Call Close to release it.
-func NewHost() *Host {
+func NewHost(opts ...Option) *Host {
 	ctx := context.Background()
 	rt := wazero.NewRuntime(ctx)
 	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
-	return &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
+	h := &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// safeLang reports whether lang is a safe parser id: a non-empty run of
+// lowercase letters, digits, and -_+ only. This keeps lang usable as a filename
+// component and blocks path traversal (e.g. "../../etc") through the override dir.
+func safeLang(lang string) bool {
+	if lang == "" {
+		return false
+	}
+	for _, r := range lang {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '+':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// loadWasm resolves the .wasm bytes for lang: an override-dir file takes
+// precedence over the embedded registry. Returns an error if neither has it.
+func (h *Host) loadWasm(lang string) ([]byte, error) {
+	if !safeLang(lang) {
+		return nil, fmt.Errorf("astgroup: invalid language id %q", lang)
+	}
+	if h.overrideDir != "" {
+		p := filepath.Join(h.overrideDir, lang+".wasm")
+		if b, err := os.ReadFile(p); err == nil {
+			return b, nil
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("astgroup: read override %s: %w", p, err)
+		}
+	}
+	path, ok := builtinParsers[lang]
+	if !ok {
+		return nil, fmt.Errorf("astgroup: no parser plugin for language %q", lang)
+	}
+	b, err := parserFS.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("astgroup: read embedded %s: %w", path, err)
+	}
+	return b, nil
 }
 
 // Parser returns the cached parser for lang, compiling and instantiating its
@@ -51,13 +111,9 @@ func (h *Host) Parser(lang string) (Parser, error) {
 		return p, nil
 	}
 
-	path, ok := builtinParsers[lang]
-	if !ok {
-		return nil, fmt.Errorf("astgroup: no parser plugin for language %q", lang)
-	}
-	wasm, err := parserFS.ReadFile(path)
+	wasm, err := h.loadWasm(lang)
 	if err != nil {
-		return nil, fmt.Errorf("astgroup: read embedded %s: %w", path, err)
+		return nil, err
 	}
 
 	compiled, err := h.runtime.CompileModule(h.ctx, wasm)
