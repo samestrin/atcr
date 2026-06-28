@@ -8,6 +8,21 @@
 # Usage: internal/astgroup/parsers/build.sh
 set -euo pipefail
 
+# Pin the toolchain and assert a minimum Go version so the regenerated .wasm is
+# reproducible and an older `go` on PATH fails fast instead of emitting a
+# silently-incompatible binary. The wasip1 //go:wasmexport ABI needs Go >= 1.24;
+# GOTOOLCHAIN=local also forbids an implicit toolchain download, so a committed
+# go.mod `go` directive cannot silently swap compilers mid-build. Source/binary
+# drift is caught separately by TestEmbeddedParsersMatchManifest (go test ./...).
+export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
+min_go="1.24"
+have_go="$(go env GOVERSION 2>/dev/null)"; have_go="${have_go#go}"
+if [ -z "${have_go}" ] || \
+   [ "$(printf '%s\n%s\n' "${min_go}" "${have_go}" | sort -V | head -n1)" != "${min_go}" ]; then
+  echo "error: build.sh requires Go >= ${min_go} for the wasip1 wasmexport ABI; found '${have_go:-none}'" >&2
+  exit 1
+fi
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 build() {
