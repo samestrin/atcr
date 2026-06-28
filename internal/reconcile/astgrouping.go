@@ -16,6 +16,10 @@ import (
 // recall 1.00 / precision 1.00 vs proximity recall 0.77 with false merges). The
 // env var is the reversible-adoption escape hatch: set it to fall back to the
 // legacy ±3 behavior without a code change.
+//
+// The check is presence-only (see astGrouperFor): ANY non-empty value disables
+// grouping, INCLUDING "0" and "false". To keep AST grouping on, leave the var
+// unset — do not set it to "0"/"false" expecting it to mean "not disabled".
 const astGroupingDisabledEnv = "ATCR_DISABLE_AST_GROUPING"
 
 // lazyGrouper wraps an astgroup.Grouper and constructs its underlying wazero
