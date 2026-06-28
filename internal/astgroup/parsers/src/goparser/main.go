@@ -1,3 +1,5 @@
+//go:build wasip1
+
 // Command goparser is the Go-language AST parser plugin, compiled to a
 // WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and loaded
 // by the internal/astgroup wazero host. It reads Go source from guest linear
