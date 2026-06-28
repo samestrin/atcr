@@ -1,0 +1,96 @@
+{
+  "reviewers": [
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 15905,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "dax",
+      "model": "deepseek-4",
+      "status": "ok",
+      "durationMs": 38939,
+      "tdLineCount": 6
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 103485,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 109713,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "kai",
+      "model": "kimi-k2.6",
+      "status": "ok",
+      "durationMs": 121284,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 146438,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "ok",
+      "durationMs": 250157,
+      "tdLineCount": 7
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 295255,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 343176,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 443386,
+      "tdLineCount": 11
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "timeout",
+      "durationMs": 600004,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded"
+    },
+    {
+      "agent": "archer-backup",
+      "model": "glm-5.1",
+      "status": "ok",
+      "durationMs": 108714,
+      "tdLineCount": 3
+    }
+  ],
+  "totalFindings": 34,
+  "partial": true,
+  "totalDurationMs": 708720,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-27T20:55:19-07:00"
+}

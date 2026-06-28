@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-27-4856d8
-question: "AST gate vs ±3-line proximity gate in the reconciler: should AST structural identity replace or augment the existing line proximity gate?"
+id: mem-2026-06-27-54ae9b
+question: "Why does blockIdx increment for skipped block siblings in cover.go, and why is this the correct behavior?"
 created: 2026-06-27
 last_retrieved: ""
 sprints: []
-files: [/Users/samestrin/Documents/GitHub/atcr/reconcile/cluster.go, /Users/samestrin/Documents/GitHub/atcr/reconcile/reconcile.go, /Users/samestrin/Documents/GitHub/atcr/.planning/epics/active/13.1_ast_plugin_architecture.md]
-tags: [clarifications, epic-13.1_ast_plugin_architecture, architecture, reconciler, clustering, proximity-gate]
+files: [internal/astgroup/cover.go]
+tags: [clarifications, epic-13.1_ast_plugin_architecture, architecture, cover, blockIdx, sibling-indexing, ast-addressing]
 retrievals: 0
 status: active
-type: clarifications epic-13.1_ast_plugin_architecture Q3 2026-06-27
+type: clarifications
 ---
 
-# AST gate vs ±3-line proximity gate in the reconciler: shoul
+# Why does blockIdx increment for skipped block siblings in co
 
 ## Decision
 
-AST structural identity should REPLACE the ±3-line proximity gate (lineProximity=3 in reconcile/cluster.go:5-7) as the primary grouping signal, not augment it. The ±3-line gate is the sole pre-filter today: findings more than 3 lines apart are split into separate clusters before DedupeCluster ever runs, making cross-window dedup structurally impossible. Augmenting inside the ±3 window would still leave cross-window grouping broken — exactly the failure mode the epic targets. AC3 requires grouping "findings that are offset by whitespace or minor line-number drift"; whitespace offsets can easily exceed ±3. The ±3 window may be retained only as a fallback when no .wasm parser is available for a language.
+The blockIdx counter tracks how many block-typed siblings were skipped before the covering child, giving the covering child a positional index that is stable and unique among block siblings. Without incrementing for non-covering block siblings, two sibling blocks separated by a non-block child (e.g., positions 0 and 2 in the child list) would both receive blockIdx=0 and collide in the structural address. The increment is consumed via segment(ch, blockIdx) when the covering child is itself a block. Any "fix" that removes or conditions away the increment for skipped siblings would destroy the uniqueness guarantee the address scheme is built on, directly breaking the Merkle-hash grouping invariant in the 13.1 AST plugin architecture.
 
 ## Rationale
 
@@ -27,6 +27,4 @@ AST structural identity should REPLACE the ±3-line proximity gate (lineProximit
 
 ## Code Reference
 
-- /Users/samestrin/Documents/GitHub/atcr/reconcile/cluster.go
-- /Users/samestrin/Documents/GitHub/atcr/reconcile/reconcile.go
-- /Users/samestrin/Documents/GitHub/atcr/.planning/epics/active/13.1_ast_plugin_architecture.md
+- internal/astgroup/cover.go

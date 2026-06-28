@@ -1,0 +1,2 @@
+LOW|go.mod:8|wazero marked indirect but is direct dependency|Run go mod tidy to fix directive|maintainability|1|require github.com/tetratelabs/wazero v1.12.0 // indirect|bruce
+MEDIUM|internal/astgroup/host.go:216|Close races with in-flight Parse calls|Add in-flight parse waitgroup or closed flag before closing runtime|correctness|10|runtime.Close can run while wasmParser.Parse holds parser lock|bruce

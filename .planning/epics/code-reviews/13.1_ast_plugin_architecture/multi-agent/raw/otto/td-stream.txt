@@ -1,0 +1,1 @@
+MEDIUM|internal/astgroup/grouper.go:118|Potential race condition in cache update|Move cache assignment after successful parsing|correctness|15|g.cache[file] = pf is called before parsing; concurrent calls for same file will get an empty 'ok: false' pf|otto

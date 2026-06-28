@@ -1,21 +1,21 @@
 ---
-id: mem-2026-06-27-3c0b59
-question: "AST grouping benchmark and adopt-or-revert policy for epic 13.1: does a benchmark suite exist, and what happens if AST grouping fails to beat Jaccard?"
+id: mem-2026-06-27-3ca77e
+question: "In astgroup/grouper.go treeFor(), is the cache update a race condition or a transient-error caching defect?"
 created: 2026-06-27
 last_retrieved: ""
 sprints: []
-files: [/Users/samestrin/Documents/GitHub/atcr/reconcile/cluster_test.go, /Users/samestrin/Documents/GitHub/atcr/.planning/epics/completed/13.0_semantic_ncd_deduplication.md, /Users/samestrin/Documents/GitHub/atcr/.planning/epics/active/13.1_ast_plugin_architecture.md]
-tags: [clarifications, epic-13.1_ast_plugin_architecture, testing, process, benchmark, adopt-or-revert]
+files: [internal/astgroup/grouper.go, internal/astgroup/host.go]
+tags: [clarifications, epic-13.1_ast_plugin_architecture, concurrency, caching, transient-error, grouper, mutex]
 retrievals: 0
 status: active
-type: clarifications epic-13.1_ast_plugin_architecture Q4 2026-06-27
+type: clarifications
 ---
 
-# AST grouping benchmark and adopt-or-revert policy for epic 1
+# In astgroup/grouper.go treeFor(), is the cache update a race
 
 ## Decision
 
-(a) No AST-grouping benchmark suite exists — the fixture set must be built during the epic, following the same pattern as 13.0's ncd_corpus.json (33 labeled pairs). reconcile/cluster_test.go:10-59 are unit correctness tests for the ±3-line Cluster() only, not an accuracy benchmark. (b) The 13.0 "NOT ADOPTED, revert" precedent does not map cleanly onto 13.1. AC1+AC2 (Wazero runtime + plugin caching) have standalone downstream value: the 13.0 Outcome section marks 13.2 Bipartite+DBSCAN as HIGH impact, sourcing edge weights from 13.1 AST isomorphism — a full revert would break the stated plan for 13.2. The adopt-or-revert boundary MUST be recorded in the epic's Clarifications section before execution begins: whether AC1+AC2 ship independently if AC3 is falsified, or everything reverts, needs an explicit pre-decision (as 13.0's Q6 was).
+It is a transient-error caching defect, not a race. g.mu.Lock() is acquired at the top of treeFor and held via defer for the entire function body — including the cache read, the pre-store write, the readFile I/O, the host.Parser() call, and parser.Parse(). No TOCTOU window exists. The real bug: on a transient readFile error (EAGAIN, EMFILE, etc.), a negative parsedFile (pf.ok == false) stored at the pre-store write remains in the cache permanently, silently suppressing all future retries for that file. The fix — delete(g.cache, file) on transient read errors — corrects this caching-policy defect. The TD label "race condition" is incorrect; it should be "transient-error caching defect." The fix is still valid and should be applied.
 
 ## Rationale
 
@@ -27,6 +27,5 @@ type: clarifications epic-13.1_ast_plugin_architecture Q4 2026-06-27
 
 ## Code Reference
 
-- /Users/samestrin/Documents/GitHub/atcr/reconcile/cluster_test.go
-- /Users/samestrin/Documents/GitHub/atcr/.planning/epics/completed/13.0_semantic_ncd_deduplication.md
-- /Users/samestrin/Documents/GitHub/atcr/.planning/epics/active/13.1_ast_plugin_architecture.md
+- internal/astgroup/grouper.go
+- internal/astgroup/host.go
