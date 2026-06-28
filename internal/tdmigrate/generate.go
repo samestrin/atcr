@@ -69,9 +69,23 @@ func cell(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// droppedNotesWarnings is implemented in the GREEN step.
+// droppedNotesWarnings reports, one message per item, any non-empty Notes field
+// that GenerateTable summarizes away. The ToC table has no Notes column — by
+// design, so a parse of the generated table stays semantically equal to a parse
+// of the source README (AC2 round-trip) — and notes live only in the shards.
+// Callers surface these on stderr so an operator regenerating the table is told
+// which notes are not represented in the ToC rather than assuming losslessness.
 func droppedNotesWarnings(shards []Shard) []string {
-	return nil
+	var warns []string
+	for _, s := range shards {
+		for _, it := range s.Items {
+			if strings.TrimSpace(it.Notes) != "" {
+				warns = append(warns, fmt.Sprintf("note dropped from ToC (kept in shard %s/%s, item %s): %s",
+					s.Date, s.Label, cell(it.File), cell(it.Notes)))
+			}
+		}
+	}
+	return warns
 }
 
 func sectionHasReviewers(s Shard) bool {

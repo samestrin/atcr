@@ -125,6 +125,11 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	_, _ = fmt.Fprint(stdout, table)
+	// The ToC has no Notes column (AC2 round-trip); warn so a non-empty note is
+	// not silently absent from the regenerated table.
+	for _, w := range droppedNotesWarnings(shards) {
+		_, _ = fmt.Fprintf(stderr, "generate: %s\n", w)
+	}
 	return 0
 }
 
