@@ -40,24 +40,7 @@ func Cluster(findings []Finding) [][]Finding {
 		}
 		// Stable sort by line so equal lines keep input order (deterministic).
 		sort.SliceStable(lined, func(i, j int) bool { return lined[i].Line < lined[j].Line })
-
-		var cur []Finding
-		prevLine := 0
-		for _, f := range lined {
-			switch {
-			case len(cur) == 0:
-				cur = []Finding{f}
-			case f.Line-prevLine <= lineProximity:
-				cur = append(cur, f)
-			default:
-				clusters = append(clusters, cur)
-				cur = []Finding{f}
-			}
-			prevLine = f.Line
-		}
-		if len(cur) > 0 {
-			clusters = append(clusters, cur)
-		}
+		clusters = append(clusters, proximityClusters(lined)...)
 	}
 	return clusters
 }

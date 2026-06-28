@@ -19,6 +19,12 @@ type Options struct {
 	// the result; the core reconcile pipeline does not read it. Empty disables that
 	// downstream concern.
 	Root string
+	// Grouper, when non-nil, supplies the primary clustering signal (AST
+	// isomorphism): findings whose GroupKey matches cluster together regardless of
+	// line distance, and findings with an empty key fall back to line proximity.
+	// Nil keeps the legacy line-proximity-only behavior. The interface is
+	// stdlib-only so wiring a wazero-backed grouper adds no dependency here.
+	Grouper Grouper
 }
 
 // Result is a completed reconciliation: the merged findings (sorted for
@@ -59,7 +65,7 @@ type Summary struct {
 // (desc), then file, then line, so the same input always yields byte-identical
 // artifacts.
 func Reconcile(sources []Source, opts Options) Result {
-	clusters := Cluster(AllFindings(sources))
+	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
 
 	var merged []Merged
 	ambiguous := []AmbiguousCluster{}
