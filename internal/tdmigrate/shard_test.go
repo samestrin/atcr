@@ -79,6 +79,36 @@ func TestWriteShards_IdempotentPrune(t *testing.T) {
 	}
 }
 
+// TestWriteShards_PreservesExistingOnFailure locks the atomic-swap contract: if
+// any shard cannot be staged, WriteShards aborts with the prior output intact
+// rather than half-wiped. Occupying a shard's temp path with a directory forces
+// its staging write to fail. With the old prune-then-write order the pre-existing
+// shard was removed before the (succeeding) write, silently losing data.
+func TestWriteShards_PreservesExistingOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "2025-01-01_keep.yaml")
+	if err := os.WriteFile(keep, []byte("date: keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the shard's temp path makes its staging WriteFile fail.
+	if err := os.Mkdir(filepath.Join(dir, "2026-06-26_x.yaml.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shards := []Shard{{
+		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
+		Items: []Item{{
+			Group: "1", Status: StatusOpen, Severity: "LOW", File: "f.go:1",
+			Problem: "p", Fix: "fix", Category: "correctness", EstMinutes: 5, Source: "s",
+		}},
+	}}
+	if _, err := WriteShards(dir, shards); err == nil {
+		t.Fatal("want error when a shard cannot be staged, got nil")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("pre-existing shard was wiped despite a staging failure: %v", err)
+	}
+}
+
 func TestMarshalShard_MultilineBlockScalar(t *testing.T) {
 	s := Shard{
 		Date: "2026-06-26", SourceType: "Sprint", Label: "x",
