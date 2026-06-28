@@ -1,3 +1,22 @@
+## [Technical Debt] - 2026-06-28
+
+### Fixed
+
+- Documented AST grouping behavior, the `ATCR_DISABLE_AST_GROUPING` opt-out, and Python clause-sibling grouping
+- Wired the reconciler to a shared wasm parser Host to amortize wazero runtime across reconciles
+- Eliminated serialized parsing in the AST grouper by moving parse work outside the mutex with per-file singleflight
+- Memoized group keys by line and Merkle hashes by address to reduce redundant AST work
+- Resolved lazy AST grouper construction, canonicalized cache paths, and normalized cross-platform path checks
+- Gave sibling non-block wrappers distinct addresses so sibling function literals no longer collide
+- Hardened wasm parser lifecycle: enforced parse timeouts, detected use-after-close, recreated modules after timeout, and discarded instances after guest-call traps
+- Added resource guards: capped wasm linear memory at 256 MiB, bounded alloc/parse result sizes, and made `maxSourceBytes` configurable
+- Hardened AST safety: bounded MerkleHash recursion depth, rejected over-deep decoded trees, and logged degradation instead of silently falling back to line proximity
+- Fixed Python parsing edge cases: folded multi-line bracket-continued headers, corrected tab-stop indent, and improved compound-keyword `isHeader` detection
+- Fixed Go parser edge cases: handled empty-input file nodes, dropped dead TypeSpec cases, and added a wasip1 build guard
+- Added a committed SHA256SUMS manifest for embedded `.wasm` parsers and regenerated it during build
+- Marked wazero as a direct dependency and pinned the Go toolchain in `parsers/build.sh`
+- Guarded benchmark recall against division by zero and relaxed AST false-positive assertion to <1%
+
 ## [13.1.0] - 2026-06-27
 
 AST plugin architecture for the reconciler: findings that refer to the same logical code block now group together even when their reported line numbers drift, using language parsers compiled to WebAssembly and run on a zero-CGO wazero host.

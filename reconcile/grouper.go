@@ -63,6 +63,14 @@ func ClusterWith(findings []Finding, g Grouper) [][]Finding {
 			}
 			keyed[k] = append(keyed[k], f)
 		}
+		// Keyed clusters are unbounded by design: same-key findings cluster
+		// regardless of line distance (the Grouper contract), so a large single
+		// function can collapse into one big cluster. DedupeCluster is O(n^2) in
+		// cluster size (see dedupe.go), but the cost is negligible at practical
+		// finding volumes and is accepted here. If a future benchmark ever shows a
+		// real hotspot, the remedy is a hard-abort or log+skip on oversized
+		// clusters — NOT a proximity fallback, which would silently violate the
+		// same-key grouping invariant this function exists to honor.
 		for _, k := range keyOrder {
 			clusters = append(clusters, keyed[k])
 		}

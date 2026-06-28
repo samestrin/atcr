@@ -83,6 +83,10 @@ Key flags:
 - `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
 - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
 
+Environment variables:
+
+- `ATCR_DISABLE_AST_GROUPING` — `atcr reconcile` clusters findings by AST isomorphism (the smallest covering AST block of each finding's line) by default, so findings group together across line-number drift, with line proximity as the per-finding fallback when no parser is available or the source is missing. Set this to a truthy value (`1`, `true`) to revert to legacy line-proximity-only clustering; a falsy, unparseable, or unset value keeps AST grouping on.
+
 ### Redirecting output for orchestrators (`--output-dir`)
 
 By default `atcr review` writes the review tree to `.atcr/reviews/<id>/` and points `.atcr/latest` at it — the right default for interactive use. An external orchestrator (a skill, CI step, or wrapper script) that needs the output at a specific location can pass `--output-dir <path>` instead:

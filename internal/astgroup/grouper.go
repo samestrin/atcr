@@ -1,6 +1,8 @@
 package astgroup
 
 import (
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,8 +22,10 @@ import (
 // file-level (Line <= 0), its language has no parser, the file is missing or
 // unparseable, or no node covers the line.
 type Grouper struct {
-	host *Host
-	root string
+	host     *Host
+	root     string
+	readFile func(string) ([]byte, error)
+	ownsHost bool
 
 	mu    sync.Mutex
 	cache map[string]*parsedFile // keyed by finding.File
@@ -30,30 +34,92 @@ type Grouper struct {
 type parsedFile struct {
 	tree Node
 	ok   bool
+
+	// done is closed once the parse (or its failure) completes. Concurrent callers
+	// for the same file find the placeholder in the cache and wait on done instead
+	// of re-parsing or blocking other files behind a held mutex; close(done)
+	// publishes tree/ok to those waiters (happens-before).
+	done chan struct{}
+
+	// Memoized grouping results, guarded by Grouper.mu. keyByLine caches the full
+	// group key per finding line; hashByAddr caches the expensive structural
+	// Merkle hash per covering-block address so the many findings that map to one
+	// covering block compute it once rather than once per finding.
+	keyByLine  map[int]string
+	hashByAddr map[string]string
+}
+
+// isPermanentReadError reports whether an error from reading a source file is
+// expected to persist across retries. Not-exist, permission-denied, and
+// containment/path errors are permanent; transient resource contention is not.
+func isPermanentReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) || os.IsPermission(err) {
+		return true
+	}
+	// Path errors from canonicalPath are permanent containment failures.
+	var pErr *os.PathError
+	if errors.As(err, &pErr) && (pErr.Err == os.ErrInvalid) {
+		return true
+	}
+	return false
 }
 
 // NewGrouper builds a Grouper rooted at root: relative finding paths are resolved
-// against root before reading. Pass the reconcile Options.Root. Call Close to
-// release the underlying wazero runtime.
-func NewGrouper(root string) *Grouper {
-	return &Grouper{host: NewHost(), root: root, cache: map[string]*parsedFile{}}
+// against root before reading. Pass the reconcile Options.Root.
+//
+// If a Host is supplied it is borrowed (not closed by this Grouper); callers
+// typically pass SharedHost() so parser instances are reused across reconciles.
+// If no Host is supplied, a fresh Host is created and owned by this Grouper, and
+// Close releases it. This backward-compatible default keeps existing tests and
+// callers working without change.
+func NewGrouper(root string, host ...*Host) *Grouper {
+	var h *Host
+	owns := false
+	if len(host) > 0 && host[0] != nil {
+		h = host[0]
+	} else {
+		h = NewHost()
+		owns = true
+	}
+	return &Grouper{host: h, root: root, readFile: os.ReadFile, ownsHost: owns, cache: map[string]*parsedFile{}}
 }
 
-// Close releases the wazero runtime.
-func (g *Grouper) Close() error { return g.host.Close() }
+// Close releases this Grouper's resources. If the Grouper owns its Host, the
+// underlying wazero runtime is closed; borrowed Hosts are left open so their
+// compiled-parser cache can be reused across reconciles.
+func (g *Grouper) Close() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cache = nil
+	if g.ownsHost {
+		return g.host.Close()
+	}
+	return nil
+}
 
-// resolvePath maps a finding's File to an on-disk path and confirms it stays
-// within root. It refuses paths that escape root — via "../" or an absolute path
-// outside it — so a hostile finding.File cannot turn the grouper into a
-// file-existence oracle for arbitrary locations. An empty root is treated as the
-// current working directory rather than disabling the guard, so containment
-// always applies. ok is false when the path is rejected.
-func (g *Grouper) resolvePath(file string) (string, bool) {
+// canonicalPath returns the symlink-resolved, root-contained on-disk path for
+// file. It collapses relative/absolute spellings and symlinks that point to the
+// same real file so they share a single cache entry and group key, while still
+// rejecting any path that escapes root (including a symlink that points outside
+// it). Root itself is symlink-resolved so a root like /tmp on macOS (/private/tmp)
+// does not falsely reject contained files.
+func (g *Grouper) canonicalPath(file string) (string, bool) {
 	root := g.root
 	if root == "" {
-		root = "."
+		// An empty root signals "no checked-out tree" (e.g. an MCP server with no
+		// source checkout). Hard-disable file reads and fall back to proximity
+		// instead of resolving against the process cwd, where a coincidentally
+		// same-named file would silently key findings off unrelated code.
+		return "", false
 	}
 	root = filepath.Clean(root)
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err == nil {
+		root = rootReal
+	}
 
 	p := file
 	if !filepath.IsAbs(p) {
@@ -61,11 +127,24 @@ func (g *Grouper) resolvePath(file string) (string, bool) {
 	}
 	p = filepath.Clean(p)
 
-	rel, err := filepath.Rel(root, p)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		// If the symlink cannot be resolved, fall back to the lexically
+		// resolved path rather than silently returning an empty key.
+		real = p
+	}
+
+	rel, err := filepath.Rel(root, real)
+	if err != nil {
 		return "", false
 	}
-	return p, true
+	// Normalize to forward slashes so the escape check is identical on Windows
+	// (where filepath.Rel yields backslash-separated paths) and Unix.
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return real, true
 }
 
 // GroupKey returns the AST-isomorphism key for f, or "" to fall back to proximity.
@@ -80,20 +159,66 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	if lang == "" {
 		return ""
 	}
-	pf := g.treeFor(file, lang)
-	if !pf.ok {
-		return ""
-	}
-	block, addr, ok := CoveringBlock(pf.tree, f.Line)
+	path, ok := g.canonicalPath(file)
 	if !ok {
 		return ""
 	}
-	// Key = file + structural address of the covering block + its Merkle hash.
-	// The address (drift-invariant, sibling-distinguishing) prevents two
-	// identically-shaped blocks in different scopes from colliding; the Merkle
-	// hash folds in the block's full structure per the epic's design. File-scoped
-	// so identical structures in different files never collide.
-	return file + "\x00" + addr + "\x00" + MerkleHash(block)
+	pf := g.treeFor(path, lang)
+	if !pf.ok {
+		return ""
+	}
+
+	// Fast path: this exact line was keyed before — return the memoized result
+	// without re-walking the tree or re-hashing.
+	g.mu.Lock()
+	if k, ok := pf.keyByLine[f.Line]; ok {
+		g.mu.Unlock()
+		return k
+	}
+	g.mu.Unlock()
+
+	block, addr, ok := CoveringBlock(pf.tree, f.Line)
+	if !ok {
+		g.rememberKey(pf, f.Line, "")
+		return ""
+	}
+
+	// Cache the expensive Merkle hash by covering-block address: N findings in the
+	// same block hash the subtree once. The address is drift-invariant and
+	// uniquely identifies the node, so it is a sound cache key.
+	g.mu.Lock()
+	mh, cached := pf.hashByAddr[addr]
+	g.mu.Unlock()
+	if !cached {
+		mh = MerkleHash(block)
+		g.mu.Lock()
+		if pf.hashByAddr == nil {
+			pf.hashByAddr = map[string]string{}
+		}
+		pf.hashByAddr[addr] = mh
+		g.mu.Unlock()
+	}
+
+	// Key = canonical file path + structural address of the covering block + its
+	// Merkle hash. The address (drift-invariant, sibling-distinguishing) already
+	// uniquely identifies the node within the file, so the Merkle hash is a
+	// defensive cross-check of the address scheme rather than load-bearing for
+	// grouping. File-scoped so identical structures in different files never
+	// collide; canonical path collapses symlinks and spelling variants.
+	key := path + "\x00" + addr + "\x00" + mh
+	g.rememberKey(pf, f.Line, key)
+	return key
+}
+
+// rememberKey memoizes the computed group key for line under g.mu so repeat
+// findings on the same line short-circuit the tree walk and hash.
+func (g *Grouper) rememberKey(pf *parsedFile, line int, key string) {
+	g.mu.Lock()
+	if pf.keyByLine == nil {
+		pf.keyByLine = map[int]string{}
+	}
+	pf.keyByLine[line] = key
+	g.mu.Unlock()
 }
 
 // treeFor returns the parsed tree for file, parsing+caching on first use. A parse
@@ -101,29 +226,55 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 // every finding in it.
 func (g *Grouper) treeFor(file, lang string) *parsedFile {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	if pf, ok := g.cache[file]; ok {
+		g.mu.Unlock()
+		<-pf.done // an in-flight or completed parse for this file: wait, don't re-parse
 		return pf
 	}
+	pf := &parsedFile{done: make(chan struct{})}
+	g.cache[file] = pf // publish the placeholder so concurrent callers wait on pf.done
+	g.mu.Unlock()
 
-	pf := &parsedFile{}
-	g.cache[file] = pf // cache the (initially negative) result; updated below on success
+	// Read+parse OUTSIDE g.mu so distinct files parse concurrently and cache hits
+	// for unrelated files never block behind an in-progress parse. Closing done
+	// publishes the result to any waiters.
+	defer close(pf.done)
 
-	path, ok := g.resolvePath(file)
+	path, ok := g.canonicalPath(file)
 	if !ok {
+		// Path escape is both a config/security signal and a silent-degradation
+		// source; surface it rather than failing over to proximity invisibly.
+		slog.Warn("astgroup: finding path escapes root, falling back to proximity grouping", "file", file)
 		return pf // path escapes root: refuse to read, fall back to proximity
 	}
-	src, err := os.ReadFile(path)
+	src, err := g.readFile(path)
 	if err != nil {
+		// Only keep permanent failures cached. Transient I/O errors (EAGAIN,
+		// EMFILE, a file briefly locked) should be retried on the next GroupKey
+		// call, so drop the placeholder for them.
+		if !isPermanentReadError(err) {
+			g.mu.Lock()
+			delete(g.cache, file)
+			g.mu.Unlock()
+			return pf
+		}
+		// A permanent read failure (commonly a wrong Root, so every finding fails
+		// the same way) is the wholesale-degradation case the operator must see.
+		slog.Warn("astgroup: source read failed, falling back to proximity grouping", "file", file, "err", err)
 		return pf
 	}
 	parser, err := g.host.Parser(lang)
 	if err != nil {
+		// Parser load/instantiate failure degrades EVERY finding in this language
+		// identically — the scariest invisible failure; log it loudly.
+		slog.Warn("astgroup: parser unavailable, falling back to proximity grouping", "lang", lang, "err", err)
 		return pf
 	}
 	tree, err := parser.Parse(src)
 	if err != nil {
+		// Per-file parse errors are expected for genuinely unparseable sources, so
+		// keep them at debug rather than warn to avoid drowning the wholesale signals.
+		slog.Debug("astgroup: parse failed, falling back to proximity grouping", "file", file, "err", err)
 		return pf
 	}
 	pf.tree = tree

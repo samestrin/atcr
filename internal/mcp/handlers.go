@@ -323,7 +323,12 @@ func (e *engine) handleReconcile(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	res, err := reconcile.RunReconcile(ctx, dir, nil, reclib.Options{
 		ReconciledAt: time.Now(),
 		Partial:      fanout.ReadManifestPartial(dir),
-		Root:         ".", // repo root = CWD; validate finding file paths (Epic 5.0)
+		// Empty root: the MCP server operates on a review-artifact dir, not a
+		// checked-out source tree, so it must NOT assume its cwd is the reviewed
+		// repo. An empty root hard-disables AST file reads (proximity fallback) and
+		// makes finding-path validation a no-op, rather than keying findings off
+		// unrelated same-named files under the server's cwd (Epic 13.1 TD).
+		Root: "",
 	})
 	if err != nil {
 		return nil, ReconcileResult{}, err

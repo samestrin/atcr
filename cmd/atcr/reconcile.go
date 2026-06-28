@@ -23,8 +23,19 @@ func newReconcileCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reconcile [id-or-path]",
 		Short: "Merge findings from all sources into reconciled artifacts",
-		Args:  usageArgs(cobra.MaximumNArgs(1)),
-		RunE:  runReconcile,
+		Long: `Merge findings from all sources into reconciled artifacts.
+
+Discovers per-source findings under <review>/sources, then clusters, dedupes, and
+confidence-scores them into <review>/reconciled.
+
+Clustering uses AST-isomorphism grouping by default: each finding is keyed by the
+smallest covering AST block of its source line, so findings group together even
+when line numbers drift, with line proximity as the per-finding fallback when no
+parser is available or the source is missing. Set ATCR_DISABLE_AST_GROUPING to a
+truthy value (1, true) to revert to legacy line-proximity-only clustering; a
+falsy, unparseable, or unset value keeps AST grouping on.`,
+		Args: usageArgs(cobra.MaximumNArgs(1)),
+		RunE: runReconcile,
 	}
 	cmd.Flags().String("fail-on", "", "exit 1 if any finding at/above this severity survives (CRITICAL, HIGH, MEDIUM, LOW)")
 	cmd.Flags().Bool("require-verified", false, "with --fail-on: count only skeptic-confirmed (VERIFIED) findings — the strictest gate")

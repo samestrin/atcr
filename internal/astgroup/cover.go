@@ -9,6 +9,15 @@ import "strconv"
 // is what lets two findings that drifted by whitespace — or that a skeptic
 // flagged a few lines apart inside the same block — group together, while keeping
 // findings in genuinely different blocks apart.
+//
+// Python compound-statement clauses (else / elif / except / finally) are emitted
+// by the pyparser plugin as SIBLING blocks of their if/try rather than children,
+// because they share the opener's indentation. Consequence for CoveringBlock: an
+// if node's span excludes its else body, so a finding in the if arm and one in
+// the else arm of the same statement never share a covering block, and a chained
+// if/elif (elif is remapped to kind "if") reads as several independent sibling
+// blocks. This is intentional — clause-level granularity, not whole-compound
+// grouping — and the kinds listed below reflect it.
 var blockKinds = map[string]bool{
 	"file": true, "module": true, "func": true, "funclit": true,
 	"class": true, "type": true, "gendecl": true, "block": true,
@@ -47,27 +56,43 @@ func CoveringBlock(root Node, line int) (block Node, addr string, ok bool) {
 // covering block, and the address of that chain relative to n. It descends
 // through non-block nodes (e.g. an expression statement wrapping a function
 // literal) to reach nested blocks. The returned chain excludes n itself.
+//
+// Invariant: a node's children are assumed to have non-overlapping line ranges.
+// The function returns the first covering child it finds; overlapping children
+// would break the uniqueness guarantee of the returned address.
 func coveringChain(n Node, line int) (chain []Node, addr string) {
 	blockIdx := 0
+	nonBlockIdx := 0
 	for i := range n.Children {
 		ch := n.Children[i]
+		block := isBlock(ch)
 		if line < ch.StartLine || line > ch.EndLine {
-			if isBlock(ch) {
+			if block {
 				blockIdx++
+			} else {
+				nonBlockIdx++
 			}
 			continue
 		}
 		subChain, subAddr := coveringChain(ch, line)
-		if isBlock(ch) {
+		if block {
 			seg := segment(ch, blockIdx)
 			if subAddr != "" {
 				seg += "/" + subAddr
 			}
 			return append([]Node{ch}, subChain...), seg
 		}
-		// ch covers but is not a block: its block descendants (if any) are the
-		// real cover; if it has none, the cover is n (empty chain).
-		return subChain, subAddr
+		// ch covers but is not a block. If it has no block descendant the cover is
+		// n itself (the enclosing block), so collapse to it — this keeps leaf
+		// statements in one block grouping together.
+		if len(subChain) == 0 {
+			return nil, ""
+		}
+		// ch wraps a block descendant: carry ch's sibling position into the
+		// address so descendants under distinct non-block siblings (e.g. two
+		// exprstmts each wrapping an identically-shaped funclit) get distinct
+		// addresses instead of both recomputing from index 0.
+		return subChain, segment(ch, nonBlockIdx) + "/" + subAddr
 	}
 	return nil, ""
 }

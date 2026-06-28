@@ -5,6 +5,39 @@ import (
 	"encoding/hex"
 )
 
+// maxNodeDepth bounds the recursion depth of the structural walks over a parsed
+// tree. It is a contract-level cap independent of the JSON decoder's nesting
+// limit: subtrees deeper than this are truncated by merkleSum so a pathologically
+// deep (e.g. hostile override-plugin) tree cannot drive unbounded host stack
+// growth. Real code nests only dozens of levels, so this never triggers in
+// practice; the host also rejects over-deep trees at decode time.
+const maxNodeDepth = 4096
+
+// exceedsDepth reports whether the tree rooted at n is deeper than limit. It is
+// iterative (explicit stack) so the depth check itself cannot overflow the host
+// stack on a hostile, deeply-nested tree — the host calls it after decoding an
+// untrusted guest tree to give every later recursive walk (MerkleHash,
+// coveringChain) a contract-level depth bound rather than relying on the JSON
+// decoder's implementation-defined nesting cap.
+func exceedsDepth(n Node, limit int) bool {
+	type frame struct {
+		node  Node
+		depth int
+	}
+	stack := []frame{{n, 0}}
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if f.depth > limit {
+			return true
+		}
+		for _, c := range f.node.Children {
+			stack = append(stack, frame{c, f.depth + 1})
+		}
+	}
+	return false
+}
+
 // MerkleHash computes a structural hash of a node: the hash folds in the node's
 // Kind and Name and, recursively, the hashes of its children, but NOT line
 // numbers. Two nodes therefore hash identically when they have the same kind,
@@ -14,18 +47,34 @@ import (
 // blocks are not over-merged.
 //
 // The encoding is unambiguous: each node serializes as
-// kind \x00 name '(' childHash ',' childHash ',' ... ')', so no kind/name/child
+// kind \x00 name '(' childSum ',' childSum ',' ... ')', so no kind/name/child
 // arrangement can be confused with another.
 func MerkleHash(n Node) string {
+	sum := merkleSum(n, 0)
+	return hex.EncodeToString(sum[:])
+}
+
+// merkleSum is the recursive core of MerkleHash. It folds children's raw 32-byte
+// sums (not their 64-char hex strings) into the parent, so internal nodes neither
+// allocate a hex string per level nor feed twice the necessary bytes into sha256.
+// Only the public MerkleHash hex-encodes, and only the root. Recursion is capped
+// at maxNodeDepth: at the cap a node is hashed without descending into its
+// children, bounding stack depth.
+func merkleSum(n Node, depth int) [32]byte {
 	h := sha256.New()
 	h.Write([]byte(n.Kind))
 	h.Write([]byte{0})
 	h.Write([]byte(n.Name))
 	h.Write([]byte{'('})
-	for _, c := range n.Children {
-		h.Write([]byte(MerkleHash(c)))
-		h.Write([]byte{','})
+	if depth < maxNodeDepth {
+		for _, c := range n.Children {
+			cs := merkleSum(c, depth+1)
+			h.Write(cs[:])
+			h.Write([]byte{','})
+		}
 	}
 	h.Write([]byte{')'})
-	return hex.EncodeToString(h.Sum(nil))
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
 }
