@@ -1,0 +1,162 @@
+[
+  {
+    "name": "go_same_func_small_drift",
+    "file": "a.go",
+    "source": "package p\n\nfunc Target() {\n\tx := 1\n\ty := 2\n\t_ = x + y\n}\n",
+    "a_line": 4,
+    "b_line": 6,
+    "same_block": true
+  },
+  {
+    "name": "go_same_func_large_drift_blank_lines",
+    "file": "a.go",
+    "source": "package p\n\nfunc Target() {\n\tx := 1\n\n\n\n\n\n\ty := 2\n\t_ = x + y\n}\n",
+    "a_line": 4,
+    "b_line": 11,
+    "same_block": true
+  },
+  {
+    "name": "go_same_if_block",
+    "file": "a.go",
+    "source": "package p\n\nfunc F(v int) int {\n\tif v > 0 {\n\t\ta := v\n\t\tb := a * 2\n\t\treturn b\n\t}\n\treturn 0\n}\n",
+    "a_line": 5,
+    "b_line": 7,
+    "same_block": true
+  },
+  {
+    "name": "go_signature_and_body_same_func",
+    "file": "a.go",
+    "source": "package p\n\nfunc Handler() {\n\tdo()\n\tmore()\n}\n\nfunc do() {}\nfunc more() {}\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "go_same_body_far_apart",
+    "file": "a.go",
+    "source": "package p\n\nfunc Big() {\n\ta := 1\n\tb := 2\n\tc := 3\n\td := 4\n\te := 5\n\t_ = a + b + c + d + e\n}\n",
+    "a_line": 4,
+    "b_line": 9,
+    "same_block": true
+  },
+  {
+    "name": "go_different_funcs_adjacent_lines",
+    "file": "a.go",
+    "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\n\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",
+    "a_line": 5,
+    "b_line": 9,
+    "same_block": false
+  },
+  {
+    "name": "go_different_funcs_far_apart",
+    "file": "a.go",
+    "source": "package p\n\nfunc A() {\n\tx := 1\n}\n\n\n\nfunc B() {\n\ty := 2\n}\n",
+    "a_line": 4,
+    "b_line": 10,
+    "same_block": false
+  },
+  {
+    "name": "go_if_vs_else_adjacent",
+    "file": "a.go",
+    "source": "package p\n\nfunc F(v int) int {\n\tif v > 0 {\n\t\treturn 1\n\t} else {\n\t\treturn 2\n\t}\n}\n",
+    "a_line": 5,
+    "b_line": 7,
+    "same_block": false
+  },
+  {
+    "name": "go_identical_shaped_funcs_separate",
+    "file": "a.go",
+    "source": "package p\n\nfunc A() int {\n\treturn 0\n}\n\nfunc B() int {\n\treturn 0\n}\n",
+    "a_line": 4,
+    "b_line": 8,
+    "same_block": false
+  },
+  {
+    "name": "go_off_by_one_same_func",
+    "file": "a.go",
+    "source": "package p\n\nfunc Calc() {\n\tsum := 0\n\tsum += 1\n\t_ = sum\n}\n",
+    "a_line": 4,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "py_same_def_small_drift",
+    "file": "a.py",
+    "source": "def target():\n    x = 1\n    y = 2\n    return x + y\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "py_same_def_large_drift_blank_lines",
+    "file": "a.py",
+    "source": "def target():\n    x = 1\n\n\n\n\n    y = 2\n    return x + y\n",
+    "a_line": 2,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "py_same_method_in_class",
+    "file": "a.py",
+    "source": "class C:\n    def m(self):\n        a = 1\n        b = 2\n        return a + b\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "py_for_loop_body",
+    "file": "a.py",
+    "source": "def loop(items):\n    total = 0\n    for it in items:\n        total += it\n        log(it)\n    return total\n",
+    "a_line": 4,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "py_different_defs_adjacent",
+    "file": "a.py",
+    "source": "def a():\n    x = 1\n    return x\n\ndef b():\n    y = 2\n    return y\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": false
+  },
+  {
+    "name": "py_different_methods_in_class",
+    "file": "a.py",
+    "source": "class C:\n    def m(self):\n        return 1\n    def n(self):\n        return 2\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": false
+  },
+  {
+    "name": "py_off_by_one_same_def",
+    "file": "a.py",
+    "source": "def calc():\n    total = 0\n    total += 1\n    return total\n",
+    "a_line": 2,
+    "b_line": 3,
+    "same_block": true
+  },
+  {
+    "name": "go_same_for_body_drift",
+    "file": "a.go",
+    "source": "package p\n\nfunc Sum(xs []int) int {\n\ttotal := 0\n\tfor _, x := range xs {\n\t\ttotal += x\n\n\n\t\t_ = total\n\t}\n\treturn total\n}\n",
+    "a_line": 6,
+    "b_line": 9,
+    "same_block": true
+  },
+  {
+    "name": "py_nested_if_same_block",
+    "file": "a.py",
+    "source": "def check(v):\n    if v:\n        a = compute()\n        b = a + 1\n        return b\n    return 0\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "go_func_vs_func_off_by_one_boundary",
+    "file": "a.go",
+    "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",
+    "a_line": 5,
+    "b_line": 8,
+    "same_block": false
+  }
+]
