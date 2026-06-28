@@ -107,6 +107,24 @@ func TestHost_ParseEmptySource(t *testing.T) {
 	require.Equal(t, "module", root.Kind)
 }
 
+// TestHost_ParseEmptySourceGo pins the Go plugin's empty-input contract
+// symmetrically with the Python one above: empty/nil source is a bare root node
+// ("file"), not a parse error. Empty Go source has no declarations, so treating
+// it as an empty tree (rather than erroring out and forcing line-proximity
+// fallback) keeps the empty-input behavior consistent across plugins.
+func TestHost_ParseEmptySourceGo(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	for _, src := range [][]byte{nil, {}} {
+		root, err := p.Parse(src)
+		require.NoError(t, err)
+		require.Equal(t, "file", root.Kind)
+	}
+}
+
 func TestHost_UnknownLanguage(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()
