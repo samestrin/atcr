@@ -70,9 +70,12 @@ type pline struct {
 
 // significantLines returns non-blank, non-comment-only lines with their
 // indentation (tabs expanded to 8) and 1-based line number. Lines inside a
-// triple-quoted string (docstrings, multi-line literals) are skipped so that a
-// def/class/# that appears as string CONTENT is not misparsed as real code — a
-// common source of spurious blocks and over-merged findings.
+// triple-quoted string (docstrings, multi-line literals) are skipped on a
+// best-effort basis so a def/class/# appearing as string CONTENT is less likely
+// to be misparsed as real code. The skip relies on scanTripleQuotes, which is a
+// heuristic: a """ embedded in a single/double-quoted string can still flip the
+// state machine, so this reduces but does not eliminate the spurious-block /
+// over-merged-finding risk on adversarial source (PoC-grade, not a tokenizer).
 func significantLines(src string) []pline {
 	var out []pline
 	delim := ""     // active triple-quote delimiter spanning lines, "" when outside
