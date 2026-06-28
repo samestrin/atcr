@@ -33,81 +33,126 @@ type AmbiguousCluster struct {
 }
 
 // DedupeCluster partitions one location cluster into merge groups and records
-// ambiguous pairs, with no adjudication applied. See dedupeCluster.
+// ambiguous pairs, with no adjudication and no AST grouping applied. See
+// dedupeCluster.
 func DedupeCluster(cluster []Finding) ([][]Finding, []AmbiguousCluster) {
-	return dedupeCluster(cluster, nil)
+	return dedupeCluster(cluster, make([]string, len(cluster)), nil)
 }
 
 // dedupeCluster partitions one location cluster into merge groups and records
-// ambiguous pairs. Findings linked by similarity >= MergeThreshold (single-
-// linkage, transitively) form a merge group to be collapsed downstream;
-// everything else stays in its own singleton group. Every pair scoring in
-// [GrayLow, MergeThreshold) is recorded as an AmbiguousCluster but is NOT merged
-// — UNLESS its content id is present in adjudicatedMerges, in which case the pair
-// is unioned (merged) and not re-recorded as ambiguous. Group order follows first
-// appearance for determinism. Token sets are computed once per finding (not per
-// pair) so the O(n^2) pair loop stays cheap.
-func dedupeCluster(cluster []Finding, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
+// ambiguous pairs. Merge decisions come from optimal bipartite matching
+// (bipartiteGroups): findings from different sources are matched 1:1 by the
+// composite edge-weight distance (AST GroupKey from keys[i], else 1 - Jaccard),
+// so each consensus issue gathers at most one finding per source and the greedy
+// single-linkage over-merge is structurally avoided. keys[i] is finding i's AST
+// group key (empty when none); it must be the same length as cluster.
+//
+// Every cross-group pair whose PROBLEM similarity falls in [GrayLow,
+// MergeThreshold) is recorded as an AmbiguousCluster but left unmerged — UNLESS
+// its content id is in adjudicatedMerges, in which case the two findings' groups
+// are unioned (merged) and the pair is not re-recorded. A gray pair whose groups
+// end up merged transitively (via adjudication of another pair) is dropped, so
+// the sidecar never contradicts the merged output. Token sets are computed once
+// per finding so the O(n^2) gray-pair scan stays cheap.
+func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
 	n := len(cluster)
+	if n == 0 {
+		return nil, nil
+	}
 	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
 		tokens[i] = tokenize(f.Problem)
 	}
-
-	uf := newUnionFind(n)
-	var ambiguous []AmbiguousCluster
-	var ambiguousPairs [][2]int // index pair behind each ambiguous entry, for the post-loop root check
+	dist := make([][]float64, n)
+	for i := range dist {
+		dist[i] = make([]float64, n)
+	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			rel, sim := classify(tokens[i], tokens[j])
-			switch rel {
-			case relMerge:
-				uf.union(i, j)
-			case relGray:
-				id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
-				if adjudicatedMerges[id] {
-					uf.union(i, j) // adjudicated this pair a duplicate
-					continue
-				}
-				ambiguous = append(ambiguous, AmbiguousCluster{
-					ID:         id,
-					File:       cluster[i].File,
-					Line:       cluster[i].Line,
-					Similarity: sim,
-					Findings:   []Finding{cluster[i], cluster[j]},
-				})
-				ambiguousPairs = append(ambiguousPairs, [2]int{i, j})
-			}
+			d := pairDistance(keys[i], keys[j], tokens[i], tokens[j])
+			dist[i][j], dist[j][i] = d, d
 		}
 	}
 
-	// A gray pair whose two findings ended up under the same union-find root
-	// (transitively merged via a third finding) is no longer adjudicable: a
-	// "merge" decision would be a silent no-op and "distinct" cannot be honored
-	// since the pair is already collapsed. Drop those entries so the ambiguous
-	// sidecar never contradicts the merged output.
+	// mergeable is the integer-exact duplicate predicate: a shared non-empty AST
+	// key, or token-set Jaccard at/above MergeThreshold (classify's cross-multiply
+	// boundary, never the float distance). It gates bipartite acceptance so the
+	// merge decision stays deterministic.
+	mergeable := func(a, b int) bool {
+		if keys[a] != "" && keys[a] == keys[b] {
+			return true
+		}
+		rel, _ := classify(tokens[a], tokens[b])
+		return rel == relMerge
+	}
+
+	groups := bipartiteGroups(cluster, dist, mergeable)
+	groupOf := make([]int, n)
+	for gi, g := range groups {
+		for _, idx := range g {
+			groupOf[idx] = gi
+		}
+	}
+
+	// Adjudicated gray pairs force-merge groups; union-find runs over GROUP ids.
+	uf := newUnionFind(len(groups))
+	var ambiguous []AmbiguousCluster
+	var ambiguousPairs [][2]int // group-id pair behind each entry, for the post-loop root check
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			if groupOf[i] == groupOf[j] {
+				continue // matched into one group already; not adjudicable
+			}
+			rel, sim := classify(tokens[i], tokens[j])
+			if rel != relGray {
+				continue
+			}
+			id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
+			if adjudicatedMerges[id] {
+				uf.union(groupOf[i], groupOf[j]) // adjudicated this pair a duplicate
+				continue
+			}
+			ambiguous = append(ambiguous, AmbiguousCluster{
+				ID:         id,
+				File:       cluster[i].File,
+				Line:       cluster[i].Line,
+				Similarity: sim,
+				Findings:   []Finding{cluster[i], cluster[j]},
+			})
+			ambiguousPairs = append(ambiguousPairs, [2]int{groupOf[i], groupOf[j]})
+		}
+	}
+
+	// Drop gray pairs whose groups were transitively merged by adjudication: a
+	// "merge" decision would be a silent no-op and "distinct" can no longer be
+	// honored, so the entry must not contradict the merged output.
 	kept := ambiguous[:0]
-	for k, p := range ambiguousPairs {
-		if uf.find(p[0]) != uf.find(p[1]) {
+	for k, gp := range ambiguousPairs {
+		if uf.find(gp[0]) != uf.find(gp[1]) {
 			kept = append(kept, ambiguous[k])
 		}
 	}
 	ambiguous = kept
 
-	groupMap := map[int][]Finding{}
-	var roots []int
-	for i := 0; i < n; i++ {
-		r := uf.find(i)
-		if _, seen := groupMap[r]; !seen {
-			roots = append(roots, r)
+	// Materialize merge groups, folding adjudicated group unions together. Root
+	// order follows group order (already normalized by lowest member index), so
+	// the merge representative stays the lowest-index finding.
+	rootMembers := map[int][]Finding{}
+	var rootOrder []int
+	for gi, g := range groups {
+		r := uf.find(gi)
+		if _, seen := rootMembers[r]; !seen {
+			rootOrder = append(rootOrder, r)
 		}
-		groupMap[r] = append(groupMap[r], cluster[i])
+		for _, idx := range g {
+			rootMembers[r] = append(rootMembers[r], cluster[idx])
+		}
 	}
-	groups := make([][]Finding, 0, len(roots))
-	for _, r := range roots {
-		groups = append(groups, groupMap[r])
+	out := make([][]Finding, 0, len(rootOrder))
+	for _, r := range rootOrder {
+		out = append(out, rootMembers[r])
 	}
-	return groups, ambiguous
+	return out, ambiguous
 }
 
 // relation is the dedupe outcome for one pair.
