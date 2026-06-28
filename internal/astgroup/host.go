@@ -34,9 +34,10 @@ type Host struct {
 	maxSourceBytes int
 	initErr        error // non-nil if WASI init failed; Parser then errors instead of panicking
 
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	closed  bool
 	parsers map[string]*wasmParser
+	parseWG sync.WaitGroup
 }
 
 // Option configures a Host at construction.
@@ -140,19 +141,31 @@ func (h *Host) loadWasm(lang string) ([]byte, error) {
 // embedded .wasm plugin on first use. It errors if no plugin is registered for
 // lang. The returned Parser is reused across calls (pointer-stable per language).
 func (h *Host) Parser(lang string) (Parser, error) {
+	h.mu.RLock()
+	if h.closed {
+		h.mu.RUnlock()
+		return nil, fmt.Errorf("astgroup: host is closed")
+	}
+	if h.initErr != nil {
+		h.mu.RUnlock()
+		return nil, h.initErr
+	}
+	if p, ok := h.parsers[lang]; ok && !p.mod.IsClosed() {
+		h.mu.RUnlock()
+		return p, nil
+	}
+	h.mu.RUnlock()
+
+	// Not cached or module was closed: instantiate under write lock.
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if h.closed {
 		return nil, fmt.Errorf("astgroup: host is closed")
 	}
-	if h.initErr != nil {
-		return nil, h.initErr
-	}
 	if p, ok := h.parsers[lang]; ok && !p.mod.IsClosed() {
 		return p, nil
 	}
-	// A previous parse hit its deadline and closed the module; recreate it.
 	delete(h.parsers, lang)
 
 	wasm, err := h.loadWasm(lang)
@@ -179,6 +192,7 @@ func (h *Host) Parser(lang string) (Parser, error) {
 		parse:          mod.ExportedFunction("parse"),
 		memory:         mod.Memory(),
 		maxSourceBytes: h.maxSourceBytes,
+		host:           h,
 	}
 	if p.alloc == nil || p.free == nil || p.parse == nil || p.memory == nil {
 		return nil, fmt.Errorf("astgroup: plugin %s missing required exports", lang)
@@ -188,20 +202,26 @@ func (h *Host) Parser(lang string) (Parser, error) {
 }
 
 // Close releases the wazero runtime and all instantiated parsers. It is safe
-// to call multiple times; subsequent calls return nil.
+// to call multiple times; subsequent calls return nil. Close drains any
+// in-flight Parse calls before tearing down the runtime.
 func (h *Host) Close() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.closed {
+		h.mu.Unlock()
 		return nil
 	}
 	h.closed = true
 	h.parsers = nil
+	h.mu.Unlock()
+
+	// Drain in-flight parses before closing the runtime.
+	h.parseWG.Wait()
 	return h.runtime.Close(h.ctx)
 }
 
 // wasmParser wraps one instantiated parser plugin. A wasm module instance is not
-// safe for concurrent calls, so every Parse is serialized by mu.
+// safe for concurrent calls, so every Parse is serialized by mu. It holds a
+// reference to its Host so Parse can participate in Host.Close draining.
 type wasmParser struct {
 	ctx            context.Context
 	mod            api.Module
@@ -210,6 +230,7 @@ type wasmParser struct {
 	parse          api.Function
 	memory         api.Memory
 	maxSourceBytes int
+	host           *Host
 
 	mu sync.Mutex
 }
@@ -240,6 +261,15 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 		slog.Warn("astgroup: source too large, falling back to proximity grouping", "size", len(src), "max", p.maxSourceBytes)
 		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), p.maxSourceBytes)
 	}
+
+	p.host.mu.RLock()
+	if p.host.closed {
+		p.host.mu.RUnlock()
+		return Node{}, fmt.Errorf("astgroup: host is closed")
+	}
+	p.host.parseWG.Add(1)
+	p.host.mu.RUnlock()
+	defer p.host.parseWG.Done()
 
 	p.mu.Lock()
 	defer p.mu.Unlock()

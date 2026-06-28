@@ -152,6 +152,23 @@ func TestHost_ParserCachedAndReused(t *testing.T) {
 	}
 }
 
+func TestHost_CloseDrainsInFlightParse(t *testing.T) {
+	h := NewHost()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	// Start a parse and immediately close the host. Close must wait for the
+	// parse to finish (or see the closed flag) rather than racing the module.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = p.Parse([]byte("package p\nfunc A() {}\n"))
+	}()
+
+	require.NoError(t, h.Close())
+	<-done
+}
+
 func TestHost_ParserAfterClose(t *testing.T) {
 	h := NewHost()
 	_, err := h.Parser("go")

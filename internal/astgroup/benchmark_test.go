@@ -112,12 +112,7 @@ func TestBenchmark_ASTGroupingAccuracy(t *testing.T) {
 	// AC3 functional criterion: resolve ≥95% of same-block drift discrepancies.
 	require.GreaterOrEqual(t, astRecall, 0.95, "AST recall on same-block pairs below 95%")
 	// Precision: AST must not over-merge genuinely-different blocks.
-	// Allow a small false-positive rate (<1%) so the PoC benchmark stays
-	// green on borderline cases while still rejecting wholesale over-merge.
-	if negatives > 0 {
-		astFPRate := float64(astFP) / float64(negatives)
-		require.Less(t, astFPRate, 0.01, "AST false-positive rate above 1%")
-	}
+	require.Equal(t, 0, astFP, "AST false-merged a different-block pair")
 	// Dominance: AST resolves every large-drift positive proximity misses.
 	require.Equal(t, proxMissedLargeDrift, astFixedLargeDrift, "AST must resolve all large-drift pairs proximity misses")
 	// AST must be no worse than proximity on precision (proximity false-merges adjacent different blocks).
