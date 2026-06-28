@@ -105,12 +105,15 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	// is the source; an empty Reviewer (unattributed finding) gets a per-finding
 	// unique key so it is treated as its own source — otherwise every unattributed
 	// finding would collapse into one pseudo-source and nothing would ever match,
-	// silently disabling dedup. NUL-prefixing cannot collide with a stream-column
-	// reviewer value.
+	// silently disabling dedup. The real-reviewer and anon key spaces carry
+	// DISTINCT NUL-delimited prefixes so an attacker-controlled Reviewer string —
+	// which may itself contain NUL — can never forge a finding's anon key and be
+	// mis-treated as that finding's source: a crafted Reviewer "\x00anon\x000" maps
+	// to "\x00src\x00\x00anon\x000", which can never equal an "\x00anon\x00<i>" key.
 	srcKeys := make([]string, n)
 	for i, f := range cluster {
 		if f.Reviewer != "" {
-			srcKeys[i] = f.Reviewer
+			srcKeys[i] = "\x00src\x00" + f.Reviewer
 		} else {
 			srcKeys[i] = "\x00anon\x00" + strconv.Itoa(i)
 		}
