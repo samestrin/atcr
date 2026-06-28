@@ -9,6 +9,15 @@ import "strconv"
 // is what lets two findings that drifted by whitespace — or that a skeptic
 // flagged a few lines apart inside the same block — group together, while keeping
 // findings in genuinely different blocks apart.
+//
+// Python compound-statement clauses (else / elif / except / finally) are emitted
+// by the pyparser plugin as SIBLING blocks of their if/try rather than children,
+// because they share the opener's indentation. Consequence for CoveringBlock: an
+// if node's span excludes its else body, so a finding in the if arm and one in
+// the else arm of the same statement never share a covering block, and a chained
+// if/elif (elif is remapped to kind "if") reads as several independent sibling
+// blocks. This is intentional — clause-level granularity, not whole-compound
+// grouping — and the kinds listed below reflect it.
 var blockKinds = map[string]bool{
 	"file": true, "module": true, "func": true, "funclit": true,
 	"class": true, "type": true, "gendecl": true, "block": true,
