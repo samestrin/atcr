@@ -66,17 +66,26 @@ func TestDedupeCluster_TransitiveMerge(t *testing.T) {
 	length(t, groups[0], 3, "three members")
 }
 
-func TestDedupeCluster_TransitivelyMergedGrayPairDropped(t *testing.T) {
-	// A~B is gray (0.667) but A~C and B~C both merge (0.818), so A and B end up
-	// under the same union-find root via C. The A-B pair must NOT be emitted.
+func TestDedupeCluster_BipartiteRefusesTransitiveOverMerge(t *testing.T) {
+	// The greedy-clustering failure case (Epic 13.2 AC2). A~B is only gray (0.667)
+	// — they are NOT duplicates — but A~C and B~C both clear the merge threshold
+	// (0.818). Greedy single-linkage chains A-B-C into one group via C, silently
+	// merging the non-duplicate pair A-B. Bipartite matching refuses this: C is one
+	// finding from one source and can corroborate only ONE of A/B (1:1), so A and B
+	// stay in separate groups and the unresolved A-B pair surfaces as ambiguous.
 	groups, amb := DedupeCluster([]Finding{
 		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 w10", "greta"), // A
 		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 c1 b1", "kai"),    // B: vs A 0.667 gray
 		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 c1", "mira"),   // C: vs A and B 0.818 merge
 	})
-	length(t, groups, 1, "all three collapse transitively via C")
-	length(t, groups[0], 3, "three members")
-	length(t, amb, 0, "a gray pair already merged transitively must not be left for adjudication")
+	length(t, groups, 2, "bipartite keeps the non-duplicate A-B apart instead of chaining all three")
+	sizes := map[int]int{}
+	for _, g := range groups {
+		sizes[len(g)]++
+	}
+	eq(t, sizes[2], 1, "one corroborated pair (C joins one of A/B)")
+	eq(t, sizes[1], 1, "one finding left as its own group")
+	length(t, amb, 1, "the unresolved gray A-B pair is recorded for adjudication")
 }
 
 func TestDedupeCluster_ExactThresholdBoundaries(t *testing.T) {
@@ -104,6 +113,40 @@ func TestDedupeCluster_BothEmptyProblemsMerge(t *testing.T) {
 	})
 	length(t, groups, 1, "two empty problem texts are identical → merge")
 	length(t, groups[0], 2, "both members")
+}
+
+func TestDedupeCluster_SharedASTKeyMergesDisjointText(t *testing.T) {
+	// Epic 13.2 composite edge weight: two cross-source findings with DISJOINT
+	// problem text (Jaccard 0 → would be distinct) but a shared non-empty AST
+	// GroupKey are matched at distance 0 and merge. This is the 13.1-isomorphism
+	// signal acting as an edge weight, which token-set Jaccard alone cannot do.
+	groups, amb := dedupeCluster([]Finding{
+		fnd("a.go", 1, "alpha beta", "greta"),
+		fnd("a.go", 1, "gamma delta", "kai"),
+	}, []string{"a.go\x00H", "a.go\x00H"}, nil)
+	length(t, groups, 1, "shared AST key merges despite disjoint text")
+	length(t, groups[0], 2, "both findings")
+	length(t, amb, 0, "no ambiguous: it merged")
+}
+
+func TestDedupeCluster_AdjudicatedGrayPairMerges(t *testing.T) {
+	// A gray pair is left unmerged by default, but an adjudication marking its id a
+	// duplicate force-merges the two groups and drops it from the sidecar. This
+	// exercises the group-level union-find merge path preserved across the rewrite.
+	a := fnd("a.go", 1, "alpha beta gamma", "greta")
+	b := fnd("a.go", 1, "alpha beta delta", "kai") // 0.5 → gray
+	id := AmbiguousID(a.File, a.Line, a.Problem, b.Problem)
+	groups, amb := dedupeCluster([]Finding{a, b}, []string{"", ""}, map[string]bool{id: true})
+	length(t, groups, 1, "adjudicated duplicate merges into one group")
+	length(t, groups[0], 2, "both members")
+	length(t, amb, 0, "an adjudicated pair is not re-recorded as ambiguous")
+}
+
+func TestClusterKeys_UsesGrouper(t *testing.T) {
+	keys := clusterKeys([]Finding{fnd("a.go", 10, "x", "r1"), fnd("a.go", 20, "y", "r2")},
+		fakeGrouper{keys: map[int]string{10: "K1", 20: ""}})
+	eq(t, keys[0], "K1", "grouper key threaded through")
+	eq(t, keys[1], "", "empty key preserved")
 }
 
 func TestDedupeCluster_SingletonClusterNoAmbiguous(t *testing.T) {
