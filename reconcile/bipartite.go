@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"fmt"
 	"math"
 	"sort"
 )
@@ -31,6 +32,10 @@ func hungarian(cost [][]float64) []int {
 	n := len(cost)
 	if n == 0 {
 		return nil
+	}
+	const maxHungarianN = 500
+	if n > maxHungarianN {
+		panic(fmt.Sprintf("hungarian: matrix size %d exceeds maximum %d", n, maxHungarianN))
 	}
 	const inf = math.MaxFloat64
 	// 1-indexed potentials/state per the canonical formulation; p[j] is the row
