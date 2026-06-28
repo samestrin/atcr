@@ -223,7 +223,11 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 
 	n := uint32(len(src))
 	if n == 0 {
-		n = 1 // alloc rejects zero; an empty source still yields a root node
+		// alloc rejects zero, so request one byte. The plugin itself decides what
+		// an empty source means: some languages return a bare root node, others
+		// emit an error node. Either way the caller falls back to proximity if
+		// Parse returns an error.
+		n = 1
 	}
 
 	res, err := p.alloc.Call(ctx, uint64(n))
