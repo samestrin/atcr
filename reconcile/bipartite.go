@@ -118,6 +118,34 @@ func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
 	if rows == 0 || cols == 0 {
 		return assign
 	}
+	// Degenerate single-row / single-column shapes don't need the full O(n^3)
+	// Hungarian over a padded square — the optimum is a plain argmin. The
+	// unattributed-source path makes every finding its own source, so
+	// bipartiteGroups calls this with a single candidate (cols==1) on every step;
+	// short-circuiting keeps that step linear instead of O(group^3) (overall
+	// ~O(n^4) across the cluster). The argmin reproduces the padded Hungarian's
+	// assignment exactly, including its lowest-index tie-break (strict `<` keeps
+	// the first minimal column/row).
+	if rows == 1 {
+		best, bestC := cost(0, 0), 0
+		for c := 1; c < cols; c++ {
+			if v := cost(0, c); v < best {
+				best, bestC = v, c
+			}
+		}
+		assign[0] = bestC
+		return assign
+	}
+	if cols == 1 {
+		best, bestR := cost(0, 0), 0
+		for r := 1; r < rows; r++ {
+			if v := cost(r, 0); v < best {
+				best, bestR = v, r
+			}
+		}
+		assign[bestR] = 0
+		return assign
+	}
 	n := rows
 	if cols > n {
 		n = cols
