@@ -151,11 +151,16 @@ result safely.
   clusters keyed on `FILE` and a `LINE ± 3` window (single-linkage). Output is
   then sorted by a total order — **severity descending, then file, then line** —
   so emission is stable.
-- **Dedupe — token-set Jaccard, 0.7 / 0.4 thresholds.** Within a cluster,
-  findings are compared by token-set Jaccard similarity using integer
-  cross-multiplication (no float comparison). A pair at or **above 0.7 merges**;
-  a pair in the **0.4–0.7 gray zone is ambiguous** — left unmerged and recorded
-  in the ambiguity sidecar; below 0.4 the findings are distinct.
+- **Dedupe — optimal bipartite matching.** Within a cluster, findings from
+  different sources are matched 1:1 by the Kuhn-Munkres (Hungarian) algorithm
+  over a composite edge-weight distance: **0** for findings sharing an
+  AST-isomorphism group key, otherwise **`1 − token-set Jaccard`**. Acceptance of
+  a match is gated by the same integer cross-multiplication boundary (no float
+  comparison): a pair at or **above 0.7 similarity merges**. The 1:1 constraint
+  structurally avoids the transitive over-merge a greedy single-linkage pass
+  suffers (one finding cannot drag two non-duplicates into one group). A pair in
+  the **0.4–0.7 gray zone is ambiguous** — left unmerged and recorded in the
+  ambiguity sidecar; below 0.4 the findings are distinct.
 - **Merge — max severity, disagreement preserved.** A merged finding takes the
   **maximum severity** across its group; when lower severities are present the
   conflict is annotated inline as `<lo> vs <hi>` (e.g. `MEDIUM vs HIGH`) rather
@@ -165,9 +170,13 @@ result safely.
 - **Confidence — v2 tiers `VERIFIED > HIGH > MEDIUM > LOW`.** Confidence is
   derived from the count of distinct reviewers who agree, and is promoted to
   `VERIFIED` when an adversarial verdict confirms the finding.
-- **Ambiguity sidecar.** Gray-zone clusters (0.4–0.7) are not silently merged or
-  dropped — they are surfaced in `Result.Ambiguous` as `AmbiguousCluster` values
-  so a host can adjudicate them (and force a merge via `Options.Merges`).
+- **Ambiguity sidecar.** Two kinds of cluster surface in `Result.Ambiguous` as
+  `AmbiguousCluster` values, neither silently merged nor dropped: **gray-zone
+  pairs** (0.4–0.7) a host can adjudicate (and force a merge via
+  `Options.Merges`); and **DBSCAN-isolated noise** — a single uncorroborated
+  finding standing alone amid a corroborated cluster (a likely single-model
+  hallucination), carried as a one-finding cluster and removed from the merged
+  output so the consensus findings stay trustworthy.
 
 ## JSON format adapter
 

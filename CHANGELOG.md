@@ -1,3 +1,18 @@
+## [13.2.0] - 2026-06-28
+
+The reconciler now deduplicates findings with optimal bipartite matching instead of greedy clustering, and deterministically isolates uncorroborated single-model noise into the ambiguity sidecar — so consensus findings stay trustworthy and the sidecar can be trusted as strictly uncorroborated noise.
+
+### Changed
+
+- Reconciler deduplication now aligns findings across models with Kuhn-Munkres (Hungarian) bipartite matching, replacing the greedy single-linkage clustering that could transitively over-merge non-duplicate findings; each consensus issue gathers at most one finding per model
+- Duplicate edge weights combine the 13.1 AST-isomorphism signal (structurally isomorphic findings match at distance 0) with token-set Jaccard distance, computed in-tree with no new dependencies and no floating-point boundary drift
+
+### Added
+
+- DBSCAN-based noise isolation: a single model's uncorroborated finding standing alone where other models corroborate each other is deterministically moved to the `ambiguous.json` sidecar and removed from the consensus output, with no arbitrary cluster-count threshold
+
+*Shipped via /execute-epic (epic 13.2)*
+
 ## [Technical Debt] - 2026-06-28
 
 ### Fixed
