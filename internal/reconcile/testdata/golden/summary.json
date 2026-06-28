@@ -13,6 +13,8 @@
   "skipped_sources": [],
   "skipped_source_count": 0,
   "ambiguous_hash": "sha256:22f8673bbb31fb5720148a3991951cb8fc98767ae9ea4f15f78babdd5e8f32d9",
+  "ambiguous_count": 1,
+  "noise_count": 0,
   "out_of_scope": 1,
   "total_findings": 6,
   "reconciled_at": "2023-11-14T22:13:20Z"

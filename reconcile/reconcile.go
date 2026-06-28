@@ -52,6 +52,11 @@ type Summary struct {
 	// AmbiguousHash digests the emitted ambiguous sidecar bytes; a host copies it
 	// verbatim into an adjudication file as the baseline hash.
 	AmbiguousHash string `json:"ambiguous_hash"`
+	// AmbiguousCount is the total number of entries in the ambiguous sidecar.
+	AmbiguousCount int `json:"ambiguous_count"`
+	// NoiseCount is the number of single-finding ambiguous entries isolated as
+	// DBSCAN noise (as opposed to multi-finding gray pairs).
+	NoiseCount int `json:"noise_count"`
 	// OutOfScope counts findings annotated out-of-scope: kept in the artifacts but
 	// excluded from a severity gate.
 	OutOfScope    int    `json:"out_of_scope"`
@@ -99,6 +104,12 @@ func Reconcile(sources []Source, opts Options) Result {
 			outOfScope++
 		}
 	}
+	noiseCount := 0
+	for _, c := range ambiguous {
+		if len(c.Findings) == 1 {
+			noiseCount++
+		}
+	}
 
 	return Result{
 		Findings:  merged,
@@ -112,6 +123,8 @@ func Reconcile(sources []Source, opts Options) Result {
 			SkippedSources:        []string{},
 			SkippedSourceCount:    0,
 			AmbiguousHash:         AmbiguousHash(ambiguous),
+			AmbiguousCount:        len(ambiguous),
+			NoiseCount:            noiseCount,
 			OutOfScope:            outOfScope,
 			TotalFindings:         len(merged),
 			ReconciledAt:          opts.ReconciledAt.UTC().Format(time.RFC3339),
