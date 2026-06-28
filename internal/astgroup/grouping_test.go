@@ -107,6 +107,25 @@ func TestMerkleHash_BoundsRecursionDepth(t *testing.T) {
 		"subtrees deeper than the cap must be truncated, not hashed unboundedly")
 }
 
+// TestExceedsDepth verifies the iterative depth guard the host applies to a
+// decoded tree: trees within the bound pass, trees deeper than it are flagged,
+// and a 50k-deep chain is detected without overflowing the checker's own stack.
+func TestExceedsDepth(t *testing.T) {
+	chain := func(depth int) Node {
+		root := Node{Kind: "block"}
+		cur := &root
+		for i := 0; i < depth; i++ {
+			cur.Children = []Node{{Kind: "block"}}
+			cur = &cur.Children[0]
+		}
+		return root
+	}
+	require.False(t, exceedsDepth(chain(5), 10), "shallow tree is within bound")
+	require.False(t, exceedsDepth(chain(10), 10), "tree exactly at the bound is allowed")
+	require.True(t, exceedsDepth(chain(11), 10), "tree one past the bound is rejected")
+	require.True(t, exceedsDepth(chain(50000), maxNodeDepth), "a 50k-deep tree is detected without stack overflow")
+}
+
 func TestMerkleHash_DistinguishesNameAndShape(t *testing.T) {
 	f := Node{Kind: "func", Name: "F", StartLine: 1, EndLine: 2}
 	g := Node{Kind: "func", Name: "G", StartLine: 1, EndLine: 2}

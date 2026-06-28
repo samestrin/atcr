@@ -345,6 +345,12 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	if err := json.Unmarshal(out, &root); err != nil {
 		return Node{}, fmt.Errorf("astgroup: decode node tree: %w", err)
 	}
+	// Reject trees deeper than the contract bound so the later recursive walks
+	// (MerkleHash, coveringChain) over this untrusted, guest-supplied tree cannot
+	// drive unbounded host stack growth. The caller falls back to proximity.
+	if exceedsDepth(root, maxNodeDepth) {
+		return Node{}, fmt.Errorf("astgroup: parsed tree exceeds max depth %d", maxNodeDepth)
+	}
 	if root.Kind == "error" {
 		return root, fmt.Errorf("astgroup: parser error: %s", root.Name)
 	}

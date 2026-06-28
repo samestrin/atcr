@@ -13,6 +13,31 @@ import (
 // practice; the host also rejects over-deep trees at decode time.
 const maxNodeDepth = 4096
 
+// exceedsDepth reports whether the tree rooted at n is deeper than limit. It is
+// iterative (explicit stack) so the depth check itself cannot overflow the host
+// stack on a hostile, deeply-nested tree — the host calls it after decoding an
+// untrusted guest tree to give every later recursive walk (MerkleHash,
+// coveringChain) a contract-level depth bound rather than relying on the JSON
+// decoder's implementation-defined nesting cap.
+func exceedsDepth(n Node, limit int) bool {
+	type frame struct {
+		node  Node
+		depth int
+	}
+	stack := []frame{{n, 0}}
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if f.depth > limit {
+			return true
+		}
+		for _, c := range f.node.Children {
+			stack = append(stack, frame{c, f.depth + 1})
+		}
+	}
+	return false
+}
+
 // MerkleHash computes a structural hash of a node: the hash folds in the node's
 // Kind and Name and, recursively, the hashes of its children, but NOT line
 // numbers. Two nodes therefore hash identically when they have the same kind,
