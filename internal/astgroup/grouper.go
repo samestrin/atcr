@@ -2,6 +2,7 @@ package astgroup
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,6 +238,9 @@ func (g *Grouper) treeFor(file, lang string) *parsedFile {
 
 	path, ok := g.canonicalPath(file)
 	if !ok {
+		// Path escape is both a config/security signal and a silent-degradation
+		// source; surface it rather than failing over to proximity invisibly.
+		slog.Warn("astgroup: finding path escapes root, falling back to proximity grouping", "file", file)
 		return pf // path escapes root: refuse to read, fall back to proximity
 	}
 	src, err := g.readFile(path)
@@ -248,15 +252,25 @@ func (g *Grouper) treeFor(file, lang string) *parsedFile {
 			g.mu.Lock()
 			delete(g.cache, file)
 			g.mu.Unlock()
+			return pf
 		}
+		// A permanent read failure (commonly a wrong Root, so every finding fails
+		// the same way) is the wholesale-degradation case the operator must see.
+		slog.Warn("astgroup: source read failed, falling back to proximity grouping", "file", file, "err", err)
 		return pf
 	}
 	parser, err := g.host.Parser(lang)
 	if err != nil {
+		// Parser load/instantiate failure degrades EVERY finding in this language
+		// identically — the scariest invisible failure; log it loudly.
+		slog.Warn("astgroup: parser unavailable, falling back to proximity grouping", "lang", lang, "err", err)
 		return pf
 	}
 	tree, err := parser.Parse(src)
 	if err != nil {
+		// Per-file parse errors are expected for genuinely unparseable sources, so
+		// keep them at debug rather than warn to avoid drowning the wholesale signals.
+		slog.Debug("astgroup: parse failed, falling back to proximity grouping", "file", file, "err", err)
 		return pf
 	}
 	pf.tree = tree
