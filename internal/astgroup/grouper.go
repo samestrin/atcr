@@ -1,6 +1,7 @@
 package astgroup
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,8 +21,9 @@ import (
 // file-level (Line <= 0), its language has no parser, the file is missing or
 // unparseable, or no node covers the line.
 type Grouper struct {
-	host *Host
-	root string
+	host     *Host
+	root     string
+	readFile func(string) ([]byte, error)
 
 	mu    sync.Mutex
 	cache map[string]*parsedFile // keyed by finding.File
@@ -32,11 +34,29 @@ type parsedFile struct {
 	ok   bool
 }
 
+// isPermanentReadError reports whether an error from reading a source file is
+// expected to persist across retries. Not-exist, permission-denied, and
+// containment/path errors are permanent; transient resource contention is not.
+func isPermanentReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) || os.IsPermission(err) {
+		return true
+	}
+	// Path errors from canonicalPath are permanent containment failures.
+	var pErr *os.PathError
+	if errors.As(err, &pErr) && (pErr.Err == os.ErrInvalid) {
+		return true
+	}
+	return false
+}
+
 // NewGrouper builds a Grouper rooted at root: relative finding paths are resolved
 // against root before reading. Pass the reconcile Options.Root. Call Close to
 // release the underlying wazero runtime.
 func NewGrouper(root string) *Grouper {
-	return &Grouper{host: NewHost(), root: root, cache: map[string]*parsedFile{}}
+	return &Grouper{host: NewHost(), root: root, readFile: os.ReadFile, cache: map[string]*parsedFile{}}
 }
 
 // Close releases the wazero runtime.
@@ -130,8 +150,16 @@ func (g *Grouper) treeFor(file, lang string) *parsedFile {
 	if !ok {
 		return pf // path escapes root: refuse to read, fall back to proximity
 	}
-	src, err := os.ReadFile(path)
+	src, err := g.readFile(path)
 	if err != nil {
+		// Only cache permanent failures. Transient I/O errors (EAGAIN, EMFILE,
+		// a file briefly locked) should be retried on the next GroupKey call.
+		if isPermanentReadError(err) {
+			return pf
+		}
+		// Do not cache the negative result; leave the entry absent so the next
+		// call retries the read.
+		delete(g.cache, file)
 		return pf
 	}
 	parser, err := g.host.Parser(lang)

@@ -1,6 +1,7 @@
 package astgroup
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -158,6 +159,34 @@ func TestGrouper_CanonicalPathDeduplicatesSpellings(t *testing.T) {
 
 	// Only one parse should have been performed for the unique on-disk file.
 	require.Equal(t, expectedCache, len(g.cache), "canonical path should deduplicate cache entries")
+}
+
+// TestGrouper_RetriesTransientReadErrors verifies that a transient read failure
+// is not cached permanently; the next GroupKey call retries and succeeds.
+func TestGrouper_RetriesTransientReadErrors(t *testing.T) {
+	root := t.TempDir()
+	src := "package p\n\nfunc F() {\n\tx := 1\n}\n"
+	path := filepath.Join(root, "code.go")
+	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
+
+	g := NewGrouper(root)
+	defer func() { _ = g.Close() }()
+
+	var calls int
+	transientErr := errors.New("transient: resource temporarily unavailable")
+	g.readFile = func(name string) ([]byte, error) {
+		calls++
+		if calls == 1 {
+			return nil, transientErr
+		}
+		return os.ReadFile(name)
+	}
+
+	// First call hits the transient error and falls back to proximity.
+	require.Empty(t, g.GroupKey(reconcile.Finding{File: "code.go", Line: 4}))
+	// Second call retries and produces a structural key.
+	require.NotEmpty(t, g.GroupKey(reconcile.Finding{File: "code.go", Line: 4}))
+	require.Equal(t, 2, calls, "second GroupKey should retry the read")
 }
 
 // TestGrouper_SatisfiesReconcileInterface is a compile-time assertion that the
