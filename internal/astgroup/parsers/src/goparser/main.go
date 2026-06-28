@@ -38,7 +38,9 @@ type node struct {
 
 // pins keeps alloc'd buffers reachable so the Go GC cannot reclaim memory the
 // host still references. The wasm linear memory IS this program's heap, so a
-// pinned slice's first-element pointer is a stable guest offset.
+// pinned slice's first-element pointer is a stable guest offset. This assumes
+// the wasm-targeting Go GC remains non-moving (true for Go 1.21+ wasip1/wasm);
+// review this assumption before upgrading the toolchain.
 var pins = map[int32][]byte{}
 
 //go:wasmexport alloc
