@@ -40,6 +40,37 @@ func TestSmallestCovering(t *testing.T) {
 	require.Nil(t, SmallestCovering(tree, 99))
 }
 
+// TestCoveringBlock_DistinguishesSiblingNonBlockWrappers reproduces the cover.go
+// bug where coveringChain discarded the accumulated sibling position when it
+// descended through a non-block covering child. Two sibling expression
+// statements, each wrapping an identically-shaped anonymous function literal,
+// must yield DISTINCT structural addresses so their group keys do not collapse.
+func TestCoveringBlock_DistinguishesSiblingNonBlockWrappers(t *testing.T) {
+	// file
+	//   exprstmt (3-5)  -> call -> funclit { return }
+	//   exprstmt (7-9)  -> call -> funclit { return }
+	mkWrapper := func(start, end int) Node {
+		return Node{Kind: "exprstmt", StartLine: start, EndLine: end, Children: []Node{
+			{Kind: "call", StartLine: start, EndLine: end, Children: []Node{
+				{Kind: "funclit", StartLine: start, EndLine: end, Children: []Node{
+					{Kind: "return", StartLine: start + 1, EndLine: start + 1},
+				}},
+			}},
+		}}
+	}
+	tree := Node{Kind: "file", StartLine: 1, EndLine: 20, Children: []Node{
+		mkWrapper(3, 5),
+		mkWrapper(7, 9),
+	}}
+
+	_, addrA, okA := CoveringBlock(tree, 4)
+	_, addrB, okB := CoveringBlock(tree, 8)
+	require.True(t, okA)
+	require.True(t, okB)
+	require.NotEqual(t, addrA, addrB,
+		"sibling non-block wrappers must produce distinct covering-block addresses")
+}
+
 func TestMerkleHash_InvariantToLineNumbers(t *testing.T) {
 	// Same structure, different line numbers (whitespace / blank-line drift).
 	a := Node{Kind: "func", Name: "F", StartLine: 10, EndLine: 14, Children: []Node{
