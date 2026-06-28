@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -98,6 +99,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	uf := newUnionFind(len(groups))
 	var ambiguous []AmbiguousCluster
 	var ambiguousPairs [][2]int // group-id pair behind each entry, for the post-loop root check
+	var ambiguousIdx [][2]int   // finding-index pair behind each entry, for the noise exclusion
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			if groupOf[i] == groupOf[j] {
@@ -120,38 +122,93 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 				Findings:   []Finding{cluster[i], cluster[j]},
 			})
 			ambiguousPairs = append(ambiguousPairs, [2]int{groupOf[i], groupOf[j]})
+			ambiguousIdx = append(ambiguousIdx, [2]int{i, j})
 		}
 	}
 
 	// Drop gray pairs whose groups were transitively merged by adjudication: a
 	// "merge" decision would be a silent no-op and "distinct" can no longer be
 	// honored, so the entry must not contradict the merged output.
-	kept := ambiguous[:0]
+	keptAmb := ambiguous[:0]
+	keptIdx := ambiguousIdx[:0]
 	for k, gp := range ambiguousPairs {
 		if uf.find(gp[0]) != uf.find(gp[1]) {
-			kept = append(kept, ambiguous[k])
+			keptAmb = append(keptAmb, ambiguous[k])
+			keptIdx = append(keptIdx, ambiguousIdx[k])
 		}
 	}
-	ambiguous = kept
+	ambiguous = keptAmb
+
+	// A finding already surfaced in a surviving gray pair must not also be isolated
+	// as DBSCAN noise (no double representation in the sidecar).
+	grayInvolved := make(map[int]bool, len(keptIdx)*2)
+	for _, p := range keptIdx {
+		grayInvolved[p[0]] = true
+		grayInvolved[p[1]] = true
+	}
 
 	// Materialize merge groups, folding adjudicated group unions together. Root
-	// order follows group order (already normalized by lowest member index), so
-	// the merge representative stays the lowest-index finding.
-	rootMembers := map[int][]Finding{}
+	// order follows group order (already normalized by lowest member index), so the
+	// merge representative stays the lowest-index finding.
+	rootIdx := map[int][]int{}
 	var rootOrder []int
 	for gi, g := range groups {
 		r := uf.find(gi)
-		if _, seen := rootMembers[r]; !seen {
+		if _, seen := rootIdx[r]; !seen {
 			rootOrder = append(rootOrder, r)
 		}
-		for _, idx := range g {
-			rootMembers[r] = append(rootMembers[r], cluster[idx])
+		rootIdx[r] = append(rootIdx[r], g...)
+	}
+	soloRoot := make(map[int]bool, n) // finding index → it is the only member of its root
+	for _, idxs := range rootIdx {
+		if len(idxs) == 1 {
+			soloRoot[idxs[0]] = true
 		}
 	}
+
+	// DBSCAN over the same location cluster isolates uncorroborated noise. The
+	// eps-neighborhood is the exact merge predicate, so a "dense" point is one with
+	// a true duplicate. Noise is isolated ONLY when a dense cluster also exists in
+	// this location (a finding standing alone where others corroborate each other is
+	// a likely single-model hallucination; a finding whose location no one else
+	// touched is just an uncorroborated report and stays in the output), and only
+	// when the finding is genuinely alone — not gray-paired and not merged into any
+	// group — so it is never represented in both the output and the sidecar.
+	labels, dense := dbscanLabels(n, dbscanMinPts, mergeable)
+	noiseIdx := map[int]bool{}
+	var noise []AmbiguousCluster
+	if dense {
+		for i := 0; i < n; i++ {
+			if labels[i] != dbscanNoise || grayInvolved[i] || !soloRoot[i] {
+				continue
+			}
+			noiseIdx[i] = true
+			noise = append(noise, AmbiguousCluster{
+				// A single-finding cluster: same-problem id keeps it stable and
+				// distinct from any two-problem gray-pair id; Similarity stays 0
+				// (no corroboration). debate skips clusters with < 2 findings.
+				ID:       AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[i].Problem),
+				File:     cluster[i].File,
+				Line:     cluster[i].Line,
+				Findings: []Finding{cluster[i]},
+			})
+		}
+	}
+
 	out := make([][]Finding, 0, len(rootOrder))
 	for _, r := range rootOrder {
-		out = append(out, rootMembers[r])
+		idxs := rootIdx[r]
+		if len(idxs) == 1 && noiseIdx[idxs[0]] {
+			continue // isolated as DBSCAN noise → sidecar only
+		}
+		sort.Ints(idxs) // stable member order after any adjudicated union
+		members := make([]Finding, len(idxs))
+		for k, idx := range idxs {
+			members[k] = cluster[idx]
+		}
+		out = append(out, members)
 	}
+	ambiguous = append(ambiguous, noise...)
 	return out, ambiguous
 }
 
