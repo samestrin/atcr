@@ -133,6 +133,44 @@ func TestHost_UnknownLanguage(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestHost_PyParseTabIndentColumn(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// Line 2 is indented with space+tab — the tab advances to the next multiple
+	// of 8, so the column is 8; line 3 uses 8 spaces (also column 8). Both must
+	// sit at the same level (children of the `if`). The old flat tab=+8 made
+	// space+tab column 9, splitting the two lines across levels.
+	root, err := p.Parse([]byte("if x:\n \ta = 1\n        b = 2\n"))
+	require.NoError(t, err)
+	require.Len(t, root.Children, 1, "the if is the only top-level block")
+	ifNode := root.Children[0]
+	require.Equal(t, "if", ifNode.Kind)
+	require.Len(t, ifNode.Children, 2, "both equally-indented body lines are children of the if")
+}
+
+func TestHost_PyParseColonNotHeaderUnlessCompound(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// A bare `"key":` line ends with ':' but is not a compound-statement header,
+	// so it must NOT adopt the following indented line as a child block.
+	root, err := p.Parse([]byte("x = 1\n\"key\":\n    y = 2\n"))
+	require.NoError(t, err)
+	var keyLine *Node
+	for i := range root.Children {
+		if root.Children[i].StartLine == 2 {
+			keyLine = &root.Children[i]
+		}
+	}
+	require.NotNil(t, keyLine, `the "key": line is a top-level node`)
+	require.Empty(t, keyLine.Children, "a non-compound colon line must not open a block")
+}
+
 func TestHost_ParseHonorsTimeout(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()

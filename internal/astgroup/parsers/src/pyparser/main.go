@@ -140,7 +140,7 @@ func leadingIndent(raw string) (indent, start int) {
 		case ' ':
 			indent++
 		case '\t':
-			indent += 8
+			indent += 8 - (indent % 8)
 		default:
 			return indent, start
 		}
@@ -237,11 +237,21 @@ func maxEnd(n node) int {
 	return m
 }
 
-// isHeader reports whether a line opens a nested block (ends with ':').
+// isHeader reports whether a line opens a nested block: it ends with ':' AND its
+// first token is a compound-statement keyword (classify returns a non-"stmt"
+// kind). Requiring the keyword — not merely a trailing ':' — stops a bare dict
+// key ("key":), a slice (arr[1:), or an annotation line from being misread as a
+// block opener and fabricating spurious child blocks that corrupt the structural
+// hash. (PoC limitation: match/case are soft keywords absent from
+// compoundKeywords, so their suites are not nested.)
 func isHeader(text string) bool {
 	t := stripComment(text)
 	t = strings.TrimRight(t, " \t")
-	return strings.HasSuffix(t, ":")
+	if !strings.HasSuffix(t, ":") {
+		return false
+	}
+	kind, _ := classify(text)
+	return kind != "stmt"
 }
 
 var compoundKeywords = []string{"def", "class", "if", "elif", "else", "for", "while", "with", "try", "except", "finally"}
