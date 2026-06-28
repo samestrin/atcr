@@ -30,6 +30,7 @@ func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, de
 	for i := range labels {
 		labels[i] = dbscanUnvisited
 	}
+	queued := make([]bool, n)
 	neighborsOf := func(p int) []int {
 		var out []int
 		for q := 0; q < n; q++ {
@@ -51,6 +52,9 @@ func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, de
 		}
 		labels[p] = cluster
 		seeds := append([]int(nil), nb...)
+		for _, q := range seeds {
+			queued[q] = true
+		}
 		for k := 0; k < len(seeds); k++ {
 			q := seeds[k]
 			if labels[q] == dbscanNoise {
@@ -62,7 +66,12 @@ func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, de
 			labels[q] = cluster
 			qn := neighborsOf(q)
 			if len(qn)+1 >= minPts {
-				seeds = append(seeds, qn...)
+				for _, r := range qn {
+					if labels[r] == dbscanUnvisited && !queued[r] {
+						queued[r] = true
+						seeds = append(seeds, r)
+					}
+				}
 			}
 		}
 		cluster++
