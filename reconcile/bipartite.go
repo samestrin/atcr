@@ -6,14 +6,15 @@ import (
 )
 
 // Bipartite matching for Epic 13.2. The greedy union-find dedup (single-linkage
-// over a similarity threshold) is replaced by optimal assignment: within a
-// location cluster, findings from different sources are matched 1:1 by the
-// Kuhn-Munkres (Hungarian) algorithm using the composite edge-weight distance
-// (see distance.go). The 1:1 constraint is the structural fix for the greedy
-// failure mode — single-linkage transitively chains A-B-C even when A and B are
-// only weakly similar; optimal matching pairs each finding with at most one
-// counterpart per other source, so a third finding cannot drag two non-duplicates
-// into one group.
+// over a similarity threshold) is replaced by greedy incremental pairwise
+// matching: within a location cluster, findings from different sources are
+// matched 1:1 by the Kuhn-Munkres (Hungarian) algorithm using the composite
+// edge-weight distance (see distance.go). Each pairwise step is optimal, but the
+// N-way result depends on the order in which sources are processed (bounded for
+// small N). The 1:1 constraint is the structural fix for the greedy failure mode
+// — single-linkage transitively chains A-B-C even when A and B are only weakly
+// similar; matching pairs each finding with at most one counterpart per other
+// source, so a third finding cannot drag two non-duplicates into one group.
 
 // noMatchSentinel is the cost charged to padded (virtual) cells when squaring a
 // rectangular cost matrix. It exceeds any real composite distance (≤ 1) so the
@@ -135,12 +136,15 @@ func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
 
 // bipartiteGroups partitions a location cluster into merge groups using the
 // incremental pairwise reduction of N-way matching: findings are split by source
-// (Reviewer), then each source's findings are optimally matched against the
-// groups accumulated so far. The group↔candidate cost is the single-linkage
-// (minimum) composite distance to the group's members, so the assignment prefers
-// pairing a candidate with the group it most resembles, while the 1:1 constraint
-// forbids one candidate from collapsing two distinct groups (the structural fix
-// for greedy single-linkage over-merge).
+// (Reviewer), then each source's findings are greedily matched against the
+// groups accumulated so far. Each pairwise step is optimal, but the overall
+// N-way result is order-dependent because a candidate matched early locks a
+// group that a later better-fitting candidate is then excluded from by the 1:1
+// constraint. The group↔candidate cost is the single-linkage (minimum) composite
+// distance to the group's members, so the assignment prefers pairing a candidate
+// with the group it most resembles, while the 1:1 constraint forbids one
+// candidate from collapsing two distinct groups (the structural fix for greedy
+// single-linkage over-merge).
 //
 // Acceptance is gated by mergeable, NOT by the float cost: a candidate joins the
 // group it was optimally assigned to only when mergeable(member, candidate) holds
