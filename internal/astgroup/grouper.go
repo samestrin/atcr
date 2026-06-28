@@ -34,6 +34,12 @@ type parsedFile struct {
 	tree Node
 	ok   bool
 
+	// done is closed once the parse (or its failure) completes. Concurrent callers
+	// for the same file find the placeholder in the cache and wait on done instead
+	// of re-parsing or blocking other files behind a held mutex; close(done)
+	// publishes tree/ok to those waiters (happens-before).
+	done chan struct{}
+
 	// Memoized grouping results, guarded by Grouper.mu. keyByLine caches the full
 	// group key per finding line; hashByAddr caches the expensive structural
 	// Merkle hash per covering-block address so the many findings that map to one
@@ -215,14 +221,19 @@ func (g *Grouper) rememberKey(pf *parsedFile, line int, key string) {
 // every finding in it.
 func (g *Grouper) treeFor(file, lang string) *parsedFile {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	if pf, ok := g.cache[file]; ok {
+		g.mu.Unlock()
+		<-pf.done // an in-flight or completed parse for this file: wait, don't re-parse
 		return pf
 	}
+	pf := &parsedFile{done: make(chan struct{})}
+	g.cache[file] = pf // publish the placeholder so concurrent callers wait on pf.done
+	g.mu.Unlock()
 
-	pf := &parsedFile{}
-	g.cache[file] = pf // cache the (initially negative) result; updated below on success
+	// Read+parse OUTSIDE g.mu so distinct files parse concurrently and cache hits
+	// for unrelated files never block behind an in-progress parse. Closing done
+	// publishes the result to any waiters.
+	defer close(pf.done)
 
 	path, ok := g.canonicalPath(file)
 	if !ok {
@@ -230,14 +241,14 @@ func (g *Grouper) treeFor(file, lang string) *parsedFile {
 	}
 	src, err := g.readFile(path)
 	if err != nil {
-		// Only cache permanent failures. Transient I/O errors (EAGAIN, EMFILE,
-		// a file briefly locked) should be retried on the next GroupKey call.
-		if isPermanentReadError(err) {
-			return pf
+		// Only keep permanent failures cached. Transient I/O errors (EAGAIN,
+		// EMFILE, a file briefly locked) should be retried on the next GroupKey
+		// call, so drop the placeholder for them.
+		if !isPermanentReadError(err) {
+			g.mu.Lock()
+			delete(g.cache, file)
+			g.mu.Unlock()
 		}
-		// Do not cache the negative result; leave the entry absent so the next
-		// call retries the read.
-		delete(g.cache, file)
 		return pf
 	}
 	parser, err := g.host.Parser(lang)

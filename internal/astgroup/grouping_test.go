@@ -281,6 +281,12 @@ func TestGrouper_ParsesDistinctFilesConcurrently(t *testing.T) {
 	g := NewGrouper(dir)
 	defer func() { _ = g.Close() }()
 
+	// Warm the parser instance up front so the timed window below measures
+	// read+parse concurrency, not one-time wasm module instantiation (slow,
+	// especially under -race).
+	_, err := g.host.Parser("go")
+	require.NoError(t, err)
+
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
 	var releaseOnce sync.Once
@@ -312,7 +318,7 @@ func TestGrouper_ParsesDistinctFilesConcurrently(t *testing.T) {
 		select {
 		case k := <-done:
 			require.NotEmpty(t, k)
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("GroupKey did not complete")
 		}
 	}
