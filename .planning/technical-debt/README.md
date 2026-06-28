@@ -9,9 +9,9 @@ This file is a staging area for small technical debt items discovered during dev
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
 | MEDIUM | 0 | 26 | 0 |
-| LOW | 0 | 24 | 0 |
+| LOW | 1 | 24 | 0 |
 
-**Last Modified:** 2026-06-28 | **Open Items:** 0 | **Deferred Items:** 52 | **Resolved Items:** 0 | **Total Items:** 52
+**Last Modified:** 2026-06-28 | **Open Items:** 1 | **Deferred Items:** 52 | **Resolved Items:** 0 | **Total Items:** 53
 
 ## Directory Structure
 
@@ -61,6 +61,12 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-28] From Sprint: epic-13.2
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| U | [ ] | LOW | reconcile/dedupe.go:62 | classify() is recomputed up to 3x per finding pair within dedupeCluster (distance-matrix build, the mergeable predicate, and the gray-pair scan) | Cache a per-cluster relation+similarity matrix once and read it from all three sites; keep the integer-exact boundary | PERFORMANCE | 30 | execute-epic-cumulative |
 
 ### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
 

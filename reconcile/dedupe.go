@@ -2,6 +2,8 @@ package reconcile
 
 import (
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -33,81 +35,200 @@ type AmbiguousCluster struct {
 }
 
 // DedupeCluster partitions one location cluster into merge groups and records
-// ambiguous pairs, with no adjudication applied. See dedupeCluster.
+// ambiguous pairs, with no adjudication and no AST grouping applied. See
+// dedupeCluster.
 func DedupeCluster(cluster []Finding) ([][]Finding, []AmbiguousCluster) {
-	return dedupeCluster(cluster, nil)
+	return dedupeCluster(cluster, make([]string, len(cluster)), nil)
 }
 
 // dedupeCluster partitions one location cluster into merge groups and records
-// ambiguous pairs. Findings linked by similarity >= MergeThreshold (single-
-// linkage, transitively) form a merge group to be collapsed downstream;
-// everything else stays in its own singleton group. Every pair scoring in
-// [GrayLow, MergeThreshold) is recorded as an AmbiguousCluster but is NOT merged
-// — UNLESS its content id is present in adjudicatedMerges, in which case the pair
-// is unioned (merged) and not re-recorded as ambiguous. Group order follows first
-// appearance for determinism. Token sets are computed once per finding (not per
-// pair) so the O(n^2) pair loop stays cheap.
-func dedupeCluster(cluster []Finding, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
+// ambiguous pairs. Merge decisions come from optimal bipartite matching
+// (bipartiteGroups): findings from different sources are matched 1:1 by the
+// composite edge-weight distance (AST GroupKey from keys[i], else 1 - Jaccard),
+// so each consensus issue gathers at most one finding per source and the greedy
+// single-linkage over-merge is structurally avoided. keys[i] is finding i's AST
+// group key (empty when none); it must be the same length as cluster.
+//
+// Every cross-group pair whose PROBLEM similarity falls in [GrayLow,
+// MergeThreshold) is recorded as an AmbiguousCluster but left unmerged — UNLESS
+// its content id is in adjudicatedMerges, in which case the two findings' groups
+// are unioned (merged) and the pair is not re-recorded. A gray pair whose groups
+// end up merged transitively (via adjudication of another pair) is dropped, so
+// the sidecar never contradicts the merged output. Token sets are computed once
+// per finding so the O(n^2) gray-pair scan stays cheap.
+func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
 	n := len(cluster)
+	if n == 0 {
+		return nil, nil
+	}
 	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
 		tokens[i] = tokenize(f.Problem)
 	}
-
-	uf := newUnionFind(n)
-	var ambiguous []AmbiguousCluster
-	var ambiguousPairs [][2]int // index pair behind each ambiguous entry, for the post-loop root check
+	dist := make([][]float64, n)
+	for i := range dist {
+		dist[i] = make([]float64, n)
+	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			rel, sim := classify(tokens[i], tokens[j])
-			switch rel {
-			case relMerge:
-				uf.union(i, j)
-			case relGray:
-				id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
-				if adjudicatedMerges[id] {
-					uf.union(i, j) // adjudicated this pair a duplicate
-					continue
-				}
-				ambiguous = append(ambiguous, AmbiguousCluster{
-					ID:         id,
-					File:       cluster[i].File,
-					Line:       cluster[i].Line,
-					Similarity: sim,
-					Findings:   []Finding{cluster[i], cluster[j]},
-				})
-				ambiguousPairs = append(ambiguousPairs, [2]int{i, j})
-			}
+			d := pairDistance(keys[i], keys[j], tokens[i], tokens[j])
+			dist[i][j], dist[j][i] = d, d
 		}
 	}
 
-	// A gray pair whose two findings ended up under the same union-find root
-	// (transitively merged via a third finding) is no longer adjudicable: a
-	// "merge" decision would be a silent no-op and "distinct" cannot be honored
-	// since the pair is already collapsed. Drop those entries so the ambiguous
-	// sidecar never contradicts the merged output.
-	kept := ambiguous[:0]
-	for k, p := range ambiguousPairs {
-		if uf.find(p[0]) != uf.find(p[1]) {
-			kept = append(kept, ambiguous[k])
+	// srcKeys identifies each finding's source for matching. A non-empty Reviewer
+	// is the source; an empty Reviewer (unattributed finding) gets a per-finding
+	// unique key so it is treated as its own source — otherwise every unattributed
+	// finding would collapse into one pseudo-source and nothing would ever match,
+	// silently disabling dedup. NUL-prefixing cannot collide with a stream-column
+	// reviewer value.
+	srcKeys := make([]string, n)
+	for i, f := range cluster {
+		if f.Reviewer != "" {
+			srcKeys[i] = f.Reviewer
+		} else {
+			srcKeys[i] = "\x00anon\x00" + strconv.Itoa(i)
 		}
 	}
-	ambiguous = kept
 
-	groupMap := map[int][]Finding{}
-	var roots []int
+	// mergeable is the integer-exact duplicate predicate: a shared non-empty AST
+	// key, or token-set Jaccard at/above MergeThreshold (classify's cross-multiply
+	// boundary, never the float distance). It gates bipartite acceptance so the
+	// merge decision stays deterministic.
+	mergeable := func(a, b int) bool {
+		if keys[a] != "" && keys[a] == keys[b] {
+			return true
+		}
+		rel, _ := classify(tokens[a], tokens[b])
+		return rel == relMerge
+	}
+
+	groups := bipartiteGroups(srcKeys, dist, mergeable)
+	groupOf := make([]int, n)
+	for gi, g := range groups {
+		for _, idx := range g {
+			groupOf[idx] = gi
+		}
+	}
+
+	// Adjudicated gray pairs force-merge groups; union-find runs over GROUP ids.
+	uf := newUnionFind(len(groups))
+	var ambiguous []AmbiguousCluster
+	var ambiguousPairs [][2]int // group-id pair behind each entry, for the post-loop root check
+	var ambiguousIdx [][2]int   // finding-index pair behind each entry, for the noise exclusion
 	for i := 0; i < n; i++ {
-		r := uf.find(i)
-		if _, seen := groupMap[r]; !seen {
-			roots = append(roots, r)
+		for j := i + 1; j < n; j++ {
+			if groupOf[i] == groupOf[j] {
+				continue // matched into one group already; not adjudicable
+			}
+			rel, sim := classify(tokens[i], tokens[j])
+			if rel != relGray {
+				continue
+			}
+			id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
+			if adjudicatedMerges[id] {
+				uf.union(groupOf[i], groupOf[j]) // adjudicated this pair a duplicate
+				continue
+			}
+			ambiguous = append(ambiguous, AmbiguousCluster{
+				ID:         id,
+				File:       cluster[i].File,
+				Line:       cluster[i].Line,
+				Similarity: sim,
+				Findings:   []Finding{cluster[i], cluster[j]},
+			})
+			ambiguousPairs = append(ambiguousPairs, [2]int{groupOf[i], groupOf[j]})
+			ambiguousIdx = append(ambiguousIdx, [2]int{i, j})
 		}
-		groupMap[r] = append(groupMap[r], cluster[i])
 	}
-	groups := make([][]Finding, 0, len(roots))
-	for _, r := range roots {
-		groups = append(groups, groupMap[r])
+
+	// Drop gray pairs whose groups were transitively merged by adjudication: a
+	// "merge" decision would be a silent no-op and "distinct" can no longer be
+	// honored, so the entry must not contradict the merged output.
+	keptAmb := ambiguous[:0]
+	keptIdx := ambiguousIdx[:0]
+	for k, gp := range ambiguousPairs {
+		if uf.find(gp[0]) != uf.find(gp[1]) {
+			keptAmb = append(keptAmb, ambiguous[k])
+			keptIdx = append(keptIdx, ambiguousIdx[k])
+		}
 	}
-	return groups, ambiguous
+	ambiguous = keptAmb
+
+	// A finding already surfaced in a surviving gray pair must not also be isolated
+	// as DBSCAN noise (no double representation in the sidecar).
+	grayInvolved := make(map[int]bool, len(keptIdx)*2)
+	for _, p := range keptIdx {
+		grayInvolved[p[0]] = true
+		grayInvolved[p[1]] = true
+	}
+
+	// Materialize merge groups, folding adjudicated group unions together. Root
+	// order follows group order (already normalized by lowest member index), so the
+	// merge representative stays the lowest-index finding.
+	rootIdx := map[int][]int{}
+	var rootOrder []int
+	for gi, g := range groups {
+		r := uf.find(gi)
+		if _, seen := rootIdx[r]; !seen {
+			rootOrder = append(rootOrder, r)
+		}
+		rootIdx[r] = append(rootIdx[r], g...)
+	}
+	soloRoot := make(map[int]bool, n) // finding index → it is the only member of its root
+	for _, idxs := range rootIdx {
+		if len(idxs) == 1 {
+			soloRoot[idxs[0]] = true
+		}
+	}
+
+	// DBSCAN over the same location cluster isolates uncorroborated noise. The
+	// eps-neighborhood is a CROSS-SOURCE merge: density must come from two distinct
+	// sources agreeing (real corroboration), not one source repeating itself — a
+	// self-duplicate is not evidence that a different source's finding is noise.
+	// Noise is isolated ONLY when such a dense cluster also exists in this location
+	// (a finding standing alone where others corroborate each other is a likely
+	// single-model hallucination; a finding whose location no one else touched is
+	// just an uncorroborated report and stays in the output), and only when the
+	// finding is genuinely alone — not gray-paired and not merged into any group —
+	// so it is never represented in both the output and the sidecar.
+	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && srcKeys[a] != srcKeys[b] }
+	labels, dense := dbscanLabels(n, dbscanMinPts, denseNeighbor)
+	noiseIdx := map[int]bool{}
+	var noise []AmbiguousCluster
+	if dense {
+		for i := 0; i < n; i++ {
+			if labels[i] != dbscanNoise || grayInvolved[i] || !soloRoot[i] {
+				continue
+			}
+			noiseIdx[i] = true
+			noise = append(noise, AmbiguousCluster{
+				// A single-finding cluster: same-problem id keeps it stable and
+				// distinct from any two-problem gray-pair id; Similarity stays 0
+				// (no corroboration). debate skips clusters with < 2 findings.
+				ID:       AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[i].Problem),
+				File:     cluster[i].File,
+				Line:     cluster[i].Line,
+				Findings: []Finding{cluster[i]},
+			})
+		}
+	}
+
+	out := make([][]Finding, 0, len(rootOrder))
+	for _, r := range rootOrder {
+		idxs := rootIdx[r]
+		if len(idxs) == 1 && noiseIdx[idxs[0]] {
+			continue // isolated as DBSCAN noise → sidecar only
+		}
+		sort.Ints(idxs) // stable member order after any adjudicated union
+		members := make([]Finding, len(idxs))
+		for k, idx := range idxs {
+			members[k] = cluster[idx]
+		}
+		out = append(out, members)
+	}
+	ambiguous = append(ambiguous, noise...)
+	return out, ambiguous
 }
 
 // relation is the dedupe outcome for one pair.
@@ -172,7 +293,8 @@ func tokenize(s string) map[string]struct{} {
 	return set
 }
 
-// unionFind is a tiny disjoint-set for single-linkage grouping within a cluster.
+// unionFind is a tiny disjoint-set used to fold adjudicated gray-pair merges over
+// the bipartite group ids within a cluster.
 type unionFind struct{ parent []int }
 
 func newUnionFind(n int) *unionFind {

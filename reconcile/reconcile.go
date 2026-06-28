@@ -79,7 +79,7 @@ func Reconcile(sources []Source, opts Options) Result {
 	clustersCollapsed, disagreements := 0, 0
 
 	for _, cl := range clusters {
-		groups, amb := dedupeCluster(cl, opts.Merges)
+		groups, amb := dedupeCluster(cl, clusterKeys(cl, opts.Grouper), opts.Merges)
 		ambiguous = append(ambiguous, amb...)
 		for _, g := range groups {
 			m := Merge(g)
@@ -135,6 +135,21 @@ func sortMerged(m []Merged) {
 		}
 		return m[i].Problem < m[j].Problem
 	})
+}
+
+// clusterKeys returns the AST group key for each finding in a cluster (empty
+// strings when g is nil or supplies no key), aligned by index with cluster. The
+// keys feed the composite edge-weight distance: two findings sharing a non-empty
+// key are structurally isomorphic (13.1) and matched at distance 0.
+func clusterKeys(cluster []Finding, g Grouper) []string {
+	keys := make([]string, len(cluster))
+	if g == nil {
+		return keys
+	}
+	for i, f := range cluster {
+		keys[i] = g.GroupKey(f)
+	}
+	return keys
 }
 
 // AllFindings flattens the findings across sources in source order.
