@@ -74,8 +74,15 @@ func (lg *lazyGrouper) Close() error {
 // the underlying wazero runtime is never created. If a language's .wasm parser
 // cannot load at group time, or the source file is absent (e.g. an MCP reconcile
 // without a checked-out tree), GroupKey returns "" and that finding falls back
-// to proximity grouping — so enabling AST grouping can only refine clustering,
-// never break a reconcile.
+// to proximity grouping, so a missing parser or absent tree never errors a
+// reconcile.
+//
+// AST grouping does NOT strictly refine proximity clustering, however. ClusterWith
+// pulls keyed findings out of the line stream before proximity-clustering the
+// unkeyed remainder, so a keyed finding and an unkeyed near-duplicate straddling
+// it can land in separate clusters and never be compared — AST grouping can thus
+// REDUCE the merge count relative to proximity-only in mixed keyed/unkeyed
+// scenarios, not only increase precision.
 func astGrouperFor(root string) (reclib.Grouper, func()) {
 	if os.Getenv(astGroupingDisabledEnv) != "" {
 		return nil, func() {}
