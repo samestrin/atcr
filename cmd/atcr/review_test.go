@@ -12,6 +12,7 @@ import (
 	"github.com/samestrin/atcr/internal/fanout"
 	"github.com/samestrin/atcr/internal/llmclient"
 	"github.com/samestrin/atcr/internal/log"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -319,6 +320,16 @@ func TestSprintPlanPath_MapsFlag(t *testing.T) {
 	cmd2 := newReviewCmd()
 	require.NoError(t, cmd2.ParseFlags(nil))
 	require.Equal(t, "", sprintPlanPath(cmd2), "unset flag yields empty")
+}
+
+// TestSprintPlanPath_UndefinedFlagPanics verifies sprintPlanPath asserts flag
+// existence — an undefined "sprint-plan" flag is a programming error that must
+// fail loudly rather than silently returning empty (mirrors boolFlag).
+func TestSprintPlanPath_UndefinedFlagPanics(t *testing.T) {
+	cmd := &cobra.Command{}
+	require.Panics(t, func() {
+		sprintPlanPath(cmd)
+	})
 }
 
 // TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
