@@ -125,6 +125,11 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 			if groupOf[i] == groupOf[j] {
 				continue // matched into one group already; not adjudicable
 			}
+			// Same non-empty AST key is authoritative duplicate evidence: do not
+			// record the pair as gray even if token Jaccard falls in the gray band.
+			if keys[i] != "" && keys[i] == keys[j] {
+				continue
+			}
 			rel, sim := classify(tokens[i], tokens[j])
 			if rel != relGray {
 				continue
