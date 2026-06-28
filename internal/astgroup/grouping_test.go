@@ -86,6 +86,27 @@ func TestMerkleHash_InvariantToLineNumbers(t *testing.T) {
 	require.Equal(t, MerkleHash(a), MerkleHash(b), "line numbers must not affect the structural hash")
 }
 
+// TestMerkleHash_BoundsRecursionDepth verifies MerkleHash does not recurse
+// without bound: subtrees deeper than the depth cap are truncated rather than
+// hashed all the way down, so a pathologically deep tree cannot drive unbounded
+// host-side stack growth. The literal 4096 must match merkle.go's maxNodeDepth.
+func TestMerkleHash_BoundsRecursionDepth(t *testing.T) {
+	const bound = 4096
+	chain := func(depth int) Node {
+		root := Node{Kind: "block"}
+		cur := &root
+		for i := 0; i < depth; i++ {
+			cur.Children = []Node{{Kind: "block"}}
+			cur = &cur.Children[0]
+		}
+		return root
+	}
+	// Two chains identical down to the bound but differing below it must hash the
+	// same once recursion is capped at the bound.
+	require.Equal(t, MerkleHash(chain(bound)), MerkleHash(chain(bound+64)),
+		"subtrees deeper than the cap must be truncated, not hashed unboundedly")
+}
+
 func TestMerkleHash_DistinguishesNameAndShape(t *testing.T) {
 	f := Node{Kind: "func", Name: "F", StartLine: 1, EndLine: 2}
 	g := Node{Kind: "func", Name: "G", StartLine: 1, EndLine: 2}
