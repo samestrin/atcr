@@ -1,0 +1,2162 @@
+diff --git a/go.mod b/go.mod
+index 09c4656d..965b6863 100644
+--- a/go.mod
++++ b/go.mod
+@@ -9,13 +9,15 @@ require (
+ 	golang.org/x/mod v0.37.0
+ )
+ 
++require github.com/tetratelabs/wazero v1.12.0 // indirect
++
+ require (
+ 	github.com/modelcontextprotocol/go-sdk v1.6.1
+ 	github.com/segmentio/asm v1.1.3 // indirect
+ 	github.com/segmentio/encoding v0.5.4 // indirect
+ 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+ 	golang.org/x/oauth2 v0.35.0 // indirect
+-	golang.org/x/sys v0.41.0 // indirect
++	golang.org/x/sys v0.44.0 // indirect
+ )
+ 
+ require (
+diff --git a/go.sum b/go.sum
+index d6138290..801120f5 100644
+--- a/go.sum
++++ b/go.sum
+@@ -20,6 +20,8 @@ github.com/spf13/pflag v1.0.9 h1:9exaQaMOCwffKiiiYk6/BndUBv+iRViNW+4lEMi0PvY=
+ github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
+ github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+ github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
++github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=
++github.com/tetratelabs/wazero v1.12.0/go.mod h1:LvKtzl2RqO4gyF27BiXU+nKAjcV8f38U+kP/q2vgxh0=
+ github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
+ github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
+ go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
+@@ -29,6 +31,8 @@ golang.org/x/oauth2 v0.35.0 h1:Mv2mzuHuZuY2+bkyWXIHMfhNdJAdwW3FuWeCPYN5GVQ=
+ golang.org/x/oauth2 v0.35.0/go.mod h1:lzm5WQJQwKZ3nwavOZ3IS5Aulzxi68dUSgRHujetwEA=
+ golang.org/x/sys v0.41.0 h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=
+ golang.org/x/sys v0.41.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
++golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
++golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+diff --git a/internal/astgroup/benchmark_test.go b/internal/astgroup/benchmark_test.go
+new file mode 100644
+index 00000000..767546d6
+--- /dev/null
++++ b/internal/astgroup/benchmark_test.go
+@@ -0,0 +1,119 @@
++package astgroup
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/reconcile"
++	"github.com/stretchr/testify/require"
++)
++
++type benchCase struct {
++	Name      string `json:"name"`
++	File      string `json:"file"`
++	Source    string `json:"source"`
++	ALine     int    `json:"a_line"`
++	BLine     int    `json:"b_line"`
++	SameBlock bool   `json:"same_block"`
++}
++
++func abs(n int) int {
++	if n < 0 {
++		return -n
++	}
++	return n
++}
++
++// TestBenchmark_ASTGroupingAccuracy is the AC3 validation harness. It runs the
++// AST grouper over a labeled corpus of finding pairs and compares it to the
++// incumbent ±3 line-proximity rule on two axes:
++//   - recall on same-block positives (the off-by-one / drift discrepancies AC3
++//     must resolve): target ≥95%;
++//   - precision (no false grouping of pairs in genuinely different blocks).
++//
++// It also asserts the AST signal strictly dominates proximity: it resolves every
++// large-drift (>3) same-block pair proximity misses, and never makes proximity's
++// adjacent-different-block false merges.
++func TestBenchmark_ASTGroupingAccuracy(t *testing.T) {
++	data, err := os.ReadFile(filepath.Join("testdata", "corpus.json"))
++	require.NoError(t, err)
++	var cases []benchCase
++	require.NoError(t, json.Unmarshal(data, &cases))
++	require.GreaterOrEqual(t, len(cases), 20, "corpus should be a meaningful size")
++
++	dir := t.TempDir()
++	g := NewGrouper(dir)
++	defer func() { _ = g.Close() }()
++
++	var (
++		positives, negatives                     int
++		astTP, astFP                             int
++		proxTP, proxFP                           int
++		astFixedLargeDrift, proxMissedLargeDrift int
++	)
++
++	for _, c := range cases {
++		// Each case gets its own file path (sources differ per case).
++		path := filepath.Join(dir, c.Name+"_"+c.File)
++		require.NoError(t, os.WriteFile(path, []byte(c.Source), 0o644))
++		rel := c.Name + "_" + c.File
++
++		ka := g.GroupKey(reconcile.Finding{File: rel, Line: c.ALine})
++		kb := g.GroupKey(reconcile.Finding{File: rel, Line: c.BLine})
++		astGrouped := ka != "" && ka == kb
++
++		// Incumbent: same file (always true here) and within ±3 lines.
++		proxGrouped := abs(c.ALine-c.BLine) <= 3
++		largeDrift := abs(c.ALine-c.BLine) > 3
++
++		if c.SameBlock {
++			positives++
++			if astGrouped {
++				astTP++
++			}
++			if proxGrouped {
++				proxTP++
++			}
++			if largeDrift {
++				if astGrouped {
++					astFixedLargeDrift++
++				}
++				if !proxGrouped {
++					proxMissedLargeDrift++
++				}
++			}
++		} else {
++			negatives++
++			if astGrouped {
++				astFP++
++				t.Logf("AST false-merge on negative case %q", c.Name)
++			}
++			if proxGrouped {
++				proxFP++
++			}
++		}
++	}
++
++	astRecall := float64(astTP) / float64(positives)
++	astPrecision := 1.0
++	if astTP+astFP > 0 {
++		astPrecision = float64(astTP) / float64(astTP+astFP)
++	}
++	proxRecall := float64(proxTP) / float64(positives)
++
++	t.Logf("positives=%d negatives=%d", positives, negatives)
++	t.Logf("AST:       recall=%.3f precision=%.3f (TP=%d FP=%d)", astRecall, astPrecision, astTP, astFP)
++	t.Logf("Proximity: recall=%.3f             (TP=%d FP=%d)", proxRecall, proxTP, proxFP)
++	t.Logf("AST resolved %d/%d large-drift (>3) same-block pairs proximity missed", astFixedLargeDrift, proxMissedLargeDrift)
++
++	// AC3 functional criterion: resolve ≥95% of same-block drift discrepancies.
++	require.GreaterOrEqual(t, astRecall, 0.95, "AST recall on same-block pairs below 95%")
++	// Precision: AST must not over-merge genuinely-different blocks.
++	require.Equal(t, 0, astFP, "AST false-merged a different-block pair")
++	// Dominance: AST resolves every large-drift positive proximity misses.
++	require.Equal(t, proxMissedLargeDrift, astFixedLargeDrift, "AST must resolve all large-drift pairs proximity misses")
++	// AST must be no worse than proximity on precision (proximity false-merges adjacent different blocks).
++	require.LessOrEqual(t, astFP, proxFP, "AST precision must be at least as good as proximity")
++}
+diff --git a/internal/astgroup/cover.go b/internal/astgroup/cover.go
+new file mode 100644
+index 00000000..e5b7577c
+--- /dev/null
++++ b/internal/astgroup/cover.go
+@@ -0,0 +1,83 @@
++package astgroup
++
++import "strconv"
++
++// blockKinds are the node kinds that constitute a "logical block" — a scope a
++// finding can be grouped by. Leaf/simple statements (assign, return, expr, bare
++// stmt) are intentionally excluded: mapping a finding to its enclosing block
++// (function body, control-flow block, class) rather than to the exact statement
++// is what lets two findings that drifted by whitespace — or that a skeptic
++// flagged a few lines apart inside the same block — group together, while keeping
++// findings in genuinely different blocks apart.
++var blockKinds = map[string]bool{
++	"file": true, "module": true, "func": true, "funclit": true,
++	"class": true, "type": true, "gendecl": true, "block": true,
++	"if": true, "for": true, "while": true, "switch": true,
++	"with": true, "try": true, "except": true, "finally": true, "else": true,
++}
++
++func isBlock(n Node) bool { return blockKinds[n.Kind] }
++
++func segment(n Node, blockIdx int) string {
++	return n.Kind + ":" + n.Name + ":" + strconv.Itoa(blockIdx)
++}
++
++// CoveringBlock returns the deepest block-level node whose inclusive line span
++// contains line, together with a structural address that uniquely locates that
++// block within the tree. The address is a "/"-joined chain of
++// kind:name:sibling-block-index segments from the root — fully structural, so it
++// is invariant to line-number drift (blank lines, reformatting) yet distinguishes
++// sibling blocks and identically-shaped blocks in different scopes. ok is false
++// when line falls outside the root's span.
++func CoveringBlock(root Node, line int) (block Node, addr string, ok bool) {
++	if line < root.StartLine || line > root.EndLine {
++		return Node{}, "", false
++	}
++	chain, subAddr := coveringChain(root, line)
++	addr = segment(root, 0)
++	block = root
++	if len(chain) > 0 {
++		addr += "/" + subAddr
++		block = chain[len(chain)-1]
++	}
++	return block, addr, true
++}
++
++// coveringChain returns the chain of block nodes BELOW n down to the deepest
++// covering block, and the address of that chain relative to n. It descends
++// through non-block nodes (e.g. an expression statement wrapping a function
++// literal) to reach nested blocks. The returned chain excludes n itself.
++func coveringChain(n Node, line int) (chain []Node, addr string) {
++	blockIdx := 0
++	for i := range n.Children {
++		ch := n.Children[i]
++		if line < ch.StartLine || line > ch.EndLine {
++			if isBlock(ch) {
++				blockIdx++
++			}
++			continue
++		}
++		subChain, subAddr := coveringChain(ch, line)
++		if isBlock(ch) {
++			seg := segment(ch, blockIdx)
++			if subAddr != "" {
++				seg += "/" + subAddr
++			}
++			return append([]Node{ch}, subChain...), seg
++		}
++		// ch covers but is not a block: its block descendants (if any) are the
++		// real cover; if it has none, the cover is n (empty chain).
++		return subChain, subAddr
++	}
++	return nil, ""
++}
++
++// SmallestCovering returns the deepest block-level node covering line, or nil if
++// line is outside the root. It is CoveringBlock without the address.
++func SmallestCovering(root Node, line int) *Node {
++	block, _, ok := CoveringBlock(root, line)
++	if !ok {
++		return nil
++	}
++	return &block
++}
+diff --git a/internal/astgroup/crosscompile_test.go b/internal/astgroup/crosscompile_test.go
+new file mode 100644
+index 00000000..2a78a3d6
+--- /dev/null
++++ b/internal/astgroup/crosscompile_test.go
+@@ -0,0 +1,63 @@
++package astgroup
++
++import (
++	"os"
++	"os/exec"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++// TestCrossCompileZeroCGO proves the wazero-backed reconciler keeps the project's
++// out-of-the-box cross-compilation guarantee: the atcr binary builds for a
++// foreign GOOS/GOARCH with CGO_ENABLED=0 (AC1 "zero CGO dependencies" + the
++// functional criterion). wazero is pure Go, so there is no C toolchain in the
++// path. Skipped under -short.
++func TestCrossCompileZeroCGO(t *testing.T) {
++	if testing.Short() {
++		t.Skip("skipping cross-compile build under -short")
++	}
++
++	root := repoRootFromHere(t)
++	cmd := exec.Command("go", "build", "-o", os.DevNull, "./cmd/atcr")
++	cmd.Dir = root
++	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=arm64")
++	out, err := cmd.CombinedOutput()
++	require.NoErrorf(t, err, "zero-CGO cross-compile to linux/arm64 failed:\n%s", out)
++}
++
++// repoRootFromHere walks up to the directory containing go.mod for the root
++// module (the one whose module path has no trailing segment after atcr).
++func repoRootFromHere(t *testing.T) string {
++	t.Helper()
++	dir, err := os.Getwd()
++	require.NoError(t, err)
++	for {
++		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
++			if data, rerr := os.ReadFile(filepath.Join(dir, "go.mod")); rerr == nil &&
++				len(data) > 0 && hasModuleLine(string(data), "module github.com/samestrin/atcr\n") {
++				return dir
++			}
++		}
++		parent := filepath.Dir(dir)
++		if parent == dir {
++			t.Fatal("could not locate repo root (root module go.mod)")
++		}
++		dir = parent
++	}
++}
++
++func hasModuleLine(content, line string) bool {
++	return len(content) >= len(line) && (content[:len(line)] == line ||
++		indexOf(content, "\n"+line) >= 0)
++}
++
++func indexOf(s, sub string) int {
++	for i := 0; i+len(sub) <= len(s); i++ {
++		if s[i:i+len(sub)] == sub {
++			return i
++		}
++	}
++	return -1
++}
+diff --git a/internal/astgroup/embed.go b/internal/astgroup/embed.go
+new file mode 100644
+index 00000000..c42a762e
+--- /dev/null
++++ b/internal/astgroup/embed.go
+@@ -0,0 +1,29 @@
++package astgroup
++
++import "embed"
++
++//go:embed parsers/go.wasm parsers/python.wasm
++var parserFS embed.FS
++
++// builtinParsers maps a language id to its embedded .wasm plugin path. Adding a
++// language is "drop in a new .wasm file" plus one entry here (and an extension
++// mapping in LanguageForExt). The embedded set is the hermetic default; a runtime
++// override directory (future extension) would be consulted before this map.
++var builtinParsers = map[string]string{
++	"go":     "parsers/go.wasm",
++	"python": "parsers/python.wasm",
++}
++
++// LanguageForExt maps a file extension (including the dot, lowercased) to a
++// parser language id, or "" if no parser is available for it. Callers that get
++// "" should fall back to line-proximity grouping for that finding.
++func LanguageForExt(ext string) string {
++	switch ext {
++	case ".go":
++		return "go"
++	case ".py":
++		return "python"
++	default:
++		return ""
++	}
++}
+diff --git a/internal/astgroup/grouper.go b/internal/astgroup/grouper.go
+new file mode 100644
+index 00000000..be933d3a
+--- /dev/null
++++ b/internal/astgroup/grouper.go
+@@ -0,0 +1,132 @@
++package astgroup
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++
++	"github.com/samestrin/atcr/reconcile"
++)
++
++// Grouper implements reconcile.Grouper using AST isomorphism. For each finding it
++// resolves the finding's file to a parser language, parses the source (once per
++// file, cached) into a structural tree via the wazero-backed Host, maps the
++// finding's line to its smallest covering AST node, and returns a file-scoped
++// Merkle hash of that node as the grouping key. Findings that share a key are the
++// "same logical block" and cluster together regardless of line drift.
++//
++// A returned empty key means "fall back to line proximity": the finding is
++// file-level (Line <= 0), its language has no parser, the file is missing or
++// unparseable, or no node covers the line.
++type Grouper struct {
++	host *Host
++	root string
++
++	mu    sync.Mutex
++	cache map[string]*parsedFile // keyed by finding.File
++}
++
++type parsedFile struct {
++	tree Node
++	ok   bool
++}
++
++// NewGrouper builds a Grouper rooted at root: relative finding paths are resolved
++// against root before reading. Pass the reconcile Options.Root. Call Close to
++// release the underlying wazero runtime.
++func NewGrouper(root string) *Grouper {
++	return &Grouper{host: NewHost(), root: root, cache: map[string]*parsedFile{}}
++}
++
++// Close releases the wazero runtime.
++func (g *Grouper) Close() error { return g.host.Close() }
++
++// resolvePath maps a finding's File to an on-disk path and confirms it stays
++// within root. It refuses paths that escape root — via "../" or an absolute path
++// outside it — so a hostile finding.File cannot turn the grouper into a
++// file-existence oracle for arbitrary locations. An empty root is treated as the
++// current working directory rather than disabling the guard, so containment
++// always applies. ok is false when the path is rejected.
++func (g *Grouper) resolvePath(file string) (string, bool) {
++	root := g.root
++	if root == "" {
++		root = "."
++	}
++	root = filepath.Clean(root)
++
++	p := file
++	if !filepath.IsAbs(p) {
++		p = filepath.Join(root, file)
++	}
++	p = filepath.Clean(p)
++
++	rel, err := filepath.Rel(root, p)
++	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
++		return "", false
++	}
++	return p, true
++}
++
++// GroupKey returns the AST-isomorphism key for f, or "" to fall back to proximity.
++func (g *Grouper) GroupKey(f reconcile.Finding) string {
++	if f.Line <= 0 || f.File == "" {
++		return ""
++	}
++	// Normalize the path so two reviewers citing the same file with different
++	// spellings ("x.go" vs "./x.go") share a cache entry and group key.
++	file := filepath.Clean(f.File)
++	lang := LanguageForExt(strings.ToLower(filepath.Ext(file)))
++	if lang == "" {
++		return ""
++	}
++	pf := g.treeFor(file, lang)
++	if !pf.ok {
++		return ""
++	}
++	block, addr, ok := CoveringBlock(pf.tree, f.Line)
++	if !ok {
++		return ""
++	}
++	// Key = file + structural address of the covering block + its Merkle hash.
++	// The address (drift-invariant, sibling-distinguishing) prevents two
++	// identically-shaped blocks in different scopes from colliding; the Merkle
++	// hash folds in the block's full structure per the epic's design. File-scoped
++	// so identical structures in different files never collide.
++	return file + "\x00" + addr + "\x00" + MerkleHash(block)
++}
++
++// treeFor returns the parsed tree for file, parsing+caching on first use. A parse
++// or read failure is cached as a negative result so a bad file is not re-read for
++// every finding in it.
++func (g *Grouper) treeFor(file, lang string) *parsedFile {
++	g.mu.Lock()
++	defer g.mu.Unlock()
++
++	if pf, ok := g.cache[file]; ok {
++		return pf
++	}
++
++	pf := &parsedFile{}
++	g.cache[file] = pf // cache the (initially negative) result; updated below on success
++
++	path, ok := g.resolvePath(file)
++	if !ok {
++		return pf // path escapes root: refuse to read, fall back to proximity
++	}
++	src, err := os.ReadFile(path)
++	if err != nil {
++		return pf
++	}
++	parser, err := g.host.Parser(lang)
++	if err != nil {
++		return pf
++	}
++	tree, err := parser.Parse(src)
++	if err != nil {
++		return pf
++	}
++	pf.tree = tree
++	pf.ok = true
++	return pf
++}
+diff --git a/internal/astgroup/grouping_test.go b/internal/astgroup/grouping_test.go
+new file mode 100644
+index 00000000..32529607
+--- /dev/null
++++ b/internal/astgroup/grouping_test.go
+@@ -0,0 +1,131 @@
++package astgroup
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/samestrin/atcr/reconcile"
++	"github.com/stretchr/testify/require"
++)
++
++func TestSmallestCovering(t *testing.T) {
++	tree := Node{Kind: "file", StartLine: 1, EndLine: 20, Children: []Node{
++		{Kind: "func", Name: "A", StartLine: 3, EndLine: 8, Children: []Node{
++			{Kind: "if", StartLine: 5, EndLine: 7},
++		}},
++		{Kind: "func", Name: "B", StartLine: 12, EndLine: 18},
++	}}
++
++	// Line inside the nested if → deepest node is the if.
++	cov := SmallestCovering(tree, 6)
++	require.NotNil(t, cov)
++	require.Equal(t, "if", cov.Kind)
++
++	// Line in func A but outside the if → func A.
++	cov = SmallestCovering(tree, 4)
++	require.NotNil(t, cov)
++	require.Equal(t, "A", cov.Name)
++
++	// Line in func B.
++	cov = SmallestCovering(tree, 15)
++	require.Equal(t, "B", cov.Name)
++
++	// Line in the file but between funcs (line 10) → the file node itself.
++	cov = SmallestCovering(tree, 10)
++	require.Equal(t, "file", cov.Kind)
++
++	// Line outside the whole file.
++	require.Nil(t, SmallestCovering(tree, 99))
++}
++
++func TestMerkleHash_InvariantToLineNumbers(t *testing.T) {
++	// Same structure, different line numbers (whitespace / blank-line drift).
++	a := Node{Kind: "func", Name: "F", StartLine: 10, EndLine: 14, Children: []Node{
++		{Kind: "return", StartLine: 11, EndLine: 11},
++	}}
++	b := Node{Kind: "func", Name: "F", StartLine: 40, EndLine: 44, Children: []Node{
++		{Kind: "return", StartLine: 41, EndLine: 41},
++	}}
++	require.Equal(t, MerkleHash(a), MerkleHash(b), "line numbers must not affect the structural hash")
++}
++
++func TestMerkleHash_DistinguishesNameAndShape(t *testing.T) {
++	f := Node{Kind: "func", Name: "F", StartLine: 1, EndLine: 2}
++	g := Node{Kind: "func", Name: "G", StartLine: 1, EndLine: 2}
++	require.NotEqual(t, MerkleHash(f), MerkleHash(g), "different names hash differently")
++
++	shallow := Node{Kind: "func", Name: "F", StartLine: 1, EndLine: 2}
++	deep := Node{Kind: "func", Name: "F", StartLine: 1, EndLine: 4, Children: []Node{{Kind: "if", StartLine: 2, EndLine: 3}}}
++	require.NotEqual(t, MerkleHash(shallow), MerkleHash(deep), "different shapes hash differently")
++}
++
++// TestGrouper_GroupsAcrossLineDrift is the AC3 behavior: two findings inside the
++// same function but at drifted line numbers produce the same GroupKey.
++func TestGrouper_GroupsAcrossLineDrift(t *testing.T) {
++	dir := t.TempDir()
++	src := `package p
++
++func Target() {
++	x := 1
++	y := 2
++	_ = x + y
++}
++
++func Other() {
++	z := 3
++	_ = z
++}
++`
++	path := filepath.Join(dir, "code.go")
++	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
++
++	g := NewGrouper(dir)
++	defer func() { _ = g.Close() }()
++
++	// Two findings inside Target() at different lines.
++	k1 := g.GroupKey(reconcile.Finding{File: "code.go", Line: 4})
++	k2 := g.GroupKey(reconcile.Finding{File: "code.go", Line: 6})
++	require.NotEmpty(t, k1)
++	require.Equal(t, k1, k2, "findings in the same function group despite a line gap")
++
++	// A finding in Other() differs.
++	k3 := g.GroupKey(reconcile.Finding{File: "code.go", Line: 10})
++	require.NotEmpty(t, k3)
++	require.NotEqual(t, k1, k3, "findings in different functions do not group")
++}
++
++func TestGrouper_EmptyKeyTriggersFallback(t *testing.T) {
++	g := NewGrouper(t.TempDir())
++	defer func() { _ = g.Close() }()
++
++	// File-level finding (Line <= 0): no structural key.
++	require.Empty(t, g.GroupKey(reconcile.Finding{File: "code.go", Line: 0}))
++	// Unsupported language.
++	require.Empty(t, g.GroupKey(reconcile.Finding{File: "README.md", Line: 5}))
++	// Missing file.
++	require.Empty(t, g.GroupKey(reconcile.Finding{File: "nope.go", Line: 5}))
++}
++
++func TestGrouper_RefusesPathOutsideRoot(t *testing.T) {
++	root := t.TempDir()
++	// A real Go file outside root that a traversal would otherwise reach.
++	outside := filepath.Dir(root)
++	secret := filepath.Join(outside, "secret.go")
++	require.NoError(t, os.WriteFile(secret, []byte("package p\nfunc S() {}\n"), 0o644))
++	defer func() { _ = os.Remove(secret) }()
++
++	g := NewGrouper(root)
++	defer func() { _ = g.Close() }()
++
++	// "../secret.go" escapes root → refused → empty key (proximity fallback).
++	require.Empty(t, g.GroupKey(reconcile.Finding{File: "../secret.go", Line: 2}))
++	// Absolute path outside root → refused.
++	require.Empty(t, g.GroupKey(reconcile.Finding{File: secret, Line: 2}))
++}
++
++// TestGrouper_SatisfiesReconcileInterface is a compile-time assertion that the
++// astgroup grouper plugs into the reconcile seam.
++func TestGrouper_SatisfiesReconcileInterface(t *testing.T) {
++	var _ reconcile.Grouper = (*Grouper)(nil)
++}
+diff --git a/internal/astgroup/host.go b/internal/astgroup/host.go
+new file mode 100644
+index 00000000..6e531832
+--- /dev/null
++++ b/internal/astgroup/host.go
+@@ -0,0 +1,228 @@
++package astgroup
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"sync"
++
++	"github.com/tetratelabs/wazero"
++	"github.com/tetratelabs/wazero/api"
++	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
++)
++
++// Parser parses source bytes into a structural Node tree. Implementations are
++// safe for concurrent use by the caller (calls into a single wasm instance are
++// serialized internally).
++type Parser interface {
++	Parse(src []byte) (Node, error)
++}
++
++// Host owns a wazero runtime and a cache of compiled, instantiated parser
++// plugins keyed by language. A parser is compiled and instantiated at most once
++// per language (the compiled-module + live-instance cache that satisfies the
++// <10ms repeat-parse NFR) and reused for every subsequent parse. Host is safe
++// for concurrent use.
++type Host struct {
++	ctx         context.Context
++	runtime     wazero.Runtime
++	overrideDir string
++	initErr     error // non-nil if WASI init failed; Parser then errors instead of panicking
++
++	mu      sync.Mutex
++	parsers map[string]*wasmParser
++}
++
++// Option configures a Host at construction.
++type Option func(*Host)
++
++// WithOverrideDir makes the Host consult dir for a "<lang>.wasm" plugin before
++// falling back to the embedded set. This is the runtime "drop in a new .wasm
++// file" mechanism: a file placed in dir enables a language that need not be in
++// the embedded registry, and shadows an embedded plugin of the same id.
++func WithOverrideDir(dir string) Option {
++	return func(h *Host) { h.overrideDir = dir }
++}
++
++// NewHost creates a Host with a fresh wazero runtime (pure Go, zero CGO) and WASI
++// preview1 imports instantiated. Call Close to release it. A WASI-init failure is
++// recorded rather than panicked: Parser then returns that error, so a host wired
++// into the production reconcile gate degrades to proximity grouping instead of
++// crashing the reconcile.
++func NewHost(opts ...Option) *Host {
++	ctx := context.Background()
++	rt := wazero.NewRuntime(ctx)
++	h := &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
++	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
++		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
++	}
++	for _, opt := range opts {
++		opt(h)
++	}
++	return h
++}
++
++// safeLang reports whether lang is a safe parser id: a non-empty run of
++// lowercase letters, digits, and -_+ only. This keeps lang usable as a filename
++// component and blocks path traversal (e.g. "../../etc") through the override dir.
++func safeLang(lang string) bool {
++	if lang == "" {
++		return false
++	}
++	for _, r := range lang {
++		switch {
++		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '+':
++		default:
++			return false
++		}
++	}
++	return true
++}
++
++// loadWasm resolves the .wasm bytes for lang: an override-dir file takes
++// precedence over the embedded registry. Returns an error if neither has it.
++func (h *Host) loadWasm(lang string) ([]byte, error) {
++	if !safeLang(lang) {
++		return nil, fmt.Errorf("astgroup: invalid language id %q", lang)
++	}
++	if h.overrideDir != "" {
++		p := filepath.Join(h.overrideDir, lang+".wasm")
++		if b, err := os.ReadFile(p); err == nil {
++			return b, nil
++		} else if !os.IsNotExist(err) {
++			return nil, fmt.Errorf("astgroup: read override %s: %w", p, err)
++		}
++	}
++	path, ok := builtinParsers[lang]
++	if !ok {
++		return nil, fmt.Errorf("astgroup: no parser plugin for language %q", lang)
++	}
++	b, err := parserFS.ReadFile(path)
++	if err != nil {
++		return nil, fmt.Errorf("astgroup: read embedded %s: %w", path, err)
++	}
++	return b, nil
++}
++
++// Parser returns the cached parser for lang, compiling and instantiating its
++// embedded .wasm plugin on first use. It errors if no plugin is registered for
++// lang. The returned Parser is reused across calls (pointer-stable per language).
++func (h *Host) Parser(lang string) (Parser, error) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++
++	if h.initErr != nil {
++		return nil, h.initErr
++	}
++	if p, ok := h.parsers[lang]; ok {
++		return p, nil
++	}
++
++	wasm, err := h.loadWasm(lang)
++	if err != nil {
++		return nil, err
++	}
++
++	compiled, err := h.runtime.CompileModule(h.ctx, wasm)
++	if err != nil {
++		return nil, fmt.Errorf("astgroup: compile %s: %w", lang, err)
++	}
++	// Reactor module: run _initialize (set up the Go runtime) but not _start.
++	cfg := wazero.NewModuleConfig().WithStartFunctions("_initialize").WithName(lang)
++	mod, err := h.runtime.InstantiateModule(h.ctx, compiled, cfg)
++	if err != nil {
++		return nil, fmt.Errorf("astgroup: instantiate %s: %w", lang, err)
++	}
++
++	p := &wasmParser{
++		ctx:    h.ctx,
++		mod:    mod,
++		alloc:  mod.ExportedFunction("alloc"),
++		free:   mod.ExportedFunction("free"),
++		parse:  mod.ExportedFunction("parse"),
++		memory: mod.Memory(),
++	}
++	if p.alloc == nil || p.free == nil || p.parse == nil || p.memory == nil {
++		return nil, fmt.Errorf("astgroup: plugin %s missing required exports", lang)
++	}
++	h.parsers[lang] = p
++	return p, nil
++}
++
++// Close releases the wazero runtime and all instantiated parsers.
++func (h *Host) Close() error {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	return h.runtime.Close(h.ctx)
++}
++
++// wasmParser wraps one instantiated parser plugin. A wasm module instance is not
++// safe for concurrent calls, so every Parse is serialized by mu.
++type wasmParser struct {
++	ctx    context.Context
++	mod    api.Module
++	alloc  api.Function
++	free   api.Function
++	parse  api.Function
++	memory api.Memory
++
++	mu sync.Mutex
++}
++
++// maxSourceBytes bounds the source a plugin will parse. Files larger than this
++// are pathological for code review; rejecting them (the caller falls back to
++// line-proximity grouping) caps guest memory and parse time without needing a
++// full execution-timeout watchdog.
++const maxSourceBytes = 1 << 23 // 8 MiB
++
++func (p *wasmParser) Parse(src []byte) (Node, error) {
++	if len(src) > maxSourceBytes {
++		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), maxSourceBytes)
++	}
++
++	p.mu.Lock()
++	defer p.mu.Unlock()
++
++	n := uint32(len(src))
++	if n == 0 {
++		n = 1 // alloc rejects zero; an empty source still yields a root node
++	}
++
++	res, err := p.alloc.Call(p.ctx, uint64(n))
++	if err != nil {
++		return Node{}, fmt.Errorf("astgroup: alloc: %w", err)
++	}
++	ptr := uint32(res[0])
++	defer func() { _, _ = p.free.Call(p.ctx, uint64(ptr)) }()
++
++	if len(src) > 0 {
++		if !p.memory.Write(ptr, src) {
++			return Node{}, fmt.Errorf("astgroup: write src out of range (ptr=%d len=%d)", ptr, len(src))
++		}
++	}
++
++	pr, err := p.parse.Call(p.ctx, uint64(ptr), uint64(len(src)))
++	if err != nil {
++		return Node{}, fmt.Errorf("astgroup: parse call: %w", err)
++	}
++	packed := pr[0]
++	rptr := uint32(packed >> 32)
++	rlen := uint32(packed)
++	defer func() { _, _ = p.free.Call(p.ctx, uint64(rptr)) }()
++
++	out, ok := p.memory.Read(rptr, rlen)
++	if !ok {
++		return Node{}, fmt.Errorf("astgroup: read result out of range (ptr=%d len=%d)", rptr, rlen)
++	}
++
++	var root Node
++	if err := json.Unmarshal(out, &root); err != nil {
++		return Node{}, fmt.Errorf("astgroup: decode node tree: %w", err)
++	}
++	if root.Kind == "error" {
++		return root, fmt.Errorf("astgroup: parser error: %s", root.Name)
++	}
++	return root, nil
++}
+diff --git a/internal/astgroup/host_test.go b/internal/astgroup/host_test.go
+new file mode 100644
+index 00000000..c4b41300
+--- /dev/null
++++ b/internal/astgroup/host_test.go
+@@ -0,0 +1,107 @@
++package astgroup
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func collectFuncNames(n Node, out *[]string) {
++	if n.Kind == "func" && n.Name != "" {
++		*out = append(*out, n.Name)
++	}
++	for _, c := range n.Children {
++		collectFuncNames(c, out)
++	}
++}
++
++func TestHost_ParseGo(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p, err := h.Parser("go")
++	require.NoError(t, err)
++
++	root, err := p.Parse([]byte("package p\n\nfunc A() {}\n\nfunc B() {}\n"))
++	require.NoError(t, err)
++	require.Equal(t, "file", root.Kind)
++
++	var names []string
++	collectFuncNames(root, &names)
++	require.ElementsMatch(t, []string{"A", "B"}, names)
++}
++
++func TestHost_ParsePython(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p, err := h.Parser("python")
++	require.NoError(t, err)
++
++	root, err := p.Parse([]byte("def a():\n    pass\n\nclass C:\n    def m(self):\n        return 1\n"))
++	require.NoError(t, err)
++	require.Equal(t, "module", root.Kind)
++
++	var names []string
++	collectFuncNames(root, &names)
++	require.Contains(t, names, "a")
++	require.Contains(t, names, "m")
++}
++
++func TestLanguageForExt(t *testing.T) {
++	require.Equal(t, "go", LanguageForExt(".go"))
++	require.Equal(t, "python", LanguageForExt(".py"))
++	require.Equal(t, "", LanguageForExt(".rb"))
++	require.Equal(t, "", LanguageForExt(""))
++}
++
++func TestHost_ParseInvalidGoReturnsError(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++	p, err := h.Parser("go")
++	require.NoError(t, err)
++
++	// Not valid Go (no package clause): plugin emits an "error" node and Parse
++	// surfaces it as an error so the caller falls back to line proximity.
++	_, err = p.Parse([]byte("this is not go source"))
++	require.Error(t, err)
++}
++
++func TestHost_ParseEmptySource(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++	p, err := h.Parser("python")
++	require.NoError(t, err)
++
++	root, err := p.Parse(nil)
++	require.NoError(t, err)
++	require.Equal(t, "module", root.Kind)
++}
++
++func TestHost_UnknownLanguage(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	_, err := h.Parser("cobol")
++	require.Error(t, err)
++}
++
++func TestHost_ParserCachedAndReused(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p1, err := h.Parser("go")
++	require.NoError(t, err)
++	p2, err := h.Parser("go")
++	require.NoError(t, err)
++	require.Same(t, p1, p2, "parser instance must be cached and reused (compiled-module cache)")
++
++	// Reused instance stays correct across repeated parses.
++	for i := 0; i < 3; i++ {
++		root, err := p1.Parse([]byte("package p\nfunc Z() {}\n"))
++		require.NoError(t, err)
++		var names []string
++		collectFuncNames(root, &names)
++		require.Equal(t, []string{"Z"}, names)
++	}
++}
+diff --git a/internal/astgroup/merkle.go b/internal/astgroup/merkle.go
+new file mode 100644
+index 00000000..d50196b7
+--- /dev/null
++++ b/internal/astgroup/merkle.go
+@@ -0,0 +1,31 @@
++package astgroup
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++)
++
++// MerkleHash computes a structural hash of a node: the hash folds in the node's
++// Kind and Name and, recursively, the hashes of its children, but NOT line
++// numbers. Two nodes therefore hash identically when they have the same kind,
++// name, and child structure even if their reported line numbers differ — exactly
++// the whitespace / blank-line / minor-drift invariance AC3 requires — while
++// differing in kind, name, or shape yields a different hash so distinct sibling
++// blocks are not over-merged.
++//
++// The encoding is unambiguous: each node serializes as
++// kind \x00 name '(' childHash ',' childHash ',' ... ')', so no kind/name/child
++// arrangement can be confused with another.
++func MerkleHash(n Node) string {
++	h := sha256.New()
++	h.Write([]byte(n.Kind))
++	h.Write([]byte{0})
++	h.Write([]byte(n.Name))
++	h.Write([]byte{'('})
++	for _, c := range n.Children {
++		h.Write([]byte(MerkleHash(c)))
++		h.Write([]byte{','})
++	}
++	h.Write([]byte{')'})
++	return hex.EncodeToString(h.Sum(nil))
++}
+diff --git a/internal/astgroup/node.go b/internal/astgroup/node.go
+new file mode 100644
+index 00000000..a5f63006
+--- /dev/null
++++ b/internal/astgroup/node.go
+@@ -0,0 +1,28 @@
++// Package astgroup provides AST-isomorphism grouping for reconciler findings.
++//
++// It loads language parsers compiled to WebAssembly (one .wasm plugin per
++// language, vendored under parsers/ and embedded via go:embed) and runs them on
++// a pure-Go wazero runtime — no CGO, so the atcr binary still cross-compiles to
++// every target out of the box. A finding's line number is mapped to its smallest
++// covering AST node, and a structural Merkle hash of that node becomes a grouping
++// key: findings that map to the same logical block group together even when their
++// reported line numbers drift (whitespace, blank lines, minor model skew).
++//
++// This package lives in the root module, not the zero-dependency reconcile
++// library: it implements reconcile's stdlib-only Grouper seam so wazero is
++// integrated into the atcr reconciler without adding a dependency to the
++// embeddable library.
++package astgroup
++
++// Node is one structural node in a parsed source tree. It is the language-
++// agnostic contract every .wasm parser plugin emits as JSON; the host decodes it
++// here. Line numbers are 1-based and inclusive. Name carries an identifier
++// (function/class name) when the node kind has one, so that sibling blocks with
++// identical shape still hash distinctly.
++type Node struct {
++	Kind      string `json:"kind"`
++	Name      string `json:"name,omitempty"`
++	StartLine int    `json:"start_line"`
++	EndLine   int    `json:"end_line"`
++	Children  []Node `json:"children,omitempty"`
++}
+diff --git a/internal/astgroup/override_test.go b/internal/astgroup/override_test.go
+new file mode 100644
+index 00000000..b7534045
+--- /dev/null
++++ b/internal/astgroup/override_test.go
+@@ -0,0 +1,86 @@
++package astgroup
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/require"
++)
++
++// TestHost_RepeatParseUnder10ms validates the NFR: once a plugin is compiled and
++// instantiated (cached), repeated parses of the same language carry <10ms
++// overhead. The first Parser() call pays compile+instantiate; subsequent parses
++// reuse the live instance.
++func TestHost_RepeatParseUnder10ms(t *testing.T) {
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++
++	p, err := h.Parser("go")
++	require.NoError(t, err)
++
++	src := []byte("package p\nfunc A() { _ = 1 }\nfunc B() { _ = 2 }\n")
++	_, err = p.Parse(src) // warm
++	require.NoError(t, err)
++
++	const n = 50
++	start := time.Now()
++	for i := 0; i < n; i++ {
++		_, err := p.Parse(src)
++		require.NoError(t, err)
++	}
++	avg := time.Since(start) / n
++	require.Less(t, avg, 10*time.Millisecond, "repeat parse averaged %v, want <10ms", avg)
++}
++
++// TestHost_RuntimeOverrideNewLanguage proves the "drop in a new .wasm file"
++// business criterion: a parser placed in the override directory is loaded for a
++// language id that is NOT in the embedded registry.
++func TestHost_RuntimeOverrideNewLanguage(t *testing.T) {
++	// Reuse the embedded Go parser bytes as a stand-in plugin under a new id.
++	wasm, err := parserFS.ReadFile("parsers/go.wasm")
++	require.NoError(t, err)
++
++	dir := t.TempDir()
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "golike.wasm"), wasm, 0o644))
++
++	h := NewHost(WithOverrideDir(dir))
++	defer func() { _ = h.Close() }()
++
++	// Not registered as a builtin — only loadable via the override dir.
++	_, err = h.Parser("golike")
++	require.NoError(t, err)
++
++	root, err := mustParse(t, h, "golike", []byte("package p\nfunc Hi() {}\n"))
++	require.NoError(t, err)
++	var names []string
++	collectFuncNames(root, &names)
++	require.Equal(t, []string{"Hi"}, names)
++}
++
++// TestHost_OverrideFallsBackToEmbedded confirms that with an override dir set but
++// no matching file, the embedded plugin is still used.
++func TestHost_OverrideFallsBackToEmbedded(t *testing.T) {
++	h := NewHost(WithOverrideDir(t.TempDir()))
++	defer func() { _ = h.Close() }()
++
++	_, err := h.Parser("go") // no go.wasm in override dir → embedded
++	require.NoError(t, err)
++}
++
++func TestHost_RejectsUnsafeLanguageId(t *testing.T) {
++	h := NewHost(WithOverrideDir(t.TempDir()))
++	defer func() { _ = h.Close() }()
++	for _, bad := range []string{"../etc/passwd", "a/b", "..", "Go!"} {
++		_, err := h.Parser(bad)
++		require.Error(t, err, "lang %q must be rejected", bad)
++	}
++}
++
++func mustParse(t *testing.T, h *Host, lang string, src []byte) (Node, error) {
++	t.Helper()
++	p, err := h.Parser(lang)
++	require.NoError(t, err)
++	return p.Parse(src)
++}
+diff --git a/internal/astgroup/parsers/build.sh b/internal/astgroup/parsers/build.sh
+new file mode 100755
+index 00000000..80f81252
+--- /dev/null
++++ b/internal/astgroup/parsers/build.sh
+@@ -0,0 +1,24 @@
++#!/usr/bin/env bash
++# Regenerate the vendored WebAssembly parser plugins from their Go sources under
++# src/. The resulting .wasm files are committed (vendored) and embedded by the
++# astgroup host via go:embed, so this script is only needed when a parser source
++# changes — it is NOT part of the normal `go build` / CI path (no Wasm toolchain
++# beyond the standard Go compiler is required).
++#
++# Usage: internal/astgroup/parsers/build.sh
++set -euo pipefail
++
++here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++
++build() {
++  local name="$1" srcdir="$2"
++  echo "building ${name}.wasm from ${srcdir}"
++  ( cd "${here}/src/${srcdir}" && \
++    GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -trimpath \
++      -o "${here}/${name}.wasm" . )
++  echo "  -> $(wc -c < "${here}/${name}.wasm") bytes"
++}
++
++build go goparser
++build python pyparser
++echo "done"
+diff --git a/internal/astgroup/parsers/go.wasm b/internal/astgroup/parsers/go.wasm
+new file mode 100644
+index 00000000..8b673013
+Binary files /dev/null and b/internal/astgroup/parsers/go.wasm differ
+diff --git a/internal/astgroup/parsers/python.wasm b/internal/astgroup/parsers/python.wasm
+new file mode 100644
+index 00000000..a87a8fde
+Binary files /dev/null and b/internal/astgroup/parsers/python.wasm differ
+diff --git a/internal/astgroup/parsers/src/goparser/go.mod b/internal/astgroup/parsers/src/goparser/go.mod
+new file mode 100644
+index 00000000..d8ca20a8
+--- /dev/null
++++ b/internal/astgroup/parsers/src/goparser/go.mod
+@@ -0,0 +1,6 @@
++// Isolated module: built only for GOOS=wasip1 via build.sh. A nested go.mod
++// keeps `go build ./...` / `go test ./...` in the parent reconcile module from
++// compiling this wasm-only command (it uses //go:wasmexport + package main).
++module github.com/samestrin/atcr/internal/astgroup/parsers/src/goparser
++
++go 1.26
+diff --git a/internal/astgroup/parsers/src/goparser/main.go b/internal/astgroup/parsers/src/goparser/main.go
+new file mode 100644
+index 00000000..91e883e2
+--- /dev/null
++++ b/internal/astgroup/parsers/src/goparser/main.go
+@@ -0,0 +1,180 @@
++// Command goparser is the Go-language AST parser plugin, compiled to a
++// WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and loaded
++// by the internal/astgroup wazero host. It reads Go source from guest linear
++// memory and emits a normalized structural node tree as JSON.
++//
++// The JSON contract (kind / name / start_line / end_line / children) is shared
++// with every other language plugin so the host stays language-agnostic. Line
++// numbers are 1-based and inclusive. Identifier names are included so that
++// sibling declarations with identical shape (e.g. two empty functions) hash
++// differently in the host's Merkle pass, while whitespace / blank-line drift —
++// which changes line numbers but not node kinds, names, or nesting — produces an
++// identical structural hash.
++//
++// Memory protocol (matches internal/astgroup wazero host):
++//   - alloc(n) returns a guest pointer to n writable bytes, pinned against GC.
++//   - parse(ptr, n) parses src=memory[ptr:ptr+n] and returns (resPtr<<32|resLen).
++//   - free(ptr) releases a previously alloc'd pointer.
++//
++// Regenerate the vendored .wasm via internal/astgroup/parsers/build.sh.
++package main
++
++import (
++	"encoding/json"
++	"go/ast"
++	"go/parser"
++	"go/token"
++	"unsafe"
++)
++
++// node mirrors internal/astgroup.Node; the JSON tags are the wire contract.
++type node struct {
++	Kind      string `json:"kind"`
++	Name      string `json:"name,omitempty"`
++	StartLine int    `json:"start_line"`
++	EndLine   int    `json:"end_line"`
++	Children  []node `json:"children,omitempty"`
++}
++
++// pins keeps alloc'd buffers reachable so the Go GC cannot reclaim memory the
++// host still references. The wasm linear memory IS this program's heap, so a
++// pinned slice's first-element pointer is a stable guest offset.
++var pins = map[int32][]byte{}
++
++//go:wasmexport alloc
++func alloc(n int32) int32 {
++	if n <= 0 {
++		n = 1
++	}
++	b := make([]byte, n)
++	p := int32(uintptr(unsafe.Pointer(&b[0])))
++	pins[p] = b
++	return p
++}
++
++//go:wasmexport free
++func free(p int32) { delete(pins, p) }
++
++//go:wasmexport parse
++func parse(ptr int32, n int32) int64 {
++	buf, ok := pins[ptr]
++	if !ok || int(n) > len(buf) {
++		return emit(node{Kind: "error", Name: "bad pointer"})
++	}
++	src := buf[:n]
++
++	fset := token.NewFileSet()
++	f, err := parser.ParseFile(fset, "src.go", src, parser.SkipObjectResolution)
++	if err != nil {
++		// Even on syntax error, emit a minimal file node so the host can fall
++		// back to line-proximity grouping rather than crashing.
++		return emit(node{Kind: "error", Name: err.Error()})
++	}
++
++	line := func(p token.Pos) int {
++		if !p.IsValid() {
++			return 0
++		}
++		return fset.Position(p).Line
++	}
++
++	var build func(n ast.Node) node
++	build = func(an ast.Node) node {
++		nd := node{Kind: nodeKind(an), StartLine: line(an.Pos()), EndLine: line(an.End())}
++		nd.Name = nodeName(an)
++		// Collect direct structural children (skip identifiers/literals — they
++		// are folded into Name/Kind, not separate structural nodes).
++		ast.Inspect(an, func(child ast.Node) bool {
++			if child == nil || child == an {
++				return true
++			}
++			if structural(child) {
++				nd.Children = append(nd.Children, build(child))
++				return false // don't descend; build recurses itself
++			}
++			return true
++		})
++		return nd
++	}
++
++	root := build(f)
++	return emit(root)
++}
++
++// structural reports whether an ast.Node is a node kind we keep in the tree.
++// Declarations, statements, and function literals carry structure; expressions,
++// identifiers, and literals are summarized into their parent's Kind/Name.
++func structural(n ast.Node) bool {
++	switch n.(type) {
++	case ast.Decl, ast.Stmt, *ast.FuncLit:
++		return true
++	default:
++		return false
++	}
++}
++
++func nodeKind(n ast.Node) string {
++	switch n.(type) {
++	case *ast.File:
++		return "file"
++	case *ast.FuncDecl:
++		return "func"
++	case *ast.GenDecl:
++		return "gendecl"
++	case *ast.TypeSpec:
++		return "type"
++	default:
++		// Strip the leading *ast. and trailing Stmt/Decl noise for stable kinds.
++		t := typeName(n)
++		return t
++	}
++}
++
++func nodeName(n ast.Node) string {
++	switch d := n.(type) {
++	case *ast.FuncDecl:
++		if d.Name != nil {
++			return d.Name.Name
++		}
++	case *ast.TypeSpec:
++		if d.Name != nil {
++			return d.Name.Name
++		}
++	}
++	return ""
++}
++
++func typeName(n ast.Node) string {
++	switch n.(type) {
++	case *ast.BlockStmt:
++		return "block"
++	case *ast.IfStmt:
++		return "if"
++	case *ast.ForStmt, *ast.RangeStmt:
++		return "for"
++	case *ast.SwitchStmt, *ast.TypeSwitchStmt:
++		return "switch"
++	case *ast.ReturnStmt:
++		return "return"
++	case *ast.AssignStmt:
++		return "assign"
++	case *ast.ExprStmt:
++		return "expr"
++	case *ast.FuncLit:
++		return "funclit"
++	default:
++		return "stmt"
++	}
++}
++
++func emit(n node) int64 {
++	b, err := json.Marshal(n)
++	if err != nil {
++		b = []byte(`{"kind":"error","name":"marshal"}`)
++	}
++	p := alloc(int32(len(b)))
++	copy(pins[p], b)
++	return (int64(p) << 32) | int64(len(b))
++}
++
++func main() {}
+diff --git a/internal/astgroup/parsers/src/pyparser/go.mod b/internal/astgroup/parsers/src/pyparser/go.mod
+new file mode 100644
+index 00000000..291394f4
+--- /dev/null
++++ b/internal/astgroup/parsers/src/pyparser/go.mod
+@@ -0,0 +1,4 @@
++// Isolated module: built only for GOOS=wasip1 via build.sh. See goparser/go.mod.
++module github.com/samestrin/atcr/internal/astgroup/parsers/src/pyparser
++
++go 1.26
+diff --git a/internal/astgroup/parsers/src/pyparser/main.go b/internal/astgroup/parsers/src/pyparser/main.go
+new file mode 100644
+index 00000000..f3f4abd0
+--- /dev/null
++++ b/internal/astgroup/parsers/src/pyparser/main.go
+@@ -0,0 +1,238 @@
++// Command pyparser is the Python-language structural parser plugin, compiled to
++// a WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and
++// loaded by the internal/astgroup wazero host.
++//
++// It is a lightweight indentation + keyword block-structure parser, NOT a full
++// Python grammar: enough to recover the nesting of defs, classes, and compound
++// statements so a finding's line can be mapped to its smallest covering block.
++// It emits the same kind/name/start_line/end_line/children JSON contract as the
++// Go plugin, so the host stays language-agnostic. Structure (kinds, names,
++// nesting) — not physical line text — drives the host's Merkle hash, so blank
++// lines and reindentation that shift line numbers do not change the hash.
++//
++// Memory protocol matches the goparser plugin and the astgroup host.
++// Regenerate the vendored .wasm via internal/astgroup/parsers/build.sh.
++package main
++
++import (
++	"encoding/json"
++	"strings"
++	"unsafe"
++)
++
++type node struct {
++	Kind      string `json:"kind"`
++	Name      string `json:"name,omitempty"`
++	StartLine int    `json:"start_line"`
++	EndLine   int    `json:"end_line"`
++	Children  []node `json:"children,omitempty"`
++}
++
++var pins = map[int32][]byte{}
++
++//go:wasmexport alloc
++func alloc(n int32) int32 {
++	if n <= 0 {
++		n = 1
++	}
++	b := make([]byte, n)
++	p := int32(uintptr(unsafe.Pointer(&b[0])))
++	pins[p] = b
++	return p
++}
++
++//go:wasmexport free
++func free(p int32) { delete(pins, p) }
++
++//go:wasmexport parse
++func parse(ptr int32, n int32) int64 {
++	buf, ok := pins[ptr]
++	if !ok || int(n) > len(buf) {
++		return emit(node{Kind: "error", Name: "bad pointer"})
++	}
++	src := string(buf[:n])
++
++	lines := significantLines(src)
++	root := node{Kind: "module", StartLine: 1, EndLine: 1}
++	if len(lines) > 0 {
++		kids, _ := build(lines, 0, lines[0].indent)
++		root.Children = kids
++		root.EndLine = lines[len(lines)-1].lineno
++	}
++	return emit(root)
++}
++
++type pline struct {
++	indent int
++	lineno int
++	text   string // stripped of leading whitespace and trailing inline comment
++}
++
++// significantLines returns non-blank, non-comment-only lines with their
++// indentation (tabs expanded to 8) and 1-based line number. Lines inside a
++// triple-quoted string (docstrings, multi-line literals) are skipped so that a
++// def/class/# that appears as string CONTENT is not misparsed as real code — a
++// common source of spurious blocks and over-merged findings.
++func significantLines(src string) []pline {
++	var out []pline
++	delim := "" // active triple-quote delimiter spanning lines, "" when outside
++	for i, raw := range strings.Split(src, "\n") {
++		startInString := delim != ""
++		delim = scanTripleQuotes(raw, delim)
++		if startInString {
++			continue // entire physical line is inside a multi-line string literal
++		}
++		indent := 0
++		j := 0
++		for ; j < len(raw); j++ {
++			switch raw[j] {
++			case ' ':
++				indent++
++			case '\t':
++				indent += 8
++			default:
++				goto done
++			}
++		}
++	done:
++		body := strings.TrimRight(raw[j:], " \t\r")
++		if body == "" || strings.HasPrefix(body, "#") {
++			continue
++		}
++		out = append(out, pline{indent: indent, lineno: i + 1, text: body})
++	}
++	return out
++}
++
++// scanTripleQuotes advances the triple-quoted-string state across one physical
++// line. delim is the active delimiter at line start ("" if outside a string);
++// the return value is the state at line end. It is a heuristic (it does not model
++// escapes or single/double quotes), sufficient to keep docstring content from
++// being parsed as code.
++func scanTripleQuotes(line, delim string) string {
++	for i := 0; i < len(line); {
++		if delim != "" {
++			if strings.HasPrefix(line[i:], delim) {
++				delim = ""
++				i += 3
++				continue
++			}
++			i++
++			continue
++		}
++		if strings.HasPrefix(line[i:], `"""`) {
++			delim = `"""`
++			i += 3
++			continue
++		}
++		if strings.HasPrefix(line[i:], `'''`) {
++			delim = `'''`
++			i += 3
++			continue
++		}
++		i++
++	}
++	return delim
++}
++
++// build consumes consecutive lines at exactly `indent` and returns their nodes.
++func build(lines []pline, i, indent int) ([]node, int) {
++	var out []node
++	for i < len(lines) {
++		cur := lines[i]
++		if cur.indent < indent {
++			break
++		}
++		if cur.indent > indent {
++			// Defensive: a deeper line without a header (continuation or
++			// inconsistent indent). Attach as a leaf at this level.
++			out = append(out, node{Kind: "stmt", StartLine: cur.lineno, EndLine: cur.lineno})
++			i++
++			continue
++		}
++		kind, name := classify(cur.text)
++		n := node{Kind: kind, Name: name, StartLine: cur.lineno, EndLine: cur.lineno}
++		i++
++		if isHeader(cur.text) && i < len(lines) && lines[i].indent > indent {
++			kids, ni := build(lines, i, lines[i].indent)
++			n.Children = kids
++			i = ni
++			n.EndLine = maxEnd(n)
++		}
++		out = append(out, n)
++	}
++	return out, i
++}
++
++func maxEnd(n node) int {
++	m := n.EndLine
++	for _, c := range n.Children {
++		if e := maxEnd(c); e > m {
++			m = e
++		}
++	}
++	return m
++}
++
++// isHeader reports whether a line opens a nested block (ends with ':').
++func isHeader(text string) bool {
++	t := stripComment(text)
++	t = strings.TrimRight(t, " \t")
++	return strings.HasSuffix(t, ":")
++}
++
++var compoundKeywords = []string{"def", "class", "if", "elif", "else", "for", "while", "with", "try", "except", "finally"}
++
++func classify(text string) (kind, name string) {
++	t := strings.TrimSpace(text)
++	if strings.HasPrefix(t, "async ") {
++		t = strings.TrimSpace(t[len("async "):])
++	}
++	for _, kw := range compoundKeywords {
++		if t == kw || strings.HasPrefix(t, kw+" ") || strings.HasPrefix(t, kw+":") || strings.HasPrefix(t, kw+"(") {
++			switch kw {
++			case "def":
++				return "func", identAfter(t, "def")
++			case "class":
++				return "class", identAfter(t, "class")
++			case "elif":
++				return "if", ""
++			default:
++				return kw, ""
++			}
++		}
++	}
++	return "stmt", ""
++}
++
++// identAfter returns the identifier following keyword kw (up to '(' or ':').
++func identAfter(t, kw string) string {
++	rest := strings.TrimSpace(t[len(kw):])
++	end := len(rest)
++	for i, r := range rest {
++		if r == '(' || r == ':' || r == ' ' {
++			end = i
++			break
++		}
++	}
++	return rest[:end]
++}
++
++func stripComment(text string) string {
++	if i := strings.IndexByte(text, '#'); i >= 0 {
++		return text[:i]
++	}
++	return text
++}
++
++func emit(n node) int64 {
++	b, err := json.Marshal(n)
++	if err != nil {
++		b = []byte(`{"kind":"error","name":"marshal"}`)
++	}
++	p := alloc(int32(len(b)))
++	copy(pins[p], b)
++	return (int64(p) << 32) | int64(len(b))
++}
++
++func main() {}
+diff --git a/internal/astgroup/testdata/corpus.json b/internal/astgroup/testdata/corpus.json
+new file mode 100644
+index 00000000..a9806179
+--- /dev/null
++++ b/internal/astgroup/testdata/corpus.json
+@@ -0,0 +1,178 @@
++[
++  {
++    "name": "go_same_func_small_drift",
++    "file": "a.go",
++    "source": "package p\n\nfunc Target() {\n\tx := 1\n\ty := 2\n\t_ = x + y\n}\n",
++    "a_line": 4,
++    "b_line": 6,
++    "same_block": true
++  },
++  {
++    "name": "go_same_func_large_drift_blank_lines",
++    "file": "a.go",
++    "source": "package p\n\nfunc Target() {\n\tx := 1\n\n\n\n\n\n\ty := 2\n\t_ = x + y\n}\n",
++    "a_line": 4,
++    "b_line": 11,
++    "same_block": true
++  },
++  {
++    "name": "go_same_if_block",
++    "file": "a.go",
++    "source": "package p\n\nfunc F(v int) int {\n\tif v > 0 {\n\t\ta := v\n\t\tb := a * 2\n\t\treturn b\n\t}\n\treturn 0\n}\n",
++    "a_line": 5,
++    "b_line": 7,
++    "same_block": true
++  },
++  {
++    "name": "go_signature_and_body_same_func",
++    "file": "a.go",
++    "source": "package p\n\nfunc Handler() {\n\tdo()\n\tmore()\n}\n\nfunc do() {}\nfunc more() {}\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "go_same_body_far_apart",
++    "file": "a.go",
++    "source": "package p\n\nfunc Big() {\n\ta := 1\n\tb := 2\n\tc := 3\n\td := 4\n\te := 5\n\t_ = a + b + c + d + e\n}\n",
++    "a_line": 4,
++    "b_line": 9,
++    "same_block": true
++  },
++  {
++    "name": "go_different_funcs_adjacent_lines",
++    "file": "a.go",
++    "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\n\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",
++    "a_line": 5,
++    "b_line": 9,
++    "same_block": false
++  },
++  {
++    "name": "go_different_funcs_far_apart",
++    "file": "a.go",
++    "source": "package p\n\nfunc A() {\n\tx := 1\n}\n\n\n\nfunc B() {\n\ty := 2\n}\n",
++    "a_line": 4,
++    "b_line": 10,
++    "same_block": false
++  },
++  {
++    "name": "go_if_vs_else_adjacent",
++    "file": "a.go",
++    "source": "package p\n\nfunc F(v int) int {\n\tif v > 0 {\n\t\treturn 1\n\t} else {\n\t\treturn 2\n\t}\n}\n",
++    "a_line": 5,
++    "b_line": 7,
++    "same_block": false
++  },
++  {
++    "name": "go_identical_shaped_funcs_separate",
++    "file": "a.go",
++    "source": "package p\n\nfunc A() int {\n\treturn 0\n}\n\nfunc B() int {\n\treturn 0\n}\n",
++    "a_line": 4,
++    "b_line": 8,
++    "same_block": false
++  },
++  {
++    "name": "go_off_by_one_same_func",
++    "file": "a.go",
++    "source": "package p\n\nfunc Calc() {\n\tsum := 0\n\tsum += 1\n\t_ = sum\n}\n",
++    "a_line": 4,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "py_same_def_small_drift",
++    "file": "a.py",
++    "source": "def target():\n    x = 1\n    y = 2\n    return x + y\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "py_same_def_large_drift_blank_lines",
++    "file": "a.py",
++    "source": "def target():\n    x = 1\n\n\n\n\n    y = 2\n    return x + y\n",
++    "a_line": 2,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "py_same_method_in_class",
++    "file": "a.py",
++    "source": "class C:\n    def m(self):\n        a = 1\n        b = 2\n        return a + b\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "py_for_loop_body",
++    "file": "a.py",
++    "source": "def loop(items):\n    total = 0\n    for it in items:\n        total += it\n        log(it)\n    return total\n",
++    "a_line": 4,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "py_different_defs_adjacent",
++    "file": "a.py",
++    "source": "def a():\n    x = 1\n    return x\n\ndef b():\n    y = 2\n    return y\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": false
++  },
++  {
++    "name": "py_different_methods_in_class",
++    "file": "a.py",
++    "source": "class C:\n    def m(self):\n        return 1\n    def n(self):\n        return 2\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": false
++  },
++  {
++    "name": "py_off_by_one_same_def",
++    "file": "a.py",
++    "source": "def calc():\n    total = 0\n    total += 1\n    return total\n",
++    "a_line": 2,
++    "b_line": 3,
++    "same_block": true
++  },
++  {
++    "name": "go_same_for_body_drift",
++    "file": "a.go",
++    "source": "package p\n\nfunc Sum(xs []int) int {\n\ttotal := 0\n\tfor _, x := range xs {\n\t\ttotal += x\n\n\n\t\t_ = total\n\t}\n\treturn total\n}\n",
++    "a_line": 6,
++    "b_line": 9,
++    "same_block": true
++  },
++  {
++    "name": "py_nested_if_same_block",
++    "file": "a.py",
++    "source": "def check(v):\n    if v:\n        a = compute()\n        b = a + 1\n        return b\n    return 0\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "py_docstring_with_fake_def_no_overmerge",
++    "file": "a.py",
++    "source": "def real_a():\n    \"\"\"\n    def fake():\n        pass\n    \"\"\"\n    x = 1\n    return x\n\ndef real_b():\n    y = 2\n    return y\n",
++    "a_line": 6,
++    "b_line": 10,
++    "same_block": false
++  },
++  {
++    "name": "py_docstring_drift_same_def",
++    "file": "a.py",
++    "source": "def handler():\n    \"\"\"Does a thing.\n\n    class NotReal:\n        pass\n    \"\"\"\n    a = compute()\n    b = a + 1\n    return b\n",
++    "a_line": 7,
++    "b_line": 9,
++    "same_block": true
++  },
++  {
++    "name": "go_func_vs_func_off_by_one_boundary",
++    "file": "a.go",
++    "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",
++    "a_line": 5,
++    "b_line": 8,
++    "same_block": false
++  }
++]
+diff --git a/internal/boundaries_test.go b/internal/boundaries_test.go
+index bea70e36..91ee0ae6 100644
+--- a/internal/boundaries_test.go
++++ b/internal/boundaries_test.go
+@@ -43,15 +43,16 @@ var allowedInternalImports = map[string][]string{
+ 	"llmclient":      {"registry", "errors", "circuitbreaker"}, // circuitbreaker: per-provider fail-fast on the API call path (epic 4.5)
+ 	"doctor":         {"llmclient", "registry"},
+ 	"fanout":         {"llmclient", "registry", "stream", "payload", "tools", "log", "metrics", "circuitbreaker", "validation", "atomicfs", "cache"}, // log: WithAgent per-agent correlation (epic 4.0 phase 4.2); metrics: fan-out instrumentation (epic 4.4); circuitbreaker: provider threaded onto the call context (epic 4.5); validation: engine-level --output-dir system-path reject for non-CLI callers (stdlib-only leaf); atomicfs: CopyPath for the EXDEV copy-fallback in backupExisting's crash-safe swap, the shared low-level fs leaf reconcile/verify already import (epic 4.7.1); cache: diff-cache replay on the single-shot review path (epic 5.2)
+-	"reconcile":      {"stream", "atomicfs"},
+-	"scorecard":      {"llmclient", "reconcile", "fanout", "version"}, // version: atcr_version stamped into the public submission envelope (epic 10.0)
+-	"personas":       {"registry", "payload"},                         // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
++	"reconcile":      {"stream", "atomicfs", "astgroup"},                                                                                             // astgroup: AST-isomorphism grouper wired as the primary clustering signal (epic 13.1)
++	"scorecard":      {"llmclient", "reconcile", "fanout", "version"},                                                                                // version: atcr_version stamped into the public submission envelope (epic 10.0)
++	"personas":       {"registry", "payload"},                                                                                                        // community persona lifecycle: validates fetched YAML via registry.ValidateAgentYAML; built-in roster from top-level personas/ (non-internal) (epic 9.0); payload: TemplateFixtureRunner calls RenderPrompt to validate built-in templates against embedded fixtures (TD-012)
+ 	"report":         {"stream", "reconcile"},
+ 	"ghaction":       {"reconcile"},                                                                                                                        // GitHub Action renderer/client: reads reconciled findings, posts check runs (epic 7.3)
+ 	"verify":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log", "sandbox", "repro"}, // log: skeptic-failure routing (epic 4.0 phase 4.2); atomicwrite: shared group-write helper; sandbox: --exec backend resolution + dispatcher wiring (epic 11.0); repro: evidence_exec write-back stamping (epic 11.0)
+ 	"debate":         {"reconcile", "stream", "registry", "fanout", "payload", "tools", "llmclient", "atomicfs", "atomicwrite", "log"},                     // cross-examination stage; mirrors verify's harness; atomicwrite shared group-write helper (epic 6.0)
+ 	"mcp":            {"gitrange", "payload", "registry", "llmclient", "fanout", "stream", "reconcile", "report", "verify", "debate", "scorecard", "log", "metrics"},
+ 	"benchmark":      {"scorecard", "version"}, // standard-suite contract + suite-tagged submission envelope; reuses scorecard.PublicRecord for one public reviewer schema, version for atcr_version (epic 10.0)
++	"astgroup":       {},                       // AST-isomorphism grouper: wazero host + embedded .wasm parsers; imports the external reconcile library (Grouper seam) + wazero only, no internal package (epic 13.1)
+ 	// integration holds only end-to-end _test.go files (no production code).
+ 	// The dependency-direction walk skips _test.go, so this entry exists to
+ 	// satisfy the allowlist-completeness check; it records the packages those
+diff --git a/internal/reconcile/astgrouping.go b/internal/reconcile/astgrouping.go
+new file mode 100644
+index 00000000..887f277e
+--- /dev/null
++++ b/internal/reconcile/astgrouping.go
+@@ -0,0 +1,32 @@
++package reconcile
++
++import (
++	"os"
++
++	"github.com/samestrin/atcr/internal/astgroup"
++	reclib "github.com/samestrin/atcr/reconcile"
++)
++
++// astGroupingDisabledEnv opts out of AST-isomorphism grouping, reverting the
++// reconciler to line-proximity-only clustering. AST grouping is ON by default —
++// the adopted primary signal once the epic 13.1 benchmark validated AC3 (AST
++// recall 1.00 / precision 1.00 vs proximity recall 0.77 with false merges). The
++// env var is the reversible-adoption escape hatch: set it to fall back to the
++// legacy ±3 behavior without a code change.
++const astGroupingDisabledEnv = "ATCR_DISABLE_AST_GROUPING"
++
++// astGrouperFor builds the AST-isomorphism grouper rooted at root (relative
++// finding paths resolve against it), or returns a nil grouper — proximity-only —
++// when the env opt-out is set. The returned cleanup is always safe to call.
++//
++// Construction never fails. If a language's .wasm parser cannot load at group
++// time, or the source file is absent (e.g. an MCP reconcile without a checked-out
++// tree), GroupKey returns "" and that finding falls back to proximity grouping —
++// so enabling AST grouping can only refine clustering, never break a reconcile.
++func astGrouperFor(root string) (reclib.Grouper, func()) {
++	if os.Getenv(astGroupingDisabledEnv) != "" {
++		return nil, func() {}
++	}
++	g := astgroup.NewGrouper(root)
++	return g, func() { _ = g.Close() }
++}
+diff --git a/internal/reconcile/astgrouping_test.go b/internal/reconcile/astgrouping_test.go
+new file mode 100644
+index 00000000..b66d2589
+--- /dev/null
++++ b/internal/reconcile/astgrouping_test.go
+@@ -0,0 +1,33 @@
++package reconcile
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestASTGrouperFor_GroupsDriftedGoFindings(t *testing.T) {
++	dir := t.TempDir()
++	src := "package p\n\nfunc F() {\n\ta := 1\n\tb := 2\n\tc := 3\n\td := 4\n\t_ = a + b + c + d\n}\n"
++	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0o644))
++
++	g, cleanup := astGrouperFor(dir)
++	defer cleanup()
++	require.NotNil(t, g)
++
++	// Lines 4 and 8 are 4 apart — beyond the ±3 proximity gate — but in the same
++	// function body, so AST grouping keys them together.
++	k1 := g.GroupKey(Finding{File: "x.go", Line: 4})
++	k2 := g.GroupKey(Finding{File: "x.go", Line: 8})
++	require.NotEmpty(t, k1)
++	require.Equal(t, k1, k2)
++}
++
++func TestASTGrouperFor_DisabledByEnv(t *testing.T) {
++	t.Setenv("ATCR_DISABLE_AST_GROUPING", "1")
++	g, cleanup := astGrouperFor(t.TempDir())
++	defer cleanup()
++	require.Nil(t, g, "env opt-out reverts to proximity-only (nil grouper)")
++}
+diff --git a/internal/reconcile/gate.go b/internal/reconcile/gate.go
+index 57ba48cb..2095b5fd 100644
+--- a/internal/reconcile/gate.go
++++ b/internal/reconcile/gate.go
+@@ -217,6 +217,15 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
+ 		adjudicating = true
+ 	}
+ 
++	// AST-isomorphism grouping (epic 13.1): the adopted primary clustering signal.
++	// Findings that map to the same logical AST block group together even when
++	// their line numbers drift, with line proximity as the fallback when no parser
++	// is available. Opt out via ATCR_DISABLE_AST_GROUPING. Degrades gracefully:
++	// missing source or an unloadable parser falls back to proximity per finding.
++	grouper, closeGrouper := astGrouperFor(opts.Root)
++	defer closeGrouper()
++	opts.Grouper = grouper
++
+ 	res := Reconcile(sources, opts)
+ 
+ 	// Flag findings whose file paths do not exist under the reviewed repo root
+diff --git a/reconcile/cluster.go b/reconcile/cluster.go
+index 5197ae94..7e496850 100644
+--- a/reconcile/cluster.go
++++ b/reconcile/cluster.go
+@@ -40,24 +40,7 @@ func Cluster(findings []Finding) [][]Finding {
+ 		}
+ 		// Stable sort by line so equal lines keep input order (deterministic).
+ 		sort.SliceStable(lined, func(i, j int) bool { return lined[i].Line < lined[j].Line })
+-
+-		var cur []Finding
+-		prevLine := 0
+-		for _, f := range lined {
+-			switch {
+-			case len(cur) == 0:
+-				cur = []Finding{f}
+-			case f.Line-prevLine <= lineProximity:
+-				cur = append(cur, f)
+-			default:
+-				clusters = append(clusters, cur)
+-				cur = []Finding{f}
+-			}
+-			prevLine = f.Line
+-		}
+-		if len(cur) > 0 {
+-			clusters = append(clusters, cur)
+-		}
++		clusters = append(clusters, proximityClusters(lined)...)
+ 	}
+ 	return clusters
+ }
+diff --git a/reconcile/grouper.go b/reconcile/grouper.go
+new file mode 100644
+index 00000000..cd6904e6
+--- /dev/null
++++ b/reconcile/grouper.go
+@@ -0,0 +1,97 @@
++package reconcile
++
++import "sort"
++
++// Grouper supplies a structural grouping key for a finding, overriding the
++// default line-proximity pre-filter. It is the seam the AST-isomorphism grouper
++// (root module, wazero-backed) plugs into without adding any dependency to this
++// zero-dependency library: the library knows only this stdlib-only interface.
++//
++// GroupKey returns a stable key such that two findings sharing a non-empty key
++// belong in the same comparison cluster regardless of their line distance. An
++// empty string means "no structural key available for this finding" (e.g. no
++// parser for its language, an unparseable file, or a file-level finding); such
++// findings fall back to ±lineProximity grouping. A key is expected to be
++// file-scoped so findings in different files never collide.
++type Grouper interface {
++	GroupKey(f Finding) string
++}
++
++// ClusterWith groups findings using g as the primary signal: findings sharing a
++// non-empty key cluster together (any line distance), and findings with an empty
++// key fall back to the legacy line-proximity clustering. A nil g reproduces
++// Cluster exactly, so the AST path is strictly opt-in and the default pipeline is
++// unchanged.
++//
++// Determinism: files are processed in sorted order; within a file, keyed clusters
++// are emitted in ascending-first-line order (keys are first seen while scanning
++// line-sorted findings), then the proximity clusters of the unkeyed remainder.
++func ClusterWith(findings []Finding, g Grouper) [][]Finding {
++	if g == nil {
++		return Cluster(findings)
++	}
++
++	byFile := map[string][]Finding{}
++	for _, f := range findings {
++		byFile[f.File] = append(byFile[f.File], f)
++	}
++	files := make([]string, 0, len(byFile))
++	for file := range byFile {
++		files = append(files, file)
++	}
++	sort.Strings(files)
++
++	var clusters [][]Finding
++	for _, file := range files {
++		fileLevel, lined := splitFileLevel(byFile[file])
++		if len(fileLevel) > 0 {
++			clusters = append(clusters, fileLevel)
++		}
++		sort.SliceStable(lined, func(i, j int) bool { return lined[i].Line < lined[j].Line })
++
++		keyed := map[string][]Finding{}
++		var keyOrder []string
++		var unkeyed []Finding
++		for _, f := range lined {
++			k := g.GroupKey(f)
++			if k == "" {
++				unkeyed = append(unkeyed, f)
++				continue
++			}
++			if _, seen := keyed[k]; !seen {
++				keyOrder = append(keyOrder, k)
++			}
++			keyed[k] = append(keyed[k], f)
++		}
++		for _, k := range keyOrder {
++			clusters = append(clusters, keyed[k])
++		}
++		clusters = append(clusters, proximityClusters(unkeyed)...)
++	}
++	return clusters
++}
++
++// proximityClusters groups already-line-sorted findings by single-linkage on line
++// number (a gap greater than lineProximity starts a new cluster). It is the
++// shared core of Cluster and the ClusterWith fallback.
++func proximityClusters(lined []Finding) [][]Finding {
++	var clusters [][]Finding
++	var cur []Finding
++	prevLine := 0
++	for _, f := range lined {
++		switch {
++		case len(cur) == 0:
++			cur = []Finding{f}
++		case f.Line-prevLine <= lineProximity:
++			cur = append(cur, f)
++		default:
++			clusters = append(clusters, cur)
++			cur = []Finding{f}
++		}
++		prevLine = f.Line
++	}
++	if len(cur) > 0 {
++		clusters = append(clusters, cur)
++	}
++	return clusters
++}
+diff --git a/reconcile/grouper_test.go b/reconcile/grouper_test.go
+new file mode 100644
+index 00000000..11316be5
+--- /dev/null
++++ b/reconcile/grouper_test.go
+@@ -0,0 +1,48 @@
++package reconcile
++
++import "testing"
++
++// fakeGrouper keys findings by line number, standing in for the AST-isomorphism
++// grouper without pulling a wasm dependency into this zero-dep library's tests.
++type fakeGrouper struct{ keys map[int]string }
++
++func (g fakeGrouper) GroupKey(f Finding) string { return g.keys[f.Line] }
++
++func TestClusterWith_SameKeyGroupsAcrossWideGap(t *testing.T) {
++	fs := []Finding{fnd("a.go", 10, "x", "r1"), fnd("a.go", 40, "y", "r2")}
++	g := fakeGrouper{keys: map[int]string{10: "a.go\x00H", 40: "a.go\x00H"}}
++	clusters := ClusterWith(fs, g)
++	length(t, clusters, 1, "same AST key clusters despite a 30-line gap")
++	length(t, clusters[0], 2, "both findings in the one cluster")
++}
++
++func TestClusterWith_DifferentKeysSplitWithinProximity(t *testing.T) {
++	fs := []Finding{fnd("a.go", 10, "x", "r1"), fnd("a.go", 12, "y", "r2")}
++	g := fakeGrouper{keys: map[int]string{10: "a.go\x00H1", 12: "a.go\x00H2"}}
++	clusters := ClusterWith(fs, g)
++	length(t, clusters, 2, "distinct AST keys split even within ±3 lines")
++}
++
++func TestClusterWith_EmptyKeyFallsBackToProximity(t *testing.T) {
++	fs := []Finding{fnd("a.go", 10, "x", "r1"), fnd("a.go", 12, "y", "r2"), fnd("a.go", 40, "z", "r3")}
++	g := fakeGrouper{keys: map[int]string{}} // no parser/AST available → all empty keys
++	clusters := ClusterWith(fs, g)
++	length(t, clusters, 2, "unkeyed findings use ±3 proximity: {10,12} and {40}")
++}
++
++func TestClusterWith_MixedKeyedAndUnkeyed(t *testing.T) {
++	fs := []Finding{
++		fnd("a.go", 10, "x", "r1"),
++		fnd("a.go", 41, "y", "r2"),
++		fnd("a.go", 11, "z", "r3"), // unkeyed, near 10 but 10 is keyed → its own proximity cluster
++	}
++	g := fakeGrouper{keys: map[int]string{10: "K", 41: "K"}}
++	clusters := ClusterWith(fs, g)
++	// {10,41} keyed cluster; {11} unkeyed proximity cluster.
++	length(t, clusters, 2, "one keyed cluster + one unkeyed cluster")
++}
++
++func TestClusterWith_NilGrouperMatchesLegacyCluster(t *testing.T) {
++	fs := []Finding{fnd("a.go", 10, "x", "r1"), fnd("a.go", 40, "y", "r2"), fnd("b.go", 0, "f", "r3")}
++	deepEq(t, ClusterWith(fs, nil), Cluster(fs), "nil grouper is identical to legacy Cluster")
++}
+diff --git a/reconcile/reconcile.go b/reconcile/reconcile.go
+index f0227cda..94b7fbd3 100644
+--- a/reconcile/reconcile.go
++++ b/reconcile/reconcile.go
+@@ -19,6 +19,12 @@ type Options struct {
+ 	// the result; the core reconcile pipeline does not read it. Empty disables that
+ 	// downstream concern.
+ 	Root string
++	// Grouper, when non-nil, supplies the primary clustering signal (AST
++	// isomorphism): findings whose GroupKey matches cluster together regardless of
++	// line distance, and findings with an empty key fall back to line proximity.
++	// Nil keeps the legacy line-proximity-only behavior. The interface is
++	// stdlib-only so wiring a wazero-backed grouper adds no dependency here.
++	Grouper Grouper
+ }
+ 
+ // Result is a completed reconciliation: the merged findings (sorted for
+@@ -58,8 +64,15 @@ type Summary struct {
+ // ambiguous sidecar and run summary. Output findings are sorted by severity
+ // (desc), then file, then line, so the same input always yields byte-identical
+ // artifacts.
++//
++// When opts.Grouper is set (AST-isomorphism grouping), clustering additionally
++// depends on the inputs that grouper reads — for the astgroup grouper, the source
++// tree it parses. Reconcile stays deterministic for a fixed (findings, source
++// tree) pair; reproducibility therefore holds per checkout, since a review runs
++// against a fixed working tree. A nil Grouper keeps clustering a pure function of
++// the findings.
+ func Reconcile(sources []Source, opts Options) Result {
+-	clusters := Cluster(AllFindings(sources))
++	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
+ 
+ 	var merged []Merged
+ 	ambiguous := []AmbiguousCluster{}

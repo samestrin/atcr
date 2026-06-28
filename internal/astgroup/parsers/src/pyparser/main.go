@@ -28,6 +28,12 @@ type node struct {
 	Children  []node `json:"children,omitempty"`
 }
 
+// pins / alloc / free / emit form the guest ABI duplicated (~29 lines) in the
+// goparser plugin. Extracting it into a shared guest package is the correct remedy
+// ONCE the parser count grows beyond the two PoC plugins (Go + Python); at two
+// parsers the duplication is below the threshold that justifies a cross-module
+// shared package. See goparser/main.go for the non-moving-GC assumption it relies
+// on.
 var pins = map[int32][]byte{}
 
 //go:wasmexport alloc
@@ -70,38 +76,101 @@ type pline struct {
 
 // significantLines returns non-blank, non-comment-only lines with their
 // indentation (tabs expanded to 8) and 1-based line number. Lines inside a
-// triple-quoted string (docstrings, multi-line literals) are skipped so that a
-// def/class/# that appears as string CONTENT is not misparsed as real code — a
-// common source of spurious blocks and over-merged findings.
+// triple-quoted string (docstrings, multi-line literals) are skipped on a
+// best-effort basis so a def/class/# appearing as string CONTENT is less likely
+// to be misparsed as real code. The skip relies on scanTripleQuotes, which is a
+// heuristic: a """ embedded in a single/double-quoted string can still flip the
+// state machine, so this reduces but does not eliminate the spurious-block /
+// over-merged-finding risk on adversarial source (PoC-grade, not a tokenizer).
 func significantLines(src string) []pline {
 	var out []pline
-	delim := "" // active triple-quote delimiter spanning lines, "" when outside
+	delim := ""     // active triple-quote delimiter spanning lines, "" when outside
+	depth := 0      // open (), [], {} nesting carried across physical lines
+	var cont *pline // logical line being assembled while depth > 0
 	for i, raw := range strings.Split(src, "\n") {
 		startInString := delim != ""
 		delim = scanTripleQuotes(raw, delim)
 		if startInString {
 			continue // entire physical line is inside a multi-line string literal
 		}
-		indent := 0
-		j := 0
-		for ; j < len(raw); j++ {
-			switch raw[j] {
-			case ' ':
-				indent++
-			case '\t':
-				indent += 8
-			default:
-				goto done
-			}
-		}
-	done:
+		indent, j := leadingIndent(raw)
 		body := strings.TrimRight(raw[j:], " \t\r")
+
+		if cont != nil {
+			// Assembling a bracket-continued logical line (e.g. a def/class header
+			// or call whose parens span lines): fold this physical line's content
+			// onto it and keep counting brackets until balanced, so a multi-line
+			// header is classified as one line ending in ':' rather than scattering
+			// its parameter lines and body into sibling blocks.
+			stripped := stripComment(raw)
+			if t := strings.TrimSpace(stripped); t != "" {
+				cont.text += " " + t
+			}
+			depth += bracketDelta(stripped)
+			if depth <= 0 {
+				depth = 0
+				cont.text = strings.TrimRight(cont.text, " \t\r")
+				out = append(out, *cont)
+				cont = nil
+			}
+			continue
+		}
+
 		if body == "" || strings.HasPrefix(body, "#") {
+			continue
+		}
+		if d := bracketDelta(stripComment(body)); d > 0 {
+			// Header opens more brackets than it closes: start folding continuation
+			// lines. The logical line keeps the first physical line's indent/lineno.
+			depth = d
+			head := strings.TrimRight(stripComment(body), " \t\r")
+			pl := pline{indent: indent, lineno: i + 1, text: head}
+			cont = &pl
 			continue
 		}
 		out = append(out, pline{indent: indent, lineno: i + 1, text: body})
 	}
+	if cont != nil {
+		// Unbalanced brackets at EOF: emit the partial logical line as-is.
+		cont.text = strings.TrimRight(cont.text, " \t\r")
+		out = append(out, *cont)
+	}
 	return out
+}
+
+// leadingIndent returns the visual indentation of raw (tabs expanded to 8) and
+// the byte offset where the first non-whitespace character begins.
+func leadingIndent(raw string) (indent, start int) {
+	for start < len(raw) {
+		switch raw[start] {
+		case ' ':
+			indent++
+		case '\t':
+			indent += 8 - (indent % 8)
+		default:
+			return indent, start
+		}
+		start++
+	}
+	return indent, start
+}
+
+// bracketDelta returns the net change in (), [], {} nesting contributed by s. It
+// is a heuristic that does not exclude brackets inside string/char literals, so a
+// line embedding an unbalanced bracket inside a string can mis-count; that is
+// acceptable for a structural pre-pass whose only job is to fold a multi-line
+// header or literal into one logical line.
+func bracketDelta(s string) int {
+	d := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(', '[', '{':
+			d++
+		case ')', ']', '}':
+			d--
+		}
+	}
+	return d
 }
 
 // scanTripleQuotes advances the triple-quoted-string state across one physical
@@ -174,11 +243,21 @@ func maxEnd(n node) int {
 	return m
 }
 
-// isHeader reports whether a line opens a nested block (ends with ':').
+// isHeader reports whether a line opens a nested block: it ends with ':' AND its
+// first token is a compound-statement keyword (classify returns a non-"stmt"
+// kind). Requiring the keyword — not merely a trailing ':' — stops a bare dict
+// key ("key":), a slice (arr[1:), or an annotation line from being misread as a
+// block opener and fabricating spurious child blocks that corrupt the structural
+// hash. (PoC limitation: match/case are soft keywords absent from
+// compoundKeywords, so their suites are not nested.)
 func isHeader(text string) bool {
 	t := stripComment(text)
 	t = strings.TrimRight(t, " \t")
-	return strings.HasSuffix(t, ":")
+	if !strings.HasSuffix(t, ":") {
+		return false
+	}
+	kind, _ := classify(text)
+	return kind != "stmt"
 }
 
 var compoundKeywords = []string{"def", "class", "if", "elif", "else", "for", "while", "with", "try", "except", "finally"}

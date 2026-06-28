@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -26,13 +28,17 @@ type Parser interface {
 // <10ms repeat-parse NFR) and reused for every subsequent parse. Host is safe
 // for concurrent use.
 type Host struct {
-	ctx         context.Context
-	runtime     wazero.Runtime
-	overrideDir string
-	initErr     error // non-nil if WASI init failed; Parser then errors instead of panicking
+	ctx            context.Context
+	runtime        wazero.Runtime
+	overrideDir    string
+	maxSourceBytes int
+	maxMemoryPages uint32
+	initErr        error // non-nil if WASI init failed; Parser then errors instead of panicking
 
-	mu      sync.Mutex
+	mu      sync.RWMutex
+	closed  bool
 	parsers map[string]*wasmParser
+	parseWG sync.WaitGroup
 }
 
 // Option configures a Host at construction.
@@ -46,6 +52,20 @@ func WithOverrideDir(dir string) Option {
 	return func(h *Host) { h.overrideDir = dir }
 }
 
+// WithMaxSourceBytes sets the maximum source size a parser plugin will accept.
+// Larger files fall back to line-proximity grouping. The default is 8 MiB.
+func WithMaxSourceBytes(n int) Option {
+	return func(h *Host) { h.maxSourceBytes = n }
+}
+
+// WithMaxMemoryPages caps the wasm linear memory (in 64 KiB pages) any parser
+// instance may grow to. It bounds host RSS so a hostile or buggy plugin —
+// especially an override-loaded one — cannot balloon toward wazero's multi-
+// hundred-MiB/4 GiB default ceiling. The default is defaultMaxMemoryPages.
+func WithMaxMemoryPages(pages uint32) Option {
+	return func(h *Host) { h.maxMemoryPages = pages }
+}
+
 // NewHost creates a Host with a fresh wazero runtime (pure Go, zero CGO) and WASI
 // preview1 imports instantiated. Call Close to release it. A WASI-init failure is
 // recorded rather than panicked: Parser then returns that error, so a host wired
@@ -53,15 +73,38 @@ func WithOverrideDir(dir string) Option {
 // crashing the reconcile.
 func NewHost(opts ...Option) *Host {
 	ctx := context.Background()
-	rt := wazero.NewRuntime(ctx)
-	h := &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
-		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
-	}
+	h := &Host{ctx: ctx, maxSourceBytes: defaultMaxSourceBytes, maxMemoryPages: defaultMaxMemoryPages, parsers: map[string]*wasmParser{}}
+	// Apply options before building the runtime so memory limits configured via
+	// WithMaxMemoryPages take effect on the runtime config itself.
 	for _, opt := range opts {
 		opt(h)
 	}
+	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true).WithMemoryLimitPages(h.maxMemoryPages)
+	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
+	h.runtime = rt
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
+		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
+	}
 	return h
+}
+
+var (
+	sharedHostOnce sync.Once
+	sharedHost     *Host
+)
+
+// SharedHost returns the process-lifetime Host: a single wazero runtime whose
+// compiled-and-instantiated parser plugins are amortized across every reconcile in
+// a long-lived process (e.g. the MCP server), instead of paying full WASI plus
+// per-language CompileModule/InstantiateModule on each RunReconcile call. It is
+// constructed lazily on first use, so a process that never groups a parseable
+// finding never instantiates the runtime. Host is safe for concurrent use, so the
+// singleton may back concurrent Groupers. It is intentionally never closed — its
+// lifetime is the process's, and the OS reclaims the runtime on exit; closing it
+// would discard the compiled-module cache this singleton exists to preserve.
+func SharedHost() *Host {
+	sharedHostOnce.Do(func() { sharedHost = NewHost() })
+	return sharedHost
 }
 
 // safeLang reports whether lang is a safe parser id: a non-empty run of
@@ -110,15 +153,32 @@ func (h *Host) loadWasm(lang string) ([]byte, error) {
 // embedded .wasm plugin on first use. It errors if no plugin is registered for
 // lang. The returned Parser is reused across calls (pointer-stable per language).
 func (h *Host) Parser(lang string) (Parser, error) {
+	h.mu.RLock()
+	if h.closed {
+		h.mu.RUnlock()
+		return nil, fmt.Errorf("astgroup: host is closed")
+	}
+	if h.initErr != nil {
+		h.mu.RUnlock()
+		return nil, h.initErr
+	}
+	if p, ok := h.parsers[lang]; ok && !p.mod.IsClosed() {
+		h.mu.RUnlock()
+		return p, nil
+	}
+	h.mu.RUnlock()
+
+	// Not cached or module was closed: instantiate under write lock.
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.initErr != nil {
-		return nil, h.initErr
+	if h.closed {
+		return nil, fmt.Errorf("astgroup: host is closed")
 	}
-	if p, ok := h.parsers[lang]; ok {
+	if p, ok := h.parsers[lang]; ok && !p.mod.IsClosed() {
 		return p, nil
 	}
+	delete(h.parsers, lang)
 
 	wasm, err := h.loadWasm(lang)
 	if err != nil {
@@ -137,12 +197,14 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	}
 
 	p := &wasmParser{
-		ctx:    h.ctx,
-		mod:    mod,
-		alloc:  mod.ExportedFunction("alloc"),
-		free:   mod.ExportedFunction("free"),
-		parse:  mod.ExportedFunction("parse"),
-		memory: mod.Memory(),
+		ctx:            h.ctx,
+		mod:            mod,
+		alloc:          mod.ExportedFunction("alloc"),
+		free:           mod.ExportedFunction("free"),
+		parse:          mod.ExportedFunction("parse"),
+		memory:         mod.Memory(),
+		maxSourceBytes: h.maxSourceBytes,
+		host:           h,
 	}
 	if p.alloc == nil || p.free == nil || p.parse == nil || p.memory == nil {
 		return nil, fmt.Errorf("astgroup: plugin %s missing required exports", lang)
@@ -151,51 +213,126 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	return p, nil
 }
 
-// Close releases the wazero runtime and all instantiated parsers.
+// Close releases the wazero runtime and all instantiated parsers. It is safe
+// to call multiple times; subsequent calls return nil. Close drains any
+// in-flight Parse calls before tearing down the runtime.
 func (h *Host) Close() error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	if h.closed {
+		h.mu.Unlock()
+		return nil
+	}
+	h.closed = true
+	h.parsers = nil
+	h.mu.Unlock()
+
+	// Drain in-flight parses before closing the runtime.
+	h.parseWG.Wait()
 	return h.runtime.Close(h.ctx)
 }
 
 // wasmParser wraps one instantiated parser plugin. A wasm module instance is not
-// safe for concurrent calls, so every Parse is serialized by mu.
+// safe for concurrent calls, so every Parse is serialized by mu. It holds a
+// reference to its Host so Parse can participate in Host.Close draining.
+//
+// Same-language parses are serialized by this mutex; this is accepted for the
+// PoC. Distinct files already parse concurrently (the Grouper releases its mutex
+// before Parse — see grouper.go treeFor), the epic's only concurrency NFR is
+// <10ms instantiation overhead (no parse-throughput target), and the realistic
+// per-parse bound is the 5s timeout / 8 MiB source cap, not lock contention. If
+// profiling later shows real same-language contention, the remedy is a
+// per-language pool of instances sized to GOMAXPROCS, round-robined per call —
+// deferred until measurement justifies the extra instances against the per-
+// instance memory cap.
 type wasmParser struct {
-	ctx    context.Context
-	mod    api.Module
-	alloc  api.Function
-	free   api.Function
-	parse  api.Function
-	memory api.Memory
+	ctx            context.Context
+	mod            api.Module
+	alloc          api.Function
+	free           api.Function
+	parse          api.Function
+	memory         api.Memory
+	maxSourceBytes int
+	host           *Host
 
 	mu sync.Mutex
 }
 
-// maxSourceBytes bounds the source a plugin will parse. Files larger than this
-// are pathological for code review; rejecting them (the caller falls back to
-// line-proximity grouping) caps guest memory and parse time without needing a
-// full execution-timeout watchdog.
-const maxSourceBytes = 1 << 23 // 8 MiB
+// defaultMaxSourceBytes bounds the source a plugin will parse by default. Files
+// larger than this are pathological for code review; rejecting them (the caller
+// falls back to line-proximity grouping) caps guest memory and parse time without
+// needing a full execution-timeout watchdog.
+const defaultMaxSourceBytes = 1 << 23 // 8 MiB
+
+// defaultMaxMemoryPages caps each parser instance's wasm linear memory. 4096
+// pages × 64 KiB = 256 MiB: ample for any source small enough to parse within
+// parseTimeout (a 2 MiB source already exhausts the time budget first), yet 16×
+// below wazero's ~4 GiB default ceiling so a runaway plugin cannot exhaust host
+// memory.
+const defaultMaxMemoryPages uint32 = 1 << 12 // 4096 pages = 256 MiB
+
+// parseTimeout bounds a single guest parse call. Paired with the runtime's
+// WithCloseOnContextDone, an exceeded deadline aborts and closes the offending
+// instance; the caller (Grouper) then falls back to line-proximity grouping for
+// that language rather than hanging the reconcile on a pathological source. It is
+// a var, not a const, only so a test can shrink it to force the timeout path.
+var parseTimeout = 5 * time.Second
+
+// maxResultBytes caps the JSON a guest parser may return. This prevents a
+// hostile or buggy plugin from claiming a multi-gigabyte result length and
+// driving the host out of memory while reading wasm memory.
+const maxResultBytes = 1 << 26 // 64 MiB
+
+// discardOnTrap closes the parser's module after a guest-call trap so Host.Parser
+// re-instantiates a clean instance on the next call instead of reusing one whose
+// pin map / linear memory may be inconsistent. Idempotent: a timeout trap already
+// closes the module via wazero's context cancellation, so Close is a no-op there;
+// it matters for a non-timeout guest panic that would otherwise leave the module
+// open and cached.
+func (p *wasmParser) discardOnTrap() { _ = p.mod.Close(p.ctx) }
 
 func (p *wasmParser) Parse(src []byte) (Node, error) {
-	if len(src) > maxSourceBytes {
-		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), maxSourceBytes)
+	if p.maxSourceBytes <= 0 {
+		return Node{}, fmt.Errorf("astgroup: maxSourceBytes must be positive")
 	}
+	if len(src) > p.maxSourceBytes {
+		slog.Warn("astgroup: source too large, falling back to proximity grouping", "size", len(src), "max", p.maxSourceBytes)
+		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), p.maxSourceBytes)
+	}
+
+	p.host.mu.RLock()
+	if p.host.closed {
+		p.host.mu.RUnlock()
+		return Node{}, fmt.Errorf("astgroup: host is closed")
+	}
+	p.host.parseWG.Add(1)
+	p.host.mu.RUnlock()
+	defer p.host.parseWG.Done()
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	ctx, cancel := context.WithTimeout(p.ctx, parseTimeout)
+	defer cancel()
+
 	n := uint32(len(src))
 	if n == 0 {
-		n = 1 // alloc rejects zero; an empty source still yields a root node
+		// alloc rejects zero, so request one byte. The plugin itself decides what
+		// an empty source means: some languages return a bare root node, others
+		// emit an error node. Either way the caller falls back to proximity if
+		// Parse returns an error.
+		n = 1
 	}
 
-	res, err := p.alloc.Call(p.ctx, uint64(n))
+	res, err := p.alloc.Call(ctx, uint64(n))
 	if err != nil {
+		p.discardOnTrap() // poisoned guest state: force re-instantiation next call
 		return Node{}, fmt.Errorf("astgroup: alloc: %w", err)
 	}
+	if len(res) == 0 {
+		return Node{}, fmt.Errorf("astgroup: alloc returned no results")
+	}
 	ptr := uint32(res[0])
-	defer func() { _, _ = p.free.Call(p.ctx, uint64(ptr)) }()
+	defer func() { _, _ = p.free.Call(ctx, uint64(ptr)) }()
 
 	if len(src) > 0 {
 		if !p.memory.Write(ptr, src) {
@@ -203,14 +340,26 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 		}
 	}
 
-	pr, err := p.parse.Call(p.ctx, uint64(ptr), uint64(len(src)))
+	pr, err := p.parse.Call(ctx, uint64(ptr), uint64(len(src)))
 	if err != nil {
+		// A guest trap can leave the pin map / linear memory inconsistent and the
+		// result-pointer free below is never reached. Discard the instance so
+		// Host.Parser re-instantiates a clean one next call rather than reusing a
+		// poisoned instance. (A timeout trap already closes the module via wazero's
+		// context cancellation; this also covers a non-timeout guest panic.)
+		p.discardOnTrap()
 		return Node{}, fmt.Errorf("astgroup: parse call: %w", err)
+	}
+	if len(pr) == 0 {
+		return Node{}, fmt.Errorf("astgroup: parse returned no results")
 	}
 	packed := pr[0]
 	rptr := uint32(packed >> 32)
 	rlen := uint32(packed)
-	defer func() { _, _ = p.free.Call(p.ctx, uint64(rptr)) }()
+	if rlen > maxResultBytes {
+		return Node{}, fmt.Errorf("astgroup: parser result too large (%d bytes > %d)", rlen, maxResultBytes)
+	}
+	defer func() { _, _ = p.free.Call(ctx, uint64(rptr)) }()
 
 	out, ok := p.memory.Read(rptr, rlen)
 	if !ok {
@@ -220,6 +369,12 @@ func (p *wasmParser) Parse(src []byte) (Node, error) {
 	var root Node
 	if err := json.Unmarshal(out, &root); err != nil {
 		return Node{}, fmt.Errorf("astgroup: decode node tree: %w", err)
+	}
+	// Reject trees deeper than the contract bound so the later recursive walks
+	// (MerkleHash, coveringChain) over this untrusted, guest-supplied tree cannot
+	// drive unbounded host stack growth. The caller falls back to proximity.
+	if exceedsDepth(root, maxNodeDepth) {
+		return Node{}, fmt.Errorf("astgroup: parsed tree exceeds max depth %d", maxNodeDepth)
 	}
 	if root.Kind == "error" {
 		return root, fmt.Errorf("astgroup: parser error: %s", root.Name)

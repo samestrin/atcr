@@ -96,6 +96,7 @@ func TestBenchmark_ASTGroupingAccuracy(t *testing.T) {
 		}
 	}
 
+	require.Greater(t, positives, 0, "corpus must contain same-block positives to compute recall")
 	astRecall := float64(astTP) / float64(positives)
 	astPrecision := 1.0
 	if astTP+astFP > 0 {

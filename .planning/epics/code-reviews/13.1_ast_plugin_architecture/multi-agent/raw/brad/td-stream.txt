@@ -1,0 +1,1 @@
+MEDIUM|internal/astgroup/benchmark_test.go:87|Potential division by zero if corpus has no positives|Add require.Greater(t, positives, 0) before division|correctness|2|astRecall := float64(astTP) / float64(positives)|bruce

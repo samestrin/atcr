@@ -1,0 +1,2 @@
+
+HIGH|reconcile/grouper.go:49|Incorrectly clusters all file-level findings together|Process all findings in file through grouper, then proximity cluster unkeyed|correctness|15|fileLevel, lined := splitFileLevel(byFile[file]); if len(fileLevel) > 0 { clusters = append(clusters, fileLevel) }|reviewer

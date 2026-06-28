@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 2 | 25 | 0 |
-| LOW | 7 | 23 | 0 |
+| MEDIUM | 0 | 26 | 0 |
+| LOW | 0 | 24 | 0 |
 
-**Last Modified:** 2026-06-27 | **Open Items:** 9 | **Deferred Items:** 50 | **Resolved Items:** 0 | **Total Items:** 59
+**Last Modified:** 2026-06-28 | **Open Items:** 0 | **Deferred Items:** 52 | **Resolved Items:** 0 | **Total Items:** 52
 
 ## Directory Structure
 
@@ -62,19 +62,12 @@ in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards �
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
 
-### [2026-06-27] From Sprint: epic-13.1
+### [2026-06-27] From Sprint: 13.1_ast_plugin_architecture
 
-| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
-|-------|---|----------|------|---------|-----|----------|-------------|--------|
-| 1 | [ ] | MEDIUM | internal/astgroup/host.go:1 | wazero parser calls have no per-parse execution timeout; a pathological source could hang a parser instance | Set RuntimeConfig WithCloseOnContextDone(true) and call parse with a context.WithTimeout deadline (accept that a timed-out instance is closed and the language falls back to proximity) | DETERMINISM | 30 | execute-epic-stage3 |
-| 1 | [ ] | LOW | internal/astgroup/parsers/src/pyparser/main.go:178 | Heuristic Python parser misparses multi-line def/class headers (those not ending in ':' on the first line) into wrong blocks | Detect open-paren continuation in headers and join physical lines until the ':' terminator, or move to a real Python grammar | CORRECTNESS | 45 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/astgroup/grouper.go:89 | GroupKey appends MerkleHash(block) but the file-scoped structural address already uniquely identifies the node within the file, so the Merkle term is redundant for grouping (nominal not load-bearing) | Either drop the MerkleHash term and rely on the address, or document that the hash is a defensive cross-check of the address scheme | OVER_ENGINEERING | 20 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/astgroup/grouper.go:60 | resolvePath checks containment with Clean+Rel but does not resolve symlinks, so a symlink inside root pointing outside it passes the guard and is read | Use filepath.EvalSymlinks or os.Root before the containment check when untrusted trees are in scope | SECURITY | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/astgroup/host.go:197 | On a guest parse trap the result-pointer free defer is never installed and the guest pin map may be left inconsistent, so a trapped instance leaks guest memory and may be unsafe to reuse | Discard and lazily re-instantiate the parser after a parse trap so its memory/pin map start clean | ERROR_HANDLING | 30 | execute-epic-independent |
-| 1 | [ ] | LOW | internal/astgroup/parsers/src/goparser/main.go:38 | Guest hands the host the address of a pinned slice as a stable offset, silently relying on Go's wasm GC being non-moving — true today but an undocumented hard assumption that a toolchain bump could break | Use runtime.Pinner on the alloc'd buffer or add an explicit comment asserting the non-moving-GC dependency so a Go upgrade is reviewed | CORRECTNESS | 20 | execute-epic-independent |
-| 2 | [ ] | MEDIUM | internal/reconcile/gate.go:220 | RunReconcile builds a fresh astgroup grouper per call so wazero recompiles each .wasm parser (~0.5s) on every MCP-server reconcile that has on-disk Go/Python source | Hold a process-lifetime astgroup.Host (compiled-module cache) shared across RunReconcile calls instead of constructing/closing per call | PERFORMANCE | 60 | execute-epic-stage3 |
-| 2 | [ ] | LOW | internal/reconcile/astgrouping.go:11 | The ATCR_DISABLE_AST_GROUPING opt-out env var is not documented in user-facing help or README | Document AST-isomorphism grouping and its ATCR_DISABLE_AST_GROUPING opt-out in the reconcile command help and README | DOCS | 15 | execute-epic-stage3 |
-| 2 | [ ] | LOW | internal/reconcile/astgrouping.go:30 | astGrouperFor builds a wazero runtime on every RunReconcile even when no finding targets a Go/Python file, paying setup cost on the common path | Short-circuit to a nil grouper when no finding extension maps to a parser, or construct the host lazily on first supported-language finding | PERFORMANCE | 25 | execute-epic-independent |
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source | Reviewers | Confidence |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|---------|----------|
+| u | [/] | LOW | internal/astgroup/parsers/src/goparser/main.go:39 | The guest pins alloc'd buffers and hands the host int32(uintptr(unsafe.Pointer(&b[0]))) as a stable guest offset, valid only because the current Go GC is non-moving. This is an undocumented runtime invariant, not a language guarantee; a future moving GC makes the packed pointer a dangling offset with no detection. The unsafe alloc/free/emit/node boilerplate is copy-pasted across goparser, pyparser, and the 13.4 brace parsers, so any ABI fix must be applied N times. (Deferred: extraction premature at 2 parsers; epic scope fixed at Go+Python — a future-remedy note is in each parser's ABI section, revisit if parser count grows.) | Extract the shared alloc/free/emit/pins ABI into one internal guest package imported by every parser main.go, and add a build-time note pinning the GC assumption (or switch to an explicitly reserved arena). | maintainability | 120 | code-review | claude | MEDIUM |
+| u | [/] | MEDIUM | internal/astgroup/parsers/src/pyparser/main.go:112 | scanTripleQuotes and stripComment are quote/escape-unaware. A triple-quote appearing inside a # comment, or a # appearing inside a string literal, flips the multi-line-string state machine the wrong way, so arbitrary spans of real code get classified as string content and dropped from significantLines, silently erasing blocks. The heuristic disclaimer documents the risk but does not bound it: on unusual source the structural hash diverges from the true AST. (Deferred: accepted PoC scope; heuristic limitation already documented at pyparser/main.go:72-78 and 152-156, degrades to proximity grouping.) | Run scanTripleQuotes only over the code portion (skip after an unquoted #) and skip triple-quotes occurring inside single-line strings. Add regression fixtures: a # containing a triple-quote, and a string literal containing #. | security | 120 | code-review | claude | MEDIUM |
 
 ### [2026-06-26] From Sprint: 11.0_executing_reviewers
 

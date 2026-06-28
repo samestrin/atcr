@@ -1,0 +1,3 @@
+MEDIUM|internal/astgroup/host.go:221|Missing bounds check on alloc Call result|Check len(res)>0 before accessing res[0]|correctness|5|res[0] panics if wasm alloc returns no values|bruce
+MEDIUM|internal/astgroup/host.go:234|Missing bounds check on parse Call result|Check len(pr)>0 before accessing pr[0]|correctness|5|pr[0] panics if wasm parse returns no values|bruce
+LOW|internal/astgroup/parsers/build.sh:15|Invalid -buildmode=c-shared for WASI wasm target|Remove -buildmode=c-shared; use plain go build|maintainability|3|c-shared is for C shared libs, not wasm modules|bruce

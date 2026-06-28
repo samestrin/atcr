@@ -1,0 +1,2 @@
+MEDIUM|internal/astgroup/host.go:190|Unchecked wasm return length can cause OOM|Cap rlen to a safe maximum before memory.Read|security|10|rlen from plugin used directly for slice allocation|greta
+MEDIUM|internal/astgroup/grouper.go:62|Symlink escape bypasses path containment|Resolve symlinks with EvalSymlinks before Rel check|security|15|filepath.Clean does not resolve symlinks|greta
