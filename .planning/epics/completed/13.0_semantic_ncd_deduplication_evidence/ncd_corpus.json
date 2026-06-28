@@ -1,0 +1,172 @@
+{
+  "_comment": "Labeled NCD calibration/benchmark corpus for Epic 13.0. 'duplicates' are pairs reporting the SAME finding in entirely different vocabulary (token-set Jaccard scores them distinct; NCD must merge them). 'distinct' are pairs that are NOT the same finding (NCD must not merge them). Each finding carries problem/fix/evidence — the three text columns NCD scores together. Used by ncd_corpus_test.go (calibration) and ncd_bench_test.go (AC3 throughput).",
+  "duplicates": [
+    {
+      "note": "logout token not invalidated",
+      "a": {"problem": "the jwt access token issued at login is never invalidated server side when the user logs out", "fix": "maintain a server side revocation list or use short lived tokens with refresh rotation", "evidence": "the logout handler clears the client cookie but never calls the token store"},
+      "b": {"problem": "after a person signs off from their account the previously granted bearer credential keeps working", "fix": "introduce a deny list of retired credentials or rotate the refresh secret at sign off", "evidence": "the sign out routine wipes only the browser state while the bearer still passes verification"}
+    },
+    {
+      "note": "sql injection in query building",
+      "a": {"problem": "user supplied search text is concatenated directly into the sql statement allowing injection", "fix": "switch to parameterized queries with bound placeholders instead of string building", "evidence": "the where clause is assembled with fmt sprintf over the raw request parameter"},
+      "b": {"problem": "the report filter endpoint interpolates request input into a database command without escaping", "fix": "use prepared statements so the driver binds arguments separately from the query", "evidence": "the handler builds the lookup by joining strings that include untrusted form fields"}
+    },
+    {
+      "note": "missing nil check before deref",
+      "a": {"problem": "the response body is dereferenced without checking whether the upstream call returned nil", "fix": "guard the pointer and return early when the upstream response is nil", "evidence": "calling code reads resp body immediately after a fetch that can fail and yield nil"},
+      "b": {"problem": "a null pointer is possible because the function uses the result before confirming it exists", "fix": "add a presence check on the returned object before accessing its members", "evidence": "the value from the network helper is used straight away even though that helper may hand back nothing"}
+    },
+    {
+      "note": "unbounded goroutine leak",
+      "a": {"problem": "a new goroutine is spawned per request but nothing ever signals it to stop so they accumulate", "fix": "attach a context with cancellation and have the worker exit when the context is done", "evidence": "the spawn site has no wait group or cancel and the count climbs under sustained load"},
+      "b": {"problem": "background workers are started without any shutdown path which slowly exhausts memory", "fix": "thread a cancelable context through and return from the loop once cancellation fires", "evidence": "profiling shows the live routine total only ever increasing while traffic continues"}
+    },
+    {
+      "note": "secrets logged in plaintext",
+      "a": {"problem": "the authorization header is written to the application log in clear text on every request", "fix": "redact or omit sensitive headers before emitting any log line", "evidence": "the request logging middleware dumps the full header map including the bearer token"},
+      "b": {"problem": "api credentials end up in the log output because the whole payload is printed for debugging", "fix": "scrub secret fields from structures before they reach the logger", "evidence": "a debug statement serializes the entire config object which contains the access key"}
+    },
+    {
+      "note": "race on shared map",
+      "a": {"problem": "a shared map is read and written from multiple goroutines without any synchronization", "fix": "protect the map with a mutex or switch to sync map for concurrent access", "evidence": "the cache is mutated in a handler while a background refresher iterates the same map"},
+      "b": {"problem": "concurrent access to the in memory store is unguarded so the data structure can corrupt", "fix": "wrap every read and write in a lock to serialize access to the structure", "evidence": "the race detector flags simultaneous entry updates from request threads and the sweeper"}
+    },
+    {
+      "note": "off by one in pagination",
+      "a": {"problem": "the pagination offset is computed as page times size which skips the first record on page one", "fix": "use page minus one times size so the first page starts at the correct index", "evidence": "requesting the first page omits the earliest row and the last row is duplicated"},
+      "b": {"problem": "list paging drops one item at the boundary because the start index is off by a single position", "fix": "correct the index math so each page begins exactly where the previous one ended", "evidence": "users report the top entry missing whenever they open the initial results screen"}
+    },
+    {
+      "note": "missing input length validation",
+      "a": {"problem": "the username field has no maximum length so an attacker can submit megabytes of data", "fix": "enforce a sensible upper bound on the field length before processing", "evidence": "the handler accepts and stores arbitrarily large strings straight into the database"},
+      "b": {"problem": "there is no cap on the size of the supplied name which enables a denial of service", "fix": "reject inputs over a reasonable character limit early in request handling", "evidence": "posting an enormous value for the field causes the row insert to balloon unchecked"}
+    },
+    {
+      "note": "unhandled error swallowed",
+      "a": {"problem": "the error returned by the write call is ignored so failures pass silently", "fix": "check the returned error and propagate or log it instead of discarding it", "evidence": "the save function assigns the error to the blank identifier and continues"},
+      "b": {"problem": "a failure from the persistence layer is dropped because the return value is never inspected", "fix": "handle the returned status so a failed operation does not look successful", "evidence": "calling code discards what the store hands back and always reports success to the caller"}
+    },
+    {
+      "note": "weak password hashing",
+      "a": {"problem": "passwords are hashed with a single round of md5 which is trivially crackable", "fix": "use a slow adaptive hash such as bcrypt or argon2 with a per user salt", "evidence": "the account creation path stores md5 of the raw password with no salt at all"},
+      "b": {"problem": "the credential storage relies on a fast unsalted digest that offers little protection", "fix": "migrate to a memory hard key derivation function with a unique salt per record", "evidence": "stored secrets are a plain hexadecimal sha of the secret making rainbow tables viable"}
+    },
+    {
+      "note": "path traversal in file download",
+      "a": {"problem": "the download endpoint joins the user supplied name onto a base path allowing directory traversal", "fix": "sanitize the path and confirm the resolved location stays within the allowed root", "evidence": "requesting dot dot slash sequences reads files outside the intended folder"},
+      "b": {"problem": "a client controlled filename is used to build the served path which permits escaping the directory", "fix": "clean the requested path and reject any resolution that leaves the served root", "evidence": "supplying parent directory tokens in the name exposes arbitrary host files"}
+    },
+    {
+      "note": "timezone bug in date diff",
+      "a": {"problem": "date subtraction uses local time so results shift by an hour across daylight saving changes", "fix": "perform the arithmetic in utc and convert to local only for display", "evidence": "the elapsed days count is wrong for any interval that crosses a clock change"},
+      "b": {"problem": "the duration calculation mixes wall clock zones which produces incorrect spans twice a year", "fix": "normalize both timestamps to a single absolute zone before computing the difference", "evidence": "reports near the spring transition show an interval that is sixty minutes short"}
+    },
+    {
+      "note": "cors allows any origin",
+      "a": {"problem": "the server reflects the request origin and allows credentials which defeats cross origin protection", "fix": "restrict allowed origins to an explicit allow list and avoid echoing arbitrary values", "evidence": "the access control allow origin header is set to whatever the caller sends"},
+      "b": {"problem": "cross origin policy is effectively disabled because every site is permitted with cookies", "fix": "configure a fixed set of trusted domains rather than accepting all of them", "evidence": "any external page can read authenticated responses because the wildcard is paired with credentials"}
+    },
+    {
+      "note": "integer overflow in size calc",
+      "a": {"problem": "the allocation size is computed by multiplying two request values which can overflow and wrap", "fix": "validate the factors and use checked multiplication before allocating", "evidence": "large width and height inputs produce a tiny buffer that is later overrun"},
+      "b": {"problem": "a product of user numbers is used as a buffer length and wraps around to a small value", "fix": "bound each operand and detect overflow prior to reserving memory", "evidence": "supplying big dimensions yields a wrapped total so the following copy writes past the end"}
+    },
+    {
+      "note": "retry without backoff",
+      "a": {"problem": "the client retries failed requests immediately in a tight loop hammering the upstream", "fix": "add exponential backoff with jitter between attempts and a maximum retry cap", "evidence": "on an outage the code reissues the call with no delay thousands of times a second"},
+      "b": {"problem": "failed calls are repeated instantly with no pause which amplifies load during incidents", "fix": "space attempts using growing delays and randomization plus an upper bound", "evidence": "when the dependency is down the retry path spins continuously without any wait"}
+    },
+    {
+      "note": "missing index causes slow query",
+      "a": {"problem": "the lookup filters on a column that has no index so every query scans the whole table", "fix": "add an index on the filtered column to avoid full table scans", "evidence": "explain shows a sequential scan over millions of rows for a single user fetch"},
+      "b": {"problem": "queries are slow because the searched field is not indexed forcing a complete scan", "fix": "create an index covering the predicate so the planner can seek instead of scanning", "evidence": "the query plan reports reading the entire relation to satisfy an equality filter"}
+    },
+    {
+      "note": "hardcoded credentials",
+      "a": {"problem": "the database password is embedded directly in the source file and committed to the repo", "fix": "load the secret from the environment or a secrets manager at runtime", "evidence": "the connection string literal contains the production password in plaintext"},
+      "b": {"problem": "an api key is baked into the code instead of being supplied through configuration", "fix": "read the key from an injected environment variable rather than a constant", "evidence": "a string constant near the top of the client holds the live service token"}
+    },
+    {
+      "note": "xss via unescaped output",
+      "a": {"problem": "user comment text is rendered into the page without escaping enabling stored cross site scripting", "fix": "html escape all user content on output or use a templating layer that auto escapes", "evidence": "a comment containing a script tag executes when other users view the thread"},
+      "b": {"problem": "profile fields are written into markup verbatim which lets attackers inject active scripts", "fix": "encode dynamic values before they are placed in the document body", "evidence": "setting a bio with an inline event handler runs javascript for every visitor"}
+    },
+    {
+      "note": "double close of resource",
+      "a": {"problem": "the file handle is closed in two places on the error path which panics on the second close", "fix": "close exactly once using a single deferred close guarded against repetition", "evidence": "the cleanup branch and the deferred call both invoke close on the same descriptor"},
+      "b": {"problem": "a connection can be released twice when an early return also triggers the deferred cleanup", "fix": "ensure the resource is freed a single time by removing the redundant manual release", "evidence": "under the failure branch the socket close runs once inline and again from the defer"}
+    },
+    {
+      "note": "unvalidated redirect",
+      "a": {"problem": "the login flow redirects to a url taken from a query parameter without validation enabling open redirect", "fix": "allow only relative paths or check the target against an approved host list", "evidence": "setting the next parameter to an external site sends users there after authenticating"},
+      "b": {"problem": "a post action forwards the browser to a caller supplied address which phishers can abuse", "fix": "restrict the forward destination to known internal routes and reject absolute urls", "evidence": "the return to field accepts a full external link and the handler trusts it blindly"}
+    }
+  ],
+  "distinct": [
+    {
+      "note": "auth issue vs ui layout",
+      "a": {"problem": "the jwt access token issued at login is never invalidated server side when the user logs out", "fix": "maintain a server side revocation list or use short lived tokens with refresh rotation", "evidence": "the logout handler clears the client cookie but never calls the token store"},
+      "b": {"problem": "the responsive grid on the dashboard overflows its container on very narrow mobile viewports", "fix": "add a min width media query and collapse the grid to a single column under four hundred pixels", "evidence": "chrome devtools at three twenty pixels shows the grid exceeding the viewport width"}
+    },
+    {
+      "note": "sql injection vs slow query (same area, different issue)",
+      "a": {"problem": "user supplied search text is concatenated directly into the sql statement allowing injection", "fix": "switch to parameterized queries with bound placeholders instead of string building", "evidence": "the where clause is assembled with fmt sprintf over the raw request parameter"},
+      "b": {"problem": "the lookup filters on a column that has no index so every query scans the whole table", "fix": "add an index on the filtered column to avoid full table scans", "evidence": "explain shows a sequential scan over millions of rows for a single user fetch"}
+    },
+    {
+      "note": "nil deref vs timezone",
+      "a": {"problem": "the response body is dereferenced without checking whether the upstream call returned nil", "fix": "guard the pointer and return early when the upstream response is nil", "evidence": "calling code reads resp body immediately after a fetch that can fail and yield nil"},
+      "b": {"problem": "date subtraction uses local time so results shift by an hour across daylight saving changes", "fix": "perform the arithmetic in utc and convert to local only for display", "evidence": "the elapsed days count is wrong for any interval that crosses a clock change"}
+    },
+    {
+      "note": "goroutine leak vs weak hashing",
+      "a": {"problem": "a new goroutine is spawned per request but nothing ever signals it to stop so they accumulate", "fix": "attach a context with cancellation and have the worker exit when the context is done", "evidence": "the spawn site has no wait group or cancel and the count climbs under sustained load"},
+      "b": {"problem": "passwords are hashed with a single round of md5 which is trivially crackable", "fix": "use a slow adaptive hash such as bcrypt or argon2 with a per user salt", "evidence": "the account creation path stores md5 of the raw password with no salt at all"}
+    },
+    {
+      "note": "secrets logged vs cors",
+      "a": {"problem": "the authorization header is written to the application log in clear text on every request", "fix": "redact or omit sensitive headers before emitting any log line", "evidence": "the request logging middleware dumps the full header map including the bearer token"},
+      "b": {"problem": "the server reflects the request origin and allows credentials which defeats cross origin protection", "fix": "restrict allowed origins to an explicit allow list and avoid echoing arbitrary values", "evidence": "the access control allow origin header is set to whatever the caller sends"}
+    },
+    {
+      "note": "race vs pagination",
+      "a": {"problem": "a shared map is read and written from multiple goroutines without any synchronization", "fix": "protect the map with a mutex or switch to sync map for concurrent access", "evidence": "the cache is mutated in a handler while a background refresher iterates the same map"},
+      "b": {"problem": "the pagination offset is computed as page times size which skips the first record on page one", "fix": "use page minus one times size so the first page starts at the correct index", "evidence": "requesting the first page omits the earliest row and the last row is duplicated"}
+    },
+    {
+      "note": "input length vs path traversal",
+      "a": {"problem": "the username field has no maximum length so an attacker can submit megabytes of data", "fix": "enforce a sensible upper bound on the field length before processing", "evidence": "the handler accepts and stores arbitrarily large strings straight into the database"},
+      "b": {"problem": "the download endpoint joins the user supplied name onto a base path allowing directory traversal", "fix": "sanitize the path and confirm the resolved location stays within the allowed root", "evidence": "requesting dot dot slash sequences reads files outside the intended folder"}
+    },
+    {
+      "note": "error swallowed vs overflow",
+      "a": {"problem": "the error returned by the write call is ignored so failures pass silently", "fix": "check the returned error and propagate or log it instead of discarding it", "evidence": "the save function assigns the error to the blank identifier and continues"},
+      "b": {"problem": "the allocation size is computed by multiplying two request values which can overflow and wrap", "fix": "validate the factors and use checked multiplication before allocating", "evidence": "large width and height inputs produce a tiny buffer that is later overrun"}
+    },
+    {
+      "note": "xss vs retry backoff",
+      "a": {"problem": "user comment text is rendered into the page without escaping enabling stored cross site scripting", "fix": "html escape all user content on output or use a templating layer that auto escapes", "evidence": "a comment containing a script tag executes when other users view the thread"},
+      "b": {"problem": "the client retries failed requests immediately in a tight loop hammering the upstream", "fix": "add exponential backoff with jitter between attempts and a maximum retry cap", "evidence": "on an outage the code reissues the call with no delay thousands of times a second"}
+    },
+    {
+      "note": "hardcoded creds vs double close",
+      "a": {"problem": "the database password is embedded directly in the source file and committed to the repo", "fix": "load the secret from the environment or a secrets manager at runtime", "evidence": "the connection string literal contains the production password in plaintext"},
+      "b": {"problem": "the file handle is closed in two places on the error path which panics on the second close", "fix": "close exactly once using a single deferred close guarded against repetition", "evidence": "the cleanup branch and the deferred call both invoke close on the same descriptor"}
+    },
+    {
+      "note": "unvalidated redirect vs missing index",
+      "a": {"problem": "the login flow redirects to a url taken from a query parameter without validation enabling open redirect", "fix": "allow only relative paths or check the target against an approved host list", "evidence": "setting the next parameter to an external site sends users there after authenticating"},
+      "b": {"problem": "queries are slow because the searched field is not indexed forcing a complete scan", "fix": "create an index covering the predicate so the planner can seek instead of scanning", "evidence": "the query plan reports reading the entire relation to satisfy an equality filter"}
+    },
+    {
+      "note": "weak hashing vs cors",
+      "a": {"problem": "passwords are hashed with a single round of md5 which is trivially crackable", "fix": "use a slow adaptive hash such as bcrypt or argon2 with a per user salt", "evidence": "the account creation path stores md5 of the raw password with no salt at all"},
+      "b": {"problem": "cross origin policy is effectively disabled because every site is permitted with cookies", "fix": "configure a fixed set of trusted domains rather than accepting all of them", "evidence": "any external page can read authenticated responses because the wildcard is paired with credentials"}
+    },
+    {
+      "note": "timezone vs xss",
+      "a": {"problem": "the duration calculation mixes wall clock zones which produces incorrect spans twice a year", "fix": "normalize both timestamps to a single absolute zone before computing the difference", "evidence": "reports near the spring transition show an interval that is sixty minutes short"},
+      "b": {"problem": "profile fields are written into markup verbatim which lets attackers inject active scripts", "fix": "encode dynamic values before they are placed in the document body", "evidence": "setting a bio with an inline event handler runs javascript for every visitor"}
+    }
+  ]
+}
