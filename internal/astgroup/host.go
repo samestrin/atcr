@@ -27,10 +27,11 @@ type Parser interface {
 // <10ms repeat-parse NFR) and reused for every subsequent parse. Host is safe
 // for concurrent use.
 type Host struct {
-	ctx         context.Context
-	runtime     wazero.Runtime
-	overrideDir string
-	initErr     error // non-nil if WASI init failed; Parser then errors instead of panicking
+	ctx            context.Context
+	runtime        wazero.Runtime
+	overrideDir    string
+	maxSourceBytes int
+	initErr        error // non-nil if WASI init failed; Parser then errors instead of panicking
 
 	mu      sync.Mutex
 	closed  bool
@@ -48,6 +49,12 @@ func WithOverrideDir(dir string) Option {
 	return func(h *Host) { h.overrideDir = dir }
 }
 
+// WithMaxSourceBytes sets the maximum source size a parser plugin will accept.
+// Larger files fall back to line-proximity grouping. The default is 8 MiB.
+func WithMaxSourceBytes(n int) Option {
+	return func(h *Host) { h.maxSourceBytes = n }
+}
+
 // NewHost creates a Host with a fresh wazero runtime (pure Go, zero CGO) and WASI
 // preview1 imports instantiated. Call Close to release it. A WASI-init failure is
 // recorded rather than panicked: Parser then returns that error, so a host wired
@@ -57,7 +64,7 @@ func NewHost(opts ...Option) *Host {
 	ctx := context.Background()
 	cfg := wazero.NewRuntimeConfig().WithCloseOnContextDone(true)
 	rt := wazero.NewRuntimeWithConfig(ctx, cfg)
-	h := &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
+	h := &Host{ctx: ctx, runtime: rt, maxSourceBytes: defaultMaxSourceBytes, parsers: map[string]*wasmParser{}}
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
 	}
@@ -145,12 +152,13 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	}
 
 	p := &wasmParser{
-		ctx:    h.ctx,
-		mod:    mod,
-		alloc:  mod.ExportedFunction("alloc"),
-		free:   mod.ExportedFunction("free"),
-		parse:  mod.ExportedFunction("parse"),
-		memory: mod.Memory(),
+		ctx:            h.ctx,
+		mod:            mod,
+		alloc:          mod.ExportedFunction("alloc"),
+		free:           mod.ExportedFunction("free"),
+		parse:          mod.ExportedFunction("parse"),
+		memory:         mod.Memory(),
+		maxSourceBytes: h.maxSourceBytes,
 	}
 	if p.alloc == nil || p.free == nil || p.parse == nil || p.memory == nil {
 		return nil, fmt.Errorf("astgroup: plugin %s missing required exports", lang)
@@ -175,21 +183,22 @@ func (h *Host) Close() error {
 // wasmParser wraps one instantiated parser plugin. A wasm module instance is not
 // safe for concurrent calls, so every Parse is serialized by mu.
 type wasmParser struct {
-	ctx    context.Context
-	mod    api.Module
-	alloc  api.Function
-	free   api.Function
-	parse  api.Function
-	memory api.Memory
+	ctx            context.Context
+	mod            api.Module
+	alloc          api.Function
+	free           api.Function
+	parse          api.Function
+	memory         api.Memory
+	maxSourceBytes int
 
 	mu sync.Mutex
 }
 
-// maxSourceBytes bounds the source a plugin will parse. Files larger than this
-// are pathological for code review; rejecting them (the caller falls back to
-// line-proximity grouping) caps guest memory and parse time without needing a
-// full execution-timeout watchdog.
-const maxSourceBytes = 1 << 23 // 8 MiB
+// defaultMaxSourceBytes bounds the source a plugin will parse by default. Files
+// larger than this are pathological for code review; rejecting them (the caller
+// falls back to line-proximity grouping) caps guest memory and parse time without
+// needing a full execution-timeout watchdog.
+const defaultMaxSourceBytes = 1 << 23 // 8 MiB
 
 // parseTimeout bounds a single guest parse call. Paired with the runtime's
 // WithCloseOnContextDone, an exceeded deadline aborts and closes the offending
@@ -199,8 +208,8 @@ const maxSourceBytes = 1 << 23 // 8 MiB
 var parseTimeout = 5 * time.Second
 
 func (p *wasmParser) Parse(src []byte) (Node, error) {
-	if len(src) > maxSourceBytes {
-		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), maxSourceBytes)
+	if len(src) > p.maxSourceBytes {
+		return Node{}, fmt.Errorf("astgroup: source too large (%d bytes > %d)", len(src), p.maxSourceBytes)
 	}
 
 	p.mu.Lock()

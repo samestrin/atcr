@@ -104,6 +104,22 @@ func TestHost_ParseHonorsTimeout(t *testing.T) {
 	require.Error(t, err, "Parse must enforce parseTimeout and abort the guest call")
 }
 
+func TestHost_MaxSourceBytesConfigurable(t *testing.T) {
+	h := NewHost(WithMaxSourceBytes(16))
+	defer func() { _ = h.Close() }()
+	p, err := h.Parser("go")
+	require.NoError(t, err)
+
+	// Source within the custom limit parses successfully.
+	_, err = p.Parse([]byte("package p\n"))
+	require.NoError(t, err)
+
+	// Source above the custom limit is rejected.
+	_, err = p.Parse([]byte("package p\nfunc A() {}\nfunc B() {}\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "source too large")
+}
+
 func TestHost_ParserCachedAndReused(t *testing.T) {
 	h := NewHost()
 	defer func() { _ = h.Close() }()
