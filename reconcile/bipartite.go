@@ -184,11 +184,14 @@ func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
 //
 // Acceptance is gated by mergeable, NOT by the float cost: a candidate joins the
 // group it was optimally assigned to only when mergeable(member, candidate) holds
-// for some member — an integer-exact predicate (AST key match, or classify ==
-// relMerge) that keeps the duplicate boundary deterministic and free of the
-// floating-point rounding the cost matrix carries. An unaccepted or unmatched
-// candidate seeds a new singleton group, so a group holds at most one finding per
-// source — one consensus issue across reviewers.
+// for EVERY current member (complete-linkage) — an integer-exact predicate (AST
+// key match, or classify == relMerge) that keeps the duplicate boundary
+// deterministic and free of the floating-point rounding the cost matrix carries.
+// Complete-linkage (rather than single-linkage "some member") is what stops two
+// merge-strength links from chaining non-duplicate endpoints through a bridge
+// finding. An unaccepted or unmatched candidate seeds a new singleton group, so a
+// group holds at most one finding per source — one consensus issue across
+// reviewers.
 //
 // Sources are identified by srcKeys[i] (the finding's source-partition key, see
 // dedupeCluster: a non-empty Reviewer, else a per-finding unique key so an
@@ -234,10 +237,16 @@ func bipartiteGroups(srcKeys []string, dist [][]float64, mergeable func(a, b int
 				continue
 			}
 			cand := cands[c]
-			accept := false
+			// Complete-linkage acceptance: the candidate joins the group it was
+			// optimally assigned to only when it is mergeable with EVERY current
+			// member, not merely one (single-linkage). Single-linkage lets two
+			// merge-strength links (a~b, b~c) chain non-duplicate endpoints (a~c
+			// below the merge boundary) into one group via the bridge; requiring all
+			// members to be duplicates of the candidate forbids that chain.
+			accept := true
 			for _, gi := range groups[r] {
-				if mergeable(gi, cand) {
-					accept = true
+				if !mergeable(gi, cand) {
+					accept = false
 					break
 				}
 			}
