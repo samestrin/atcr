@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -60,6 +61,9 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	n := len(cluster)
 	if n == 0 {
 		return nil, nil
+	}
+	if len(keys) != n {
+		panic(fmt.Sprintf("dedupeCluster: len(keys)=%d must equal len(cluster)=%d", len(keys), n))
 	}
 	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
