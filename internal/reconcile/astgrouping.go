@@ -22,10 +22,12 @@ import (
 // unset — do not set it to "0"/"false" expecting it to mean "not disabled".
 const astGroupingDisabledEnv = "ATCR_DISABLE_AST_GROUPING"
 
-// lazyGrouper wraps an astgroup.Grouper and constructs its underlying wazero
-// runtime only when the first finding with a supported language extension is
-// seen. This avoids paying the WASI instantiation cost on reconciles whose
-// findings do not target a parsed language.
+// lazyGrouper wraps an astgroup.Grouper and defers obtaining the shared wazero
+// Host until the first finding with a supported language extension is seen. This
+// avoids touching the runtime on reconciles whose findings do not target a parsed
+// language; once obtained, the process-lifetime Host (astgroup.SharedHost) is
+// reused across reconciles so WASI plus per-language module instantiation is paid
+// at most once per process, not once per RunReconcile call.
 type lazyGrouper struct {
 	root       string
 	newGrouper func(string) *astgroup.Grouper
@@ -34,7 +36,10 @@ type lazyGrouper struct {
 }
 
 func newLazyGrouper(root string) *lazyGrouper {
-	return &lazyGrouper{root: root, newGrouper: astgroup.NewGrouper}
+	return &lazyGrouper{
+		root:       root,
+		newGrouper: func(root string) *astgroup.Grouper { return astgroup.NewGrouper(root, astgroup.SharedHost()) },
+	}
 }
 
 // GroupKey returns the AST-isomorphism key for f, or "" to fall back to
@@ -51,7 +56,9 @@ func (lg *lazyGrouper) GroupKey(f reclib.Finding) string {
 	return lg.g.GroupKey(f)
 }
 
-// Close releases the wazero runtime if the grouper was constructed.
+// Close releases the grouper's per-run file-tree cache if it was constructed. The
+// shared wazero Host (astgroup.SharedHost) is process-lifetime and is deliberately
+// not closed here, so its compiled-parser cache survives for the next reconcile.
 func (lg *lazyGrouper) Close() error {
 	if lg.g != nil {
 		return lg.g.Close()

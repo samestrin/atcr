@@ -62,7 +62,7 @@ func isPermanentReadError(err error) bool {
 // Close releases it. This backward-compatible default keeps existing tests and
 // callers working without change.
 func NewGrouper(root string, host ...*Host) *Grouper {
-	h := SharedHost()
+	var h *Host
 	owns := false
 	if len(host) > 0 && host[0] != nil {
 		h = host[0]
