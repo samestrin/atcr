@@ -217,6 +217,15 @@ func RunReconcile(ctx context.Context, reviewDir string, allow []string, opts Op
 		adjudicating = true
 	}
 
+	// AST-isomorphism grouping (epic 13.1): the adopted primary clustering signal.
+	// Findings that map to the same logical AST block group together even when
+	// their line numbers drift, with line proximity as the fallback when no parser
+	// is available. Opt out via ATCR_DISABLE_AST_GROUPING. Degrades gracefully:
+	// missing source or an unloadable parser falls back to proximity per finding.
+	grouper, closeGrouper := astGrouperFor(opts.Root)
+	defer closeGrouper()
+	opts.Grouper = grouper
+
 	res := Reconcile(sources, opts)
 
 	// Flag findings whose file paths do not exist under the reviewed repo root
