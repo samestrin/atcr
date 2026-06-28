@@ -117,6 +117,29 @@ func TestAC3_SelfDuplicateIsNotCorroboration(t *testing.T) {
 	isTrue(t, stillPresent, "host's uncorroborated finding stays in the consensus output")
 }
 
+func TestAC3_UnattributedCopiesAreNotCrossSourceCorroboration(t *testing.T) {
+	// Two empty-Reviewer copies of the same finding are the SAME (unknown) source,
+	// not two independent corroborating sources. srcKeys gives each its own key for
+	// bipartite MATCHING, but the DENSITY predicate must collapse them: otherwise
+	// two unattributed copies of a spurious claim manufacture a dense cluster that
+	// wrongly isolates a different, legitimate finding as noise.
+	groups, amb := DedupeCluster([]Finding{
+		fnd("a.go", 1, "spurious duplicated claim text", ""),           // unattributed copy 1
+		fnd("a.go", 1, "spurious duplicated claim text", ""),           // unattributed copy 2 (merges with copy 1)
+		fnd("a.go", 1, "a completely different real finding", "greta"), // legitimate, distinct
+	})
+	length(t, amb, 0, "two unattributed copies are not corroboration → nothing isolated as noise")
+	stillPresent := false
+	for _, g := range groups {
+		for _, f := range g {
+			if f.Reviewer == "greta" {
+				stillPresent = true
+			}
+		}
+	}
+	isTrue(t, stillPresent, "the legitimate finding stays in the output")
+}
+
 func TestDedupeCluster_SameSourceDuplicatesDoNotMerge(t *testing.T) {
 	// Documented behavior of the cross-source matching model: two identical
 	// findings from the SAME reviewer are not merged with each other (matching is
