@@ -55,6 +55,32 @@ func TestAC2_TransitiveBridgeDoesNotMergeNonDuplicates(t *testing.T) {
 	length(t, amb, 1, "the unresolved gray A-B pair is recorded for adjudication")
 }
 
+func TestAC2_CompleteLinkageRejectsMergeStrengthChain(t *testing.T) {
+	// Two MERGE-strength links (a~b and b~c each >= 0.7) with NON-duplicate
+	// endpoints (a~c below the merge threshold). Single-linkage acceptance
+	// (mergeable for ANY current member) lets c join {a,b} via b and drags the
+	// non-duplicate a and c into one group. Complete-linkage acceptance (mergeable
+	// for ALL members) keeps a and c apart. This differs from
+	// TestAC2_TransitiveBridgeDoesNotMergeNonDuplicates, whose bridge is a single
+	// GRAY link — here BOTH bridge links clear the merge threshold.
+	a := fnd("a.go", 1, "t1 t2 t3 t4 t5 t6 t7 t8", "ra")  // a
+	b := fnd("a.go", 1, "t1 t2 t3 t4 t5 t6", "rb")        // b: a~b inter6/union8 = 0.75 merge
+	c := fnd("a.go", 1, "t1 t2 t3 t4 t5 t6 t9 t10", "rc") // c: b~c 0.75 merge; a~c inter6/union10 = 0.6 (not merge)
+	groups, _ := DedupeCluster([]Finding{a, b, c})
+	groupOfA, groupOfC := -1, -2
+	for gi, g := range groups {
+		for _, f := range g {
+			if f.Reviewer == "ra" {
+				groupOfA = gi
+			}
+			if f.Reviewer == "rc" {
+				groupOfC = gi
+			}
+		}
+	}
+	notEq(t, groupOfA, groupOfC, "non-duplicate endpoints a and c stay in separate groups (no single-linkage chain)")
+}
+
 func TestAC2_OptimalAssignmentPrefersClosestPairing(t *testing.T) {
 	// Both reviewers report two findings at one location, with cross-overlap so a
 	// naive matcher could pair them wrong. greta:[A,B], kai:[P,Q] where A~Q and

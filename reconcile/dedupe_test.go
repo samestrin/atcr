@@ -155,3 +155,62 @@ func TestDedupeCluster_SingletonClusterNoAmbiguous(t *testing.T) {
 	length(t, groups[0], 1, "one member")
 	length(t, amb, 0, "no ambiguous")
 }
+
+func TestDedupeCluster_SharedASTKeyNotGray(t *testing.T) {
+	// Two same-source findings with a shared non-empty AST key are structurally
+	// identical per the 13.1 signal. They cannot merge because of the 1:1
+	// cross-source constraint, but they must NOT be recorded as a gray pair.
+	_, amb := dedupeCluster([]Finding{
+		fnd("a.go", 1, "alpha beta gamma", "greta"),
+		fnd("a.go", 1, "delta epsilon zeta", "greta"),
+	}, []string{"a.go\x00H", "a.go\x00H"}, nil)
+	length(t, amb, 0, "shared AST key is not gray")
+}
+
+func TestDedupeCluster_CraftedReviewerCannotSpoofAnonKey(t *testing.T) {
+	// Security: an unattributed finding's per-finding anonymous source key must live
+	// in a namespace an attacker-controlled Reviewer string cannot forge. A Reviewer
+	// crafted to equal a genuine finding's anon key would otherwise collide — the
+	// two would be treated as the SAME source and silently dropped from 1:1
+	// cross-source matching (dedup disabled). They are distinct sources, so their
+	// identical findings must merge into one group.
+	groups, _ := DedupeCluster([]Finding{
+		fnd("a.go", 1, "token never expires unchecked", ""),              // genuine unattributed → anon key for index 0
+		fnd("a.go", 1, "token never expires unchecked", "\x00anon\x000"), // crafted to collide with the index-0 anon key
+	})
+	length(t, groups, 1, "distinct sources with identical text merge; the crafted reviewer cannot spoof the anon key")
+	length(t, groups[0], 2, "both findings")
+}
+
+func TestDedupeCluster_OversizedClusterDegradesToSingletons(t *testing.T) {
+	// Defense against an O(n^2)-memory / O(n^2)-CPU DoS: a location cluster larger
+	// than maxClusterSize skips the distance-matrix allocation and the pairwise
+	// matching/DBSCAN/gray passes entirely, degrading to one singleton group per
+	// finding (every finding preserved, no merge attempted). The identical text
+	// below would all collapse into ONE group if processed, so a result of n
+	// singletons proves the degraded path ran. maxClusterSize is far above any real
+	// cluster, so only adversarial input reaches this.
+	n := maxClusterSize + 50
+	cluster := make([]Finding, n)
+	for i := range cluster {
+		cluster[i] = fnd("a.go", 1, "identical duplicated problem text", "")
+	}
+	groups, amb := DedupeCluster(cluster)
+	length(t, groups, n, "oversized cluster degrades to one singleton per finding")
+	for _, g := range groups {
+		length(t, g, 1, "each finding stands alone")
+	}
+	length(t, amb, 0, "no ambiguous/noise computed for an oversized cluster")
+}
+
+func TestDedupeCluster_MismatchedKeysLengthPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for mismatched keys length")
+		}
+	}()
+	dedupeCluster([]Finding{
+		fnd("a.go", 1, "alpha", "greta"),
+		fnd("a.go", 1, "beta", "kai"),
+	}, []string{""}, nil)
+}

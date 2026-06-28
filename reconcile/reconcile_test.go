@@ -129,3 +129,16 @@ func TestAllFindings_FlattensInSourceOrder(t *testing.T) {
 	eq(t, all[1].File, "b.go", "source order preserved")
 	eq(t, all[2].File, "c.go", "source order preserved")
 }
+
+func TestReconcile_SummaryCountsAmbiguousAndNoise(t *testing.T) {
+	// Dense pair (greta+kai merge) provides the corroboration context that lets a
+	// third, unrelated finding be isolated as DBSCAN noise.
+	sources := []Source{{Name: "pool", Findings: []Finding{
+		mf("HIGH", "a.go", 1, "token never expires unchecked here", "", "security", 15, "e", "greta"),
+		mf("HIGH", "a.go", 1, "token never expires unchecked here", "", "security", 15, "e", "kai"),
+		mf("HIGH", "a.go", 1, "completely different spurious claim", "", "security", 15, "e", "mira"),
+	}}}
+	res := Reconcile(sources, recAt())
+	eq(t, res.Summary.AmbiguousCount, 1, "one noise entry in ambiguous sidecar")
+	eq(t, res.Summary.NoiseCount, 1, "the single entry is noise")
+}

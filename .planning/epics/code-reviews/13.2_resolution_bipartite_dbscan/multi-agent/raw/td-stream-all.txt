@@ -1,0 +1,13 @@
+# Merged TD Stream from direct review
+# SEVERITY|FILE:LINE|PROBLEM|FIX|CATEGORY|EST_MINUTES|EVIDENCE|REVIEWER
+
+MEDIUM|reconcile/bipartite.go:165|Potential infinite loop in Hungarian algorithm|The `for` loop at line 165 (`for j0 != 0`) modifies `j0` using `way[j0]`, but if `way` contains a cycle or `j0` never reaches 0, it will hang.|Add a safety iteration limit or verify the shortest-augmenting-path properties|correctness|30|`for j0 != 0 { j1 := way[j0]; p[j0] = p[j1]; j0 = j1 }`|otto
+MEDIUM|reconcile/bipartite.go:44|Potential integer overflow in loop index|Use int64 for large n or add bounds check|correctness|10|for i := 1; i <= n; i++ with n from len(cost)|bruce
+MEDIUM|reconcile/dedupe.go:89|Anonymous source key uses index only, not stable ID|Include file+line+problem hash in key|correctness|15|"\x00anon\x00" + strconv.Itoa(i) changes if order shifts|bruce
+MEDIUM|reconcile/dedupe.go:156|DBSCAN noise ID uses same-problem twice|Use finding ID or include reviewer|maintainability|5|AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[i].Problem)|bruce
+LOW|reconcile/dbscan.go:44|Neighbor search is O(n²) per point|Precompute neighbor lists or use spatial index|performance|30|for q := 0; q < n; q++ inside loop for every p|bruce
+LOW|reconcile/bipartite.go:89|noMatchSentinel hardcoded as 2.0|Derive from max possible cost|maintainability|5|const noMatchSentinel = 2.0 vs dynamic max|bruce
+MEDIUM|reconcile/dedupe.go:48|Unbounded cluster size enables O(n^2) memory and O(n^3) CPU DoS|Enforce max cluster size before allocating distance matrix|security|15|dist := make([][]float64, n) runs without size guard|greta
+MEDIUM|reconcile/dedupe.go:146|Attacker-controlled Reviewer string can spoof anonymous source keys|Sanitize Reviewer field or use collision-resistant IDs|security|10|srcKeys[i] = f.Reviewer allows sentinel collision|greta
+MEDIUM|reconcile/dbscan.go:47|Repeated neighbor computation in DBSCAN expansion|Precompute adjacency list or cache neighbor results to avoid O(V^2) repeated scans|performance|5|`neighborsOf` called inside BFS loop, recomputing O(V) edges per point|bruce
+MEDIUM|reconcile/dedupe.go:136|AmbiguousID collision for noise vs gray pairs|Use distinct ID scheme for noise|correctness|15|AmbiguousID(a,b) for noise equals gray pair ID|bruce

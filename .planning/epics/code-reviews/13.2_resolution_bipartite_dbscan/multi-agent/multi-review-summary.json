@@ -1,0 +1,98 @@
+{
+  "reviewers": [
+    {
+      "agent": "ronin",
+      "model": "nemotron-3-nano",
+      "status": "failed",
+      "durationMs": 11915,
+      "tdLineCount": 0,
+      "error": "no content in stream"
+    },
+    {
+      "agent": "otto",
+      "model": "gemma-4-31b",
+      "status": "ok",
+      "durationMs": 41292,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "bob2",
+      "model": "NVIDIA-Nemotron-3-Super-120B-A12B",
+      "status": "ok",
+      "durationMs": 110378,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "kai-backup",
+      "model": "kimi-k2.5",
+      "status": "ok",
+      "durationMs": 9711,
+      "tdLineCount": 5
+    },
+    {
+      "agent": "greta",
+      "model": "openai/qwen-3.6-plus",
+      "status": "ok",
+      "durationMs": 146962,
+      "tdLineCount": 2
+    },
+    {
+      "agent": "mira",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 267618,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "bob",
+      "model": "bob-model",
+      "status": "timeout",
+      "durationMs": 300004,
+      "tdLineCount": 0,
+      "error": "stream idle timeout: no activity for 5m0s: context deadline exceeded"
+    },
+    {
+      "agent": "bruce",
+      "model": "minimax-m3-mira",
+      "status": "ok",
+      "durationMs": 310301,
+      "tdLineCount": 0
+    },
+    {
+      "agent": "brad",
+      "model": "openai/qwen-3.7-plus",
+      "status": "ok",
+      "durationMs": 313969,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "dax-local",
+      "model": "llm-large",
+      "status": "ok",
+      "durationMs": 8434,
+      "tdLineCount": 1
+    },
+    {
+      "agent": "vera",
+      "model": "gpt-oss-20b",
+      "status": "timeout",
+      "durationMs": 600000,
+      "tdLineCount": 0,
+      "error": "stream read failed: context deadline exceeded"
+    },
+    {
+      "agent": "archer",
+      "model": "glm-5.2",
+      "status": "failed",
+      "durationMs": 452889,
+      "tdLineCount": 0,
+      "error": "no content in stream (fallback archer-backup also failed: no content in stream)"
+    }
+  ],
+  "totalFindings": 10,
+  "partial": true,
+  "totalDurationMs": 767591,
+  "bundleSize": 0,
+  "remoteRepoPath": "",
+  "timestamp": "2026-06-28T13:43:10-07:00"
+}

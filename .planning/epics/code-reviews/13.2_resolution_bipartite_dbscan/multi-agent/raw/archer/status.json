@@ -1,0 +1,7 @@
+{
+  "agent_name": "archer",
+  "model": "glm-5.2",
+  "status": "failed",
+  "duration_ms": 452889,
+  "error": "no content in stream (fallback archer-backup also failed: no content in stream)"
+}

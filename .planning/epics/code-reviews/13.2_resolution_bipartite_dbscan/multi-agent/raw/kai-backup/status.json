@@ -1,0 +1,9 @@
+{
+  "agent_name": "kai-backup",
+  "model": "kimi-k2.5",
+  "status": "ok",
+  "duration_ms": 9711,
+  "fallback_used": true,
+  "fallback_from": "kai",
+  "original_error": "no content in stream"
+}

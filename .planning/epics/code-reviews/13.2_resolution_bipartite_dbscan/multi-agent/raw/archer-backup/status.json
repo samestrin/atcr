@@ -1,0 +1,7 @@
+{
+  "agent_name": "archer-backup",
+  "model": "glm-5.1",
+  "status": "failed",
+  "duration_ms": 314699,
+  "error": "no content in stream"
+}

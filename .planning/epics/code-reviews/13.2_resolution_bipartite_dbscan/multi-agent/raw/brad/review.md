@@ -1,0 +1,1 @@
+MEDIUM|reconcile/dbscan.go:47|Repeated neighbor computation in DBSCAN expansion|Precompute adjacency list or cache neighbor results to avoid O(V^2) repeated scans|performance|5|`neighborsOf` called inside BFS loop, recomputing O(V) edges per point|bruce

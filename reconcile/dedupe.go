@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strconv"
@@ -16,6 +17,14 @@ const (
 	MergeThreshold = 0.7
 	GrayLow        = 0.4
 )
+
+// maxClusterSize bounds the findings in one location cluster that dedupeCluster
+// will fully process. Beyond it the cluster is adversarial — real clusters are a
+// handful of findings — so the O(n^2) distance matrix and the pairwise
+// matching/DBSCAN/gray passes are skipped to avoid a memory/CPU DoS. It matches
+// the Hungarian solver's own size limit (see hungarian in bipartite.go) so the
+// matching pass is never asked to exceed its bound.
+const maxClusterSize = 500
 
 // tokenSplit splits normalized text on any run of non-alphanumeric characters.
 var tokenSplit = regexp.MustCompile(`[^a-z0-9]+`)
@@ -61,17 +70,51 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	if n == 0 {
 		return nil, nil
 	}
+	if len(keys) != n {
+		panic(fmt.Sprintf("dedupeCluster: len(keys)=%d must equal len(cluster)=%d", len(keys), n))
+	}
+	if n > maxClusterSize {
+		// DoS safety valve: a location cluster this large is adversarial (real
+		// clusters are a handful of findings). Skip the O(n^2) distance matrix and
+		// the pairwise matching/DBSCAN/gray passes entirely; pass every finding
+		// through as its own singleton group — bounded O(n) work, no dedup, no
+		// ambiguous/noise sidecar. Bounding here also keeps every downstream
+		// Hungarian problem within its size limit.
+		out := make([][]Finding, n)
+		for i := range cluster {
+			out[i] = []Finding{cluster[i]}
+		}
+		return out, nil
+	}
 	tokens := make([]map[string]struct{}, n)
 	for i, f := range cluster {
 		tokens[i] = tokenize(f.Problem)
 	}
+	// Precompute the relation+similarity matrix ONCE per cluster. classify is the
+	// hot path — the distance-matrix build, the mergeable predicate, and the
+	// gray-pair scan each need a pair's relation, so without caching the same pair
+	// is classified up to three times. The integer-exact relation is stored
+	// verbatim and every site below reads rel[i][j] (never a fresh float
+	// comparison), so the deterministic 0.7/0.4 boundary is preserved. The
+	// composite distance is derived inline (mirroring pairDistance): 0 when the
+	// pair shares a non-empty AST key (the 13.1 isomorphism signal), else 1-Jaccard.
+	rel := make([][]relation, n)
+	sim := make([][]float64, n)
 	dist := make([][]float64, n)
-	for i := range dist {
+	for i := range rel {
+		rel[i] = make([]relation, n)
+		sim[i] = make([]float64, n)
 		dist[i] = make([]float64, n)
 	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			d := pairDistance(keys[i], keys[j], tokens[i], tokens[j])
+			r, s := classify(tokens[i], tokens[j])
+			rel[i][j], rel[j][i] = r, r
+			sim[i][j], sim[j][i] = s, s
+			d := distanceCeiling - s
+			if keys[i] != "" && keys[i] == keys[j] {
+				d = distanceFloor
+			}
 			dist[i][j], dist[j][i] = d, d
 		}
 	}
@@ -80,12 +123,15 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	// is the source; an empty Reviewer (unattributed finding) gets a per-finding
 	// unique key so it is treated as its own source — otherwise every unattributed
 	// finding would collapse into one pseudo-source and nothing would ever match,
-	// silently disabling dedup. NUL-prefixing cannot collide with a stream-column
-	// reviewer value.
+	// silently disabling dedup. The real-reviewer and anon key spaces carry
+	// DISTINCT NUL-delimited prefixes so an attacker-controlled Reviewer string —
+	// which may itself contain NUL — can never forge a finding's anon key and be
+	// mis-treated as that finding's source: a crafted Reviewer "\x00anon\x000" maps
+	// to "\x00src\x00\x00anon\x000", which can never equal an "\x00anon\x00<i>" key.
 	srcKeys := make([]string, n)
 	for i, f := range cluster {
 		if f.Reviewer != "" {
-			srcKeys[i] = f.Reviewer
+			srcKeys[i] = "\x00src\x00" + f.Reviewer
 		} else {
 			srcKeys[i] = "\x00anon\x00" + strconv.Itoa(i)
 		}
@@ -99,8 +145,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 		if keys[a] != "" && keys[a] == keys[b] {
 			return true
 		}
-		rel, _ := classify(tokens[a], tokens[b])
-		return rel == relMerge
+		return rel[a][b] == relMerge
 	}
 
 	groups := bipartiteGroups(srcKeys, dist, mergeable)
@@ -121,8 +166,12 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 			if groupOf[i] == groupOf[j] {
 				continue // matched into one group already; not adjudicable
 			}
-			rel, sim := classify(tokens[i], tokens[j])
-			if rel != relGray {
+			// Same non-empty AST key is authoritative duplicate evidence: do not
+			// record the pair as gray even if token Jaccard falls in the gray band.
+			if keys[i] != "" && keys[i] == keys[j] {
+				continue
+			}
+			if rel[i][j] != relGray {
 				continue
 			}
 			id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
@@ -134,7 +183,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 				ID:         id,
 				File:       cluster[i].File,
 				Line:       cluster[i].Line,
-				Similarity: sim,
+				Similarity: sim[i][j],
 				Findings:   []Finding{cluster[i], cluster[j]},
 			})
 			ambiguousPairs = append(ambiguousPairs, [2]int{groupOf[i], groupOf[j]})
@@ -192,7 +241,18 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	// just an uncorroborated report and stays in the output), and only when the
 	// finding is genuinely alone — not gray-paired and not merged into any group —
 	// so it is never represented in both the output and the sidecar.
-	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && srcKeys[a] != srcKeys[b] }
+	// denseSrc is the DENSITY source key, distinct from srcKeys: it collapses ALL
+	// unattributed findings into one shared "" source so two empty-Reviewer copies
+	// of the same finding are NOT independent corroboration (srcKeys keeps each its
+	// own per-finding key for bipartite matching, which density must not reuse —
+	// every unattributed finding would otherwise count as a distinct corroborating
+	// source). A named reviewer remains its own source, so a named finding still
+	// corroborates a different source (named or unattributed).
+	denseSrc := make([]string, n)
+	for i, f := range cluster {
+		denseSrc[i] = f.Reviewer
+	}
+	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && denseSrc[a] != denseSrc[b] }
 	labels, dense := dbscanLabels(n, dbscanMinPts, denseNeighbor)
 	noiseIdx := map[int]bool{}
 	var noise []AmbiguousCluster

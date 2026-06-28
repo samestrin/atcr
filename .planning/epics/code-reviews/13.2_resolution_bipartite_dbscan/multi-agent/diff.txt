@@ -1,0 +1,1277 @@
+diff --git a/internal/reconcile/ac3_isolation_test.go b/internal/reconcile/ac3_isolation_test.go
+new file mode 100644
+index 00000000..a9b14e96
+--- /dev/null
++++ b/internal/reconcile/ac3_isolation_test.go
+@@ -0,0 +1,50 @@
++package reconcile
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/samestrin/atcr/internal/stream"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// TestAC3_HallucinationIsolatedToAmbiguousSidecar proves the Epic 13.2 AC3
++// end-to-end contract at the emit boundary: a single-model hallucination
++// reported amid a corroborated consensus is removed from findings.json and
++// isolated into ambiguous.json as a single-finding cluster. This is what lets
++// the sidecar be trusted as strictly uncorroborated noise.
++func TestAC3_HallucinationIsolatedToAmbiguousSidecar(t *testing.T) {
++	sources := []Source{
++		{Name: "pool", Findings: []stream.Finding{
++			mf("HIGH", "auth.go", 42, "token never expires unchecked", "guard it", "security", 15, "pool saw it", "greta"),
++			mf("LOW", "auth.go", 42, "totally unrelated hallucinated nonsense", "n/a", "style", 5, "pool only", "greta"),
++		}},
++		{Name: "host", Findings: []stream.Finding{
++			mf("HIGH", "auth.go", 43, "token never expires unchecked", "guard it", "security", 15, "host also", "host"),
++		}},
++	}
++	res := Reconcile(sources, Options{ReconciledAt: time.Unix(1700000000, 0).UTC()})
++
++	dir := t.TempDir()
++	require.NoError(t, Emit(dir, res))
++
++	findings, err := os.ReadFile(filepath.Join(dir, FindingsJSON))
++	require.NoError(t, err)
++	amb, err := os.ReadFile(filepath.Join(dir, AmbiguousJSON))
++	require.NoError(t, err)
++
++	assert.NotContains(t, string(findings), "hallucinated nonsense",
++		"the uncorroborated hallucination must be removed from the consensus findings")
++	assert.Contains(t, string(amb), "hallucinated nonsense",
++		"the hallucination must be isolated into the ambiguous.json sidecar")
++	assert.Contains(t, string(findings), "token never expires",
++		"the corroborated consensus finding stays in findings.json")
++
++	// The sidecar entry is a single-finding noise cluster (debate skips < 2).
++	require.Len(t, res.Ambiguous, 1, "exactly one isolated cluster")
++	assert.Len(t, res.Ambiguous[0].Findings, 1, "noise cluster carries one finding")
++	assert.Equal(t, "totally unrelated hallucinated nonsense", res.Ambiguous[0].Findings[0].Problem)
++}
+diff --git a/reconcile/README.md b/reconcile/README.md
+index 4984f16e..9b7517bc 100644
+--- a/reconcile/README.md
++++ b/reconcile/README.md
+@@ -151,11 +151,16 @@ result safely.
+   clusters keyed on `FILE` and a `LINE ± 3` window (single-linkage). Output is
+   then sorted by a total order — **severity descending, then file, then line** —
+   so emission is stable.
+-- **Dedupe — token-set Jaccard, 0.7 / 0.4 thresholds.** Within a cluster,
+-  findings are compared by token-set Jaccard similarity using integer
+-  cross-multiplication (no float comparison). A pair at or **above 0.7 merges**;
+-  a pair in the **0.4–0.7 gray zone is ambiguous** — left unmerged and recorded
+-  in the ambiguity sidecar; below 0.4 the findings are distinct.
++- **Dedupe — optimal bipartite matching.** Within a cluster, findings from
++  different sources are matched 1:1 by the Kuhn-Munkres (Hungarian) algorithm
++  over a composite edge-weight distance: **0** for findings sharing an
++  AST-isomorphism group key, otherwise **`1 − token-set Jaccard`**. Acceptance of
++  a match is gated by the same integer cross-multiplication boundary (no float
++  comparison): a pair at or **above 0.7 similarity merges**. The 1:1 constraint
++  structurally avoids the transitive over-merge a greedy single-linkage pass
++  suffers (one finding cannot drag two non-duplicates into one group). A pair in
++  the **0.4–0.7 gray zone is ambiguous** — left unmerged and recorded in the
++  ambiguity sidecar; below 0.4 the findings are distinct.
+ - **Merge — max severity, disagreement preserved.** A merged finding takes the
+   **maximum severity** across its group; when lower severities are present the
+   conflict is annotated inline as `<lo> vs <hi>` (e.g. `MEDIUM vs HIGH`) rather
+@@ -165,9 +170,13 @@ result safely.
+ - **Confidence — v2 tiers `VERIFIED > HIGH > MEDIUM > LOW`.** Confidence is
+   derived from the count of distinct reviewers who agree, and is promoted to
+   `VERIFIED` when an adversarial verdict confirms the finding.
+-- **Ambiguity sidecar.** Gray-zone clusters (0.4–0.7) are not silently merged or
+-  dropped — they are surfaced in `Result.Ambiguous` as `AmbiguousCluster` values
+-  so a host can adjudicate them (and force a merge via `Options.Merges`).
++- **Ambiguity sidecar.** Two kinds of cluster surface in `Result.Ambiguous` as
++  `AmbiguousCluster` values, neither silently merged nor dropped: **gray-zone
++  pairs** (0.4–0.7) a host can adjudicate (and force a merge via
++  `Options.Merges`); and **DBSCAN-isolated noise** — a single uncorroborated
++  finding standing alone amid a corroborated cluster (a likely single-model
++  hallucination), carried as a one-finding cluster and removed from the merged
++  output so the consensus findings stay trustworthy.
+ 
+ ## JSON format adapter
+ 
+diff --git a/reconcile/ac2_greedy_failures_test.go b/reconcile/ac2_greedy_failures_test.go
+new file mode 100644
+index 00000000..cfcdc188
+--- /dev/null
++++ b/reconcile/ac2_greedy_failures_test.go
+@@ -0,0 +1,76 @@
++package reconcile
++
++import (
++	"sort"
++	"testing"
++)
++
++// Epic 13.2 AC2 benchmark: bipartite matching resolves known greedy-clustering
++// (single-linkage union-find) failure edge cases. Each case documents what the
++// old greedy partitioner produced and asserts the bipartite partitioner's
++// corrected grouping. The shared failure mode is the same: single-linkage takes
++// the transitive closure of the "similar enough" graph, so one finding can drag
++// several non-duplicates into a single group. Optimal 1:1 assignment cannot.
++
++// groupSizes returns the sorted multiset of group sizes for a dedupe result, a
++// permutation-independent fingerprint of the partition.
++func groupSizes(groups [][]Finding) []int {
++	sizes := make([]int, len(groups))
++	for i, g := range groups {
++		sizes[i] = len(g)
++	}
++	sort.Ints(sizes)
++	return sizes
++}
++
++func TestAC2_SingleSourceFindingDoesNotAbsorbTwoFromAnother(t *testing.T) {
++	// One reviewer (greta) reports one issue; another (kai) reports TWO findings
++	// that each clear the merge threshold against greta's. Greedy union-find
++	// merges A~P and A~Q and collapses all three into ONE group — double-counting
++	// kai and inventing 3-way consensus from a 1+2 split. Bipartite's 1:1 rule
++	// lets greta's finding corroborate only ONE kai finding; the other stands
++	// alone.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 1, "alpha beta gamma delta epsilon zeta eta", "greta"), // A
++		fnd("a.go", 1, "alpha beta gamma delta epsilon zeta p1", "kai"),    // P: vs A 0.75 merge
++		fnd("a.go", 1, "alpha beta gamma delta epsilon zeta q1", "kai"),    // Q: vs A 0.75 merge
++	})
++	// Greedy would have produced [3]; bipartite produces a corroborated pair plus
++	// the uncorroborated extra.
++	deepEq(t, groupSizes(groups), []int{1, 2}, "consensus pair + one stranded finding (not a 3-way over-merge)")
++	length(t, amb, 0, "P/Q are same-source and never compared, so no gray pair is recorded")
++}
++
++func TestAC2_TransitiveBridgeDoesNotMergeNonDuplicates(t *testing.T) {
++	// A~B is only gray (0.667 — not duplicates). C clears the merge threshold
++	// against both (0.818). Greedy chains A-B-C into one group of 3, silently
++	// merging the non-duplicate A-B. Bipartite keeps A and B apart (C corroborates
++	// one of them) and surfaces the unresolved A-B pair as ambiguous.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 w10", "greta"), // A
++		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 c1 b1", "kai"),    // B: vs A 0.667 gray
++		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 c1", "mira"),   // C: vs A,B 0.818 merge
++	})
++	deepEq(t, groupSizes(groups), []int{1, 2}, "non-duplicate A-B not chained via C")
++	length(t, amb, 1, "the unresolved gray A-B pair is recorded for adjudication")
++}
++
++func TestAC2_OptimalAssignmentPrefersClosestPairing(t *testing.T) {
++	// Both reviewers report two findings at one location, with cross-overlap so a
++	// naive matcher could pair them wrong. greta:[A,B], kai:[P,Q] where A~Q and
++	// B~P are the true duplicates (>=0.7) while A~P and B~Q are only gray. Optimal
++	// assignment recovers the two correct pairs; it must not strand a finding or
++	// pair on the weaker edge.
++	groups, _ := DedupeCluster([]Finding{
++		fnd("a.go", 1, "shared1 shared2 shared3 shared4 shared5 shared6 shared7 aone", "greta"), // A
++		fnd("a.go", 1, "shared1 shared2 shared3 shared4 shared5 shared6 shared7 bone", "greta"), // B
++		fnd("a.go", 1, "shared1 shared2 shared3 shared4 shared5 shared6 shared7 bone", "kai"),   // P == B text → B~P merge
++		fnd("a.go", 1, "shared1 shared2 shared3 shared4 shared5 shared6 shared7 aone", "kai"),   // Q == A text → A~Q merge
++	})
++	deepEq(t, groupSizes(groups), []int{2, 2}, "two correct cross-source pairs, no stranded finding")
++	// Verify the pairing is by identical text (A with Q, B with P), not crossed.
++	for _, g := range groups {
++		length(t, g, 2, "each group is a clean cross-source pair")
++		eq(t, g[0].Problem == g[1].Problem, true, "paired findings share the same problem text")
++	}
++}
+diff --git a/reconcile/ac3_dbscan_test.go b/reconcile/ac3_dbscan_test.go
+new file mode 100644
+index 00000000..fa330422
+--- /dev/null
++++ b/reconcile/ac3_dbscan_test.go
+@@ -0,0 +1,141 @@
++package reconcile
++
++import "testing"
++
++// Epic 13.2 AC3: DBSCAN deterministically isolates known model hallucinations
++// into the ambiguous sidecar — single-finding AmbiguousClusters — without an
++// arbitrary cluster-count k, and only where corroboration context exists.
++
++func TestAC3_IsolatesHallucinationAmidConsensus(t *testing.T) {
++	// greta and kai corroborate one issue (identical text → merge); mira reports
++	// an unrelated finding at the same location that no one else saw. The
++	// corroborated pair is the dense cluster; mira's lone finding is isolated as
++	// noise into the sidecar and removed from the merged output.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 1, "token never expires unchecked here", "greta"),
++		fnd("a.go", 1, "token never expires unchecked here", "kai"),
++		fnd("a.go", 1, "completely different spurious claim", "mira"), // hallucination
++	})
++	length(t, groups, 1, "only the corroborated consensus pair remains in the output")
++	length(t, groups[0], 2, "greta + kai")
++	length(t, amb, 1, "the hallucination is isolated into the sidecar")
++	length(t, amb[0].Findings, 1, "single-finding noise cluster")
++	eq(t, amb[0].Findings[0].Reviewer, "mira", "the lone model's finding")
++	eq(t, amb[0].Similarity, 0.0, "no corroboration → similarity 0")
++}
++
++func TestAC3_SoloFindingIsNotIsolated(t *testing.T) {
++	// A single finding at a location no one else touched has no corroboration
++	// context, so it is NOT noise — it stays a normal (uncorroborated) finding.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 5, "unused import lingers", "greta"),
++	})
++	length(t, groups, 1, "solo finding stays in the output")
++	length(t, groups[0], 1, "the finding itself")
++	length(t, amb, 0, "nothing isolated without a dense cluster for context")
++}
++
++func TestAC3_AllDistinctNoIsolation(t *testing.T) {
++	// Three mutually-distinct findings: no dense cluster forms, so none is labeled
++	// a hallucination — they are independent findings, not noise.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 1, "alpha beta gamma", "greta"),
++		fnd("a.go", 1, "delta epsilon zeta", "kai"),
++		fnd("a.go", 1, "eta theta iota", "mira"),
++	})
++	length(t, groups, 3, "all three remain as independent findings")
++	length(t, amb, 0, "no corroboration context → no isolation")
++}
++
++func TestAC3_GrayPairedFindingNotDoubleCountedAsNoise(t *testing.T) {
++	// A dense pair (greta+kai merge) plus a third finding that is GRAY to the pair
++	// (sim in [0.4,0.7)). The gray finding is recorded as a gray pair, not also as
++	// a noise singleton — exactly one sidecar entry references it.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 1, "alpha beta gamma delta epsilon", "greta"),
++		fnd("a.go", 1, "alpha beta gamma delta epsilon", "kai"), // merge with greta
++		fnd("a.go", 1, "alpha beta gamma zeta eta", "mira"),     // 3/7 ~0.43 gray to the pair
++	})
++	// The gray third stays as its own uncorroborated finding (not merged, not
++	// isolated as noise): the consensus pair plus mira's singleton.
++	length(t, groups, 2, "consensus pair + mira's gray singleton")
++	// Every sidecar entry mentioning mira must be a 2-finding gray pair, never a
++	// 1-finding noise cluster (no double representation).
++	sawMira := false
++	for _, c := range amb {
++		for _, f := range c.Findings {
++			if f.Reviewer == "mira" {
++				sawMira = true
++				length(t, c.Findings, 2, "mira appears only in the gray pair, not as noise")
++			}
++		}
++	}
++	isTrue(t, sawMira, "mira is referenced in the gray sidecar")
++}
++
++func TestAC3_AdjudicatedMergeNotDoubleCountedAsNoise(t *testing.T) {
++	// Guard against double representation: A-B are gray and adjudicated as a merge,
++	// so they form one group even though neither has a true (mergeable) neighbor. A
++	// separate dense pair D-E makes the cluster "dense", so DBSCAN would label A and
++	// B noise — but because they were merged (not solo), they must NOT be isolated
++	// into the sidecar. Every finding ends up in exactly one place.
++	a := fnd("x.go", 1, "alpha beta gamma", "mira")
++	b := fnd("x.go", 1, "alpha beta delta", "pool") // gray to A (0.5)
++	id := AmbiguousID(a.File, a.Line, a.Problem, b.Problem)
++	groups, amb := dedupeCluster([]Finding{
++		a, b,
++		fnd("x.go", 1, "zeta eta theta iota kappa", "greta"),
++		fnd("x.go", 1, "zeta eta theta iota kappa", "kai"), // identical → dense pair
++	}, make([]string, 4), map[string]bool{id: true})
++	length(t, groups, 2, "adjudicated A-B pair and the D-E consensus pair")
++	for _, g := range groups {
++		length(t, g, 2, "each group has two members; nothing was wrongly isolated")
++	}
++	length(t, amb, 0, "no noise singletons: A and B were merged, not isolated")
++}
++
++func TestAC3_SelfDuplicateIsNotCorroboration(t *testing.T) {
++	// Density must require TWO distinct sources. One reviewer (greta) repeating
++	// itself is NOT corroboration, so it must NOT manufacture the dense-context
++	// that would banish a different reviewer's legitimate uncorroborated finding.
++	groups, amb := DedupeCluster([]Finding{
++		fnd("a.go", 1, "token never expires unchecked here", "greta"),
++		fnd("a.go", 1, "token never expires unchecked here", "greta"), // SAME source self-dup
++		fnd("a.go", 1, "an entirely different real issue", "host"),    // host's lone finding
++	})
++	// No cross-source agreement exists, so nothing is isolated; host's finding
++	// stays in the output rather than being wrongly removed to the sidecar.
++	length(t, amb, 0, "a self-duplicate is not corroboration → no isolation")
++	stillPresent := false
++	for _, g := range groups {
++		for _, f := range g {
++			if f.Reviewer == "host" {
++				stillPresent = true
++			}
++		}
++	}
++	isTrue(t, stillPresent, "host's uncorroborated finding stays in the consensus output")
++}
++
++func TestDedupeCluster_SameSourceDuplicatesDoNotMerge(t *testing.T) {
++	// Documented behavior of the cross-source matching model: two identical
++	// findings from the SAME reviewer are not merged with each other (matching is
++	// 1:1 across sources, never within a source). They remain separate findings.
++	groups, _ := DedupeCluster([]Finding{
++		fnd("a.go", 1, "token never expires unchecked", "greta"),
++		fnd("a.go", 1, "token never expires unchecked", "greta"),
++	})
++	length(t, groups, 2, "same-source duplicates stay as separate findings")
++}
++
++func TestDedupeCluster_UnattributedDuplicatesStillMerge(t *testing.T) {
++	// Findings with no Reviewer are each treated as their own source, so genuine
++	// duplicates still merge instead of collapsing into one non-matchable
++	// pseudo-source (which would silently disable dedup).
++	groups, _ := DedupeCluster([]Finding{
++		fnd("a.go", 1, "token never expires unchecked", ""),
++		fnd("a.go", 1, "token never expires unchecked", ""),
++	})
++	length(t, groups, 1, "unattributed duplicates merge")
++	length(t, groups[0], 2, "both members")
++}
+diff --git a/reconcile/bipartite.go b/reconcile/bipartite.go
+new file mode 100644
+index 00000000..57c3c81d
+--- /dev/null
++++ b/reconcile/bipartite.go
+@@ -0,0 +1,223 @@
++package reconcile
++
++import (
++	"math"
++	"sort"
++)
++
++// Bipartite matching for Epic 13.2. The greedy union-find dedup (single-linkage
++// over a similarity threshold) is replaced by optimal assignment: within a
++// location cluster, findings from different sources are matched 1:1 by the
++// Kuhn-Munkres (Hungarian) algorithm using the composite edge-weight distance
++// (see distance.go). The 1:1 constraint is the structural fix for the greedy
++// failure mode — single-linkage transitively chains A-B-C even when A and B are
++// only weakly similar; optimal matching pairs each finding with at most one
++// counterpart per other source, so a third finding cannot drag two non-duplicates
++// into one group.
++
++// noMatchSentinel is the cost charged to padded (virtual) cells when squaring a
++// rectangular cost matrix. It exceeds any real composite distance (≤ 1) so the
++// assignment never prefers a virtual cell over a feasible real one.
++const noMatchSentinel = 2.0
++
++// hungarian solves the minimum-cost assignment problem for a square cost matrix
++// and returns assign where assign[r] is the column matched to row r (a
++// permutation of 0..n-1). It is the classic O(n^3) Kuhn-Munkres with potentials
++// (Jonker-Volgenant shortest-augmenting-path form). Strict-less-than comparisons
++// make the column tie-break favor the lowest index, so equal-cost inputs yield a
++// deterministic, platform-stable assignment.
++func hungarian(cost [][]float64) []int {
++	n := len(cost)
++	if n == 0 {
++		return nil
++	}
++	const inf = math.MaxFloat64
++	// 1-indexed potentials/state per the canonical formulation; p[j] is the row
++	// (1-indexed) assigned to column j, p[0] is the scratch slot.
++	u := make([]float64, n+1)
++	v := make([]float64, n+1)
++	p := make([]int, n+1)
++	way := make([]int, n+1)
++	for i := 1; i <= n; i++ {
++		p[0] = i
++		j0 := 0
++		minv := make([]float64, n+1)
++		used := make([]bool, n+1)
++		for j := 0; j <= n; j++ {
++			minv[j] = inf
++		}
++		for {
++			used[j0] = true
++			i0 := p[j0]
++			delta := inf
++			j1 := -1
++			for j := 1; j <= n; j++ {
++				if used[j] {
++					continue
++				}
++				cur := cost[i0-1][j-1] - u[i0] - v[j]
++				if cur < minv[j] {
++					minv[j] = cur
++					way[j] = j0
++				}
++				if minv[j] < delta {
++					delta = minv[j]
++					j1 = j
++				}
++			}
++			for j := 0; j <= n; j++ {
++				if used[j] {
++					u[p[j]] += delta
++					v[j] -= delta
++				} else {
++					minv[j] -= delta
++				}
++			}
++			j0 = j1
++			if p[j0] == 0 {
++				break
++			}
++		}
++		for j0 != 0 {
++			j1 := way[j0]
++			p[j0] = p[j1]
++			j0 = j1
++		}
++	}
++	assign := make([]int, n)
++	for j := 1; j <= n; j++ {
++		if p[j] >= 1 {
++			assign[p[j]-1] = j - 1
++		}
++	}
++	return assign
++}
++
++// hungarianAssign runs the Hungarian algorithm over a rows×cols cost matrix
++// (defined by cost(r,c)) and returns assign where assign[r] is the optimally
++// matched real column, or -1 when row r was matched only to a virtual (padding)
++// column because there were fewer real columns than rows. The matrix is padded to
++// a square with noMatchSentinel so rectangular problems are well-formed and a real
++// column is always preferred over padding. This is pure optimization: it does NOT
++// apply a merge threshold — the caller decides acceptance with an exact predicate,
++// so the float cost never gates a duplicate decision (see bipartiteGroups).
++func hungarianAssign(rows, cols int, cost func(r, c int) float64) []int {
++	assign := make([]int, rows)
++	for r := range assign {
++		assign[r] = -1
++	}
++	if rows == 0 || cols == 0 {
++		return assign
++	}
++	n := rows
++	if cols > n {
++		n = cols
++	}
++	square := make([][]float64, n)
++	for r := 0; r < n; r++ {
++		square[r] = make([]float64, n)
++		for c := 0; c < n; c++ {
++			if r < rows && c < cols {
++				square[r][c] = cost(r, c)
++			} else {
++				square[r][c] = noMatchSentinel
++			}
++		}
++	}
++	full := hungarian(square)
++	for r := 0; r < rows; r++ {
++		if c := full[r]; c < cols {
++			assign[r] = c
++		}
++	}
++	return assign
++}
++
++// bipartiteGroups partitions a location cluster into merge groups using the
++// incremental pairwise reduction of N-way matching: findings are split by source
++// (Reviewer), then each source's findings are optimally matched against the
++// groups accumulated so far. The group↔candidate cost is the single-linkage
++// (minimum) composite distance to the group's members, so the assignment prefers
++// pairing a candidate with the group it most resembles, while the 1:1 constraint
++// forbids one candidate from collapsing two distinct groups (the structural fix
++// for greedy single-linkage over-merge).
++//
++// Acceptance is gated by mergeable, NOT by the float cost: a candidate joins the
++// group it was optimally assigned to only when mergeable(member, candidate) holds
++// for some member — an integer-exact predicate (AST key match, or classify ==
++// relMerge) that keeps the duplicate boundary deterministic and free of the
++// floating-point rounding the cost matrix carries. An unaccepted or unmatched
++// candidate seeds a new singleton group, so a group holds at most one finding per
++// source — one consensus issue across reviewers.
++//
++// Sources are identified by srcKeys[i] (the finding's source-partition key, see
++// dedupeCluster: a non-empty Reviewer, else a per-finding unique key so an
++// unattributed finding is its own source and can still match others rather than
++// collapsing every unattributed finding into one non-matchable pseudo-source).
++//
++// Determinism: sources are processed in sorted order; within a source, findings
++// keep cluster order; the returned groups are normalized — members ascending,
++// groups ordered by their lowest member index — so the merge representative
++// (group[0]) is the lowest-index finding regardless of source processing order.
++func bipartiteGroups(srcKeys []string, dist [][]float64, mergeable func(a, b int) bool) [][]int {
++	bySource := map[string][]int{}
++	var order []string
++	for i, key := range srcKeys {
++		if _, seen := bySource[key]; !seen {
++			order = append(order, key)
++		}
++		bySource[key] = append(bySource[key], i)
++	}
++	sort.Strings(order)
++
++	var groups [][]int
++	for _, s := range order {
++		cands := bySource[s]
++		if len(groups) == 0 {
++			for _, c := range cands {
++				groups = append(groups, []int{c})
++			}
++			continue
++		}
++		assign := hungarianAssign(len(groups), len(cands), func(r, c int) float64 {
++			m := distanceCeiling
++			for _, gi := range groups[r] {
++				if d := dist[gi][cands[c]]; d < m {
++					m = d
++				}
++			}
++			return m
++		})
++		used := make([]bool, len(cands))
++		for r, c := range assign {
++			if c < 0 {
++				continue
++			}
++			cand := cands[c]
++			accept := false
++			for _, gi := range groups[r] {
++				if mergeable(gi, cand) {
++					accept = true
++					break
++				}
++			}
++			if accept {
++				groups[r] = append(groups[r], cand)
++				used[c] = true
++			}
++		}
++		for ci, idx := range cands {
++			if !used[ci] {
++				groups = append(groups, []int{idx})
++			}
++		}
++	}
++
++	for _, g := range groups {
++		sort.Ints(g)
++	}
++	sort.SliceStable(groups, func(i, j int) bool {
++		return groups[i][0] < groups[j][0]
++	})
++	return groups
++}
+diff --git a/reconcile/bipartite_test.go b/reconcile/bipartite_test.go
+new file mode 100644
+index 00000000..7250a34f
+--- /dev/null
++++ b/reconcile/bipartite_test.go
+@@ -0,0 +1,93 @@
++package reconcile
++
++import "testing"
++
++// totalCost sums the chosen assignment's costs for validation.
++func totalCost(cost [][]float64, assign []int) float64 {
++	sum := 0.0
++	for r, c := range assign {
++		sum += cost[r][c]
++	}
++	return sum
++}
++
++// isPermutation verifies assign is a bijection rows→cols.
++func isPermutation(assign []int, n int) bool {
++	if len(assign) != n {
++		return false
++	}
++	seen := make([]bool, n)
++	for _, c := range assign {
++		if c < 0 || c >= n || seen[c] {
++			return false
++		}
++		seen[c] = true
++	}
++	return true
++}
++
++func TestHungarian_2x2Diagonal(t *testing.T) {
++	cost := [][]float64{{1, 2}, {2, 1}}
++	a := hungarian(cost)
++	isTrue(t, isPermutation(a, 2), "valid permutation")
++	eq(t, totalCost(cost, a), 2.0, "diagonal is optimal (1+1)")
++}
++
++func TestHungarian_2x2AntiDiagonal(t *testing.T) {
++	cost := [][]float64{{2, 1}, {1, 2}}
++	a := hungarian(cost)
++	eq(t, totalCost(cost, a), 2.0, "anti-diagonal is optimal (1+1)")
++	eq(t, a[0], 1, "row0→col1")
++	eq(t, a[1], 0, "row1→col0")
++}
++
++func TestHungarian_3x3KnownOptimum(t *testing.T) {
++	cost := [][]float64{{7, 5, 11}, {5, 4, 1}, {9, 3, 2}}
++	a := hungarian(cost)
++	isTrue(t, isPermutation(a, 3), "valid permutation")
++	eq(t, totalCost(cost, a), 11.0, "min assignment cost is 11 (r0c0,r1c2,r2c1)")
++}
++
++func TestHungarian_Deterministic(t *testing.T) {
++	// All-equal costs: every assignment is optimal; the algorithm must pick the
++	// same one every time (lowest-column tie-break).
++	cost := [][]float64{{0.5, 0.5, 0.5}, {0.5, 0.5, 0.5}, {0.5, 0.5, 0.5}}
++	a1 := hungarian(cost)
++	a2 := hungarian(cost)
++	for i := range a1 {
++		eq(t, a1[i], a2[i], "deterministic across runs")
++	}
++}
++
++func TestHungarianAssign_Rectangular(t *testing.T) {
++	// 1 row, 3 cols, all real; the row takes its cheapest column. No threshold
++	// gate — the raw optimal assignment is returned.
++	cost := func(r, c int) float64 {
++		return []float64{0.25, 0.1, 0.2}[c]
++	}
++	assign := hungarianAssign(1, 3, cost)
++	eq(t, assign[0], 1, "row0 takes cheapest col1 (0.1)")
++}
++
++func TestHungarianAssign_MoreRowsThanCols(t *testing.T) {
++	// 3 rows, 1 col: only one row gets the real column; the cheapest wins, the
++	// others are matched to padding → -1.
++	cost := func(r, c int) float64 {
++		return []float64{0.2, 0.05, 0.15}[r]
++	}
++	assign := hungarianAssign(3, 1, cost)
++	eq(t, assign[1], 0, "cheapest row (row1, 0.05) takes the only col")
++	eq(t, assign[0], -1, "row0 matched to padding")
++	eq(t, assign[2], -1, "row2 matched to padding")
++}
++
++func TestHungarianAssign_RealColumnPreferredOverPadding(t *testing.T) {
++	// 2 rows, 1 col: a high real cost (0.95) is still preferred over padding, so
++	// one row keeps the real column (acceptance is the caller's job, not here).
++	cost := func(r, c int) float64 {
++		return []float64{0.95, 0.1}[r]
++	}
++	assign := hungarianAssign(2, 1, cost)
++	eq(t, assign[1], 0, "cheaper row1 takes the real col")
++	eq(t, assign[0], -1, "row0 to padding")
++}
+diff --git a/reconcile/dbscan.go b/reconcile/dbscan.go
+new file mode 100644
+index 00000000..0050b1d8
+--- /dev/null
++++ b/reconcile/dbscan.go
+@@ -0,0 +1,71 @@
++package reconcile
++
++// DBSCAN noise isolation for Epic 13.2. After bipartite matching forms the merge
++// groups, DBSCAN over the same location cluster separates uncorroborated "noise"
++// findings (single-model hallucinations) from the dense, corroborated consensus —
++// deterministically and without an arbitrary cluster count k. The two parameters
++// are principled, not tuned: minPts = 2 ("corroborated by at least one other
++// finding") and the eps-neighborhood is the merge boundary itself, supplied as an
++// integer-exact predicate so the density threshold never drifts on floating-point
++// rounding (the same boundary bipartite acceptance uses).
++const (
++	// dbscanMinPts is the core-point threshold: a point plus one eps-neighbor.
++	dbscanMinPts = 2
++	// dbscanNoise labels a point DBSCAN could not assign to any cluster.
++	dbscanNoise = -1
++	// dbscanUnvisited is the initial label before a point is processed.
++	dbscanUnvisited = -2
++)
++
++// dbscanLabels runs DBSCAN over n points whose eps-neighborhood is defined by the
++// neighbor predicate — neighbor(i, j) reports whether j (j != i) lies within eps
++// of i and must be symmetric. It returns a label per point (dbscanNoise for noise,
++// otherwise a 0-based cluster id) and dense=true when at least one cluster formed.
++//
++// Determinism: points are visited in index order; a cluster's seed set is grown
++// as a FIFO with each expansion's neighbors appended in ascending index order, so
++// the labeling is identical on every run and platform.
++func dbscanLabels(n, minPts int, neighbor func(i, j int) bool) (labels []int, dense bool) {
++	labels = make([]int, n)
++	for i := range labels {
++		labels[i] = dbscanUnvisited
++	}
++	neighborsOf := func(p int) []int {
++		var out []int
++		for q := 0; q < n; q++ {
++			if q != p && neighbor(p, q) {
++				out = append(out, q)
++			}
++		}
++		return out
++	}
++	cluster := 0
++	for p := 0; p < n; p++ {
++		if labels[p] != dbscanUnvisited {
++			continue
++		}
++		nb := neighborsOf(p)
++		if len(nb)+1 < minPts { // +1 counts p itself toward the core threshold
++			labels[p] = dbscanNoise
++			continue
++		}
++		labels[p] = cluster
++		seeds := append([]int(nil), nb...)
++		for k := 0; k < len(seeds); k++ {
++			q := seeds[k]
++			if labels[q] == dbscanNoise {
++				labels[q] = cluster // a former-noise point reachable from a core is a border point
++			}
++			if labels[q] != dbscanUnvisited {
++				continue
++			}
++			labels[q] = cluster
++			qn := neighborsOf(q)
++			if len(qn)+1 >= minPts {
++				seeds = append(seeds, qn...)
++			}
++		}
++		cluster++
++	}
++	return labels, cluster > 0
++}
+diff --git a/reconcile/dbscan_test.go b/reconcile/dbscan_test.go
+new file mode 100644
+index 00000000..66dc1d01
+--- /dev/null
++++ b/reconcile/dbscan_test.go
+@@ -0,0 +1,58 @@
++package reconcile
++
++import "testing"
++
++// adjacency builds a symmetric neighbor predicate from an edge list (pairs of
++// indices that are within eps of each other).
++func adjacency(edges [][2]int) func(i, j int) bool {
++	set := map[[2]int]bool{}
++	for _, e := range edges {
++		set[[2]int{e[0], e[1]}] = true
++		set[[2]int{e[1], e[0]}] = true
++	}
++	return func(i, j int) bool { return set[[2]int{i, j}] }
++}
++
++func TestDBSCAN_IsolatesNoisePoint(t *testing.T) {
++	// 0-1 are neighbors (dense), 2 is isolated. minPts=2 → {0,1} cluster, 2 noise.
++	labels, dense := dbscanLabels(3, 2, adjacency([][2]int{{0, 1}}))
++	isTrue(t, dense, "a dense cluster formed")
++	eq(t, labels[0], labels[1], "0 and 1 share a cluster")
++	notEq(t, labels[0], dbscanNoise, "0 is not noise")
++	eq(t, labels[2], dbscanNoise, "2 is isolated noise")
++}
++
++func TestDBSCAN_AllIsolatedNoDenseCluster(t *testing.T) {
++	labels, dense := dbscanLabels(3, 2, adjacency(nil))
++	isTrue(t, !dense, "no cluster formed when every point is isolated")
++	for i := 0; i < 3; i++ {
++		eq(t, labels[i], dbscanNoise, "every point is noise")
++	}
++}
++
++func TestDBSCAN_DensityConnectedChain(t *testing.T) {
++	// 0-1 and 1-2 are neighbors but 0-2 are not. Density-reachability links all
++	// three into one cluster (no point is noise).
++	labels, dense := dbscanLabels(3, 2, adjacency([][2]int{{0, 1}, {1, 2}}))
++	isTrue(t, dense, "dense")
++	eq(t, labels[0], labels[1], "0,1 same cluster")
++	eq(t, labels[1], labels[2], "1,2 same cluster → all connected")
++}
++
++func TestDBSCAN_MinPtsThreeLeavesPairAsNoise(t *testing.T) {
++	// With minPts=3 a bare pair (each has only 1 neighbor) is not dense → noise.
++	labels, dense := dbscanLabels(2, 3, adjacency([][2]int{{0, 1}}))
++	isTrue(t, !dense, "a pair is not dense at minPts=3")
++	eq(t, labels[0], dbscanNoise, "0 noise")
++	eq(t, labels[1], dbscanNoise, "1 noise")
++}
++
++func TestDBSCAN_Deterministic(t *testing.T) {
++	edges := [][2]int{{0, 1}, {2, 3}, {3, 4}}
++	l1, _ := dbscanLabels(6, 2, adjacency(edges))
++	l2, _ := dbscanLabels(6, 2, adjacency(edges))
++	for i := range l1 {
++		eq(t, l1[i], l2[i], "stable labels across runs")
++	}
++	eq(t, l1[5], dbscanNoise, "point 5 has no edges → noise")
++}
+diff --git a/reconcile/dedupe.go b/reconcile/dedupe.go
+index c7464028..5a630f62 100644
+--- a/reconcile/dedupe.go
++++ b/reconcile/dedupe.go
+@@ -2,6 +2,8 @@ package reconcile
+ 
+ import (
+ 	"regexp"
++	"sort"
++	"strconv"
+ 	"strings"
+ )
+ 
+@@ -33,81 +35,200 @@ type AmbiguousCluster struct {
+ }
+ 
+ // DedupeCluster partitions one location cluster into merge groups and records
+-// ambiguous pairs, with no adjudication applied. See dedupeCluster.
++// ambiguous pairs, with no adjudication and no AST grouping applied. See
++// dedupeCluster.
+ func DedupeCluster(cluster []Finding) ([][]Finding, []AmbiguousCluster) {
+-	return dedupeCluster(cluster, nil)
++	return dedupeCluster(cluster, make([]string, len(cluster)), nil)
+ }
+ 
+ // dedupeCluster partitions one location cluster into merge groups and records
+-// ambiguous pairs. Findings linked by similarity >= MergeThreshold (single-
+-// linkage, transitively) form a merge group to be collapsed downstream;
+-// everything else stays in its own singleton group. Every pair scoring in
+-// [GrayLow, MergeThreshold) is recorded as an AmbiguousCluster but is NOT merged
+-// — UNLESS its content id is present in adjudicatedMerges, in which case the pair
+-// is unioned (merged) and not re-recorded as ambiguous. Group order follows first
+-// appearance for determinism. Token sets are computed once per finding (not per
+-// pair) so the O(n^2) pair loop stays cheap.
+-func dedupeCluster(cluster []Finding, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
++// ambiguous pairs. Merge decisions come from optimal bipartite matching
++// (bipartiteGroups): findings from different sources are matched 1:1 by the
++// composite edge-weight distance (AST GroupKey from keys[i], else 1 - Jaccard),
++// so each consensus issue gathers at most one finding per source and the greedy
++// single-linkage over-merge is structurally avoided. keys[i] is finding i's AST
++// group key (empty when none); it must be the same length as cluster.
++//
++// Every cross-group pair whose PROBLEM similarity falls in [GrayLow,
++// MergeThreshold) is recorded as an AmbiguousCluster but left unmerged — UNLESS
++// its content id is in adjudicatedMerges, in which case the two findings' groups
++// are unioned (merged) and the pair is not re-recorded. A gray pair whose groups
++// end up merged transitively (via adjudication of another pair) is dropped, so
++// the sidecar never contradicts the merged output. Token sets are computed once
++// per finding so the O(n^2) gray-pair scan stays cheap.
++func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[string]bool) ([][]Finding, []AmbiguousCluster) {
+ 	n := len(cluster)
++	if n == 0 {
++		return nil, nil
++	}
+ 	tokens := make([]map[string]struct{}, n)
+ 	for i, f := range cluster {
+ 		tokens[i] = tokenize(f.Problem)
+ 	}
++	dist := make([][]float64, n)
++	for i := range dist {
++		dist[i] = make([]float64, n)
++	}
++	for i := 0; i < n; i++ {
++		for j := i + 1; j < n; j++ {
++			d := pairDistance(keys[i], keys[j], tokens[i], tokens[j])
++			dist[i][j], dist[j][i] = d, d
++		}
++	}
++
++	// srcKeys identifies each finding's source for matching. A non-empty Reviewer
++	// is the source; an empty Reviewer (unattributed finding) gets a per-finding
++	// unique key so it is treated as its own source — otherwise every unattributed
++	// finding would collapse into one pseudo-source and nothing would ever match,
++	// silently disabling dedup. NUL-prefixing cannot collide with a stream-column
++	// reviewer value.
++	srcKeys := make([]string, n)
++	for i, f := range cluster {
++		if f.Reviewer != "" {
++			srcKeys[i] = f.Reviewer
++		} else {
++			srcKeys[i] = "\x00anon\x00" + strconv.Itoa(i)
++		}
++	}
++
++	// mergeable is the integer-exact duplicate predicate: a shared non-empty AST
++	// key, or token-set Jaccard at/above MergeThreshold (classify's cross-multiply
++	// boundary, never the float distance). It gates bipartite acceptance so the
++	// merge decision stays deterministic.
++	mergeable := func(a, b int) bool {
++		if keys[a] != "" && keys[a] == keys[b] {
++			return true
++		}
++		rel, _ := classify(tokens[a], tokens[b])
++		return rel == relMerge
++	}
++
++	groups := bipartiteGroups(srcKeys, dist, mergeable)
++	groupOf := make([]int, n)
++	for gi, g := range groups {
++		for _, idx := range g {
++			groupOf[idx] = gi
++		}
++	}
+ 
+-	uf := newUnionFind(n)
++	// Adjudicated gray pairs force-merge groups; union-find runs over GROUP ids.
++	uf := newUnionFind(len(groups))
+ 	var ambiguous []AmbiguousCluster
+-	var ambiguousPairs [][2]int // index pair behind each ambiguous entry, for the post-loop root check
++	var ambiguousPairs [][2]int // group-id pair behind each entry, for the post-loop root check
++	var ambiguousIdx [][2]int   // finding-index pair behind each entry, for the noise exclusion
+ 	for i := 0; i < n; i++ {
+ 		for j := i + 1; j < n; j++ {
++			if groupOf[i] == groupOf[j] {
++				continue // matched into one group already; not adjudicable
++			}
+ 			rel, sim := classify(tokens[i], tokens[j])
+-			switch rel {
+-			case relMerge:
+-				uf.union(i, j)
+-			case relGray:
+-				id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
+-				if adjudicatedMerges[id] {
+-					uf.union(i, j) // adjudicated this pair a duplicate
+-					continue
+-				}
+-				ambiguous = append(ambiguous, AmbiguousCluster{
+-					ID:         id,
+-					File:       cluster[i].File,
+-					Line:       cluster[i].Line,
+-					Similarity: sim,
+-					Findings:   []Finding{cluster[i], cluster[j]},
+-				})
+-				ambiguousPairs = append(ambiguousPairs, [2]int{i, j})
++			if rel != relGray {
++				continue
+ 			}
++			id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
++			if adjudicatedMerges[id] {
++				uf.union(groupOf[i], groupOf[j]) // adjudicated this pair a duplicate
++				continue
++			}
++			ambiguous = append(ambiguous, AmbiguousCluster{
++				ID:         id,
++				File:       cluster[i].File,
++				Line:       cluster[i].Line,
++				Similarity: sim,
++				Findings:   []Finding{cluster[i], cluster[j]},
++			})
++			ambiguousPairs = append(ambiguousPairs, [2]int{groupOf[i], groupOf[j]})
++			ambiguousIdx = append(ambiguousIdx, [2]int{i, j})
+ 		}
+ 	}
+ 
+-	// A gray pair whose two findings ended up under the same union-find root
+-	// (transitively merged via a third finding) is no longer adjudicable: a
+-	// "merge" decision would be a silent no-op and "distinct" cannot be honored
+-	// since the pair is already collapsed. Drop those entries so the ambiguous
+-	// sidecar never contradicts the merged output.
+-	kept := ambiguous[:0]
+-	for k, p := range ambiguousPairs {
+-		if uf.find(p[0]) != uf.find(p[1]) {
+-			kept = append(kept, ambiguous[k])
++	// Drop gray pairs whose groups were transitively merged by adjudication: a
++	// "merge" decision would be a silent no-op and "distinct" can no longer be
++	// honored, so the entry must not contradict the merged output.
++	keptAmb := ambiguous[:0]
++	keptIdx := ambiguousIdx[:0]
++	for k, gp := range ambiguousPairs {
++		if uf.find(gp[0]) != uf.find(gp[1]) {
++			keptAmb = append(keptAmb, ambiguous[k])
++			keptIdx = append(keptIdx, ambiguousIdx[k])
+ 		}
+ 	}
+-	ambiguous = kept
++	ambiguous = keptAmb
+ 
+-	groupMap := map[int][]Finding{}
+-	var roots []int
+-	for i := 0; i < n; i++ {
+-		r := uf.find(i)
+-		if _, seen := groupMap[r]; !seen {
+-			roots = append(roots, r)
++	// A finding already surfaced in a surviving gray pair must not also be isolated
++	// as DBSCAN noise (no double representation in the sidecar).
++	grayInvolved := make(map[int]bool, len(keptIdx)*2)
++	for _, p := range keptIdx {
++		grayInvolved[p[0]] = true
++		grayInvolved[p[1]] = true
++	}
++
++	// Materialize merge groups, folding adjudicated group unions together. Root
++	// order follows group order (already normalized by lowest member index), so the
++	// merge representative stays the lowest-index finding.
++	rootIdx := map[int][]int{}
++	var rootOrder []int
++	for gi, g := range groups {
++		r := uf.find(gi)
++		if _, seen := rootIdx[r]; !seen {
++			rootOrder = append(rootOrder, r)
++		}
++		rootIdx[r] = append(rootIdx[r], g...)
++	}
++	soloRoot := make(map[int]bool, n) // finding index → it is the only member of its root
++	for _, idxs := range rootIdx {
++		if len(idxs) == 1 {
++			soloRoot[idxs[0]] = true
+ 		}
+-		groupMap[r] = append(groupMap[r], cluster[i])
+ 	}
+-	groups := make([][]Finding, 0, len(roots))
+-	for _, r := range roots {
+-		groups = append(groups, groupMap[r])
++
++	// DBSCAN over the same location cluster isolates uncorroborated noise. The
++	// eps-neighborhood is a CROSS-SOURCE merge: density must come from two distinct
++	// sources agreeing (real corroboration), not one source repeating itself — a
++	// self-duplicate is not evidence that a different source's finding is noise.
++	// Noise is isolated ONLY when such a dense cluster also exists in this location
++	// (a finding standing alone where others corroborate each other is a likely
++	// single-model hallucination; a finding whose location no one else touched is
++	// just an uncorroborated report and stays in the output), and only when the
++	// finding is genuinely alone — not gray-paired and not merged into any group —
++	// so it is never represented in both the output and the sidecar.
++	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && srcKeys[a] != srcKeys[b] }
++	labels, dense := dbscanLabels(n, dbscanMinPts, denseNeighbor)
++	noiseIdx := map[int]bool{}
++	var noise []AmbiguousCluster
++	if dense {
++		for i := 0; i < n; i++ {
++			if labels[i] != dbscanNoise || grayInvolved[i] || !soloRoot[i] {
++				continue
++			}
++			noiseIdx[i] = true
++			noise = append(noise, AmbiguousCluster{
++				// A single-finding cluster: same-problem id keeps it stable and
++				// distinct from any two-problem gray-pair id; Similarity stays 0
++				// (no corroboration). debate skips clusters with < 2 findings.
++				ID:       AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[i].Problem),
++				File:     cluster[i].File,
++				Line:     cluster[i].Line,
++				Findings: []Finding{cluster[i]},
++			})
++		}
++	}
++
++	out := make([][]Finding, 0, len(rootOrder))
++	for _, r := range rootOrder {
++		idxs := rootIdx[r]
++		if len(idxs) == 1 && noiseIdx[idxs[0]] {
++			continue // isolated as DBSCAN noise → sidecar only
++		}
++		sort.Ints(idxs) // stable member order after any adjudicated union
++		members := make([]Finding, len(idxs))
++		for k, idx := range idxs {
++			members[k] = cluster[idx]
++		}
++		out = append(out, members)
+ 	}
+-	return groups, ambiguous
++	ambiguous = append(ambiguous, noise...)
++	return out, ambiguous
+ }
+ 
+ // relation is the dedupe outcome for one pair.
+@@ -172,7 +293,8 @@ func tokenize(s string) map[string]struct{} {
+ 	return set
+ }
+ 
+-// unionFind is a tiny disjoint-set for single-linkage grouping within a cluster.
++// unionFind is a tiny disjoint-set used to fold adjudicated gray-pair merges over
++// the bipartite group ids within a cluster.
+ type unionFind struct{ parent []int }
+ 
+ func newUnionFind(n int) *unionFind {
+diff --git a/reconcile/dedupe_test.go b/reconcile/dedupe_test.go
+index f421b526..0b4f0451 100644
+--- a/reconcile/dedupe_test.go
++++ b/reconcile/dedupe_test.go
+@@ -66,17 +66,26 @@ func TestDedupeCluster_TransitiveMerge(t *testing.T) {
+ 	length(t, groups[0], 3, "three members")
+ }
+ 
+-func TestDedupeCluster_TransitivelyMergedGrayPairDropped(t *testing.T) {
+-	// A~B is gray (0.667) but A~C and B~C both merge (0.818), so A and B end up
+-	// under the same union-find root via C. The A-B pair must NOT be emitted.
++func TestDedupeCluster_BipartiteRefusesTransitiveOverMerge(t *testing.T) {
++	// The greedy-clustering failure case (Epic 13.2 AC2). A~B is only gray (0.667)
++	// — they are NOT duplicates — but A~C and B~C both clear the merge threshold
++	// (0.818). Greedy single-linkage chains A-B-C into one group via C, silently
++	// merging the non-duplicate pair A-B. Bipartite matching refuses this: C is one
++	// finding from one source and can corroborate only ONE of A/B (1:1), so A and B
++	// stay in separate groups and the unresolved A-B pair surfaces as ambiguous.
+ 	groups, amb := DedupeCluster([]Finding{
+ 		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 w10", "greta"), // A
+ 		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 c1 b1", "kai"),    // B: vs A 0.667 gray
+ 		fnd("a.go", 1, "w1 w2 w3 w4 w5 w6 w7 w8 w9 c1", "mira"),   // C: vs A and B 0.818 merge
+ 	})
+-	length(t, groups, 1, "all three collapse transitively via C")
+-	length(t, groups[0], 3, "three members")
+-	length(t, amb, 0, "a gray pair already merged transitively must not be left for adjudication")
++	length(t, groups, 2, "bipartite keeps the non-duplicate A-B apart instead of chaining all three")
++	sizes := map[int]int{}
++	for _, g := range groups {
++		sizes[len(g)]++
++	}
++	eq(t, sizes[2], 1, "one corroborated pair (C joins one of A/B)")
++	eq(t, sizes[1], 1, "one finding left as its own group")
++	length(t, amb, 1, "the unresolved gray A-B pair is recorded for adjudication")
+ }
+ 
+ func TestDedupeCluster_ExactThresholdBoundaries(t *testing.T) {
+@@ -106,6 +115,40 @@ func TestDedupeCluster_BothEmptyProblemsMerge(t *testing.T) {
+ 	length(t, groups[0], 2, "both members")
+ }
+ 
++func TestDedupeCluster_SharedASTKeyMergesDisjointText(t *testing.T) {
++	// Epic 13.2 composite edge weight: two cross-source findings with DISJOINT
++	// problem text (Jaccard 0 → would be distinct) but a shared non-empty AST
++	// GroupKey are matched at distance 0 and merge. This is the 13.1-isomorphism
++	// signal acting as an edge weight, which token-set Jaccard alone cannot do.
++	groups, amb := dedupeCluster([]Finding{
++		fnd("a.go", 1, "alpha beta", "greta"),
++		fnd("a.go", 1, "gamma delta", "kai"),
++	}, []string{"a.go\x00H", "a.go\x00H"}, nil)
++	length(t, groups, 1, "shared AST key merges despite disjoint text")
++	length(t, groups[0], 2, "both findings")
++	length(t, amb, 0, "no ambiguous: it merged")
++}
++
++func TestDedupeCluster_AdjudicatedGrayPairMerges(t *testing.T) {
++	// A gray pair is left unmerged by default, but an adjudication marking its id a
++	// duplicate force-merges the two groups and drops it from the sidecar. This
++	// exercises the group-level union-find merge path preserved across the rewrite.
++	a := fnd("a.go", 1, "alpha beta gamma", "greta")
++	b := fnd("a.go", 1, "alpha beta delta", "kai") // 0.5 → gray
++	id := AmbiguousID(a.File, a.Line, a.Problem, b.Problem)
++	groups, amb := dedupeCluster([]Finding{a, b}, []string{"", ""}, map[string]bool{id: true})
++	length(t, groups, 1, "adjudicated duplicate merges into one group")
++	length(t, groups[0], 2, "both members")
++	length(t, amb, 0, "an adjudicated pair is not re-recorded as ambiguous")
++}
++
++func TestClusterKeys_UsesGrouper(t *testing.T) {
++	keys := clusterKeys([]Finding{fnd("a.go", 10, "x", "r1"), fnd("a.go", 20, "y", "r2")},
++		fakeGrouper{keys: map[int]string{10: "K1", 20: ""}})
++	eq(t, keys[0], "K1", "grouper key threaded through")
++	eq(t, keys[1], "", "empty key preserved")
++}
++
+ func TestDedupeCluster_SingletonClusterNoAmbiguous(t *testing.T) {
+ 	groups, amb := DedupeCluster([]Finding{fnd("a.go", 1, "lonely", "greta")})
+ 	length(t, groups, 1, "one group")
+diff --git a/reconcile/distance.go b/reconcile/distance.go
+new file mode 100644
+index 00000000..6c0e72c7
+--- /dev/null
++++ b/reconcile/distance.go
+@@ -0,0 +1,34 @@
++package reconcile
++
++// Composite edge-weight distance for Epic 13.2 bipartite matching / DBSCAN.
++//
++// The dependency note for 13.2 requires the 13.1 AST-isomorphism metric to be
++// usable as an edge weight (13.0 NCD was falsified and not adopted). The signal
++// is therefore composite and per-pair:
++//
++//   - distance 0 when two findings share the same non-empty AST GroupKey: they
++//     sit at structurally-isomorphic code, the strongest available duplicate
++//     signal.
++//   - 1 - token-set Jaccard otherwise (proximity-grouped or unkeyed findings),
++//     reusing the integer-authoritative similarity classify already computes so
++//     the distance is deterministic and stdlib-only.
++//
++// distanceFloor / distanceCeiling bound the metric to [0,1]. The merge and
++// gray-zone distance cutoffs (1 - MergeThreshold, 1 - GrayLow) live with the
++// matching and DBSCAN passes that consume them.
++const (
++	distanceFloor   = 0.0
++	distanceCeiling = 1.0
++)
++
++// pairDistance returns the composite edge-weight distance between two findings,
++// given their precomputed AST group keys and PROBLEM-text token sets. Token sets
++// are precomputed by the caller so the O(V^2) matrix build stays cheap. The
++// computation is symmetric in its arguments.
++func pairDistance(keyA, keyB string, tokA, tokB map[string]struct{}) float64 {
++	if keyA != "" && keyA == keyB {
++		return distanceFloor
++	}
++	_, sim := classify(tokA, tokB)
++	return distanceCeiling - sim
++}
+diff --git a/reconcile/distance_test.go b/reconcile/distance_test.go
+new file mode 100644
+index 00000000..014d3f4f
+--- /dev/null
++++ b/reconcile/distance_test.go
+@@ -0,0 +1,46 @@
++package reconcile
++
++import "testing"
++
++// The composite edge-weight distance (Epic 13.2): 0 when two findings share a
++// non-empty AST GroupKey (13.1 isomorphism), else 1 - token-set Jaccard.
++
++func TestPairDistance_SameASTKeyIsZero(t *testing.T) {
++	// Identical non-empty key dominates even when the problem texts are disjoint.
++	d := pairDistance("a.go\x00H", "a.go\x00H", tokenize("alpha beta"), tokenize("gamma delta"))
++	eq(t, d, 0.0, "shared non-empty AST key → distance 0")
++}
++
++func TestPairDistance_DifferentASTKeysFallToJaccard(t *testing.T) {
++	// Different keys → composite ignores the key and uses 1 - Jaccard. Disjoint
++	// texts → Jaccard 0 → distance 1.
++	d := pairDistance("a.go\x00H", "a.go\x00K", tokenize("alpha beta"), tokenize("gamma delta"))
++	eq(t, d, 1.0, "different keys, disjoint text → distance 1")
++}
++
++func TestPairDistance_EmptyKeysUseJaccard(t *testing.T) {
++	// Proximity-grouped (empty key) findings rank by 1 - Jaccard.
++	// {alpha,beta,gamma} vs {alpha,beta,delta}: 2 shared / 4 union = 0.5 → 0.5.
++	d := pairDistance("", "", tokenize("alpha beta gamma"), tokenize("alpha beta delta"))
++	inDelta(t, d, 0.5, 1e-9, "empty keys → 1 - Jaccard")
++}
++
++func TestPairDistance_IdenticalTextEmptyKeysIsZero(t *testing.T) {
++	d := pairDistance("", "", tokenize("token never expires"), tokenize("token never expires"))
++	eq(t, d, 0.0, "identical text → distance 0")
++}
++
++func TestPairDistance_OneEmptyKeyIsNotAMatch(t *testing.T) {
++	// One keyed, one unkeyed: not a shared key, so fall to Jaccard.
++	d := pairDistance("a.go\x00H", "", tokenize("alpha beta"), tokenize("alpha beta"))
++	eq(t, d, 0.0, "identical text still 0 via Jaccard")
++	d2 := pairDistance("a.go\x00H", "", tokenize("alpha beta"), tokenize("gamma delta"))
++	eq(t, d2, 1.0, "disjoint text via Jaccard despite one key present")
++}
++
++func TestPairDistance_Symmetric(t *testing.T) {
++	tokA, tokB := tokenize("alpha beta gamma"), tokenize("alpha beta delta")
++	d1 := pairDistance("", "", tokA, tokB)
++	d2 := pairDistance("", "", tokB, tokA)
++	eq(t, d1, d2, "distance is symmetric in its arguments")
++}
+diff --git a/reconcile/reconcile.go b/reconcile/reconcile.go
+index 94b7fbd3..34a32909 100644
+--- a/reconcile/reconcile.go
++++ b/reconcile/reconcile.go
+@@ -79,7 +79,7 @@ func Reconcile(sources []Source, opts Options) Result {
+ 	clustersCollapsed, disagreements := 0, 0
+ 
+ 	for _, cl := range clusters {
+-		groups, amb := dedupeCluster(cl, opts.Merges)
++		groups, amb := dedupeCluster(cl, clusterKeys(cl, opts.Grouper), opts.Merges)
+ 		ambiguous = append(ambiguous, amb...)
+ 		for _, g := range groups {
+ 			m := Merge(g)
+@@ -137,6 +137,21 @@ func sortMerged(m []Merged) {
+ 	})
+ }
+ 
++// clusterKeys returns the AST group key for each finding in a cluster (empty
++// strings when g is nil or supplies no key), aligned by index with cluster. The
++// keys feed the composite edge-weight distance: two findings sharing a non-empty
++// key are structurally isomorphic (13.1) and matched at distance 0.
++func clusterKeys(cluster []Finding, g Grouper) []string {
++	keys := make([]string, len(cluster))
++	if g == nil {
++		return keys
++	}
++	for i, f := range cluster {
++		keys[i] = g.GroupKey(f)
++	}
++	return keys
++}
++
+ // AllFindings flattens the findings across sources in source order.
+ func AllFindings(sources []Source) []Finding {
+ 	var out []Finding

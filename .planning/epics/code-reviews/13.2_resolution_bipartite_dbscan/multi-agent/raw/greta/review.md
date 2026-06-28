@@ -1,0 +1,2 @@
+MEDIUM|reconcile/dedupe.go:48|Unbounded cluster size enables O(n^2) memory and O(n^3) CPU DoS|Enforce max cluster size before allocating distance matrix|security|15|dist := make([][]float64, n) runs without size guard|greta
+MEDIUM|reconcile/dedupe.go:146|Attacker-controlled Reviewer string can spoof anonymous source keys|Sanitize Reviewer field or use collision-resistant IDs|security|10|srcKeys[i] = f.Reviewer allows sentinel collision|greta
