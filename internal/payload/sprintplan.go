@@ -32,7 +32,7 @@ const MaxSprintPlanBytes int64 = 16384
 //
 // The plan file is trusted local operator input (Epic 12.2 Security
 // Considerations), so no path-traversal or content sandboxing is performed here.
-func ReadSprintPlan(path string) (string, error) {
+func ReadSprintPlan(path string) (content string, err error) {
 	if strings.TrimSpace(path) == "" {
 		return "", nil
 	}
@@ -46,7 +46,11 @@ func ReadSprintPlan(path string) (string, error) {
 		}
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	// Bound memory use even if the path points at a huge or non-regular file: only
 	// MaxSprintPlanBytes+1 bytes are ever buffered. The extra byte lets
