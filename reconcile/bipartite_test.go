@@ -91,3 +91,16 @@ func TestHungarianAssign_RealColumnPreferredOverPadding(t *testing.T) {
 	eq(t, assign[1], 0, "cheaper row1 takes the real col")
 	eq(t, assign[0], -1, "row0 to padding")
 }
+
+func TestHungarian_RejectsOversizedMatrix(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for oversized matrix")
+		}
+	}()
+	cost := make([][]float64, 501)
+	for i := range cost {
+		cost[i] = make([]float64, 501)
+	}
+	hungarian(cost)
+}
