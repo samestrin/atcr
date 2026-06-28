@@ -127,6 +127,50 @@ func Other() {
 	require.NotEqual(t, k1, k3, "findings in different functions do not group")
 }
 
+// TestGrouper_MemoizesKeyAndHash verifies the per-finding caching: many findings
+// in one covering block compute the structural Merkle hash exactly once (cached
+// by address) and every queried line is memoized, instead of re-walking and
+// re-hashing the subtree on every finding.
+func TestGrouper_MemoizesKeyAndHash(t *testing.T) {
+	dir := t.TempDir()
+	src := `package p
+
+func Big() {
+	a := 1
+	b := 2
+	c := 3
+	d := 4
+	_ = a + b + c + d
+}
+`
+	path := filepath.Join(dir, "big.go")
+	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
+
+	g := NewGrouper(dir)
+	defer func() { _ = g.Close() }()
+
+	var keys []string
+	for line := 4; line <= 9; line++ {
+		k := g.GroupKey(reconcile.Finding{File: "big.go", Line: line})
+		require.NotEmpty(t, k)
+		keys = append(keys, k)
+	}
+	// All findings sit in Big()'s body block → identical key.
+	for _, k := range keys[1:] {
+		require.Equal(t, keys[0], k, "findings in one block must share a key")
+	}
+
+	cp, ok := g.canonicalPath(filepath.Clean("big.go"))
+	require.True(t, ok)
+	pf := g.cache[cp]
+	require.NotNil(t, pf)
+	require.Len(t, pf.hashByAddr, 1, "Merkle hash memoized once for the shared covering block")
+	require.Len(t, pf.keyByLine, 6, "each queried finding line memoized")
+
+	// Re-querying a cached line returns the same key (fast path).
+	require.Equal(t, keys[0], g.GroupKey(reconcile.Finding{File: "big.go", Line: 4}))
+}
+
 func TestGrouper_EmptyKeyTriggersFallback(t *testing.T) {
 	g := NewGrouper(t.TempDir())
 	defer func() { _ = g.Close() }()

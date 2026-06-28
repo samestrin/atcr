@@ -33,6 +33,13 @@ type Grouper struct {
 type parsedFile struct {
 	tree Node
 	ok   bool
+
+	// Memoized grouping results, guarded by Grouper.mu. keyByLine caches the full
+	// group key per finding line; hashByAddr caches the expensive structural
+	// Merkle hash per covering-block address so the many findings that map to one
+	// covering block compute it once rather than once per finding.
+	keyByLine  map[int]string
+	hashByAddr map[string]string
 }
 
 // isPermanentReadError reports whether an error from reading a source file is
@@ -149,17 +156,58 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	if !pf.ok {
 		return ""
 	}
+
+	// Fast path: this exact line was keyed before — return the memoized result
+	// without re-walking the tree or re-hashing.
+	g.mu.Lock()
+	if k, ok := pf.keyByLine[f.Line]; ok {
+		g.mu.Unlock()
+		return k
+	}
+	g.mu.Unlock()
+
 	block, addr, ok := CoveringBlock(pf.tree, f.Line)
 	if !ok {
+		g.rememberKey(pf, f.Line, "")
 		return ""
 	}
+
+	// Cache the expensive Merkle hash by covering-block address: N findings in the
+	// same block hash the subtree once. The address is drift-invariant and
+	// uniquely identifies the node, so it is a sound cache key.
+	g.mu.Lock()
+	mh, cached := pf.hashByAddr[addr]
+	g.mu.Unlock()
+	if !cached {
+		mh = MerkleHash(block)
+		g.mu.Lock()
+		if pf.hashByAddr == nil {
+			pf.hashByAddr = map[string]string{}
+		}
+		pf.hashByAddr[addr] = mh
+		g.mu.Unlock()
+	}
+
 	// Key = canonical file path + structural address of the covering block + its
 	// Merkle hash. The address (drift-invariant, sibling-distinguishing) already
 	// uniquely identifies the node within the file, so the Merkle hash is a
 	// defensive cross-check of the address scheme rather than load-bearing for
 	// grouping. File-scoped so identical structures in different files never
 	// collide; canonical path collapses symlinks and spelling variants.
-	return path + "\x00" + addr + "\x00" + MerkleHash(block)
+	key := path + "\x00" + addr + "\x00" + mh
+	g.rememberKey(pf, f.Line, key)
+	return key
+}
+
+// rememberKey memoizes the computed group key for line under g.mu so repeat
+// findings on the same line short-circuit the tree walk and hash.
+func (g *Grouper) rememberKey(pf *parsedFile, line int, key string) {
+	g.mu.Lock()
+	if pf.keyByLine == nil {
+		pf.keyByLine = map[int]string{}
+	}
+	pf.keyByLine[line] = key
+	g.mu.Unlock()
 }
 
 // treeFor returns the parsed tree for file, parsing+caching on first use. A parse
