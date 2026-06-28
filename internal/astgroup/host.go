@@ -122,9 +122,11 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	if h.initErr != nil {
 		return nil, h.initErr
 	}
-	if p, ok := h.parsers[lang]; ok {
+	if p, ok := h.parsers[lang]; ok && !p.mod.IsClosed() {
 		return p, nil
 	}
+	// A previous parse hit its deadline and closed the module; recreate it.
+	delete(h.parsers, lang)
 
 	wasm, err := h.loadWasm(lang)
 	if err != nil {
