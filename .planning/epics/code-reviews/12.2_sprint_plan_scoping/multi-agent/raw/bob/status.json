@@ -1,0 +1,7 @@
+{
+  "agent_name": "bob",
+  "model": "bob-model",
+  "status": "failed",
+  "duration_ms": 10717,
+  "error": "no content in stream"
+}

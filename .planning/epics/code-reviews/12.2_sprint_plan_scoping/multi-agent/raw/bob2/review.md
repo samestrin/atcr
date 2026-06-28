@@ -1,0 +1,2 @@
+
+MEDIUM|internal/payload/sprintplan.go:32|Incorrectly trimming plan content before capping|Trimming removes meaningful whitespace; should only check emptiness via trim|correctness|15|Trimming removes meaningful whitespace; should only check emptiness via trim|reviewer

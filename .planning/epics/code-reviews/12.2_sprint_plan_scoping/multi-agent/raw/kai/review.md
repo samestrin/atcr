@@ -1,0 +1,1 @@
+MEDIUM|internal/payload/sprintplan.go:45|Unbounded file read before size cap|Use io.LimitReader capped at MaxSprintPlanBytes to avoid OOM|performance|10|os.ReadFile loads whole file before 16KiB cap; violates 5ms NFR|bruce

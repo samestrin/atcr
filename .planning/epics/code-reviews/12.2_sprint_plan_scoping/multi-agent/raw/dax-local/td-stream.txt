@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/review.go:240|Redundant scope resolution call|Call resolveScopeConstraint once in PrepareReviewFromDiff|correctness|10|Called in both PrepareReview and PrepareReviewFromDiff with same logic|bruce
