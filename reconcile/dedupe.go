@@ -225,7 +225,18 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	// just an uncorroborated report and stays in the output), and only when the
 	// finding is genuinely alone — not gray-paired and not merged into any group —
 	// so it is never represented in both the output and the sidecar.
-	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && srcKeys[a] != srcKeys[b] }
+	// denseSrc is the DENSITY source key, distinct from srcKeys: it collapses ALL
+	// unattributed findings into one shared "" source so two empty-Reviewer copies
+	// of the same finding are NOT independent corroboration (srcKeys keeps each its
+	// own per-finding key for bipartite matching, which density must not reuse —
+	// every unattributed finding would otherwise count as a distinct corroborating
+	// source). A named reviewer remains its own source, so a named finding still
+	// corroborates a different source (named or unattributed).
+	denseSrc := make([]string, n)
+	for i, f := range cluster {
+		denseSrc[i] = f.Reviewer
+	}
+	denseNeighbor := func(a, b int) bool { return mergeable(a, b) && denseSrc[a] != denseSrc[b] }
 	labels, dense := dbscanLabels(n, dbscanMinPts, denseNeighbor)
 	noiseIdx := map[int]bool{}
 	var noise []AmbiguousCluster
