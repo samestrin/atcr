@@ -90,13 +90,31 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 	for i, f := range cluster {
 		tokens[i] = tokenize(f.Problem)
 	}
+	// Precompute the relation+similarity matrix ONCE per cluster. classify is the
+	// hot path — the distance-matrix build, the mergeable predicate, and the
+	// gray-pair scan each need a pair's relation, so without caching the same pair
+	// is classified up to three times. The integer-exact relation is stored
+	// verbatim and every site below reads rel[i][j] (never a fresh float
+	// comparison), so the deterministic 0.7/0.4 boundary is preserved. The
+	// composite distance is derived inline (mirroring pairDistance): 0 when the
+	// pair shares a non-empty AST key (the 13.1 isomorphism signal), else 1-Jaccard.
+	rel := make([][]relation, n)
+	sim := make([][]float64, n)
 	dist := make([][]float64, n)
-	for i := range dist {
+	for i := range rel {
+		rel[i] = make([]relation, n)
+		sim[i] = make([]float64, n)
 		dist[i] = make([]float64, n)
 	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
-			d := pairDistance(keys[i], keys[j], tokens[i], tokens[j])
+			r, s := classify(tokens[i], tokens[j])
+			rel[i][j], rel[j][i] = r, r
+			sim[i][j], sim[j][i] = s, s
+			d := distanceCeiling - s
+			if keys[i] != "" && keys[i] == keys[j] {
+				d = distanceFloor
+			}
 			dist[i][j], dist[j][i] = d, d
 		}
 	}
@@ -127,8 +145,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 		if keys[a] != "" && keys[a] == keys[b] {
 			return true
 		}
-		rel, _ := classify(tokens[a], tokens[b])
-		return rel == relMerge
+		return rel[a][b] == relMerge
 	}
 
 	groups := bipartiteGroups(srcKeys, dist, mergeable)
@@ -154,8 +171,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 			if keys[i] != "" && keys[i] == keys[j] {
 				continue
 			}
-			rel, sim := classify(tokens[i], tokens[j])
-			if rel != relGray {
+			if rel[i][j] != relGray {
 				continue
 			}
 			id := AmbiguousID(cluster[i].File, cluster[i].Line, cluster[i].Problem, cluster[j].Problem)
@@ -167,7 +183,7 @@ func dedupeCluster(cluster []Finding, keys []string, adjudicatedMerges map[strin
 				ID:         id,
 				File:       cluster[i].File,
 				Line:       cluster[i].Line,
-				Similarity: sim,
+				Similarity: sim[i][j],
 				Findings:   []Finding{cluster[i], cluster[j]},
 			})
 			ambiguousPairs = append(ambiguousPairs, [2]int{groupOf[i], groupOf[j]})
