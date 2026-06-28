@@ -64,6 +64,13 @@ type Summary struct {
 // ambiguous sidecar and run summary. Output findings are sorted by severity
 // (desc), then file, then line, so the same input always yields byte-identical
 // artifacts.
+//
+// When opts.Grouper is set (AST-isomorphism grouping), clustering additionally
+// depends on the inputs that grouper reads — for the astgroup grouper, the source
+// tree it parses. Reconcile stays deterministic for a fixed (findings, source
+// tree) pair; reproducibility therefore holds per checkout, since a review runs
+// against a fixed working tree. A nil Grouper keeps clustering a pure function of
+// the findings.
 func Reconcile(sources []Source, opts Options) Result {
 	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
 

@@ -29,6 +29,7 @@ type Host struct {
 	ctx         context.Context
 	runtime     wazero.Runtime
 	overrideDir string
+	initErr     error // non-nil if WASI init failed; Parser then errors instead of panicking
 
 	mu      sync.Mutex
 	parsers map[string]*wasmParser
@@ -46,12 +47,17 @@ func WithOverrideDir(dir string) Option {
 }
 
 // NewHost creates a Host with a fresh wazero runtime (pure Go, zero CGO) and WASI
-// preview1 imports instantiated. Call Close to release it.
+// preview1 imports instantiated. Call Close to release it. A WASI-init failure is
+// recorded rather than panicked: Parser then returns that error, so a host wired
+// into the production reconcile gate degrades to proximity grouping instead of
+// crashing the reconcile.
 func NewHost(opts ...Option) *Host {
 	ctx := context.Background()
 	rt := wazero.NewRuntime(ctx)
-	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
 	h := &Host{ctx: ctx, runtime: rt, parsers: map[string]*wasmParser{}}
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
+		h.initErr = fmt.Errorf("astgroup: WASI init: %w", err)
+	}
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -107,6 +113,9 @@ func (h *Host) Parser(lang string) (Parser, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if h.initErr != nil {
+		return nil, h.initErr
+	}
 	if p, ok := h.parsers[lang]; ok {
 		return p, nil
 	}

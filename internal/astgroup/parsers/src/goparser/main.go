@@ -1,6 +1,6 @@
 // Command goparser is the Go-language AST parser plugin, compiled to a
 // WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and loaded
-// by the reconcile/astgroup wazero host. It reads Go source from guest linear
+// by the internal/astgroup wazero host. It reads Go source from guest linear
 // memory and emits a normalized structural node tree as JSON.
 //
 // The JSON contract (kind / name / start_line / end_line / children) is shared
@@ -11,12 +11,12 @@
 // which changes line numbers but not node kinds, names, or nesting — produces an
 // identical structural hash.
 //
-// Memory protocol (matches reconcile/astgroup wazero host):
+// Memory protocol (matches internal/astgroup wazero host):
 //   - alloc(n) returns a guest pointer to n writable bytes, pinned against GC.
 //   - parse(ptr, n) parses src=memory[ptr:ptr+n] and returns (resPtr<<32|resLen).
 //   - free(ptr) releases a previously alloc'd pointer.
 //
-// Regenerate the vendored .wasm via reconcile/astgroup/parsers/build.sh.
+// Regenerate the vendored .wasm via internal/astgroup/parsers/build.sh.
 package main
 
 import (
@@ -27,7 +27,7 @@ import (
 	"unsafe"
 )
 
-// node mirrors reconcile/astgroup.Node; the JSON tags are the wire contract.
+// node mirrors internal/astgroup.Node; the JSON tags are the wire contract.
 type node struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name,omitempty"`

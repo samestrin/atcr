@@ -1,6 +1,6 @@
 // Command pyparser is the Python-language structural parser plugin, compiled to
 // a WebAssembly reactor (GOOS=wasip1 GOARCH=wasm, -buildmode=c-shared) and
-// loaded by the reconcile/astgroup wazero host.
+// loaded by the internal/astgroup wazero host.
 //
 // It is a lightweight indentation + keyword block-structure parser, NOT a full
 // Python grammar: enough to recover the nesting of defs, classes, and compound
@@ -11,7 +11,7 @@
 // lines and reindentation that shift line numbers do not change the hash.
 //
 // Memory protocol matches the goparser plugin and the astgroup host.
-// Regenerate the vendored .wasm via reconcile/astgroup/parsers/build.sh.
+// Regenerate the vendored .wasm via internal/astgroup/parsers/build.sh.
 package main
 
 import (
@@ -69,10 +69,19 @@ type pline struct {
 }
 
 // significantLines returns non-blank, non-comment-only lines with their
-// indentation (tabs expanded to 8) and 1-based line number.
+// indentation (tabs expanded to 8) and 1-based line number. Lines inside a
+// triple-quoted string (docstrings, multi-line literals) are skipped so that a
+// def/class/# that appears as string CONTENT is not misparsed as real code — a
+// common source of spurious blocks and over-merged findings.
 func significantLines(src string) []pline {
 	var out []pline
+	delim := "" // active triple-quote delimiter spanning lines, "" when outside
 	for i, raw := range strings.Split(src, "\n") {
+		startInString := delim != ""
+		delim = scanTripleQuotes(raw, delim)
+		if startInString {
+			continue // entire physical line is inside a multi-line string literal
+		}
 		indent := 0
 		j := 0
 		for ; j < len(raw); j++ {
@@ -93,6 +102,37 @@ func significantLines(src string) []pline {
 		out = append(out, pline{indent: indent, lineno: i + 1, text: body})
 	}
 	return out
+}
+
+// scanTripleQuotes advances the triple-quoted-string state across one physical
+// line. delim is the active delimiter at line start ("" if outside a string);
+// the return value is the state at line end. It is a heuristic (it does not model
+// escapes or single/double quotes), sufficient to keep docstring content from
+// being parsed as code.
+func scanTripleQuotes(line, delim string) string {
+	for i := 0; i < len(line); {
+		if delim != "" {
+			if strings.HasPrefix(line[i:], delim) {
+				delim = ""
+				i += 3
+				continue
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(line[i:], `"""`) {
+			delim = `"""`
+			i += 3
+			continue
+		}
+		if strings.HasPrefix(line[i:], `'''`) {
+			delim = `'''`
+			i += 3
+			continue
+		}
+		i++
+	}
+	return delim
 }
 
 // build consumes consecutive lines at exactly `indent` and returns their nodes.

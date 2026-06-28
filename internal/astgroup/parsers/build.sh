@@ -5,7 +5,7 @@
 # changes — it is NOT part of the normal `go build` / CI path (no Wasm toolchain
 # beyond the standard Go compiler is required).
 #
-# Usage: reconcile/astgroup/parsers/build.sh
+# Usage: internal/astgroup/parsers/build.sh
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

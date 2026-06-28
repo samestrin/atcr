@@ -152,6 +152,22 @@
     "same_block": true
   },
   {
+    "name": "py_docstring_with_fake_def_no_overmerge",
+    "file": "a.py",
+    "source": "def real_a():\n    \"\"\"\n    def fake():\n        pass\n    \"\"\"\n    x = 1\n    return x\n\ndef real_b():\n    y = 2\n    return y\n",
+    "a_line": 6,
+    "b_line": 10,
+    "same_block": false
+  },
+  {
+    "name": "py_docstring_drift_same_def",
+    "file": "a.py",
+    "source": "def handler():\n    \"\"\"Does a thing.\n\n    class NotReal:\n        pass\n    \"\"\"\n    a = compute()\n    b = a + 1\n    return b\n",
+    "a_line": 7,
+    "b_line": 9,
+    "same_block": true
+  },
+  {
     "name": "go_func_vs_func_off_by_one_boundary",
     "file": "a.go",
     "source": "package p\n\nfunc A() {\n\tx := 1\n\t_ = x\n}\nfunc B() {\n\ty := 2\n\t_ = y\n}\n",

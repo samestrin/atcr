@@ -43,20 +43,24 @@ func NewGrouper(root string) *Grouper {
 func (g *Grouper) Close() error { return g.host.Close() }
 
 // resolvePath maps a finding's File to an on-disk path and confirms it stays
-// within root (when root is set). It refuses paths that escape root — via "../"
-// or an absolute path outside it — so a hostile finding.File cannot turn the
-// grouper into a file-existence oracle for arbitrary locations. ok is false when
-// the path is rejected.
+// within root. It refuses paths that escape root — via "../" or an absolute path
+// outside it — so a hostile finding.File cannot turn the grouper into a
+// file-existence oracle for arbitrary locations. An empty root is treated as the
+// current working directory rather than disabling the guard, so containment
+// always applies. ok is false when the path is rejected.
 func (g *Grouper) resolvePath(file string) (string, bool) {
+	root := g.root
+	if root == "" {
+		root = "."
+	}
+	root = filepath.Clean(root)
+
 	p := file
 	if !filepath.IsAbs(p) {
-		p = filepath.Join(g.root, file)
+		p = filepath.Join(root, file)
 	}
 	p = filepath.Clean(p)
-	if g.root == "" {
-		return p, true
-	}
-	root := filepath.Clean(g.root)
+
 	rel, err := filepath.Rel(root, p)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
@@ -69,11 +73,14 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	if f.Line <= 0 || f.File == "" {
 		return ""
 	}
-	lang := LanguageForExt(strings.ToLower(filepath.Ext(f.File)))
+	// Normalize the path so two reviewers citing the same file with different
+	// spellings ("x.go" vs "./x.go") share a cache entry and group key.
+	file := filepath.Clean(f.File)
+	lang := LanguageForExt(strings.ToLower(filepath.Ext(file)))
 	if lang == "" {
 		return ""
 	}
-	pf := g.treeFor(f.File, lang)
+	pf := g.treeFor(file, lang)
 	if !pf.ok {
 		return ""
 	}
@@ -86,7 +93,7 @@ func (g *Grouper) GroupKey(f reconcile.Finding) string {
 	// identically-shaped blocks in different scopes from colliding; the Merkle
 	// hash folds in the block's full structure per the epic's design. File-scoped
 	// so identical structures in different files never collide.
-	return f.File + "\x00" + addr + "\x00" + MerkleHash(block)
+	return file + "\x00" + addr + "\x00" + MerkleHash(block)
 }
 
 // treeFor returns the parsed tree for file, parsing+caching on first use. A parse
