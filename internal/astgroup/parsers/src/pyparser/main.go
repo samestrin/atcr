@@ -75,33 +75,93 @@ type pline struct {
 // common source of spurious blocks and over-merged findings.
 func significantLines(src string) []pline {
 	var out []pline
-	delim := "" // active triple-quote delimiter spanning lines, "" when outside
+	delim := ""     // active triple-quote delimiter spanning lines, "" when outside
+	depth := 0      // open (), [], {} nesting carried across physical lines
+	var cont *pline // logical line being assembled while depth > 0
 	for i, raw := range strings.Split(src, "\n") {
 		startInString := delim != ""
 		delim = scanTripleQuotes(raw, delim)
 		if startInString {
 			continue // entire physical line is inside a multi-line string literal
 		}
-		indent := 0
-		j := 0
-		for ; j < len(raw); j++ {
-			switch raw[j] {
-			case ' ':
-				indent++
-			case '\t':
-				indent += 8
-			default:
-				goto done
-			}
-		}
-	done:
+		indent, j := leadingIndent(raw)
 		body := strings.TrimRight(raw[j:], " \t\r")
+
+		if cont != nil {
+			// Assembling a bracket-continued logical line (e.g. a def/class header
+			// or call whose parens span lines): fold this physical line's content
+			// onto it and keep counting brackets until balanced, so a multi-line
+			// header is classified as one line ending in ':' rather than scattering
+			// its parameter lines and body into sibling blocks.
+			stripped := stripComment(raw)
+			if t := strings.TrimSpace(stripped); t != "" {
+				cont.text += " " + t
+			}
+			depth += bracketDelta(stripped)
+			if depth <= 0 {
+				depth = 0
+				cont.text = strings.TrimRight(cont.text, " \t\r")
+				out = append(out, *cont)
+				cont = nil
+			}
+			continue
+		}
+
 		if body == "" || strings.HasPrefix(body, "#") {
+			continue
+		}
+		if d := bracketDelta(stripComment(body)); d > 0 {
+			// Header opens more brackets than it closes: start folding continuation
+			// lines. The logical line keeps the first physical line's indent/lineno.
+			depth = d
+			head := strings.TrimRight(stripComment(body), " \t\r")
+			pl := pline{indent: indent, lineno: i + 1, text: head}
+			cont = &pl
 			continue
 		}
 		out = append(out, pline{indent: indent, lineno: i + 1, text: body})
 	}
+	if cont != nil {
+		// Unbalanced brackets at EOF: emit the partial logical line as-is.
+		cont.text = strings.TrimRight(cont.text, " \t\r")
+		out = append(out, *cont)
+	}
 	return out
+}
+
+// leadingIndent returns the visual indentation of raw (tabs expanded to 8) and
+// the byte offset where the first non-whitespace character begins.
+func leadingIndent(raw string) (indent, start int) {
+	for start < len(raw) {
+		switch raw[start] {
+		case ' ':
+			indent++
+		case '\t':
+			indent += 8
+		default:
+			return indent, start
+		}
+		start++
+	}
+	return indent, start
+}
+
+// bracketDelta returns the net change in (), [], {} nesting contributed by s. It
+// is a heuristic that does not exclude brackets inside string/char literals, so a
+// line embedding an unbalanced bracket inside a string can mis-count; that is
+// acceptable for a structural pre-pass whose only job is to fold a multi-line
+// header or literal into one logical line.
+func bracketDelta(s string) int {
+	d := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(', '[', '{':
+			d++
+		case ')', ']', '}':
+			d--
+		}
+	}
+	return d
 }
 
 // scanTripleQuotes advances the triple-quoted-string state across one physical
