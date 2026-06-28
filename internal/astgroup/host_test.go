@@ -49,6 +49,34 @@ func TestHost_ParsePython(t *testing.T) {
 	require.Contains(t, names, "m")
 }
 
+func TestHost_ParsePythonMultiLineHeader(t *testing.T) {
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+
+	p, err := h.Parser("python")
+	require.NoError(t, err)
+
+	// A def whose signature spans multiple physical lines: the first physical
+	// line ("def wrapped(") does not end in ':'. The parser must still recognize
+	// it as a single function header and nest the body under it, rather than
+	// scattering the parameter lines and the body into sibling blocks (which would
+	// fabricate covering blocks and mis-group findings on those lines).
+	src := "def wrapped(\n" +
+		"    a,\n" +
+		"    b,\n" +
+		"):\n" +
+		"    return a + b\n"
+	root, err := p.Parse([]byte(src))
+	require.NoError(t, err)
+	require.Equal(t, "module", root.Kind)
+
+	require.Len(t, root.Children, 1, "multi-line def header must yield exactly one top-level block")
+	fn := root.Children[0]
+	require.Equal(t, "func", fn.Kind)
+	require.Equal(t, "wrapped", fn.Name)
+	require.NotEmpty(t, fn.Children, "function body must nest under the folded multi-line def header")
+}
+
 func TestLanguageForExt(t *testing.T) {
 	require.Equal(t, "go", LanguageForExt(".go"))
 	require.Equal(t, "python", LanguageForExt(".py"))
