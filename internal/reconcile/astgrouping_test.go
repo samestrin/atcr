@@ -33,6 +33,22 @@ func TestASTGrouperFor_DisabledByEnv(t *testing.T) {
 	require.Nil(t, g, "env opt-out reverts to proximity-only (nil grouper)")
 }
 
+func TestASTGrouperFor_FalsyEnvKeepsGroupingOn(t *testing.T) {
+	// The opt-out is parsed as a boolean: only a truthy value disables grouping.
+	// A falsy or unparseable value must KEEP grouping on, guarding against the
+	// presence-only footgun where =false / =0 silently reverted to proximity.
+	for _, v := range []string{"0", "false", "FALSE", "no-such-bool"} {
+		t.Run(v, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "x.go"), []byte("package p\n"), 0o644))
+			t.Setenv("ATCR_DISABLE_AST_GROUPING", v)
+			g, cleanup := astGrouperFor(dir)
+			defer cleanup()
+			require.NotNil(t, g, "value %q must keep AST grouping on", v)
+		})
+	}
+}
+
 func TestASTGrouperFor_LazyInitOnSupportedExtension(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.go"), []byte("package p\n"), 0o644))

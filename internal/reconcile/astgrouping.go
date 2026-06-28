@@ -1,8 +1,10 @@
 package reconcile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -17,9 +19,11 @@ import (
 // env var is the reversible-adoption escape hatch: set it to fall back to the
 // legacy ±3 behavior without a code change.
 //
-// The check is presence-only (see astGrouperFor): ANY non-empty value disables
-// grouping, INCLUDING "0" and "false". To keep AST grouping on, leave the var
-// unset — do not set it to "0"/"false" expecting it to mean "not disabled".
+// The value is parsed as a boolean (see astGroupingDisabled): a truthy value
+// (1, t, T, TRUE, true, True) disables grouping; a falsy value (0, false, …), an
+// unparseable value, and an unset var all KEEP grouping on — so
+// ATCR_DISABLE_AST_GROUPING=false / =0 do the intuitive thing rather than the
+// legacy presence-only footgun where any non-empty value disabled.
 const astGroupingDisabledEnv = "ATCR_DISABLE_AST_GROUPING"
 
 // lazyGrouper wraps an astgroup.Grouper and defers obtaining the shared wazero
@@ -84,9 +88,23 @@ func (lg *lazyGrouper) Close() error {
 // REDUCE the merge count relative to proximity-only in mixed keyed/unkeyed
 // scenarios, not only increase precision.
 func astGrouperFor(root string) (reclib.Grouper, func()) {
-	if os.Getenv(astGroupingDisabledEnv) != "" {
+	if astGroupingDisabled() {
 		return nil, func() {}
 	}
 	lg := newLazyGrouper(root)
-	return lg, func() { _ = lg.Close() }
+	return lg, func() {
+		if err := lg.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warn: astgroup grouper close: %v\n", err)
+		}
+	}
+}
+
+// astGroupingDisabled reports whether the opt-out env var is set to a truthy
+// boolean. The value is parsed with strconv.ParseBool: a truthy value disables
+// grouping, while a falsy value, an unparseable value, and an unset var all keep
+// it on (so =0/=false do the intuitive thing, not the legacy presence-only
+// behavior where any non-empty value disabled).
+func astGroupingDisabled() bool {
+	disabled, err := strconv.ParseBool(os.Getenv(astGroupingDisabledEnv))
+	return err == nil && disabled
 }
