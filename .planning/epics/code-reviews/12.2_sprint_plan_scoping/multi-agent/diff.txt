@@ -1,0 +1,702 @@
+diff --git a/README.md b/README.md
+index 2087d9fc..7a3a0b70 100644
+--- a/README.md
++++ b/README.md
+@@ -78,7 +78,7 @@ atcr report --format md
+ 
+ Key flags:
+ 
+-- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`)
++- `atcr review --base X --head Y` / `--merge-commit SHA` / `--id <id>` / `--output-dir <path>` (write the tree to an explicit path; see below) / `--payload diff|blocks|files` / `--timeout <secs>` / `--fail-on <severity>` (one-shot review + reconcile + gate) / `--resume <latest\|id\|path>` (finish an interrupted/failed review by running only its pending agents, then reconcile; see below) / `--force` (overwrite an existing `--id` or `--output-dir` collision, backing the prior tree up to `<dir>.bak` first; mutually exclusive with `--resume`) / `--no-cache` (bypass the diff cache read and force a fresh review; fresh results are still written back to `.atcr/cache`) / `--sprint-plan <path>` (inject a sprint/epic plan as a `SCOPE CONSTRAINT` before the diff so reviewers suppress findings unrelated to the plan's work items; a missing/empty plan is ignored, an unreadable one warns and proceeds)
+ - `atcr reconcile --fail-on <severity>` / `--sources <a,b>` (restrict to named source dirs)
+ - `atcr report --format md|json|checklist` / `--output <file>` / `--disagreements` (focused disagreement-radar view — see [docs/disagreement-radar.md](docs/disagreement-radar.md))
+ - `atcr doctor` / `--json` / `--max-tokens <n>` (default 2048, high enough for thinking models) / `--timeout <secs>` (default 60) / `--agents <a,b>` (test a subset of listed agents; their fallback chains are still probed). Exit **0** when every agent has a working invocation path (primary or fallback), **1** when any agent has none, **2** for usage/config errors.
+diff --git a/cmd/atcr/review.go b/cmd/atcr/review.go
+index 34068145..6350943d 100644
+--- a/cmd/atcr/review.go
++++ b/cmd/atcr/review.go
+@@ -51,6 +51,7 @@ func newReviewCmd() *cobra.Command {
+ 	cmd.Flags().String("resume", "", "resume an interrupted/failed review (latest | <id> | <path>): run only pending agents into the existing directory, then reconcile")
+ 	cmd.Flags().Bool("force", false, "overwrite an existing review directory, backing it up to <dir>.bak first (applies to --id and --output-dir collisions; mutually exclusive with --resume)")
+ 	cmd.Flags().Bool("no-cache", false, "bypass the diff cache read and force a fresh review; fresh results are still written back to .atcr/cache")
++	cmd.Flags().String("sprint-plan", "", "path to a sprint/epic plan (markdown); its content is injected as a SCOPE CONSTRAINT before the diff so reviewers suppress findings unrelated to the plan's work items")
+ 	addRangeFlags(cmd)
+ 	return cmd
+ }
+@@ -86,6 +87,16 @@ func outputDirFromFlags(cmd *cobra.Command) (string, error) {
+ 	return abs, nil
+ }
+ 
++// sprintPlanPath returns the --sprint-plan flag value (trimmed). Empty when the
++// flag is unset, which leaves the review diff-wide (Epic 12.2). The path is
++// passed through verbatim (relative paths resolve against CWD when the engine
++// reads the file); a missing/unreadable plan is handled in the engine, not here,
++// so a bad path never blocks flag parsing.
++func sprintPlanPath(cmd *cobra.Command) string {
++	v, _ := cmd.Flags().GetString("sprint-plan")
++	return strings.TrimSpace(v)
++}
++
+ // runReview resolves the range, loads config, and runs the full review flow.
+ // Range/config problems are usage errors (exit 2); an all-agents-failed review
+ // is a plain failure (exit 1) with the artifacts preserved on disk.
+@@ -212,14 +223,15 @@ func runReview(cmd *cobra.Command, _ []string) error {
+ 			DefaultBranch: res.DefaultBranch,
+ 			CommitCount:   res.CommitCount,
+ 		},
+-		Branch:     gitrange.CurrentBranch(ctx, "."),
+-		Date:       now.Format("2006-01-02"),
+-		TimeSuffix: now.Format("150405"),
+-		StartedAt:  now,
+-		IDOverride: idOverride,
+-		OutputDir:  outputDir,
+-		Force:      boolFlag(cmd, "force"),
+-		NoCache:    boolFlag(cmd, "no-cache"),
++		Branch:         gitrange.CurrentBranch(ctx, "."),
++		Date:           now.Format("2006-01-02"),
++		TimeSuffix:     now.Format("150405"),
++		StartedAt:      now,
++		IDOverride:     idOverride,
++		OutputDir:      outputDir,
++		Force:          boolFlag(cmd, "force"),
++		NoCache:        boolFlag(cmd, "no-cache"),
++		SprintPlanPath: sprintPlanPath(cmd),
+ 	}
+ 
+ 	// Run the two review phases separately so build-phase failures (persona
+diff --git a/cmd/atcr/review_test.go b/cmd/atcr/review_test.go
+index ae0f9cf9..2324fbc9 100644
+--- a/cmd/atcr/review_test.go
++++ b/cmd/atcr/review_test.go
+@@ -298,6 +298,29 @@ func TestReviewCmd_NoCacheFlagRegistered(t *testing.T) {
+ 	require.False(t, v, "--no-cache defaults to false (caching active)")
+ }
+ 
++// TestReviewCmd_SprintPlanFlagRegistered verifies the --sprint-plan flag exists
++// on the review command and defaults to empty (diff-wide review when unset), per
++// Epic 12.2 AC1.
++func TestReviewCmd_SprintPlanFlagRegistered(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NotNil(t, cmd.Flags().Lookup("sprint-plan"), "review must define --sprint-plan")
++	v, err := cmd.Flags().GetString("sprint-plan")
++	require.NoError(t, err)
++	require.Equal(t, "", v, "--sprint-plan defaults to empty (diff-wide review)")
++}
++
++// TestSprintPlanPath_MapsFlag verifies the flag value is read (and trimmed) so it
++// can populate ReviewRequest.SprintPlanPath; an unset flag yields empty.
++func TestSprintPlanPath_MapsFlag(t *testing.T) {
++	cmd := newReviewCmd()
++	require.NoError(t, cmd.ParseFlags([]string{"--sprint-plan", "  plans/sprint.md  "}))
++	require.Equal(t, "plans/sprint.md", sprintPlanPath(cmd), "value is read and trimmed")
++
++	cmd2 := newReviewCmd()
++	require.NoError(t, cmd2.ParseFlags(nil))
++	require.Equal(t, "", sprintPlanPath(cmd2), "unset flag yields empty")
++}
++
+ // TestReviewCmd_ResumeAndForceMutuallyExclusive locks AC1b: passing both
+ // --resume and --force is a usage error (exit 2) regardless of a git repo,
+ // because the guard fires at the resume branch before any range resolution.
+diff --git a/internal/fanout/resume.go b/internal/fanout/resume.go
+index 5e0a365c..920035ea 100644
+--- a/internal/fanout/resume.go
++++ b/internal/fanout/resume.go
+@@ -284,7 +284,7 @@ func PrepareResume(ctx context.Context, cfg *ReviewConfig, reviewDir string, req
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+-	slots, _, err := buildSlots(cfg, payloads, req.Range, "")
++	slots, _, err := buildSlots(cfg, payloads, req.Range, "", "")
+ 	if err != nil {
+ 		return nil, nil, err
+ 	}
+diff --git a/internal/fanout/retry_wiring_test.go b/internal/fanout/retry_wiring_test.go
+index 8377f10a..28ef085e 100644
+--- a/internal/fanout/retry_wiring_test.go
++++ b/internal/fanout/retry_wiring_test.go
+@@ -39,12 +39,12 @@ func TestBuildAgent_PropagatesRetryFields(t *testing.T) {
+ 	cfg := retryCfg()
+ 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+ 
+-	greta, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "")
++	greta, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+ 	require.NoError(t, err)
+ 	assert.Equal(t, 5, greta.MaxRetries, "unset agent inherits resolved global max_retries")
+ 	assert.Equal(t, 500, greta.InitialBackoffMs, "unset agent inherits resolved global initial_backoff_ms")
+ 
+-	kai, _, err := buildAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "")
++	kai, _, err := buildAgent(cfg, "kai", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+ 	require.NoError(t, err)
+ 	assert.Equal(t, 9, kai.MaxRetries, "per-agent max_retries override wins")
+ 	assert.Equal(t, 500, kai.InitialBackoffMs, "inherits global initial_backoff_ms when not overridden")
+diff --git a/internal/fanout/review.go b/internal/fanout/review.go
+index cf4fc2d5..eddad0a5 100644
+--- a/internal/fanout/review.go
++++ b/internal/fanout/review.go
+@@ -94,6 +94,17 @@ type ReviewRequest struct {
+ 	// entries and every subsequent run benefits. Defaulting false keeps caching
+ 	// fully active for callers that do not opt out (e.g. the MCP handler).
+ 	NoCache bool
++	// SprintPlanPath, when non-empty, points at a markdown sprint/epic plan whose
++	// content is wrapped in a SCOPE CONSTRAINT block and prepended to every
++	// reviewer's payload, immediately before the diff (Epic 12.2). It scopes the
++	// review to the plan's active work items so reviewers suppress findings for
++	// unrelated changes in the diff. A missing or empty file is ignored (the
++	// review proceeds diff-wide); an unreadable file warns on stderr but does not
++	// abort. The constraint becomes part of the rendered prompt, so the diff-cache
++	// key invalidates correctly when the plan changes. Defaulting empty preserves
++	// the unconstrained, diff-wide review for callers that do not set it (e.g. the
++	// MCP handler).
++	SprintPlanPath string
+ }
+ 
+ // ReviewResult is the outcome of a completed review run.
+@@ -225,7 +236,14 @@ func PrepareReview(ctx context.Context, cfg *ReviewConfig, req ReviewRequest) (*
+ 	if empty {
+ 		return nil, fmt.Errorf("%w: the range contains commits but no changed files (only merge or empty commits?); review a range that changes files", ErrNoReviewableContent)
+ 	}
+-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "")
++	// Sprint-plan scope (Epic 12.2): read the plan once here and prepend its
++	// SCOPE CONSTRAINT to every reviewer's payload via buildSlots. An unreadable
++	// or oversized plan warns but never aborts the review.
++	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
++	if scopeWarn != "" {
++		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
++	}
++	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, "", scopeConstraint)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -409,7 +427,14 @@ func PrepareReviewFromDiff(ctx context.Context, cfg *ReviewConfig, req ReviewReq
+ 	payloads := map[string]modePayload{
+ 		diffMode: {Text: b.String(), FileCount: len(kept), Truncation: trunc},
+ 	}
+-	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode)
++	// Sprint-plan scope (Epic 12.2): the ingestion path honors --sprint-plan too,
++	// prepending the SCOPE CONSTRAINT to every reviewer's payload. An unreadable or
++	// oversized plan warns but never aborts the review.
++	scopeConstraint, scopeWarn := resolveScopeConstraint(req)
++	if scopeWarn != "" {
++		fmt.Fprintln(os.Stderr, "warn: "+scopeWarn)
++	}
++	slots, perAgentMode, err := buildSlots(cfg, payloads, req.Range, diffMode, scopeConstraint)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -646,18 +671,46 @@ func neededModes(cfg *ReviewConfig) []string {
+ 	return modes
+ }
+ 
++// resolveScopeConstraint reads the sprint/epic plan named by req.SprintPlanPath
++// and returns the formatted SCOPE CONSTRAINT block to prepend to every reviewer's
++// payload (Epic 12.2), plus an optional human-readable warning the caller surfaces
++// on stderr. The three dispositions:
++//
++//   - no plan (empty path, missing, or empty/whitespace-only file) → ("", ""):
++//     the review proceeds diff-wide, silently (AC2).
++//   - unreadable plan (permission error, a directory, IO error) → ("", warning):
++//     the review proceeds unconstrained rather than aborting, after the caller
++//     warns (AC3).
++//   - oversized plan → (capped block, warning): the content is capped at
++//     payload.MaxSprintPlanBytes before injection so it cannot inflate every agent
++//     prompt past payload_byte_budget, and the truncation is surfaced (AC6).
++//
++// It is pure (no I/O beyond the file read) and returns the warning rather than
++// printing it, so the two prepare entry points can route it to their own stderr.
++func resolveScopeConstraint(req ReviewRequest) (constraint, warning string) {
++	raw, err := payload.ReadSprintPlan(req.SprintPlanPath)
++	if err != nil {
++		return "", fmt.Sprintf("sprint plan %q is unreadable; proceeding with a diff-wide review: %v", req.SprintPlanPath, err)
++	}
++	block, truncated := payload.ScopeConstraint(raw)
++	if truncated {
++		warning = fmt.Sprintf("sprint plan %q exceeded %d bytes and was truncated before injection", req.SprintPlanPath, payload.MaxSprintPlanBytes)
++	}
++	return block, warning
++}
++
+ // buildSlots assembles the roster into ordered slots (parallel lane first, then
+ // serial) and returns the per-agent payload-mode map for the manifest. A
+ // build-time failure (unknown agent/provider, persona resolution, prompt render)
+ // aborts the whole run fail-fast: these are configuration errors the user must
+ // fix, not transient per-agent outcomes, so there is nothing useful to preserve
+ // — unlike the all-agents-failed runtime path, which keeps artifacts on disk.
+-func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode string) ([]Slot, map[string]string, error) {
++func buildSlots(cfg *ReviewConfig, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) ([]Slot, map[string]string, error) {
+ 	perAgentMode := map[string]string{}
+ 	var slots []Slot
+ 
+ 	add := func(name string, serial bool) error {
+-		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode)
++		primary, mode, err := buildAgent(cfg, name, payloads, rng, forceMode, scopeConstraint)
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -738,7 +791,7 @@ func diffCacheKey(prompt, model, baseURL string, temperature *float64) string {
+ 
+ // buildAgent resolves an agent's persona, renders its prompt against the payload
+ // it sees, and assembles the invocation. It returns the agent and its mode.
+-func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode string) (Agent, string, error) {
++func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload, rng ReviewRange, forceMode, scopeConstraint string) (Agent, string, error) {
+ 	ac, ok := cfg.Registry.Agents[name]
+ 	if !ok {
+ 		return Agent{}, "", fmt.Errorf("agent %q not found in registry", name)
+@@ -763,13 +816,21 @@ func buildAgent(cfg *ReviewConfig, name string, payloads map[string]modePayload,
+ 	if err != nil {
+ 		return Agent{}, "", err
+ 	}
++	// Sprint-plan SCOPE CONSTRAINT (Epic 12.2): prepend the formatted constraint
++	// to the payload so it lands in EVERY persona — every reviewer renders
++	// {{.Payload}} (it carries the diff), so prepending guarantees delivery
++	// regardless of the persona template, and places the constraint immediately
++	// before the diff (the NFR). Empty when no --sprint-plan was given, leaving the
++	// payload unchanged for a diff-wide review. Because the constraint becomes part
++	// of the rendered prompt, the diff-cache key (which hashes the full prompt)
++	// invalidates correctly when the plan changes (AC5).
+ 	prompt, err := payload.RenderPrompt(persona.Text, payload.PayloadContext{
+ 		AgentName:    name,
+ 		BaseRef:      rng.Base,
+ 		HeadRef:      rng.Head,
+ 		PayloadMode:  mode,
+ 		FileCount:    mp.FileCount,
+-		Payload:      mp.Text,
++		Payload:      scopeConstraint + mp.Text,
+ 		ScopeRule:    payload.ScopeRule(payload.PayloadMode(mode)),
+ 		ToolsEnabled: ac.Tools,
+ 	})
+diff --git a/internal/fanout/review_scope_inject_test.go b/internal/fanout/review_scope_inject_test.go
+index 7b8389ec..163ce9ce 100644
+--- a/internal/fanout/review_scope_inject_test.go
++++ b/internal/fanout/review_scope_inject_test.go
+@@ -1,6 +1,7 @@
+ package fanout
+ 
+ import (
++	"strings"
+ 	"testing"
+ 
+ 	"github.com/stretchr/testify/require"
+@@ -18,17 +19,47 @@ func TestBuildAgent_InjectsScopeFocus(t *testing.T) {
+ 	payloads := map[string]modePayload{"blocks": {Text: "some diff", FileCount: 1}}
+ 	rng := ReviewRange{Base: "a", Head: "b"}
+ 
+-	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng, "")
++	gretaAgent, _, err := buildAgent(cfg, "greta", payloads, rng, "", "")
+ 	require.NoError(t, err)
+ 	require.Contains(t, gretaAgent.Prompt, "performance", "scoped agent prompt must mention its scope categories")
+ 	require.Contains(t, gretaAgent.Prompt, "efficiency")
+ 	// The invocation prompt the model actually receives must carry it too.
+ 	require.Contains(t, gretaAgent.Invocation.Prompt, "performance")
+ 
+-	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng, "")
++	kaiAgent, _, err := buildAgent(cfg, "kai", payloads, rng, "", "")
+ 	require.NoError(t, err)
+ 	require.NotContains(t, kaiAgent.Prompt, "Review Focus", "unscoped agent prompt must be unchanged")
+ 	// Lock the invocation prompt too — the model actually receives this, so an
+ 	// unscoped agent must not carry scope focus text there either.
+ 	require.NotContains(t, kaiAgent.Invocation.Prompt, "Review Focus", "unscoped agent invocation prompt must be unchanged")
+ }
++
++// buildAgent must prepend the sprint-plan SCOPE CONSTRAINT to an agent's payload,
++// so the constraint lands in EVERY persona (it renders {{.Payload}}) and appears
++// immediately before the diff text (Epic 12.2 AC4). An empty constraint leaves
++// the prompt unchanged.
++func TestBuildAgent_PrependsScopeConstraint(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	const diffToken = "UNIQUE_DIFF_TOKEN_98765"
++	const constraint = "## SENTINEL SCOPE CONSTRAINT\nplan body\n\n"
++	payloads := map[string]modePayload{"blocks": {Text: diffToken, FileCount: 1}}
++	rng := ReviewRange{Base: "a", Head: "b"}
++
++	agent, _, err := buildAgent(cfg, "greta", payloads, rng, "", constraint)
++	require.NoError(t, err)
++	require.Contains(t, agent.Prompt, "SENTINEL SCOPE CONSTRAINT", "constrained agent prompt must carry the scope constraint")
++	// The constraint must sit BEFORE the diff text — that placement is the NFR
++	// (the model must see the scope before the payload it scopes).
++	ci := strings.Index(agent.Prompt, "SENTINEL SCOPE CONSTRAINT")
++	di := strings.Index(agent.Prompt, diffToken)
++	require.GreaterOrEqual(t, ci, 0)
++	require.GreaterOrEqual(t, di, 0)
++	require.Less(t, ci, di, "scope constraint must appear before the diff payload")
++	// The invocation prompt the model actually receives must carry it too.
++	require.Contains(t, agent.Invocation.Prompt, "SENTINEL SCOPE CONSTRAINT")
++
++	// An empty constraint leaves the prompt unchanged (diff-wide review default).
++	plain, _, err := buildAgent(cfg, "greta", payloads, rng, "", "")
++	require.NoError(t, err)
++	require.NotContains(t, plain.Prompt, "SENTINEL SCOPE CONSTRAINT", "empty constraint must not alter the prompt")
++}
+diff --git a/internal/fanout/review_sprintplan_test.go b/internal/fanout/review_sprintplan_test.go
+new file mode 100644
+index 00000000..d3a707d4
+--- /dev/null
++++ b/internal/fanout/review_sprintplan_test.go
+@@ -0,0 +1,86 @@
++package fanout
++
++import (
++	"bytes"
++	"context"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/samestrin/atcr/internal/payload"
++	"github.com/stretchr/testify/require"
++)
++
++// resolveScopeConstraint maps a ReviewRequest's SprintPlanPath to the formatted
++// SCOPE CONSTRAINT block plus an optional stderr warning, covering the three
++// dispositions in Epic 12.2: no plan (silent), unreadable (warn, proceed), and
++// oversized (cap, warn).
++func TestResolveScopeConstraint(t *testing.T) {
++	// No plan: empty path → no constraint, no warning (AC2).
++	if c, w := resolveScopeConstraint(ReviewRequest{}); c != "" || w != "" {
++		t.Fatalf("empty path = (%q, %q), want (\"\", \"\")", c, w)
++	}
++
++	// Missing file is ignored silently (AC2).
++	missing := filepath.Join(t.TempDir(), "nope.md")
++	if c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: missing}); c != "" || w != "" {
++		t.Fatalf("missing file = (%q, %q), want (\"\", \"\")", c, w)
++	}
++
++	// Valid plan: constraint carries the block + content, no warning.
++	dir := t.TempDir()
++	planPath := filepath.Join(dir, "plan.md")
++	require.NoError(t, os.WriteFile(planPath, []byte("## Tasks\n- only auth changes\n"), 0o644))
++	c, w := resolveScopeConstraint(ReviewRequest{SprintPlanPath: planPath})
++	require.Contains(t, c, "SCOPE CONSTRAINT")
++	require.Contains(t, c, "only auth changes")
++	require.Empty(t, w, "a valid plan produces no warning")
++
++	// Unreadable plan (a directory): no constraint, but a warning so the review
++	// proceeds diff-wide without crashing (AC3).
++	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: dir})
++	require.Empty(t, c, "unreadable plan yields no constraint")
++	require.NotEmpty(t, w, "unreadable plan must warn on stderr")
++
++	// Oversized plan: capped constraint plus a truncation warning (AC6).
++	big := filepath.Join(dir, "big.md")
++	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte("x"), int(payload.MaxSprintPlanBytes)+1000), 0o644))
++	c, w = resolveScopeConstraint(ReviewRequest{SprintPlanPath: big})
++	require.Contains(t, c, "SCOPE CONSTRAINT")
++	require.NotEmpty(t, w, "an oversized plan must warn that it was truncated")
++}
++
++// End-to-end: a ReviewRequest carrying a SprintPlanPath must make PrepareReviewFromDiff
++// inject the SCOPE CONSTRAINT into every reviewer slot, immediately before the diff
++// payload (Epic 12.2 AC4).
++func TestPrepareReviewFromDiff_InjectsSprintPlanConstraint(t *testing.T) {
++	cfg := twoAgentConfig("http://unused")
++	out := filepath.Join(t.TempDir(), "ext-review")
++	req := diffReq(t.TempDir(), out)
++	planPath := filepath.Join(t.TempDir(), "sprint.md")
++	require.NoError(t, os.WriteFile(planPath, []byte("## Sprint\n- only auth changes\n"), 0o644))
++	req.SprintPlanPath = planPath
++
++	prep, err := PrepareReviewFromDiff(context.Background(), cfg, req, looseDiff)
++	require.NoError(t, err)
++	require.NotEmpty(t, prep.Slots)
++
++	for _, s := range prep.Slots {
++		p := s.Primary.Prompt
++		require.Contains(t, p, "SCOPE CONSTRAINT", "every slot must carry the injected constraint")
++		require.Contains(t, p, "only auth changes")
++		ci := strings.Index(p, "SCOPE CONSTRAINT")
++		di := strings.Index(p, "func total") // appears in looseDiff
++		require.GreaterOrEqual(t, ci, 0)
++		require.GreaterOrEqual(t, di, 0)
++		require.Less(t, ci, di, "constraint must precede the diff payload")
++	}
++
++	// Without a plan, slots carry no constraint (diff-wide default).
++	reqNoPlan := diffReq(t.TempDir(), filepath.Join(t.TempDir(), "ext-review-2"))
++	prepNoPlan, err := PrepareReviewFromDiff(context.Background(), cfg, reqNoPlan, looseDiff)
++	require.NoError(t, err)
++	require.NotEmpty(t, prepNoPlan.Slots)
++	require.NotContains(t, prepNoPlan.Slots[0].Primary.Prompt, "SCOPE CONSTRAINT")
++}
+diff --git a/internal/fanout/review_test.go b/internal/fanout/review_test.go
+index a2fc048a..4dc9b95e 100644
+--- a/internal/fanout/review_test.go
++++ b/internal/fanout/review_test.go
+@@ -559,7 +559,7 @@ func TestPrepareReview_RejectsSystemOutputDir(t *testing.T) {
+ // silently empty payload that produces a plausible-looking vacuous review.
+ func TestBuildAgent_MissingPayloadModeErrors(t *testing.T) {
+ 	cfg := twoAgentConfig("http://unused")
+-	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "")
++	_, _, err := buildAgent(cfg, "greta", map[string]modePayload{}, ReviewRange{Base: "a", Head: "b"}, "", "")
+ 	require.Error(t, err)
+ 	assert.Contains(t, err.Error(), "greta")
+ 	assert.Contains(t, err.Error(), "blocks")
+diff --git a/internal/fanout/review_tools_test.go b/internal/fanout/review_tools_test.go
+index f933669f..4f4f14d5 100644
+--- a/internal/fanout/review_tools_test.go
++++ b/internal/fanout/review_tools_test.go
+@@ -38,7 +38,7 @@ func TestBuildAgent_PropagatesToolFields(t *testing.T) {
+ 	cfg := toolCfg()
+ 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+ 
+-	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "")
++	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+ 	require.NoError(t, err)
+ 	assert.True(t, a.Tools)
+ 	assert.Equal(t, 5, a.MaxTurns)
+@@ -101,7 +101,7 @@ func TestBuildAgent_PropagatesSupportsFC(t *testing.T) {
+ 	cfg := toolCfg()
+ 	payloads := map[string]modePayload{"blocks": {Text: "x", FileCount: 1}}
+ 
+-	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "")
++	a, _, err := buildAgent(cfg, "greta", payloads, ReviewRange{Base: "a", Head: "b"}, "", "")
+ 	require.NoError(t, err)
+ 	assert.True(t, a.SupportsFC, "greta declares supports_function_calling=true")
+ }
+diff --git a/internal/payload/sprintplan.go b/internal/payload/sprintplan.go
+new file mode 100644
+index 00000000..4e463e59
+--- /dev/null
++++ b/internal/payload/sprintplan.go
+@@ -0,0 +1,96 @@
++package payload
++
++import (
++	"os"
++	"strings"
++	"unicode/utf8"
++)
++
++// MaxSprintPlanBytes is the fixed byte ceiling applied to sprint-plan content
++// before it is wrapped in a SCOPE CONSTRAINT block and prepended to every agent
++// prompt. The constraint is uncounted by ApplyByteBudget (which runs during
++// payload build, before render), so an uncapped plan would inflate every agent
++// prompt past payload_byte_budget. At 16 KiB it is ~3% of the 512 KiB default
++// budget — large enough for any real sprint/epic plan, small enough that the
++// extra bytes cannot meaningfully bloat a prompt (Epic 12.2 AC6).
++const MaxSprintPlanBytes int64 = 16384
++
++// ReadSprintPlan loads the sprint-plan file at path, returning its raw content.
++// It distinguishes three cases so the caller can scope a review correctly:
++//
++//   - path is empty (the --sprint-plan flag was not set) or the file does not
++//     exist → ("", nil): no plan, the review proceeds diff-wide (Epic 12.2 AC2).
++//   - the path exists but cannot be read (permission error, it is a directory,
++//     etc.) → ("", err): the caller warns on stderr and proceeds without a
++//     constraint rather than crashing the review (Epic 12.2 AC3).
++//   - a readable file → (content, nil): its bytes verbatim, for ScopeConstraint
++//     to sanitize, cap, and format.
++//
++// The plan file is trusted local operator input (Epic 12.2 Security
++// Considerations), so no path-traversal or content sandboxing is performed here.
++func ReadSprintPlan(path string) (string, error) {
++	if strings.TrimSpace(path) == "" {
++		return "", nil
++	}
++	b, err := os.ReadFile(path)
++	if err != nil {
++		// A missing file is "no plan", not an error: the review proceeds diff-wide
++		// (AC2). Any other read failure (permission, directory, IO) is surfaced so
++		// the caller can warn (AC3).
++		if os.IsNotExist(err) {
++			return "", nil
++		}
++		return "", err
++	}
++	return string(b), nil
++}
++
++// ScopeConstraint formats content as a SCOPE CONSTRAINT block to prepend to a
++// reviewer's payload, immediately before the diff. It returns the block and
++// whether the plan content was truncated to fit MaxSprintPlanBytes.
++//
++// Empty or whitespace-only content yields ("", false): there is nothing to
++// constrain, so the review proceeds unconstrained (Epic 12.2 AC2). Otherwise the
++// content is capped at MaxSprintPlanBytes on a UTF-8 rune boundary (so the block
++// is never invalid UTF-8) and wrapped with the constraint instruction. The block
++// is a SOFT scope, mirroring ScopeFocus: it steers reviewers toward in-scope
++// changes but explicitly preserves an escape hatch for genuinely critical
++// out-of-scope issues, so a real security/data-loss bug is never silently lost.
++//
++// Like ScopeFocus, content is concatenated verbatim with no per-entry escaping:
++// the plan is trusted operator input, and the payload is injected as template
++// data (never re-parsed), so plan text containing template syntax is inert.
++func ScopeConstraint(content string) (block string, truncated bool) {
++	plan := strings.TrimSpace(content)
++	if plan == "" {
++		return "", false
++	}
++	plan, truncated = capUTF8(plan, int(MaxSprintPlanBytes))
++	var b strings.Builder
++	b.WriteString("## SCOPE CONSTRAINT\n")
++	b.WriteString("The sprint/epic plan below defines the active work items for this review. ")
++	b.WriteString("Constrain your findings to files and changes directly related to these work items. ")
++	b.WriteString("Suppress findings for unrelated changes that merely happen to appear in the diff — ")
++	b.WriteString("for example dependency bumps, formatter or whitespace-only reformatting, and mechanical ")
++	b.WriteString("refactors not described in the plan. This is a scope hint, not a hard limit: still report ")
++	b.WriteString("any genuinely critical issue (security, data loss, crash) even if it falls outside the plan.\n\n")
++	b.WriteString("----- BEGIN SPRINT PLAN -----\n")
++	b.WriteString(plan)
++	b.WriteString("\n----- END SPRINT PLAN -----\n\n")
++	return b.String(), truncated
++}
++
++// capUTF8 truncates s to at most max bytes without splitting a multibyte rune,
++// reporting whether a truncation occurred. When s exceeds max it backs the cut
++// off to the nearest preceding rune boundary, so the result is always valid
++// UTF-8 even if that drops a few bytes below max.
++func capUTF8(s string, max int) (string, bool) {
++	if len(s) <= max {
++		return s, false
++	}
++	cut := max
++	for cut > 0 && !utf8.RuneStart(s[cut]) {
++		cut--
++	}
++	return s[:cut], true
++}
+diff --git a/internal/payload/sprintplan_test.go b/internal/payload/sprintplan_test.go
+new file mode 100644
+index 00000000..987a3df9
+--- /dev/null
++++ b/internal/payload/sprintplan_test.go
+@@ -0,0 +1,138 @@
++package payload
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"unicode/utf8"
++)
++
++// ReadSprintPlan must distinguish "no plan" (empty path or missing file → "", nil,
++// review proceeds diff-wide) from "unreadable" (a path that exists but cannot be
++// read → error, caller warns) and "present" (valid file → its content).
++func TestReadSprintPlan(t *testing.T) {
++	// Empty path = flag unset = no plan. Silent, no error (AC2).
++	if got, err := ReadSprintPlan(""); err != nil || got != "" {
++		t.Fatalf("ReadSprintPlan(\"\") = (%q, %v), want (\"\", nil)", got, err)
++	}
++
++	// Missing file is ignored silently, defaulting to a diff-wide review (AC2).
++	missing := filepath.Join(t.TempDir(), "does-not-exist.md")
++	if got, err := ReadSprintPlan(missing); err != nil || got != "" {
++		t.Fatalf("ReadSprintPlan(missing) = (%q, %v), want (\"\", nil)", got, err)
++	}
++
++	// A valid file returns its content verbatim.
++	dir := t.TempDir()
++	planPath := filepath.Join(dir, "plan.md")
++	const body = "# Sprint 1\n- Task A: refactor auth\n"
++	if err := os.WriteFile(planPath, []byte(body), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if got, err := ReadSprintPlan(planPath); err != nil || got != body {
++		t.Fatalf("ReadSprintPlan(valid) = (%q, %v), want (%q, nil)", got, err, body)
++	}
++
++	// An empty file is readable but carries no plan: ReadSprintPlan returns its
++	// (empty) content with no error, and ScopeConstraint then yields no block, so
++	// the review proceeds diff-wide (Epic 12.2 AC2, "empty file is ignored").
++	emptyPath := filepath.Join(dir, "empty.md")
++	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
++		t.Fatal(err)
++	}
++	got, err := ReadSprintPlan(emptyPath)
++	if err != nil || got != "" {
++		t.Fatalf("ReadSprintPlan(empty file) = (%q, %v), want (\"\", nil)", got, err)
++	}
++	if block, _ := ScopeConstraint(got); block != "" {
++		t.Fatalf("ScopeConstraint(empty file content) = %q, want \"\"", block)
++	}
++
++	// An unreadable path (a directory) returns an error so the caller can warn on
++	// stderr without crashing the review (AC3).
++	if _, err := ReadSprintPlan(dir); err == nil {
++		t.Fatalf("ReadSprintPlan(directory) = nil error, want error")
++	}
++}
++
++// ScopeConstraint formats the SCOPE CONSTRAINT block. Empty/whitespace-only
++// content yields "" (no block, review proceeds unconstrained); valid content is
++// wrapped with the constraint instructions; oversized content is capped at
++// MaxSprintPlanBytes and reports truncated=true.
++func TestScopeConstraint(t *testing.T) {
++	// Empty and whitespace-only content produce no block.
++	if block, trunc := ScopeConstraint(""); block != "" || trunc {
++		t.Fatalf("ScopeConstraint(\"\") = (%q, %v), want (\"\", false)", block, trunc)
++	}
++	if block, trunc := ScopeConstraint("   \n\t  "); block != "" || trunc {
++		t.Fatalf("ScopeConstraint(whitespace) = (%q, %v), want (\"\", false)", block, trunc)
++	}
++
++	// Valid content is wrapped: the block must name the constraint, embed the plan
++	// content, and preserve the soft-critical escape hatch so a genuinely critical
++	// out-of-scope issue is still reportable.
++	const body = "## Active Tasks\n- Implement sprint-plan scoping\n"
++	block, trunc := ScopeConstraint(body)
++	if trunc {
++		t.Fatalf("ScopeConstraint(small) truncated=true, want false")
++	}
++	if !strings.Contains(block, "SCOPE CONSTRAINT") {
++		t.Fatalf("ScopeConstraint block missing header: %q", block)
++	}
++	if !strings.Contains(block, body) {
++		t.Fatalf("ScopeConstraint block missing plan content: %q", block)
++	}
++	if !strings.Contains(strings.ToLower(block), "critical") {
++		t.Fatalf("ScopeConstraint block missing critical-issue escape hatch: %q", block)
++	}
++
++	// Oversized content is capped at MaxSprintPlanBytes and flagged truncated. The
++	// embedded plan content must not exceed the ceiling, so the block cannot inflate
++	// every agent prompt past payload_byte_budget (AC6).
++	huge := strings.Repeat("x", int(MaxSprintPlanBytes)+5000)
++	capped, truncated := ScopeConstraint(huge)
++	if !truncated {
++		t.Fatalf("ScopeConstraint(oversized) truncated=false, want true")
++	}
++	// The plan content embedded between the markers must be capped to the ceiling,
++	// so the block cannot inflate every agent prompt past payload_byte_budget (AC6).
++	// Measure the embedded segment directly rather than counting a character that
++	// also appears in the wrapper prose.
++	if n := int64(len(embeddedPlan(t, capped))); n > MaxSprintPlanBytes {
++		t.Fatalf("ScopeConstraint embedded %d plan bytes, want <= %d", n, MaxSprintPlanBytes)
++	}
++}
++
++// embeddedPlan extracts the plan content a ScopeConstraint block wraps between
++// its BEGIN/END markers, so a test can measure the embedded segment precisely
++// without being fooled by characters in the wrapper prose.
++func embeddedPlan(t *testing.T, block string) string {
++	t.Helper()
++	const begin = "----- BEGIN SPRINT PLAN -----\n"
++	const end = "\n----- END SPRINT PLAN -----"
++	i := strings.Index(block, begin)
++	if i < 0 {
++		t.Fatalf("block missing BEGIN marker: %q", block)
++	}
++	rest := block[i+len(begin):]
++	j := strings.Index(rest, end)
++	if j < 0 {
++		t.Fatalf("block missing END marker: %q", block)
++	}
++	return rest[:j]
++}
++
++// The byte cap must not split a multibyte UTF-8 rune: truncating mid-rune would
++// emit invalid UTF-8 into every agent prompt.
++func TestScopeConstraint_TruncatesOnRuneBoundary(t *testing.T) {
++	// "世" is 3 bytes; fill just past the ceiling with multibyte runes.
++	runes := strings.Repeat("世", int(MaxSprintPlanBytes)/3+100)
++	block, truncated := ScopeConstraint(runes)
++	if !truncated {
++		t.Fatalf("expected truncation of oversized multibyte content")
++	}
++	if !utf8.ValidString(block) {
++		t.Fatalf("ScopeConstraint produced invalid UTF-8 after truncation")
++	}
++}

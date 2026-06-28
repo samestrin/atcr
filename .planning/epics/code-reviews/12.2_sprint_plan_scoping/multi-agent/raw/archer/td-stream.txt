@@ -1,0 +1,1 @@
+HIGH|internal/payload/sprintplan.go:38|Path trimmed for empty check but untrimmed for os.ReadFile|Trim path before passing to os.ReadFile or use trimmed value consistently|correctness|5|strings.TrimSpace(path)=="" check uses trimmed path but os.ReadFile(path) uses raw path with possible whitespace|base-code-reviewer

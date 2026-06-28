@@ -1,0 +1,2 @@
+MEDIUM|internal/payload/sprintplan.go:38|Reads entire file into memory before capping|Use io.LimitReader with os.Open to cap read at MaxSprintPlanBytes|performance|10|os.ReadFile allocates full file size, risking OOM on large inputs|CodeReviewer
+LOW|cmd/atcr/review.go:94|Ignores error from cmd.Flags().GetString|Handle error or assert flag existence|maintainability|2|v, _ := cmd.Flags().GetString ignores potential flag lookup failure|CodeReviewer

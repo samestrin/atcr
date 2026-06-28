@@ -1,0 +1,1 @@
+LOW|internal/fanout/review.go:236|Potential stderr noise in loop|Move stderr warning outside of PrepareReview/PrepareReviewFromDiff if called in a loop|maintainability|10|fmt.Fprintln(os.Stderr, "warn: "+scopeWarn) is called during review preparation|otto

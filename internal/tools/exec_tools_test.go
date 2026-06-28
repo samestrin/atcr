@@ -52,15 +52,22 @@ func execCtx() context.Context { return WithExecEligibility(context.Background()
 // EnableExecution, be BOTH present in the execTools gate map AND backed by a
 // registered handler — so no exec handler can reach runInSandbox/execBackend
 // ungated. It also asserts the converse: no execTools entry exists without a
-// backing handler (no orphan gates). A future exec tool added to ExecutionTools
-// but registered ungated (e.g. via mustRegister/RegisterTool instead of the
-// trusted registerExec path) would fail this test.
+// backing handler (no orphan gates), and that execTools contains ONLY tools
+// declared by ExecutionTools(). ExecutionTools() is therefore the authoritative
+// exec-tool registry; any future sandbox-reaching handler must be added there
+// AND registered via the trusted registerExec path.
 func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	b := &stubBackend{result: sandbox.RunResult{ExitCode: 0, Output: "ok"}}
 	d := newExecDispatcher(t, b)
 
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+
+	execNames := make(map[string]bool, len(ExecutionTools()))
+	for _, def := range ExecutionTools() {
+		execNames[def.Name] = true
+	}
+
 	for _, def := range ExecutionTools() {
 		assert.True(t, d.execTools[def.Name], "exec tool %q must be gated in execTools", def.Name)
 		_, hasHandler := d.handlers[def.Name]
@@ -69,7 +76,22 @@ func TestEnableExecution_EveryExecToolIsGated(t *testing.T) {
 	for name := range d.execTools {
 		_, hasHandler := d.handlers[name]
 		assert.True(t, hasHandler, "execTools gate %q has no backing handler (orphan gate)", name)
+		assert.True(t, execNames[name], "execTools gate %q is not declared in ExecutionTools(); any sandbox-reaching handler must be added to ExecutionTools() and registered via registerExec", name)
 	}
+}
+
+// TestRegisterExec_OnlyAllowsExecutionToolsNames guards the trusted exec
+// registration path: any name published through registerExec must be declared in
+// ExecutionTools(). This makes ExecutionTools() authoritative by construction and
+// prevents a future sandbox-reaching handler from being registered via registerExec
+// without appearing in the tool registry offered to agents.
+func TestRegisterExec_OnlyAllowsExecutionToolsNames(t *testing.T) {
+	d := NewDispatcher(stubResolver{root: "/snap"}, DefaultLimits())
+	assert.Panics(t, func() {
+		d.registerExec("not_an_exec_tool", func(_ context.Context, _ *Dispatcher, _ json.RawMessage, _ string) (ToolResult, error) {
+			return ToolResult{}, nil
+		})
+	}, "registerExec must reject names not declared in ExecutionTools()")
 }
 
 func TestExecutionTools_Defs(t *testing.T) {

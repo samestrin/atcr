@@ -1,0 +1,9 @@
+{
+  "agent_name": "dax-local",
+  "model": "llm-large",
+  "status": "ok",
+  "duration_ms": 6029,
+  "fallback_used": true,
+  "fallback_from": "dax",
+  "original_error": "no content in stream"
+}

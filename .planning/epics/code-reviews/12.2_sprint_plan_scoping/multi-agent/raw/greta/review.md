@@ -1,0 +1,2 @@
+HIGH|internal/payload/sprintplan.go:38|Unbounded file read before size cap enables DoS via large file|Use io.LimitReader or read with a fixed-size buffer|security|15|os.ReadFile(path) loads entire file into memory before truncation|greta
+MEDIUM|internal/payload/sprintplan.go:82|Prompt injection via delimiter collision in sprint plan content|Sanitize plan content to escape or remove BEGIN/END markers|security|10|b.WriteString(plan) injected verbatim without escaping delimiter strings|greta

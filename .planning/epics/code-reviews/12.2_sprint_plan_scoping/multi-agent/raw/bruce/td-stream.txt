@@ -1,0 +1,1 @@
+MEDIUM|internal/fanout/resume.go:287|Resume path silently drops sprint plan constraint|Call resolveScopeConstraint(req) in PrepareResume and pass result to buildSlots so resumed agents honor --sprint-plan|correctness|15|buildSlots called with "" constraint, req.SprintPlanPath ignored on resume|bruce
