@@ -410,8 +410,9 @@ func identAfter(h string, pos int) string {
 }
 
 // funcParenName recognizes a `name(...)` function header (Bash name(), TS
-// methods): the trimmed header ends in ')', and the text before the first '('
-// is a single identifier.
+// methods): the trimmed header ends in ')', and the identifier immediately
+// before the first '(' is the name. Leading modifier words (async, public,
+// static, get, set, etc.) are skipped so TS class methods are named correctly.
 func funcParenName(h string) (string, bool) {
 	t := strings.TrimSpace(h)
 	if !strings.HasSuffix(t, ")") {
@@ -421,19 +422,36 @@ func funcParenName(h string) (string, bool) {
 	if open <= 0 {
 		return "", false
 	}
-	name := strings.TrimSpace(t[:open])
-	if name == "" {
+	prefix := strings.TrimSpace(t[:open])
+	// Extract the last identifier token from prefix.
+	end := len(prefix)
+	for end > 0 && prefix[end-1] == ' ' {
+		end--
+	}
+	start := end
+	for start > 0 && isIdentByte(prefix[start-1]) {
+		start--
+	}
+	if start == end {
 		return "", false
 	}
-	for i := 0; i < len(name); i++ {
-		if !isIdentByte(name[i]) {
-			return "", false
-		}
-	}
+	name := prefix[start:end]
 	// Reserved control words must not be misclassified as function names.
 	switch name {
 	case "catch", "with", "switch":
 		return "", false
+	}
+	// If there is any leading text, it must be only modifier words/whitespace;
+	// arbitrary expressions like `return foo()` must not become functions.
+	modifiers := strings.Fields(prefix[:start])
+	for _, m := range modifiers {
+		switch m {
+		case "async", "public", "private", "protected", "static", "get", "set",
+			"readonly", "abstract", "override":
+			// allowed modifier
+		default:
+			return "", false
+		}
 	}
 	return name, true
 }
