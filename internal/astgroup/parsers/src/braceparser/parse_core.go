@@ -452,11 +452,23 @@ func parseHeredoc(src []byte, j int) (tag string, strip bool, consumed int) {
 }
 
 // heredocLineMatches reports whether the given physical line is the heredoc
-// terminator: it equals tag, optionally after stripping leading tabs (<<-/<<~).
+// terminator. After optionally stripping leading tabs (<<-/<<~), the line must
+// equal tag, or begin with tag followed by a non-identifier byte — the latter
+// covers PHP's `EOT;` / `EOT,` / `EOT)` closings where the marker is followed by
+// punctuation. The non-identifier guard keeps `EOThername` from matching `EOT`.
 func heredocLineMatches(lineBytes []byte, tag string, strip bool) bool {
+	if tag == "" {
+		return false
+	}
 	s := strings.TrimRight(string(lineBytes), "\r")
 	if strip {
 		s = strings.TrimLeft(s, "\t")
 	}
-	return s == tag
+	if s == tag {
+		return true
+	}
+	if strings.HasPrefix(s, tag) {
+		return !isIdentByte(s[len(tag)])
+	}
+	return false
 }

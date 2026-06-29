@@ -131,3 +131,19 @@ func TestConfigs_AllNamed(t *testing.T) {
 		}
 	}
 }
+
+func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
+	// PHP heredoc terminator EOT; (marker + semicolon) must close, so the sibling
+	// func `b` is not swallowed, and the braces inside the heredoc create no block.
+	src := []byte("<?php\nfunction a() {\n  $s = <<<EOT\n  not { a } block\nEOT;\n  return $s;\n}\nfunction b() {\n  return 2;\n}\n")
+	root := parseSource(src, phpConfig)
+	if len(root.Children) != 2 {
+		t.Fatalf("php heredoc must terminate at EOT; got %d children %+v", len(root.Children), root.Children)
+	}
+	if root.Children[0].Name != "a" || root.Children[1].Name != "b" {
+		t.Fatalf("want funcs a,b; got %+v", root.Children)
+	}
+	if len(root.Children[0].Children) != 0 {
+		t.Fatalf("heredoc body braces must not create blocks: %+v", root.Children[0].Children)
+	}
+}
