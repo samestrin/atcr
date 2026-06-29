@@ -379,6 +379,11 @@ func funcParenName(h string) (string, bool) {
 			return "", false
 		}
 	}
+	// Reserved control words must not be misclassified as function names.
+	switch name {
+	case "catch", "with", "switch":
+		return "", false
+	}
 	return name, true
 }
 
