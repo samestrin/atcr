@@ -291,3 +291,18 @@ func TestParseSource_ArrowFunctionStillFunc(t *testing.T) {
 		t.Fatalf("arrow function should still be func: %+v", root.Children)
 	}
 }
+
+func TestParseSource_TSCatchClauseNotFunc(t *testing.T) {
+	// TypeScript catch clauses look like `catch (e) {` and must not be
+	// misclassified as a function named catch by funcParenName.
+	src := []byte("try {\n  work()\n} catch (e) {\n  handle()\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 2 {
+		t.Fatalf("try/catch should produce two blocks, got %d children %+v", len(root.Children), root.Children)
+	}
+	for _, c := range root.Children {
+		if c.Kind != "block" {
+			t.Fatalf("catch clause should be anonymous block, got %q/%q", c.Kind, c.Name)
+		}
+	}
+}
