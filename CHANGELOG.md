@@ -1,3 +1,15 @@
+## [13.3.0] - 2026-06-28
+
+### Added
+
+- Deterministic per-run PageRank "authority" signal over a model-agreement graph (nodes are models, count-weighted edges are cross-model agreements), built once per reconcile run with a damped power iteration (damping 0.85, strict iteration backstop) — fully offline and stdlib-only.
+
+### Changed
+
+- Confidence scoring now factors model authority: an isolated (single-reviewer) finding is promoted from `MEDIUM` to `HIGH` when its model's run authority exceeds the uniform `1/N` baseline. Promotion is one-directional (authority never lowers confidence), and confidence stays identical to the prior reviewer-count behavior when a run has no cross-model agreement.
+
+*Shipped via /execute-epic (epic 13.3)*
+
 ## [Technical Debt] - 2026-06-28
 
 ### Fixed
