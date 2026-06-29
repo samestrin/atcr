@@ -97,13 +97,14 @@ var rustConfig = langConfig{
 // never open/close a block. Bash control flow (if/fi, for/done, case/esac) is
 // end-keyword delimited and intentionally NOT grouped (see epic clarifications).
 var bashConfig = langConfig{
-	name:         "bash",
-	lineComments: []string{"#"},
-	strChars:     "\"'",
-	funcParen:    true,
-	heredocs:     true,
-	heredocOp:    "<<",
-	paramExpand:  true,
+	name:                "bash",
+	lineComments:        []string{"#"},
+	strChars:            "\"'",
+	funcParen:           true,
+	heredocs:            true,
+	heredocOp:           "<<",
+	paramExpand:         true,
+	commentWordBoundary: true,
 	keywords: []blockKeyword{
 		{word: "function", kind: "func", named: true},
 	},

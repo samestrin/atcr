@@ -206,3 +206,46 @@ func TestParseSource_RustCharLiteralBraceIgnored(t *testing.T) {
 		t.Fatalf("rust char-literal/lifetime handling broke the fn block: %+v", root.Children)
 	}
 }
+
+func TestParseSource_CStyleForKeepsForKind(t *testing.T) {
+	// The semicolons inside the C-style for header must not reset the header, so
+	// the loop body is classified "for" (not anonymous "block").
+	src := []byte("function f() {\n  for (let i = 0; i < 3; i++) {\n    work(i)\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	fn := root.Children[0]
+	if fn.Kind != "func" || len(fn.Children) != 1 {
+		t.Fatalf("want one child under func f, got %+v", fn)
+	}
+	if fn.Children[0].Kind != "for" {
+		t.Fatalf("C-style for body kind = %q, want for", fn.Children[0].Kind)
+	}
+}
+
+func TestBashConfig_DollarHashNotComment(t *testing.T) {
+	bash := bashConfig
+	// `$#` must NOT start a comment; the multi-line group `{ ... }` opened after
+	// `&&` must therefore be balanced so the function f still spans to its real
+	// closing brace (no brace-stack desync swallowing `echo done`).
+	src := []byte("f() {\n  [ $# -gt 0 ] && {\n    echo yes\n  }\n  echo done\n}\n")
+	root := parseSource(src, bash)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" {
+		t.Fatalf("want single func f, got %+v", root.Children)
+	}
+	if root.Children[0].EndLine != 6 {
+		t.Fatalf("func f should span to its real closing brace on line 6, got EndLine=%d", root.Children[0].EndLine)
+	}
+	// `echo done` (line 5) is directly in f, after the inner group closed on line 4.
+	d, _ := deepest(root, 5)
+	if d.Kind != "func" || d.Name != "f" {
+		t.Fatalf("line 5 should resolve to func f, got %+v", d)
+	}
+}
+
+func TestBashConfig_HashCommentStillWorks(t *testing.T) {
+	// A real comment (# at a word boundary) is still stripped; its brace is ignored.
+	src := []byte("f() {\n  # a comment with a } brace\n  echo hi\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" || len(root.Children[0].Children) != 0 {
+		t.Fatalf("boundary # comment must still be stripped: %+v", root.Children)
+	}
+}

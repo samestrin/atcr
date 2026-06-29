@@ -41,19 +41,20 @@ type blockKeyword struct {
 // agnostic brace scanner. The differences between the four target languages
 // live entirely in this data, never in the scanner's control flow.
 type langConfig struct {
-	name         string
-	lineComments []string // line-comment introducers, e.g. {"//"} or {"//", "#"} or {"#"}
-	blockOpen    string   // block-comment open, e.g. "/*" ("" disables)
-	blockClose   string   // block-comment close, e.g. "*/"
-	strChars     string   // string delimiters, e.g. "\"'`" (ts) or "\"" (rust)
-	rawStrings   bool     // Rust raw strings: r"...", r#"..."#
-	charLiterals bool     // Rust char literals 'x' / '\n' (so ' is not a string/lifetime)
-	arrowFunc    bool     // treat => as an (anonymous) function-block introducer (TS/JS)
-	funcParen    bool     // treat `ident(...) {` as a named function block (TS methods, Bash name())
-	heredocs     bool     // enable heredoc bodies (Bash <<, PHP <<<)
-	heredocOp    string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
-	paramExpand  bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
-	keywords     []blockKeyword
+	name                string
+	lineComments        []string // line-comment introducers, e.g. {"//"} or {"//", "#"} or {"#"}
+	blockOpen           string   // block-comment open, e.g. "/*" ("" disables)
+	blockClose          string   // block-comment close, e.g. "*/"
+	strChars            string   // string delimiters, e.g. "\"'`" (ts) or "\"" (rust)
+	rawStrings          bool     // Rust raw strings: r"...", r#"..."#
+	charLiterals        bool     // Rust char literals 'x' / '\n' (so ' is not a string/lifetime)
+	arrowFunc           bool     // treat => as an (anonymous) function-block introducer (TS/JS)
+	funcParen           bool     // treat `ident(...) {` as a named function block (TS methods, Bash name())
+	heredocs            bool     // enable heredoc bodies (Bash <<, PHP <<<)
+	heredocOp           string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
+	paramExpand         bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
+	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
+	keywords            []blockKeyword
 }
 
 // scanner states.
@@ -79,10 +80,12 @@ func parseSource(src []byte, cfg langConfig) node {
 	var header []byte
 	headerLine := 1
 	headerStarted := false
+	parenDepth := 0 // open '(' run in the current header; a ';' inside it (C-style for) does not end the statement
 
 	resetHeader := func() {
 		header = header[:0]
 		headerStarted = false
+		parenDepth = 0
 	}
 	addHeader := func(b byte) {
 		if b == '\n' || b == '\r' || b == '\t' {
@@ -184,7 +187,7 @@ func parseSource(src []byte, cfg langConfig) node {
 			case cfg.blockOpen != "" && matchAt(src, i, cfg.blockOpen):
 				i += len(cfg.blockOpen) - 1
 				state = stBlockComment
-			case matchAnyPrefix(src, i, cfg.lineComments):
+			case lineCommentStarts(src, i, cfg):
 				state = stLineComment
 			case cfg.rawStrings && c == 'r' && rawStringStart(src, i):
 				rawHashes = countHashes(src, i+1)
@@ -209,12 +212,27 @@ func parseSource(src []byte, cfg langConfig) node {
 				heredocStrip = strip
 				heredocPending = true
 				i += len(cfg.heredocOp) + consumed - 1
+			case c == '(':
+				parenDepth++
+				addHeader(c)
+			case c == ')':
+				if parenDepth > 0 {
+					parenDepth--
+				}
+				addHeader(c)
 			case c == '{':
 				openBlock()
 			case c == '}':
 				closeBlock()
 			case c == ';':
-				resetHeader()
+				// A ';' ends the statement (resetting the header) only at paren
+				// depth 0. Inside an unclosed '(' run it is part of the header — a
+				// C-style `for (i=0; i<n; i++)` keeps its `for` keyword for naming.
+				if parenDepth == 0 {
+					resetHeader()
+				} else {
+					addHeader(c)
+				}
 			default:
 				addHeader(c)
 			}
@@ -346,6 +364,36 @@ func matchAnyPrefix(src []byte, i int, prefixes []string) bool {
 		if matchAt(src, i, p) {
 			return true
 		}
+	}
+	return false
+}
+
+// lineCommentStarts reports whether a line comment begins at src[i]. For the "#"
+// marker under commentWordBoundary (Bash), the '#' must sit at a word boundary so
+// `$#`, `${#a}`, and `x#y` are NOT treated as comments — mishandling them would
+// swallow the rest of the line and can desync the brace stack.
+func lineCommentStarts(src []byte, i int, cfg langConfig) bool {
+	for _, m := range cfg.lineComments {
+		if !matchAt(src, i, m) {
+			continue
+		}
+		if m == "#" && cfg.commentWordBoundary && !hashAtWordBoundary(src, i) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// hashAtWordBoundary reports whether the byte before i is a shell word boundary,
+// i.e. a '#' there introduces a comment rather than continuing a token like `$#`.
+func hashAtWordBoundary(src []byte, i int) bool {
+	if i == 0 {
+		return true
+	}
+	switch src[i-1] {
+	case ' ', '\t', '\n', '\r', ';', '&', '|', '(', '`':
+		return true
 	}
 	return false
 }
