@@ -411,6 +411,20 @@ func TestParseSource_BashGroupCommandStillBlock(t *testing.T) {
 	}
 }
 
+func TestParseSource_TypedArrowAnnotationIsBlock(t *testing.T) {
+	// `const x: () => void = { ... }` is an object literal assigned to a typed
+	// const; the `=>` is a return-type annotation followed by an `=` assignment,
+	// not an arrow function. It must be an anonymous block, not a func.
+	src := []byte("const x: () => void = {\n  a: 1,\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want 1 child, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "block" {
+		t.Fatalf("typed-arrow-annotation object literal kind = %q, want block", root.Children[0].Kind)
+	}
+}
+
 func TestParseSource_BashArithmeticShiftNotHeredoc(t *testing.T) {
 	// `<<` inside bash arithmetic `$((...))` / `((...))` is a left-shift, NOT a
 	// heredoc. The scanner must not enter heredoc state (which would swallow the
