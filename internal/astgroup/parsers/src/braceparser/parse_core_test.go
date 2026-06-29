@@ -411,6 +411,25 @@ func TestParseSource_BashGroupCommandStillBlock(t *testing.T) {
 	}
 }
 
+func TestParseSource_PHPAttributeNotComment(t *testing.T) {
+	// A PHP 8 attribute `#[Route(...)]` before a declaration on the same line must
+	// NOT be swallowed as a `#` line comment; the function block must still open.
+	src := []byte("#[Route('/x')] function f() {\n  body();\n}\n")
+	root := parseSource(src, phpConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "func" || root.Children[0].Name != "f" {
+		t.Fatalf("PHP attribute must not swallow the function: %+v", root.Children)
+	}
+}
+
+func TestParseSource_PHPHashCommentStillWorks(t *testing.T) {
+	// A real `#` comment (not followed by `[`) is still stripped.
+	src := []byte("function f() {\n  # a } comment\n  body();\n}\n")
+	root := parseSource(src, phpConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" || len(root.Children[0].Children) != 0 {
+		t.Fatalf("PHP # comment must still be stripped: %+v", root.Children)
+	}
+}
+
 func TestParseSource_TypedArrowAnnotationIsBlock(t *testing.T) {
 	// `const x: () => void = { ... }` is an object literal assigned to a typed
 	// const; the `=>` is a return-type annotation followed by an `=` assignment,
