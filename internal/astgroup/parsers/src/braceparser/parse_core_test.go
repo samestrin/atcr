@@ -380,3 +380,33 @@ func TestParseSource_PHPFlexibleHeredoc(t *testing.T) {
 		t.Fatalf("second function should be b, got %q", root.Children[1].Name)
 	}
 }
+
+func TestParseSource_BashBraceExpansionIgnored(t *testing.T) {
+	// Bash brace expansion {a,b} / file{1,2} / {1..10} has no leading $ and must
+	// NOT open a block: its braces are expansion syntax, not a group command. The
+	// enclosing function must stay a single block with no spurious child.
+	src := []byte("f() {\n  cp a{1,2}\n  echo {x,y,z}\n  for i in {1..3}; do :; done\n  echo done\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" {
+		t.Fatalf("want single func f, got %+v", root.Children)
+	}
+	if got := len(root.Children[0].Children); got != 0 {
+		t.Fatalf("brace expansion must not create child blocks; got %d: %+v", got, root.Children[0].Children)
+	}
+	if root.Children[0].EndLine != 6 {
+		t.Fatalf("func f should span to its real closing brace on line 6, got EndLine=%d", root.Children[0].EndLine)
+	}
+}
+
+func TestParseSource_BashGroupCommandStillBlock(t *testing.T) {
+	// A real `{ ...; }` group command (space after the brace) must still open a
+	// block — the expansion special-case must not swallow it.
+	src := []byte("f() {\n  [ $# -gt 0 ] && {\n    echo yes\n  }\n  echo done\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" {
+		t.Fatalf("want single func f, got %+v", root.Children)
+	}
+	if got := len(root.Children[0].Children); got != 1 {
+		t.Fatalf("group command must still open one block; got %d: %+v", got, root.Children[0].Children)
+	}
+}
