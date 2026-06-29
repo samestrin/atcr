@@ -340,7 +340,10 @@ func classifyHeader(h string, cfg langConfig) (kind, name string) {
 					}
 				}
 			}
-			if depth == 0 {
+			// An `=` after the last `=>` means the `=>` is a return-type annotation
+			// followed by an assignment (`const x: () => void = {...}`), not an arrow
+			// function — the `{` opens an object literal, so fall through to "block".
+			if depth == 0 && !strings.ContainsRune(h[a+2:], '=') {
 				return "func", ""
 			}
 		}
