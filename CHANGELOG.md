@@ -1,3 +1,12 @@
+## [13.4.0] - 2026-06-28
+
+### Added
+
+- AST-isomorphism grouping now covers TypeScript/JavaScript (`.ts`/`.tsx`/`.cts`/`.mts`/`.js`/`.jsx`/`.mjs`), PHP (`.php`), Rust (`.rs`), and Bash (`.sh`/`.bash`): duplicate findings in those languages group by their smallest covering block across line drift > 3, instead of falling back to the ±3 line-proximity gate.
+- A shared brace-block parser (`braceparser`) compiled once per language into a vendored wasip1 `.wasm`, parameterized by a per-language keyword/comment/string/heredoc table — adding the next brace language is a config-table plus corpus change, not new parser code.
+
+*Shipped via /execute-epic (epic 13.4)*
+
 ## [Technical Debt] - 2026-06-28
 
 ### Fixed

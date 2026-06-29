@@ -174,5 +174,213 @@
     "a_line": 5,
     "b_line": 8,
     "same_block": false
+  },
+  {
+    "name": "ts_same_func_small_drift",
+    "file": "a.ts",
+    "source": "function target() {\n  const x = 1\n  const y = 2\n  return x + y\n}\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "ts_same_func_large_drift_blank_lines",
+    "file": "a.ts",
+    "source": "function target() {\n  const x = 1\n\n\n\n\n  const y = 2\n  return x + y\n}\n",
+    "a_line": 2,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "ts_same_if_block",
+    "file": "a.ts",
+    "source": "function f(v) {\n  if (v) {\n    const a = v\n    const b = a * 2\n    return b\n  }\n  return 0\n}\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "ts_different_funcs_adjacent_lines",
+    "file": "a.ts",
+    "source": "function a() {\n  const x = 1\n  return x\n}\nfunction b() {\n  const y = 2\n  return y\n}\n",
+    "a_line": 3,
+    "b_line": 6,
+    "same_block": false
+  },
+  {
+    "name": "ts_different_funcs_far_apart",
+    "file": "a.ts",
+    "source": "function a() {\n  const x = 1\n}\n\n\nfunction b() {\n  const y = 2\n}\n",
+    "a_line": 2,
+    "b_line": 7,
+    "same_block": false
+  },
+  {
+    "name": "ts_off_by_one_same_func",
+    "file": "a.ts",
+    "source": "function calc() {\n  let sum = 0\n  sum += 1\n  return sum\n}\n",
+    "a_line": 2,
+    "b_line": 3,
+    "same_block": true
+  },
+  {
+    "name": "ts_block_comment_drift_same_func",
+    "file": "a.ts",
+    "source": "function handler() {\n  const a = compute()\n  /* a long\n     multi-line\n     comment that\n     drifts lines */\n  const b = a + 1\n  return b\n}\n",
+    "a_line": 2,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "ts_string_brace_no_overmerge",
+    "file": "a.ts",
+    "source": "function ra() {\n  const s = \"} {\"\n  return s\n}\nfunction rb() {\n  const t = 2\n  return t\n}\n",
+    "a_line": 2,
+    "b_line": 6,
+    "same_block": false
+  },
+  {
+    "name": "php_same_func_small_drift",
+    "file": "a.php",
+    "source": "<?php\nfunction target() {\n  $x = 1;\n  $y = 2;\n  return $x + $y;\n}\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "php_same_method_large_drift",
+    "file": "a.php",
+    "source": "<?php\nclass C {\n  function m() {\n    $a = 1;\n\n\n\n    $b = 2;\n    return $a + $b;\n  }\n}\n",
+    "a_line": 4,
+    "b_line": 9,
+    "same_block": true
+  },
+  {
+    "name": "php_different_methods_adjacent",
+    "file": "a.php",
+    "source": "<?php\nclass C {\n  function m() {\n    return 1;\n  }\n  function n() {\n    return 2;\n  }\n}\n",
+    "a_line": 4,
+    "b_line": 7,
+    "same_block": false
+  },
+  {
+    "name": "php_heredoc_no_overmerge",
+    "file": "a.php",
+    "source": "<?php\nfunction a() {\n  $s = <<<EOT\n  not { a } block\nEOT;\n  return $s;\n}\nfunction b() {\n  return 2;\n}\n",
+    "a_line": 6,
+    "b_line": 9,
+    "same_block": false
+  },
+  {
+    "name": "php_off_by_one_same_func",
+    "file": "a.php",
+    "source": "<?php\nfunction calc() {\n  $sum = 0;\n  $sum += 1;\n  return $sum;\n}\n",
+    "a_line": 3,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "php_foreach_body",
+    "file": "a.php",
+    "source": "<?php\nfunction loop($items) {\n  $total = 0;\n  foreach ($items as $it) {\n    $total += $it;\n    log($it);\n  }\n  return $total;\n}\n",
+    "a_line": 5,
+    "b_line": 6,
+    "same_block": true
+  },
+  {
+    "name": "rust_same_fn_small_drift",
+    "file": "a.rs",
+    "source": "fn target() {\n    let x = 1;\n    let y = 2;\n    let _ = x + y;\n}\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "rust_same_fn_large_drift_blank_lines",
+    "file": "a.rs",
+    "source": "fn target() {\n    let x = 1;\n\n\n\n\n    let y = 2;\n    let _ = x + y;\n}\n",
+    "a_line": 2,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "rust_impl_method_grouping",
+    "file": "a.rs",
+    "source": "impl Foo {\n    fn bar(&self) {\n        let a = 1;\n        let b = 2;\n        a + b\n    }\n}\n",
+    "a_line": 3,
+    "b_line": 5,
+    "same_block": true
+  },
+  {
+    "name": "rust_different_fns_adjacent",
+    "file": "a.rs",
+    "source": "fn a() {\n    let x = 1;\n}\nfn b() {\n    let y = 2;\n}\n",
+    "a_line": 2,
+    "b_line": 5,
+    "same_block": false
+  },
+  {
+    "name": "rust_char_literal_brace_same_fn",
+    "file": "a.rs",
+    "source": "fn f() {\n    let open = '{';\n\n\n\n    let close = '}';\n    use_it();\n}\n",
+    "a_line": 2,
+    "b_line": 7,
+    "same_block": true
+  },
+  {
+    "name": "rust_raw_string_no_overmerge",
+    "file": "a.rs",
+    "source": "fn ra() {\n    let s = r#\"} {\"#;\n    done();\n}\nfn rb() {\n    let t = 2;\n}\n",
+    "a_line": 2,
+    "b_line": 6,
+    "same_block": false
+  },
+  {
+    "name": "bash_same_func_small_drift",
+    "file": "a.sh",
+    "source": "greet() {\n  local x=1\n  local y=2\n  echo $x $y\n}\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "bash_same_func_large_drift_blank_lines",
+    "file": "a.sh",
+    "source": "greet() {\n  local x=1\n\n\n\n\n  local y=2\n  echo $x $y\n}\n",
+    "a_line": 2,
+    "b_line": 8,
+    "same_block": true
+  },
+  {
+    "name": "bash_function_keyword_form",
+    "file": "a.bash",
+    "source": "function hello {\n  local a=1\n  local b=2\n  echo done\n}\n",
+    "a_line": 2,
+    "b_line": 4,
+    "same_block": true
+  },
+  {
+    "name": "bash_different_funcs_adjacent",
+    "file": "a.sh",
+    "source": "greet() {\n  echo a\n}\nhi() {\n  echo b\n}\n",
+    "a_line": 2,
+    "b_line": 5,
+    "same_block": false
+  },
+  {
+    "name": "bash_param_expansion_same_func",
+    "file": "a.sh",
+    "source": "greet() {\n  local x=${name}\n\n\n\n  local y=${other:-def}\n  echo $x $y\n}\n",
+    "a_line": 2,
+    "b_line": 7,
+    "same_block": true
+  },
+  {
+    "name": "bash_heredoc_no_overmerge",
+    "file": "a.sh",
+    "source": "greet() {\n  cat <<EOF\n  { not a block }\nEOF\n  echo done\n}\npost() {\n  echo hi\n}\n",
+    "a_line": 5,
+    "b_line": 8,
+    "same_block": false
   }
 ]

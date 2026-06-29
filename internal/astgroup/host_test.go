@@ -80,8 +80,46 @@ func TestHost_ParsePythonMultiLineHeader(t *testing.T) {
 func TestLanguageForExt(t *testing.T) {
 	require.Equal(t, "go", LanguageForExt(".go"))
 	require.Equal(t, "python", LanguageForExt(".py"))
-	require.Equal(t, "", LanguageForExt(".rb"))
+	require.Equal(t, "", LanguageForExt(".rb")) // Ruby is intentionally out of scope
 	require.Equal(t, "", LanguageForExt(""))
+
+	// Brace languages (epic 13.4): TypeScript/JavaScript family, PHP, Rust, Bash.
+	for _, ext := range []string{".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".mjs"} {
+		require.Equalf(t, "ts", LanguageForExt(ext), "ext %s should map to ts", ext)
+	}
+	require.Equal(t, "php", LanguageForExt(".php"))
+	require.Equal(t, "rust", LanguageForExt(".rs"))
+	require.Equal(t, "bash", LanguageForExt(".sh"))
+	require.Equal(t, "bash", LanguageForExt(".bash"))
+}
+
+// TestHost_BraceParsersLoadAndParse proves each embedded brace .wasm instantiates
+// and recovers a function block for representative source of its language — the
+// end-to-end check that the build-tag-selected table reached the binary the host
+// loads for that language id.
+func TestHost_BraceParsersLoadAndParse(t *testing.T) {
+	cases := []struct{ lang, src string }{
+		{"ts", "function f() {\n  const x = 1\n  return x\n}\n"},
+		{"php", "<?php\nfunction f() {\n  $x = 1;\n  return $x;\n}\n"},
+		{"rust", "fn f() -> i32 {\n  let x = 1;\n  x\n}\n"},
+		{"bash", "f() {\n  local x=1\n  echo $x\n}\n"},
+	}
+	h := NewHost()
+	defer func() { _ = h.Close() }()
+	for _, c := range cases {
+		p, err := h.Parser(c.lang)
+		require.NoErrorf(t, err, "parser for %q should be registered", c.lang)
+		root, err := p.Parse([]byte(c.src))
+		require.NoErrorf(t, err, "parse %q", c.lang)
+		require.Equalf(t, "file", root.Kind, "%q root kind", c.lang)
+		var hasFunc bool
+		for _, ch := range root.Children {
+			if ch.Kind == "func" {
+				hasFunc = true
+			}
+		}
+		require.Truef(t, hasFunc, "%q: expected a func block, got %+v", c.lang, root.Children)
+	}
 }
 
 func TestHost_ParseInvalidGoReturnsError(t *testing.T) {
