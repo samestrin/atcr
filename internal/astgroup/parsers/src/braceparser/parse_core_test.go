@@ -348,3 +348,13 @@ func TestParseSource_TSModifierMethodNamed(t *testing.T) {
 		t.Fatalf("expected func/foo, got %q/%q", m.Kind, m.Name)
 	}
 }
+
+func TestParseSource_RustUnicodeEscapeCharLiteral(t *testing.T) {
+	// Rust unicode escapes like '\\u{7f}' are char literals; their braces must
+	// not affect block depth.
+	src := []byte("fn f() { let c = '\\u{7f}'; }")
+	root := parseSource(src, rustConfig)
+	if len(root.Children) != 1 || len(root.Children[0].Children) != 0 {
+		t.Fatalf("unicode escape in char literal must not create child blocks: %+v", root.Children)
+	}
+}
