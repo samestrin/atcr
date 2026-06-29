@@ -106,6 +106,7 @@ var bashConfig = langConfig{
 	heredocs:            true,
 	heredocOp:           "<<",
 	paramExpand:         true,
+	braceExpand:         true,
 	commentWordBoundary: true,
 	keywords: []blockKeyword{
 		{word: "function", kind: "func", named: true},

@@ -56,6 +56,7 @@ type langConfig struct {
 	heredocs            bool     // enable heredoc bodies (Bash <<, PHP <<<)
 	heredocOp           string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
 	paramExpand         bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
+	braceExpand         bool     // treat {a,b} / {1..N} brace expansion as opaque (Bash) so its braces never open/close a block
 	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
 	keywords            []blockKeyword
 }
@@ -237,6 +238,12 @@ func parseSource(src []byte, cfg langConfig) node {
 				}
 				addHeader(c)
 			case c == '{':
+				if cfg.braceExpand {
+					if end := bashBraceExpansionEnd(src, i); end >= 0 {
+						i = end // consume the brace expansion; its braces never touch the block stack
+						break
+					}
+				}
 				openBlock()
 			case c == '}':
 				closeBlock()
@@ -503,6 +510,49 @@ func hashAtWordBoundary(src []byte, i int) bool {
 		return true
 	}
 	return false
+}
+
+// bashBraceExpansionEnd reports the index of the '}' that closes a Bash brace
+// expansion beginning at src[i]=='{', or -1 if it is not an expansion. An
+// expansion has no whitespace immediately after '{' and contains a top-level
+// ',' or '..' before its matching '}' on the same line (e.g. {a,b}, file{1,2},
+// {1..10}). A `{ ...; }` group command (space/newline after '{') returns -1 so
+// it still opens a real block.
+func bashBraceExpansionEnd(src []byte, i int) int {
+	if i+1 >= len(src) {
+		return -1
+	}
+	switch src[i+1] {
+	case ' ', '\t', '\n', '\r':
+		return -1 // group command, not expansion
+	}
+	depth := 0
+	sep := false
+	for j := i; j < len(src); j++ {
+		switch src[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				if sep {
+					return j
+				}
+				return -1
+			}
+		case ',':
+			if depth == 1 {
+				sep = true
+			}
+		case '.':
+			if depth == 1 && j+1 < len(src) && src[j+1] == '.' {
+				sep = true
+			}
+		case '\n', '\r':
+			return -1 // multi-line: not a simple expansion; treat as a block
+		}
+	}
+	return -1 // unmatched: degrade to a block
 }
 
 // rawStringStart reports whether src[i]=='r' begins a Rust raw string: r" or r#.
