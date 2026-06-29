@@ -542,20 +542,43 @@ func hasHashes(src []byte, i, n int) bool {
 
 // charLiteralLen returns the byte length of a Rust char literal starting at the
 // opening quote src[i]=='\”, or 0 if it is not a char literal (e.g. a lifetime
-// 'a or a label). Handles '\n', '\\', '{', and any single char. Multi-byte
-// escapes like '\u{7f}' are not length-matched here; returning 0 leaves the lone
-// quote as ordinary text, which is safe (it cannot open a string in Rust mode).
+// 'a or a label). Handles '\n', '\\', '\u{...}', '\x..', and any single char.
 func charLiteralLen(src []byte, i int) int {
 	n := len(src)
 	if i+1 >= n {
 		return 0
 	}
 	if src[i+1] == '\\' {
-		// '\X' — escaped single char then closing quote.
-		if i+3 < n && src[i+3] == '\'' {
-			return 4
+		if i+2 >= n {
+			return 0
 		}
-		return 0
+		switch src[i+2] {
+		case 'u':
+			// '\u{...}' — unicode escape; consume up to closing quote.
+			if i+3 >= n || src[i+3] != '{' {
+				return 0
+			}
+			j := i + 4
+			for j < n && src[j] != '}' {
+				j++
+			}
+			if j >= n || j+1 >= n || src[j+1] != '\'' {
+				return 0
+			}
+			return j - i + 2
+		case 'x':
+			// '\xNN' — byte escape.
+			if i+5 >= n || src[i+5] != '\'' {
+				return 0
+			}
+			return 6
+		default:
+			// '\X' — single-character escape.
+			if i+3 < n && src[i+3] == '\'' {
+				return 4
+			}
+			return 0
+		}
 	}
 	// 'X' — single char then closing quote.
 	if i+2 < n && src[i+2] == '\'' {
