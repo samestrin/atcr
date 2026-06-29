@@ -223,7 +223,7 @@ func parseSource(src []byte, cfg langConfig) node {
 				strDelim = c
 				escape = false
 			case cfg.heredocs && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
-				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp))
+				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp), cfg.heredocOp == "<<<")
 				heredocTag = tag
 				heredocStrip = strip
 				heredocPending = true
@@ -607,10 +607,13 @@ func isHeredocStart(src []byte, j int) bool {
 }
 
 // parseHeredoc reads a heredoc tag starting at src[j] (just after the operator),
-// returning the tag, whether leading tabs are stripped from the terminator
-// (<<-/<<~), and the number of bytes consumed from j.
-func parseHeredoc(src []byte, j int) (tag string, strip bool, consumed int) {
+// returning the tag, whether leading whitespace is stripped from the terminator,
+// and the number of bytes consumed from j. stripIndent is true for operators
+// like PHP's <<< that always allow indented closers; it is also forced true by
+// bash's <<- / <<~ strip operators.
+func parseHeredoc(src []byte, j int, stripIndent bool) (tag string, strip bool, consumed int) {
 	start := j
+	strip = stripIndent
 	for j < len(src) && (src[j] == ' ' || src[j] == '\t') {
 		j++
 	}
@@ -640,7 +643,7 @@ func heredocLineMatches(lineBytes []byte, tag string, strip bool) bool {
 	}
 	s := strings.TrimRight(string(lineBytes), "\r")
 	if strip {
-		s = strings.TrimLeft(s, "\t")
+		s = strings.TrimLeft(s, " \t")
 	}
 	if s == tag {
 		return true
