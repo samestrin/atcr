@@ -1,6 +1,9 @@
 package reconcile
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 // PageRank parameters (epic 13.3). The damping factor is the standard 0.85.
 // Convergence is driven by the L1 epsilon: the power method's error contracts at
@@ -139,11 +142,7 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 			}
 			nv := teleport + danglingShare + pageRankDamping*inflow
 			next[u] = nv
-			d := nv - rank[u]
-			if d < 0 {
-				d = -d
-			}
-			delta += d
+			delta += math.Abs(nv - rank[u])
 		}
 		rank, next = next, rank
 		if delta < pageRankEpsilon {
