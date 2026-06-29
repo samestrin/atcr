@@ -18,6 +18,14 @@ const (
 	pageRankEpsilon = 1e-12
 )
 
+// maxDistinctReviewers bounds the per-finding agreement fan-out. addAgreement's
+// pair loop is O(n^2) in the distinct reviewer count, so a single source that
+// floods one finding location with fabricated reviewer names could force
+// quadratic edge-building work (a CPU-exhaustion vector). A real run has a
+// handful of models, so this cap is a defensive backstop that never triggers in
+// practice.
+const maxDistinctReviewers = 64
+
 // agreementGraph is the run-global model-agreement graph (epic 13.3): nodes are
 // models (reviewers), an edge between two models is count-weighted by how many
 // findings they agreed on across the whole reconcile run. It is undirected — an
@@ -39,6 +47,8 @@ func newAgreementGraph() *agreementGraph {
 // reviewer names and self-pairs are ignored, and duplicate names within the slice
 // are collapsed, so a single model repeating itself never forges an edge. A slice
 // with fewer than two distinct non-empty reviewers adds nothing (no agreement).
+// The distinct set is capped at maxDistinctReviewers to bound the O(n^2) pair
+// loop against a flooded reviewer list (DoS backstop).
 func (g *agreementGraph) addAgreement(reviewers []string) {
 	seen := make(map[string]bool, len(reviewers))
 	distinct := make([]string, 0, len(reviewers))
@@ -50,6 +60,9 @@ func (g *agreementGraph) addAgreement(reviewers []string) {
 		distinct = append(distinct, r)
 	}
 	sort.Strings(distinct)
+	if len(distinct) > maxDistinctReviewers {
+		distinct = distinct[:maxDistinctReviewers]
+	}
 	for i := 0; i < len(distinct); i++ {
 		for j := i + 1; j < len(distinct); j++ {
 			g.addEdge(distinct[i], distinct[j])
