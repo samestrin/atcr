@@ -331,3 +331,20 @@ func TestParseSource_RustImplForName(t *testing.T) {
 		t.Fatalf("expected class/Foo, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
 	}
 }
+
+func TestParseSource_TSModifierMethodNamed(t *testing.T) {
+	// TS method modifiers must not defeat funcParenName; the actual method name
+	// should still be recovered.
+	src := []byte("class C {\n  async foo() {\n    work()\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" {
+		t.Fatalf("expected class, got %+v", root.Children)
+	}
+	if len(root.Children[0].Children) != 1 {
+		t.Fatalf("expected one method, got %+v", root.Children[0].Children)
+	}
+	m := root.Children[0].Children[0]
+	if m.Kind != "func" || m.Name != "foo" {
+		t.Fatalf("expected func/foo, got %q/%q", m.Kind, m.Name)
+	}
+}
