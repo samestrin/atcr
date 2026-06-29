@@ -306,3 +306,28 @@ func TestParseSource_TSCatchClauseNotFunc(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSource_RustGenericImplName(t *testing.T) {
+	// Generic impls must extract the type name after skipping the generic list.
+	src := []byte("impl<T> Foo<T> {\n  fn bar() {}\n}\n")
+	root := parseSource(src, rustConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one impl block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "class" || root.Children[0].Name != "Foo" {
+		t.Fatalf("expected class/Foo, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
+func TestParseSource_RustImplForName(t *testing.T) {
+	// `impl Trait for Foo` must use Foo as the name so unrelated impls of
+	// identical shape do not false-merge.
+	src := []byte("impl Trait for Foo {\n  fn bar() {}\n}\n")
+	root := parseSource(src, rustConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one impl block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "class" || root.Children[0].Name != "Foo" {
+		t.Fatalf("expected class/Foo, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
