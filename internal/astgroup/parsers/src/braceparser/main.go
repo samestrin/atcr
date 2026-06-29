@@ -44,7 +44,7 @@ func free(p int32) { delete(pins, p) }
 //go:wasmexport parse
 func parse(ptr int32, n int32) int64 {
 	buf, ok := pins[ptr]
-	if !ok || int(n) > len(buf) {
+	if !ok || n < 0 || int(n) > len(buf) {
 		return emit(node{Kind: "error", Name: "bad pointer"})
 	}
 	src := buf[:n]

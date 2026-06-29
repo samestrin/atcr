@@ -1,0 +1,1 @@
+LOW|internal/astgroup/parsers/src/braceparser/main.go:41|Potential memory leak in pins map|Implement a mechanism to limit the growth of the pins map or ensure all allocated memory is freed by the host|resource-management|30|pins map grows indefinitely as alloc is called but free is managed by host|otto

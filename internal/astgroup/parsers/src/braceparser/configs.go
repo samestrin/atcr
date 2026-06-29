@@ -14,6 +14,8 @@ package main
 // hash distinctly.
 
 // tsConfig covers TypeScript and JavaScript (.ts/.tsx/.cts/.mts/.js/.jsx/.mjs).
+// This includes strict-mode and module-level sources: the brace scanner is
+// syntax-driven and does not depend on "use strict" or module boundaries.
 // Arrow functions and `name(...) {` method shorthand both become func blocks;
 // object/array literals fall through to anonymous "block".
 var tsConfig = langConfig{
@@ -48,6 +50,7 @@ var phpConfig = langConfig{
 	strChars:     "\"'",
 	heredocs:     true,
 	heredocOp:    "<<<",
+	attrHash:     true,
 	keywords: []blockKeyword{
 		{word: "function", kind: "func", named: true},
 		{word: "class", kind: "class", named: true},
@@ -104,6 +107,7 @@ var bashConfig = langConfig{
 	heredocs:            true,
 	heredocOp:           "<<",
 	paramExpand:         true,
+	braceExpand:         true,
 	commentWordBoundary: true,
 	keywords: []blockKeyword{
 		{word: "function", kind: "func", named: true},

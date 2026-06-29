@@ -17,7 +17,10 @@
 // (active_*.go) and the wasm ABI (main.go) are build-constrained.
 package main
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+)
 
 // node mirrors internal/astgroup.Node; the JSON tags are the wire contract.
 type node struct {
@@ -53,7 +56,9 @@ type langConfig struct {
 	heredocs            bool     // enable heredoc bodies (Bash <<, PHP <<<)
 	heredocOp           string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
 	paramExpand         bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
+	braceExpand         bool     // treat {a,b} / {1..N} brace expansion as opaque (Bash) so its braces never open/close a block
 	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
+	attrHash            bool     // a "#" immediately followed by "[" is a PHP 8 attribute (#[Attr]), not a line comment
 	keywords            []blockKeyword
 }
 
@@ -130,6 +135,9 @@ func parseSource(src []byte, cfg langConfig) node {
 	heredocStrip := false
 	heredocPending := false
 	paramDepth := 0
+	var paramQuote byte
+	paramEscape := false
+	arithDepth := 0 // bash `((...))` / `$((...))` nesting; a `<<` inside is a shift, not a heredoc
 
 	for i := 0; i < len(src); i++ {
 		c := src[i]
@@ -171,15 +179,26 @@ func parseSource(src []byte, cfg langConfig) node {
 		case stParamExp:
 			// Inside a ${...} parameter expansion: count nested braces so the
 			// matching close returns to normal without ever touching the block
-			// stack. Other chars (including a stray quote) are ignored — good
-			// enough for a structural pre-pass.
-			if c == '{' {
+			// stack. Braces inside quoted strings are ignored so that patterns
+			// like ${var/"}"/"{"} do not desync the brace depth.
+			if paramQuote != 0 {
+				if paramEscape {
+					paramEscape = false
+				} else if c == '\\' {
+					paramEscape = true
+				} else if c == paramQuote {
+					paramQuote = 0
+				}
+			} else if c == '{' {
 				paramDepth++
 			} else if c == '}' {
 				paramDepth--
 				if paramDepth <= 0 {
 					state = stNormal
 				}
+			} else if c == '"' || c == '\'' {
+				paramQuote = c
+				paramEscape = false
 			}
 
 		default: // stNormal
@@ -189,6 +208,12 @@ func parseSource(src []byte, cfg langConfig) node {
 				state = stBlockComment
 			case lineCommentStarts(src, i, cfg):
 				state = stLineComment
+			// NOTE: a bare '/' (neither '//' nor '/*') is intentionally NOT tracked.
+			// JS/TS regex literals (/pattern/) have no scanner state, so a '{' or '}'
+			// inside a regex desyncs brace depth and degrades that finding to line-
+			// proximity grouping (it can never break a reconcile). Regex-vs-division
+			// disambiguation is a known-hard, deferred design item; see the technical-
+			// debt README (braceparser parse_core.go regex-literal rows).
 			case cfg.rawStrings && c == 'r' && rawStringStart(src, i):
 				rawHashes = countHashes(src, i+1)
 				i += 1 + rawHashes // consume 'r' and the '#' run; the '"' is consumed next iter as part of the body
@@ -206,12 +231,31 @@ func parseSource(src []byte, cfg langConfig) node {
 				state = stString
 				strDelim = c
 				escape = false
-			case cfg.heredocs && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
-				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp))
+			case cfg.heredocs && arithDepth == 0 && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
+				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp), cfg.heredocOp == "<<<")
 				heredocTag = tag
 				heredocStrip = strip
 				heredocPending = true
 				i += len(cfg.heredocOp) + consumed - 1
+			case cfg.heredocs && cfg.heredocOp == "<<" && c == '(' && i+1 < len(src) && src[i+1] == '(':
+				// Bash arithmetic `((...))` / `$((...))`: a `<<` inside is a left-shift,
+				// never a heredoc. Track depth so heredoc detection is suppressed within
+				// (the `<<` then falls through to header text, which is harmless).
+				arithDepth++
+				parenDepth += 2
+				addHeader('(')
+				addHeader('(')
+				i++
+			case cfg.heredocs && cfg.heredocOp == "<<" && arithDepth > 0 && c == ')' && i+1 < len(src) && src[i+1] == ')':
+				arithDepth--
+				if parenDepth >= 2 {
+					parenDepth -= 2
+				} else {
+					parenDepth = 0
+				}
+				addHeader(')')
+				addHeader(')')
+				i++
 			case c == '(':
 				parenDepth++
 				addHeader(c)
@@ -221,6 +265,12 @@ func parseSource(src []byte, cfg langConfig) node {
 				}
 				addHeader(c)
 			case c == '{':
+				if cfg.braceExpand {
+					if end := bashBraceExpansionEnd(src, i); end >= 0 {
+						i = end // consume the brace expansion; its braces never touch the block stack
+						break
+					}
+				}
 				openBlock()
 			case c == '}':
 				closeBlock()
@@ -271,9 +321,38 @@ func classifyHeader(h string, cfg langConfig) (kind, name string) {
 			bestKw = kw
 		}
 	}
+	// Rust `impl Trait for Foo {` must classify as the impl block, not as a
+	// `for` loop. When the winning keyword is `for` and `impl` precedes it,
+	// prefer the impl keyword so the name resolves to Foo.
+	if bestKw.word == "for" {
+		if idx := lastWholeWord(h, "impl"); idx >= 0 {
+			bestIdx = idx
+			bestKw = blockKeyword{word: "impl", kind: "class", named: true}
+		}
+	}
 	if cfg.arrowFunc {
 		if a := strings.LastIndex(h, "=>"); a > bestIdx {
-			return "func", ""
+			// Only honor `=>` as an arrow-function header when it sits at
+			// parenthesis depth 0. Inline arrows inside control-flow headers
+			// such as `for (x of items.map(i => i.id))` must keep their
+			// control kind, not be misclassified as func.
+			depth := 0
+			for i := 0; i < a; i++ {
+				switch h[i] {
+				case '(':
+					depth++
+				case ')':
+					if depth > 0 {
+						depth--
+					}
+				}
+			}
+			// An `=` after the last `=>` means the `=>` is a return-type annotation
+			// followed by an assignment (`const x: () => void = {...}`), not an arrow
+			// function — the `{` opens an object literal, so fall through to "block".
+			if depth == 0 && !strings.ContainsRune(h[a+2:], '=') {
+				return "func", ""
+			}
 		}
 	}
 	if bestIdx >= 0 {
@@ -316,21 +395,64 @@ func lastWholeWord(h, word string) int {
 	}
 }
 
-// identAfter returns the identifier starting after pos (skipping spaces).
+// skipGenericList returns the position just after a balanced `<...>` generic
+// parameter list starting at pos, or pos unchanged if no `<` is present.
+func skipGenericList(h string, pos int) int {
+	if pos >= len(h) || h[pos] != '<' {
+		return pos
+	}
+	depth := 1
+	pos++
+	for pos < len(h) && depth > 0 {
+		switch h[pos] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		}
+		pos++
+	}
+	return pos
+}
+
+// identAfter returns the identifier starting after pos (skipping spaces and any
+// generic parameter list). For Rust `impl Trait for Foo` it skips to the name
+// after `for` so sibling impl blocks hash by the implemented type.
 func identAfter(h string, pos int) string {
-	for pos < len(h) && h[pos] == ' ' {
-		pos++
+	skipSpaces := func() {
+		for pos < len(h) && h[pos] == ' ' {
+			pos++
+		}
 	}
-	start := pos
-	for pos < len(h) && isIdentByte(h[pos]) {
-		pos++
+	readIdent := func() string {
+		start := pos
+		for pos < len(h) && isIdentByte(h[pos]) {
+			pos++
+		}
+		return h[start:pos]
 	}
-	return h[start:pos]
+
+	skipSpaces()
+	pos = skipGenericList(h, pos)
+	skipSpaces()
+	name := readIdent()
+	skipSpaces()
+	pos = skipGenericList(h, pos)
+	skipSpaces()
+	if strings.HasPrefix(h[pos:], "for ") {
+		pos += len("for ")
+		skipSpaces()
+		pos = skipGenericList(h, pos)
+		skipSpaces()
+		name = readIdent()
+	}
+	return name
 }
 
 // funcParenName recognizes a `name(...)` function header (Bash name(), TS
-// methods): the trimmed header ends in ')', and the text before the first '('
-// is a single identifier.
+// methods): the trimmed header ends in ')', and the identifier immediately
+// before the first '(' is the name. Leading modifier words (async, public,
+// static, get, set, etc.) are skipped so TS class methods are named correctly.
 func funcParenName(h string) (string, bool) {
 	t := strings.TrimSpace(h)
 	if !strings.HasSuffix(t, ")") {
@@ -340,12 +462,34 @@ func funcParenName(h string) (string, bool) {
 	if open <= 0 {
 		return "", false
 	}
-	name := strings.TrimSpace(t[:open])
-	if name == "" {
+	prefix := strings.TrimSpace(t[:open])
+	// Extract the last identifier token from prefix.
+	end := len(prefix)
+	for end > 0 && prefix[end-1] == ' ' {
+		end--
+	}
+	start := end
+	for start > 0 && isIdentByte(prefix[start-1]) {
+		start--
+	}
+	if start == end {
 		return "", false
 	}
-	for i := 0; i < len(name); i++ {
-		if !isIdentByte(name[i]) {
+	name := prefix[start:end]
+	// Reserved control words must not be misclassified as function names.
+	switch name {
+	case "catch", "with", "switch":
+		return "", false
+	}
+	// If there is any leading text, it must be only modifier words/whitespace;
+	// arbitrary expressions like `return foo()` must not become functions.
+	modifiers := strings.Fields(prefix[:start])
+	for _, m := range modifiers {
+		switch m {
+		case "async", "public", "private", "protected", "static", "get", "set",
+			"readonly", "abstract", "override":
+			// allowed modifier
+		default:
 			return "", false
 		}
 	}
@@ -356,7 +500,7 @@ func matchAt(src []byte, i int, s string) bool {
 	if s == "" || i+len(s) > len(src) {
 		return false
 	}
-	return string(src[i:i+len(s)]) == s
+	return bytes.Equal(src[i:i+len(s)], []byte(s))
 }
 
 func matchAnyPrefix(src []byte, i int, prefixes []string) bool {
@@ -380,6 +524,9 @@ func lineCommentStarts(src []byte, i int, cfg langConfig) bool {
 		if m == "#" && cfg.commentWordBoundary && !hashAtWordBoundary(src, i) {
 			continue
 		}
+		if m == "#" && cfg.attrHash && i+1 < len(src) && src[i+1] == '[' {
+			continue // PHP 8 attribute `#[...]`, not a line comment
+		}
 		return true
 	}
 	return false
@@ -396,6 +543,49 @@ func hashAtWordBoundary(src []byte, i int) bool {
 		return true
 	}
 	return false
+}
+
+// bashBraceExpansionEnd reports the index of the '}' that closes a Bash brace
+// expansion beginning at src[i]=='{', or -1 if it is not an expansion. An
+// expansion has no whitespace immediately after '{' and contains a top-level
+// ',' or '..' before its matching '}' on the same line (e.g. {a,b}, file{1,2},
+// {1..10}). A `{ ...; }` group command (space/newline after '{') returns -1 so
+// it still opens a real block.
+func bashBraceExpansionEnd(src []byte, i int) int {
+	if i+1 >= len(src) {
+		return -1
+	}
+	switch src[i+1] {
+	case ' ', '\t', '\n', '\r':
+		return -1 // group command, not expansion
+	}
+	depth := 0
+	sep := false
+	for j := i; j < len(src); j++ {
+		switch src[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				if sep {
+					return j
+				}
+				return -1
+			}
+		case ',':
+			if depth == 1 {
+				sep = true
+			}
+		case '.':
+			if depth == 1 && j+1 < len(src) && src[j+1] == '.' {
+				sep = true
+			}
+		case '\n', '\r':
+			return -1 // multi-line: not a simple expansion; treat as a block
+		}
+	}
+	return -1 // unmatched: degrade to a block
 }
 
 // rawStringStart reports whether src[i]=='r' begins a Rust raw string: r" or r#.
@@ -438,20 +628,43 @@ func hasHashes(src []byte, i, n int) bool {
 
 // charLiteralLen returns the byte length of a Rust char literal starting at the
 // opening quote src[i]=='\”, or 0 if it is not a char literal (e.g. a lifetime
-// 'a or a label). Handles '\n', '\\', '{', and any single char. Multi-byte
-// escapes like '\u{7f}' are not length-matched here; returning 0 leaves the lone
-// quote as ordinary text, which is safe (it cannot open a string in Rust mode).
+// 'a or a label). Handles '\n', '\\', '\u{...}', '\x..', and any single char.
 func charLiteralLen(src []byte, i int) int {
 	n := len(src)
 	if i+1 >= n {
 		return 0
 	}
 	if src[i+1] == '\\' {
-		// '\X' — escaped single char then closing quote.
-		if i+3 < n && src[i+3] == '\'' {
-			return 4
+		if i+2 >= n {
+			return 0
 		}
-		return 0
+		switch src[i+2] {
+		case 'u':
+			// '\u{...}' — unicode escape; consume up to closing quote.
+			if i+3 >= n || src[i+3] != '{' {
+				return 0
+			}
+			j := i + 4
+			for j < n && src[j] != '}' {
+				j++
+			}
+			if j >= n || j+1 >= n || src[j+1] != '\'' {
+				return 0
+			}
+			return j - i + 2
+		case 'x':
+			// '\xNN' — byte escape.
+			if i+5 >= n || src[i+5] != '\'' {
+				return 0
+			}
+			return 6
+		default:
+			// '\X' — single-character escape.
+			if i+3 < n && src[i+3] == '\'' {
+				return 4
+			}
+			return 0
+		}
 	}
 	// 'X' — single char then closing quote.
 	if i+2 < n && src[i+2] == '\'' {
@@ -477,10 +690,13 @@ func isHeredocStart(src []byte, j int) bool {
 }
 
 // parseHeredoc reads a heredoc tag starting at src[j] (just after the operator),
-// returning the tag, whether leading tabs are stripped from the terminator
-// (<<-/<<~), and the number of bytes consumed from j.
-func parseHeredoc(src []byte, j int) (tag string, strip bool, consumed int) {
+// returning the tag, whether leading whitespace is stripped from the terminator,
+// and the number of bytes consumed from j. stripIndent is true for operators
+// like PHP's <<< that always allow indented closers; it is also forced true by
+// bash's <<- / <<~ strip operators.
+func parseHeredoc(src []byte, j int, stripIndent bool) (tag string, strip bool, consumed int) {
 	start := j
+	strip = stripIndent
 	for j < len(src) && (src[j] == ' ' || src[j] == '\t') {
 		j++
 	}
@@ -510,7 +726,7 @@ func heredocLineMatches(lineBytes []byte, tag string, strip bool) bool {
 	}
 	s := strings.TrimRight(string(lineBytes), "\r")
 	if strip {
-		s = strings.TrimLeft(s, "\t")
+		s = strings.TrimLeft(s, " \t")
 	}
 	if s == tag {
 		return true

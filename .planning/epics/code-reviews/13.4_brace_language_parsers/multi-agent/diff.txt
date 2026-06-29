@@ -1,0 +1,1587 @@
+diff --git a/internal/astgroup/embed.go b/internal/astgroup/embed.go
+index c42a762e..1575e505 100644
+--- a/internal/astgroup/embed.go
++++ b/internal/astgroup/embed.go
+@@ -3,15 +3,25 @@ package astgroup
+ import "embed"
+ 
+ //go:embed parsers/go.wasm parsers/python.wasm
++//go:embed parsers/ts.wasm parsers/php.wasm parsers/rust.wasm parsers/bash.wasm
+ var parserFS embed.FS
+ 
+ // builtinParsers maps a language id to its embedded .wasm plugin path. Adding a
+ // language is "drop in a new .wasm file" plus one entry here (and an extension
+ // mapping in LanguageForExt). The embedded set is the hermetic default; a runtime
+ // override directory (future extension) would be consulted before this map.
++//
++// The ts/php/rust/bash plugins are four builds of one shared brace-block parser
++// source (parsers/src/braceparser), each with its language's keyword/naming table
++// baked in at compile time; the language id is the discriminator the host uses to
++// pick the binary, exactly as for go/python.
+ var builtinParsers = map[string]string{
+ 	"go":     "parsers/go.wasm",
+ 	"python": "parsers/python.wasm",
++	"ts":     "parsers/ts.wasm",
++	"php":    "parsers/php.wasm",
++	"rust":   "parsers/rust.wasm",
++	"bash":   "parsers/bash.wasm",
+ }
+ 
+ // LanguageForExt maps a file extension (including the dot, lowercased) to a
+@@ -23,6 +33,15 @@ func LanguageForExt(ext string) string {
+ 		return "go"
+ 	case ".py":
+ 		return "python"
++	// TypeScript/JavaScript family — one shared brace parser, one language id.
++	case ".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".mjs":
++		return "ts"
++	case ".php":
++		return "php"
++	case ".rs":
++		return "rust"
++	case ".sh", ".bash":
++		return "bash"
+ 	default:
+ 		return ""
+ 	}
+diff --git a/internal/astgroup/host_test.go b/internal/astgroup/host_test.go
+index 1a8a05cf..424d274c 100644
+--- a/internal/astgroup/host_test.go
++++ b/internal/astgroup/host_test.go
+@@ -80,8 +80,46 @@ func TestHost_ParsePythonMultiLineHeader(t *testing.T) {
+ func TestLanguageForExt(t *testing.T) {
+ 	require.Equal(t, "go", LanguageForExt(".go"))
+ 	require.Equal(t, "python", LanguageForExt(".py"))
+-	require.Equal(t, "", LanguageForExt(".rb"))
++	require.Equal(t, "", LanguageForExt(".rb")) // Ruby is intentionally out of scope
+ 	require.Equal(t, "", LanguageForExt(""))
++
++	// Brace languages (epic 13.4): TypeScript/JavaScript family, PHP, Rust, Bash.
++	for _, ext := range []string{".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".mjs"} {
++		require.Equalf(t, "ts", LanguageForExt(ext), "ext %s should map to ts", ext)
++	}
++	require.Equal(t, "php", LanguageForExt(".php"))
++	require.Equal(t, "rust", LanguageForExt(".rs"))
++	require.Equal(t, "bash", LanguageForExt(".sh"))
++	require.Equal(t, "bash", LanguageForExt(".bash"))
++}
++
++// TestHost_BraceParsersLoadAndParse proves each embedded brace .wasm instantiates
++// and recovers a function block for representative source of its language — the
++// end-to-end check that the build-tag-selected table reached the binary the host
++// loads for that language id.
++func TestHost_BraceParsersLoadAndParse(t *testing.T) {
++	cases := []struct{ lang, src string }{
++		{"ts", "function f() {\n  const x = 1\n  return x\n}\n"},
++		{"php", "<?php\nfunction f() {\n  $x = 1;\n  return $x;\n}\n"},
++		{"rust", "fn f() -> i32 {\n  let x = 1;\n  x\n}\n"},
++		{"bash", "f() {\n  local x=1\n  echo $x\n}\n"},
++	}
++	h := NewHost()
++	defer func() { _ = h.Close() }()
++	for _, c := range cases {
++		p, err := h.Parser(c.lang)
++		require.NoErrorf(t, err, "parser for %q should be registered", c.lang)
++		root, err := p.Parse([]byte(c.src))
++		require.NoErrorf(t, err, "parse %q", c.lang)
++		require.Equalf(t, "file", root.Kind, "%q root kind", c.lang)
++		var hasFunc bool
++		for _, ch := range root.Children {
++			if ch.Kind == "func" {
++				hasFunc = true
++			}
++		}
++		require.Truef(t, hasFunc, "%q: expected a func block, got %+v", c.lang, root.Children)
++	}
+ }
+ 
+ func TestHost_ParseInvalidGoReturnsError(t *testing.T) {
+diff --git a/internal/astgroup/parsers/SHA256SUMS b/internal/astgroup/parsers/SHA256SUMS
+index a3019a14..e9f4c513 100644
+--- a/internal/astgroup/parsers/SHA256SUMS
++++ b/internal/astgroup/parsers/SHA256SUMS
+@@ -1,2 +1,6 @@
+ 5890693a806ef23fbe633bcb7e0e50b83405c84084466d367ebbf52555453e35  go.wasm
+ 0b79ffcf5eec314e3a02d359dc1a09d74b4093f1951d5415e25f286ebc851439  python.wasm
++fab785501e1d58207fba2541877db39aceda56ca822d48b5994ef7e34a27d52a  ts.wasm
++e6fa06d0e5fb936ce347b5f58ece1e4472723ba2fd7b441b5983d91c87dafc51  php.wasm
++968df24de55b5fbee5ee58087efb67194d57d7d563b4ffff6fbcdc249277d5db  rust.wasm
++1e9c061bda3682782540e4d8e2585e0bf6f256deb3280fe96df633e32dd523db  bash.wasm
+diff --git a/internal/astgroup/parsers/bash.wasm b/internal/astgroup/parsers/bash.wasm
+new file mode 100644
+index 00000000..9abe8363
+Binary files /dev/null and b/internal/astgroup/parsers/bash.wasm differ
+diff --git a/internal/astgroup/parsers/build.sh b/internal/astgroup/parsers/build.sh
+index 39c1dd12..068793dc 100755
+--- a/internal/astgroup/parsers/build.sh
++++ b/internal/astgroup/parsers/build.sh
+@@ -26,22 +26,34 @@ fi
+ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ 
+ build() {
+-  local name="$1" srcdir="$2"
+-  echo "building ${name}.wasm from ${srcdir}"
++  local name="$1" srcdir="$2" tags="${3:-}"
++  local tagflag=()
++  [ -n "${tags}" ] && tagflag=(-tags "${tags}")
++  echo "building ${name}.wasm from ${srcdir}${tags:+ (tags: ${tags})}"
+   ( cd "${here}/src/${srcdir}" && \
+     GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -trimpath \
+-      -o "${here}/${name}.wasm" . )
++      ${tagflag[@]+"${tagflag[@]}"} -o "${here}/${name}.wasm" . )
+   echo "  -> $(wc -c < "${here}/${name}.wasm") bytes"
+ }
+ 
+ build go goparser
+ build python pyparser
+ 
++# The brace parser is ONE Go source (src/braceparser) compiled once per language
++# with the language's keyword/naming table baked in via build tag. Four binaries
++# (not one shared binary) is the deliberate design: the host already holds the
++# language string from the file extension and uses the .wasm as the discriminator,
++# exactly like go/python — see the epic's recorded clarifications.
++build ts braceparser ts
++build php braceparser php
++build rust braceparser rust
++build bash braceparser bash
++
+ # Refresh the checksum manifest so the committed binaries stay verifiable from a
+ # committed hash. TestEmbeddedParsersMatchManifest (go test ./...) fails in CI if
+ # the .wasm files and SHA256SUMS drift, catching a tampered or stale binary
+ # without needing a Wasm toolchain in the pipeline. Commit SHA256SUMS with the
+ # regenerated .wasm files.
+-( cd "${here}" && sha256sum go.wasm python.wasm > SHA256SUMS )
++( cd "${here}" && sha256sum go.wasm python.wasm ts.wasm php.wasm rust.wasm bash.wasm > SHA256SUMS )
+ echo "wrote SHA256SUMS"
+ echo "done"
+diff --git a/internal/astgroup/parsers/php.wasm b/internal/astgroup/parsers/php.wasm
+new file mode 100644
+index 00000000..4fabc421
+Binary files /dev/null and b/internal/astgroup/parsers/php.wasm differ
+diff --git a/internal/astgroup/parsers/rust.wasm b/internal/astgroup/parsers/rust.wasm
+new file mode 100644
+index 00000000..f7ad5d5d
+Binary files /dev/null and b/internal/astgroup/parsers/rust.wasm differ
+diff --git a/internal/astgroup/parsers/src/braceparser/active_bash.go b/internal/astgroup/parsers/src/braceparser/active_bash.go
+new file mode 100644
+index 00000000..e05b89f8
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_bash.go
+@@ -0,0 +1,7 @@
++//go:build bash
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags bash` by
++// build.sh to produce bash.wasm.
++var active = bashConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/active_php.go b/internal/astgroup/parsers/src/braceparser/active_php.go
+new file mode 100644
+index 00000000..3decc4a4
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_php.go
+@@ -0,0 +1,7 @@
++//go:build php
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags php` by
++// build.sh to produce php.wasm.
++var active = phpConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/active_rust.go b/internal/astgroup/parsers/src/braceparser/active_rust.go
+new file mode 100644
+index 00000000..2614c448
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_rust.go
+@@ -0,0 +1,7 @@
++//go:build rust
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags rust` by
++// build.sh to produce rust.wasm.
++var active = rustConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/active_ts.go b/internal/astgroup/parsers/src/braceparser/active_ts.go
+new file mode 100644
+index 00000000..23eb7d2f
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/active_ts.go
+@@ -0,0 +1,7 @@
++//go:build ts
++
++package main
++
++// active is the compile-time-selected language table. Built with `-tags ts` by
++// build.sh to produce ts.wasm (TypeScript/JavaScript).
++var active = tsConfig
+diff --git a/internal/astgroup/parsers/src/braceparser/configs.go b/internal/astgroup/parsers/src/braceparser/configs.go
+new file mode 100644
+index 00000000..01fa2828
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/configs.go
+@@ -0,0 +1,111 @@
++package main
++
++// This file holds the four per-language tables that parameterize the shared
++// scanner in parse_core.go. All language differences live here as DATA — comment
++// and string syntax, heredoc/raw-string/char-literal rules, and the block-
++// introducing keyword/naming table — so the scanner control flow stays language-
++// agnostic over braces + this table (Risk mitigation: "keep language differences
++// in data, not control flow"). build.sh compiles one .wasm per language by
++// selecting `active` (active_*.go) at compile time via build tag.
++//
++// Kinds emitted MUST be members of the host's blockKinds set (internal/astgroup
++// cover.go): file/func/class/if/for/while/switch/block (+ else). Names are the
++// identifier following the keyword, so sibling blocks of identical shape still
++// hash distinctly.
++
++// tsConfig covers TypeScript and JavaScript (.ts/.tsx/.cts/.mts/.js/.jsx/.mjs).
++// Arrow functions and `name(...) {` method shorthand both become func blocks;
++// object/array literals fall through to anonymous "block".
++var tsConfig = langConfig{
++	name:         "ts",
++	lineComments: []string{"//"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"'`", // double, single, and template (backtick) literals
++	arrowFunc:    true,
++	funcParen:    true,
++	keywords: []blockKeyword{
++		{word: "function", kind: "func", named: true},
++		{word: "class", kind: "class", named: true},
++		{word: "interface", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "switch", kind: "switch"},
++	},
++}
++
++// phpConfig covers PHP (.php). Both // and # are line comments; functions and
++// methods use the `function` keyword (so funcParen stays off to avoid mislabeling
++// bare calls); heredoc/nowdoc use <<<. PHP string interpolation lives inside
++// quoted strings, already handled by string state, so paramExpand stays off.
++var phpConfig = langConfig{
++	name:         "php",
++	lineComments: []string{"//", "#"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"'",
++	heredocs:     true,
++	heredocOp:    "<<<",
++	keywords: []blockKeyword{
++		{word: "function", kind: "func", named: true},
++		{word: "class", kind: "class", named: true},
++		{word: "interface", kind: "class", named: true},
++		{word: "trait", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "elseif", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "foreach", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "switch", kind: "switch"},
++	},
++}
++
++// rustConfig covers Rust (.rs). Only " opens a string; ' is a char literal or
++// lifetime (charLiterals), not a string delimiter, so '{' / '}' / 'a never skew
++// brace depth. Raw strings r"..." / r#"..."# are opaque. impl/trait/mod/struct/
++// enum map to "class"; loop maps to "while"; match maps to "switch".
++var rustConfig = langConfig{
++	name:         "rust",
++	lineComments: []string{"//"},
++	blockOpen:    "/*",
++	blockClose:   "*/",
++	strChars:     "\"",
++	rawStrings:   true,
++	charLiterals: true,
++	keywords: []blockKeyword{
++		{word: "fn", kind: "func", named: true},
++		{word: "impl", kind: "class", named: true},
++		{word: "trait", kind: "class", named: true},
++		{word: "mod", kind: "class", named: true},
++		{word: "struct", kind: "class", named: true},
++		{word: "enum", kind: "class", named: true},
++		{word: "if", kind: "if"},
++		{word: "else", kind: "else"},
++		{word: "for", kind: "for"},
++		{word: "while", kind: "while"},
++		{word: "loop", kind: "while"},
++		{word: "match", kind: "switch"},
++	},
++}
++
++// bashConfig covers Bash (.sh/.bash). Function-level granularity only: both
++// `name() {` (funcParen) and `function name {` (keyword) forms are recovered.
++// `#` is a line comment, << starts a heredoc, and ${...} is opaque so its braces
++// never open/close a block. Bash control flow (if/fi, for/done, case/esac) is
++// end-keyword delimited and intentionally NOT grouped (see epic clarifications).
++var bashConfig = langConfig{
++	name:                "bash",
++	lineComments:        []string{"#"},
++	strChars:            "\"'",
++	funcParen:           true,
++	heredocs:            true,
++	heredocOp:           "<<",
++	paramExpand:         true,
++	commentWordBoundary: true,
++	keywords: []blockKeyword{
++		{word: "function", kind: "func", named: true},
++	},
++}
+diff --git a/internal/astgroup/parsers/src/braceparser/configs_test.go b/internal/astgroup/parsers/src/braceparser/configs_test.go
+new file mode 100644
+index 00000000..a9f6bda0
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/configs_test.go
+@@ -0,0 +1,149 @@
++package main
++
++import "testing"
++
++func findFunc(n node, name string) (node, bool) {
++	if n.Kind == "func" && n.Name == name {
++		return n, true
++	}
++	for _, c := range n.Children {
++		if f, ok := findFunc(c, name); ok {
++			return f, true
++		}
++	}
++	return node{}, false
++}
++
++func TestPHPConfig_ClassMethodGrouping(t *testing.T) {
++	src := []byte("<?php\nclass Foo {\n  public function bar() {\n    $x = 1;\n    $y = 2;\n    return $x + $y;\n  }\n}\n")
++	root := parseSource(src, phpConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "class" || root.Children[0].Name != "Foo" {
++		t.Fatalf("want class Foo, got %+v", root.Children)
++	}
++	if _, ok := findFunc(root, "bar"); !ok {
++		t.Fatalf("expected func bar in tree: %+v", root)
++	}
++	a, _ := deepest(root, 4)
++	b, _ := deepest(root, 5)
++	if a.Kind != "func" || a.Name != "bar" || a.StartLine != b.StartLine {
++		t.Fatalf("php method body lines should share func bar: %+v / %+v", a, b)
++	}
++}
++
++func TestPHPConfig_HashCommentBraceIgnored(t *testing.T) {
++	src := []byte("<?php\nfunction f() {\n  # } stray brace {\n  g();\n}\n")
++	root := parseSource(src, phpConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "func" || root.Children[0].Name != "f" {
++		t.Fatalf("php # comment braces must not break structure: %+v", root.Children)
++	}
++}
++
++func TestPHPConfig_TraitIsClass(t *testing.T) {
++	src := []byte("<?php\ntrait T {\n  function m() {\n    $a = 1;\n  }\n}\n")
++	root := parseSource(src, phpConfig)
++	if root.Children[0].Kind != "class" || root.Children[0].Name != "T" {
++		t.Fatalf("php trait should map to class T: %+v", root.Children[0])
++	}
++}
++
++func TestRustConfig_ImplFnGrouping(t *testing.T) {
++	src := []byte("impl Foo {\n    fn bar(&self) {\n        let x = 1;\n        let y = 2;\n        x + y\n    }\n}\n")
++	root := parseSource(src, rustConfig)
++	if root.Children[0].Kind != "class" || root.Children[0].Name != "Foo" {
++		t.Fatalf("rust impl should map to class Foo: %+v", root.Children[0])
++	}
++	a, _ := deepest(root, 3)
++	b, _ := deepest(root, 4)
++	if a.Kind != "func" || a.Name != "bar" || a.StartLine != b.StartLine {
++		t.Fatalf("rust fn body lines should share func bar: %+v / %+v", a, b)
++	}
++}
++
++func TestRustConfig_RawStringBraceIgnored(t *testing.T) {
++	src := []byte("fn f() {\n    let s = r#\"a { b } c\"#;\n    g();\n}\n")
++	root := parseSource(src, rustConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "func" {
++		t.Fatalf("rust raw-string braces must not break structure: %+v", root.Children)
++	}
++	if len(root.Children[0].Children) != 0 {
++		t.Fatalf("raw string must not create child blocks: %+v", root.Children[0].Children)
++	}
++}
++
++func TestRustConfig_MatchAndLoop(t *testing.T) {
++	src := []byte("fn f(v: i32) {\n    loop {\n        let x = 1;\n        break;\n    }\n}\n")
++	root := parseSource(src, rustConfig)
++	fn, ok := findFunc(root, "f")
++	if !ok || len(fn.Children) != 1 || fn.Children[0].Kind != "while" {
++		t.Fatalf("rust loop should map to a while block inside f: %+v", root.Children)
++	}
++}
++
++func TestBashConfig_FunctionForms(t *testing.T) {
++	src := []byte("greet() {\n  echo a\n  echo b\n}\nfunction hi {\n  echo c\n}\n")
++	root := parseSource(src, bashConfig)
++	if len(root.Children) != 2 {
++		t.Fatalf("want 2 bash functions, got %d: %+v", len(root.Children), root.Children)
++	}
++	if root.Children[0].Kind != "func" || root.Children[0].Name != "greet" {
++		t.Fatalf("name() form should be func greet: %+v", root.Children[0])
++	}
++	if root.Children[1].Kind != "func" || root.Children[1].Name != "hi" {
++		t.Fatalf("function form should be func hi: %+v", root.Children[1])
++	}
++}
++
++func TestBashConfig_ParamExpansionNotABlock(t *testing.T) {
++	// Unquoted ${var} must NOT open a block (and its closing } must not pop the
++	// enclosing function), so both body lines stay in the same func block.
++	src := []byte("greet() {\n  local x=${name}\n  local y=${other:-def}\n  echo $x $y\n}\n")
++	root := parseSource(src, bashConfig)
++	if len(root.Children) != 1 || root.Children[0].Name != "greet" {
++		t.Fatalf("param expansions corrupted the function block: %+v", root.Children)
++	}
++	if len(root.Children[0].Children) != 0 {
++		t.Fatalf("${...} must not create child blocks: %+v", root.Children[0].Children)
++	}
++	a, _ := deepest(root, 2)
++	b, _ := deepest(root, 3)
++	if a.Name != "greet" || a.StartLine != b.StartLine {
++		t.Fatalf("bash body lines should share the greet block: %+v / %+v", a, b)
++	}
++}
++
++func TestBashConfig_NestedParamExpansion(t *testing.T) {
++	src := []byte("f() {\n  echo ${a:-${b:-c}}\n  done_thing\n}\n")
++	root := parseSource(src, bashConfig)
++	if len(root.Children) != 1 || root.Children[0].Name != "f" || len(root.Children[0].Children) != 0 {
++		t.Fatalf("nested ${..${..}..} must not create blocks: %+v", root.Children)
++	}
++}
++
++// TestConfigs_AllNamed guards that every config carries its language name so the
++// build-tag selection and any future per-language assertion can rely on it.
++func TestConfigs_AllNamed(t *testing.T) {
++	for _, c := range []langConfig{tsConfig, phpConfig, rustConfig, bashConfig} {
++		if c.name == "" {
++			t.Fatalf("config missing name: %+v", c)
++		}
++		if len(c.keywords) == 0 {
++			t.Fatalf("config %q has no keywords", c.name)
++		}
++	}
++}
++
++func TestPHPConfig_HeredocBracesIgnored(t *testing.T) {
++	// PHP heredoc terminator EOT; (marker + semicolon) must close, so the sibling
++	// func `b` is not swallowed, and the braces inside the heredoc create no block.
++	src := []byte("<?php\nfunction a() {\n  $s = <<<EOT\n  not { a } block\nEOT;\n  return $s;\n}\nfunction b() {\n  return 2;\n}\n")
++	root := parseSource(src, phpConfig)
++	if len(root.Children) != 2 {
++		t.Fatalf("php heredoc must terminate at EOT; got %d children %+v", len(root.Children), root.Children)
++	}
++	if root.Children[0].Name != "a" || root.Children[1].Name != "b" {
++		t.Fatalf("want funcs a,b; got %+v", root.Children)
++	}
++	if len(root.Children[0].Children) != 0 {
++		t.Fatalf("heredoc body braces must not create blocks: %+v", root.Children[0].Children)
++	}
++}
+diff --git a/internal/astgroup/parsers/src/braceparser/go.mod b/internal/astgroup/parsers/src/braceparser/go.mod
+new file mode 100644
+index 00000000..7238c293
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/go.mod
+@@ -0,0 +1,9 @@
++// Isolated module: built only for GOOS=wasip1 via build.sh, once per target
++// language (-tags ts|php|rust|bash). A nested go.mod keeps `go build ./...` /
++// `go test ./...` in the parent reconcile module from compiling this wasm-only
++// command (it uses //go:wasmexport + package main). The language-agnostic
++// scanner (parse_core.go / configs.go) carries no build tag, so it is unit-
++// tested on the host via `go test` in this directory.
++module github.com/samestrin/atcr/internal/astgroup/parsers/src/braceparser
++
++go 1.26
+diff --git a/internal/astgroup/parsers/src/braceparser/main.go b/internal/astgroup/parsers/src/braceparser/main.go
+new file mode 100644
+index 00000000..9ed3805a
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/main.go
+@@ -0,0 +1,71 @@
++//go:build wasip1
++
++// This file is the WebAssembly reactor entrypoint for the brace parser: the
++// guest ABI (alloc/free/parse/emit + the pin map) plus the parse wasmexport that
++// drives the language-agnostic scanner in parse_core.go with the build-tag-
++// selected `active` config (active_*.go). Compiled GOOS=wasip1 GOARCH=wasm
++// -buildmode=c-shared, once per language (-tags ts|php|rust|bash), by build.sh.
++//
++// Memory protocol (matches the goparser/pyparser plugins and the astgroup host):
++//   - alloc(n) returns a guest pointer to n writable bytes, pinned against GC.
++//   - parse(ptr, n) parses src=memory[ptr:ptr+n] and returns (resPtr<<32|resLen).
++//   - free(ptr) releases a previously alloc'd pointer.
++//
++// This alloc/free/emit/pins ABI (~29 lines) is duplicated from the goparser and
++// pyparser plugins. Extracting it into a shared guest package is the right remedy
++// now that the parser source count is three (Go + Python + brace); it is captured
++// as a technical-debt item rather than done here because it needs cross-module
++// go.mod replace coordination in build.sh, which is out of this epic's
++// "add parsers and registry entries only" scope. See goparser/main.go for the
++// non-moving-GC assumption the pin map relies on.
++package main
++
++import (
++	"encoding/json"
++	"unsafe"
++)
++
++var pins = map[int32][]byte{}
++
++//go:wasmexport alloc
++func alloc(n int32) int32 {
++	if n <= 0 {
++		n = 1
++	}
++	b := make([]byte, n)
++	p := int32(uintptr(unsafe.Pointer(&b[0])))
++	pins[p] = b
++	return p
++}
++
++//go:wasmexport free
++func free(p int32) { delete(pins, p) }
++
++//go:wasmexport parse
++func parse(ptr int32, n int32) int64 {
++	buf, ok := pins[ptr]
++	if !ok || int(n) > len(buf) {
++		return emit(node{Kind: "error", Name: "bad pointer"})
++	}
++	src := buf[:n]
++
++	// Empty input has no structure to recover. Emit a bare file node — matching
++	// the goparser/pyparser empty-source contract — so the host treats empty
++	// source as an empty tree rather than a parse error.
++	if len(src) == 0 {
++		return emit(node{Kind: "file", StartLine: 1, EndLine: 1})
++	}
++	return emit(parseSource(src, active))
++}
++
++func emit(n node) int64 {
++	b, err := json.Marshal(n)
++	if err != nil {
++		b = []byte(`{"kind":"error","name":"marshal"}`)
++	}
++	p := alloc(int32(len(b)))
++	copy(pins[p], b)
++	return (int64(p) << 32) | int64(len(b))
++}
++
++func main() {}
+diff --git a/internal/astgroup/parsers/src/braceparser/parse_core.go b/internal/astgroup/parsers/src/braceparser/parse_core.go
+new file mode 100644
+index 00000000..5414489d
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/parse_core.go
+@@ -0,0 +1,522 @@
++// Package main is the shared brace-block structural parser. One Go source is
++// compiled once per target language (build tag ts|php|rust|bash) into a wasip1
++// reactor .wasm loaded by the internal/astgroup wazero host. It recovers block
++// structure for brace-delimited languages by tracking { } depth (plus string,
++// comment, and heredoc state so braces inside literals do not fabricate blocks)
++// and names each block from the nearest preceding block-introducing keyword.
++//
++// It is a heuristic structural parser for GROUPING ONLY, not a grammar: a
++// misparse degrades to line-proximity grouping for that finding and can never
++// break a reconcile. It emits the same kind/name/start_line/end_line/children
++// JSON contract as the Go and Python plugins, so the host stays language-
++// agnostic. Structure — not physical line text — drives the host's Merkle hash,
++// so blank-line / reformat drift does not change a block's hash.
++//
++// The scanner (this file) and the per-language tables (configs.go) carry no
++// build tag, so they are unit-tested on the host; only `active` selection
++// (active_*.go) and the wasm ABI (main.go) are build-constrained.
++package main
++
++import "strings"
++
++// node mirrors internal/astgroup.Node; the JSON tags are the wire contract.
++type node struct {
++	Kind      string `json:"kind"`
++	Name      string `json:"name,omitempty"`
++	StartLine int    `json:"start_line"`
++	EndLine   int    `json:"end_line"`
++	Children  []node `json:"children,omitempty"`
++}
++
++// blockKeyword maps a block-introducing keyword to the host block kind it
++// produces. named=true captures the identifier following the keyword as the
++// block's Name so sibling blocks of identical shape still hash distinctly.
++type blockKeyword struct {
++	word  string
++	kind  string
++	named bool
++}
++
++// langConfig is the per-language parameterization of the otherwise language-
++// agnostic brace scanner. The differences between the four target languages
++// live entirely in this data, never in the scanner's control flow.
++type langConfig struct {
++	name                string
++	lineComments        []string // line-comment introducers, e.g. {"//"} or {"//", "#"} or {"#"}
++	blockOpen           string   // block-comment open, e.g. "/*" ("" disables)
++	blockClose          string   // block-comment close, e.g. "*/"
++	strChars            string   // string delimiters, e.g. "\"'`" (ts) or "\"" (rust)
++	rawStrings          bool     // Rust raw strings: r"...", r#"..."#
++	charLiterals        bool     // Rust char literals 'x' / '\n' (so ' is not a string/lifetime)
++	arrowFunc           bool     // treat => as an (anonymous) function-block introducer (TS/JS)
++	funcParen           bool     // treat `ident(...) {` as a named function block (TS methods, Bash name())
++	heredocs            bool     // enable heredoc bodies (Bash <<, PHP <<<)
++	heredocOp           string   // heredoc operator: "<<" (Bash) or "<<<" (PHP)
++	paramExpand         bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
++	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
++	keywords            []blockKeyword
++}
++
++// scanner states.
++const (
++	stNormal = iota
++	stLineComment
++	stBlockComment
++	stString
++	stRawString
++	stHeredoc
++	stParamExp
++)
++
++// parseSource scans src under cfg and returns the structural node tree rooted at
++// a "file" node. It is allocation-light and single-pass; every byte advances the
++// cursor by at most a small fixed lookahead so line counting stays exact across
++// every state (comments, strings, heredoc bodies included).
++func parseSource(src []byte, cfg langConfig) node {
++	stack := []node{{Kind: "file", StartLine: 1, EndLine: 1}}
++	line := 1
++	lineStart := 0
++
++	var header []byte
++	headerLine := 1
++	headerStarted := false
++	parenDepth := 0 // open '(' run in the current header; a ';' inside it (C-style for) does not end the statement
++
++	resetHeader := func() {
++		header = header[:0]
++		headerStarted = false
++		parenDepth = 0
++	}
++	addHeader := func(b byte) {
++		if b == '\n' || b == '\r' || b == '\t' {
++			b = ' '
++		}
++		if b == ' ' && !headerStarted {
++			return
++		}
++		if !headerStarted {
++			headerStarted = true
++			headerLine = line
++		}
++		header = append(header, b)
++	}
++	openBlock := func() {
++		kind, name := classifyHeader(string(header), cfg)
++		start := line
++		if headerStarted {
++			start = headerLine
++		}
++		stack = append(stack, node{Kind: kind, Name: name, StartLine: start, EndLine: line})
++		resetHeader()
++	}
++	closeBlock := func() {
++		if len(stack) <= 1 {
++			resetHeader()
++			return
++		}
++		child := stack[len(stack)-1]
++		stack = stack[:len(stack)-1]
++		child.EndLine = line
++		parent := &stack[len(stack)-1]
++		parent.Children = append(parent.Children, child)
++		resetHeader()
++	}
++
++	state := stNormal
++	var strDelim byte
++	escape := false
++	rawHashes := 0
++	var heredocTag string
++	heredocStrip := false
++	heredocPending := false
++	paramDepth := 0
++
++	for i := 0; i < len(src); i++ {
++		c := src[i]
++
++		switch state {
++		case stLineComment:
++			if c == '\n' {
++				state = stNormal
++			}
++
++		case stBlockComment:
++			if cfg.blockClose != "" && matchAt(src, i, cfg.blockClose) {
++				i += len(cfg.blockClose) - 1
++				state = stNormal
++			}
++
++		case stString:
++			if escape {
++				escape = false
++			} else if c == '\\' {
++				escape = true
++			} else if c == strDelim {
++				state = stNormal
++			}
++
++		case stRawString:
++			if c == '"' && hasHashes(src, i+1, rawHashes) {
++				i += rawHashes
++				state = stNormal
++			}
++
++		case stHeredoc:
++			if c == '\n' {
++				if heredocLineMatches(src[lineStart:i], heredocTag, heredocStrip) {
++					state = stNormal
++				}
++			}
++
++		case stParamExp:
++			// Inside a ${...} parameter expansion: count nested braces so the
++			// matching close returns to normal without ever touching the block
++			// stack. Other chars (including a stray quote) are ignored — good
++			// enough for a structural pre-pass.
++			if c == '{' {
++				paramDepth++
++			} else if c == '}' {
++				paramDepth--
++				if paramDepth <= 0 {
++					state = stNormal
++				}
++			}
++
++		default: // stNormal
++			switch {
++			case cfg.blockOpen != "" && matchAt(src, i, cfg.blockOpen):
++				i += len(cfg.blockOpen) - 1
++				state = stBlockComment
++			case lineCommentStarts(src, i, cfg):
++				state = stLineComment
++			case cfg.rawStrings && c == 'r' && rawStringStart(src, i):
++				rawHashes = countHashes(src, i+1)
++				i += 1 + rawHashes // consume 'r' and the '#' run; the '"' is consumed next iter as part of the body
++				state = stRawString
++			case cfg.charLiterals && c == '\'':
++				if n := charLiteralLen(src, i); n > 0 {
++					i += n - 1 // consume whole 'x' / '\n' literal; not a string, not a lifetime
++				}
++				// else: a lone ' (lifetime / apostrophe) — treat as ordinary text.
++			case cfg.paramExpand && c == '$' && i+1 < len(src) && src[i+1] == '{':
++				i++ // consume the '{'; depth tracks nested ${...}
++				paramDepth = 1
++				state = stParamExp
++			case strings.IndexByte(cfg.strChars, c) >= 0:
++				state = stString
++				strDelim = c
++				escape = false
++			case cfg.heredocs && matchAt(src, i, cfg.heredocOp) && isHeredocStart(src, i+len(cfg.heredocOp)):
++				tag, strip, consumed := parseHeredoc(src, i+len(cfg.heredocOp))
++				heredocTag = tag
++				heredocStrip = strip
++				heredocPending = true
++				i += len(cfg.heredocOp) + consumed - 1
++			case c == '(':
++				parenDepth++
++				addHeader(c)
++			case c == ')':
++				if parenDepth > 0 {
++					parenDepth--
++				}
++				addHeader(c)
++			case c == '{':
++				openBlock()
++			case c == '}':
++				closeBlock()
++			case c == ';':
++				// A ';' ends the statement (resetting the header) only at paren
++				// depth 0. Inside an unclosed '(' run it is part of the header — a
++				// C-style `for (i=0; i<n; i++)` keeps its `for` keyword for naming.
++				if parenDepth == 0 {
++					resetHeader()
++				} else {
++					addHeader(c)
++				}
++			default:
++				addHeader(c)
++			}
++		}
++
++		if c == '\n' {
++			line++
++			lineStart = i + 1
++			if heredocPending {
++				heredocPending = false
++				state = stHeredoc
++			}
++		}
++	}
++
++	for len(stack) > 1 {
++		closeBlock()
++	}
++	root := stack[0]
++	if line > root.EndLine {
++		root.EndLine = line
++	}
++	return root
++}
++
++// classifyHeader maps the accumulated header text preceding a '{' to a block
++// kind and (optional) name, using the nearest preceding block-introducing
++// keyword. Falls back to an anonymous "block" so object/array literals and other
++// brace groups never false-merge with real declarations.
++func classifyHeader(h string, cfg langConfig) (kind, name string) {
++	bestIdx := -1
++	var bestKw blockKeyword
++	for _, kw := range cfg.keywords {
++		if idx := lastWholeWord(h, kw.word); idx > bestIdx {
++			bestIdx = idx
++			bestKw = kw
++		}
++	}
++	if cfg.arrowFunc {
++		if a := strings.LastIndex(h, "=>"); a > bestIdx {
++			return "func", ""
++		}
++	}
++	if bestIdx >= 0 {
++		if bestKw.named {
++			name = identAfter(h, bestIdx+len(bestKw.word))
++		}
++		return bestKw.kind, name
++	}
++	if cfg.funcParen {
++		if id, ok := funcParenName(h); ok {
++			return "func", id
++		}
++	}
++	return "block", ""
++}
++
++func isIdentByte(b byte) bool {
++	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
++}
++
++// lastWholeWord returns the index of the last whole-word occurrence of word in
++// h (identifier boundaries on both sides), or -1.
++func lastWholeWord(h, word string) int {
++	from := len(h)
++	for {
++		idx := strings.LastIndex(h[:from], word)
++		if idx < 0 {
++			return -1
++		}
++		beforeOK := idx == 0 || !isIdentByte(h[idx-1])
++		afterPos := idx + len(word)
++		afterOK := afterPos >= len(h) || !isIdentByte(h[afterPos])
++		if beforeOK && afterOK {
++			return idx
++		}
++		from = idx
++		if from == 0 {
++			return -1
++		}
++	}
++}
++
++// identAfter returns the identifier starting after pos (skipping spaces).
++func identAfter(h string, pos int) string {
++	for pos < len(h) && h[pos] == ' ' {
++		pos++
++	}
++	start := pos
++	for pos < len(h) && isIdentByte(h[pos]) {
++		pos++
++	}
++	return h[start:pos]
++}
++
++// funcParenName recognizes a `name(...)` function header (Bash name(), TS
++// methods): the trimmed header ends in ')', and the text before the first '('
++// is a single identifier.
++func funcParenName(h string) (string, bool) {
++	t := strings.TrimSpace(h)
++	if !strings.HasSuffix(t, ")") {
++		return "", false
++	}
++	open := strings.IndexByte(t, '(')
++	if open <= 0 {
++		return "", false
++	}
++	name := strings.TrimSpace(t[:open])
++	if name == "" {
++		return "", false
++	}
++	for i := 0; i < len(name); i++ {
++		if !isIdentByte(name[i]) {
++			return "", false
++		}
++	}
++	return name, true
++}
++
++func matchAt(src []byte, i int, s string) bool {
++	if s == "" || i+len(s) > len(src) {
++		return false
++	}
++	return string(src[i:i+len(s)]) == s
++}
++
++func matchAnyPrefix(src []byte, i int, prefixes []string) bool {
++	for _, p := range prefixes {
++		if matchAt(src, i, p) {
++			return true
++		}
++	}
++	return false
++}
++
++// lineCommentStarts reports whether a line comment begins at src[i]. For the "#"
++// marker under commentWordBoundary (Bash), the '#' must sit at a word boundary so
++// `$#`, `${#a}`, and `x#y` are NOT treated as comments — mishandling them would
++// swallow the rest of the line and can desync the brace stack.
++func lineCommentStarts(src []byte, i int, cfg langConfig) bool {
++	for _, m := range cfg.lineComments {
++		if !matchAt(src, i, m) {
++			continue
++		}
++		if m == "#" && cfg.commentWordBoundary && !hashAtWordBoundary(src, i) {
++			continue
++		}
++		return true
++	}
++	return false
++}
++
++// hashAtWordBoundary reports whether the byte before i is a shell word boundary,
++// i.e. a '#' there introduces a comment rather than continuing a token like `$#`.
++func hashAtWordBoundary(src []byte, i int) bool {
++	if i == 0 {
++		return true
++	}
++	switch src[i-1] {
++	case ' ', '\t', '\n', '\r', ';', '&', '|', '(', '`':
++		return true
++	}
++	return false
++}
++
++// rawStringStart reports whether src[i]=='r' begins a Rust raw string: r" or r#.
++func rawStringStart(src []byte, i int) bool {
++	// 'r' must not be the tail of an identifier (e.g. `for`, `var`).
++	if i > 0 && isIdentByte(src[i-1]) {
++		return false
++	}
++	j := i + 1
++	if j >= len(src) {
++		return false
++	}
++	if src[j] == '"' {
++		return true
++	}
++	for j < len(src) && src[j] == '#' {
++		j++
++	}
++	return j < len(src) && src[j] == '"' && j > i+1
++}
++
++func countHashes(src []byte, i int) int {
++	n := 0
++	for i+n < len(src) && src[i+n] == '#' {
++		n++
++	}
++	return n
++}
++
++// hasHashes reports whether src has exactly n '#' starting at i (used to close a
++// raw string r#"..."# with the matching hash count).
++func hasHashes(src []byte, i, n int) bool {
++	for k := 0; k < n; k++ {
++		if i+k >= len(src) || src[i+k] != '#' {
++			return false
++		}
++	}
++	return true
++}
++
++// charLiteralLen returns the byte length of a Rust char literal starting at the
++// opening quote src[i]=='\”, or 0 if it is not a char literal (e.g. a lifetime
++// 'a or a label). Handles '\n', '\\', '{', and any single char. Multi-byte
++// escapes like '\u{7f}' are not length-matched here; returning 0 leaves the lone
++// quote as ordinary text, which is safe (it cannot open a string in Rust mode).
++func charLiteralLen(src []byte, i int) int {
++	n := len(src)
++	if i+1 >= n {
++		return 0
++	}
++	if src[i+1] == '\\' {
++		// '\X' — escaped single char then closing quote.
++		if i+3 < n && src[i+3] == '\'' {
++			return 4
++		}
++		return 0
++	}
++	// 'X' — single char then closing quote.
++	if i+2 < n && src[i+2] == '\'' {
++		return 3
++	}
++	return 0
++}
++
++// isHeredocStart reports whether a heredoc tag plausibly begins at src[j] (after
++// the heredoc operator): an optional -/~ then optional quote then an identifier
++// char. Guards against treating a bit-shift `a << b` as a heredoc.
++func isHeredocStart(src []byte, j int) bool {
++	for j < len(src) && (src[j] == ' ' || src[j] == '\t') {
++		j++
++	}
++	if j < len(src) && (src[j] == '-' || src[j] == '~') {
++		j++
++	}
++	if j < len(src) && (src[j] == '\'' || src[j] == '"') {
++		j++
++	}
++	return j < len(src) && (isIdentByte(src[j]) && !(src[j] >= '0' && src[j] <= '9'))
++}
++
++// parseHeredoc reads a heredoc tag starting at src[j] (just after the operator),
++// returning the tag, whether leading tabs are stripped from the terminator
++// (<<-/<<~), and the number of bytes consumed from j.
++func parseHeredoc(src []byte, j int) (tag string, strip bool, consumed int) {
++	start := j
++	for j < len(src) && (src[j] == ' ' || src[j] == '\t') {
++		j++
++	}
++	if j < len(src) && (src[j] == '-' || src[j] == '~') {
++		strip = true
++		j++
++	}
++	if j < len(src) && (src[j] == '\'' || src[j] == '"') {
++		j++
++	}
++	ts := j
++	for j < len(src) && isIdentByte(src[j]) {
++		j++
++	}
++	tag = string(src[ts:j])
++	return tag, strip, j - start
++}
++
++// heredocLineMatches reports whether the given physical line is the heredoc
++// terminator. After optionally stripping leading tabs (<<-/<<~), the line must
++// equal tag, or begin with tag followed by a non-identifier byte — the latter
++// covers PHP's `EOT;` / `EOT,` / `EOT)` closings where the marker is followed by
++// punctuation. The non-identifier guard keeps `EOThername` from matching `EOT`.
++func heredocLineMatches(lineBytes []byte, tag string, strip bool) bool {
++	if tag == "" {
++		return false
++	}
++	s := strings.TrimRight(string(lineBytes), "\r")
++	if strip {
++		s = strings.TrimLeft(s, "\t")
++	}
++	if s == tag {
++		return true
++	}
++	if strings.HasPrefix(s, tag) {
++		return !isIdentByte(s[len(tag)])
++	}
++	return false
++}
+diff --git a/internal/astgroup/parsers/src/braceparser/parse_core_test.go b/internal/astgroup/parsers/src/braceparser/parse_core_test.go
+new file mode 100644
+index 00000000..d704cd45
+--- /dev/null
++++ b/internal/astgroup/parsers/src/braceparser/parse_core_test.go
+@@ -0,0 +1,251 @@
++package main
++
++import "testing"
++
++// The scanner tests drive the production tsConfig directly (see configs.go).
++
++// deepest returns the deepest block node whose inclusive line span covers line,
++// mirroring the host's CoveringBlock so unit tests can assert grouping intent.
++func deepest(n node, line int) (node, bool) {
++	if line < n.StartLine || line > n.EndLine {
++		return node{}, false
++	}
++	for _, c := range n.Children {
++		if d, ok := deepest(c, line); ok {
++			return d, true
++		}
++	}
++	return n, true
++}
++
++func firstChildKind(n node) string {
++	if len(n.Children) == 0 {
++		return ""
++	}
++	return n.Children[0].Kind
++}
++
++func TestParseSource_SimpleFunction(t *testing.T) {
++	src := []byte("function f() {\n  let x = 1\n  let y = 2\n}\n")
++	root := parseSource(src, tsConfig)
++	if root.Kind != "file" {
++		t.Fatalf("root kind = %q, want file", root.Kind)
++	}
++	if len(root.Children) != 1 {
++		t.Fatalf("root children = %d, want 1", len(root.Children))
++	}
++	fn := root.Children[0]
++	if fn.Kind != "func" || fn.Name != "f" {
++		t.Fatalf("func node = %q/%q, want func/f", fn.Kind, fn.Name)
++	}
++	if fn.StartLine != 1 || fn.EndLine != 4 {
++		t.Fatalf("func span = %d..%d, want 1..4", fn.StartLine, fn.EndLine)
++	}
++	// Both body lines must resolve to the same covering block (grouping intent).
++	a, _ := deepest(root, 2)
++	b, _ := deepest(root, 3)
++	if a.Kind != "func" || a.StartLine != b.StartLine {
++		t.Fatalf("body lines did not share the func block: %+v vs %+v", a, b)
++	}
++}
++
++func TestParseSource_SiblingFunctionsDistinct(t *testing.T) {
++	src := []byte("function a() {\n  x()\n}\nfunction b() {\n  y()\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 2 {
++		t.Fatalf("want 2 sibling funcs, got %d", len(root.Children))
++	}
++	a, _ := deepest(root, 2)
++	b, _ := deepest(root, 5)
++	if a.StartLine == b.StartLine {
++		t.Fatalf("distinct functions must not share a covering block")
++	}
++}
++
++func TestParseSource_NestedControlFlow(t *testing.T) {
++	src := []byte("function f(v) {\n  if (v) {\n    g()\n    h()\n  }\n}\n")
++	root := parseSource(src, tsConfig)
++	fn := root.Children[0]
++	if fn.Kind != "func" {
++		t.Fatalf("outer kind = %q, want func", fn.Kind)
++	}
++	if firstChildKind(fn) != "if" {
++		t.Fatalf("inner kind = %q, want if", firstChildKind(fn))
++	}
++	a, _ := deepest(root, 3)
++	b, _ := deepest(root, 4)
++	if a.Kind != "if" || a.StartLine != b.StartLine {
++		t.Fatalf("if-body lines should share the if block: %+v vs %+v", a, b)
++	}
++}
++
++func TestParseSource_BraceInStringIgnored(t *testing.T) {
++	src := []byte("function f() {\n  let s = \"a { b } c\"\n  let t = 'x } y {'\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 1 {
++		t.Fatalf("braces inside strings must not open blocks; got %d children", len(root.Children))
++	}
++	if got := len(root.Children[0].Children); got != 0 {
++		t.Fatalf("func should have no child blocks; got %d", got)
++	}
++}
++
++func TestParseSource_BraceInLineCommentIgnored(t *testing.T) {
++	src := []byte("function f() {\n  // } stray brace {\n  doWork()\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "func" {
++		t.Fatalf("line-comment braces must not break structure: %+v", root.Children)
++	}
++}
++
++func TestParseSource_BraceInBlockCommentIgnored(t *testing.T) {
++	src := []byte("function f() {\n  /* } stray { */\n  doWork()\n}\nfunction g() {\n  more()\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 2 {
++		t.Fatalf("block-comment braces must not break structure; got %d children", len(root.Children))
++	}
++}
++
++func TestParseSource_TemplateLiteralIgnored(t *testing.T) {
++	src := []byte("function f() {\n  let s = `a ${x} { } b`\n  done()\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 1 || len(root.Children[0].Children) != 0 {
++		t.Fatalf("template-literal braces must not open blocks: %+v", root.Children)
++	}
++}
++
++func TestParseSource_ArrowFunction(t *testing.T) {
++	src := []byte("const handler = (e) => {\n  process(e)\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 1 || root.Children[0].Kind != "func" {
++		t.Fatalf("arrow function should be a func block: %+v", root.Children)
++	}
++}
++
++func TestParseSource_ObjectLiteralIsAnonymousBlock(t *testing.T) {
++	// An object literal assigned to a variable must NOT be named func/class; it
++	// becomes an anonymous block so it never false-merges with a real declaration.
++	src := []byte("const cfg = {\n  a: 1,\n  b: 2,\n}\n")
++	root := parseSource(src, tsConfig)
++	if len(root.Children) != 1 {
++		t.Fatalf("want 1 block child, got %d", len(root.Children))
++	}
++	if root.Children[0].Kind != "block" {
++		t.Fatalf("object literal kind = %q, want block", root.Children[0].Kind)
++	}
++}
++
++func TestParseSource_EmptyAndDegenerate(t *testing.T) {
++	for _, src := range []string{"", "\n\n\n", "   ", "// just a comment\n"} {
++		root := parseSource([]byte(src), tsConfig)
++		if root.Kind != "file" {
++			t.Fatalf("empty/degenerate %q: root kind %q, want file", src, root.Kind)
++		}
++		if len(root.Children) != 0 {
++			t.Fatalf("empty/degenerate %q: want 0 children, got %d", src, len(root.Children))
++		}
++	}
++}
++
++func TestParseSource_UnbalancedBracesDoNotPanic(t *testing.T) {
++	// Extra '}' and an unclosed '{' must both degrade gracefully (no panic, file root).
++	for _, src := range []string{"}}}\n", "function f() {\n  if (x) {\n", "{{{{\n"} {
++		root := parseSource([]byte(src), tsConfig)
++		if root.Kind != "file" {
++			t.Fatalf("unbalanced %q: root kind %q", src, root.Kind)
++		}
++	}
++}
++
++func TestParseSource_BashHeredocBracesIgnored(t *testing.T) {
++	bash := langConfig{
++		name:         "bash",
++		lineComments: []string{"#"},
++		strChars:     "\"'",
++		funcParen:    true,
++		heredocs:     true,
++		heredocOp:    "<<",
++		keywords:     []blockKeyword{{word: "function", kind: "func", named: true}},
++	}
++	// The heredoc terminator is at column 0 (real bash rules), so the heredoc
++	// closes and parsing resumes — the sibling func `post` must NOT be swallowed.
++	src := []byte("greet() {\n  cat <<EOF\n  { braces } { in } heredoc\nEOF\n  echo done\n}\npost() {\n  echo hi\n}\n")
++	root := parseSource(src, bash)
++	if len(root.Children) != 2 {
++		t.Fatalf("heredoc must terminate at column-0 tag so `post` is a sibling: got %d children %+v", len(root.Children), root.Children)
++	}
++	if root.Children[0].Kind != "func" || root.Children[0].Name != "greet" {
++		t.Fatalf("first child = %q/%q, want func/greet", root.Children[0].Kind, root.Children[0].Name)
++	}
++	if len(root.Children[0].Children) != 0 {
++		t.Fatalf("heredoc body must not create child blocks: %+v", root.Children[0].Children)
++	}
++	if root.Children[1].Name != "post" {
++		t.Fatalf("second child = %q, want post", root.Children[1].Name)
++	}
++}
++
++func TestParseSource_RustCharLiteralBraceIgnored(t *testing.T) {
++	rust := langConfig{
++		name:         "rust",
++		lineComments: []string{"//"},
++		blockOpen:    "/*",
++		blockClose:   "*/",
++		strChars:     "\"",
++		rawStrings:   true,
++		charLiterals: true,
++		keywords: []blockKeyword{
++			{word: "fn", kind: "func", named: true},
++			{word: "impl", kind: "class", named: true},
++		},
++	}
++	// The char literals '{' and '}' and the lifetime 'a must not affect brace depth.
++	src := []byte("fn f<'a>(x: &'a str) {\n  let open = '{';\n  let close = '}';\n  use_it(x);\n}\n")
++	root := parseSource(src, rust)
++	if len(root.Children) != 1 || root.Children[0].Kind != "func" || root.Children[0].Name != "f" {
++		t.Fatalf("rust char-literal/lifetime handling broke the fn block: %+v", root.Children)
++	}
++}
++
++func TestParseSource_CStyleForKeepsForKind(t *testing.T) {
++	// The semicolons inside the C-style for header must not reset the header, so
++	// the loop body is classified "for" (not anonymous "block").
++	src := []byte("function f() {\n  for (let i = 0; i < 3; i++) {\n    work(i)\n  }\n}\n")
++	root := parseSource(src, tsConfig)
++	fn := root.Children[0]
++	if fn.Kind != "func" || len(fn.Children) != 1 {
++		t.Fatalf("want one child under func f, got %+v", fn)
++	}
++	if fn.Children[0].Kind != "for" {
++		t.Fatalf("C-style for body kind = %q, want for", fn.Children[0].Kind)
++	}
++}
++
++func TestBashConfig_DollarHashNotComment(t *testing.T) {
++	bash := bashConfig
++	// `$#` must NOT start a comment; the multi-line group `{ ... }` opened after
++	// `&&` must therefore be balanced so the function f still spans to its real
++	// closing brace (no brace-stack desync swallowing `echo done`).
++	src := []byte("f() {\n  [ $# -gt 0 ] && {\n    echo yes\n  }\n  echo done\n}\n")
++	root := parseSource(src, bash)
++	if len(root.Children) != 1 || root.Children[0].Name != "f" {
++		t.Fatalf("want single func f, got %+v", root.Children)
++	}
++	if root.Children[0].EndLine != 6 {
++		t.Fatalf("func f should span to its real closing brace on line 6, got EndLine=%d", root.Children[0].EndLine)
++	}
++	// `echo done` (line 5) is directly in f, after the inner group closed on line 4.
++	d, _ := deepest(root, 5)
++	if d.Kind != "func" || d.Name != "f" {
++		t.Fatalf("line 5 should resolve to func f, got %+v", d)
++	}
++}
++
++func TestBashConfig_HashCommentStillWorks(t *testing.T) {
++	// A real comment (# at a word boundary) is still stripped; its brace is ignored.
++	src := []byte("f() {\n  # a comment with a } brace\n  echo hi\n}\n")
++	root := parseSource(src, bashConfig)
++	if len(root.Children) != 1 || root.Children[0].Name != "f" || len(root.Children[0].Children) != 0 {
++		t.Fatalf("boundary # comment must still be stripped: %+v", root.Children)
++	}
++}
+diff --git a/internal/astgroup/parsers/ts.wasm b/internal/astgroup/parsers/ts.wasm
+new file mode 100644
+index 00000000..3cafc0ec
+Binary files /dev/null and b/internal/astgroup/parsers/ts.wasm differ
+diff --git a/internal/astgroup/testdata/corpus.json b/internal/astgroup/testdata/corpus.json
+index a9806179..59b92431 100644
+--- a/internal/astgroup/testdata/corpus.json
++++ b/internal/astgroup/testdata/corpus.json
+@@ -174,5 +174,213 @@
+     "a_line": 5,
+     "b_line": 8,
+     "same_block": false
++  },
++  {
++    "name": "ts_same_func_small_drift",
++    "file": "a.ts",
++    "source": "function target() {\n  const x = 1\n  const y = 2\n  return x + y\n}\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "ts_same_func_large_drift_blank_lines",
++    "file": "a.ts",
++    "source": "function target() {\n  const x = 1\n\n\n\n\n  const y = 2\n  return x + y\n}\n",
++    "a_line": 2,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "ts_same_if_block",
++    "file": "a.ts",
++    "source": "function f(v) {\n  if (v) {\n    const a = v\n    const b = a * 2\n    return b\n  }\n  return 0\n}\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "ts_different_funcs_adjacent_lines",
++    "file": "a.ts",
++    "source": "function a() {\n  const x = 1\n  return x\n}\nfunction b() {\n  const y = 2\n  return y\n}\n",
++    "a_line": 3,
++    "b_line": 6,
++    "same_block": false
++  },
++  {
++    "name": "ts_different_funcs_far_apart",
++    "file": "a.ts",
++    "source": "function a() {\n  const x = 1\n}\n\n\nfunction b() {\n  const y = 2\n}\n",
++    "a_line": 2,
++    "b_line": 7,
++    "same_block": false
++  },
++  {
++    "name": "ts_off_by_one_same_func",
++    "file": "a.ts",
++    "source": "function calc() {\n  let sum = 0\n  sum += 1\n  return sum\n}\n",
++    "a_line": 2,
++    "b_line": 3,
++    "same_block": true
++  },
++  {
++    "name": "ts_block_comment_drift_same_func",
++    "file": "a.ts",
++    "source": "function handler() {\n  const a = compute()\n  /* a long\n     multi-line\n     comment that\n     drifts lines */\n  const b = a + 1\n  return b\n}\n",
++    "a_line": 2,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "ts_string_brace_no_overmerge",
++    "file": "a.ts",
++    "source": "function ra() {\n  const s = \"} {\"\n  return s\n}\nfunction rb() {\n  const t = 2\n  return t\n}\n",
++    "a_line": 2,
++    "b_line": 6,
++    "same_block": false
++  },
++  {
++    "name": "php_same_func_small_drift",
++    "file": "a.php",
++    "source": "<?php\nfunction target() {\n  $x = 1;\n  $y = 2;\n  return $x + $y;\n}\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "php_same_method_large_drift",
++    "file": "a.php",
++    "source": "<?php\nclass C {\n  function m() {\n    $a = 1;\n\n\n\n    $b = 2;\n    return $a + $b;\n  }\n}\n",
++    "a_line": 4,
++    "b_line": 9,
++    "same_block": true
++  },
++  {
++    "name": "php_different_methods_adjacent",
++    "file": "a.php",
++    "source": "<?php\nclass C {\n  function m() {\n    return 1;\n  }\n  function n() {\n    return 2;\n  }\n}\n",
++    "a_line": 4,
++    "b_line": 7,
++    "same_block": false
++  },
++  {
++    "name": "php_heredoc_no_overmerge",
++    "file": "a.php",
++    "source": "<?php\nfunction a() {\n  $s = <<<EOT\n  not { a } block\nEOT;\n  return $s;\n}\nfunction b() {\n  return 2;\n}\n",
++    "a_line": 6,
++    "b_line": 9,
++    "same_block": false
++  },
++  {
++    "name": "php_off_by_one_same_func",
++    "file": "a.php",
++    "source": "<?php\nfunction calc() {\n  $sum = 0;\n  $sum += 1;\n  return $sum;\n}\n",
++    "a_line": 3,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "php_foreach_body",
++    "file": "a.php",
++    "source": "<?php\nfunction loop($items) {\n  $total = 0;\n  foreach ($items as $it) {\n    $total += $it;\n    log($it);\n  }\n  return $total;\n}\n",
++    "a_line": 5,
++    "b_line": 6,
++    "same_block": true
++  },
++  {
++    "name": "rust_same_fn_small_drift",
++    "file": "a.rs",
++    "source": "fn target() {\n    let x = 1;\n    let y = 2;\n    let _ = x + y;\n}\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "rust_same_fn_large_drift_blank_lines",
++    "file": "a.rs",
++    "source": "fn target() {\n    let x = 1;\n\n\n\n\n    let y = 2;\n    let _ = x + y;\n}\n",
++    "a_line": 2,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "rust_impl_method_grouping",
++    "file": "a.rs",
++    "source": "impl Foo {\n    fn bar(&self) {\n        let a = 1;\n        let b = 2;\n        a + b\n    }\n}\n",
++    "a_line": 3,
++    "b_line": 5,
++    "same_block": true
++  },
++  {
++    "name": "rust_different_fns_adjacent",
++    "file": "a.rs",
++    "source": "fn a() {\n    let x = 1;\n}\nfn b() {\n    let y = 2;\n}\n",
++    "a_line": 2,
++    "b_line": 5,
++    "same_block": false
++  },
++  {
++    "name": "rust_char_literal_brace_same_fn",
++    "file": "a.rs",
++    "source": "fn f() {\n    let open = '{';\n\n\n\n    let close = '}';\n    use_it();\n}\n",
++    "a_line": 2,
++    "b_line": 7,
++    "same_block": true
++  },
++  {
++    "name": "rust_raw_string_no_overmerge",
++    "file": "a.rs",
++    "source": "fn ra() {\n    let s = r#\"} {\"#;\n    done();\n}\nfn rb() {\n    let t = 2;\n}\n",
++    "a_line": 2,
++    "b_line": 6,
++    "same_block": false
++  },
++  {
++    "name": "bash_same_func_small_drift",
++    "file": "a.sh",
++    "source": "greet() {\n  local x=1\n  local y=2\n  echo $x $y\n}\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "bash_same_func_large_drift_blank_lines",
++    "file": "a.sh",
++    "source": "greet() {\n  local x=1\n\n\n\n\n  local y=2\n  echo $x $y\n}\n",
++    "a_line": 2,
++    "b_line": 8,
++    "same_block": true
++  },
++  {
++    "name": "bash_function_keyword_form",
++    "file": "a.bash",
++    "source": "function hello {\n  local a=1\n  local b=2\n  echo done\n}\n",
++    "a_line": 2,
++    "b_line": 4,
++    "same_block": true
++  },
++  {
++    "name": "bash_different_funcs_adjacent",
++    "file": "a.sh",
++    "source": "greet() {\n  echo a\n}\nhi() {\n  echo b\n}\n",
++    "a_line": 2,
++    "b_line": 5,
++    "same_block": false
++  },
++  {
++    "name": "bash_param_expansion_same_func",
++    "file": "a.sh",
++    "source": "greet() {\n  local x=${name}\n\n\n\n  local y=${other:-def}\n  echo $x $y\n}\n",
++    "a_line": 2,
++    "b_line": 7,
++    "same_block": true
++  },
++  {
++    "name": "bash_heredoc_no_overmerge",
++    "file": "a.sh",
++    "source": "greet() {\n  cat <<EOF\n  { not a block }\nEOF\n  echo done\n}\npost() {\n  echo hi\n}\n",
++    "a_line": 5,
++    "b_line": 8,
++    "same_block": false
+   }
+ ]

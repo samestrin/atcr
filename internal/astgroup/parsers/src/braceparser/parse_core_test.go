@@ -249,3 +249,223 @@ func TestBashConfig_HashCommentStillWorks(t *testing.T) {
 		t.Fatalf("boundary # comment must still be stripped: %+v", root.Children)
 	}
 }
+
+func TestParseSource_BashParamExpQuotedBracesIgnored(t *testing.T) {
+	// A closing brace inside a quoted string inside ${...} must not exit the
+	// parameter-expansion state prematurely; the enclosing function must keep
+	// its real closing brace.
+	src := []byte("f() { x=${var/\"}\"/}; echo done; }\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("quoted brace inside ${...} must not desync parser; got %d children %+v", len(root.Children), root.Children)
+	}
+	if root.Children[0].Kind != "func" || root.Children[0].Name != "f" {
+		t.Fatalf("expected func/f, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+	if root.Children[0].EndLine != 1 {
+		t.Fatalf("func f should end on line 1, got EndLine=%d", root.Children[0].EndLine)
+	}
+}
+
+func TestParseSource_ControlHeaderInlineArrow(t *testing.T) {
+	// An inline arrow inside a control-flow header must not flip the block kind
+	// to func; the loop/switch body should keep its control kind.
+	src := []byte("function outer() {\n  for (const x of items.map(i => i.id)) {\n    work(x)\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one outer block, got %+v", root.Children)
+	}
+	outer := root.Children[0]
+	if outer.Kind != "func" || outer.Name != "outer" {
+		t.Fatalf("expected outer func/outer, got %q/%q", outer.Kind, outer.Name)
+	}
+	if len(outer.Children) != 1 || outer.Children[0].Kind != "for" {
+		t.Fatalf("inline arrow in for header must not classify as func: %+v", outer.Children)
+	}
+}
+
+func TestParseSource_ArrowFunctionStillFunc(t *testing.T) {
+	src := []byte("const f = () => {\n  work()\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "func" {
+		t.Fatalf("arrow function should still be func: %+v", root.Children)
+	}
+}
+
+func TestParseSource_TSCatchClauseNotFunc(t *testing.T) {
+	// TypeScript catch clauses look like `catch (e) {` and must not be
+	// misclassified as a function named catch by funcParenName.
+	src := []byte("try {\n  work()\n} catch (e) {\n  handle()\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 2 {
+		t.Fatalf("try/catch should produce two blocks, got %d children %+v", len(root.Children), root.Children)
+	}
+	for _, c := range root.Children {
+		if c.Kind != "block" {
+			t.Fatalf("catch clause should be anonymous block, got %q/%q", c.Kind, c.Name)
+		}
+	}
+}
+
+func TestParseSource_RustGenericImplName(t *testing.T) {
+	// Generic impls must extract the type name after skipping the generic list.
+	src := []byte("impl<T> Foo<T> {\n  fn bar() {}\n}\n")
+	root := parseSource(src, rustConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one impl block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "class" || root.Children[0].Name != "Foo" {
+		t.Fatalf("expected class/Foo, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
+func TestParseSource_RustImplForName(t *testing.T) {
+	// `impl Trait for Foo` must use Foo as the name so unrelated impls of
+	// identical shape do not false-merge.
+	src := []byte("impl Trait for Foo {\n  fn bar() {}\n}\n")
+	root := parseSource(src, rustConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one impl block, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "class" || root.Children[0].Name != "Foo" {
+		t.Fatalf("expected class/Foo, got %q/%q", root.Children[0].Kind, root.Children[0].Name)
+	}
+}
+
+func TestParseSource_TSModifierMethodNamed(t *testing.T) {
+	// TS method modifiers must not defeat funcParenName; the actual method name
+	// should still be recovered.
+	src := []byte("class C {\n  async foo() {\n    work()\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "class" {
+		t.Fatalf("expected class, got %+v", root.Children)
+	}
+	if len(root.Children[0].Children) != 1 {
+		t.Fatalf("expected one method, got %+v", root.Children[0].Children)
+	}
+	m := root.Children[0].Children[0]
+	if m.Kind != "func" || m.Name != "foo" {
+		t.Fatalf("expected func/foo, got %q/%q", m.Kind, m.Name)
+	}
+}
+
+func TestParseSource_RustUnicodeEscapeCharLiteral(t *testing.T) {
+	// Rust unicode escapes like '\\u{7f}' are char literals; their braces must
+	// not affect block depth.
+	src := []byte("fn f() { let c = '\\u{7f}'; }")
+	root := parseSource(src, rustConfig)
+	if len(root.Children) != 1 || len(root.Children[0].Children) != 0 {
+		t.Fatalf("unicode escape in char literal must not create child blocks: %+v", root.Children)
+	}
+}
+
+func TestParseSource_PHPFlexibleHeredoc(t *testing.T) {
+	php := langConfig{
+		name:         "php",
+		lineComments: []string{"//", "#"},
+		blockOpen:    "/*",
+		blockClose:   "*/",
+		strChars:     "\"'",
+		heredocs:     true,
+		heredocOp:    "<<<",
+		keywords:     []blockKeyword{{word: "function", kind: "func", named: true}},
+	}
+	// PHP 7.3+ allows the closing marker to be indented with spaces/tabs.
+	src := []byte("function a() {\n  echo <<<EOT\n  body\n  EOT;\n}\nfunction b() {\n  echo hi;\n}\n")
+	root := parseSource(src, php)
+	if len(root.Children) != 2 {
+		t.Fatalf("indented heredoc closer must terminate; got %d children %+v", len(root.Children), root.Children)
+	}
+	if root.Children[1].Name != "b" {
+		t.Fatalf("second function should be b, got %q", root.Children[1].Name)
+	}
+}
+
+func TestParseSource_BashBraceExpansionIgnored(t *testing.T) {
+	// Bash brace expansion {a,b} / file{1,2} / {1..10} has no leading $ and must
+	// NOT open a block: its braces are expansion syntax, not a group command. The
+	// enclosing function must stay a single block with no spurious child.
+	src := []byte("f() {\n  cp a{1,2}\n  echo {x,y,z}\n  for i in {1..3}; do :; done\n  echo done\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" {
+		t.Fatalf("want single func f, got %+v", root.Children)
+	}
+	if got := len(root.Children[0].Children); got != 0 {
+		t.Fatalf("brace expansion must not create child blocks; got %d: %+v", got, root.Children[0].Children)
+	}
+	if root.Children[0].EndLine != 6 {
+		t.Fatalf("func f should span to its real closing brace on line 6, got EndLine=%d", root.Children[0].EndLine)
+	}
+}
+
+func TestParseSource_BashGroupCommandStillBlock(t *testing.T) {
+	// A real `{ ...; }` group command (space after the brace) must still open a
+	// block — the expansion special-case must not swallow it.
+	src := []byte("f() {\n  [ $# -gt 0 ] && {\n    echo yes\n  }\n  echo done\n}\n")
+	root := parseSource(src, bashConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" {
+		t.Fatalf("want single func f, got %+v", root.Children)
+	}
+	if got := len(root.Children[0].Children); got != 1 {
+		t.Fatalf("group command must still open one block; got %d: %+v", got, root.Children[0].Children)
+	}
+}
+
+func TestParseSource_PHPAttributeNotComment(t *testing.T) {
+	// A PHP 8 attribute `#[Route(...)]` before a declaration on the same line must
+	// NOT be swallowed as a `#` line comment; the function block must still open.
+	src := []byte("#[Route('/x')] function f() {\n  body();\n}\n")
+	root := parseSource(src, phpConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "func" || root.Children[0].Name != "f" {
+		t.Fatalf("PHP attribute must not swallow the function: %+v", root.Children)
+	}
+}
+
+func TestParseSource_PHPHashCommentStillWorks(t *testing.T) {
+	// A real `#` comment (not followed by `[`) is still stripped.
+	src := []byte("function f() {\n  # a } comment\n  body();\n}\n")
+	root := parseSource(src, phpConfig)
+	if len(root.Children) != 1 || root.Children[0].Name != "f" || len(root.Children[0].Children) != 0 {
+		t.Fatalf("PHP # comment must still be stripped: %+v", root.Children)
+	}
+}
+
+func TestParseSource_TypedArrowAnnotationIsBlock(t *testing.T) {
+	// `const x: () => void = { ... }` is an object literal assigned to a typed
+	// const; the `=>` is a return-type annotation followed by an `=` assignment,
+	// not an arrow function. It must be an anonymous block, not a func.
+	src := []byte("const x: () => void = {\n  a: 1,\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("want 1 child, got %+v", root.Children)
+	}
+	if root.Children[0].Kind != "block" {
+		t.Fatalf("typed-arrow-annotation object literal kind = %q, want block", root.Children[0].Kind)
+	}
+}
+
+func TestParseSource_BashArithmeticShiftNotHeredoc(t *testing.T) {
+	// `<<` inside bash arithmetic `$((...))` / `((...))` is a left-shift, NOT a
+	// heredoc. The scanner must not enter heredoc state (which would swallow the
+	// rest of the file). Both the spaced and no-space forms must stay structural.
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"spaced-expansion", "f() {\n  echo $(( 1 << n ))\n  echo done\n}\ng() {\n  echo hi\n}\n"},
+		{"nospace-assign", "f() {\n  x=$((a<<bits))\n  echo done\n}\ng() {\n  echo hi\n}\n"},
+		{"arith-command", "f() {\n  (( y = 1 << 3 ))\n  echo done\n}\ng() {\n  echo hi\n}\n"},
+	}
+	for _, tc := range cases {
+		root := parseSource([]byte(tc.src), bashConfig)
+		if len(root.Children) != 2 {
+			t.Fatalf("%s: arithmetic shift must not start a heredoc; want 2 funcs, got %d: %+v", tc.name, len(root.Children), root.Children)
+		}
+		if root.Children[0].Name != "f" || root.Children[1].Name != "g" {
+			t.Fatalf("%s: want funcs f and g, got %q and %q", tc.name, root.Children[0].Name, root.Children[1].Name)
+		}
+		if root.Children[0].EndLine != 4 {
+			t.Fatalf("%s: func f should end at its real brace on line 4, got EndLine=%d", tc.name, root.Children[0].EndLine)
+		}
+	}
+}
