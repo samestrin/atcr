@@ -8,10 +8,10 @@ This file is a staging area for small technical debt items discovered during dev
 |----------|------|----------|----------|
 | CRITICAL | 0 | 0 | 0 |
 | HIGH | 0 | 2 | 0 |
-| MEDIUM | 0 | 26 | 0 |
-| LOW | 0 | 25 | 0 |
+| MEDIUM | 2 | 26 | 0 |
+| LOW | 4 | 25 | 0 |
 
-**Last Modified:** 2026-06-28 | **Open Items:** 0 | **Deferred Items:** 53 | **Resolved Items:** 0 | **Total Items:** 53
+**Last Modified:** 2026-06-28 | **Open Items:** 6 | **Deferred Items:** 53 | **Resolved Items:** 0 | **Total Items:** 59
 
 ## Directory Structure
 
@@ -61,6 +61,17 @@ The shard schema, field semantics, and the YAML-safety guarantees are documented
 in [`items/SCHEMA.md`](items/SCHEMA.md). Round-trip fidelity (table → shards →
 table with zero data loss) is proven by the Go test suite in
 `internal/tdmigrate/`, not by a committed generated artifact.
+
+### [2026-06-28] From Sprint: epic-13.4
+
+| Group | | Severity | File | Problem | Fix | Category | Est Minutes | Source |
+|-------|---|----------|------|---------|-----|----------|-------------|--------|
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/main.go:20 | The alloc/free/emit/pins guest ABI is duplicated across three parser sources (goparser, pyparser, braceparser); the threshold the existing code documents for extraction (parser count > 2) is now crossed | Extract the shared guest ABI into a package referenced via go.mod replace directives coordinated in build.sh | MAINTAINABILITY | 60 | execute-epic-stage3 |
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/configs.go:99 | Bash brace expansion {a,b} (no leading $) opens a spurious anonymous block; it is balanced so it cannot corrupt the brace stack, but can split two findings in the same function across different blocks, denting bash grouping recall on brace-expansion-heavy lines | Treat a comma-containing brace group as opaque in bash, or accept the proximity fallback for those findings | EDGE_CASES | 30 | execute-epic-stage3 |
+| 1 | [ ] | MEDIUM | internal/astgroup/parsers/src/braceparser/parse_core.go:205 | TS/JS regex literals are not tracked as a scanner state; a regex with an unbalanced brace (/\}/ or /{[^}]*}/) is scanned in normal state so its } pops a real block, desyncing structure and risking false-merges the host cannot detect | Add a regex-literal state for ts that detects / in value position (prev significant token in ( = , : [ { ; or a keyword) and treats the body opaque with [ ] char-class and \ escape handling; deferred as it is a known-hard JS regex/division disambiguation needing its own design+test pass | CORRECTNESS | 60 | execute-epic-independent |
+| 1 | [ ] | MEDIUM | internal/astgroup/parsers/src/braceparser/go.mod:1 | The braceparser nested go.mod (as with goparser/pyparser) keeps its scanner unit tests out of root go test ./..., so CI only exercises the prebuilt .wasm via the corpus and scanner source can silently drift from the committed binary | Add a CI step that runs go test inside each parsers/src/<lang> module and ideally rebuilds the .wasm to diff against committed bytes so scanner regressions gate PRs | OBSERVABILITY | 45 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/parse_core.go:245 | TS arrowFunc treats any header containing => as a func, so an object literal with a function-type annotation (const x: () => void = {) is mislabeled func instead of anonymous block | Treat => as a function introducer only when no = assignment follows it in the header (the substring after the last => contains no =) | CORRECTNESS | 20 | execute-epic-independent |
+| 1 | [ ] | LOW | internal/astgroup/parsers/src/braceparser/configs.go:45 | PHP # is always a line comment, so a PHP 8 attribute inline before code on the same line (#[Route] function f() {) is swallowed as a comment and its block missed | Do not start a # line comment when the next char is [ (PHP attribute) | EDGE_CASES | 20 | execute-epic-independent |
 
 ### [2026-06-28] From Sprint: epic-13.3
 
