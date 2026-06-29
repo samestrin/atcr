@@ -95,13 +95,13 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 
 	// Precompute each node's total out-weight and its sorted neighbor list so the
 	// inner accumulation order is fixed.
-	outWeight := make(map[string]int, n)
+	outWeight := make(map[string]float64, n)
 	neighbors := make(map[string][]string, n)
 	for _, u := range nodes {
-		w := 0
+		w := 0.0
 		nbrs := make([]string, 0, len(g.adj[u]))
 		for v, c := range g.adj[u] {
-			w += c
+			w += float64(c)
 			nbrs = append(nbrs, v)
 		}
 		sort.Strings(nbrs)
@@ -134,7 +134,7 @@ func (g *agreementGraph) pageRank() map[string]float64 {
 			inflow := 0.0
 			for _, v := range neighbors[u] {
 				if ow := outWeight[v]; ow > 0 {
-					inflow += float64(g.adj[v][u]) / float64(ow) * rank[v]
+					inflow += float64(g.adj[v][u]) / ow * rank[v]
 				}
 			}
 			nv := teleport + danglingShare + pageRankDamping*inflow
