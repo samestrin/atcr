@@ -358,3 +358,25 @@ func TestParseSource_RustUnicodeEscapeCharLiteral(t *testing.T) {
 		t.Fatalf("unicode escape in char literal must not create child blocks: %+v", root.Children)
 	}
 }
+
+func TestParseSource_PHPFlexibleHeredoc(t *testing.T) {
+	php := langConfig{
+		name:         "php",
+		lineComments: []string{"//", "#"},
+		blockOpen:    "/*",
+		blockClose:   "*/",
+		strChars:     "\"'",
+		heredocs:     true,
+		heredocOp:    "<<<",
+		keywords:     []blockKeyword{{word: "function", kind: "func", named: true}},
+	}
+	// PHP 7.3+ allows the closing marker to be indented with spaces/tabs.
+	src := []byte("function a() {\n  echo <<<EOT\n  body\n  EOT;\n}\nfunction b() {\n  echo hi;\n}\n")
+	root := parseSource(src, php)
+	if len(root.Children) != 2 {
+		t.Fatalf("indented heredoc closer must terminate; got %d children %+v", len(root.Children), root.Children)
+	}
+	if root.Children[1].Name != "b" {
+		t.Fatalf("second function should be b, got %q", root.Children[1].Name)
+	}
+}
