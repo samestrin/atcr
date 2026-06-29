@@ -1,3 +1,20 @@
+## [Technical Debt] - 2026-06-29
+
+### Fixed
+
+- Fixed PHP attributes (`#[...]`) being swallowed as comments in the brace parser.
+- Corrected typed arrow annotations (`foo<T>() => ...`) being mislabeled as functions.
+- Stopped Bash arithmetic shifts (`<<` / `>>`) from being misdetected as heredoc starts.
+- Added handling for Bash brace expansion so it no longer opens spurious blocks.
+- Fixed heredoc strip-tab logic so PHP `<<<` heredocs no longer incorrectly strip leading tabs.
+- Fixed multi-byte escape sequences (`\u{7f}`) being dropped due to `charLiteralLen` returning zero.
+- Relaxed `funcParenName` so TypeScript method modifiers no longer defeat function detection.
+- Fixed `identAfter` to skip generic parameters after keywords like `impl`, preserving the real identifier name.
+- Stopped `classifyHeader` from treating `catch (e)` as a function when TypeScript `funcParen` is enabled.
+- Corrected `classifyHeader` arrow-function detection to consider arrow position rather than just the last `=>` index.
+- Reduced inefficient string allocation in the brace parser core scanner.
+- Documented regex-as-unhandled in the brace parser normal state and added a dedicated CI job for the brace parser module.
+
 ## [13.4.0] - 2026-06-28
 
 ### Added

@@ -85,3 +85,33 @@ jobs:
       - name: Run Module Tests
         # root `go test ./...` does NOT cross ./reconcile's go.mod boundary
         run: go test ./...
+
+  # PR-time tests for the brace-parser scanner, which lives behind a nested go.mod
+  # (internal/astgroup/parsers/src/braceparser) so root `go test ./...` never reaches
+  # its parse_core.go/configs.go unit tests — leaving scanner regressions invisible
+  # until they surface in the corpus. This job provisions Go 1.26 (the module's go
+  # directive) and runs tests only: the embedded .wasm binaries are committed by
+  # design (build.sh is not part of CI) and their integrity is already verified by
+  # TestEmbeddedParsersMatchManifest, so no wasm rebuild is needed here.
+  braceparser-module:
+    name: Brace Parser Module Test
+    runs-on: [self-hosted, gauntlet]
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ./internal/astgroup/parsers/src/braceparser
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Run Module Tests
+        run: go test ./...
