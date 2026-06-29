@@ -169,3 +169,22 @@ func modelAuthority(groups [][]Finding) map[string]float64 {
 	}
 	return g.pageRank()
 }
+
+// promoteByAuthority raises an isolated finding's confidence from MEDIUM to HIGH
+// when its sole reviewer's run authority exceeds the uniform 1/N baseline (epic
+// 13.3, AC3). It is promote-only: a finding is never demoted, so a valid isolated
+// finding can never be silently dropped below the downstream HIGH gate. Findings
+// with two or more reviewers (already HIGH) and findings whose model sits at or
+// below the baseline pass through unchanged, and an empty authority map (no
+// agreement in the run) is a no-op — together these keep the pre-13.3 confidence
+// exactly when no model has earned differential authority.
+func promoteByAuthority(m Merged, authority map[string]float64) Merged {
+	if len(authority) == 0 || len(m.Reviewers) != 1 || m.Confidence != ConfMedium {
+		return m
+	}
+	baseline := 1.0 / float64(len(authority))
+	if authority[m.Reviewers[0]] > baseline {
+		m.Confidence = ConfHigh
+	}
+	return m
+}

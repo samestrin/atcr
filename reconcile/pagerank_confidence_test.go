@@ -62,6 +62,35 @@ func TestReconcile_SymmetricAuthorityDoesNotPromote(t *testing.T) {
 	eq(t, byFile["c.go"].Confidence, ConfMedium, "symmetric authority does not exceed baseline → no promotion")
 }
 
+// TestReconcile_SymmetricTripleDoesNotPromote locks the float boundary: three
+// models that all pairwise agree form a vertex-transitive (symmetric) graph whose
+// PageRank converges to EXACTLY 1/N for every node, so the strict > baseline test
+// promotes nothing. A regression that introduced float drift at this boundary
+// would spuriously promote isolated findings in any fully-corroborated run.
+func TestReconcile_SymmetricTripleDoesNotPromote(t *testing.T) {
+	sources := []Source{
+		{Name: "alpha", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
+			mf("HIGH", "c.go", 30, "shared issue three here", "fix", "security", 15, "e", "alpha"),
+			mf("HIGH", "d.go", 40, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
+		}},
+		{Name: "beta", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
+			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "beta"),
+		}},
+		{Name: "gamma", Findings: []Finding{
+			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "gamma"),
+			mf("HIGH", "c.go", 30, "shared issue three here", "fix", "security", 15, "e", "gamma"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	byFile := map[string]Merged{}
+	for _, m := range res.Findings {
+		byFile[m.File] = m
+	}
+	eq(t, byFile["d.go"].Confidence, ConfMedium, "symmetric K3 → no node exceeds baseline → no promotion")
+}
+
 // TestReconcile_NoAgreementLeavesConfidenceUnchanged is the backward-compat
 // invariant: with no cross-model agreement anywhere in the run the authority graph
 // is empty and confidence is exactly the pre-13.3 vote-count result.
