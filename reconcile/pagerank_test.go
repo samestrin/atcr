@@ -125,7 +125,7 @@ func TestAgreementGraph_EmptyHasNoRanks(t *testing.T) {
 	eq(t, len(newAgreementGraph().pageRank()), 0, "empty graph → no ranks")
 }
 
-// BenchmarkModelAuthority validates the epic's <5ms NFR with headroom: a 24-model
+// BenchmarkModelAuthority characterizes the epic's <5ms NFR with headroom: a 24-model
 // run with thousands of agreement groups (far beyond a realistic handful of
 // reviewers) still builds the graph and runs PageRank well under the bound.
 func BenchmarkModelAuthority(b *testing.B) {
