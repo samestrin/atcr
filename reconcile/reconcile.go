@@ -95,12 +95,16 @@ func Reconcile(sources []Source, opts Options) Result {
 	// An empty result (no cross-model agreement) disables promotion, keeping
 	// confidence byte-identical to the pre-13.3 vote-count behavior.
 	authority := modelAuthority(allGroups)
+	var baseline float64
+	if len(authority) > 0 {
+		baseline = 1.0 / float64(len(authority))
+	}
 
 	// Second pass: merge each group and assign authority-aware confidence.
 	var merged []Merged
 	clustersCollapsed, disagreements := 0, 0
 	for _, g := range allGroups {
-		m := promoteByAuthority(Merge(g), authority)
+		m := promoteByAuthority(Merge(g), authority, baseline)
 		if len(g) >= 2 {
 			clustersCollapsed++
 		}

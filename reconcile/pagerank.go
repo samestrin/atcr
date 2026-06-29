@@ -182,11 +182,10 @@ func modelAuthority(groups [][]Finding) map[string]float64 {
 // below the baseline pass through unchanged, and an empty authority map (no
 // agreement in the run) is a no-op — together these keep the pre-13.3 confidence
 // exactly when no model has earned differential authority.
-func promoteByAuthority(m Merged, authority map[string]float64) Merged {
+func promoteByAuthority(m Merged, authority map[string]float64, baseline float64) Merged {
 	if len(authority) == 0 || len(m.Reviewers) != 1 || m.Confidence != ConfMedium {
 		return m
 	}
-	baseline := 1.0 / float64(len(authority))
 	// The strict > baseline comparison is intentional and exact for
 	// vertex-transitive agreement graphs. Non-vertex-transitive nodes landing
 	// infinitesimally above 1/N due to float truncation stay at MEDIUM, per the
