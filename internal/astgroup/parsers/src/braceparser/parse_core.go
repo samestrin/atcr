@@ -17,7 +17,10 @@
 // (active_*.go) and the wasm ABI (main.go) are build-constrained.
 package main
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+)
 
 // node mirrors internal/astgroup.Node; the JSON tags are the wire contract.
 type node struct {
@@ -460,7 +463,7 @@ func matchAt(src []byte, i int, s string) bool {
 	if s == "" || i+len(s) > len(src) {
 		return false
 	}
-	return string(src[i:i+len(s)]) == s
+	return bytes.Equal(src[i:i+len(s)], []byte(s))
 }
 
 func matchAnyPrefix(src []byte, i int, prefixes []string) bool {
