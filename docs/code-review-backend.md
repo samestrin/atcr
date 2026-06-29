@@ -94,6 +94,9 @@ than ingesting atcr's pre-collapsed blob.
 - `partial` — `true` if any agent failed or timed out (the run still produced
   results from the agents that succeeded).
 - `clusters_collapsed`, `severity_disagreements` — merge diagnostics.
+- `authority_promoted` — count of findings PageRank authority promotion raised
+  from MEDIUM to HIGH confidence in the run (observability for the promotion
+  signal; `0` when no single-reviewer finding was promoted).
 
 ## Behavioral notes for callers
 
