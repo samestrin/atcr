@@ -208,6 +208,12 @@ func parseSource(src []byte, cfg langConfig) node {
 				state = stBlockComment
 			case lineCommentStarts(src, i, cfg):
 				state = stLineComment
+			// NOTE: a bare '/' (neither '//' nor '/*') is intentionally NOT tracked.
+			// JS/TS regex literals (/pattern/) have no scanner state, so a '{' or '}'
+			// inside a regex desyncs brace depth and degrades that finding to line-
+			// proximity grouping (it can never break a reconcile). Regex-vs-division
+			// disambiguation is a known-hard, deferred design item; see the technical-
+			// debt README (braceparser parse_core.go regex-literal rows).
 			case cfg.rawStrings && c == 'r' && rawStringStart(src, i):
 				rawHashes = countHashes(src, i+1)
 				i += 1 + rawHashes // consume 'r' and the '#' run; the '"' is consumed next iter as part of the body
