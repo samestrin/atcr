@@ -124,3 +124,20 @@ func TestAgreementGraph_Deterministic(t *testing.T) {
 func TestAgreementGraph_EmptyHasNoRanks(t *testing.T) {
 	eq(t, len(newAgreementGraph().pageRank()), 0, "empty graph → no ranks")
 }
+
+func TestAgreementGraph_AddAgreementSkipsEmptyAndDuplicates(t *testing.T) {
+	// Defensive contract: empty names and within-slice duplicates never forge an
+	// edge or a spurious node. ["", "alpha", "alpha", "beta"] has exactly two
+	// distinct real models, so it is one alpha-beta agreement and nothing else.
+	g := newAgreementGraph()
+	g.addAgreement([]string{"", "alpha", "alpha", "beta"})
+	eq(t, len(g.adj), 2, "only the two real models become nodes")
+	eq(t, g.adj["alpha"]["beta"], 1, "exactly one alpha-beta edge")
+	_, hasEmpty := g.adj[""]
+	isTrue(t, !hasEmpty, "empty reviewer never becomes a node")
+
+	// A slice with only one distinct real model adds no edge at all.
+	g2 := newAgreementGraph()
+	g2.addAgreement([]string{"alpha", "", "alpha"})
+	eq(t, len(g2.adj), 0, "single distinct model → no agreement edge")
+}
