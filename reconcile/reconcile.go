@@ -79,23 +79,35 @@ type Summary struct {
 func Reconcile(sources []Source, opts Options) Result {
 	clusters := ClusterWith(AllFindings(sources), opts.Grouper)
 
-	var merged []Merged
+	// First pass: dedupe every cluster into merge groups. The groups are collected
+	// across ALL clusters before any confidence is assigned because authority
+	// (epic 13.3) is a run-global property — a model's PageRank depends on every
+	// agreement it took part in, not just the ones inside one location cluster.
+	var allGroups [][]Finding
 	ambiguous := []AmbiguousCluster{}
-	clustersCollapsed, disagreements := 0, 0
-
 	for _, cl := range clusters {
 		groups, amb := dedupeCluster(cl, clusterKeys(cl, opts.Grouper), opts.Merges)
 		ambiguous = append(ambiguous, amb...)
-		for _, g := range groups {
-			m := Merge(g)
-			if len(g) >= 2 {
-				clustersCollapsed++
-			}
-			if m.Disagreement != "" {
-				disagreements++
-			}
-			merged = append(merged, m)
+		allGroups = append(allGroups, groups...)
+	}
+
+	// Build the run-global model-agreement graph and compute per-model authority.
+	// An empty result (no cross-model agreement) disables promotion, keeping
+	// confidence byte-identical to the pre-13.3 vote-count behavior.
+	authority := modelAuthority(allGroups)
+
+	// Second pass: merge each group and assign authority-aware confidence.
+	var merged []Merged
+	clustersCollapsed, disagreements := 0, 0
+	for _, g := range allGroups {
+		m := promoteByAuthority(Merge(g), authority)
+		if len(g) >= 2 {
+			clustersCollapsed++
 		}
+		if m.Disagreement != "" {
+			disagreements++
+		}
+		merged = append(merged, m)
 	}
 	sortMerged(merged)
 	outOfScope := 0

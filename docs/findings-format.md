@@ -48,7 +48,7 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 ```
 
 - **`REVIEWERS`** is the comma-joined set of distinct sources that reported the merged finding. Commas inside a reviewer name are replaced with `/` before joining, so the column can never be forged into extra reviewers.
-- **`CONFIDENCE`** is `HIGH` when 2+ distinct reviewers agree, `MEDIUM` for a single reviewer, and `LOW` is reserved for untrusted sources.
+- **`CONFIDENCE`** is `HIGH` when 2+ distinct reviewers agree and `MEDIUM` for a single reviewer, with `LOW` reserved for untrusted sources. As a refinement, an isolated (single-reviewer) finding is promoted to `HIGH` when its model's per-run PageRank *authority* — earned by agreeing with other models elsewhere in the run — exceeds the uniform `1/N` baseline. Promotion is one-directional: authority never lowers a finding's confidence. When no cross-model agreement exists in a run the signal is inert and confidence is exactly the reviewer-count result.
 
 ## Columns
 
@@ -62,7 +62,7 @@ MEDIUM|internal/store/cache.go:88|Unbounded map grows without eviction (disagree
 | 6 | `EST_MINUTES` | Integer effort estimate | Best-effort; non-numeric parses as `0`. Max wins on merge. |
 | 7 | `EVIDENCE` | Supporting snippet or rationale | In reconciled rows, prefixed with the reviewer name. |
 | 8 | `REVIEWER` (per-source) / `REVIEWERS` (reconciled) | Source attribution | Single name vs. comma-joined set. |
-| 9 | `CONFIDENCE` (reconciled only) | `HIGH` / `MEDIUM` / `LOW` | Reviewer-agreement signal. |
+| 9 | `CONFIDENCE` (reconciled only) | `HIGH` / `MEDIUM` / `LOW` | Reviewer-agreement signal, refined by per-run PageRank authority (an isolated finding from an above-`1/N`-authority model is promoted to `HIGH`; never demoted). |
 
 ## Parsing rules
 
