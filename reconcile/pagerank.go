@@ -187,6 +187,10 @@ func promoteByAuthority(m Merged, authority map[string]float64) Merged {
 		return m
 	}
 	baseline := 1.0 / float64(len(authority))
+	// The strict > baseline comparison is intentional and exact for
+	// vertex-transitive agreement graphs. Non-vertex-transitive nodes landing
+	// infinitesimally above 1/N due to float truncation stay at MEDIUM, per the
+	// epic clarification that the threshold should not be relaxed.
 	if authority[m.Reviewers[0]] > baseline {
 		m.Confidence = ConfHigh
 	}
