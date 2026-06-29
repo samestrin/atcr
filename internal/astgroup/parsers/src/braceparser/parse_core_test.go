@@ -266,3 +266,28 @@ func TestParseSource_BashParamExpQuotedBracesIgnored(t *testing.T) {
 		t.Fatalf("func f should end on line 1, got EndLine=%d", root.Children[0].EndLine)
 	}
 }
+
+func TestParseSource_ControlHeaderInlineArrow(t *testing.T) {
+	// An inline arrow inside a control-flow header must not flip the block kind
+	// to func; the loop/switch body should keep its control kind.
+	src := []byte("function outer() {\n  for (const x of items.map(i => i.id)) {\n    work(x)\n  }\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 {
+		t.Fatalf("expected one outer block, got %+v", root.Children)
+	}
+	outer := root.Children[0]
+	if outer.Kind != "func" || outer.Name != "outer" {
+		t.Fatalf("expected outer func/outer, got %q/%q", outer.Kind, outer.Name)
+	}
+	if len(outer.Children) != 1 || outer.Children[0].Kind != "for" {
+		t.Fatalf("inline arrow in for header must not classify as func: %+v", outer.Children)
+	}
+}
+
+func TestParseSource_ArrowFunctionStillFunc(t *testing.T) {
+	src := []byte("const f = () => {\n  work()\n}\n")
+	root := parseSource(src, tsConfig)
+	if len(root.Children) != 1 || root.Children[0].Kind != "func" {
+		t.Fatalf("arrow function should still be func: %+v", root.Children)
+	}
+}
