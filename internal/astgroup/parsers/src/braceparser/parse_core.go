@@ -284,6 +284,15 @@ func classifyHeader(h string, cfg langConfig) (kind, name string) {
 			bestKw = kw
 		}
 	}
+	// Rust `impl Trait for Foo {` must classify as the impl block, not as a
+	// `for` loop. When the winning keyword is `for` and `impl` precedes it,
+	// prefer the impl keyword so the name resolves to Foo.
+	if bestKw.word == "for" {
+		if idx := lastWholeWord(h, "impl"); idx >= 0 {
+			bestIdx = idx
+			bestKw = blockKeyword{word: "impl", kind: "class", named: true}
+		}
+	}
 	if cfg.arrowFunc {
 		if a := strings.LastIndex(h, "=>"); a > bestIdx {
 			// Only honor `=>` as an arrow-function header when it sits at
@@ -346,16 +355,58 @@ func lastWholeWord(h, word string) int {
 	}
 }
 
-// identAfter returns the identifier starting after pos (skipping spaces).
+// skipGenericList returns the position just after a balanced `<...>` generic
+// parameter list starting at pos, or pos unchanged if no `<` is present.
+func skipGenericList(h string, pos int) int {
+	if pos >= len(h) || h[pos] != '<' {
+		return pos
+	}
+	depth := 1
+	pos++
+	for pos < len(h) && depth > 0 {
+		switch h[pos] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		}
+		pos++
+	}
+	return pos
+}
+
+// identAfter returns the identifier starting after pos (skipping spaces and any
+// generic parameter list). For Rust `impl Trait for Foo` it skips to the name
+// after `for` so sibling impl blocks hash by the implemented type.
 func identAfter(h string, pos int) string {
-	for pos < len(h) && h[pos] == ' ' {
-		pos++
+	skipSpaces := func() {
+		for pos < len(h) && h[pos] == ' ' {
+			pos++
+		}
 	}
-	start := pos
-	for pos < len(h) && isIdentByte(h[pos]) {
-		pos++
+	readIdent := func() string {
+		start := pos
+		for pos < len(h) && isIdentByte(h[pos]) {
+			pos++
+		}
+		return h[start:pos]
 	}
-	return h[start:pos]
+
+	skipSpaces()
+	pos = skipGenericList(h, pos)
+	skipSpaces()
+	name := readIdent()
+	skipSpaces()
+	pos = skipGenericList(h, pos)
+	skipSpaces()
+	if strings.HasPrefix(h[pos:], "for ") {
+		pos += len("for ")
+		skipSpaces()
+		pos = skipGenericList(h, pos)
+		skipSpaces()
+		name = readIdent()
+	}
+	return name
 }
 
 // funcParenName recognizes a `name(...)` function header (Bash name(), TS
