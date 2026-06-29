@@ -286,7 +286,24 @@ func classifyHeader(h string, cfg langConfig) (kind, name string) {
 	}
 	if cfg.arrowFunc {
 		if a := strings.LastIndex(h, "=>"); a > bestIdx {
-			return "func", ""
+			// Only honor `=>` as an arrow-function header when it sits at
+			// parenthesis depth 0. Inline arrows inside control-flow headers
+			// such as `for (x of items.map(i => i.id))` must keep their
+			// control kind, not be misclassified as func.
+			depth := 0
+			for i := 0; i < a; i++ {
+				switch h[i] {
+				case '(':
+					depth++
+				case ')':
+					if depth > 0 {
+						depth--
+					}
+				}
+			}
+			if depth == 0 {
+				return "func", ""
+			}
 		}
 	}
 	if bestIdx >= 0 {
