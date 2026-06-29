@@ -58,6 +58,7 @@ type langConfig struct {
 	paramExpand         bool     // treat ${...} as opaque (Bash) so its braces never open/close a block
 	braceExpand         bool     // treat {a,b} / {1..N} brace expansion as opaque (Bash) so its braces never open/close a block
 	commentWordBoundary bool     // a "#" line comment requires a preceding word boundary (Bash: keeps $#, ${#a} out of comments)
+	attrHash            bool     // a "#" immediately followed by "[" is a PHP 8 attribute (#[Attr]), not a line comment
 	keywords            []blockKeyword
 }
 
@@ -516,6 +517,9 @@ func lineCommentStarts(src []byte, i int, cfg langConfig) bool {
 		}
 		if m == "#" && cfg.commentWordBoundary && !hashAtWordBoundary(src, i) {
 			continue
+		}
+		if m == "#" && cfg.attrHash && i+1 < len(src) && src[i+1] == '[' {
+			continue // PHP 8 attribute `#[...]`, not a line comment
 		}
 		return true
 	}

@@ -50,6 +50,7 @@ var phpConfig = langConfig{
 	strChars:     "\"'",
 	heredocs:     true,
 	heredocOp:    "<<<",
+	attrHash:     true,
 	keywords: []blockKeyword{
 		{word: "function", kind: "func", named: true},
 		{word: "class", kind: "class", named: true},
