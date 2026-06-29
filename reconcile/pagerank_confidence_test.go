@@ -160,3 +160,78 @@ func TestReconcile_NoAgreementLeavesConfidenceUnchanged(t *testing.T) {
 		eq(t, m.Confidence, ConfMedium, "isolated finding with no run agreement stays MEDIUM")
 	}
 }
+
+// countAuthorityFlips derives the number of authority-driven MEDIUM→HIGH
+// promotions directly from the findings: a single-reviewer finding is MEDIUM by
+// the vote-count rule (ConfidenceFor(1)==ConfMedium), so the only way it can end
+// HIGH is promoteByAuthority flipping it. This independent recount is the oracle
+// the Summary.AuthorityPromoted counter must match (AC2).
+func countAuthorityFlips(res Result) int {
+	n := 0
+	for _, m := range res.Findings {
+		if len(m.Reviewers) == 1 && m.Confidence == ConfHigh {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReconcile_AuthorityPromotedSummaryCountsFlips is the AC2 behavior: the
+// Summary.AuthorityPromoted counter equals the number of findings
+// promoteByAuthority actually flipped MEDIUM→HIGH in the run. The fixture is the
+// asymmetric multi-reviewer case where exactly one isolated finding (alpha's
+// c.go) is promoted while beta's isolated finding stays MEDIUM, so the counter
+// must read 1 and must agree with the independent recount.
+func TestReconcile_AuthorityPromotedSummaryCountsFlips(t *testing.T) {
+	sources := []Source{
+		{Name: "alpha", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
+			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "alpha"),
+			mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
+		}},
+		{Name: "beta", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
+			mf("HIGH", "d.go", 40, "isolated beta only finding", "fix", "security", 15, "e", "beta"),
+		}},
+		{Name: "gamma", Findings: []Finding{
+			mf("HIGH", "b.go", 20, "shared issue two here", "fix", "security", 15, "e", "gamma"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	eq(t, res.Summary.AuthorityPromoted, 1, "exactly one isolated finding (alpha's c.go) promoted MEDIUM→HIGH")
+	eq(t, res.Summary.AuthorityPromoted, countAuthorityFlips(res), "counter must match independently recounted flips")
+}
+
+// TestReconcile_AuthorityPromotedZeroWhenNoPromotion pins AC4 on the counter
+// itself: a symmetric two-model run promotes nothing, so the counter is 0 (no
+// spurious counting when confidence assignment is unchanged).
+func TestReconcile_AuthorityPromotedZeroWhenNoPromotion(t *testing.T) {
+	sources := []Source{
+		{Name: "alpha", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "alpha"),
+			mf("HIGH", "c.go", 30, "isolated alpha only finding", "fix", "security", 15, "e", "alpha"),
+		}},
+		{Name: "beta", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "shared issue one here", "fix", "security", 15, "e", "beta"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	eq(t, res.Summary.AuthorityPromoted, 0, "symmetric authority promotes nothing → counter 0")
+	eq(t, res.Summary.AuthorityPromoted, countAuthorityFlips(res), "counter must match independently recounted flips")
+}
+
+// TestReconcile_AuthorityPromotedZeroWhenNoAgreement is the backward-compat
+// counter invariant: with no cross-model agreement the authority map is empty,
+// promotion is a no-op, and the counter stays 0.
+func TestReconcile_AuthorityPromotedZeroWhenNoAgreement(t *testing.T) {
+	sources := []Source{
+		{Name: "alpha", Findings: []Finding{
+			mf("HIGH", "a.go", 10, "alpha distinct finding alpha", "fix", "security", 15, "e", "alpha"),
+		}},
+		{Name: "beta", Findings: []Finding{
+			mf("HIGH", "b.go", 20, "beta distinct finding beta", "fix", "security", 15, "e", "beta"),
+		}},
+	}
+	res := Reconcile(sources, recAt())
+	eq(t, res.Summary.AuthorityPromoted, 0, "no agreement → empty authority map → counter 0")
+}

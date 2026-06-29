@@ -1,3 +1,21 @@
+## [13.5.0] - 2026-06-29
+
+### Added
+
+- Added an `authority_promoted` field to the reconcile run summary
+  (`reconcile-json/v1`) recording how many findings PageRank authority promotion
+  raised from MEDIUM to HIGH confidence in a run — observability for the epic 13.3
+  promotion signal, which was previously silent.
+
+### Changed
+
+- The reconcile summary wire schema gained the additive `authority_promoted` key.
+  This is a v2 wire-schema change (sanctioned by this epic); existing consumers are
+  unaffected unless they decode `reconcile-json/v1` with strict unknown-field
+  rejection.
+
+*Shipped via /execute-epic (epic 13.5)*
+
 ## [Technical Debt] - 2026-06-29
 
 ### Fixed

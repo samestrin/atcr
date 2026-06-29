@@ -41,7 +41,13 @@ type Summary struct {
 	PerSourceCounts       map[string]int `json:"per_source_counts"`
 	ClustersCollapsed     int            `json:"clusters_collapsed"`
 	SeverityDisagreements int            `json:"severity_disagreements"`
-	Partial               bool           `json:"partial"`
+	// AuthorityPromoted counts findings PageRank authority promotion (epic 13.3,
+	// promoteByAuthority) raised from MEDIUM to HIGH confidence in this run. It is
+	// observability only — promotion behavior is unchanged — surfacing a misfiring
+	// promotion that would otherwise be derivable only indirectly as a "HIGH with a
+	// single reviewer."
+	AuthorityPromoted int  `json:"authority_promoted"`
+	Partial           bool `json:"partial"`
 	// SkippedSources lists source paths an embedder dropped on a read error or bad
 	// header: warn-and-continue degradation is recorded here rather than
 	// exit-coded, mirroring the Partial flag's contract. The core library leaves
@@ -102,9 +108,16 @@ func Reconcile(sources []Source, opts Options) Result {
 
 	// Second pass: merge each group and assign authority-aware confidence.
 	var merged []Merged
-	clustersCollapsed, disagreements := 0, 0
+	clustersCollapsed, disagreements, authorityPromoted := 0, 0, 0
 	for _, g := range allGroups {
-		m := promoteByAuthority(Merge(g), authority, baseline)
+		base := Merge(g)
+		m := promoteByAuthority(base, authority, baseline)
+		// Count an actual authority-driven flip: the merged group was MEDIUM by the
+		// vote-count rule and promotion raised it to HIGH. Comparing before/after
+		// keeps the counter exact even if promoteByAuthority's predicate evolves.
+		if base.Confidence == ConfMedium && m.Confidence == ConfHigh {
+			authorityPromoted++
+		}
 		if len(g) >= 2 {
 			clustersCollapsed++
 		}
@@ -135,6 +148,7 @@ func Reconcile(sources []Source, opts Options) Result {
 			PerSourceCounts:       perSourceCounts(sources),
 			ClustersCollapsed:     clustersCollapsed,
 			SeverityDisagreements: disagreements,
+			AuthorityPromoted:     authorityPromoted,
 			Partial:               opts.Partial,
 			SkippedSources:        []string{},
 			SkippedSourceCount:    0,
